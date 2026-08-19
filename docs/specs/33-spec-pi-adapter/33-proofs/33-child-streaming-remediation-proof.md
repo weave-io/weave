@@ -416,3 +416,110 @@ Conventional Commits:
 The earlier exact-identity RED remains recorded under `695e15a2`, and the
 historical 2026-08-18 RED remains unchanged above. Task 11 remains unchecked in
 `.weave/plans/pi-child-streaming-remediation.md`. Weft and Warp were not run.
+
+## Task 11 final exact-isolated proof
+
+Date of final fresh run: 2026-08-19
+
+The preceding remediation section is retained as an append-only historical
+record. The run below is the authoritative final isolated proof. It does not
+rewrite the 2026-08-18 RED or the first exact-identity RED under `695e15a2`.
+This section contains only bounded identity values, counts, statuses, and
+hashes. It contains no config contents, reasoning text, assistant text, tool
+payload, prompt, credential, screenshot, scrollback, or transcript.
+
+### Exact identity and controls
+
+| Fact | Bounded value |
+| --- | --- |
+| Git subject used for the fresh parent | `9aa25ef1aa5577bd86df6222421f480a1d768e8f` |
+| Git dirty | `false` |
+| Source-input count | `143` |
+| Build completion | `2026-08-19T13:42:52.276Z` |
+| Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| Build-manifest SHA-256 | `89c67bea80ea56d1bb8110be2e973fca01d3bf48c6366fff73d32bba1f3aa9e1` |
+| Symlink during fresh proof | isolated worktree adapter |
+| Pi | `0.84.2`; package SHA-256 `820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0` |
+| pi-ai | `0.84.2`; package SHA-256 `9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9` |
+| pi-tui | `0.84.2`; package SHA-256 `2c19fb7e3d1e83a461b6f020b2ffc118b435dcd78a07af8c8def72864cd09e6e` |
+| Independent verifier | **PASS** — `current`; child streaming permitted |
+
+The stale A/B control classified the loaded A against changed on-disk output
+as **stale-on-disk**. The manifest and output corruption controls classified
+as **unverifiable** and **stale-on-disk**. After restoration, `/reload`
+adopted the replacement output and classified **current**. The control process
+exited before the final fresh parent. The independent verifier passed before
+the final delegation.
+
+Built adapter output digests were content-free and bounded:
+
+| Output | SHA-256 |
+| --- | --- |
+| `cli` | `9d39ca336f49291f24964e5de2a3890d9c0410cc9ca48736de00fcecac1a418a` |
+| `cli-declarations` | `5984be53878a216ed0a054094be409679635219c00519c70e86b6c853369b9e8` |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| `extension-build-identity` | `cdae357c6587a31da95e39f94aa8ab57dfafc7af8ea37799dfec4a9d27c6feb5` |
+| `extension-declarations` | `3373de113af5f106448d6adc21b21632a7995da0db9b2af6fb641cac942fe009` |
+| `extension-impl` | `bfa80249dddb5bd61caab3efdba8314de4a60e5687a127cd1b3fb91cf6298a5c` |
+| `extension-impl-declarations` | `a621a0bb2212fcd1b57ac8d4ce78350bea5017920812a6431c8adf11ff3c4c9c` |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` |
+| `index` | `58fd868f3944805c4ce2bf8e018b5c7e66610e2104ed856bab5b2b69237ea41b` |
+| `index-declarations` | `f92b2bf8b4eb0bfa8cf7991ed31b2a6cf6d8bfc77846ee513dc1d02cef4c2cf7` |
+
+### Fresh live lanes
+
+The fresh parent delegated exactly one `shuttle-mini` child. The live TUI was
+the only reasoning observation surface. The child used one bounded tool call
+and streamed a long assistant reply long enough for two pre-settlement
+samples. All observations below are content-free counts.
+
+| Lane | Status | Bounded observation |
+| --- | --- | --- |
+| Parent raw reasoning live | **PASS** | Exact `↪ reasoning •` prefix observations: `1`; live parent activity remained reasoning-only. |
+| Inspector raw reasoning live | **PASS** | Exact prefix observations: `3`; one bounded live reasoning buffer. |
+| Inspector tool details | **PASS** | Correlated tool starts: `1`; terminal results: `1`; duplicate terminal rows: `0`. |
+| Inspector assistant reply live | **PASS** | Streaming-header observations: `1`; pre-settlement body samples: `2`; body growth: `1`. |
+
+The settled parent card answer-leak predicate was **false**. The parent card
+showed no child assistant or tool activity. The inspector became read-only
+after settlement. Its final view retained no live reasoning row.
+
+### Sink isolation, lifecycle release, and cleanup
+
+| Check | Status | Bounded result |
+| --- | --- | --- |
+| Parent card registry after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Inspector reasoning registry after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Tool-result semantics | **PASS** | One authoritative settled result; duplicate terminal results: `0` |
+| Content-free capture | **PASS** | `47` events; independent manifest |
+| Content-free replay and red controls | **PASS** | `5` red controls; `4` lanes |
+| Live diagnostics | **PASS** | Bounded content-free buffer `1096/8192` bytes; omitted `0`; no raw content retained. |
+| Durable Weave reasoning sinks | **PASS** | No parent input, message, card details, Runtime Store, checkpoint, replay, log, diagnostic payload, fixture, or proof content. |
+| Runtime Store after cleanup | **PASS** | No active lease; `0` workflow instances; schema `6` |
+| Herdr proof pane and processes | **PASS** | Fresh pane closed; no child, provider, or proof process remained. |
+
+The zero counts came from the bounded production-extension integration seam.
+It exposes only registry sizes and retained byte totals. It does not expose
+reasoning text, keys, IDs, or payloads. The host-managed native child session
+remained the Pi persistence boundary.
+
+### Restoration and validation
+
+| Gate | Result |
+| --- | --- |
+| Exact global config restoration | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644` |
+| Mode-0600 exact recovery backup | **PASS** — retained through proof; same SHA-256 |
+| Global and project config validation | **PASS** |
+| `bun run typecheck` | **PASS** — `0` errors |
+| `bun run lint` | **PASS** — exit `0`; declaration validation passed |
+| `bun run build` | **PASS** |
+| `bun run validate-config` | **PASS** |
+| `bun run docs:check-links` | **PASS** |
+| Content-free capture/replay controls | **PASS** |
+| Runtime status | **PASS** — no active lease; `0` workflow instances |
+| Adapter symlink and launcher restoration | **PASS** — original main-worktree symlink and launcher SHA restored |
+
+The earlier exact-identity RED remains under `695e15a2`, and the historical
+2026-08-18 RED remains unchanged. Task 11 remains unchecked in
+`.weave/plans/pi-child-streaming-remediation.md`. Weft and Warp were not run.
+
