@@ -10,9 +10,11 @@
 
 import {
   type AdapterCommandRegistry,
+  type AdapterCommandRequest,
   dispatchAdapterCommand,
 } from "@weaveio/weave-engine";
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import type { CliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
 import {
@@ -88,43 +90,45 @@ export interface AdapterCommandContext {
   readonly prompt?: PromptAdapter;
 }
 
-interface AdapterChildListItem {
-  readonly childId: string;
-  readonly threadId: string;
-  readonly title: string;
-  readonly status: string;
-  readonly originParentSessionId: string;
-  readonly tombstoned: boolean;
-  readonly stale: boolean;
-}
+const adapterChildListItemSchema = z.object({
+  childId: z.string(),
+  threadId: z.string(),
+  title: z.string(),
+  status: z.string(),
+  originParentSessionId: z.string(),
+  tombstoned: z.boolean(),
+  stale: z.boolean(),
+});
 
-interface AdapterChildrenListResult {
-  readonly children: readonly AdapterChildListItem[];
-  readonly nextCursor?: string;
-}
-
-interface AdapterChildrenShowResult {
-  readonly child: AdapterChildListItem;
-  readonly entries: readonly {
-    readonly index: number;
-    readonly id: string;
-    readonly type: string;
-    readonly content?: string;
-    readonly contentComplete?: boolean;
-    readonly contentByteLength?: number;
-    readonly contentCursor?: string;
-  }[];
-  readonly nextCursor?: string;
-  readonly diagnostics?: {
-    readonly nativeSessionId?: string;
-    readonly originParentSessionId: string;
-    readonly sessionHeader: string;
-    readonly sessionHealth: string;
-  };
-  readonly complete?: boolean;
-  readonly contentIncluded?: boolean;
-}
-
+const adapterChildrenListResultSchema = z.object({
+  children: z.array(adapterChildListItemSchema),
+  nextCursor: z.string().optional(),
+});
+const adapterChildrenShowResultSchema = z.object({
+  child: adapterChildListItemSchema,
+  entries: z.array(
+    z.object({
+      index: z.number(),
+      id: z.string(),
+      type: z.string(),
+      content: z.string().optional(),
+      contentComplete: z.boolean().optional(),
+      contentByteLength: z.number().optional(),
+      contentCursor: z.string().optional(),
+    }),
+  ),
+  nextCursor: z.string().optional(),
+  diagnostics: z
+    .object({
+      nativeSessionId: z.string().optional(),
+      originParentSessionId: z.string(),
+      sessionHeader: z.string(),
+      sessionHealth: z.string(),
+    })
+    .optional(),
+  complete: z.boolean().optional(),
+  contentIncluded: z.boolean().optional(),
+});
 /**
  * Byte-exact authoritative result page. Unlike `children show --content`,
  * nothing here is sanitized or rewritten, and `exact` says so on the wire.
@@ -136,22 +140,21 @@ interface AdapterChildrenShowResult {
  * any bytes at all, and it is byte-preserving, so nothing has to be sanitized
  * to make it fit.
  */
-interface AdapterChildrenResultResult {
-  readonly childId: string;
-  readonly exact: true;
-  readonly status: "complete" | "incomplete";
-  readonly reason?: string;
-  readonly total?: number;
-  readonly byteLength?: number;
-  readonly digest?: string;
-  readonly contentEncoding?: "base64";
-  readonly content?: string;
-  readonly contentByteOffset?: number;
-  readonly contentByteLength?: number;
-  readonly contentDigest?: string;
-  readonly nextCursor?: string;
-}
-
+const adapterChildrenResultResultSchema = z.object({
+  childId: z.string(),
+  exact: z.literal(true),
+  status: z.enum(["complete", "incomplete"]),
+  reason: z.string().optional(),
+  total: z.number().optional(),
+  byteLength: z.number().optional(),
+  digest: z.string().optional(),
+  contentEncoding: z.literal("base64").optional(),
+  content: z.string().optional(),
+  contentByteOffset: z.number().optional(),
+  contentByteLength: z.number().optional(),
+  contentDigest: z.string().optional(),
+  nextCursor: z.string().optional(),
+});
 /**
  * Decodes one base64 result page back to its exact bytes.
  *
@@ -163,7 +166,8 @@ export function decodeAdapterResultPage(page: {
   readonly content?: string;
   readonly contentByteLength?: number;
 }): Result<Uint8Array | undefined, string> {
-  if (page.content === undefined) return ok(undefined);
+  const content = page.content;
+  if (content === undefined) return ok(void 0);
   if (page.contentEncoding !== "base64") {
     return err(
       `unsupported result content encoding: ${page.contentEncoding ?? "(absent)"}`,
@@ -171,7 +175,7 @@ export function decodeAdapterResultPage(page: {
   }
   const decoded: Result<Uint8Array, string> = Result.fromThrowable(
     () => {
-      const binary = atob(page.content as string);
+      const binary = atob(content);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1) {
         bytes[index] = binary.charCodeAt(index);
@@ -192,19 +196,46 @@ export function decodeAdapterResultPage(page: {
   return ok(decoded.value);
 }
 
-interface AdapterChildrenDeleteResult {
-  readonly childId: string;
-  readonly tombstoned: true;
-  readonly deletedAt: string;
-}
+const adapterChildrenDeleteResultSchema = z.object({
+  childId: z.string(),
+  tombstoned: z.literal(true),
+  deletedAt: z.string(),
+});
+const adapterDoctorResultSchema = z.object({
+  status: z.string(),
+  checks: z.array(
+    z.object({
+      id: z.string(),
+      status: z.string(),
+      detail: z.string().optional(),
+    }),
+  ),
+});
+const adapterResolveMatchesSchema = z.object({
+  matches: z.array(
+    z.object({
+      childId: z.string(),
+      originParentSessionId: z.string(),
+    }),
+  ),
+});
+type AdapterResolveMatch = z.infer<
+  typeof adapterResolveMatchesSchema
+>["matches"][number];
 
-interface AdapterDoctorResult {
-  readonly status: string;
-  readonly checks: readonly {
-    readonly id: string;
-    readonly status: string;
-    readonly detail?: string;
-  }[];
+function parseAdapterJson<T extends z.ZodType>(
+  resultJson: string,
+  schema: T,
+): Result<z.output<T>, string> {
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(resultJson),
+    () => "invalid json",
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+
+  const validated = schema.safeParse(parsed.value);
+  if (!validated.success) return err("invalid adapter result payload");
+  return ok(validated.data);
 }
 
 // ---------------------------------------------------------------------------
@@ -393,111 +424,140 @@ export async function resolveDeleteParentScope(
 
 function parseResolveMatches(
   resultJson: string,
-): readonly AdapterChildListItem[] | undefined {
-  const parsed: Result<unknown, string> = Result.fromThrowable(
-    () => JSON.parse(resultJson) as unknown,
-    () => "invalid json",
-  )();
-  if (parsed.isErr()) return undefined;
-  if (
-    typeof parsed.value !== "object" ||
-    parsed.value === null ||
-    !("matches" in parsed.value) ||
-    !Array.isArray((parsed.value as { matches: unknown }).matches)
-  ) {
-    return undefined;
-  }
-  const matches: AdapterChildListItem[] = [];
-  for (const row of (parsed.value as { matches: unknown[] }).matches) {
-    if (
-      typeof row !== "object" ||
-      row === null ||
-      typeof (row as { childId?: unknown }).childId !== "string" ||
-      typeof (row as { originParentSessionId?: unknown })
-        .originParentSessionId !== "string"
-    ) {
-      return undefined;
-    }
-    matches.push(row as AdapterChildListItem);
-  }
-  return matches;
+): readonly AdapterResolveMatch[] | undefined {
+  const parsed = parseAdapterJson(resultJson, adapterResolveMatchesSchema);
+  return parsed.isOk() ? parsed.value.matches : undefined;
+}
+
+interface AdapterChildrenListPayload {
+  workspaceKey: string;
+  includeTombstoned: true;
+}
+
+interface AdapterChildrenShowPayload {
+  workspaceKey: string;
+  childId: string;
+  parentSessionId?: string;
+  cursor?: string;
+  content?: true;
+  contentCursor?: string;
+  diagnostic?: true;
+}
+
+interface AdapterChildrenResultPayload {
+  workspaceKey: string;
+  childId: string;
+  parentSessionId?: string;
+  cursor?: string;
+}
+
+interface AdapterChildrenDeletePayload {
+  workspaceKey: string;
+  childId: string;
+  parentSessionId?: string;
+  confirmed: true;
+}
+
+interface AdapterDoctorPayload {
+  diagnostic?: true;
+}
+
+type AdapterPayload =
+  | AdapterChildrenListPayload
+  | AdapterChildrenShowPayload
+  | AdapterChildrenResultPayload
+  | AdapterChildrenDeletePayload
+  | AdapterDoctorPayload;
+
+function createAdapterRequest(
+  command: string,
+  payload: AdapterPayload,
+): AdapterCommandRequest {
+  return {
+    adapter: PI_ADAPTER,
+    command,
+    payloadJson: JSON.stringify(payload),
+  };
 }
 
 function buildRequest(
   target: AdapterCliTarget,
   workspaceKey: string,
   ctx: AdapterCommandContext,
-): {
-  readonly adapter: string;
-  readonly command: string;
-  readonly payloadJson: string;
-} {
+): AdapterCommandRequest {
   switch (target.action) {
-    case "children.list":
-      return {
-        adapter: PI_ADAPTER,
-        command: PI_COMMANDS.childrenList,
-        payloadJson: JSON.stringify({
-          workspaceKey,
-          includeTombstoned: true,
-        }),
+    case "children.list": {
+      const payload: AdapterChildrenListPayload = {
+        workspaceKey,
+        includeTombstoned: true,
       };
-    case "children.show":
-      return {
-        adapter: PI_ADAPTER,
-        command: PI_COMMANDS.childrenShow,
-        payloadJson: JSON.stringify({
-          workspaceKey,
-          childId: target.childId,
-          ...(target.parentSessionId === undefined
-            ? {}
-            : { parentSessionId: target.parentSessionId }),
-          ...(target.cursor === undefined ? {} : { cursor: target.cursor }),
-          ...(target.content === true ? { content: true } : {}),
-          ...(target.contentCursor === undefined
-            ? {}
-            : { contentCursor: target.contentCursor }),
-          ...(ctx.diagnostic ? { diagnostic: true } : {}),
-        }),
+      return createAdapterRequest(PI_COMMANDS.childrenList, payload);
+    }
+    case "children.show": {
+      const payload: AdapterChildrenShowPayload = {
+        workspaceKey,
+        childId: target.childId,
       };
-    case "children.result":
-      return {
-        adapter: PI_ADAPTER,
-        command: PI_COMMANDS.childrenResult,
-        payloadJson: JSON.stringify({
-          workspaceKey,
-          childId: target.childId,
-          ...(target.parentSessionId === undefined
-            ? {}
-            : { parentSessionId: target.parentSessionId }),
-          ...(target.cursor === undefined ? {} : { cursor: target.cursor }),
-        }),
+      if (target.parentSessionId !== undefined) {
+        payload.parentSessionId = target.parentSessionId;
+      }
+      if (target.cursor !== undefined) {
+        payload.cursor = target.cursor;
+      }
+      if (target.content === true) {
+        payload.content = true;
+      }
+      if (target.contentCursor !== undefined) {
+        payload.contentCursor = target.contentCursor;
+      }
+      if (ctx.diagnostic) {
+        payload.diagnostic = true;
+      }
+      return createAdapterRequest(PI_COMMANDS.childrenShow, payload);
+    }
+    case "children.result": {
+      const payload: AdapterChildrenResultPayload = {
+        workspaceKey,
+        childId: target.childId,
       };
-    case "children.delete":
-      return {
-        adapter: PI_ADAPTER,
-        command: PI_COMMANDS.childrenDelete,
-        payloadJson: JSON.stringify({
-          workspaceKey,
-          childId: target.childId,
-          parentSessionId: target.parentSessionId,
-          confirmed: true,
-        }),
+      if (target.parentSessionId !== undefined) {
+        payload.parentSessionId = target.parentSessionId;
+      }
+      if (target.cursor !== undefined) {
+        payload.cursor = target.cursor;
+      }
+      return createAdapterRequest(PI_COMMANDS.childrenResult, payload);
+    }
+    case "children.delete": {
+      const payload: AdapterChildrenDeletePayload = {
+        workspaceKey,
+        childId: target.childId,
+        confirmed: true,
       };
-    case "doctor":
-      return {
-        adapter: PI_ADAPTER,
-        command: PI_COMMANDS.doctor,
-        payloadJson: JSON.stringify({
-          ...(ctx.diagnostic ? { diagnostic: true } : {}),
-        }),
-      };
+      if (target.parentSessionId !== undefined) {
+        payload.parentSessionId = target.parentSessionId;
+      }
+      return createAdapterRequest(PI_COMMANDS.childrenDelete, payload);
+    }
+    case "doctor": {
+      const payload: AdapterDoctorPayload = {};
+      if (ctx.diagnostic) {
+        payload.diagnostic = true;
+      }
+      return createAdapterRequest(PI_COMMANDS.doctor, payload);
+    }
   }
 }
 
 function stableJson(resultJson: string): string {
-  const parsed = JSON.parse(resultJson) as unknown;
-  return `${JSON.stringify(parsed, null, 2)}\n`.trimEnd();
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(resultJson),
+    () => void 0,
+  )();
+  return parsed.match(
+    (value) => `${JSON.stringify(value, null, 2)}\n`.trimEnd(),
+    () => resultJson,
+  );
 }
 
 function renderHuman(
@@ -505,16 +565,16 @@ function renderHuman(
   resultJson: string,
   theme: ThemeColors,
 ): string {
-  const parsed = JSON.parse(resultJson) as
-    | AdapterChildrenListResult
-    | AdapterChildrenShowResult
-    | AdapterChildrenResultResult
-    | AdapterChildrenDeleteResult
-    | AdapterDoctorResult;
-
   switch (action) {
     case "children.list": {
-      const body = parsed as AdapterChildrenListResult;
+      const parsed = parseAdapterJson(
+        resultJson,
+        adapterChildrenListResultSchema,
+      );
+      if (parsed.isErr()) {
+        return `Invalid adapter result payload: ${parsed.error}`;
+      }
+      const body = parsed.value;
       if (body.children.length === 0) {
         return "No children found for this workspace.";
       }
@@ -528,7 +588,14 @@ function renderHuman(
       return lines.join("\n");
     }
     case "children.show": {
-      const body = parsed as AdapterChildrenShowResult;
+      const parsed = parseAdapterJson(
+        resultJson,
+        adapterChildrenShowResultSchema,
+      );
+      if (parsed.isErr()) {
+        return `Invalid adapter result payload: ${parsed.error}`;
+      }
+      const body = parsed.value;
       const header = [
         `${theme.bold(body.child.childId)}  ${body.child.status}`,
         theme.dim(body.child.title),
@@ -563,7 +630,14 @@ function renderHuman(
       return [...header, ...entryLines].join("\n");
     }
     case "children.result": {
-      const body = parsed as AdapterChildrenResultResult;
+      const parsed = parseAdapterJson(
+        resultJson,
+        adapterChildrenResultResultSchema,
+      );
+      if (parsed.isErr()) {
+        return `Invalid adapter result payload: ${parsed.error}`;
+      }
+      const body = parsed.value;
       if (body.status !== "complete") {
         return `No verified result for child ${theme.cyan(body.childId)} (${body.reason ?? "unknown"}).`;
       }
@@ -585,11 +659,22 @@ function renderHuman(
       return lines.join("\n");
     }
     case "children.delete": {
-      const body = parsed as AdapterChildrenDeleteResult;
+      const parsed = parseAdapterJson(
+        resultJson,
+        adapterChildrenDeleteResultSchema,
+      );
+      if (parsed.isErr()) {
+        return `Invalid adapter result payload: ${parsed.error}`;
+      }
+      const body = parsed.value;
       return `Tombstoned child ${theme.cyan(body.childId)} at ${body.deletedAt}.`;
     }
     case "doctor": {
-      const body = parsed as AdapterDoctorResult;
+      const parsed = parseAdapterJson(resultJson, adapterDoctorResultSchema);
+      if (parsed.isErr()) {
+        return `Invalid adapter result payload: ${parsed.error}`;
+      }
+      const body = parsed.value;
       const lines = [
         `Doctor status: ${theme.bold(body.status)}`,
         ...body.checks.map(

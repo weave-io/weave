@@ -40,7 +40,7 @@ export function buildMigratedContent(
 
   const body =
     conversion.dsl.trim().length > 0
-      ? conversion.dsl + "\n"
+      ? `${conversion.dsl}\n`
       : starterConfig(plan.scope);
 
   return provenanceComment + body;

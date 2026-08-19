@@ -24,8 +24,15 @@ import {
 } from "./legacy-dsl-identifiers.js";
 import {
   copyLegacyGraph,
+  isLegacyBoolean,
+  isLegacyGraphRecord,
+  isLegacyNumber,
+  isLegacyRecord,
+  isLegacyString,
   LEGACY_GRAPH_TOO_LARGE_MESSAGE,
   type LegacyGraphCopyError,
+  type LegacyGraphObject,
+  type LegacyInputValue,
   UNSAFE_LEGACY_GRAPH_MESSAGE,
 } from "./legacy-graph-copy.js";
 import { inspectLegacyJsonc } from "./legacy-jsonc-inspect.js";
@@ -138,7 +145,7 @@ type PathParts = Array<string | number>;
 // ---------------------------------------------------------------------------
 
 const parseJsoncSource = Result.fromThrowable(
-  (source: string): unknown => {
+  (source: string): LegacyInputValue => {
     const errors: ParseError[] = [];
     const result = parseJsonc(source, errors, {
       allowTrailingComma: true,
@@ -155,7 +162,7 @@ const parseJsoncSource = Result.fromThrowable(
  * Parse legacy JSONC with comments and trailing commas.
  * Returns `undefined` when parsing fails.
  */
-function parseLegacyJsonc(source: string): unknown {
+function parseLegacyJsonc(source: string): LegacyInputValue | undefined {
   const parsed = parseJsoncSource(source);
   if (parsed.isErr()) return undefined;
   return parsed.value;
@@ -165,22 +172,44 @@ function parseLegacyJsonc(source: string): unknown {
  * Escapes a string value for safe embedding in a `.weave` DSL double-quoted
  * string literal.
  */
-// Regex for ASCII control characters not covered by named escape sequences
-// (\n, \r, \t). Covers U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — this regex exists specifically to detect and escape control characters
-const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
 function escapeForDsl(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(CONTROL_CHAR_RE, (ch) => {
-      const hex = ch.charCodeAt(0).toString(16).padStart(4, "0");
-      return `\\u${hex}`;
-    });
+  let escaped = "";
+  for (let index = 0; index < str.length; index += 1) {
+    const character = str.charAt(index);
+    if (character === "\\") {
+      escaped += "\\\\";
+      continue;
+    }
+    if (character === '"') {
+      escaped += '\\"';
+      continue;
+    }
+    if (character === "\n") {
+      escaped += "\\n";
+      continue;
+    }
+    if (character === "\r") {
+      escaped += "\\r";
+      continue;
+    }
+    if (character === "\t") {
+      escaped += "\\t";
+      continue;
+    }
+    const code = character.charCodeAt(0);
+    const isControlCode =
+      (code >= 0 && code <= 0x08) ||
+      code === 0x0b ||
+      code === 0x0c ||
+      (code >= 0x0e && code <= 0x1f) ||
+      code === 0x7f;
+    if (isControlCode) {
+      escaped += `\\u${code.toString(16).padStart(4, "0")}`;
+      continue;
+    }
+    escaped += character;
+  }
+  return escaped;
 }
 
 function graphCopyWarning(error: LegacyGraphCopyError): ConversionWarning {
@@ -199,21 +228,21 @@ function parseFailedResult(): ConversionResult {
   return { dsl: "", warnings };
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isPlainRecord(value: LegacyInputValue): value is LegacyGraphObject {
+  return isLegacyRecord(value);
 }
 
-function isNonBlankString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+function isNonBlankString(value: LegacyInputValue): value is string {
+  return isLegacyString(value) && value.trim().length > 0;
 }
 
-function hasOwn(record: Record<string, unknown>, key: string): boolean {
+function hasOwn(record: LegacyGraphObject, key: string): boolean {
   return Object.hasOwn(record, key);
 }
 
-function isValidTemperature(value: unknown): value is number {
+function isValidTemperature(value: LegacyInputValue): value is number {
   return (
-    typeof value === "number" &&
+    isLegacyNumber(value) &&
     Number.isFinite(value) &&
     value >= MIN_TEMPERATURE &&
     value <= MAX_TEMPERATURE
@@ -225,7 +254,7 @@ function formatTriggerList(triggers: string[]): string {
 }
 
 function warnRejectedFastAliases(
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   context: PathParts,
   warnings: ConversionWarning[],
 ): void {
@@ -307,7 +336,7 @@ function finalizeConversion(
  * discarded structured field and every malformed or empty entry.
  */
 function convertLegacyTriggers(
-  value: unknown,
+  value: LegacyInputValue,
   fieldPath: PathParts,
   warnings: ConversionWarning[],
 ): string[] | undefined {
@@ -328,7 +357,7 @@ function convertLegacyTriggers(
     const entryPath: PathParts = [...fieldPath, index];
     const entry = value[index];
 
-    if (typeof entry === "string") {
+    if (isLegacyString(entry)) {
       if (entry.trim().length === 0) {
         pushWarning(
           warnings,
@@ -396,7 +425,7 @@ function convertLegacyTriggers(
 }
 
 function convertLegacyPatternField(
-  value: unknown,
+  value: LegacyInputValue,
   fieldPath: PathParts,
   warnings: ConversionWarning[],
 ): void {
@@ -413,7 +442,7 @@ function convertLegacyPatternField(
   let validCount = 0;
   for (let index = 0; index < value.length; index += 1) {
     const pattern = value[index];
-    if (typeof pattern === "string" && pattern.trim().length > 0) {
+    if (isLegacyString(pattern) && pattern.trim().length > 0) {
       validCount += 1;
       continue;
     }
@@ -451,7 +480,7 @@ function isPromptFileSafe(promptFile: string): boolean {
 }
 
 function convertTemperature(
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   context: PathParts,
   warnings: ConversionWarning[],
   lines: string[],
@@ -477,14 +506,11 @@ function convertTemperature(
  * Convert a legacy `tools` record into a `tool_policy { ... }` DSL block.
  */
 function convertLegacyTools(
-  tools: Record<string, unknown>,
+  tools: LegacyGraphObject,
   context: PathParts,
   warnings: ConversionWarning[],
 ): string[] {
-  const capabilities = Object.create(null) as Record<
-    ToolCapability,
-    ToolPermission
-  >;
+  const capabilities = new Map<ToolCapability, ToolPermission>();
 
   for (const toolName of Object.keys(tools)) {
     const toolPath = joinPath([...context, "tools", toolName]);
@@ -496,7 +522,7 @@ function convertLegacyTools(
       continue;
     }
     const allowed = tools[toolName];
-    if (typeof allowed !== "boolean") {
+    if (!isLegacyBoolean(allowed)) {
       pushWarning(
         warnings,
         toolPath,
@@ -509,16 +535,13 @@ function convertLegacyTools(
       pushWarning(warnings, toolPath, CONVERSION_REASON.toolUnknown);
       continue;
     }
-    capabilities[capability] = allowed ? "allow" : "deny";
+    capabilities.set(capability, allowed ? "allow" : "deny");
   }
 
-  const capEntries = Object.entries(capabilities) as Array<
-    [ToolCapability, ToolPermission]
-  >;
-  if (capEntries.length === 0) return [];
+  if (capabilities.size === 0) return [];
 
   const lines = ["  tool_policy {"];
-  for (const [cap, perm] of capEntries) {
+  for (const [cap, perm] of capabilities) {
     lines.push(`    ${cap} ${perm}`);
   }
   lines.push("  }");
@@ -530,7 +553,7 @@ function convertLegacyTools(
  * `models [...]` array with the primary model first.
  */
 function convertLegacyModels(
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   context: PathParts,
   warnings: ConversionWarning[],
 ): string[] {
@@ -538,7 +561,7 @@ function convertLegacyModels(
 
   if (hasOwn(entry, "model")) {
     const model = entry.model;
-    if (typeof model !== "string") {
+    if (!isLegacyString(model)) {
       pushWarning(
         warnings,
         joinPath([...context, "model"]),
@@ -570,7 +593,7 @@ function convertLegacyModels(
       for (let index = 0; index < fallback.length; index += 1) {
         const item = fallback[index];
         const itemPath = joinPath([...context, "fallback_models", index]);
-        if (typeof item !== "string") {
+        if (!isLegacyString(item)) {
           pushWarning(
             warnings,
             itemPath,
@@ -598,11 +621,11 @@ function convertLegacyModels(
  * Convert a legacy `prompt_file` value into a DSL `prompt_file "..."` line.
  */
 function convertLegacyPromptFile(
-  value: unknown,
+  value: LegacyInputValue,
   context: PathParts,
   warnings: ConversionWarning[],
 ): string | undefined {
-  if (typeof value !== "string") {
+  if (!isLegacyString(value)) {
     pushWarning(
       warnings,
       joinPath([...context, "prompt_file"]),
@@ -624,7 +647,7 @@ function convertLegacyPromptFile(
 }
 
 function convertUnsupportedFields(
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   context: PathParts,
   fields: readonly string[],
   warnings: ConversionWarning[],
@@ -647,7 +670,7 @@ function convertUnsupportedFields(
  */
 function convertLegacyAgentEntry(
   name: string,
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   warnings: ConversionWarning[],
 ): string[] {
   const context: PathParts = ["agents", name];
@@ -658,10 +681,7 @@ function convertLegacyAgentEntry(
 
   convertTemperature(entry, context, warnings, lines);
 
-  if (
-    hasOwn(entry, "prompt_append") &&
-    typeof entry.prompt_append === "string"
-  ) {
+  if (hasOwn(entry, "prompt_append") && isLegacyString(entry.prompt_append)) {
     lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
   } else if (hasOwn(entry, "prompt_append")) {
     pushWarning(
@@ -717,13 +737,13 @@ function convertLegacyAgentEntry(
  */
 function convertLegacyCustomAgent(
   name: string,
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   warnings: ConversionWarning[],
 ): string[] {
   const context: PathParts = ["custom_agents", name];
   const lines: string[] = [`agent ${name} {`];
 
-  if (hasOwn(entry, "prompt") && typeof entry.prompt === "string") {
+  if (hasOwn(entry, "prompt") && isLegacyString(entry.prompt)) {
     lines.push(`  prompt "${escapeForDsl(entry.prompt)}"`);
   } else if (hasOwn(entry, "prompt")) {
     pushWarning(
@@ -755,7 +775,7 @@ function convertLegacyCustomAgent(
 
   if (hasOwn(entry, "mode")) {
     const mode = entry.mode;
-    if (typeof mode === "string" && VALID_MODES.has(mode)) {
+    if (isLegacyString(mode) && VALID_MODES.has(mode)) {
       lines.push(`  mode ${mode}`);
     } else {
       pushWarning(
@@ -766,10 +786,7 @@ function convertLegacyCustomAgent(
     }
   }
 
-  if (
-    hasOwn(entry, "prompt_append") &&
-    typeof entry.prompt_append === "string"
-  ) {
+  if (hasOwn(entry, "prompt_append") && isLegacyString(entry.prompt_append)) {
     lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
   } else if (hasOwn(entry, "prompt_append")) {
     pushWarning(
@@ -816,7 +833,7 @@ function convertLegacyCustomAgent(
  */
 function convertLegacyCategory(
   name: string,
-  entry: Record<string, unknown>,
+  entry: LegacyGraphObject,
   warnings: ConversionWarning[],
 ): string[] {
   const context: PathParts = ["categories", name];
@@ -846,10 +863,7 @@ function convertLegacyCategory(
 
   convertTemperature(entry, context, warnings, lines);
 
-  if (
-    hasOwn(entry, "prompt_append") &&
-    typeof entry.prompt_append === "string"
-  ) {
+  if (hasOwn(entry, "prompt_append") && isLegacyString(entry.prompt_append)) {
     lines.push(`  prompt_append "${escapeForDsl(entry.prompt_append)}"`);
   } else if (hasOwn(entry, "prompt_append")) {
     pushWarning(
@@ -886,7 +900,7 @@ function convertLegacyCategory(
 }
 
 function convertDisableList(
-  value: unknown,
+  value: LegacyInputValue,
   key: string,
   keyword: "agents" | "hooks" | "skills",
   expectedReason: string,
@@ -900,7 +914,7 @@ function convertDisableList(
   const items: string[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const item = value[index];
-    if (typeof item !== "string") {
+    if (!isLegacyString(item)) {
       pushWarning(
         warnings,
         joinPath([key, index]),
@@ -918,7 +932,7 @@ function convertDisableList(
   );
 }
 
-function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
+function convertCopiedRoot(parsed: LegacyGraphObject): ConversionResult {
   const warnings: ConversionWarning[] = [];
   const dslLines: string[] = [];
 
@@ -969,7 +983,7 @@ function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
     }
 
     if (key === "log_level") {
-      if (typeof value !== "string") {
+      if (!isLegacyString(value)) {
         pushWarning(
           warnings,
           key,
@@ -1116,7 +1130,7 @@ function convertCopiedRoot(parsed: Record<string, unknown>): ConversionResult {
  * descriptor-safe copy rejects getters, inherited fields, and callables
  * without executing them.
  */
-export function convertLegacyValue(value: unknown): ConversionResult {
+export function convertLegacyValue(value: LegacyInputValue): ConversionResult {
   const copied = copyLegacyGraph(value);
   if (copied.isErr()) {
     return { dsl: "", warnings: [graphCopyWarning(copied.error)] };
@@ -1124,12 +1138,12 @@ export function convertLegacyValue(value: unknown): ConversionResult {
   const copiedValue = copied.value;
   if (
     copiedValue === null ||
-    typeof copiedValue !== "object" ||
+    !isLegacyGraphRecord(copiedValue) ||
     Array.isArray(copiedValue)
   ) {
     return parseFailedResult();
   }
-  return convertCopiedRoot(copiedValue as Record<string, unknown>);
+  return convertCopiedRoot(copiedValue);
 }
 
 /**
@@ -1149,12 +1163,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
     return { dsl: "", warnings: inspected.error.warnings };
   }
   const parseResult = parseLegacyJsonc(source);
-  if (
-    parseResult === undefined ||
-    parseResult === null ||
-    typeof parseResult !== "object" ||
-    Array.isArray(parseResult)
-  ) {
+  if (!isLegacyGraphRecord(parseResult)) {
     return parseFailedResult();
   }
   return convertLegacyValue(parseResult);

@@ -30,15 +30,14 @@ describe("BunFileSystem", () => {
   });
 
   it("uses typed missing-file causes", async () => {
-    const missingFile = {
-      text: () =>
-        Promise.reject(
-          Object.assign(new Error("ENOENT: no such file or directory"), {
-            code: "ENOENT",
-          }),
-        ),
-    } as ReturnType<typeof Bun.file>;
-    Bun.file = (() => missingFile) as typeof Bun.file;
+    const missingFile = Bun.file("/project/missing.weave");
+    missingFile.text = () =>
+      Promise.reject(
+        Object.assign(new Error("ENOENT: no such file or directory"), {
+          code: "ENOENT",
+        }),
+      );
+    Bun.file = () => missingFile;
 
     const fileSystem = new BunFileSystem();
     const result = await fileSystem.readText("/project/missing.weave");

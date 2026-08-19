@@ -192,10 +192,9 @@ function formatJournalEntry(
   const safeDataKeys = Object.keys(entry.data).filter((k) => !isDeniedKey(k));
   const dataStr =
     safeDataKeys.length > 0
-      ? " " +
-        safeDataKeys
+      ? ` ${safeDataKeys
           .map((k) => `${k}=${JSON.stringify(entry.data[k])}`)
-          .join(" ")
+          .join(" ")}`
       : "";
 
   return `${entry.timestamp} ${severityLabel} [${sourceLabel}] ${entry.eventType}${dataStr}`;

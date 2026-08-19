@@ -4,7 +4,7 @@ import {
   dirname as posixDirname,
   resolve as posixResolve,
 } from "node:path/posix";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 
 type FileSystemErrorCause =
   | { kind: "MissingFile" }
@@ -37,11 +37,15 @@ export function describeFileSystemError(error: FileSystemError): string {
   }
 }
 
+function isStringValue<T>(value: T): value is T & string {
+  return Object.prototype.toString.call(value) === "[object String]";
+}
+
 function normalizeRuntimeFailure(cause: unknown): FileSystemErrorCause {
   if (cause instanceof Error) {
     return { kind: "RuntimeFailure", message: cause.message };
   }
-  if (typeof cause === "string") {
+  if (isStringValue(cause)) {
     return { kind: "RuntimeFailure", message: cause };
   }
   return { kind: "RuntimeFailure", message: String(cause) };
@@ -49,11 +53,22 @@ function normalizeRuntimeFailure(cause: unknown): FileSystemErrorCause {
 
 function isMissingFileCause(cause: unknown): boolean {
   if (cause instanceof Error && cause.message.includes("ENOENT")) return true;
-  if (typeof cause !== "object" || cause === null) return false;
+  const candidate = new Object(cause);
+  if (cause === null || candidate !== cause) return false;
 
-  const error = cause as { code?: unknown; errno?: unknown };
-  if (error.code === "ENOENT") return true;
-  return error.errno === -2;
+  const descriptors = Result.fromThrowable(
+    () => ({
+      code: Object.getOwnPropertyDescriptor(candidate, "code"),
+      errno: Object.getOwnPropertyDescriptor(candidate, "errno"),
+    }),
+    () => void 0,
+  )();
+  if (descriptors.isErr()) return false;
+  const { code, errno } = descriptors.value;
+  if (code !== undefined && "value" in code && code.value === "ENOENT") {
+    return true;
+  }
+  return errno !== undefined && "value" in errno && errno.value === -2;
 }
 
 function toError(
@@ -85,8 +100,19 @@ function toReadError(path: string): (cause: unknown) => FileSystemError {
 
 export class BunFileSystem implements FileSystem {
   cwd(): string {
-    const runtime = Bun as typeof Bun & { cwd?: string };
-    return runtime.cwd ?? ".";
+    const cwd = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(Bun, "cwd"),
+      () => void 0,
+    )();
+    if (
+      cwd.isOk() &&
+      cwd.value !== undefined &&
+      "value" in cwd.value &&
+      isStringValue(cwd.value.value)
+    ) {
+      return cwd.value.value;
+    }
+    return ".";
   }
 
   home(): string {
@@ -119,7 +145,7 @@ export class BunFileSystem implements FileSystem {
     const resolved = this.resolvePath(path);
     return this.mkdir(dirname(resolved)).andThen(() =>
       ResultAsync.fromPromise(
-        Bun.write(resolved, content).then(() => undefined),
+        Bun.write(resolved, content).then(() => void 0),
         toError("write", resolved),
       ),
     );
@@ -128,7 +154,7 @@ export class BunFileSystem implements FileSystem {
   mkdir(path: string): ResultAsync<void, FileSystemError> {
     const resolved = this.resolvePath(path);
     return ResultAsync.fromPromise(
-      Bun.$`mkdir -p ${resolved}`.quiet().then(() => undefined),
+      Bun.$`mkdir -p ${resolved}`.quiet().then(() => void 0),
       toError("mkdir", resolved),
     );
   }
@@ -199,12 +225,12 @@ export class MemoryFileSystem implements FileSystem {
     const resolved = this.resolvePath(path);
     this.ensureDirsExist(posixDirname(resolved));
     this.files.set(resolved, content);
-    return okAsync(undefined);
+    return okAsync();
   }
 
   mkdir(path: string): ResultAsync<void, FileSystemError> {
     this.ensureDirsExist(this.resolvePath(path));
-    return okAsync(undefined);
+    return okAsync();
   }
 
   copyFile(from: string, to: string): ResultAsync<void, FileSystemError> {

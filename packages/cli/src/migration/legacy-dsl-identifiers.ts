@@ -15,7 +15,7 @@ export const DANGEROUS_DSL_NAMES = new Set([
 /** Maximum identifier length accepted for converted agent/category names. */
 export const MAX_DSL_IDENTIFIER_LENGTH = 128;
 
-const DSL_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
+const DSL_IDENTIFIER_SYNTAX = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 export type DslNameClassification = "ok" | "dangerous" | "invalid";
 
@@ -25,11 +25,11 @@ export function isDangerousDslName(name: string): boolean {
 }
 
 /** True when `name` matches the current lexer identifier grammar and length bound. */
-export function isDslIdentifierShape(name: string): boolean {
+export function isDslIdentifierSyntax(name: string): boolean {
   return (
     name.length > 0 &&
     name.length <= MAX_DSL_IDENTIFIER_LENGTH &&
-    DSL_IDENTIFIER_RE.test(name)
+    DSL_IDENTIFIER_SYNTAX.test(name)
   );
 }
 
@@ -41,7 +41,7 @@ export function isDslIdentifierShape(name: string): boolean {
  */
 export function classifyDslName(name: string): DslNameClassification {
   if (isDangerousDslName(name)) return "dangerous";
-  if (!isDslIdentifierShape(name)) return "invalid";
+  if (!isDslIdentifierSyntax(name)) return "invalid";
   return "ok";
 }
 

@@ -20,6 +20,19 @@ import { type RuntimeCommandContext, runRuntime } from "../runtime.js";
 const themeManager = new ThemeManager({ isTty: () => false });
 const theme = themeManager.getTheme(false);
 
+type RuntimePreferenceValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly RuntimePreferenceValue[]
+  | { readonly [key: string]: RuntimePreferenceValue };
+
+interface RuntimeTestContext {
+  readonly terminal: BufferTerminal;
+  readonly ctx: RuntimeCommandContext;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -27,7 +40,7 @@ const theme = themeManager.getTheme(false);
 function makeContext(
   subcommand: "status" | "journal" | "preferences",
   overrides: Partial<RuntimeCommandContext> = {},
-): { terminal: BufferTerminal; ctx: RuntimeCommandContext } {
+): RuntimeTestContext {
   const terminal = new BufferTerminal();
   const store = createInMemoryRuntimeStore();
   const ctx: RuntimeCommandContext = {
@@ -46,7 +59,7 @@ function makeContextWithStore(
   subcommand: "status" | "journal" | "preferences",
   store: ReturnType<typeof createInMemoryRuntimeStore>,
   overrides: Partial<RuntimeCommandContext> = {},
-): { terminal: BufferTerminal; ctx: RuntimeCommandContext } {
+): RuntimeTestContext {
   const terminal = new BufferTerminal();
   const ctx: RuntimeCommandContext = {
     terminal,
@@ -380,7 +393,7 @@ async function seedPreference(
   store: ReturnType<typeof createInMemoryRuntimeStore>,
   namespace: string,
   key: string,
-  value: unknown,
+  value: RuntimePreferenceValue,
 ): Promise<void> {
   const result = await store.preferences.set(
     namespace,

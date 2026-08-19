@@ -101,9 +101,7 @@ describe("validate command", () => {
     });
     const result = await runValidate(ctx);
     expect(result._unsafeUnwrap()).toBe(0);
-    const parsed = JSON.parse(terminal.out.join("\n")) as {
-      agents: Record<string, unknown>;
-    };
+    const parsed = JSON.parse(terminal.out.join("\n"));
     expect(Object.keys(parsed.agents)).toContain("helper");
   });
 });

@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import {
   classifyDslName,
   isDangerousDslName,
-  isDslIdentifierShape,
+  isDslIdentifierSyntax,
   isEmittableDslName,
   MAX_DSL_IDENTIFIER_LENGTH,
 } from "../legacy-dsl-identifiers.js";
@@ -32,7 +32,7 @@ describe("legacy DSL identifier contract", () => {
       "",
       "a".repeat(MAX_DSL_IDENTIFIER_LENGTH + 1),
     ]) {
-      expect(isDslIdentifierShape(name)).toBe(false);
+      expect(isDslIdentifierSyntax(name)).toBe(false);
       expect(classifyDslName(name)).toBe("invalid");
       expect(isEmittableDslName(name)).toBe(false);
     }
@@ -41,7 +41,7 @@ describe("legacy DSL identifier contract", () => {
   it("rejects dangerous names even when they match identifier shape", () => {
     for (const name of ["__proto__", "constructor", "prototype"]) {
       expect(isDangerousDslName(name)).toBe(true);
-      expect(isDslIdentifierShape(name)).toBe(true);
+      expect(isDslIdentifierSyntax(name)).toBe(true);
       expect(classifyDslName(name)).toBe("dangerous");
       expect(isEmittableDslName(name)).toBe(false);
     }

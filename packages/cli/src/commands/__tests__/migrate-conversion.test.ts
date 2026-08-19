@@ -36,6 +36,9 @@ import {
 } from "../../migration/legacy-conversion-diagnostics.js";
 import {
   LEGACY_GRAPH_TOO_LARGE_MESSAGE,
+  type LegacyInputCallable,
+  type LegacyInputRecord,
+  type LegacyInputValue,
   MAX_LEGACY_ARRAY_LENGTH,
   MAX_LEGACY_SOURCE_LENGTH,
   MAX_LEGACY_STRING_LENGTH,
@@ -236,8 +239,8 @@ describe("convertLegacyJsonc — unsupported section warnings", () => {
       JSON.stringify({ workflows: { "my-flow": {} } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("workflows");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("workflows");
+    expect(result.warnings[0]?.reason).toContain(
       "not supported in migration v1",
     );
   });
@@ -247,8 +250,8 @@ describe("convertLegacyJsonc — unsupported section warnings", () => {
       JSON.stringify({ continuation: { recovery: { compaction: true } } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("continuation");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("continuation");
+    expect(result.warnings[0]?.reason).toContain(
       "not supported in migration v1",
     );
   });
@@ -258,8 +261,8 @@ describe("convertLegacyJsonc — unsupported section warnings", () => {
       JSON.stringify({ analytics: { enabled: true } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("analytics");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("analytics");
+    expect(result.warnings[0]?.reason).toContain(
       "not supported in migration v1",
     );
   });
@@ -269,8 +272,8 @@ describe("convertLegacyJsonc — unsupported section warnings", () => {
       JSON.stringify({ background: { enabled: true } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("background");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("background");
+    expect(result.warnings[0]?.reason).toContain(
       "not supported in migration v1",
     );
   });
@@ -296,8 +299,8 @@ describe("convertLegacyJsonc — unsupported section warnings", () => {
       JSON.stringify({ some_unknown_field: "value" }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("some_unknown_field");
-    expect(result.warnings[0]!.reason).toContain("unknown legacy field");
+    expect(result.warnings[0]?.field).toBe("some_unknown_field");
+    expect(result.warnings[0]?.reason).toContain("unknown legacy field");
   });
 });
 
@@ -328,8 +331,8 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
     const result = convertLegacyJsonc("{ invalid json !!!");
     expect(result.dsl).toBe("");
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("<source>");
-    expect(result.warnings[0]!.reason).toContain("failed to parse");
+    expect(result.warnings[0]?.field).toBe("<source>");
+    expect(result.warnings[0]?.reason).toContain("failed to parse");
   });
 
   it("warns on invalid log_level value but still converts other fields", () => {
@@ -342,8 +345,8 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
     expect(result.dsl).toContain('disable agents ["warp"]');
     // log_level produces a warning
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("log_level");
-    expect(result.warnings[0]!.reason).toContain("not a valid log level");
+    expect(result.warnings[0]?.field).toBe("log_level");
+    expect(result.warnings[0]?.reason).toContain("not a valid log level");
   });
 
   it("warns when disabled_agents is not an array", () => {
@@ -351,8 +354,8 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
       JSON.stringify({ disabled_agents: "warp" }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("disabled_agents");
-    expect(result.warnings[0]!.reason).toContain("expected an array");
+    expect(result.warnings[0]?.field).toBe("disabled_agents");
+    expect(result.warnings[0]?.reason).toContain("expected an array");
   });
 
   it("warns when disabled_hooks is not an array", () => {
@@ -360,7 +363,7 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
       JSON.stringify({ disabled_hooks: "hook-name" }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("disabled_hooks");
+    expect(result.warnings[0]?.field).toBe("disabled_hooks");
   });
 
   it("warns when disabled_skills is not an array", () => {
@@ -368,14 +371,14 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
       JSON.stringify({ disabled_skills: "tdd" }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("disabled_skills");
+    expect(result.warnings[0]?.field).toBe("disabled_skills");
   });
 
   it("warns when log_level is not a string", () => {
     const result = convertLegacyJsonc(JSON.stringify({ log_level: 42 }));
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("log_level");
-    expect(result.warnings[0]!.reason).toContain("expected a string");
+    expect(result.warnings[0]?.field).toBe("log_level");
+    expect(result.warnings[0]?.reason).toContain("expected a string");
   });
 });
 
@@ -791,8 +794,8 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.display_name");
-    expect(result.warnings[0]!.reason).toContain("not supported");
+    expect(result.warnings[0]?.field).toBe("agents.loom.display_name");
+    expect(result.warnings[0]?.reason).toContain("not supported");
     // temperature still converted
     expect(result.dsl).toContain("temperature 0.1");
   });
@@ -800,8 +803,8 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
   it("warns when agents value is not an object", () => {
     const result = convertLegacyJsonc(JSON.stringify({ agents: "invalid" }));
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents");
-    expect(result.warnings[0]!.reason).toContain("expected an object");
+    expect(result.warnings[0]?.field).toBe("agents");
+    expect(result.warnings[0]?.reason).toContain("expected an object");
   });
 
   it("converts multiple builtin agent overrides", () => {
@@ -825,8 +828,8 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
       JSON.stringify({ agents: { "my-helper": { temperature: 0.2 } } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.my-helper");
-    expect(result.warnings[0]!.reason).toContain("not a builtin agent name");
+    expect(result.warnings[0]?.field).toBe("agents.my-helper");
+    expect(result.warnings[0]?.reason).toContain("not a builtin agent name");
     // No agent block generated for non-builtin name
     expect(result.dsl).not.toContain("agent my-helper");
   });
@@ -859,8 +862,8 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
     );
     // One warning for the non-builtin name
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.my-helper");
-    expect(result.warnings[0]!.reason).toContain("not a builtin agent name");
+    expect(result.warnings[0]?.field).toBe("agents.my-helper");
+    expect(result.warnings[0]?.reason).toContain("not a builtin agent name");
     // Builtin is converted
     expect(result.dsl).toContain("agent loom {");
     // Non-builtin is not
@@ -871,7 +874,7 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({ agents: { "my-helper": { temperature: 0.2 } } }),
     );
-    expect(result.warnings[0]!.reason).toContain("custom_agents");
+    expect(result.warnings[0]?.reason).toContain("custom_agents");
   });
 });
 
@@ -927,8 +930,8 @@ describe("convertLegacyJsonc — custom_agents (new agent blocks)", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.my-agent.mode");
-    expect(result.warnings[0]!.reason).toContain("not a valid mode");
+    expect(result.warnings[0]?.field).toBe("custom_agents.my-agent.mode");
+    expect(result.warnings[0]?.reason).toContain("not a valid mode");
   });
 
   it("converts custom agent with prompt_file (safe path)", () => {
@@ -952,8 +955,8 @@ describe("convertLegacyJsonc — custom_agents (new agent blocks)", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.my-agent.skills");
-    expect(result.warnings[0]!.reason).toContain("not supported");
+    expect(result.warnings[0]?.field).toBe("custom_agents.my-agent.skills");
+    expect(result.warnings[0]?.reason).toContain("not supported");
   });
 });
 
@@ -966,8 +969,8 @@ describe("convertLegacyJsonc — custom_agents builtin collision warnings", () =
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.loom");
-    expect(result.warnings[0]!.reason).toContain("collides with a builtin");
+    expect(result.warnings[0]?.field).toBe("custom_agents.loom");
+    expect(result.warnings[0]?.reason).toContain("collides with a builtin");
     // No agent block generated
     expect(result.dsl).not.toContain("agent loom {");
   });
@@ -979,8 +982,8 @@ describe("convertLegacyJsonc — custom_agents builtin collision warnings", () =
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.tapestry");
-    expect(result.warnings[0]!.reason).toContain("collides with a builtin");
+    expect(result.warnings[0]?.field).toBe("custom_agents.tapestry");
+    expect(result.warnings[0]?.reason).toContain("collides with a builtin");
   });
 
   it("warns on all 8 builtin name collisions", () => {
@@ -994,9 +997,9 @@ describe("convertLegacyJsonc — custom_agents builtin collision warnings", () =
       "weft",
       "warp",
     ];
-    const customAgents: Record<string, unknown> = {};
+    const customAgents: LegacyInputRecord = {};
     for (const name of builtins) {
-      customAgents[name] = { prompt: `Override ${name}.` };
+      defineOwn(customAgents, name, { prompt: `Override ${name}.` });
     }
     const result = convertLegacyJsonc(
       JSON.stringify({ custom_agents: customAgents }),
@@ -1007,7 +1010,7 @@ describe("convertLegacyJsonc — custom_agents builtin collision warnings", () =
         (w) => w.field === `custom_agents.${name}`,
       );
       expect(w).toBeDefined();
-      expect(w!.reason).toContain("collides with a builtin");
+      expect(w?.reason).toContain("collides with a builtin");
     }
     // No agent blocks generated
     for (const name of builtins) {
@@ -1026,7 +1029,7 @@ describe("convertLegacyJsonc — custom_agents builtin collision warnings", () =
     );
     // One warning for the collision
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("custom_agents.loom");
+    expect(result.warnings[0]?.field).toBe("custom_agents.loom");
     // Non-colliding agent is converted
     expect(result.dsl).toContain("agent my-helper {");
     // Colliding agent is not
@@ -1082,8 +1085,8 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
     expect(modelsLine).toBeDefined();
     expect(modelsLine).toContain('"primary-model"');
     // primary-model must appear before fallback-1
-    const primaryIdx = modelsLine!.indexOf('"primary-model"');
-    const fallbackIdx = modelsLine!.indexOf('"fallback-1"');
+    const primaryIdx = modelsLine?.indexOf('"primary-model"') ?? -1;
+    const fallbackIdx = modelsLine?.indexOf('"fallback-1"') ?? -1;
     expect(primaryIdx).toBeLessThan(fallbackIdx);
   });
 
@@ -1092,8 +1095,8 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
       JSON.stringify({ agents: { loom: { model: 42 } } }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.model");
-    expect(result.warnings[0]!.reason).toContain("expected a string");
+    expect(result.warnings[0]?.field).toBe("agents.loom.model");
+    expect(result.warnings[0]?.reason).toContain("expected a string");
   });
 
   it("warns when fallback_models is not an array", () => {
@@ -1105,8 +1108,8 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.fallback_models");
-    expect(result.warnings[0]!.reason).toContain("expected an array");
+    expect(result.warnings[0]?.field).toBe("agents.loom.fallback_models");
+    expect(result.warnings[0]?.reason).toContain("expected an array");
     // Primary model still converted
     expect(result.dsl).toContain('models ["claude-sonnet-4-5"]');
   });
@@ -1321,8 +1324,8 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       JSON.stringify({ categories: "invalid" }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("categories");
-    expect(result.warnings[0]!.reason).toContain("expected an object");
+    expect(result.warnings[0]?.field).toBe("categories");
+    expect(result.warnings[0]?.reason).toContain("expected an object");
   });
 
   it("converted category DSL passes parseConfig validation", () => {
@@ -1413,10 +1416,10 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe(
+    expect(result.warnings[0]?.field).toBe(
       "agents.loom.tools.call_weave_agent",
     );
-    expect(result.warnings[0]!.reason).toContain("harness-specific");
+    expect(result.warnings[0]?.reason).toContain("harness-specific");
   });
 
   it("warns on ambiguous legacy tool todowrite", () => {
@@ -1426,8 +1429,8 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.tools.todowrite");
-    expect(result.warnings[0]!.reason).toContain("harness-specific");
+    expect(result.warnings[0]?.field).toBe("agents.loom.tools.todowrite");
+    expect(result.warnings[0]?.reason).toContain("harness-specific");
   });
 
   it("warns on unknown legacy tool name", () => {
@@ -1437,10 +1440,10 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe(
+    expect(result.warnings[0]?.field).toBe(
       "agents.loom.tools.some_unknown_tool",
     );
-    expect(result.warnings[0]!.reason).toContain("unknown legacy tool name");
+    expect(result.warnings[0]?.reason).toContain("unknown legacy tool name");
   });
 
   it("converts known tools while warning on ambiguous ones", () => {
@@ -1530,8 +1533,8 @@ describe("convertLegacyJsonc — unsafe prompt_file references warned and skippe
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
+    expect(result.warnings[0]?.field).toBe("agents.loom.prompt_file");
+    expect(result.warnings[0]?.reason).toContain("directory components");
     expect(result.dsl).not.toContain("prompt_file");
   });
 
@@ -1542,8 +1545,8 @@ describe("convertLegacyJsonc — unsafe prompt_file references warned and skippe
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
+    expect(result.warnings[0]?.field).toBe("agents.loom.prompt_file");
+    expect(result.warnings[0]?.reason).toContain("directory components");
     expect(result.dsl).not.toContain("prompt_file");
   });
 
@@ -1554,8 +1557,8 @@ describe("convertLegacyJsonc — unsafe prompt_file references warned and skippe
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
+    expect(result.warnings[0]?.field).toBe("agents.loom.prompt_file");
+    expect(result.warnings[0]?.reason).toContain("directory components");
     expect(result.dsl).not.toContain("prompt_file");
   });
 
@@ -1568,10 +1571,10 @@ describe("convertLegacyJsonc — unsafe prompt_file references warned and skippe
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe(
+    expect(result.warnings[0]?.field).toBe(
       "custom_agents.my-agent.prompt_file",
     );
-    expect(result.warnings[0]!.reason).toContain("directory components");
+    expect(result.warnings[0]?.reason).toContain("directory components");
     expect(result.dsl).not.toContain("prompt_file");
   });
 
@@ -1852,8 +1855,8 @@ describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.tools.write");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("agents.loom.tools.write");
+    expect(result.warnings[0]?.reason).toContain(
       "tool permission must be a boolean",
     );
     expect(result.dsl).not.toContain("tool_policy");
@@ -1866,8 +1869,8 @@ describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.tools.bash");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("agents.loom.tools.bash");
+    expect(result.warnings[0]?.reason).toContain(
       "tool permission must be a boolean",
     );
     expect(result.dsl).not.toContain("execute");
@@ -1880,8 +1883,8 @@ describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.tools.read");
-    expect(result.warnings[0]!.reason).toContain(
+    expect(result.warnings[0]?.field).toBe("agents.loom.tools.read");
+    expect(result.warnings[0]?.reason).toContain(
       "tool permission must be a boolean",
     );
   });
@@ -1902,7 +1905,7 @@ describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
     );
     // One warning for the non-boolean
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.tools.bash");
+    expect(result.warnings[0]?.field).toBe("agents.loom.tools.bash");
     // Valid boolean tools are still converted
     expect(result.dsl).toContain("write allow");
     expect(result.dsl).toContain("read deny");
@@ -2172,8 +2175,8 @@ describe("convertLegacyJsonc — real-world JSONC trailing commas and comments (
     const result = convertLegacyJsonc("{ invalid json !!!");
     expect(result.dsl).toBe("");
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("<source>");
-    expect(result.warnings[0]!.reason).toContain("failed to parse");
+    expect(result.warnings[0]?.field).toBe("<source>");
+    expect(result.warnings[0]?.reason).toContain("failed to parse");
   });
 });
 
@@ -2274,7 +2277,7 @@ describe("convertLegacyJsonc — string trigger conversion", () => {
 describe("convertLegacyValue — descriptor-safe conversion", () => {
   it("does not execute getters on crafted objects", () => {
     let getterExecutions = 0;
-    const input: Record<string, unknown> = {};
+    const input: LegacyInputRecord = {};
     Object.defineProperty(input, "log_level", {
       enumerable: true,
       configurable: true,
@@ -2311,7 +2314,7 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
 
   it("rejects callable values without executing getters", () => {
     let getterExecutions = 0;
-    const callable = () => undefined;
+    const callable: LegacyInputCallable = () => void 0;
     Object.defineProperty(callable, "log_level", {
       enumerable: true,
       configurable: true,
@@ -2328,8 +2331,10 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
   });
 
   it("rejects cycles without throwing", () => {
-    const input: Record<string, unknown> = { agents: {} };
-    (input.agents as Record<string, unknown>).loom = input;
+    const input: LegacyInputRecord = {};
+    const agents: LegacyInputRecord = {};
+    defineOwn(input, "agents", agents);
+    defineOwn(agents, "loom", input);
 
     const result = convertLegacyValue(input);
     expect(result.dsl).toBe("");
@@ -2349,7 +2354,7 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
 
   it("rejects sparse arrays without executing getters", () => {
     let getterExecutions = 0;
-    const sparse: unknown[] = [];
+    const sparse: LegacyInputValue[] = [];
     sparse[1] = "loom";
     Object.defineProperty(sparse, "0", {
       enumerable: true,
@@ -2368,7 +2373,7 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
 
   it("rejects nested trigger getters without executing them", () => {
     let getterExecutions = 0;
-    const trigger: Record<string, unknown> = {};
+    const trigger: LegacyInputRecord = {};
     Object.defineProperty(trigger, "routing_hint", {
       enumerable: true,
       configurable: true,
@@ -2418,9 +2423,9 @@ describe("convertLegacyValue — descriptor-safe conversion", () => {
 });
 
 function defineOwn(
-  target: Record<string, unknown>,
+  target: LegacyInputRecord,
   key: string,
-  value: unknown,
+  value: LegacyInputValue,
 ): void {
   Object.defineProperty(target, key, {
     value,
@@ -2430,13 +2435,17 @@ function defineOwn(
   });
 }
 
+function createInputRecord(): LegacyInputRecord {
+  return Object.create(null);
+}
+
 function warningBlob(result: ConversionResult): string {
   return `${result.dsl}\n${JSON.stringify(result.warnings)}`;
 }
 
 describe("convertLegacyJsonc — prototype-safe membership checks", () => {
   it("warns on top-level toString, constructor, and __proto__ without throwing", () => {
-    const root = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
     defineOwn(root, "toString", "secret-toString");
     defineOwn(root, "constructor", "secret-constructor");
     defineOwn(root, "__proto__", "secret-proto");
@@ -2444,9 +2453,9 @@ describe("convertLegacyJsonc — prototype-safe membership checks", () => {
     const result = convertLegacyValue(root);
     expect(result.dsl).toBe("");
     expect(result.warnings.length).toBeGreaterThan(0);
-    expect(
-      result.warnings.every((warning) => typeof warning.reason === "string"),
-    ).toBe(true);
+    expect(result.warnings.every((warning) => warning.reason.length > 0)).toBe(
+      true,
+    );
     const blob = warningBlob(result);
     expect(blob).not.toContain("[native code]");
     expect(blob).not.toContain("function ");
@@ -2456,9 +2465,9 @@ describe("convertLegacyJsonc — prototype-safe membership checks", () => {
   });
 
   it("warns on nested map toString, constructor, and __proto__ without throwing", () => {
-    const root = Object.create(null) as Record<string, unknown>;
-    const agents = Object.create(null) as Record<string, unknown>;
-    const inner = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
+    const agents = createInputRecord();
+    const inner = createInputRecord();
     defineOwn(inner, "temperature", 0.1);
     defineOwn(agents, "toString", inner);
     defineOwn(agents, "constructor", inner);
@@ -2475,10 +2484,10 @@ describe("convertLegacyJsonc — prototype-safe membership checks", () => {
   });
 
   it("does not emit prototype methods as tool_policy capabilities", () => {
-    const root = Object.create(null) as Record<string, unknown>;
-    const agents = Object.create(null) as Record<string, unknown>;
-    const loom = Object.create(null) as Record<string, unknown>;
-    const tools = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
+    const agents = createInputRecord();
+    const loom = createInputRecord();
+    const tools = createInputRecord();
     defineOwn(tools, "toString", true);
     defineOwn(tools, "constructor", false);
     defineOwn(tools, "__proto__", true);
@@ -2574,9 +2583,9 @@ describe("convertLegacyJsonc — identifier validation before emission", () => {
 
 describe("convertLegacyJsonc — emitted scalar validation", () => {
   it("omits NaN temperature from the direct value seam", () => {
-    const root = Object.create(null) as Record<string, unknown>;
-    const agents = Object.create(null) as Record<string, unknown>;
-    const loom = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
+    const agents = createInputRecord();
+    const loom = createInputRecord();
     defineOwn(loom, "temperature", Number.NaN);
     defineOwn(agents, "loom", loom);
     defineOwn(root, "agents", agents);
@@ -2596,9 +2605,9 @@ describe("convertLegacyJsonc — emitted scalar validation", () => {
   });
 
   it("omits Infinity temperature from the direct value seam", () => {
-    const root = Object.create(null) as Record<string, unknown>;
-    const agents = Object.create(null) as Record<string, unknown>;
-    const loom = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
+    const agents = createInputRecord();
+    const loom = createInputRecord();
     defineOwn(loom, "temperature", Number.POSITIVE_INFINITY);
     defineOwn(agents, "loom", loom);
     defineOwn(root, "agents", agents);
@@ -2746,7 +2755,7 @@ describe("convertLegacyJsonc — sanitized warnings and bounds", () => {
 
   it("bounds huge keys without echoing them", () => {
     const hugeKey = "k".repeat(MAX_LEGACY_STRING_LENGTH + 8);
-    const root = Object.create(null) as Record<string, unknown>;
+    const root = createInputRecord();
     defineOwn(root, hugeKey, "value");
     const result = convertLegacyValue(root);
     expect(result.dsl).toBe("");

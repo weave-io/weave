@@ -45,6 +45,12 @@ export type InstallError =
  * See: docs/reference/adapter-capabilities.md
  * See: docs/architecture/product-vision.md#adapter-capability-contract
  */
+export interface HarnessInstallerRegistry {
+  readonly opencode: HarnessInstaller;
+  readonly "claude-code": HarnessInstaller;
+  readonly pi: HarnessInstaller;
+}
+
 export interface HarnessInstaller {
   readonly id: SupportedHarnessId;
   /**
@@ -57,9 +63,7 @@ export interface HarnessInstaller {
   install(request: InstallRequest): ResultAsync<InstallResult, InstallError>;
 }
 
-export function installerRegistry(
-  fs: FileSystem,
-): Record<SupportedHarnessId, HarnessInstaller> {
+export function installerRegistry(fs: FileSystem): HarnessInstallerRegistry {
   return {
     opencode: new OpenCodeInstaller(fs),
     "claude-code": unsupportedInstaller("claude-code"),

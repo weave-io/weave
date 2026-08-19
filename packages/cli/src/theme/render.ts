@@ -77,7 +77,7 @@ export class ThemeRenderer {
 
   private getVersion(): string {
     const version = this.versionSource.version;
-    if (typeof version === "string" && version.length > 0) return version;
+    if (version !== undefined && version.length > 0) return version;
     return "0.0.0";
   }
 

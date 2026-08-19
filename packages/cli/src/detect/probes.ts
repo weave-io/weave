@@ -61,8 +61,8 @@ export class BunDetectionProbes implements DetectionProbes {
       Bun.$`command -v ${binary}`
         .quiet()
         .text()
-        .then((value) => value.trim() || undefined)
-        .catch(() => undefined),
+        .then((value) => value.trim() || void 0)
+        .catch(() => void 0),
       probeError("which", binary),
     );
   }
@@ -72,8 +72,8 @@ export class BunDetectionProbes implements DetectionProbes {
       Bun.$`${binary} --version`
         .quiet()
         .text()
-        .then((value) => value.trim().split("\n")[0] || undefined)
-        .catch(() => undefined),
+        .then((value) => value.trim().split("\n")[0] || void 0)
+        .catch(() => void 0),
       probeError("version", binary),
     );
   }
