@@ -1,4 +1,5 @@
 # @weaveio/weave-adapter-claude-code
+<<<<<<< HEAD
 
 ## 0.1.0
 
@@ -12,3 +13,5 @@
   - Model alias mapping (claude-sonnet-4-5 → sonnet, claude-opus-4 → opus, etc.)
   - Tool policy mapping to Claude Code's tools frontmatter arrays
   - Bootstrap plugin with SessionStart hook and /weave:compose skill
+=======
+>>>>>>> 0598b0fe (chore(release): add package license metadata)

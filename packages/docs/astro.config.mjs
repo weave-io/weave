@@ -153,6 +153,7 @@ export default defineConfig({
             'docs/reference/cli',
             'docs/reference/dsl',
             'docs/reference/packages',
+            'docs/reference/releases',
           ],
         },
       ],
