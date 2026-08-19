@@ -90,6 +90,33 @@ prereleases are skipped; conflicts stop the run. Do not edit source files,
 consume changesets, or create a manual stable changelog entry to repair a
 `next` run.
 
+## `nightly` channel (manual path only)
+
+Task 27 adds a maintainer-guarded `channel: nightly` option to the trusted
+workflow. It has no schedule trigger. The old `publish.yml` schedule remains
+the only scheduled publisher. Planned schedule activation belongs to Task 35;
+do not treat this manual path as active scheduled nightly publication.
+
+Nightly reads the latest successful nightly source SHA from the registry and
+computes the affected package set since that SHA. It closes the set over shared
+changesets and bundled-artifact dependencies. It does not consume or delete
+changesets. If the set is empty, the run records `NothingToPublish` and exits
+green without build, attestation, proof, OIDC, registry, or Git ref work.
+
+For a non-empty set, the controller creates
+`<stable>-nightly.YYYYMMDD.sha12` versions. Version and dependency overrides
+exist only in the staging tree. Changelogs are deterministic scratch snapshots;
+nightly does not call an AI model or mutate source manifests or canonical
+changelogs. Every affected package requires independent exact attestation and
+clean-consumer proof. Every affected adapter requires minimum and latest host
+proof. Missing, skipped, or mismatched evidence blocks before OIDC.
+
+`disabled` is a typed early exit. `dry-run` runs the complete build and proof
+chain but skips publish and OIDC. An eventual enabled run uses the trusted
+workflow's `nightly` dist-tag, verifies registry digests, and creates no Git
+tags or releases. Schedule activation is a later rollout decision, not part of
+Task 27.
+
 ## Resume
 
 Dispatch `.github/workflows/release-publish.yml` with `channel: stable-resume`

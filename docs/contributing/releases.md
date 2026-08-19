@@ -82,6 +82,31 @@ Reruns recompute authority and compare exact digests. Matching registry bytes,
 tags, and prereleases are idempotent; conflicts fail closed. A `next` run does
 not mutate Git source files or provide a Git mutation path for repair.
 
+## The `nightly` channel
+
+Task 27 adds a maintainer-guarded manual `channel: nightly` route to the same
+trusted workflow. `release-publish.yml` remains scheduleless. The existing
+`publish.yml` schedule is still the sole scheduled publisher. Task 35 is the
+planned schedule-activation task; this route does not claim that nightly is
+scheduled or active.
+
+The controller finds the latest successful nightly source SHA, computes the
+affected-since-that-nightly package set, and closes it over shared changesets
+and bundled-artifact dependencies. It never consumes or deletes changesets. An
+empty set is a green `NothingToPublish` skip: no build, attestation, consumer or
+harness proof, OIDC, registry verification, or Git refs run.
+
+A non-empty run uses `<stable>-nightly.YYYYMMDD.sha12`. Version and dependency
+changes are staging-only. Changelogs are deterministic scratch snapshots with
+no AI or source mutation. Independent attestation and clean-consumer proof
+cover every affected package. Minimum and latest host proofs cover every
+affected adapter. Missing, skipped, or mismatched evidence blocks before OIDC.
+
+`disabled` is a typed early exit. `dry-run` runs the full build, attestation,
+consumer, and harness chain with publish and OIDC skipped. An eventual enabled
+run uses the trusted workflow's `nightly` dist-tag, verifies registry digests,
+and creates no Git tags or releases. Nightly has no approval environment.
+
 ## Rollout modes
 
 The checked-in `rollout-stage.ts` declaration, the external mode, and the

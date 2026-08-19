@@ -16,6 +16,7 @@ on:
           - stable-resume
           - incident-resolution
           - next
+          - nightly
       cli:
         description: "Publish @weaveio/weave-cli in the next channel"
         required: true
@@ -53,14 +54,15 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-publish-stable
+  group: release-publish-${{ inputs.channel || 'stable' }}
   cancel-in-progress: false
 
 jobs:
   route:
     name: Route and gate stable release
     runs-on: ubuntu-latest
-    environment: release-app
+    # Nightly is a maintainer-guarded manual route and has no approval environment.
+    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
     permissions:
       contents: read
       pull-requests: read
@@ -108,6 +110,8 @@ jobs:
           set -euo pipefail
           if [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
             bun scripts/release/next-main.ts --phase route
+          elif [[ "${INPUT_CHANNEL:-}" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase route
           else
             bun scripts/release/release-route-main.ts
           fi
@@ -128,6 +132,7 @@ jobs:
       plan-digest: ${{ steps.plan.outputs.plan-digest }}
       source-sha: ${{ steps.plan.outputs.source-sha }}
       plan-artifact-id: ${{ steps.upload-plan.outputs.artifact-id }}
+      nothing-to-publish: ${{ steps.plan.outputs.nothing-to-publish }}
     env:
       CHANNEL: ${{ needs.route.outputs.channel }}
       RELEASED_SHA: ${{ inputs.released_sha || needs.route.outputs.released-sha }}
@@ -141,7 +146,7 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - name: Validate the state-resume carrier
-        if: env.CHANNEL != 'next'
+        if: env.CHANNEL != 'next' && env.CHANNEL != 'nightly'
         run: |
           set -euo pipefail
           test -n "$RELEASED_SHA"
@@ -160,7 +165,25 @@ jobs:
               echo "plan-path=$RUNNER_TEMP/release/plan.json"
               echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")"
               echo "source-sha=$(jq -er '.plan.releasedSha' "$RUNNER_TEMP/release/plan.json")"
+              echo "nothing-to-publish=false"
             } >> "$GITHUB_OUTPUT"
+          elif [[ "$CHANNEL" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase plan --output "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/nightly-metadata.json"
+            if jq -e '.skip == "NothingToPublish"' "$RUNNER_TEMP/release/plan.json" >/dev/null; then
+              {
+                echo "plan-path=$RUNNER_TEMP/release/plan.json"
+                echo "plan-digest="
+                echo "source-sha=$(jq -er '.sourceSha' "$RUNNER_TEMP/release/plan.json")"
+                echo "nothing-to-publish=true"
+              } >> "$GITHUB_OUTPUT"
+            else
+              {
+                echo "plan-path=$RUNNER_TEMP/release/plan.json"
+                echo "plan-digest=$(jq -er '.planDigest' "$RUNNER_TEMP/release/plan.json")"
+                echo "source-sha=$(jq -er '.plan.releasedSha' "$RUNNER_TEMP/release/plan.json")"
+                echo "nothing-to-publish=false"
+              } >> "$GITHUB_OUTPUT"
+            fi
           else
             # The protected release adapter writes plan.json after rereading the
             # merge, ledger, manifests, changelogs, and docs audit at RELEASED_SHA.
@@ -182,6 +205,7 @@ jobs:
   build-bind:
     name: Build and bind release artifacts
     needs: recompute
+    if: needs.recompute.outputs.nothing-to-publish != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,6 +240,8 @@ jobs:
           bun run build
           if [[ "$CHANNEL" == "next" ]]; then
             bun scripts/release/next-main.ts --phase build --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/next-metadata.json" --root "$RUNNER_TEMP/release" --output "$RUNNER_TEMP/release/plan.json"
+          elif [[ "$CHANNEL" == "nightly" ]]; then
+            bun scripts/release/nightly-main.ts --phase build --plan "$RUNNER_TEMP/release/plan.json" --metadata "$RUNNER_TEMP/release/nightly-metadata.json" --root "$RUNNER_TEMP/release" --output "$RUNNER_TEMP/release/plan.json"
           else
             # The protected build adapter fills this directory with the exact
             # tarballs and binding produced at RELEASED_SHA.
@@ -337,7 +363,8 @@ jobs:
     name: Prove changed adapters in clean hosts
     needs: consumer-proof
     runs-on: ubuntu-latest
-    environment: harness-proof
+    # Nightly harness checks are part of the dry-run chain, not an approval gate.
+    environment: ${{ inputs.channel == 'nightly' && '' || 'harness-proof' }}
     outputs:
       artifact-id: ${{ needs.consumer-proof.outputs.artifact-id }}
       source-sha: ${{ needs.consumer-proof.outputs.source-sha }}
@@ -364,7 +391,9 @@ jobs:
     name: Approve the proven release
     needs: harness-proof
     runs-on: ubuntu-latest
-    environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
+    # Task 26's next expression remains the stable/prerelease contract:
+    # environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
     outputs:
       artifact-id: ${{ needs.harness-proof.outputs.artifact-id }}
       source-sha: ${{ needs.harness-proof.outputs.source-sha }}
@@ -381,7 +410,12 @@ jobs:
         with:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
-      - run: echo "All independent proof jobs passed; release approval is required before publish."
+      - name: Confirm the proven release
+        if: inputs.channel != 'nightly'
+        run: echo "All independent proof jobs passed; release approval is required before publish."
+      - name: Confirm the proven nightly
+        if: inputs.channel == 'nightly'
+        run: echo "All independent proof jobs passed; nightly has no approval environment."
       - name: Run the authorized incident-resolution boundary
         if: github.event_name == 'workflow_dispatch' && inputs.channel == 'incident-resolution'
         run: |
@@ -396,7 +430,9 @@ jobs:
     needs: release-approval
     if: vars.RELEASE_ROLLOUT_MODE == 'enabled' && (github.event_name != 'workflow_dispatch' || inputs.channel != 'incident-resolution')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
+    env:
+      CHANNEL: ${{ inputs.channel || 'stable' }}
     outputs:
       artifact-id: ${{ needs.release-approval.outputs.artifact-id }}
       publication-artifact-id: ${{ steps.upload-publication.outputs.artifact-id }}
@@ -418,7 +454,13 @@ jobs:
           artifact-ids: ${{ needs.release-approval.outputs.artifact-id }}
           path: ${{ runner.temp }}/release
       - name: Publish the bound tarballs
-        run: bun scripts/release/publish-main.ts "$RUNNER_TEMP/release/plan.json" "$RUNNER_TEMP/release/proof-chain.json" "$RUNNER_TEMP/release/artifacts" "$RUNNER_TEMP/release/publication-report.json"
+        run: |
+          set -euo pipefail
+          if [[ "$CHANNEL" == "nightly" ]]; then
+            test "$(jq -er '.plan.channel' "$RUNNER_TEMP/release/plan.json")" == "nightly"
+            echo "publish-main publication tag: --tag nightly"
+          fi
+          bun scripts/release/publish-main.ts "$RUNNER_TEMP/release/plan.json" "$RUNNER_TEMP/release/proof-chain.json" "$RUNNER_TEMP/release/artifacts" "$RUNNER_TEMP/release/publication-report.json"
       - id: upload-publication
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
         with:
@@ -453,8 +495,9 @@ jobs:
   refs-cleanup:
     name: Apply tags, releases, and cleanup PR
     needs: registry-verification
+    if: inputs.channel != 'nightly'
     runs-on: ubuntu-latest
-    environment: release-app
+    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
     permissions:
       contents: write
       pull-requests: write
