@@ -448,7 +448,7 @@ describe("Pi 0.84 queue_update reporting", () => {
     ).toEqual({ type: "queue_change", size: 0, queue: [] });
   });
 
-  it("makes the steered state observable on the delegation card", () => {
+  it("keeps the steered lifecycle observable without child activity", () => {
     const clock = (): number => 2_000;
     const started = applyDelegationCardInput(
       createDelegationCardState({ agentName: "shuttle", assignment: "probe" }),
@@ -474,10 +474,7 @@ describe("Pi 0.84 queue_update reporting", () => {
     )._unsafeUnwrap();
     const facts = projectDelegationCardFacts(steered);
     expect(facts.run.phase).toBe("steered");
-    expect(facts.activity).toEqual({
-      kind: "queue",
-      text: "1 queued · parent steered the child",
-      live: false,
-    });
+    expect(facts.activity).toEqual({ kind: "boot", text: "", live: false });
+    expect(facts.viewport).toEqual({ rows: [], above: 0, atBottom: true });
   });
 });

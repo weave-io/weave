@@ -14,11 +14,11 @@
  * copying those same bytes into the parent's model-visible activity or into
  * persisted delegation-card details, so both are asserted here.
  *
- * The guarantee is structural: tool payload prose is never read into the card
- * model at all, so these tests do not check that a redactor caught a pattern -
- * they check that a payload known to contain a hostile value cannot appear in
- * either surface, while the useful, bounded fact (which tool ran, and whether
- * it is running, done, or failed) still does.
+ * The guarantee is structural: tool payload prose and tool activity are never
+ * read into the parent card model at all, so these tests do not check that a
+ * redactor caught a pattern. They check that a payload known to contain a
+ * hostile value cannot appear in either surface, and that partial card frames
+ * stay the adapter-authored content-free marker.
  */
 import { describe, expect, it } from "bun:test";
 import {
@@ -281,7 +281,7 @@ describe("delegation card tool-result leakage", () => {
     });
   }
 
-  it("never publishes benign tool output either, and still states the tool and its state", () => {
+  it("never publishes benign tool output or tool activity", () => {
     const events = [
       toolCall("bash"),
       toolPartial("18 of 24 files scanned"),
@@ -293,28 +293,25 @@ describe("delegation card tool-result leakage", () => {
     for (const surface of [modelVisible, persisted]) {
       expect(surface).not.toContain("18 of 24");
       expect(surface).not.toContain("1 replacement");
+      expect(surface).not.toContain("bash");
     }
-
-    // The bounded, structurally safe facts survive: which tool ran, and the
-    // canonical lifecycle state the card derives from the event type itself.
-    expect(modelVisible).toContain("bash");
-    expect(modelVisible).toContain("bash · running");
-    expect(modelVisible).toContain("bash · done");
-    expect(persisted).toContain("bash");
-    expect(persisted).toContain("done");
+    // Every partial model update is the adapter-authored marker, not a child
+    // tool row or status sentence.
+    expect(modelVisible).toMatch(/^(…\n?)+$/u);
   });
 
-  it("reports a failed tool as failed without its error payload", () => {
+  it("reports a failed tool without tool activity or its error payload", () => {
     const events = [toolCall("edit"), toolError(`EACCES ${POSIX_PATH}`)];
     const { modelVisible, persisted } = publishedSurface(events);
 
-    expect(modelVisible).toContain("edit · failed");
+    expect(modelVisible).not.toContain("edit");
+    expect(modelVisible).not.toContain("failed");
     expect(modelVisible).not.toContain("EACCES");
+    expect(persisted).not.toContain("edit");
     expect(persisted).not.toContain("EACCES");
-    expect(persisted).toContain("failed");
   });
 
-  it("keeps the completed card's tool evidence free of tool payload", () => {
+  it("keeps the completed card's settlement evidence free of tool payload", () => {
     const timer = new ImmediateTimerPort();
     const updates: PiToolResult[] = [];
     const stream = new PiDelegationCardStream({
@@ -336,8 +333,9 @@ describe("delegation card tool-result leakage", () => {
 
     const terminal = details?.facts.terminal;
     expect(terminal?.outcome).toBe("completed");
-    // Evidence names the last tool and its canonical state, nothing it printed.
-    expect(terminal?.evidence).toBe("verified · bash · done");
+    // Settlement framing names only the authoritative settlement, never the
+    // last child tool or anything it printed.
+    expect(terminal?.evidence).toBe("authoritative settlement");
     expect(JSON.stringify(details)).not.toContain(OPENAI_KEY);
     expect(JSON.stringify(details)).not.toContain(POSIX_PATH);
   });

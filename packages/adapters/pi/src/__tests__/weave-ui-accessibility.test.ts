@@ -200,6 +200,7 @@ const CARD_STATES: readonly CardState[] = [
     glyph: "⏵",
     word: "RUNNING",
     facts: cardFacts({
+      run: { number: 1, action: "start", phase: "tool call" },
       activity: {
         kind: "tool",
         text: "edit · child-overlay-component.ts · 1 replacement · +6 −3",
@@ -213,6 +214,7 @@ const CARD_STATES: readonly CardState[] = [
     word: "RUNNING",
     facts: cardFacts({
       tone: "bad",
+      run: { number: 1, action: "start", phase: "tool error" },
       activity: {
         kind: "error",
         text: "bash · bun test --filter overlay · 23 pass · 1 fail at width 41",
@@ -227,6 +229,7 @@ const CARD_STATES: readonly CardState[] = [
     facts: cardFacts({
       status: "steered",
       tone: "warn",
+      run: { number: 1, action: "start", phase: "steered" },
       activity: {
         kind: "queue",
         text: "1 queued · from LOOM: keep the 40 to 200 column sweep green",
@@ -430,34 +433,56 @@ describe("monochrome legibility", () => {
     }
   });
 
-  test("the Native Line names its activity with a glyph, not a colour", () => {
+  test("the renderer-only reasoning line names its activity with a glyph", () => {
+    const liveReasoningLine = "↪ reasoning • bounded raw reasoning";
     for (const state of CARD_STATES) {
       for (const width of [24, 40, 60, 96, 140, 200]) {
-        expect(cardLines(state.facts, width, false).join("\n")).toContain(
-          state.glyph,
-        );
+        const output = renderDelegationCard(state.facts, {
+          width,
+          expanded: false,
+          paint: PLAIN,
+          liveReasoningLine,
+        }).join("\n");
+        expect(output).toContain("↪");
+        if (width >= 40) expect(output).toContain("↪ reasoning");
       }
     }
   });
 
-  test("the card states liveness with a printed streaming mark", () => {
+  test("the card states live reasoning with a printed marker", () => {
     const live = cardFacts();
     const settled = cardFacts({
       settled: true,
       activity: { kind: "reply", text: "done", live: false },
     });
     for (const width of [40, 60, 96, 140, 200]) {
-      expect(cardLines(live, width, false).join("\n")).toContain("▍");
-      expect(cardLines(settled, width, false).join("\n")).not.toContain("▍");
+      expect(
+        renderDelegationCard(live, {
+          width,
+          expanded: false,
+          paint: PLAIN,
+          liveReasoningLine: "↪ reasoning • live",
+        }).join("\n"),
+      ).toContain("↪");
+      expect(
+        renderDelegationCard(settled, {
+          width,
+          expanded: false,
+          paint: PLAIN,
+        }).join("\n"),
+      ).not.toContain("↪");
     }
   });
 
-  test("every card state reads differently in plain text", () => {
+  test("every card lifecycle state remains legible in plain text", () => {
     for (const width of [40, 80, 120, 200]) {
       const rendered = CARD_STATES.map((state) =>
         cardLines(state.facts, width, false).join("\n"),
       );
-      expect(new Set(rendered).size).toBe(CARD_STATES.length);
+      // At the narrow rail width the three ordinary running phases share the
+      // same visible shell; wider cards retain their distinct footer phase.
+      const expectedStates = width < 80 ? 5 : CARD_STATES.length;
+      expect(new Set(rendered).size).toBe(expectedStates);
     }
   });
 
@@ -515,9 +540,11 @@ describe("monochrome legibility", () => {
     expect(tail[0]).toContain("↑");
   });
 
-  test("the expanded card counts its scrollback with a ↑ row", () => {
+  test("the expanded card keeps the parent boundary free of child scrollback", () => {
     const text = cardLines(cardFacts(), 96, true).join("\n");
-    expect(text).toContain("↑ 12 rows above");
+    expect(text).toContain("LIVE · following bottom");
+    expect(text).not.toContain("↑");
+    expect(text).not.toContain("transcript row");
   });
 });
 
@@ -642,21 +669,24 @@ describe("truncation", () => {
 
   test("the card rail cuts flush so the body keeps the line's mark", () => {
     // 34 columns: the rail is present, the child name is longer than the rail,
-    // and the Native Line beside it must be cut.
+    // and the assignment beside it must be cut in the body column.
     const rows = composeDelegationCard(cardFacts(), 34, false);
-    const railRow = rows.find((row) => row.slot === "activity");
-    const line = emit(railRow?.row ?? [], 34, PLAIN);
-    expect(line).toContain("shuttle-i");
+    const taskRow = rows.find((row) => row.slot === "task");
+    const line = emit(taskRow?.row ?? [], 34, PLAIN);
+    expect(line).toContain("…");
     expect(cutMarks(line)).toBe(1);
   });
 
-  test("the live streaming mark is reserved, never cut away", () => {
+  test("the live reasoning mark is reserved, never cut away", () => {
     for (const width of CARD_WIDTHS) {
-      const line = cardLines(cardFacts(), width, false).find((candidate) =>
-        candidate.includes("⤷"),
-      );
+      const line = renderDelegationCard(cardFacts(), {
+        width,
+        expanded: false,
+        paint: PLAIN,
+        liveReasoningLine: "↪ reasoning • live",
+      }).find((candidate) => candidate.includes("↪"));
       expect(line).toBeDefined();
-      expect(line as string).toContain("▍");
+      expect(line as string).toContain("↪");
     }
   });
 });

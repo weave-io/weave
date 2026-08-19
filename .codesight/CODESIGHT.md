@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 342 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~38,300 tokens. Without it, AI exploration would cost ~108,200 tokens. **Saves ~69,900 tokens per conversation.**
-> **Last scanned:** 2026-08-19 01:41 — re-run after significant changes
+> **Last scanned:** 2026-08-19 03:04 — re-run after significant changes
 
 ---
 
@@ -152,10 +152,10 @@
   - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
-  - _...34 more_
+  - _...37 more_
 - `packages/adapters/pi/src/child-card-render.ts`
   - function renderDelegationCard: (facts, options) => string[]
-  - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
+  - function composeDelegationCard: (facts, width, expanded, liveReasoningLine) => readonly PiCardRow[]
   - function degradedDelegationCard: (reason, options, paint) => void
   - function cardEdge: (width, open, left, right) => Row
   - function cardBody: (width, content) => Row
@@ -301,7 +301,7 @@
   - function formatPiLiveReasoningParentLine: (text) => string
   - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
   - function piLiveReasoningUtf8Bytes: (value) => number
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -730,7 +730,7 @@
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
   - function boundDelegationCardDetails: (facts) => PiDelegationCardDetails | undefined
-  - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
+  - function renderDelegationCardResult: (result, options, theme, context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
   - _...15 more_

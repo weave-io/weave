@@ -141,10 +141,10 @@
   - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
-  - _...34 more_
+  - _...37 more_
 - `packages/adapters/pi/src/child-card-render.ts`
   - function renderDelegationCard: (facts, options) => string[]
-  - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
+  - function composeDelegationCard: (facts, width, expanded, liveReasoningLine) => readonly PiCardRow[]
   - function degradedDelegationCard: (reason, options, paint) => void
   - function cardEdge: (width, open, left, right) => Row
   - function cardBody: (width, content) => Row
@@ -290,7 +290,7 @@
   - function formatPiLiveReasoningParentLine: (text) => string
   - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
   - function piLiveReasoningUtf8Bytes: (value) => number
-  - _...21 more_
+  - _...22 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -719,7 +719,7 @@
   - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
   - function boundDelegationCardDetails: (facts) => PiDelegationCardDetails | undefined
-  - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
+  - function renderDelegationCardResult: (result, options, theme, context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
   - _...15 more_

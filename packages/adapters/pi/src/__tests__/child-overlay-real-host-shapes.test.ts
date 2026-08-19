@@ -940,7 +940,14 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
 
     const finalRows = renderRows().join("\n");
     expect(finalRows).toContain("Weave capture deterministic final answer.");
-    expect(card.facts().activity.text).toBe(
+    // The authoritative answer remains in the inspector's settled transcript;
+    // the parent card keeps its child-activity boundary content-free.
+    expect(card.facts().activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(JSON.stringify(card.facts())).not.toContain(
       "Weave capture deterministic final answer.",
     );
     stream.dispose();
