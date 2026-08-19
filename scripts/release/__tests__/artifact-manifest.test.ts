@@ -1,8 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { validateArtifactManifest } from "../artifact-manifest.js";
+import type { StableTrainContent } from "../stable-train.js";
 import { trainRecordDigest } from "../stable-train.js";
 
 const digest = `sha256:${"a".repeat(64)}`;
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const manifest = {
   schemaVersion: 1,
   releaseSubjectSha: "b".repeat(40),
@@ -28,7 +36,7 @@ const manifest = {
       packages: ["@weaveio/weave-cli"],
       versions: { "@weaveio/weave-cli": "1.2.3" },
     };
-    return { ...content, recordDigest: trainRecordDigest(content) };
+    return { ...content, recordDigest: trainDigest(content) };
   })(),
 };
 

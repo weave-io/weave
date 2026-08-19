@@ -30,9 +30,11 @@ const cut = () =>
 function checkedTrain(
   content: Omit<StableTrainRecord, "recordDigest">,
 ): StableTrainRecord {
+  const digest = trainRecordDigest(content);
+  if (digest.isErr()) throw new Error(JSON.stringify(digest.error));
   const result = validateStableTrain({
     ...content,
-    recordDigest: trainRecordDigest(content),
+    recordDigest: digest.value,
   });
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
@@ -71,10 +73,11 @@ await runScenarios("release-dry-stable", [
     verify: () =>
       (() => {
         const { recordDigest: _recordDigest, ...content } = record;
-        return (
-          partialPublishRecoveryMetadata(
-            checkedTrain({ ...content, state: "partial" }),
-          ).recovery === "fresh-main-cut"
+        return partialPublishRecoveryMetadata(
+          checkedTrain({ ...content, state: "partial" }),
+        ).match(
+          (metadata) => metadata.recovery === "fresh-main-cut",
+          () => false,
         );
       })(),
   },

@@ -7,7 +7,12 @@ import {
   metadataReplayDigest,
   validatePullRequestHead,
 } from "../metadata-replay.js";
-import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
+import type { MetadataReplayRecord } from "../model.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
 
 class MemoryFiles implements FileSystem {
   readonly files = new Map<string, string>();
@@ -68,7 +73,7 @@ function replay(files: MemoryFiles) {
   };
   const checked = validateStableTrain({
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: trainDigest(trainContent),
   });
   if (checked.isErr()) throw new Error(JSON.stringify(checked.error));
   const train = checked.value;
@@ -159,9 +164,23 @@ describe("metadata replay", () => {
     const files = new MemoryFiles();
     const { record } = replay(files);
     const { recordDigest, ...content } = record;
-    expect(recordDigest).toBe(metadataReplayDigest(content));
+    expect(recordDigest).toBe(metadataDigest(content));
   });
 });
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function metadataDigest(
+  value: Omit<MetadataReplayRecord, "recordDigest">,
+): string {
+  const result = metadataReplayDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 function hash(value: string): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", value, "hex")}`;

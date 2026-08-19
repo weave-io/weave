@@ -60,6 +60,11 @@ function hex(seed: string): string {
 function digest(seed: string): string {
   return `sha256:${hex(seed)}`;
 }
+function planDigest(value: ReleasePlan): string {
+  const result = releasePlanDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 const PORTABLE_LIMITS = hex("portable-delegation-limits");
 const SETTLEMENT_BUDGET = hex("pi-settlement-budget");
@@ -460,7 +465,7 @@ describe("canonical serialization", () => {
     expect(expectOk(serializeReleasePlan(reordered))).toBe(
       expectOk(serializeReleasePlan(plan())),
     );
-    expect(releasePlanDigest(reordered)).toBe(releasePlanDigest(plan()));
+    expect(planDigest(reordered)).toBe(planDigest(plan()));
   });
 
   it("round-trips the workflow-artifact envelope with a self-checking digest", () => {
@@ -469,7 +474,7 @@ describe("canonical serialization", () => {
     if (parsedArtifact.isErr()) throw new Error(parsedArtifact.error.message);
     const parsed = expectOk(validatePlanArtifact(parsedArtifact.value));
     expect(parsed.plan).toEqual(plan());
-    expect(parsed.planDigest).toBe(releasePlanDigest(plan()));
+    expect(parsed.planDigest).toBe(planDigest(plan()));
   });
 
   it("rejects an envelope whose digest names another plan", () => {
@@ -487,16 +492,16 @@ describe("canonical serialization", () => {
   });
 
   it("reports a plan digest mismatch with both digests", () => {
-    expect(
-      expectOk(verifyReleasePlanDigest(plan(), releasePlanDigest(plan()))),
-    ).toBe(releasePlanDigest(plan()));
+    expect(expectOk(verifyReleasePlanDigest(plan(), planDigest(plan())))).toBe(
+      planDigest(plan()),
+    );
     const error = expectErr(
       verifyReleasePlanDigest(plan(), digest("stale-plan")),
     );
     expect(error).toEqual({
       type: "PlanDigestMismatch",
       expected: digest("stale-plan"),
-      actual: releasePlanDigest(plan()),
+      actual: planDigest(plan()),
     });
   });
 });
@@ -1346,7 +1351,7 @@ describe("plan-aware artifacts", () => {
 
   it("binds uploaded artifacts to the plan they were built for", () => {
     const result = bound();
-    expect(result.planDigest).toBe(releasePlanDigest(releasedPlan()));
+    expect(result.planDigest).toBe(planDigest(releasedPlan()));
     expect(expectOk(verifyPlanBoundArtifact(result, releasedPlan()))).toEqual(
       binding(),
     );

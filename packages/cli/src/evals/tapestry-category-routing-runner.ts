@@ -108,6 +108,7 @@ import type {
   RawErrorSummary,
   RunnerError,
   RunnerResult,
+  ScoringDimension,
   ScoringError,
   TranscriptMessage,
 } from "./types.js";
@@ -1059,6 +1060,34 @@ function buildUserMessage(evalCase: EvalCase): string {
   return `Task to route: ${evalCase.description}`;
 }
 
+function scorerDimensionForCase(evalCase: EvalCase): ScoringDimension {
+  switch (evalCase.expected_outcome.kind) {
+    case "agent_routing":
+      return "routingCorrectness";
+    case "delegation_chain":
+      return "delegationCorrectness";
+    case "task_completion":
+      return "executionCompleteness";
+    case "tool_call":
+      return "rationaleQuality";
+  }
+}
+
+function normalizeScorerError(
+  evalCase: EvalCase,
+  error: ScoringError,
+): Extract<ScoringError, { type: "ScorerAdapterError" }> {
+  return {
+    type: "ScorerAdapterError",
+    caseId: evalCase.id,
+    dimension:
+      error.type === "ScorerAdapterError"
+        ? error.dimension
+        : scorerDimensionForCase(evalCase),
+    message: error.message,
+  };
+}
+
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
 ) {
@@ -1516,6 +1545,7 @@ export class TapestryCategoryRoutingRunner {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
             .score(runOutput, evalCase, rubrics)
+            .mapErr((error) => normalizeScorerError(evalCase, error))
             .map((scorerRecord) => ({
               runOutput,
               scoreRecord: mergeWithScorerDimensions(

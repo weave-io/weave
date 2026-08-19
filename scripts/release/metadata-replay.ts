@@ -9,7 +9,7 @@ import {
 import type { Clock } from "./clock.js";
 import type { FileSystem } from "./filesystem.js";
 import type { GitHubRefClient } from "./github-client.js";
-import { canonicalizeJson } from "./json.js";
+import { digestJson, validateJsonValue } from "./json.js";
 import {
   MetadataBranchSchema,
   type MetadataReplayRecord,
@@ -31,7 +31,8 @@ export type MetadataReplayError =
       actual: string;
     }
   | { type: "ReplayWriteFailed"; path: string; message: string }
-  | { type: "ReleaseDeletionPrecondition"; reason: string };
+  | { type: "ReleaseDeletionPrecondition"; reason: string }
+  | { type: "CanonicalJsonFailed"; reason: string };
 
 export type ReplayMutation =
   | { type: "write"; path: string; contents: string }
@@ -47,6 +48,8 @@ export interface ReleaseBranchDeletion {
   mergedMetadataPr: { number: number; head: string; merged: boolean };
   manualStopApproved: boolean;
 }
+
+type MetadataReplayDigestInput = Omit<MetadataReplayRecord, "recordDigest">;
 
 /**
  * Replays only content recorded by the stable train onto fresh protected main.
@@ -80,7 +83,10 @@ export class MetadataReplay {
       consumedChangesets: train.consumedChangesets ?? [],
       metadataWrites: train.metadataWrites ?? [],
     };
-    return ok({ ...content, recordDigest: metadataReplayDigest(content) });
+    return metadataReplayDigest(content).map((recordDigest) => ({
+      ...content,
+      recordDigest,
+    }));
   }
 
   applyReplay(
@@ -278,9 +284,14 @@ export class MetadataReplay {
 }
 
 export function metadataReplayDigest(
-  record: Omit<MetadataReplayRecord, "recordDigest">,
-): string {
-  return `sha256:${Bun.CryptoHasher.hash("sha256", canonicalizeJson(record), "hex")}`;
+  record: MetadataReplayDigestInput,
+): Result<string, MetadataReplayError> {
+  return validateJsonValue(record)
+    .andThen((value) => digestJson(value))
+    .mapErr((error) => ({
+      type: "CanonicalJsonFailed" as const,
+      reason: error.reason,
+    }));
 }
 
 type MetadataReplayInput = Parameters<
@@ -308,7 +319,9 @@ export function validateReplay(
       issues: parsed.error.issues.map((issue) => issue.message),
     });
   const { recordDigest, ...content } = parsed.data;
-  if (recordDigest !== metadataReplayDigest(content))
+  const expectedDigest = metadataReplayDigest(content);
+  if (expectedDigest.isErr()) return err(expectedDigest.error);
+  if (recordDigest !== expectedDigest.value)
     return err({
       type: "InvalidReplayRecord",
       issues: ["record digest does not match canonical content"],

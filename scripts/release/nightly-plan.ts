@@ -1,5 +1,13 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
+import { z } from "zod";
 import {
   BunChangesetFileSystem,
   type ChangesetBump,
@@ -347,11 +355,101 @@ function parseStableTrain(
 }
 
 type PreflightResponseError = { type: "GitHubResponse" };
-type MainRef = JsonObject & {
-  readonly object: JsonObject & { readonly sha: string };
+type MainRef = {
+  readonly object: { readonly sha: string };
   readonly date: string;
 };
-type PreflightResponse = JsonObject & { readonly date: string };
+type CheckRun = {
+  readonly name?: string;
+  readonly conclusion?: string;
+};
+type CheckRunsResponse = {
+  readonly check_runs: readonly CheckRun[];
+  readonly date: string;
+};
+type PreflightResponse = MainRef | CheckRunsResponse;
+type JsonObjectWithCheckRuns = JsonObject & {
+  readonly check_runs: readonly JsonValue[];
+};
+type ProjectedCheckRun = { name?: string; conclusion?: string };
+
+const MainRefBodySchema = z
+  .object({
+    object: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }).strict(),
+  })
+  .strict();
+const CheckRunSchema = z
+  .object({
+    name: z.string().max(256).optional(),
+    conclusion: z.string().max(64).optional(),
+  })
+  .strict();
+const CheckRunsBodySchema = z
+  .object({
+    check_runs: z.array(CheckRunSchema).max(1000),
+  })
+  .strict();
+const ResponseDateSchema = z.string().max(128);
+
+function projectGitHubResponse(
+  path: string,
+  body: JsonValue,
+  responseDate: string,
+): Result<PreflightResponse, PreflightResponseError> {
+  const date = ResponseDateSchema.safeParse(responseDate);
+  if (!date.success) return err({ type: "GitHubResponse" });
+  if (!isJsonObject(body) || Object.hasOwn(body, "__proto__"))
+    return err({ type: "GitHubResponse" });
+  if (path === "/git/ref/heads/main") {
+    if (!Object.hasOwn(body, "object")) return err({ type: "GitHubResponse" });
+    const object = body.object;
+    if (
+      !isJsonObject(object) ||
+      Object.hasOwn(object, "__proto__") ||
+      !Object.hasOwn(object, "sha") ||
+      !isJsonString(object.sha)
+    )
+      return err({ type: "GitHubResponse" });
+    const projected = MainRefBodySchema.safeParse({
+      object: { sha: object.sha },
+    });
+    if (!projected.success) return err({ type: "GitHubResponse" });
+    return ok({
+      object: { sha: projected.data.object.sha },
+      date: date.data,
+    });
+  }
+  if (path.startsWith("/commits/") && path.endsWith("/check-runs")) {
+    if (!Object.hasOwn(body, "check_runs") || !Array.isArray(body.check_runs))
+      return err({ type: "GitHubResponse" });
+    const projectedRuns: ProjectedCheckRun[] = [];
+    for (const candidate of body.check_runs) {
+      if (!isJsonObject(candidate) || Object.hasOwn(candidate, "__proto__"))
+        return err({ type: "GitHubResponse" });
+      const projected: ProjectedCheckRun = {};
+      if (Object.hasOwn(candidate, "name")) {
+        if (!isJsonString(candidate.name))
+          return err({ type: "GitHubResponse" });
+        projected.name = candidate.name;
+      }
+      if (Object.hasOwn(candidate, "conclusion")) {
+        if (!isJsonString(candidate.conclusion))
+          return err({ type: "GitHubResponse" });
+        projected.conclusion = candidate.conclusion;
+      }
+      const parsed = CheckRunSchema.safeParse(projected);
+      if (!parsed.success) return err({ type: "GitHubResponse" });
+      projectedRuns.push(parsed.data);
+    }
+    const projected = CheckRunsBodySchema.safeParse({
+      check_runs: projectedRuns,
+    });
+    if (!projected.success) return err({ type: "GitHubResponse" });
+    return ok({ check_runs: projected.data.check_runs, date: date.data });
+  }
+  return err({ type: "GitHubResponse" });
+}
+
 function fetchJson(
   path: string,
   token: string,
@@ -371,24 +469,28 @@ function fetchJson(
     })).andThen((text) => {
       const parsed = parseJsonValue(text);
       if (parsed.isErr()) return errAsync({ type: "GitHubResponse" as const });
-      if (!isJsonObject(parsed.value))
-        return errAsync({ type: "GitHubResponse" as const });
-      const body = parsed.value;
-      const withDate = Object.assign({}, body, {
-        date: response.headers.get("date") ?? "",
-      });
-      return okAsync(withDate);
+      return projectGitHubResponse(
+        path,
+        parsed.value,
+        response.headers.get("date") ?? "",
+      );
     });
   });
 }
 function isMainRef(value: JsonValue): value is MainRef {
-  return (
-    isJsonObject(value) &&
-    isStringValue(value.date) &&
-    isJsonObject(value.object) &&
-    isStringValue(value.object.sha) &&
-    /^[0-9a-f]{40}$/.test(value.object.sha)
-  );
+  if (
+    !isJsonObject(value) ||
+    Object.hasOwn(value, "__proto__") ||
+    !Object.hasOwn(value, "date") ||
+    !isJsonString(value.date) ||
+    !Object.hasOwn(value, "object") ||
+    !isJsonObject(value.object) ||
+    Object.hasOwn(value.object, "__proto__") ||
+    !Object.hasOwn(value.object, "sha") ||
+    !isJsonString(value.object.sha)
+  )
+    return false;
+  return /^[0-9a-f]{40}$/.test(value.object.sha);
 }
 function hasGreenRequiredCheck(value: JsonValue): boolean {
   if (!isCheckRunsPayload(value)) return false;
@@ -396,12 +498,30 @@ function hasGreenRequiredCheck(value: JsonValue): boolean {
 }
 function isCheckRunsPayload(
   value: JsonValue,
-): value is JsonValue & { readonly check_runs: readonly JsonValue[] } {
-  return isJsonObject(value) && Array.isArray(value.check_runs);
+): value is JsonObjectWithCheckRuns {
+  return (
+    isJsonObject(value) &&
+    !Object.hasOwn(value, "__proto__") &&
+    Object.hasOwn(value, "check_runs") &&
+    Array.isArray(value.check_runs) &&
+    value.check_runs.every(isCheckRun)
+  );
+}
+function isCheckRun(value: JsonValue): value is JsonObject {
+  if (!isJsonObject(value) || Object.hasOwn(value, "__proto__")) return false;
+  if (Object.hasOwn(value, "name") && !isJsonString(value.name)) return false;
+  if (Object.hasOwn(value, "conclusion") && !isJsonString(value.conclusion))
+    return false;
+  return true;
 }
 function isGreenCheck(value: JsonValue): boolean {
-  if (!isJsonObject(value)) return false;
-  return value.name === REQUIRED_MAIN_CHECK && value.conclusion === "success";
+  return (
+    isCheckRun(value) &&
+    Object.hasOwn(value, "name") &&
+    Object.hasOwn(value, "conclusion") &&
+    value.name === REQUIRED_MAIN_CHECK &&
+    value.conclusion === "success"
+  );
 }
 function loadChangesets(): ResultAsync<readonly ParsedChangeset[], unknown> {
   const files = new BunChangesetFileSystem();

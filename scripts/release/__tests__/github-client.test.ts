@@ -12,6 +12,7 @@ import type {
 import type { StableTrainRecord } from "../model.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
+import type { StableTrainContent } from "../stable-train.js";
 import { trainRecordDigest } from "../stable-train.js";
 
 const SHA = "a".repeat(40);
@@ -28,6 +29,11 @@ const bytes = new Uint8Array([1, 2, 3]);
 const checksum = new TextEncoder().encode("checksum");
 const digest = (value: Uint8Array) =>
   `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 function assetNames(tag: string): string[] {
   if (tag === TAGS[0])
     return [
@@ -202,7 +208,7 @@ function request(github: MockReleaseClient, attempts?: number) {
       originRunId: 123,
       awaitingPromotionTrain: {
         ...awaitingTrainContent,
-        recordDigest: trainRecordDigest(awaitingTrainContent),
+        recordDigest: trainDigest(awaitingTrainContent),
       },
     },
     manifest: {

@@ -15,10 +15,16 @@ import {
   validateStableTrain,
 } from "../stable-train.js";
 
+function digestContent(content: StableTrainContent): string {
+  const result = trainRecordDigest(content);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 function checkedRecord(content: StableTrainContent): StableTrainRecord {
   const result = validateStableTrain({
     ...content,
-    recordDigest: trainRecordDigest(content),
+    recordDigest: digestContent(content),
   });
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
@@ -199,7 +205,7 @@ describe("stable train records", () => {
     expect(bound.value.state).toBe("bound");
     expect(bound.value.artifactIds).toEqual([17, 18]);
     const { recordDigest: _digest, ...boundContent } = bound.value;
-    expect(bound.value.recordDigest).toBe(trainRecordDigest(boundContent));
+    expect(bound.value.recordDigest).toBe(digestContent(boundContent));
     expect(
       bindStableTrain(bound.value, `sha256:${"e".repeat(64)}`, [19]).isErr(),
     ).toBe(true);
@@ -209,8 +215,10 @@ describe("stable train records", () => {
     const partial = { ...content, state: "partial" as const };
     const partialRecord = checkedRecord(partial);
     const recovery = partialPublishRecoveryMetadata(partialRecord);
-    expect(recovery.metadataDigest).toMatch(/^sha256:/);
-    expect(recovery.recovery).toBe("fresh-main-cut");
+    expect(recovery.isOk()).toBe(true);
+    if (recovery.isErr()) return;
+    expect(recovery.value.metadataDigest).toMatch(/^sha256:/);
+    expect(recovery.value.recovery).toBe("fresh-main-cut");
     const plan = planStableCut({
       mainHeadSha: "b".repeat(40),
       serverCutAt: new Date("2026-07-20T00:00:00.000Z"),

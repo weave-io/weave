@@ -5,7 +5,13 @@ import {
   promotionCommands,
   promotionCommandsFromRegistry,
 } from "../promotion-commands.js";
-import { trainRecordDigest } from "../stable-train.js";
+import { type StableTrainContent, trainRecordDigest } from "../stable-train.js";
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 function authorization(packages: readonly string[]) {
   const trainContent = {
@@ -35,7 +41,7 @@ function authorization(packages: readonly string[]) {
     originRunId: 123,
     awaitingPromotionTrain: {
       ...trainContent,
-      recordDigest: trainRecordDigest(trainContent),
+      recordDigest: trainDigest(trainContent),
     },
   };
 }

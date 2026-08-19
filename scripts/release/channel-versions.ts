@@ -10,7 +10,7 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   ResultAsync,
   type ResultAsync as ResultAsyncType,
 } from "neverthrow";
@@ -450,6 +450,7 @@ function readChangedPaths(
     "changedPathsSince" in reader
       ? reader.changedPathsSince(fromSha, toSha)
       : reader(fromSha, toSha);
+  if (Array.isArray(value)) return okAsync(value);
   if (value instanceof ResultAsync) {
     return value.mapErr((error) => ({
       type: "GitDiffFailed" as const,
@@ -476,20 +477,37 @@ function readChangedPaths(
       toSha,
       message: String(error),
     }));
-  return okAsync(value);
+  return errAsync({
+    type: "GitDiffFailed" as const,
+    fromSha,
+    toSha,
+    message: "changed-path reader returned an unsupported value",
+  });
+}
+
+function isObjectLike<T>(value: T): value is T & object {
+  return value !== null && value !== undefined && Object(value) === value;
+}
+
+function isCallable<T>(value: T): boolean {
+  return Result.fromThrowable(
+    () => Function.prototype.toString.call(value),
+    () => false,
+  )().isOk();
 }
 
 function isResultLike(
   value: ChannelDiffValue,
 ): value is Result<readonly string[], unknown> {
-  return z.object({ match: z.function() }).safeParse(value).success;
+  if (!isObjectLike(value)) return false;
+  return "match" in value && isCallable(value.match);
 }
 
 function isPromiseLike(
   value: ChannelDiffValue,
 ): value is PromiseLike<readonly string[]> {
-  const parsed = z.record(z.string(), z.unknown()).safeParse(value);
-  return parsed.success && z.function().safeParse(parsed.data.then).success;
+  if (!isObjectLike(value)) return false;
+  return "then" in value && isCallable(value.then);
 }
 
 function normalizeSha12(sourceSha: string): string | null {

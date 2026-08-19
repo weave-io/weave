@@ -1,8 +1,24 @@
 import { expect, test } from "bun:test";
 import { metadataReplayDigest } from "../metadata-replay.js";
-import { trainRecordDigest } from "../stable-train.js";
+import type { MetadataReplayRecord } from "../model.js";
+import { type StableTrainContent, trainRecordDigest } from "../stable-train.js";
 
 const sha = "a".repeat(40);
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function metadataDigest(
+  value: Omit<MetadataReplayRecord, "recordDigest">,
+): string {
+  const result = metadataReplayDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const versions = {
   "@weaveio/weave-cli": "1.0.0",
   "@weaveio/weave-adapter-opencode": "1.0.0",
@@ -55,13 +71,13 @@ test("metadata-replay main accepts a canonical no-op replay record", async () =>
     subjectSha: sha,
     cutAt: "2026-07-19T00:00:00.000Z",
     expiresAt: "2026-07-26T00:00:00.000Z",
-    state: "finalized",
-    packages: ["@weaveio/weave-cli"],
+    state: "finalized" as const,
+    packages: ["@weaveio/weave-cli"] as const,
     versions: { "@weaveio/weave-cli": "1.0.1" },
   };
   const train = {
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: trainDigest(trainContent),
   };
   const recordContent = {
     schemaVersion: 1 as const,
@@ -75,7 +91,7 @@ test("metadata-replay main accepts a canonical no-op replay record", async () =>
   };
   const record = {
     ...recordContent,
-    recordDigest: metadataReplayDigest(recordContent),
+    recordDigest: metadataDigest(recordContent),
   };
   expect(
     await run("scripts/release/metadata-replay-main.ts", {

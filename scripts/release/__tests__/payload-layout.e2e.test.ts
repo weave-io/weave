@@ -22,6 +22,13 @@ import { TarInspector } from "../tar-inspector.js";
 import { writeArtifactManifest } from "../write-artifact-manifest.js";
 
 const sha = "abcdef123456".padEnd(40, "a");
+
+function digestTrain(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const invocation = validateReleaseInvocation({
   repository: "weave-io/weave",
   workflowPath: ".github/workflows/publish.yml",
@@ -180,7 +187,7 @@ test("stable CLI-only payload layout packs the train-authoritative set", async (
   };
   const train = {
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: digestTrain(trainContent),
   };
   const reset = Bun.spawn(["rm", "-rf", join(root, ".release")]);
   expect(await reset.exited).toBe(0);
@@ -274,7 +281,7 @@ test("stable manifests embed a validated train and nightly manifests omit it", a
   };
   const trainResult = validateStableTrain({
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: digestTrain(trainContent),
   });
   if (trainResult.isErr()) throw new Error(JSON.stringify(trainResult.error));
   const train = trainResult.value;

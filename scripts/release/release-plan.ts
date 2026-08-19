@@ -52,10 +52,13 @@ import {
   LedgerStableVersionSchema,
 } from "./consumption-ledger.js";
 import {
+  digestJson,
+  type JsonCanonicalizationError,
   type JsonObject,
   type JsonValue,
   parseJsonValue,
   sortJsonInput,
+  validateJsonValue,
 } from "./json.js";
 import { publishablePackageNames } from "./package-policy.js";
 import type {
@@ -403,7 +406,8 @@ export const ReleasePlanArtifactSchema = z
   })
   .strict()
   .superRefine((artifact, context) => {
-    if (artifact.planDigest !== releasePlanDigest(artifact.plan))
+    const expected = releasePlanDigest(artifact.plan);
+    if (expected.isErr() || artifact.planDigest !== expected.value)
       context.addIssue({
         code: "custom",
         path: ["planDigest"],
@@ -421,6 +425,11 @@ export type ReleaseDocsAudit = z.infer<typeof ReleaseDocsAuditSchema>;
 export type ReleaseProofMarker = z.infer<typeof ReleaseProofMarkerSchema>;
 export type ReleaseProofMarkers = z.infer<typeof ReleaseProofMarkersSchema>;
 export type ReleasePlanArtifact = z.infer<typeof ReleasePlanArtifactSchema>;
+interface ReleasePlanSerializationInput {
+  readonly schemaVersion: typeof RELEASE_PLAN_SCHEMA_VERSION;
+  readonly planDigest: string;
+  readonly plan: ReleasePlan;
+}
 
 type Assert<T extends true> = T;
 /** The plan carries Task 5's closure and Task 3's identities, not copies. */
@@ -464,6 +473,7 @@ export type ReleasePlanError =
     }
   /** Identity. */
   | { type: "PlanDigestMismatch"; expected: string; actual: string }
+  | { type: "CanonicalJsonFailed"; reason: string }
   | { type: "PlanDivergence"; path: string; expected: unknown; actual: unknown }
   /** Docs audit. */
   | { type: "MissingDocsAudit"; ref: string }
@@ -537,8 +547,8 @@ export function validateReleasePlanArtifact(
 export function serializeReleasePlan(
   plan: ReleasePlan,
 ): Result<string, ReleasePlanError> {
-  return validateReleasePlan(plan).map((validated) =>
-    JSON.stringify(sortValue(validated), null, 2),
+  return validateReleasePlan(plan).andThen((validated) =>
+    sortValue(validated).map((sorted) => JSON.stringify(sorted, null, 2)),
   );
 }
 
@@ -553,15 +563,13 @@ export function parseReleasePlan(
 export function serializeReleasePlanArtifact(
   plan: ReleasePlan,
 ): Result<string, ReleasePlanError> {
-  return validateReleasePlan(plan).map((validated) =>
-    JSON.stringify(
+  return validateReleasePlan(plan).andThen((validated) =>
+    releasePlanDigest(validated).andThen((planDigest) =>
       sortValue({
         schemaVersion: RELEASE_PLAN_SCHEMA_VERSION,
-        planDigest: releasePlanDigest(validated),
+        planDigest,
         plan: validated,
-      }),
-      null,
-      2,
+      }).map((sorted) => JSON.stringify(sorted, null, 2)),
     ),
   );
 }
@@ -574,8 +582,12 @@ export function parseReleasePlanArtifact(
 }
 
 /** The plan's identity: SHA-256 over its canonical bytes. */
-export function releasePlanDigest(plan: ReleasePlan): string {
-  return digestOf(JSON.stringify(sortValue(plan)));
+export function releasePlanDigest(
+  plan: ReleasePlan,
+): Result<string, ReleasePlanError> {
+  return validateJsonValue(plan)
+    .andThen((value) => digestJson(value))
+    .mapErr(canonicalJsonError);
 }
 
 /** Fails closed when a carried digest does not identify the carried plan. */
@@ -583,10 +595,11 @@ export function verifyReleasePlanDigest(
   plan: ReleasePlan,
   expected: string,
 ): Result<string, ReleasePlanError> {
-  const actual = releasePlanDigest(plan);
-  if (actual !== expected)
-    return err({ type: "PlanDigestMismatch", expected, actual });
-  return ok(actual);
+  return releasePlanDigest(plan).andThen((actual) =>
+    actual !== expected
+      ? err({ type: "PlanDigestMismatch" as const, expected, actual })
+      : ok(actual),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1434,14 +1447,18 @@ function stripTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-function sortValue<T>(value: T): JsonValue {
-  return sortJsonInput(value);
+function canonicalJsonError(
+  error: JsonCanonicalizationError,
+): ReleasePlanError {
+  return { type: "CanonicalJsonFailed", reason: error.reason };
 }
 
-function digestOf(value: string): string {
-  return `${NPM_DIGEST_PREFIX}${new Bun.CryptoHasher("sha256")
-    .update(value)
-    .digest("hex")}`;
+function sortValue(
+  value: ReleasePlan | ReleasePlanSerializationInput | JsonValue,
+): Result<JsonValue, ReleasePlanError> {
+  return validateJsonValue(value)
+    .andThen((bounded) => sortJsonInput(bounded))
+    .mapErr(canonicalJsonError);
 }
 
 function compareText(left: string, right: string): number {

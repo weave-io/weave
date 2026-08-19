@@ -7,7 +7,13 @@ import type {
 import type { Clock } from "./clock.js";
 import type { PublicPackageName } from "./constants.js";
 import { PUBLIC_PACKAGE_NAMES, STABLE_TRAIN_TRANSITIONS } from "./constants.js";
-import { canonicalizeJson } from "./json.js";
+import {
+  canonicalizeJson,
+  digestJson,
+  type JsonCanonicalizationError,
+  type JsonValue,
+  validateJsonValue,
+} from "./json.js";
 import { type StableTrainRecord, StableTrainRecordSchema } from "./model.js";
 
 export type StableTrainError =
@@ -22,7 +28,8 @@ export type StableTrainError =
   | { type: "InvalidCut"; reason: string }
   | { type: "UnmergedCommit"; sha: string }
   | { type: "NonGreenCommit"; sha: string }
-  | { type: "ReservedVersion"; packageName: string; version: string };
+  | { type: "ReservedVersion"; packageName: string; version: string }
+  | { type: "CanonicalJsonFailed"; reason: string };
 
 export interface StableTrainContent {
   schemaVersion: 1;
@@ -78,6 +85,11 @@ export interface StableFixPlan {
   commits: readonly string[];
 }
 
+type StableTrainDigestInput =
+  | StableTrainContent
+  | StableTrainRecord
+  | JsonValue;
+
 /** Content-addressed evidence written after a partial npm publish. */
 export interface PartialPublishRecoveryMetadata {
   schemaVersion: 1;
@@ -88,17 +100,31 @@ export interface PartialPublishRecoveryMetadata {
   metadataDigest: string;
 }
 
-export function canonicalTrainJson<T>(record: T): string {
-  return canonicalizeJson(record);
+function canonicalJsonError(
+  error: JsonCanonicalizationError,
+): StableTrainError {
+  return { type: "CanonicalJsonFailed", reason: error.reason };
 }
 
-export function trainRecordDigest<T>(record: T): string {
-  return `sha256:${Bun.CryptoHasher.hash("sha256", canonicalTrainJson(record), "hex")}`;
+export function canonicalTrainJson(
+  record: StableTrainDigestInput,
+): Result<string, StableTrainError> {
+  return validateJsonValue(record)
+    .andThen((value) => canonicalizeJson(value))
+    .mapErr(canonicalJsonError);
+}
+
+export function trainRecordDigest(
+  record: StableTrainDigestInput,
+): Result<string, StableTrainError> {
+  return validateJsonValue(record)
+    .andThen((value) => digestJson(value))
+    .mapErr(canonicalJsonError);
 }
 
 export function partialPublishRecoveryMetadata(
   record: StableTrainRecord,
-): PartialPublishRecoveryMetadata {
+): Result<PartialPublishRecoveryMetadata, StableTrainError> {
   const content = {
     schemaVersion: 1 as const,
     trainDigest: record.recordDigest,
@@ -106,10 +132,12 @@ export function partialPublishRecoveryMetadata(
     usedVersions: record.versions,
     recovery: "fresh-main-cut" as const,
   };
-  return {
-    ...content,
-    metadataDigest: `sha256:${Bun.CryptoHasher.hash("sha256", canonicalTrainJson(content), "hex")}`,
-  };
+  return digestJson(content)
+    .mapErr(canonicalJsonError)
+    .map((metadataDigest) => ({
+      ...content,
+      metadataDigest,
+    }));
 }
 
 /** Rejects stale artifact identity after a rebuild, rerun, or fix. */
@@ -143,10 +171,11 @@ export function validateStableTrain(
     });
   const { recordDigest, ...content } = parsed.data;
   const actual = trainRecordDigest(content);
-  if (recordDigest !== actual)
+  if (actual.isErr()) return err(actual.error);
+  if (recordDigest !== actual.value)
     return err({
       type: "DigestMismatch",
-      expected: actual,
+      expected: actual.value,
       actual: recordDigest,
     });
   return ok(parsed.data);
@@ -161,7 +190,10 @@ export function transitionStableTrain(
     return err({ type: "InvalidTransition", from: record.state, to: state });
   const { recordDigest: _recordDigest, ...content } = record;
   const next = { ...content, state };
-  return ok({ ...next, recordDigest: trainRecordDigest(next) });
+  return trainRecordDigest(next).map((recordDigest) => ({
+    ...next,
+    recordDigest,
+  }));
 }
 
 /**
@@ -199,10 +231,12 @@ export function bindStableTrain(
     artifactManifestDigest,
     artifactIds: [...artifactIds],
   };
-  return validateStableTrain({
-    ...next,
-    recordDigest: trainRecordDigest(next),
-  });
+  return trainRecordDigest(next).andThen((recordDigest) =>
+    validateStableTrain({
+      ...next,
+      recordDigest,
+    }),
+  );
 }
 
 /** Expiry is exclusive: a train is unusable at precisely expiresAt. */
@@ -265,24 +299,23 @@ export function planStableCut(
     consumedChangesets,
     metadataWrites,
   };
-  const candidate = {
-    ...content,
-    recordDigest: trainRecordDigest(content),
-  };
-  const checked = StableTrainRecordSchema.safeParse(candidate);
-  if (!checked.success)
-    return err({
-      type: "InvalidTrainRecord",
-      issues: checked.error.issues.map((issue) => issue.message),
+  return trainRecordDigest(content).andThen((recordDigest) => {
+    const candidate = { ...content, recordDigest };
+    const checked = StableTrainRecordSchema.safeParse(candidate);
+    if (!checked.success)
+      return err({
+        type: "InvalidTrainRecord" as const,
+        issues: checked.error.issues.map((issue) => issue.message),
+      });
+    return ok({
+      record: checked.data,
+      expectedHeadSha: input.mainHeadSha,
+      worktree: {
+        consumedChangesets,
+        metadataWrites,
+        preservedPaths: input.partition.remainOnMainFiles,
+      },
     });
-  return ok({
-    record: checked.data,
-    expectedHeadSha: input.mainHeadSha,
-    worktree: {
-      consumedChangesets,
-      metadataWrites,
-      preservedPaths: input.partition.remainOnMainFiles,
-    },
   });
 }
 
@@ -308,29 +341,34 @@ export function planStableFix(
       return err({ type: "UnmergedCommit", sha: commit.sha });
     if (!commit.green) return err({ type: "NonGreenCommit", sha: commit.sha });
   }
-  const invalidated = invalidateArtifacts(input.record);
-  return ok({
-    record: invalidated,
+  return invalidateArtifacts(input.record).map((record) => ({
+    record,
     expectedHeadSha: input.expectedHeadSha,
     commits: input.commits.map(({ sha }) => sha),
-  });
+  }));
 }
 
 export function invalidateArtifacts(
   record: StableTrainRecord,
-): StableTrainRecord {
+): Result<StableTrainRecord, StableTrainError> {
   const {
     recordDigest: _digest,
     artifactIds: _artifactIds,
     artifactManifestDigest: _manifest,
     ...content
   } = record;
-  const candidate = {
-    ...content,
-    recordDigest: trainRecordDigest(content),
-  };
-  const checked = StableTrainRecordSchema.safeParse(candidate);
-  return checked.success ? checked.data : record;
+  return trainRecordDigest(content).andThen((recordDigest) => {
+    const checked = StableTrainRecordSchema.safeParse({
+      ...content,
+      recordDigest,
+    });
+    if (!checked.success)
+      return err({
+        type: "InvalidTrainRecord" as const,
+        issues: checked.error.issues.map((issue) => issue.message),
+      });
+    return ok(checked.data);
+  });
 }
 
 interface DerivedVersions {

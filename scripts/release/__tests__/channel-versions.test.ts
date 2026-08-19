@@ -203,6 +203,20 @@ describe("channel versions", () => {
     expect(result._unsafeUnwrap().affected).toEqual([OPENCODE, PI]);
   });
 
+  it("awaits native Promise changed paths without iterating the promise object", async () => {
+    const result = await computeNightlyAffectedSet({
+      packageVersions: versions,
+      changesets: [],
+      ledger: EMPTY_CONSUMPTION_LEDGER,
+      sourceSha: SHA,
+      registry: registry(),
+      manifests,
+      changedPathsSince: () =>
+        Promise.resolve(["packages/adapters/pi/src/index.ts"]),
+    });
+    expect(result._unsafeUnwrap().affected).toEqual([PI]);
+  });
+
   it("returns NothingToPublish for a clean nightly diff", async () => {
     const result = await computeNightlyAffectedSet({
       packageVersions: versions,

@@ -7,6 +7,12 @@ import {
   validateStableTrain,
 } from "../stable-train.js";
 
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 function train(
   state: "awaiting-promotion" | "promoted",
   overrides: Partial<StableTrainContent> = {},
@@ -24,7 +30,7 @@ function train(
   };
   const result = validateStableTrain({
     ...content,
-    recordDigest: trainRecordDigest(content),
+    recordDigest: trainDigest(content),
   });
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;

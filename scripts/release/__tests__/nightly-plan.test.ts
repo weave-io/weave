@@ -212,4 +212,48 @@ describe("release preflight operation routing", () => {
     expect(await runPreflight(environment("unknown"))).toBe(1);
     globalThis.fetch = originalFetch;
   });
+
+  test("rejects a GitHub response with an own __proto__ key", async () => {
+    const fetchStub = Object.assign(
+      async (): Promise<Response> =>
+        new Response(`{"__proto__":{"object":{"sha":"${sha}"}}}`, {
+          headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" },
+        }),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    globalThis.fetch = fetchStub;
+    try {
+      expect(await runPreflight(environment("stable-cut"))).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("rejects an inherited GitHub object.sha", async () => {
+    const previous = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "object",
+    );
+    Object.defineProperty(Object.prototype, "object", {
+      configurable: true,
+      value: { sha },
+      writable: true,
+    });
+    const fetchStub = Object.assign(
+      async (): Promise<Response> =>
+        new Response("{}", {
+          headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" },
+        }),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    globalThis.fetch = fetchStub;
+    try {
+      expect(await runPreflight(environment("stable-cut"))).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === undefined)
+        Reflect.deleteProperty(Object.prototype, "object");
+      else Object.defineProperty(Object.prototype, "object", previous);
+    }
+  });
 });

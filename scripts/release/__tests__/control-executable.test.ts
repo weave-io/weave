@@ -2,7 +2,17 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { createBindingRecord } from "../artifact-binding.js";
 import type { ArtifactManifest } from "../model.js";
-import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 test("compiled control is self-contained and digest recorded", async () => {
   const root = join(import.meta.dir, "..", "..", "..");
@@ -70,7 +80,7 @@ test("compiled control dry-runs publication from a clean directory", async () =>
   };
   const stableTrainResult = validateStableTrain({
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: trainDigest(trainContent),
   });
   if (stableTrainResult.isErr())
     throw new Error(JSON.stringify(stableTrainResult.error));

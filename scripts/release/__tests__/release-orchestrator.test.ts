@@ -17,7 +17,17 @@ import type {
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { scanCredentialSources } from "../package-policy.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
-import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 describe("release command allowlist", () => {
   test("rejects shell injection before spawning", async () => {
@@ -602,7 +612,7 @@ function stableTrain(
   };
   const checked = validateStableTrain({
     ...content,
-    recordDigest: trainRecordDigest(content),
+    recordDigest: trainDigest(content),
   });
   if (checked.isErr()) throw new Error(JSON.stringify(checked.error));
   return checked.value;
