@@ -67,6 +67,8 @@ import {
 } from "./child-compaction-settlement.js";
 import {
   MAX_SETTLEMENT_OUTPUT_BYTES,
+  MODEL_TRANSITION_SCHEMA_VERSION,
+  type PiModelTransitionBody,
   parseControlBody,
   toModelIdentityBody,
 } from "./child-control-bodies.js";
@@ -326,6 +328,14 @@ import {
   type PiModelFailoverTerminalDecision,
 } from "./model-failover-coordinator.js";
 import {
+  appendConfirmedPiModelFailoverRecord,
+  modelFailoverRecordFromTransition,
+  type PiModelFailoverAppendPort,
+  parsePiModelFailoverNativeEntry,
+  parsePiModelFailoverRecord,
+} from "./model-failover-record.js";
+import { primaryModelFallbackRenderer } from "./model-fallback-event-render.js";
+import {
   PiModelActivator,
   type PiModelApplyPort,
   type PiModelResolution,
@@ -443,6 +453,7 @@ import type {
   PiSessionContext,
   PiSkillInfo,
   PiTrustState,
+  PiUiThemePort,
 } from "./types.js";
 import { makePaint, plainPaint } from "./ui-paint.js";
 import {
@@ -463,6 +474,145 @@ import { PiWorkflowController } from "./workflow-controller.js";
 
 export const PI_SHARED_LOG_PATH = ".weave/weave.log";
 const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
+
+type PiModelTransitionFacts = Omit<PiModelTransitionBody, "phase">;
+
+type PiModelIdentityLike = {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+};
+
+/**
+ * Projects one coordinator event into the strict, bounded facts shared by
+ * both transition phases. A missing or unchanged origin is not a reportable
+ * transition: the host truth still updates, but no unauthenticated claim is
+ * manufactured for the child channel or durable record.
+ */
+function modelTransitionFactsFromAppliedEvent(
+  event: Pick<
+    PiModelFailoverAppliedEvent,
+    "failureClass" | "model" | "fromModel"
+  >,
+  transitionId: string,
+  fallbackFrom?: PiModelIdentityLike,
+): PiModelTransitionFacts | undefined {
+  const projected = Result.fromThrowable(
+    () => {
+      const from = event.fromModel ?? fallbackFrom;
+      if (from === undefined) return undefined;
+      if (
+        from.provider === event.model.provider &&
+        from.id === event.model.id
+      ) {
+        return undefined;
+      }
+      return {
+        schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
+        transitionId,
+        failureClass: event.failureClass,
+        from: toModelIdentityBody(from),
+        to: toModelIdentityBody(event.model),
+        phase: "applied" as const,
+      };
+    },
+    () => undefined,
+  )();
+  if (projected.isErr() || projected.value === undefined) return undefined;
+  const parsed = parseControlBody("model-transition", projected.value);
+  if (!parsed.ok) return undefined;
+  const { phase: _phase, ...facts } = parsed.value;
+  return facts;
+}
+
+function createPiModelFailoverAppendPort(
+  pi: Pick<PiExtensionApi, "appendEntry">,
+  readEntries: () => readonly unknown[] | undefined,
+): PiModelFailoverAppendPort {
+  return {
+    appendEntry: (type, data) => pi.appendEntry(type, data),
+    getEntries: () => readEntries() ?? [],
+  };
+}
+
+/** Appends only authenticated recovery facts; applied-only phases are ignored. */
+function appendPiModelFailoverTransition(
+  port: PiModelFailoverAppendPort,
+  transition: unknown,
+  log: PiAdapterLogger,
+): void {
+  const record = modelFailoverRecordFromTransition(transition);
+  if (record.isErr()) {
+    log.warn(
+      { reason: record.error.reason },
+      "model-failover transition record rejected",
+    );
+    return;
+  }
+  if (record.value === undefined) return;
+  const appended = appendConfirmedPiModelFailoverRecord(port, record.value);
+  if (appended.isErr()) {
+    log.warn(
+      { reason: appended.error.reason },
+      "model-failover durable append failed",
+    );
+  }
+}
+
+type PiEntryRendererComponent = {
+  render(width: number): string[];
+  invalidate(): void;
+};
+
+type PiEntryRendererHost = PiExtensionApi & {
+  registerEntryRenderer?: (
+    customType: string,
+    renderer: (
+      entry: unknown,
+      options: { readonly expanded: boolean },
+      theme: unknown,
+    ) => PiEntryRendererComponent | undefined,
+  ) => void;
+};
+
+function registerPrimaryModelFallbackRenderer(
+  pi: PiExtensionApi,
+  log: PiAdapterLogger,
+  registered: { value: boolean },
+): void {
+  if (registered.value) return;
+  const host = pi as PiEntryRendererHost;
+  const register = host.registerEntryRenderer;
+  if (typeof register !== "function") return;
+  // Mark before invoking host code: a throwing host still receives exactly one
+  // registration attempt for this extension instance.
+  registered.value = true;
+  Result.fromThrowable(
+    () =>
+      register.call(
+        host,
+        primaryModelFallbackRenderer.customType,
+        (entry, _options, theme) => {
+          const data = readPiOwnEnumerableData(entry, "data");
+          if (data.state !== "data") return undefined;
+          const paint = Result.fromThrowable(
+            () => makePaint(theme as PiUiThemePort),
+            () => undefined,
+          )().unwrapOr(plainPaint());
+          return {
+            render: (width: number) => [
+              ...primaryModelFallbackRenderer.render(data.value, width, paint),
+            ],
+            invalidate: (): void => undefined,
+          };
+        },
+      ),
+    () => undefined,
+  )().match(
+    () => undefined,
+    () => log.warn({}, "primary model-fallback renderer registration failed"),
+  );
+}
 
 type PiPrimarySwitchFailure =
   | { readonly type: "PrimarySwitchUnavailable" }
@@ -1854,6 +2004,9 @@ async function activateChildModeIfApplicable(
   // remains reusable for a later fallback turn, but it never owns a fallback
   // marker, context repair, or terminal callback.
   let latestChildCtx = ctx;
+  const modelFailoverAppendPort = createPiModelFailoverAppendPort(pi, () =>
+    latestChildCtx.sessionManager?.getEntries?.(),
+  );
   let childFailoverCoordinator: PiModelFailoverCoordinator | undefined;
   let childFailoverGeneration: number | undefined;
   let childFallbackAttempt = 0;
@@ -1864,6 +2017,49 @@ async function activateChildModeIfApplicable(
   let cancellationClaimed = false;
   let shuttingDown = false;
   let fallbackGate: PiChildFallbackSettlementGate | undefined;
+  let childModelTransitionFacts: PiModelTransitionFacts | undefined;
+  let childModelTransitionReportTail: Promise<boolean> = Promise.resolve(true);
+
+  const queueChildModelTransition = (
+    phase: PiModelTransitionBody["phase"],
+  ): void => {
+    const facts = childModelTransitionFacts;
+    if (facts === undefined) return;
+    const generation = state.bootstrapGeneration;
+    const previous = childModelTransitionReportTail;
+    childModelTransitionReportTail = previous
+      .then(async (priorSucceeded) => {
+        if (state.bootstrapGeneration !== generation) return false;
+        // A recovery claim is valid only when its paired applied fact reached
+        // the parent. The runtime serializes control envelopes, while this
+        // local queue preserves the phase order at the lifecycle seam.
+        if (!priorSucceeded && phase === "recovery-confirmed") return false;
+        if (phase === "recovery-confirmed") {
+          // The local durable event follows the same applied proof that the
+          // authenticated recovery phase depends on. If applied reporting
+          // failed, keep the child transcript free of an unsupported recovery
+          // claim as well.
+          appendPiModelFailoverTransition(
+            modelFailoverAppendPort,
+            { ...facts, phase },
+            deps.logger,
+          );
+        }
+        const reported = await runtime.reportModelTransition({
+          ...facts,
+          phase,
+        });
+        if (reported.isErr()) {
+          deps.logger.warn(
+            { childId: state.childId, errorType: reported.error.type },
+            "child model transition reporting failed",
+          );
+          return false;
+        }
+        return true;
+      })
+      .catch(() => false);
+  };
 
   const claimTerminalSettlement = (): boolean => {
     if (
@@ -1878,10 +2074,14 @@ async function activateChildModeIfApplicable(
     return true;
   };
 
-  const reportChildFailure = (reason: string): void => {
+  const reportChildFailure = async (reason: string): Promise<void> => {
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (!claimTerminalSettlement()) return;
-    void reportSettlement("failed", { reason });
+    // Do not let a terminal failure overtake an already-admitted applied
+    // transition. A transport failure still resolves the queue and degrades to
+    // the ordinary sanitized settlement below.
+    await childModelTransitionReportTail;
+    await reportSettlement("failed", { reason });
   };
 
   /**
@@ -1939,6 +2139,11 @@ async function activateChildModeIfApplicable(
    */
   async function settleChildCompleted(): Promise<void> {
     if (!claimTerminalSettlement()) return;
+    // Model-transition reports are nonterminal, but the terminal settlement
+    // must not overtake a recovery claim that the child has already admitted.
+    // Awaiting the bounded local queue preserves the authenticated sequence
+    // and lets a failed report degrade to an ordinary settlement.
+    await childModelTransitionReportTail;
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (state.directStep !== undefined) {
       const candidate = state.directStep.recorder.take();
@@ -2033,6 +2238,8 @@ async function activateChildModeIfApplicable(
       childFallbackEpoch = undefined;
       childFallbackFailure = undefined;
       childPendingFailure = undefined;
+      childModelTransitionFacts = undefined;
+      childModelTransitionReportTail = Promise.resolve(true);
       abortGate.reset();
     }
     // The gate can also be closed by a previous terminal outcome before a
@@ -2069,7 +2276,19 @@ async function activateChildModeIfApplicable(
             model.provider === event.model.provider &&
             model.id === event.model.id,
         );
+        // Capture the origin before committing the destination. The host
+        // context may already expose the destination by the time this
+        // callback runs, so it is not a safe fallback origin.
+        const priorModel = state.appliedModel ?? latestChildCtx.model;
+        // Commit host/model truth before attempting the authenticated report.
+        // A reporting failure must not roll back the model Pi already applied.
         if (matches.length === 1) state.appliedModel = matches[0];
+        childModelTransitionFacts = modelTransitionFactsFromAppliedEvent(
+          event,
+          deps.idGenerator.next(),
+          priorModel,
+        );
+        queueChildModelTransition("applied");
       },
       context: () => {
         const current = latestChildCtx;
@@ -2093,7 +2312,7 @@ async function activateChildModeIfApplicable(
         state.bootstrapGeneration === generation,
       isSessionCurrent: (nativeSessionId) => nativeSessionId === state.childId,
       isCancelled: () => cancellationClaimed || runtime.isCancelled(),
-      onRecoveryConfirmed: () => {
+      onRecoveryConfirmed: (event) => {
         const epoch = childFallbackEpoch;
         const gate = fallbackGate;
         if (epoch === undefined || gate === undefined) return;
@@ -2102,6 +2321,7 @@ async function activateChildModeIfApplicable(
           // confirmed context proof clears transient assembly for the new
           // provider run, so failed text can never join fallback output.
           resetChildTransientAttempt();
+          queueChildModelTransition(event.phase);
         }
       },
       onTerminal: (decision) => {
@@ -3544,6 +3764,8 @@ export function createPiExtension(
    * naming a target's model needs a context the extension already holds.
    */
   let latestSessionCtx: PiSessionContext | undefined;
+  /** The host API used by generation-scoped native-entry append callbacks. */
+  let currentPrimaryPi: PiExtensionApi | undefined;
   /**
    * The owner whose committed neutral intent applies to this session: an
    * authenticated child bootstrap in child mode, otherwise the committed
@@ -3712,6 +3934,61 @@ export function createPiExtension(
   };
 
   let primaryFailoverSettlementDeferred = false;
+  let primaryModelTransitionFacts: PiModelTransitionFacts | undefined;
+  /**
+   * Native entry data has no source field by design. Keep source-scoped
+   * in-process ports so two authenticated observers may legitimately carry
+   * the same transition id without collapsing into one another.
+   */
+  const childObserverTransitionIds = new Set<string>();
+  const childObserverAppendPorts = new Map<string, PiModelFailoverAppendPort>();
+  const createPrimaryModelFailoverAppendPort = (): PiModelFailoverAppendPort =>
+    createPiModelFailoverAppendPort(
+      // The public host method is the durable native-session append boundary.
+      // SessionManager history is read lazily so reload/replacement is safe.
+      {
+        appendEntry: (type, data) => currentPrimaryPi?.appendEntry(type, data),
+      },
+      () => {
+        const entries = latestSessionCtx?.sessionManager?.getEntries?.();
+        if (entries === undefined) return undefined;
+        return entries.filter((entry) => {
+          const parsed = parsePiModelFailoverNativeEntry(entry);
+          if (parsed.isErr() || parsed.value === undefined) return true;
+          return !childObserverTransitionIds.has(parsed.value.transitionId);
+        });
+      },
+    );
+  let primaryModelFailoverAppendPort = createPrimaryModelFailoverAppendPort();
+
+  const childObserverModelFailoverAppendPort = (
+    sourceKind: "delegated" | "direct",
+    childId: string,
+  ): PiModelFailoverAppendPort => {
+    const sourceKey = `${sourceKind}:${childId}`;
+    const existing = childObserverAppendPorts.get(sourceKey);
+    if (existing !== undefined) return existing;
+    const port = createPiModelFailoverAppendPort(
+      {
+        appendEntry: (type, data) => {
+          const host = currentPrimaryPi;
+          if (host === undefined) return;
+          host.appendEntry(type, data);
+          const parsed = parsePiModelFailoverRecord(data);
+          if (parsed.isOk()) {
+            childObserverTransitionIds.add(parsed.value.transitionId);
+          }
+        },
+      },
+      // A child observer's source identity is not encoded in the strict
+      // record, so native history cannot distinguish another source with the
+      // same transition id. Its source-scoped port supplies the dedupe set;
+      // primary history remains restart-deduped through the port above.
+      () => undefined,
+    );
+    childObserverAppendPorts.set(sourceKey, port);
+    return port;
+  };
 
   const readPrimaryModelFailover = ():
     | PiModelFailoverCoordinator
@@ -3781,6 +4058,16 @@ export function createPiExtension(
         ? matches[0]
         : { provider: event.model.provider, id: event.model.id };
     if (applied === undefined) return;
+    // Capture the one transition id at application proof. The same facts are
+    // reused for recovery confirmation, so applied and durable recovery can
+    // never describe two different switches.
+    primaryModelTransitionFacts = modelTransitionFactsFromAppliedEvent(
+      event,
+      deps.idGenerator.next(),
+      session.primarySession.getAppliedModel() ?? latestSessionCtx?.model,
+    );
+    // Model truth is committed before any durable append or later recovery
+    // admission. A failed marker/context proof must not roll it back.
     session.primarySession.noteAppliedModel(applied);
     resetProviderFastReporting();
     // The applied model invalidates every prior mapped attempt. Keep the
@@ -3863,6 +4150,22 @@ export function createPiExtension(
   const onPrimaryRecoveryConfirmed = (
     event: PiModelFailoverRecoveryConfirmedEvent,
   ): void => {
+    const facts = primaryModelTransitionFacts;
+    if (
+      facts !== undefined &&
+      facts.failureClass === event.failureClass &&
+      facts.to.provider === event.model.provider &&
+      facts.to.id === event.model.id
+    ) {
+      appendPiModelFailoverTransition(
+        primaryModelFailoverAppendPort,
+        { ...facts, phase: "recovery-confirmed" },
+        deps.logger,
+      );
+    }
+    // A terminal callback is not allowed to reuse a prior transition id after
+    // this recovery proof has been consumed.
+    primaryModelTransitionFacts = undefined;
     recordPrimaryModelFallbackTelemetry({
       outcome: "recovery-confirmed",
       failureClass: event.failureClass,
@@ -3914,12 +4217,14 @@ export function createPiExtension(
       !runtimeModelFallbackEnabled()
     ) {
       shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+      primaryModelTransitionFacts = undefined;
       primaryFailoverSettlementDeferred = false;
       return;
     }
     const current = session.primarySession.getCurrent();
     if (current === undefined) {
       shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+      primaryModelTransitionFacts = undefined;
       return;
     }
     const available = safelyListAvailableModels(ctx.modelRegistry).unwrapOr([]);
@@ -3950,6 +4255,7 @@ export function createPiExtension(
       return;
     }
     shutdownModelFailoverCoordinator(modelFailoverCoordinatorCell);
+    primaryModelTransitionFacts = undefined;
     const coordinator = createPiModelFailoverCoordinator({
       host: {
         setModel: (model) => pi.setModel(model),
@@ -6374,9 +6680,17 @@ export function createPiExtension(
     },
   });
 
+  const primaryFallbackRendererRegistration = { value: false };
+
   const piAdapterExtension = function piAdapterExtension(
     pi: PiExtensionApi,
   ): void {
+    currentPrimaryPi = pi;
+    registerPrimaryModelFallbackRenderer(
+      pi,
+      deps.logger,
+      primaryFallbackRendererRegistration,
+    );
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
@@ -6621,6 +6935,10 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
+      primaryModelTransitionFacts = undefined;
+      childObserverTransitionIds.clear();
+      childObserverAppendPorts.clear();
+      primaryModelFailoverAppendPort = createPrimaryModelFailoverAppendPort();
       resetProviderFastReporting();
       // Revoke the prior generation synchronously, before the first await.
       // Overlays settle first, then the startup sequence bumps, then every
@@ -7463,6 +7781,18 @@ export function createPiExtension(
                 inspectionRegistry,
               );
             },
+            // Authenticated child transitions are the sole parent-side source
+            // for durable child fallback facts. Applied truth is already
+            // committed by the controller before this callback runs; only the
+            // strict record converter admits recovery-confirmed data.
+            onModelTransition: (childId, transition) => {
+              if (!startupOwnsGeneration()) return;
+              appendPiModelFailoverTransition(
+                childObserverModelFailoverAppendPort("delegated", childId),
+                transition,
+                deps.logger,
+              );
+            },
             onPrivateOutput: deps.onChildPrivateOutput,
             inspectionRegistry,
             // One gate, one pipeline. Focus, generation, settlement and
@@ -7800,6 +8130,14 @@ export function createPiExtension(
                   onPrivateOutput: (childId, capture) =>
                     deps.onChildPrivateOutput?.(childId, capture) ??
                     ok(undefined),
+                  onModelTransition: (childId, transition) => {
+                    if (!startupOwnsGeneration()) return;
+                    appendPiModelFailoverTransition(
+                      childObserverModelFailoverAppendPort("direct", childId),
+                      transition,
+                      deps.logger,
+                    );
+                  },
                 },
                 generation.id,
               ),

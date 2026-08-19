@@ -113,7 +113,13 @@ class MinimalFakeHost implements PiExtensionApi {
     this.events.set(event, existing);
   }
   sendUserMessage(_content: string): void {}
-  appendEntry(_type: string, _data: unknown): void {}
+  readonly appendedEntries: {
+    readonly type: string;
+    readonly data: unknown;
+  }[] = [];
+  appendEntry(type: string, data: unknown): void {
+    this.appendedEntries.push({ type, data });
+  }
   getActiveTools(): readonly string[] {
     return [];
   }
@@ -560,6 +566,27 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     const marker = host.sentMessages[0];
     expect(marker?.customType).toBe("weave.model-fallback.recovery-marker");
 
+    await waitFor(
+      () =>
+        output.lines.filter((line) => line.kind === "model-transition")
+          .length === 1,
+    );
+    const appliedLine = output.lines.find(
+      (line) => line.kind === "model-transition",
+    );
+    const appliedBody = appliedLine?.body as Record<string, unknown>;
+    expect(appliedBody).toMatchObject({
+      phase: "applied",
+      transitionId: expect.any(String),
+      from: { provider: origin.provider, id: origin.id },
+      to: { provider: fallback.provider, id: fallback.id },
+    });
+    expect(JSON.stringify(appliedBody)).not.toContain("partial failed output");
+    expect(JSON.stringify(appliedBody)).not.toContain("rate limited");
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      0,
+    );
+
     const durableHistory: unknown[] = [failedMessage, marker];
     await host.fire(
       "message_start",
@@ -578,6 +605,34 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       providerInput,
       recoveryCtx,
     );
+    await waitFor(
+      () =>
+        output.lines.filter((line) => line.kind === "model-transition")
+          .length === 2,
+    );
+    const transitions = output.lines.filter(
+      (line) => line.kind === "model-transition",
+    );
+    const recoveryBody = transitions[1]?.body as Record<string, unknown>;
+    expect(recoveryBody).toMatchObject({
+      phase: "recovery-confirmed",
+      transitionId: appliedBody.transitionId,
+      from: { provider: origin.provider, id: origin.id },
+      to: { provider: fallback.provider, id: fallback.id },
+    });
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      0,
+    );
+    expect(host.appendedEntries).toHaveLength(1);
+    expect(host.appendedEntries[0]).toMatchObject({
+      type: "weave.model-failover",
+      data: {
+        schemaVersion: 1,
+        transitionId: appliedBody.transitionId,
+        from: { provider: origin.provider, id: origin.id },
+        to: { provider: fallback.provider, id: fallback.id },
+      },
+    });
     expect(contextResult).toEqual([userMessage]);
     expect(trustedContextInputs).toEqual([[userMessage]]);
     expect(providerInput).toEqual([userMessage, failedMessage, marker]);
@@ -627,6 +682,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
       1,
     );
+    expect(host.appendedEntries).toHaveLength(1);
   });
 
   it("retries settlement once after a failed output write without leaving a sequence gap", async () => {

@@ -13781,6 +13781,11 @@ describe("createPiExtension: primary model fallback C4a", () => {
     expect(
       records.some((record) => record.outcome === "recovery-confirmed"),
     ).toBe(false);
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === "weave.model-failover",
+      ),
+    ).toHaveLength(0);
   });
 
   it("keeps applied model and recomputed provider-fast truth after context admission fails", async () => {
@@ -13827,6 +13832,34 @@ describe("createPiExtension: primary model fallback C4a", () => {
     expect(
       records.some((record) => record.outcome === "recovery-confirmed"),
     ).toBe(false);
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === "weave.model-failover",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("registers the primary model-fallback renderer exactly once", () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    const registrations: string[] = [];
+    Object.assign(host.api, {
+      registerEntryRenderer: (customType: string) => {
+        registrations.push(customType);
+      },
+    });
+
+    const extension = installModelFallbackExtension(host, []);
+    // Pi invokes one compiled extension instance once in normal operation;
+    // invoke it a second time here to prove the registration guard is local to
+    // the instance rather than a duplicate host callback.
+    extension(host.api);
+
+    expect(registrations).toEqual(["weave.model-failover"]);
   });
 
   it("completes one primary fallback lifecycle with one deferred settlement (C4b)", async () => {
@@ -13998,7 +14031,20 @@ describe("createPiExtension: primary model fallback C4a", () => {
     expect(host.getCurrentModel()).toBe(loomFallback);
     expect(host.sentUserMessages).toHaveLength(0);
     expect(host.generatedTurnCount).toBe(0);
-    expect(host.appendedEntries).toHaveLength(0);
+    const fallbackEntries = host.appendedEntries.filter(
+      (entry) => entry.type === "weave.model-failover",
+    );
+    expect(fallbackEntries).toHaveLength(1);
+    expect(fallbackEntries[0]?.data).toMatchObject({
+      schemaVersion: 1,
+      transitionId: expect.any(String),
+      from: { provider: loomOrigin.provider, id: loomOrigin.id },
+      to: { provider: loomFallback.provider, id: loomFallback.id },
+    });
+    expect(JSON.stringify(fallbackEntries)).not.toContain("fallback answer");
+    expect(JSON.stringify(fallbackEntries)).not.toContain(
+      "bounded provider failure",
+    );
     expect(host.durableHistory).toEqual([
       userMessage,
       failedAssistant,

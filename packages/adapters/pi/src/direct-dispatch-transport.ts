@@ -18,7 +18,10 @@ import {
   type Result,
   ResultAsync,
 } from "neverthrow";
-import { toModelIdentityBody } from "./child-control-bodies.js";
+import {
+  type PiModelTransitionBody,
+  toModelIdentityBody,
+} from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiNativeSessionRecord } from "./child-native-sessions.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
@@ -163,6 +166,11 @@ export interface PiDirectDispatchTransportDeps {
     childId: string,
     capture: PiChildPrivateOutputCapture,
   ) => Result<void, PiAdapterFailure> | ResultAsync<void, PiAdapterFailure>;
+  /** Receives authenticated model transitions from the direct-step child. */
+  readonly onModelTransition?: (
+    childId: string,
+    transition: PiModelTransitionBody,
+  ) => void;
 }
 
 /** A direct step's provisioned native session and its parent ref record. */
@@ -366,6 +374,8 @@ export function createDirectDispatchTransport(
           capturedPrivateOutput = capture;
           return deps.onPrivateOutput?.(childId, capture) ?? ok(undefined);
         },
+        onModelTransition: (transitionChildId, transition) =>
+          deps.onModelTransition?.(transitionChildId, transition),
         onDelegationRequest: (authenticatedChildId, correlationId, body) => {
           const relayDelegation = deps.relayDelegation;
           if (relayDelegation === undefined) {
