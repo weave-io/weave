@@ -409,4 +409,102 @@ describe("permission canonicalization", () => {
     expect(ownKeysReads).toBe(1);
     expect(lengthReads).toBe(1);
   });
+
+  test("rebuilds arrays in numeric order after reversed ownKeys", () => {
+    const source = ["first", "second"];
+    const reversed = new Proxy(source, {
+      ownKeys: () => ["1", "0", "length"],
+      getOwnPropertyDescriptor(target, key) {
+        return Object.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    expect(canonicalizeJson(reversed)._unsafeUnwrap()).toBe(
+      '["first","second"]',
+    );
+  });
+
+  test("captures each index descriptor once instead of accepting a substituted reread", () => {
+    const source = ["first", "second"];
+    const reads = new Map<string, number>();
+    const proxy = new Proxy(source, {
+      ownKeys: () => ["1", "0", "length"],
+      getOwnPropertyDescriptor(target, key) {
+        const text = String(key);
+        const count = (reads.get(text) ?? 0) + 1;
+        reads.set(text, count);
+        if (text === "0" && count > 1) {
+          return {
+            value: "substituted",
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          };
+        }
+        return Object.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    expect(canonicalizeJson(proxy)._unsafeUnwrap()).toBe('["first","second"]');
+    expect(reads.get("0")).toBe(1);
+    expect(reads.get("1")).toBe(1);
+    expect(reads.get("length")).toBe(1);
+  });
+
+  test("rejects an index substituted outside the dense range", () => {
+    const source = ["first", "second"];
+    const substituted = new Proxy(source, {
+      ownKeys: () => ["0", "2", "length"],
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "2") {
+          return {
+            value: "substituted",
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          };
+        }
+        return Object.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    expect(canonicalizeJson(substituted).isErr()).toBe(true);
+  });
+
+  test("rejects non-index array properties", () => {
+    const source = ["first"];
+    const withExtra = new Proxy(source, {
+      ownKeys: () => ["0", "extra", "length"],
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "extra") {
+          return {
+            value: "unexpected",
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          };
+        }
+        return Object.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    expect(canonicalizeJson(withExtra).isErr()).toBe(true);
+  });
+
+  test("rejects callable proxies before inspecting object properties", () => {
+    let ownKeysReads = 0;
+    const callable = (): string => "unsafe";
+    const callableProxy = new Proxy(callable, {
+      getPrototypeOf() {
+        throw new Error("getPrototypeOf should not run");
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error("ownKeys should not run");
+      },
+    });
+
+    expect(canonicalizeJson(callableProxy).isErr()).toBe(true);
+    expect(ownKeysReads).toBe(0);
+  });
 });

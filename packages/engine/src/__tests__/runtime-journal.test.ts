@@ -575,6 +575,25 @@ describe("sanitizeJournalData", () => {
     expect(result.isOk()).toBe(true);
   });
 
+  it("accepts frozen JSON data descriptors", () => {
+    const frozen = Object.freeze({
+      stepName: "plan",
+      nested: Object.freeze({ duration: 100 }),
+      items: Object.freeze(["first", "second"]),
+    });
+
+    const result = sanitizeJournalData(frozen);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        stepName: "plan",
+        nested: { duration: 100 },
+        items: ["first", "second"],
+      });
+      expect(result.value).not.toBe(frozen);
+    }
+  });
+
   it("returns err for data with 'token' field", () => {
     const result = sanitizeJournalData({ token: "abc" });
     expect(result.isErr()).toBe(true);

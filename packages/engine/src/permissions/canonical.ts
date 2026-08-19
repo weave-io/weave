@@ -114,6 +114,12 @@ const primitiveTag = <T>(value: T): PrimitiveTag => {
 const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
   value !== null && value !== undefined && Object(value) === value;
 
+const isCallable = <T>(value: T): boolean =>
+  Result.fromThrowable(
+    () => Function.prototype.toString.call(value),
+    () => false,
+  )().isOk();
+
 const isJsonRecord = (value: JsonValue): value is JsonRecord =>
   Object(value) === value && !Array.isArray(value);
 
@@ -199,6 +205,7 @@ function copyJson<T>(
   if (tag === "boolean") return ok(value === true);
   if (tag === "null") return ok(null);
   if (!isObjectLike(value)) return err(unsafe(path, "unsupported value"));
+  if (isCallable(value)) return err(unsafe(path, "unsupported callable"));
   if (context.seen.has(value))
     return err(unsafe(path, "cyclic or aliased value"));
 
@@ -206,48 +213,20 @@ function copyJson<T>(
   const array = Array.isArray(value);
   if (prototype !== Object.prototype && prototype !== null && !array)
     return err(unsafe(path, "unsupported object prototype"));
-  const keys = Reflect.ownKeys(value);
-  if (keys.length > MAX_PROPERTIES_PER_OBJECT)
-    return err(unsafe(path, "object exceeds its property bound"));
-  if (array) {
-    if (keys.length > MAX_ARRAY_ELEMENTS + 1)
-      return err(unsafe(path, `array exceeds ${MAX_ARRAY_ELEMENTS} elements`));
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
-    if (
-      lengthDescriptor === undefined ||
-      !("value" in lengthDescriptor) ||
-      lengthDescriptor.enumerable ||
-      primitiveTag(lengthDescriptor.value) !== "number"
-    )
-      return err(unsafe(path, "invalid array length"));
-    const length = Number(lengthDescriptor.value);
-    if (!Number.isSafeInteger(length) || length < 0)
-      return err(unsafe(path, "invalid array length"));
-    if (length > MAX_ARRAY_ELEMENTS)
-      return err(unsafe(path, `array length exceeds ${MAX_ARRAY_ELEMENTS}`));
-    if (keys.length !== length + 1) return err(unsafe(path, "sparse array"));
-  }
-  const properties = consumeProperties(keys.length, context);
-  if (properties.isErr()) return err(properties.error);
-  context.seen.add(value);
 
   if (array) {
+    const snapshot = snapshotArrayOnce(value);
+    if (snapshot.isErr()) return err(unsafe(path, "invalid array"));
+    const properties = consumeProperties(snapshot.value.length + 1, context);
+    if (properties.isErr()) return err(properties.error);
+    context.seen.add(value);
     const result: JsonValue[] = [];
-    for (let index = 0; index < keys.length; index += 1) {
-      const key = keys[index];
-      if (key === "length") continue;
-      if (Object.prototype.toString.call(key) !== "[object String]")
-        return err(unsafe(path, "unexpected property"));
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        descriptor.enumerable !== true
-      )
-        return err(unsafe(path, "accessor or non-enumerable property"));
+    for (let index = 0; index < snapshot.value.length; index += 1) {
+      const descriptor = snapshot.value[index];
+      if (descriptor === undefined) return err(unsafe(path, "invalid array"));
       const child = copyJson(
         descriptor.value,
-        `${path}[${result.length}]`,
+        `${path}[${index}]`,
         context,
         depth + 1,
       );
@@ -257,16 +236,27 @@ function copyJson<T>(
     return ok(Object.freeze(result));
   }
 
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > MAX_PROPERTIES_PER_OBJECT)
+    return err(unsafe(path, "object exceeds its property bound"));
+  const properties = consumeProperties(keys.length, context);
+  if (properties.isErr()) return err(properties.error);
+  context.seen.add(value);
+
   const result: JsonRecord = Object.create(null);
-  const stringKeys: string[] = [];
+  const descriptors = new Map<string, PropertyDescriptor>();
   for (const key of keys) {
     if (Object.prototype.toString.call(key) !== "[object String]")
       return err(unsafe(path, "unexpected symbol key"));
-    stringKeys.push(String(key));
+    const text = String(key);
+    const descriptor = Object.getOwnPropertyDescriptor(value, text);
+    if (descriptor === undefined)
+      return err(unsafe(path, "missing own descriptor"));
+    descriptors.set(text, descriptor);
   }
-  stringKeys.sort(compareCodeUnits);
+  const stringKeys = [...descriptors.keys()].sort(compareCodeUnits);
   for (const key of stringKeys) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const descriptor = descriptors.get(key);
     if (
       descriptor === undefined ||
       !("value" in descriptor) ||

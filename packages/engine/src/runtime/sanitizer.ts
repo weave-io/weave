@@ -238,9 +238,7 @@ const ownDataDescriptor = (
 ): descriptor is DataPropertyDescriptor =>
   descriptor !== undefined &&
   "value" in descriptor &&
-  descriptor.enumerable === true &&
-  descriptor.configurable === true &&
-  descriptor.writable === true;
+  descriptor.enumerable === true;
 
 /**
  * Copy one value without invoking caller-owned getters or retaining aliases.
@@ -307,7 +305,6 @@ function copyArray<T extends object>(
     !("value" in lengthDescriptor) ||
     lengthDescriptor.enumerable ||
     lengthDescriptor.configurable ||
-    !lengthDescriptor.writable ||
     inputTag(lengthDescriptor.value) !== "number"
   ) {
     return err(failure(UNSAFE_GRAPH));
