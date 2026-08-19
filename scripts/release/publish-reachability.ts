@@ -12,6 +12,8 @@ import { err, ok, Result, ResultAsync } from "neverthrow";
 import {
   RELEASE_ATTEST_WORKFLOW_PATH,
   RELEASE_PUBLISH_WORKFLOW_PATH,
+  RELEASE_STABLE_PREPARE_WORKFLOW_PATH,
+  RELEASE_STABLE_REGENERATE_WORKFLOW_PATH,
 } from "./constants.js";
 import {
   discoverProductionReleaseEntrypoints,
@@ -42,12 +44,215 @@ export const ALLOWED_UNRELATED_ID_TOKEN_WORKFLOWS = new Set([
   ".github/workflows/deploy-docs.yml",
 ]);
 
+export const DOCS_AUDIT_WORKFLOW_PATH =
+  ".github/workflows/docs-audit.yml" as const;
+export const DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH =
+  ".github/workflows/docs-audit-followup.yml" as const;
+
+/** The six Phase C workflows covered by the release security contract. */
+export const PHASE_C_WORKFLOW_PATHS = [
+  RELEASE_STABLE_PREPARE_WORKFLOW_PATH,
+  RELEASE_STABLE_REGENERATE_WORKFLOW_PATH,
+  RELEASE_PUBLISH_WORKFLOW_PATH,
+  RELEASE_ATTEST_WORKFLOW_PATH,
+  DOCS_AUDIT_WORKFLOW_PATH,
+  DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH,
+] as const;
+export type PhaseCWorkflowPath = (typeof PHASE_C_WORKFLOW_PATHS)[number];
+
 export type WorkflowPermissionMap = Readonly<Record<string, string>>;
+export type WorkflowPermissionContract = Readonly<{
+  root: WorkflowPermissionMap;
+  jobs: Readonly<Record<string, WorkflowPermissionMap>>;
+}>;
+
+/**
+ * Exact job-level permissions for the Phase C workflows. Keep this contract
+ * next to the reachability checker so a workflow cannot silently broaden a
+ * boundary while its documentation still describes the old one.
+ */
+const workflowExpression = (body: string): string =>
+  ["$", "{{ ", body, " }}"].join("");
+const NIGHTLY_OR_RELEASE_APP_ENVIRONMENT = workflowExpression(
+  "inputs.channel == 'nightly' && '' || 'release-app'",
+);
+const NIGHTLY_OR_HARNESS_PROOF_ENVIRONMENT = workflowExpression(
+  "inputs.channel == 'nightly' && '' || 'harness-proof'",
+);
+const CHANNEL_APPROVAL_ENVIRONMENT = workflowExpression(
+  "inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release')",
+);
+
+export const PHASE_C_PERMISSION_CONTRACTS = {
+  [RELEASE_STABLE_PREPARE_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      authorize: { contents: "read" },
+      plan: { contents: "read", checks: "read" },
+      "docs-release-audit": { contents: "read" },
+      "changelog-ai": { contents: "read" },
+      "open-pr": {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+      "plan-2": { contents: "read", checks: "read" },
+      "docs-release-audit-2": { contents: "read" },
+      "changelog-ai-2": { contents: "read" },
+      "open-pr-2": {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+      "plan-3": { contents: "read", checks: "read" },
+      "docs-release-audit-3": { contents: "read" },
+      "changelog-ai-3": { contents: "read" },
+      "open-pr-3": {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "read",
+      },
+      "recovery-summary": {},
+    },
+  },
+  [RELEASE_STABLE_REGENERATE_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      "manual-authorize": { contents: "read" },
+      detect: {
+        contents: "read",
+        checks: "read",
+        "pull-requests": "read",
+      },
+      plan: { contents: "read", checks: "read" },
+      "docs-release-audit": { contents: "read", checks: "write" },
+      "changelog-ai": { contents: "read" },
+      "update-pr": {
+        contents: "write",
+        "pull-requests": "write",
+        checks: "write",
+      },
+      "recovery-summary": {},
+    },
+  },
+  [RELEASE_PUBLISH_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      route: { contents: "read", "pull-requests": "read" },
+      recompute: { contents: "read", checks: "read" },
+      "build-bind": { contents: "read", actions: "write" },
+      "await-attest": {
+        contents: "read",
+        actions: "write",
+        checks: "read",
+      },
+      "consumer-proof": { contents: "read", actions: "read" },
+      "harness-proof": { contents: "read", actions: "read" },
+      "release-approval": { contents: "read", checks: "read" },
+      publish: { actions: "write", contents: "read", "id-token": "write" },
+      "registry-verification": { contents: "read", actions: "read" },
+      "refs-cleanup": { contents: "write", "pull-requests": "write" },
+    },
+  },
+  [RELEASE_ATTEST_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      attest: {
+        actions: "read",
+        attestations: "write",
+        checks: "write",
+        contents: "read",
+        "id-token": "write",
+      },
+    },
+  },
+  [DOCS_AUDIT_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      "docs-deterministic": { contents: "read" },
+      "docs-ai-audit": { contents: "read" },
+      "docs-ai-fork-skip": {},
+      "docs-audit": { contents: "read", checks: "write" },
+    },
+  },
+  [DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH]: {
+    root: {},
+    jobs: {
+      "followup-audit": { contents: "read", "pull-requests": "read" },
+      "followup-post": {
+        contents: "read",
+        "pull-requests": "write",
+        checks: "write",
+      },
+      "docs-audit": { contents: "read", checks: "write" },
+      "apply-patches": { contents: "write", "pull-requests": "write" },
+    },
+  },
+} as const satisfies Readonly<
+  Record<PhaseCWorkflowPath, WorkflowPermissionContract>
+>;
+
+/** Exact environment gate (or null) for every Phase C job. */
+export const PHASE_C_ENVIRONMENT_CONTRACTS: Readonly<
+  Record<PhaseCWorkflowPath, Readonly<Record<string, string | null>>>
+> = {
+  [RELEASE_STABLE_PREPARE_WORKFLOW_PATH]: {
+    authorize: "release-app",
+    plan: null,
+    "docs-release-audit": "release-ai",
+    "changelog-ai": "release-ai",
+    "open-pr": "release-app",
+    "plan-2": null,
+    "docs-release-audit-2": "release-ai",
+    "changelog-ai-2": "release-ai",
+    "open-pr-2": "release-app",
+    "plan-3": null,
+    "docs-release-audit-3": "release-ai",
+    "changelog-ai-3": "release-ai",
+    "open-pr-3": "release-app",
+    "recovery-summary": null,
+  },
+  [RELEASE_STABLE_REGENERATE_WORKFLOW_PATH]: {
+    "manual-authorize": "release-app",
+    detect: null,
+    plan: null,
+    "docs-release-audit": "release-ai",
+    "changelog-ai": "release-ai",
+    "update-pr": "release-app",
+    "recovery-summary": null,
+  },
+  [RELEASE_PUBLISH_WORKFLOW_PATH]: {
+    route: NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
+    recompute: null,
+    "build-bind": null,
+    "await-attest": null,
+    "consumer-proof": null,
+    "harness-proof": NIGHTLY_OR_HARNESS_PROOF_ENVIRONMENT,
+    "release-approval": CHANNEL_APPROVAL_ENVIRONMENT,
+    publish: CHANNEL_APPROVAL_ENVIRONMENT,
+    "registry-verification": null,
+    "refs-cleanup": NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
+  },
+  [RELEASE_ATTEST_WORKFLOW_PATH]: { attest: null },
+  [DOCS_AUDIT_WORKFLOW_PATH]: {
+    "docs-deterministic": null,
+    "docs-ai-audit": "release-ai",
+    "docs-ai-fork-skip": null,
+    "docs-audit": null,
+  },
+  [DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH]: {
+    "followup-audit": "release-ai",
+    "followup-post": "release-app",
+    "docs-audit": "release-app",
+    "apply-patches": "docs-audit-patch",
+  },
+};
 
 export interface WorkflowJobShape {
   readonly id: string;
   readonly needs: readonly string[];
   readonly permissions: WorkflowPermissionMap;
+  readonly environment: string | null;
   readonly runs: readonly string[];
   readonly localUses: readonly string[];
 }
@@ -72,6 +277,8 @@ export type ReachabilityFailureKind =
   | "DeprecateInvocation"
   | "FixtureSeamReachability"
   | "IntegrationTestInvocation"
+  | "CredentialBoundaryViolation"
+  | "PullRequestTargetForbidden"
   | "WorkflowReadFailed"
   | "ModuleReadFailed";
 
@@ -291,6 +498,80 @@ export function lintWorkflowPermissions(
   return ok(undefined);
 }
 
+/**
+ * Check the exact Phase C job permission matrix and credential/execution
+ * boundaries. The broader id-token inventory remains in
+ * lintWorkflowPermissions so this function can also be used by focused
+ * workflow-shape tests.
+ */
+export function lintPhaseCSecurity(
+  workflows: readonly WorkflowShape[],
+): Result<void, PublishReachabilityError> {
+  for (const path of PHASE_C_WORKFLOW_PATHS) {
+    const workflow = workflows.find((candidate) => candidate.path === path);
+    if (workflow === undefined)
+      return err({
+        type: "WorkflowPermissionViolation",
+        path,
+        reason: "Phase C workflow is missing from the security contract",
+      });
+    const expected = PHASE_C_PERMISSION_CONTRACTS[path];
+    if (
+      workflow.rootPermissions === null ||
+      !samePermissionMap(workflow.rootPermissions, expected.root)
+    )
+      return err({
+        type: "WorkflowPermissionViolation",
+        path,
+        reason: "workflow root permissions do not match the Phase C contract",
+      });
+    const expectedJobs = Object.keys(expected.jobs);
+    const actualJobs = workflow.jobs.map((job) => job.id);
+    if (
+      actualJobs.length !== expectedJobs.length ||
+      actualJobs.some((job) => !expectedJobs.includes(job))
+    )
+      return err({
+        type: "WorkflowPermissionViolation",
+        path,
+        reason: `job set must be exactly ${expectedJobs.join(", ")}`,
+      });
+    for (const [jobId, permissions] of Object.entries(expected.jobs)) {
+      const job = workflow.jobs.find((candidate) => candidate.id === jobId);
+      if (job === undefined)
+        return err({
+          type: "WorkflowPermissionViolation",
+          path,
+          job: jobId,
+          reason: "job is missing from the Phase C permission contract",
+        });
+      if (!samePermissionMap(job.permissions, permissions))
+        return err({
+          type: "WorkflowPermissionViolation",
+          path,
+          job: jobId,
+          reason: "job permissions do not match the Phase C contract",
+        });
+      const expectedEnvironment =
+        PHASE_C_ENVIRONMENT_CONTRACTS[path][jobId] ?? null;
+      if (job.environment !== expectedEnvironment)
+        return err({
+          type: "WorkflowPermissionViolation",
+          path,
+          job: jobId,
+          reason: "job environment does not match the Phase C gate contract",
+        });
+    }
+  }
+  return lintWorkflowCredentialBoundaries(workflows);
+}
+
+/** Alias used by CI and by external boundary tests. */
+export const validatePhaseCSecurity = lintPhaseCSecurity;
+
+/** Alias used by security checks that describe this as workflow security. */
+export const lintWorkflowSecurity = lintPhaseCSecurity;
+
 /** Alias used by CI and by external boundary tests. */
 export const validateWorkflowPermissions = lintWorkflowPermissions;
 
@@ -449,6 +730,100 @@ export function scanWorkflowCommands(
   return ok(undefined);
 }
 
+/**
+ * Reject credential names which would bypass trusted publishing or provide a
+ * subscription/OAuth session to an AI or harness job. Shell guards that only
+ * inspect inherited state are intentionally not env assignments and remain
+ * valid in the legacy publisher workflow.
+ */
+function lintWorkflowCredentialBoundaries(
+  workflows: readonly WorkflowShape[],
+): Result<void, PublishReachabilityError> {
+  for (const workflow of workflows) {
+    const source = withoutYamlComments(workflow.text);
+    if (/^\s*pull_request_target\s*:/m.test(source))
+      return err({
+        type: "PublishReachabilityViolation",
+        kind: "PullRequestTargetForbidden",
+        origin: workflow.path,
+        reason: "CI must not use pull_request_target",
+      });
+
+    for (const match of source.matchAll(
+      /^\s*(?:"([A-Za-z_][A-Za-z0-9_-]*)"|'([A-Za-z_][A-Za-z0-9_-]*)'|([A-Za-z_][A-Za-z0-9_-]*))\s*:/gm,
+    )) {
+      const name = match[1] ?? match[2] ?? match[3];
+      if (name === undefined) continue;
+      const reason = credentialBoundaryViolation(name);
+      if (reason !== undefined)
+        return err({
+          type: "PublishReachabilityViolation",
+          kind: "CredentialBoundaryViolation",
+          origin: workflow.path,
+          target: name,
+          reason,
+        });
+    }
+
+    for (const match of source.matchAll(
+      /\b(secrets|vars)\.([A-Za-z_][A-Za-z0-9_-]*)\b/g,
+    )) {
+      const namespace = match[1];
+      const name = match[2];
+      if (namespace === undefined || name === undefined) continue;
+      const reason = credentialBoundaryViolation(name);
+      if (reason !== undefined)
+        return err({
+          type: "PublishReachabilityViolation",
+          kind: "CredentialBoundaryViolation",
+          origin: workflow.path,
+          target: `${namespace}.${name}`,
+          reason,
+        });
+    }
+  }
+  return ok(undefined);
+}
+
+const ALLOWED_SERVICE_CREDENTIAL_NAMES = new Set([
+  "EVAL_RESULTS_REPO_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "RELEASE_APP_TOKEN",
+]);
+
+function credentialBoundaryViolation(name: string): string | undefined {
+  const normalized = name.toUpperCase();
+  if (ALLOWED_SERVICE_CREDENTIAL_NAMES.has(normalized)) return undefined;
+  if (
+    normalized === "NPM_TOKEN" ||
+    normalized === "NODE_AUTH_TOKEN" ||
+    normalized.startsWith("NPM_CONFIG_") ||
+    /^(?:NPM|NODE_AUTH)(?:_|$).*(?:TOKEN|AUTH|CREDENTIAL|PASSWORD|SECRET)/.test(
+      normalized,
+    ) ||
+    normalized.includes("CREDENTIAL_HELPER") ||
+    normalized.includes("KEYCHAIN")
+  )
+    return "npm credentials and credential helpers are forbidden in CI";
+  if (
+    normalized.includes("OAUTH") ||
+    normalized.includes("SUBSCRIPTION") ||
+    normalized.includes("REFRESH_TOKEN") ||
+    normalized.includes("SESSION_TOKEN")
+  )
+    return "OAuth, subscription, refresh-token, and persisted-session authentication are forbidden in CI";
+  if (
+    /(?:^|_)(?:AI|OPENAI|ANTHROPIC|CLAUDE|OPENCODE|OPENROUTER|HARNESS|PI)(?:_|$)/.test(
+      normalized,
+    ) &&
+    /(?:TOKEN|CREDENTIAL|SESSION|AUTH|SECRET|PASSWORD|KEY)/.test(normalized) &&
+    !normalized.endsWith("_API_KEY")
+  )
+    return "AI and harness authentication must use an API key, not a token or session";
+  return undefined;
+}
+
 export interface ModuleReachability {
   readonly files: readonly string[];
   readonly reachedPublishExecutor: boolean;
@@ -522,6 +897,8 @@ export async function analyzePublishReachability(
   if (workflows.isErr()) return err(workflows.error);
   const permissionLint = lintWorkflowPermissions(workflows.value);
   if (permissionLint.isErr()) return err(permissionLint.error);
+  const phaseCSecurityLint = lintPhaseCSecurity(workflows.value);
+  if (phaseCSecurityLint.isErr()) return err(phaseCSecurityLint.error);
   const stable = workflows.value.find(
     (workflow) => workflow.path === TRUSTED_PUBLISH_WORKFLOW,
   );
@@ -968,6 +1345,7 @@ function parseJob(
 ): WorkflowJobShape {
   let needs: string[] = [];
   let permissions: WorkflowPermissionMap = {};
+  let environment: string | null = null;
   const runs: string[] = [];
   const localUses: string[] = [];
   for (let index = start; index < end; index += 1) {
@@ -984,6 +1362,9 @@ function parseJob(
         6,
       );
     }
+    const environmentMatch = line.match(/^ {4}environment:\s*(.*)$/);
+    if (environmentMatch !== null)
+      environment = unquoteYaml((environmentMatch[1] ?? "").trim());
     const runMatch = line.match(/^\s*(?:-\s*)?run:\s*(.*)$/);
     if (runMatch !== null) {
       const value = runMatch[1] ?? "";
@@ -1005,7 +1386,7 @@ function parseJob(
       if (value.startsWith("./")) localUses.push(value.slice(2));
     }
   }
-  return { id, needs, permissions, runs, localUses };
+  return { id, needs, permissions, environment, runs, localUses };
 }
 
 function readRootPermissions(
