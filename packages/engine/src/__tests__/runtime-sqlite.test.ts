@@ -99,6 +99,99 @@ function makeStore(dir: string, opts: Partial<SqliteRuntimeStoreOptions> = {}) {
   });
 }
 
+async function readHydratedJournal(dataJson: string) {
+  const store = makeStore(testDir);
+  const entry = (
+    await store.journal.append({
+      source: { kind: "engine", name: "hydration-test" },
+      eventType: "hydration.test",
+      severity: "info",
+      data: { valid: true },
+    })
+  )._unsafeUnwrap();
+  await store.close();
+
+  const db = new Database(makeDbPath(testDir));
+  db.prepare(
+    "UPDATE runtime_journal_entries SET data_json = ? WHERE id = ?",
+  ).run(dataJson, entry.id);
+  db.close();
+
+  const reopened = makeStore(testDir);
+  const result = await reopened.journal.findById(entry.id);
+  await reopened.close();
+  return result;
+}
+
+async function readHydratedSnapshot(metadataJson: string) {
+  const store = makeStore(testDir);
+  const instance = (
+    await store.instances.create({
+      workflowName: "hydration-test",
+      goal: "hydration",
+      slug: "hydration",
+    })
+  )._unsafeUnwrap();
+  const lease = (
+    await store.leases.acquire({
+      workflowInstanceId: instance.id,
+      ownerId: createOwnerId("hydration-owner"),
+      ttlMs: 60_000,
+    })
+  )._unsafeUnwrap();
+  const snapshot = (
+    await store.snapshots.record({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      harnessName: "hydration-test",
+      agentName: "shuttle",
+      sessionStatus: "active",
+      metadata: { valid: true },
+    })
+  )._unsafeUnwrap();
+  (await store.leases.release(lease.id, lease.ownerId))._unsafeUnwrap();
+  await store.close();
+
+  const db = new Database(makeDbPath(testDir));
+  db.prepare("UPDATE session_snapshots SET metadata_json = ? WHERE id = ?").run(
+    metadataJson,
+    snapshot.id,
+  );
+  db.close();
+
+  const reopened = makeStore(testDir);
+  const result = await reopened.snapshots.findById(snapshot.id);
+  await reopened.close();
+  return result;
+}
+
+async function readHydratedWorkflow(artifactsJson: string) {
+  const store = makeStore(testDir);
+  const instance = (
+    await store.instances.create({
+      workflowName: "hydration-test",
+      goal: "hydration",
+      slug: "hydration",
+    })
+  )._unsafeUnwrap();
+  await store.close();
+
+  const db = new Database(makeDbPath(testDir));
+  db.prepare(
+    "UPDATE workflow_instances SET artifacts_json = ? WHERE id = ?",
+  ).run(artifactsJson, instance.id);
+  db.close();
+
+  const reopened = makeStore(testDir);
+  const result = await reopened.instances.findById(instance.id);
+  await reopened.close();
+  return result;
+}
+
+function nestedObjectJson(levels: number): string {
+  return `${'{"level":'.repeat(levels)}{"safe":true}${"}".repeat(levels)}`;
+}
+
 const CANONICAL_BOOTSTRAP_DDL = `
   CREATE TABLE runtime_metadata (
     key TEXT NOT NULL PRIMARY KEY,
@@ -2800,6 +2893,87 @@ describe("WorkflowInstance CRUD", () => {
     expect(journalResult.isErr()).toBe(true);
     expect(journalResult._unsafeUnwrapErr().type).toBe("query");
     await reopened.close();
+  });
+
+  describe("bounded secure hydration", () => {
+    it("rejects denied journal fields during hydration", async () => {
+      for (const dataJson of [
+        JSON.stringify({ prompt: "redacted" }),
+        JSON.stringify({ api_key: "redacted" }),
+      ]) {
+        const result = await readHydratedJournal(dataJson);
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("query");
+      }
+    });
+
+    it("rejects denied snapshot fields during hydration", async () => {
+      for (const metadataJson of [
+        JSON.stringify({ prompt: "redacted" }),
+        JSON.stringify({ api_key: "redacted" }),
+      ]) {
+        const result = await readHydratedSnapshot(metadataJson);
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("query");
+      }
+    });
+
+    it("rejects unknown keys in fixed persisted domain schemas", async () => {
+      const result = await readHydratedWorkflow(
+        JSON.stringify([
+          {
+            id: "artifact-1",
+            name: "plan",
+            path: ".weave/plans/plan.md",
+            revision: 1,
+            approvalState: "pending",
+            unknownField: true,
+          },
+        ]),
+      );
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) expect(result.error.type).toBe("query");
+    });
+
+    it("rejects excessive nesting but accepts the depth boundary", async () => {
+      const accepted = await readHydratedJournal(nestedObjectJson(9));
+      expect(accepted.isOk()).toBe(true);
+
+      const rejected = await readHydratedJournal(nestedObjectJson(10));
+      expect(rejected.isErr()).toBe(true);
+      if (rejected.isErr()) expect(rejected.error.type).toBe("query");
+    });
+
+    it("rejects encoded JSON over the hydration bound before parsing", async () => {
+      const oversized = JSON.stringify({ safe: "x".repeat(2 * 1024 * 1024) });
+      const result = await readHydratedJournal(oversized);
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) expect(result.error.type).toBe("query");
+    });
+
+    it("rejects malformed array payloads for object-owned contracts", async () => {
+      const journal = await readHydratedJournal("[]");
+      expect(journal.isErr()).toBe(true);
+      if (journal.isErr()) expect(journal.error.type).toBe("query");
+
+      const snapshot = await readHydratedSnapshot("[]");
+      expect(snapshot.isErr()).toBe(true);
+      if (snapshot.isErr()) expect(snapshot.error.type).toBe("query");
+    });
+
+    it("preserves valid scalar metadata boundary values after hydration", async () => {
+      const result = await readHydratedSnapshot(
+        JSON.stringify({ empty: "", zero: 0, disabled: false }),
+      );
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value?.metadata).toEqual({
+          empty: "",
+          zero: 0,
+          disabled: false,
+        });
+      }
+    });
   });
 
   it("list returns all instances", async () => {

@@ -100,7 +100,7 @@ import {
 } from "../errors.js";
 import { createProjectSalt } from "../fingerprint.js";
 import { RuntimeJournalWriter } from "../journal-writer.js";
-import { sanitizeSnapshotMetadata } from "../sanitizer.js";
+import { sanitizeJournalData, sanitizeSnapshotMetadata } from "../sanitizer.js";
 import type {
   AcquireLeaseInput,
   AdapterPreferenceRepository,
@@ -134,13 +134,13 @@ import type {
   ExecutionLeaseId,
   JournalQueryFilter,
   JsonObject,
-  JsonValue,
   OwnerId,
   RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  SnapshotMetadata,
   StepAttemptRecord,
   UsageObservation,
   UsageObservationId,
@@ -201,254 +201,288 @@ function newId(): string {
 // Row ↔ Domain parsers
 // ---------------------------------------------------------------------------
 
-const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.null(),
-    z.string(),
-    z.number().finite(),
-    z.boolean(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
-  ]),
-);
-const jsonObjectSchema: z.ZodType<JsonObject> = z.record(
-  z.string(),
-  jsonValueSchema,
-);
-const metadataSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.number().finite(), z.boolean()]),
-);
-const artifactIntegritySchema = z.object({
-  algorithm: z.literal("sha256"),
-  digest: z.string(),
-});
+const artifactIntegritySchema = z
+  .object({
+    algorithm: z.literal("sha256"),
+    digest: z.string(),
+  })
+  .strict();
 const artifactApprovalActorSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("user"),
-    provenance: z.record(
-      z.string(),
-      z.union([z.string(), z.number().finite(), z.boolean()]),
-    ),
-  }),
-  z.object({
-    kind: z.literal("agent"),
-    agentName: z.string(),
-    gate: z.enum(["review", "security"]),
-  }),
+  z
+    .object({
+      kind: z.literal("user"),
+      provenance: z.record(
+        z.string(),
+        z.union([z.string(), z.number().finite(), z.boolean()]),
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("agent"),
+      agentName: z.string(),
+      gate: z.enum(["review", "security"]),
+    })
+    .strict(),
 ]);
-const storedArtifactSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  path: z.string(),
-  revision: z.number().int().positive(),
-  approvalState: z.enum(["pending", "approved", "rejected"]),
-  producerAgent: z.string().optional(),
-  approvalActor: artifactApprovalActorSchema.optional(),
-  approvalDecidedAt: z.string().optional(),
-  mimeType: z.string().optional(),
-  description: z.string().optional(),
-  integrity: artifactIntegritySchema.optional(),
-});
-const storedConsumedArtifactSchema = z.object({
-  artifactId: z.string(),
-  name: z.string(),
-  revision: z.number().int().positive(),
-});
-const storedStepAttemptSchema = z.object({
-  stepName: z.string(),
-  attemptNumber: z.number().int().positive(),
-  dispatchedAt: z.string(),
-  consumedArtifacts: z.array(storedConsumedArtifactSchema),
-});
-const workflowInstanceRowSchema = z.object({
-  id: z.string(),
-  workflow_name: z.string(),
-  goal: z.string(),
-  slug: z.string(),
-  status: z.enum([
-    "created",
-    "running",
-    "paused",
-    "blocked",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
-  current_step_name: z.string().nullable(),
-  artifacts_json: z.string(),
-  step_attempts_json: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  completed_at: z.string().nullable(),
-  error_message: z.string().nullable(),
-});
-const executionLeaseRowSchema = z.object({
-  id: z.string(),
-  workflow_instance_id: z.string(),
-  owner_id: z.string(),
-  acquired_at: z.string(),
-  expires_at: z.string(),
-  last_heartbeat_at: z.string().nullable(),
-});
-const sessionSnapshotRowSchema = z.object({
-  id: z.string(),
-  workflow_instance_id: z.string(),
-  lease_id: z.string().nullable(),
-  harness_name: z.string(),
-  harness_version: z.string().nullable(),
-  agent_name: z.string(),
-  model_id: z.string().nullable(),
-  step_name: z.string().nullable(),
-  session_status: z.enum(["active", "idle", "terminated"]),
-  recorded_at: z.string(),
-  metadata_json: z.string(),
-});
-const journalRowSchema = z.object({
-  id: z.string(),
-  timestamp: z.string(),
-  source_kind: z.enum(["engine", "adapter"]),
-  source_name: z.string(),
-  event_type: z.string(),
-  execution_id: z.string().nullable(),
-  workflow_instance_id: z.string().nullable(),
-  step_id: z.string().nullable(),
-  severity: z.enum(["debug", "info", "warn", "error"]),
-  data_json: z.string(),
-});
-const usageObservationRowSchema = z.object({
-  id: z.string(),
-  timestamp: z.string(),
-  source_kind: z.enum(["engine", "adapter"]),
-  source_name: z.string(),
-  workflow_instance_id: z.string().nullable(),
-  step_id: z.string().nullable(),
-  agent_name: z.string().nullable(),
-  model: z.string().nullable(),
-  input_tokens: z.number().nullable(),
-  output_tokens: z.number().nullable(),
-  cache_read_tokens: z.number().nullable(),
-  cache_write_tokens: z.number().nullable(),
-  total_tokens: z.number().nullable(),
-  cost: z.number().nullable(),
-  normalized_json: z.string(),
-});
-const usageRollupRowSchema = z.object({
-  rollup_key: z.string(),
-  source_kind: z.enum(["engine", "adapter"]),
-  source_name: z.string(),
-  workflow_instance_id: z.string().nullable(),
-  step_id: z.string().nullable(),
-  agent_name: z.string().nullable(),
-  model: z.string().nullable(),
-  input_tokens: z.number().nullable(),
-  output_tokens: z.number().nullable(),
-  cache_read_tokens: z.number().nullable(),
-  cache_write_tokens: z.number().nullable(),
-  total_tokens: z.number().nullable(),
-  cost: z.number().nullable(),
-  observation_count: z.number(),
-});
-const adapterPreferenceRowSchema = z.object({
-  namespace: z.string(),
-  key: z.string(),
-  value_json: z.string(),
-  updated_at: z.string(),
-});
-const permissionGrantRowSchema = z.object({
-  grant_id: z.string(),
-  project_identity: z.string(),
-  agent_name: z.string(),
-  registration_owner: z.string(),
-  tool_identity: z.string(),
-  registration_revision: z.string(),
-  policy_fingerprint: z.string(),
-  request_schema_version: z.string(),
-  request_digest: z.string(),
-  display_summary: z.string(),
-  display_details: z.string().nullable(),
-  created_at: z.number(),
-  expires_at: z.number().nullable(),
-  revoked_at: z.number().nullable(),
-  state: z.enum(["active", "revoked"]),
-});
-const normalizedUsageSchema = z.object({
-  id: z.string(),
-  timestamp: z.string(),
-  sourceKind: z.enum(["engine", "adapter"]),
-  sourceName: z.string(),
-  workflowInstanceId: z.string().optional(),
-  stepId: z.string().optional(),
-  agentName: z.string().optional(),
-  model: z.string().optional(),
-  inputTokens: z.number().optional(),
-  outputTokens: z.number().optional(),
-  cacheReadTokens: z.number().optional(),
-  cacheWriteTokens: z.number().optional(),
-  totalTokens: z.number().optional(),
-  cost: z.number().optional(),
-});
-const runtimeMetadataValueRowSchema = z.object({ value: z.string() });
-const runtimeStoreErrorCauseSchema = z.object({
-  name: z.string().optional(),
-  message: z.string(),
-  stack: z.string().optional(),
-});
-const runtimeStoreErrorSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("initialization"),
-    message: z.string(),
-    cause: runtimeStoreErrorCauseSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("migration_version"),
-    foundVersion: z.number(),
-    supportedVersion: z.number(),
-    message: z.string(),
-  }),
-  z.object({
-    type: z.literal("serialization"),
-    message: z.string(),
-    cause: runtimeStoreErrorCauseSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("query"),
-    message: z.string(),
-    cause: runtimeStoreErrorCauseSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("not_found"),
-    entity: z.string(),
+const storedArtifactSchema = z
+  .object({
     id: z.string(),
+    name: z.string(),
+    path: z.string(),
+    revision: z.number().int().positive(),
+    approvalState: z.enum(["pending", "approved", "rejected"]),
+    producerAgent: z.string().optional(),
+    approvalActor: artifactApprovalActorSchema.optional(),
+    approvalDecidedAt: z.string().optional(),
+    mimeType: z.string().optional(),
+    description: z.string().optional(),
+    integrity: artifactIntegritySchema.optional(),
+  })
+  .strict();
+const storedConsumedArtifactSchema = z
+  .object({
+    artifactId: z.string(),
+    name: z.string(),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+const storedStepAttemptSchema = z
+  .object({
+    stepName: z.string(),
+    attemptNumber: z.number().int().positive(),
+    dispatchedAt: z.string(),
+    consumedArtifacts: z.array(storedConsumedArtifactSchema),
+  })
+  .strict();
+const workflowInstanceRowSchema = z
+  .object({
+    id: z.string(),
+    workflow_name: z.string(),
+    goal: z.string(),
+    slug: z.string(),
+    status: z.enum([
+      "created",
+      "running",
+      "paused",
+      "blocked",
+      "completed",
+      "failed",
+      "cancelled",
+    ]),
+    current_step_name: z.string().nullable(),
+    artifacts_json: z.string(),
+    step_attempts_json: z.string().optional(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    completed_at: z.string().nullable(),
+    error_message: z.string().nullable(),
+  })
+  .strict();
+const executionLeaseRowSchema = z
+  .object({
+    id: z.string(),
+    workflow_instance_id: z.string(),
+    owner_id: z.string(),
+    acquired_at: z.string(),
+    expires_at: z.string(),
+    last_heartbeat_at: z.string().nullable(),
+  })
+  .strict();
+const sessionSnapshotRowSchema = z
+  .object({
+    id: z.string(),
+    workflow_instance_id: z.string(),
+    lease_id: z.string().nullable(),
+    harness_name: z.string(),
+    harness_version: z.string().nullable(),
+    agent_name: z.string(),
+    model_id: z.string().nullable(),
+    step_name: z.string().nullable(),
+    session_status: z.enum(["active", "idle", "terminated"]),
+    recorded_at: z.string(),
+    metadata_json: z.string(),
+  })
+  .strict();
+const journalRowSchema = z
+  .object({
+    id: z.string(),
+    timestamp: z.string(),
+    source_kind: z.enum(["engine", "adapter"]),
+    source_name: z.string(),
+    event_type: z.string(),
+    execution_id: z.string().nullable(),
+    workflow_instance_id: z.string().nullable(),
+    step_id: z.string().nullable(),
+    severity: z.enum(["debug", "info", "warn", "error"]),
+    data_json: z.string(),
+  })
+  .strict();
+const usageObservationRowSchema = z
+  .object({
+    id: z.string(),
+    timestamp: z.string(),
+    source_kind: z.enum(["engine", "adapter"]),
+    source_name: z.string(),
+    workflow_instance_id: z.string().nullable(),
+    step_id: z.string().nullable(),
+    agent_name: z.string().nullable(),
+    model: z.string().nullable(),
+    input_tokens: z.number().nullable(),
+    output_tokens: z.number().nullable(),
+    cache_read_tokens: z.number().nullable(),
+    cache_write_tokens: z.number().nullable(),
+    total_tokens: z.number().nullable(),
+    cost: z.number().nullable(),
+    normalized_json: z.string(),
+  })
+  .strict();
+const usageRollupRowSchema = z
+  .object({
+    rollup_key: z.string(),
+    source_kind: z.enum(["engine", "adapter"]),
+    source_name: z.string(),
+    workflow_instance_id: z.string().nullable(),
+    step_id: z.string().nullable(),
+    agent_name: z.string().nullable(),
+    model: z.string().nullable(),
+    input_tokens: z.number().nullable(),
+    output_tokens: z.number().nullable(),
+    cache_read_tokens: z.number().nullable(),
+    cache_write_tokens: z.number().nullable(),
+    total_tokens: z.number().nullable(),
+    cost: z.number().nullable(),
+    observation_count: z.number(),
+  })
+  .strict();
+const adapterPreferenceRowSchema = z
+  .object({
+    namespace: z.string(),
+    key: z.string(),
+    value_json: z.string(),
+    updated_at: z.string(),
+  })
+  .strict();
+const permissionGrantRowSchema = z
+  .object({
+    grant_id: z.string(),
+    project_identity: z.string(),
+    agent_name: z.string(),
+    registration_owner: z.string(),
+    tool_identity: z.string(),
+    registration_revision: z.string(),
+    policy_fingerprint: z.string(),
+    request_schema_version: z.string(),
+    request_digest: z.string(),
+    display_summary: z.string(),
+    display_details: z.string().nullable(),
+    created_at: z.number(),
+    expires_at: z.number().nullable(),
+    revoked_at: z.number().nullable(),
+    state: z.enum(["active", "revoked"]),
+  })
+  .strict();
+const normalizedUsageSchema = z
+  .object({
+    id: z.string(),
+    timestamp: z.string(),
+    sourceKind: z.enum(["engine", "adapter"]),
+    sourceName: z.string(),
+    workflowInstanceId: z.string().optional(),
+    stepId: z.string().optional(),
+    agentName: z.string().optional(),
+    model: z.string().optional(),
+    inputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    cacheReadTokens: z.number().optional(),
+    cacheWriteTokens: z.number().optional(),
+    totalTokens: z.number().optional(),
+    cost: z.number().optional(),
+  })
+  .strict();
+const runtimeMetadataValueRowSchema = z.object({ value: z.string() }).strict();
+const runtimeStoreErrorCauseSchema = z
+  .object({
+    name: z.string().optional(),
     message: z.string(),
-  }),
-  z.object({
-    type: z.literal("conflict"),
-    entity: z.string(),
-    message: z.string(),
-    conflictingId: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal("validation"),
-    message: z.string(),
-    field: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal("journal_write"),
-    message: z.string(),
-    cause: runtimeStoreErrorCauseSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("invariant_violation"),
-    entity: z.string(),
-    message: z.string(),
-    id: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal("retention"),
-    message: z.string(),
-    cause: runtimeStoreErrorCauseSchema.optional(),
-  }),
+    stack: z.string().optional(),
+  })
+  .strict();
+const runtimeStoreErrorSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("initialization"),
+      message: z.string(),
+      cause: runtimeStoreErrorCauseSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("migration_version"),
+      foundVersion: z.number(),
+      supportedVersion: z.number(),
+      message: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("serialization"),
+      message: z.string(),
+      cause: runtimeStoreErrorCauseSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("query"),
+      message: z.string(),
+      cause: runtimeStoreErrorCauseSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("not_found"),
+      entity: z.string(),
+      id: z.string(),
+      message: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("conflict"),
+      entity: z.string(),
+      message: z.string(),
+      conflictingId: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("validation"),
+      message: z.string(),
+      field: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("journal_write"),
+      message: z.string(),
+      cause: runtimeStoreErrorCauseSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("invariant_violation"),
+      entity: z.string(),
+      message: z.string(),
+      id: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("retention"),
+      message: z.string(),
+      cause: runtimeStoreErrorCauseSchema.optional(),
+    })
+    .strict(),
 ]);
 
 type StoredArtifact = z.infer<typeof storedArtifactSchema>;
@@ -464,17 +498,81 @@ type UsageRollupBuilder = MutableDomain<UsageRollup>;
 type NormalizedUsageBuilder = MutableDomain<NormalizedUsageObservation>;
 type ArtifactBuilder = MutableDomain<ArtifactRef>;
 
-function parseStoredJson<T>(
-  value: string,
-  schema: z.ZodType<T>,
-  message: string,
-): T {
+const MAX_PERSISTED_JSON_BYTES = 2 * 1024 * 1024;
+const persistedJsonEncoder = new TextEncoder();
+
+function assertPersistedJsonSize(value: string, message: string): void {
+  const encodedPrefix = persistedJsonEncoder.encode(
+    value.slice(0, MAX_PERSISTED_JSON_BYTES + 1),
+  );
+  if (encodedPrefix.byteLength > MAX_PERSISTED_JSON_BYTES) {
+    throw new Error(
+      `${message} exceeds the ${MAX_PERSISTED_JSON_BYTES}-byte limit`,
+    );
+  }
+}
+
+function parseStoredArtifacts(value: string): StoredArtifact[] {
+  const message = "Invalid workflow_instances artifacts_json";
+  assertPersistedJsonSize(value, message);
   const parsed = Result.fromThrowable(
-    (): JsonValue => JSON.parse(value),
+    () => JSON.parse(value),
     () => new Error(message),
   )();
   if (parsed.isErr()) throw parsed.error;
-  const checked = schema.safeParse(parsed.value);
+  const checked = z.array(storedArtifactSchema).safeParse(parsed.value);
+  if (!checked.success) throw new Error(message);
+  return checked.data;
+}
+
+function parseStoredStepAttempts(value: string): StoredStepAttempt[] {
+  const message = "Invalid workflow_instances step_attempts_json";
+  assertPersistedJsonSize(value, message);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(value),
+    () => new Error(message),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  const checked = z.array(storedStepAttemptSchema).safeParse(parsed.value);
+  if (!checked.success) throw new Error(message);
+  return checked.data;
+}
+
+function parseSnapshotMetadata(value: string): SnapshotMetadata {
+  const message = "Invalid session_snapshots metadata_json";
+  assertPersistedJsonSize(value, message);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(value),
+    () => new Error(message),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  const sanitized = sanitizeSnapshotMetadata(parsed.value);
+  if (sanitized.isErr()) throw new Error(message);
+  return sanitized.value;
+}
+
+function parseJournalData(value: string): JsonObject {
+  const message = "Invalid runtime_journal_entries data_json";
+  assertPersistedJsonSize(value, message);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(value),
+    () => new Error(message),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  const sanitized = sanitizeJournalData(parsed.value);
+  if (sanitized.isErr()) throw new Error(message);
+  return sanitized.value;
+}
+
+function parseNormalizedUsage(value: string): NormalizedUsage {
+  const message = "Invalid usage observation normalized_json";
+  assertPersistedJsonSize(value, message);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(value),
+    () => new Error(message),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  const checked = normalizedUsageSchema.safeParse(parsed.value);
   if (!checked.success) throw new Error(message);
   return checked.data;
 }
@@ -518,19 +616,15 @@ function rowToWorkflowInstance(row: WorkflowInstanceRow): WorkflowInstance {
   const parsed = workflowInstanceRowSchema.safeParse(row);
   if (!parsed.success) throw new Error("Invalid workflow_instances row");
   const stored = parsed.data;
-  const artifacts = parseStoredJson(
-    stored.artifacts_json,
-    z.array(storedArtifactSchema),
-    "Invalid workflow_instances artifacts_json",
-  ).map(storedArtifactToDomain);
+  const artifacts = parseStoredArtifacts(stored.artifacts_json).map(
+    storedArtifactToDomain,
+  );
   const stepAttempts =
     stored.step_attempts_json === undefined
       ? []
-      : parseStoredJson(
-          stored.step_attempts_json,
-          z.array(storedStepAttemptSchema),
-          "Invalid workflow_instances step_attempts_json",
-        ).map(storedStepAttemptToDomain);
+      : parseStoredStepAttempts(stored.step_attempts_json).map(
+          storedStepAttemptToDomain,
+        );
   const result: WorkflowInstanceBuilder = {
     id: createWorkflowInstanceId(stored.id),
     workflowName: stored.workflow_name,
@@ -569,11 +663,7 @@ function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
   const parsed = sessionSnapshotRowSchema.safeParse(row);
   if (!parsed.success) throw new Error("Invalid session_snapshots row");
   const stored = parsed.data;
-  const metadata = parseStoredJson(
-    stored.metadata_json,
-    metadataSchema,
-    "Invalid session_snapshots metadata_json",
-  );
+  const metadata = parseSnapshotMetadata(stored.metadata_json);
   const result: SessionSnapshotBuilder = {
     id: createSessionSnapshotId(stored.id),
     workflowInstanceId: createWorkflowInstanceId(stored.workflow_instance_id),
@@ -596,11 +686,7 @@ function rowToJournalEntry(row: RuntimeJournalEntryRow): RuntimeJournalEntry {
   const parsed = journalRowSchema.safeParse(row);
   if (!parsed.success) throw new Error("Invalid runtime_journal_entries row");
   const stored = parsed.data;
-  const data = parseStoredJson(
-    stored.data_json,
-    jsonObjectSchema,
-    "Invalid runtime_journal_entries data_json",
-  );
+  const data = parseJournalData(stored.data_json);
   const result: RuntimeJournalEntryBuilder = {
     id: createRuntimeJournalEntryId(stored.id),
     timestamp: stored.timestamp,
@@ -1533,22 +1619,13 @@ function rowToNormalizedUsage(
     return err(serializationError("Invalid usage_observations row"));
   }
   return Result.fromThrowable(
-    () => JSON.parse(parsedRow.data.normalized_json),
+    () => parseNormalizedUsage(parsedRow.data.normalized_json),
     (cause) =>
       serializationError(
         "Failed to parse usage observation normalized_json",
         cause,
       ),
-  )().andThen((parsed) => {
-    const checked = normalizedUsageSchema.safeParse(parsed);
-    if (!checked.success) {
-      return err(
-        serializationError(
-          "usage observation normalized_json has an invalid shape",
-        ),
-      );
-    }
-    const normalized: NormalizedUsage = checked.data;
+  )().map((normalized) => {
     const result: NormalizedUsageBuilder = {
       id: createUsageObservationId(normalized.id),
       timestamp: normalized.timestamp,
@@ -1581,7 +1658,7 @@ function rowToNormalizedUsage(
       result.totalTokens = normalized.totalTokens;
     }
     if (normalized.cost !== undefined) result.cost = normalized.cost;
-    return ok<NormalizedUsageObservation, RuntimeStoreError>(result);
+    return result;
   });
 }
 
