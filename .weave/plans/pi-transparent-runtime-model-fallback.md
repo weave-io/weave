@@ -401,7 +401,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - The script refuses the wrong Pi version, unpacked source, altered artifact, unexpected event count, or leaked marker/provider content.
     - Acceptance manifest and smoke checklist include the new case with no issue-specific proof file.
 
-- [ ] 13. Run focused and repository-wide verification
+- [x] 13. Run focused and repository-wide verification
   - **What**: Validate the complete implementation before freezing a review range.
   - **Files**: No new files unless a failing test exposes a required in-scope correction.
   - **Depends on**: Tasks 1–12.
