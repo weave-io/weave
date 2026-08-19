@@ -2,7 +2,7 @@
 
 `@weaveio/weave-adapter-pi` projects normalized Weave configuration and lifecycle decisions into an interactive Pi TUI session. It is a Pi extension, not a standalone print/JSON/RPC/SDK runtime. The adapter may start private authenticated RPC children for delegation and direct workflow steps.
 
-**Related:** [Adapter Boundary](../architecture/adapter-boundary.md) · [Capabilities](../reference/adapter-capabilities.md) · [Execution Lifecycle](../reference/execution-lifecycle.md) · [Runtime Store](../reference/runtime.md) · [Delegation](../reference/delegation.md)
+**Related:** [Adapter Boundary](../adapter-boundary.md) · [Capabilities](../adapter-readiness-status.md) · [Execution Lifecycle](../workflow-schema.md) · [Runtime Store](../system-architecture.md) · [Delegation](../product-vision.md)
 
 ---
 
@@ -96,7 +96,7 @@ A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries
 | Public OpenAI API Fast/Priority, the `openai` provider | Unsupported |
 | Every other Pi provider | Unsupported |
 
-These are two different OpenAI contracts, and they share no fact, allowlist entry, request field, or response value. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#openai-codex-subscription-fast-mode-chatgpt-backend).
+These are two different OpenAI contracts, and they share no fact, allowlist entry, request field, or response value. See the [provider acceleration contract](../model-resolution.md).
 
 #### The hook seam stays unsupported
 
@@ -152,7 +152,7 @@ The `provider-fast-activation` capability declares the static readiness `degrade
 
 A mapped attempt journals its own sanitized snapshots, and the latest of them is also the state `/weave:status` reports. `requested` is recorded immediately, as soon as both controls land on the outgoing request, and the terminal snapshot is recorded later, when that same attempt's evidence resolves or the call ends below `applied`. A mapped snapshot therefore does not wait for the turn to settle. Intent that reached no mapped attempt is recorded instead when a turn settles (`agent_settled`). A bounded in-memory dedupe window collapses repeats of the same `(state, reason, evidenceOutcome)` triple to one durable journal record, so the transient `requested` state and its terminal outcome are each kept once, and the key is claimed before the write so two settled turns cannot persist it twice. A failed write releases the claim, so a later settled turn may record it again. The window is in-memory only: it is cleared on session start, after a successful primary switch, and on shutdown or a failed boot activation, so the new active intent owner records its own outcome. The latest mapped snapshot is dropped with it, because it describes one session's request. Durable journal events already written are never removed by that reset.
 
-This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. Raising Pi to `applied`, or mapping any further provider, requires the same proof this mapping already carries: the effective transport of one prepared request plus correlated response evidence for that same request, shown in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof. The Codex mapping also carries a [recheck obligation](../specs/fast-provider-acceleration-contract.md#recheck-obligation-for-this-transport): a failed recheck returns it to `unsupported`.
+This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. Raising Pi to `applied`, or mapping any further provider, requires the same proof this mapping already carries: the effective transport of one prepared request plus correlated response evidence for that same request, shown in a fresh real harness under [Adapter Readiness Status](../adapter-readiness-status.md). Unit confidence is not that proof. The Codex mapping also carries a [recheck obligation](../model-resolution.md): a failed recheck returns it to `unsupported`.
 
 ## Config refresh at delegation boundaries
 
@@ -171,7 +171,7 @@ The catalog is derived from four kinds of source:
 
 Every file source keeps its **own** SHA-256 over the raw bytes as read. A digest is never taken over a concatenation of several files, and DSL-level normalization happens after hashing, so detection is byte-level.
 
-Inline prompts are not separate sources. A single-line `prompt` and a triple-quoted multiline `prompt` are both content of the config file that declares them, so an inline prompt edit is detected through that file's digest; there is no separate manifest entry for inline prompt text. See [Prompt Composition — Change detection](../reference/prompts.md#change-detection), and [DSL Reference — Multiline strings](../reference/dsl.md#multiline-strings) for the multiline syntax itself.
+Inline prompts are not separate sources. A single-line `prompt` and a triple-quoted multiline `prompt` are both content of the config file that declares them, so an inline prompt edit is detected through that file's digest; there is no separate manifest entry for inline prompt text. See [Prompt Composition — Change detection](../prompt-composition.md), and [DSL Reference — Multiline strings](../dsl-reference.md) for the multiline syntax itself.
 
 The project root and the trust state are identity inputs, not sources. A change to either is a different source graph and is handled by session replacement, never by refresh.
 
@@ -451,7 +451,7 @@ Retries use persisted attempt metadata so they reuse the artifact revisions cons
 
 Delegation requires a persistent parent session. A parent started with `--no-session` has nowhere to record child references, so the adapter refuses to spawn a child and returns `PersistentParentSessionRequired`; the child surfaces stay mounted but read-only. This fails before any child work starts rather than falling back to an unrecorded child.
 
-A delegation call addresses a *thread*, not a single run. Omitting `action` starts a new thread from `agent` plus `task`. `action retry` reruns a failed or cancelled thread by opaque `thread` id, with optional extra `instruction`. `action continue` gives a completed thread more work from a new `task`. A thread that is already running refuses both with `ThreadAlreadyRunning`; other thread failures are `ThreadNotFound`, `ThreadAuthorityDenied`, `ThreadStale`, `ThreadIntegrityError`, `ThreadNotRetryable`, `ThreadNotResumable`, and `ThreadResumeUnavailable`. Each run increments a run number, and earlier runs freeze rather than being rewritten. See [Delegation](../reference/delegation.md#thread-lifecycle).
+A delegation call addresses a *thread*, not a single run. Omitting `action` starts a new thread from `agent` plus `task`. `action retry` reruns a failed or cancelled thread by opaque `thread` id, with optional extra `instruction`. `action continue` gives a completed thread more work from a new `task`. A thread that is already running refuses both with `ThreadAlreadyRunning`; other thread failures are `ThreadNotFound`, `ThreadAuthorityDenied`, `ThreadStale`, `ThreadIntegrityError`, `ThreadNotRetryable`, `ThreadNotResumable`, and `ThreadResumeUnavailable`. Each run increments a run number, and earlier runs freeze rather than being rewritten. See [Delegation](../product-vision.md).
 
 A run that settles with no terminal assistant response fails with `ChildResponseMissing` and one reason: `empty`, `whitespace-only`, `thinking-only`, `tool-only`, or `no-response`. This is a result failure, not a transport failure — the recorded session stays intact, capacity is released like any other settlement, the failure is retryable, and its recovery hint is to retry the thread.
 
@@ -496,7 +496,7 @@ Unselecting a provider extension removes the models and credentials it supplies,
 
 Enumeration is best-effort and read-only. The inventory unions three evidence sources: the `sourceInfo` of commands and tools the host already loaded, configured packages with their installed path and `pi.extensions` manifest, and bounded scans of `<agent dir>/extensions` plus, only for a trusted project, `<cwd>/.pi/extensions`. Nothing is loaded, evaluated, installed, or resolved over the network. Two limits follow from that: an extension that registers no command and no tool and lives outside those two directories cannot be enumerated at all, and a configured package is represented by its installed directory rather than by each entry it declares. The inventory is capped at 200 entries, with bounded directory depth and page sizes, and reports truncation instead of silently shortening the list.
 
-The record is stored in the project Runtime Store as one [adapter preference](../reference/runtime.md#adapter-preferences) row under namespace `adapter-pi`, key `child-extensions`. Choosing inherit-all removes the row rather than storing a record that says "default". `weave runtime preferences --namespace adapter-pi` lists it read-only.
+The record is stored in the project Runtime Store as one [adapter preference](../system-architecture.md) row under namespace `adapter-pi`, key `child-extensions`. Choosing inherit-all removes the row rather than storing a record that says "default". `weave runtime preferences --namespace adapter-pi` lists it read-only.
 
 ### Native child sessions
 
@@ -520,17 +520,17 @@ A child whose parent session is gone becomes an orphan. Orphans stay readable an
 
 #### No migration from the JSONL store
 
-Earlier versions kept child history in an adapter-owned JSONL store under `child-history/<parent-session-id>/`. That store is removed, and there is no migration. Weave does not read, convert, quarantine, or delete existing JSONL history — the files are simply left in place and are no longer visible to Weave. Handle them outside Weave if you still want the data. See [ADR 0014](../adr/0014-pi-native-child-sessions.md).
+Earlier versions kept child history in an adapter-owned JSONL store under `child-history/<parent-session-id>/`. That store is removed, and there is no migration. Weave does not read, convert, quarantine, or delete existing JSONL history — the files are simply left in place and are no longer visible to Weave. Handle them outside Weave if you still want the data. See [runtime persistence ADR](../adr/0002-runtime-persistence-store.md).
 
 The removed settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, and `orphan_retention_days` went with the store. The `child_inspection` block is strict, so a config that still sets them fails validation.
 
 ### Private child inspection
 
-Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. It carries `recovery_enabled` (default `true`), `recovery_countdown_seconds` (default `10`, range `0`–`60`), and the optional `keys` overlay key map. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Spec 33 §§4–10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#4-parent-child-refs). Do not infer these settings from engine configuration.
+Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. It carries `recovery_enabled` (default `true`), `recovery_countdown_seconds` (default `10`, range `0`–`60`), and the optional `keys` overlay key map. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Pi adapter readiness contract](../adapter-readiness-status.md). Do not infer these settings from engine configuration.
 
 The inspector is adapter-owned. It reads sensitive raw prompts, responses, and session events from local-only native child sessions; it never places that content in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. Clearing removes local records; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
 
-Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [ADR 0013](../adr/0013-pi-private-child-sessions.md) for the ownership decision and [Spec 33 §6](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#6-inline-weavedelegate-delegation-card) for the limits.
+Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [adapter boundary ADR](../adr/0003-opencode-adapter-materialization-shape.md) for the ownership decision and [adapter boundary](../adapter-boundary.md) for the limits.
 
 The inspection view renders with Pi's own chat components, so a streamed child reads like a native Pi session: user and task blocks, markdown answer text, italic reasoning, and Pi's tool-execution blocks with real diffs and bash output. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. The adapter injects those components through a narrow port (`PiTranscriptComponentFactory`); the transcript reducer and its dependency-free fallback renderer stay pure, and the fallback text still renders when a component cannot be built. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
 
@@ -658,7 +658,7 @@ Four earlier surfaces are gone. If you are upgrading, expect them to be absent r
 | The overlay header's telemetry row (status, model, reasoning level, turn and queue counts, token cost). | The Status Matrix rail, which is the only place child telemetry appears. The header carries identity and parent context only. |
 | The duplicate `weave-task` plan-task footer beside the plan widget. | The [Plan Rail](#plan-rail), the single owner of ambient parent context. |
 
-The `child_inspection.keys` map declares no view-toggle action, so a config that names one is a validation error. See the [Weave UI design record](../specs/33-spec-pi-adapter/33-weave-ui-design.md) for why each surface was dropped.
+The `child_inspection.keys` map declares no view-toggle action, so a config that names one is a validation error. See the [Weave product vision](../product-vision.md) for why each surface was dropped.
 
 #### Why an inspection opened in the fallback editor
 
@@ -703,7 +703,7 @@ Outside the TUI, the same adapter-owned data is reachable through `weave adapter
 
 Each check reports `pass`, `fail`, or `skip` with a bounded detail string. The report status is `ok` when no check fails, `degraded` when any check fails, and `unavailable` when every check is skipped or the report itself fails validation. Scans are bounded to 50 rows per page and details carry counters, never child text.
 
-For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt record is reported as a diagnostic code — `ChildSessionMissing`, `ChildSessionCorrupt`, `ChildSessionRootViolation`, `ChildSessionPermissionError`, `ChildTombstoneAppendFailed`, `ChildRefInvalid`, `ChildRefOriginMismatch`, `ChildCacheDegraded`, or `ChildCacheStale` — and it does not authorize a guessed resume. Step-by-step remedies are in [Pi child troubleshooting](../guides/pi-child-troubleshooting.md); the complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#15-commands-dispatch-boundary-and-cli).
+For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt record is reported as a diagnostic code — `ChildSessionMissing`, `ChildSessionCorrupt`, `ChildSessionRootViolation`, `ChildSessionPermissionError`, `ChildTombstoneAppendFailed`, `ChildRefInvalid`, `ChildRefOriginMismatch`, `ChildCacheDegraded`, or `ChildCacheStale` — and it does not authorize a guessed resume. Step-by-step remedies are in [Pi adapter readiness status](../adapter-readiness-status.md); the complete command and key map is [CLI reference](../reference/cli.md#weave-adapter).
 
 ### Settlement and output
 
@@ -833,7 +833,7 @@ Beyond the engine's closed capability IDs, the adapter declares the concrete Pi 
 - `rendering-fallback` — a gap uses Pi's default rendering.
 - `feature-only` — a gap leaves current behavior in place and never enters health-only mode or the overlay fallback. `post-recovery-model-switch` is the only such surface; the adapter probes `pi.features.agent_recovery_exhausted` as an own enumerable data property equal to `true` and reports that result on `/weave:health` as a `feature-unavailable` host-surface gap. It does not add an engine capability ID.
 
-A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Capabilities](../reference/adapter-capabilities.md#adapter-owned-host-surface-probes).
+A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Readiness Status](../adapter-readiness-status.md).
 
 ### Host runtime resolution
 
@@ -847,7 +847,7 @@ Redirection is fail-open. An unproven host root, a mismatched host package, a mi
 
 Consumers that need a specific copy read that outcome as provenance: one specifier is `host` when it was redirected to the host file or already was it, and `unproven` with a bounded reason otherwise. The codex fast provider registration is the first such consumer and refuses to run on anything but `host`.
 
-Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Verification](../testing/adapter-verification.md#prove-one-host-runtime-copy-pi).
+Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Readiness Status](../adapter-readiness-status.md).
 
 ## Health-only mode
 

@@ -106,6 +106,12 @@ export const PRIVATE_SOURCE_IMPACTS = {
   ],
 } as const satisfies Record<PrivatePackageName, readonly PublicPackageName[]>;
 
+/**
+ * Compatibility name used by the retained nightly planner baseline. New
+ * release stages use PRIVATE_SOURCE_IMPACTS directly.
+ */
+export const BUNDLED_SOURCE_IMPACTS = PRIVATE_SOURCE_IMPACTS;
+
 /** Where each bundled private workspace's source lives. */
 export const PRIVATE_SOURCE_DIRECTORIES = {
   "@weaveio/weave-core": "packages/core",

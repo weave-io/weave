@@ -2,7 +2,7 @@
 
 `@weaveio/weave-adapter-opencode` is Weave's runtime OpenCode plugin. It loads normalized `.weave` configuration and translates it into OpenCode agents, commands, tools, and lifecycle behavior.
 
-**Related:** [Adapter Boundary](../architecture/adapter-boundary.md) · [Adapter Capabilities](../reference/adapter-capabilities.md) · [Package README](../../packages/adapters/opencode/README.md)
+**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Package README](../../packages/adapters/opencode/README.md)
 
 ---
 
@@ -63,7 +63,7 @@ A descriptor's `fast true` is neutral intent. OpenCode's plugin surface can muta
 
 The adapter therefore sends no acceleration control and mutates no request option or header. `provider-fast-activation` declares `unsupported` with runtime status `unsupported` and the bounded reason `response-proof-unavailable`. Materialized agent configuration is never presented as evidence of acceleration.
 
-This is an optional-capability gap: it warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle. Raising OpenCode above `unsupported` requires a plugin contract that exposes correlated official response-body evidence for the same attempt, plus real-harness proof under [Adapter Verification](../testing/adapter-verification.md). Mocked unit coverage is not that proof.
+This is an optional-capability gap: it warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle. Raising OpenCode above `unsupported` requires a plugin contract that exposes correlated official response-body evidence for the same attempt, plus real-harness proof under [Adapter Readiness Status](../adapter-readiness-status.md). Mocked unit coverage is not that proof.
 
 ## Commands and execution
 

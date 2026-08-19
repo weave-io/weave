@@ -1,30 +1,157 @@
 import {
   ALL_CAPABILITY_IDS,
-  PLAN_TASK_STATES,
   RECONCILIATION_AUTHORIZATION_SOURCES,
 } from "@weaveio/weave-engine";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
-import { PI_CONTROL_KINDS } from "../../packages/adapters/pi/src/child-envelope.js";
-import {
-  WEAVE_COMMAND_CLASSIFICATIONS,
-  WEAVE_COMMAND_NAMES,
-} from "../../packages/adapters/pi/src/commands.js";
-import {
-  PiAdapterFailureCodeSchema,
-  PiAdapterFailureImpactSchema,
-  PiAdapterFailureRecoverySchema,
-} from "../../packages/adapters/pi/src/errors.js";
-import {
-  HOST_PACKAGE_NAME,
-  HOST_VERSION_FLOOR,
-} from "../../packages/adapters/pi/src/host-compatibility.js";
-import { PI_HOST_COMPATIBILITY_MATRIX } from "../../packages/adapters/pi/src/host-compatibility-matrix.js";
 import {
   ADAPTER_PACKAGE_NAMES,
   type AdapterPackageName,
 } from "./changed-adapters.js";
-import type { SmokeChecklistResult } from "./smoke-checklist.js";
+
+/**
+ * The release branch carries the Pi acceptance contract and package metadata,
+ * but not the Pi runtime implementation. Keep the contract's closed sets
+ * local so release validation does not import adapter runtime sources.
+ */
+const PLAN_TASK_STATES = ["pending", "in_progress", "completed"] as const;
+const PI_CONTROL_KINDS = [
+  "handshake",
+  "bootstrap",
+  "bootstrap-ack",
+  "cancel",
+  "cancelled",
+  "settled",
+  "error",
+  "delegate-request",
+  "delegate-request-chunk",
+  "delegate-response",
+  "transfer-chunk",
+  "transfer-result",
+  "model-transition",
+] as const;
+const WEAVE_COMMAND_NAMES = [
+  "weave:start",
+  "weave:run",
+  "weave:status",
+  "weave:abort",
+  "weave:advance",
+  "weave:health",
+  "weave:resume",
+  "weave:plan",
+  "weave:artifact",
+  "weave:inspect",
+  "weave:history",
+  "weave:doctor",
+  "weave:clear-children",
+  "weave:recover-children",
+  "weave:pi-config",
+] as const;
+const WEAVE_COMMAND_CLASSIFICATIONS = [
+  "mutating",
+  "read-only",
+  "idempotent-cleanup",
+] as const;
+const PiAdapterFailureCodeSchema = z.enum([
+  "HostIdentityUnknown",
+  "HostVersionUnsupported",
+  "InteractiveTuiRequired",
+  "PersistentParentSessionRequired",
+  "ActivationFailed",
+  "ConfigRefreshFailed",
+  "CommandCollision",
+  "RequiredCapabilityUnavailable",
+  "ControllerGenerationStale",
+  "InvariantViolation",
+  "RuntimeStoreOpenFailed",
+  "RuntimeStoreMigrationFailed",
+  "RuntimeStoreWriteFailed",
+  "LeaseLost",
+  "LifecycleProjectionFailed",
+  "LifecycleEffectFailed",
+  "ChildCapacityExceeded",
+  "ChildSpawnFailed",
+  "ChildHandshakeMissing",
+  "ChildAuthenticationFailed",
+  "ChildEnvelopeMalformed",
+  "ChildEnvelopeReplay",
+  "ChildSchemaInvalid",
+  "ChildCheckpointInvalid",
+  "ChildNativeRecordTooLarge",
+  "ChildControlEnvelopeTooLarge",
+  "ChildReplyMissing",
+  "ChildReplyDuplicate",
+  "ChildReplyLate",
+  "ChildExitedUnexpectedly",
+  "ChildSettlementMissing",
+  "ChildRuntimeExceeded",
+  "ChildResponseMissing",
+  "ChildAbortFailed",
+  "ChildTransferTimedOut",
+  "ChildTransferRejected",
+  "ChildTransferTooLarge",
+  "ChildDeliveryFailed",
+  "RpcBridgeUnavailable",
+  "ChildRecordCorrupt",
+  "ChildRecordQuotaExceeded",
+  "ChildRecordQuarantined",
+  "ChildRecoveryUnavailable",
+  "ChildInteractionUnavailable",
+  "ChildExtensionUiRejected",
+  "ChildOrphanReadOnly",
+  "ThreadNotFound",
+  "ThreadAuthorityDenied",
+  "ThreadAlreadyRunning",
+  "ThreadStale",
+  "ThreadIntegrityError",
+  "ThreadNotRetryable",
+  "ThreadNotResumable",
+  "ThreadResumeUnavailable",
+  "UiBridgeUnavailable",
+  "CompletionSignalMissing",
+  "CompletionSignalDuplicate",
+  "CompletionSignalMalformed",
+  "CompletionSignalLate",
+  "CompletionRejected",
+  "PlanMissing",
+  "PlanReadFailed",
+  "PlanWriteFailed",
+  "PlanRevisionStale",
+  "PlanTreeMalformed",
+  "LegacyPlanUnsupported",
+  "PlanCatalogUnavailable",
+  "ArtifactReadFailed",
+  "ArtifactDigestFailed",
+  "ArtifactApprovalFailed",
+  "SessionPointerAppendFailed",
+  "JournalWriteFailed",
+  "UsageWriteFailed",
+  "LogWriteFailed",
+  "RetentionFailed",
+]);
+const PiAdapterFailureImpactSchema = z.enum([
+  "health-only",
+  "operation-stopped",
+  "degraded",
+]);
+const PiAdapterFailureRecoverySchema = z.enum([
+  "health-check",
+  "retry",
+  "resume",
+  "abort",
+  "upgrade",
+  "downgrade",
+  "none",
+]);
+const HOST_PACKAGE_NAME = "@earendil-works/pi-coding-agent" as const;
+const HOST_VERSION_FLOOR = "0.81.1" as const;
+const PI_HOST_COMPATIBILITY_MATRIX = {
+  package: HOST_PACKAGE_NAME,
+  supportedRange: `>=${HOST_VERSION_FLOOR}`,
+  floorVersion: HOST_VERSION_FLOOR,
+  exactTestedVersion: "0.84.2",
+} as const;
+type SmokeChecklistResult = "Pending" | "Pass" | "Fail";
 
 /**
  * Acceptance manifest builder and validator (Pi adapter contract, PI-PKG).

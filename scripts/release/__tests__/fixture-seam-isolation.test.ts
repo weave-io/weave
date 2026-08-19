@@ -323,7 +323,15 @@ function moduleGraphReachesSeam(
     ).andThen((present) => {
       if (!present || !/\.(ts|js|mjs|cjs)$/.test(current)) return walk();
       return readText(current).andThen((text) => {
-        if (mentionsSeam(text)) return okAsyncResult(SEAM);
+        // Guard constants in the reachability checker name the test-only seam
+        // but do not import or execute it. Other roots may carry the path in a
+        // manifest, workflow, or dynamic/spawn fixture and must be rejected.
+        if (
+          mentionsSeam(text) &&
+          !current.endsWith("/scripts/release/publish-reachability.ts") &&
+          !current.endsWith("/scripts/release/entrypoint-inventory.ts")
+        )
+          return okAsyncResult(SEAM);
         for (const spec of importSpecs(text))
           pending.push(...resolveImportCandidates(current, spec));
         for (const spawned of spawnPaths(text)) {

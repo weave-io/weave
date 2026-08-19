@@ -194,7 +194,7 @@ export function bindArtifacts(
                                   digest(text),
                                   artifacts.map(({ actual }) => actual.id),
                                 );
-                          if (stableTrain !== undefined && stableTrain.isErr())
+                          if (stableTrain?.isErr())
                             return errAsync({
                               type: "InvalidManifest" as const,
                               issues: [stableTrain.error.type],

@@ -70,7 +70,7 @@ function renderMigratePreflight(
 ): string {
   const overwriteLine = destExists
     ? theme.boldYellow(
-        `yes — backup will be created at ${plan.destinationPath}.bak`,
+        "yes — backup will be created at " + plan.destinationPath + ".bak",
       )
     : "no (destination does not exist)";
   const warningLine =

@@ -60,10 +60,6 @@ import {
 } from "./stable-train.js";
 import { TarInspector } from "./tar-inspector.js";
 
-const STABLE_PROMOTION_PACKAGES = [
-  "@weaveio/weave-cli",
-  "@weaveio/weave-adapter-opencode",
-] as const;
 const IMMUTABLE_POLL_ATTEMPTS = 5;
 const IMMUTABLE_POLL_DELAY_MS = 1_000;
 interface ExpectedReleaseAsset {

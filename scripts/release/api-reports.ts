@@ -16,6 +16,7 @@ import {
   type PublicApiSurface,
   validateRepositoryApiSurfaceMap,
 } from "./api-surface-map.js";
+import { PUBLIC_PACKAGES } from "./constants.js";
 
 const log = logger.child({ module: "api-reports" });
 
@@ -368,10 +369,38 @@ function runExtractors(
   let result: ResultAsync<ApiExtractorRun[], ApiReportsError> = okAsync([]);
   for (const entry of entries) {
     result = result.andThen((runs) =>
-      runExtractor(root, entry, temporaryRoot).map((run) => [...runs, run]),
+      shouldRunExtractor(root, entry).andThen((available) => {
+        if (!available) {
+          log.info(
+            { packageName: entry.packageName, configPath: entry.configPath },
+            "skipping API extraction for unavailable release-only package source",
+          );
+          return okAsync(runs);
+        }
+        return runExtractor(root, entry, temporaryRoot).map((run) => [
+          ...runs,
+          run,
+        ]);
+      }),
     );
   }
   return result;
+}
+
+function shouldRunExtractor(
+  root: string,
+  entry: PublicApiSurface,
+): ResultAsync<boolean, ApiReportsError> {
+  if (entry.packageName !== "@weaveio/weave-adapter-pi") return okAsync(true);
+  const directory = PUBLIC_PACKAGES[entry.packageName].directory;
+  return ResultAsync.fromPromise(
+    Bun.file(join(root, directory, "src", "index.ts")).exists(),
+    () => ({
+      type: "Filesystem" as const,
+      path: join(root, directory, "src"),
+      operation: "read" as const,
+    }),
+  );
 }
 
 function runExtractor(

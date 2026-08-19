@@ -206,9 +206,30 @@ export class PublicPackageBuilder {
     for (const packageName of Object.keys(
       PUBLIC_PACKAGE_BUILDS,
     ) as PublicPackageName[]) {
-      result = result.andThen(() => this.build(packageName));
+      result = result.andThen(() => this.buildIfSourceIsAvailable(packageName));
     }
     return result;
+  }
+
+  private buildIfSourceIsAvailable(
+    packageName: PublicPackageName,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    if (packageName !== "@weaveio/weave-adapter-pi")
+      return this.build(packageName);
+    const source = PUBLIC_PACKAGE_BUILDS[packageName].entries[0]?.source;
+    if (source === undefined) return this.build(packageName);
+    return ResultAsync.fromPromise(Bun.file(source).exists(), () => ({
+      type: "Filesystem" as const,
+      path: source,
+      operation: "list" as const,
+    })).andThen((available) => {
+      if (available) return this.build(packageName);
+      logger.info(
+        { packageName, source },
+        "skipping unavailable adapter source in release-only integration",
+      );
+      return okAsync(undefined);
+    });
   }
 
   build(

@@ -137,6 +137,7 @@ export async function loadDocuments(root = "."): Promise<DocumentStore> {
   const documents: Record<string, string> = {};
   const patterns = [
     "README.md",
+    "RELEASING.md",
     "docs/README.md",
     "docs/**/*.md",
     "docs/reference/cli.md",

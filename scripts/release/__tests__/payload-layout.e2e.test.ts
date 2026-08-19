@@ -75,6 +75,7 @@ test("nightly payload layout executes plan, subset pack, and control manifest va
         "@weaveio/weave-cli": "0.1.0",
         "@weaveio/weave-adapter-opencode": "0.1.0",
         "@weaveio/weave-adapter-claude-code": "0.1.0",
+        "@weaveio/weave-adapter-pi": "0.1.0",
       },
     });
     if (plan.isErr() || plan.value.skip !== undefined)

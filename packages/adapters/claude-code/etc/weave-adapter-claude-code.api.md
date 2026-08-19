@@ -16,11 +16,6 @@ export const BOOTSTRAP_FILES: readonly [".claude-plugin/plugin.json", "hooks/hoo
 // @public
 export function buildClaudeCodeModelInput(descriptor: AgentDescriptor): ModelResolutionInput;
 
-// Warning: (ae-forgotten-export) The symbol "AdapterCapabilityContract" needs to be exported by the entry point index.d.ts
-//
-// @public
-export const CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract;
-
 // @public
 export const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>;
 

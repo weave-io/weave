@@ -1,7 +1,7 @@
 # Project Context
 
 This is a typescript project using raw-http.
-It is a monorepo with internal workspaces `@weaveio/weave-core`, `@weaveio/weave-config`, and `@weaveio/weave-engine`, plus public `@weaveio/weave-cli` and adapter packages. Internal layers are bundled, not npm APIs.
+It is a monorepo with workspaces: @weave/core (packages/core), @weave/engine (packages/engine), @weave/adapter-opencode (packages/adapters/opencode).
 
 
 High-impact files (most imported, changes here affect many other files):

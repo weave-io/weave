@@ -273,5 +273,9 @@ function isKnownWorkspaceBuildDependency(packageName: string): boolean {
   ) {
     return true;
   }
-  return packageName === "@weaveio/weave-adapter-claude-code";
+  // Bundled into the CLI build and stripped from its staged manifest.
+  return (
+    packageName === "@weaveio/weave-adapter-claude-code" ||
+    packageName === "@weaveio/weave-adapter-pi"
+  );
 }

@@ -321,6 +321,7 @@ test("routes stable cut planning without performing a ref mutation", async () =>
       "@weaveio/weave-cli": "1.0.0",
       "@weaveio/weave-adapter-opencode": "1.0.0",
       "@weaveio/weave-adapter-claude-code": "1.0.0",
+      "@weaveio/weave-adapter-pi": "1.0.0",
     },
   });
   expect(result.isOk()).toBe(true);

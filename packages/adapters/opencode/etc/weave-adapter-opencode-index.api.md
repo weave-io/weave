@@ -94,18 +94,11 @@ export type ModelResolutionError = {
     message: string;
 };
 
-// Warning: (ae-forgotten-export) The symbol "AdapterCapabilityContract" needs to be exported by the entry point index.d.ts
-//
-// @public
-export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract;
-
 // Warning: (ae-forgotten-export) The symbol "HarnessAdapter" needs to be exported by the entry point index.d.ts
 //
 // @public
 export class OpenCodeAdapter implements HarnessAdapter {
     constructor(options?: OpenCodeAdapterOptions);
-    // Warning: (ae-forgotten-export) The symbol "OpenCodeFastActivationReport" needs to be exported by the entry point index.d.ts
-    readonly fastActivationReports: Map<string, OpenCodeFastActivationReport>;
     init(): Promise<void>;
     loadAvailableSkills(): Promise<SkillInfo[]>;
     planStateProvider: PlanStateProvider | undefined;
@@ -164,21 +157,11 @@ export interface OpenCodeClientFacade {
     updateAgent(name: string, config: AgentConfig): ResultAsync<void, OpenCodeClientError>;
 }
 
-// @public (undocumented)
+// @public
 export interface OpenCodeModelContext {
     availableModels?: Set<string>;
     systemDefault?: string;
     uiSelectedModel?: string;
-}
-
-// @public
-export interface OpenCodeModelResolution {
-    // (undocumented)
-    model: string;
-    // Warning: (ae-forgotten-export) The symbol "ThinkingLevelDecl" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    thinkingLevel?: ThinkingLevelDecl;
 }
 
 export { Plugin_2 as Plugin }
@@ -254,7 +237,7 @@ export type ReconcileAgentError = {
 export type ReconcileDecision = "create" | "update" | "collision";
 
 // @public
-export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<OpenCodeModelResolution, ModelResolutionError>;
+export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<string, ModelResolutionError>;
 
 // @public
 export class RuntimeCommandProjection {

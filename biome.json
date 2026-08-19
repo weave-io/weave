@@ -47,13 +47,11 @@
   },
   "overrides": [
     {
-      "includes": [
-        "packages/adapters/claude-code/src/__tests__/integration.test.ts"
-      ],
+      "includes": ["scripts/**/*.ts"],
       "linter": {
         "rules": {
-          "style": {
-            "noNonNullAssertion": "off"
+          "suspicious": {
+            "noConsole": "off"
           }
         }
       }

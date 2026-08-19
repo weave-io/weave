@@ -7,9 +7,9 @@ Launch a harness with its own command after configuring it.
 This reference follows the output of `weave --help` and documents the
 implemented subcommands that the help output routes to as well.
 
-**Related:** [Configuration](configuration.md) · [Prompts](prompts.md) ·
-[Runtime Store](runtime.md) · [Adapter Boundary](../architecture/adapter-boundary.md) ·
-[Agent Evals](../guides/evals.md) · [Claude Code](../adapters/claude-code.md)
+**Related:** [Configuration](../config-loading.md) · [Prompts](../prompt-composition.md) ·
+[Runtime Store](../system-architecture.md) · [Adapter Boundary](../adapter-boundary.md) ·
+[Agent Evals](../agent-evals.md) · [Claude Code](../adapters/claude-code.md)
 
 ## Usage
 

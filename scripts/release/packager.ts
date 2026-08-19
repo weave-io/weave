@@ -386,38 +386,46 @@ export class PublicPackagePackager {
         ? (Object.keys(PUBLIC_PACKAGES) as PublicPackageName[])
         : [...overridePackageNames].map((name) => name as PublicPackageName));
     const uniquePackages = [...new Set(packageNames)];
-    let result = okAsync<readonly PackageStagingRecord[], PackagerError>([]);
-    for (const packageName of uniquePackages) {
-      const version = effectiveVersions[packageName];
-      const directDependencyRanges = options.dependencyRangeOverrides?.find(
-        (entry) => entry.packageName === packageName,
-      )?.dependencies;
-      const carrierDependencyRanges =
-        carrier.value.dependencyRangeOverrides?.[packageName];
-      const dependencyRanges =
-        directDependencyRanges === undefined
-          ? carrierDependencyRanges
-          : { ...carrierDependencyRanges, ...directDependencyRanges };
-      const changelogOverride =
-        options.changelogOverrides?.[packageName] ??
-        carrier.value.changelogOverrides?.[packageName];
-      result = result.andThen((records) =>
-        this.packDetailed(packageName, root, join(root, "tarballs"), {
-          channel,
-          version,
-          dependencyRanges,
-          changelogOverride,
-          purpose: selectedPurpose,
-          sourceRoot: options.sourceRoot,
-          releasedSha: options.releasedSha,
-          sourceSha: options.sourceSha,
-          canonicalNotesUrl: options.canonicalNotesUrl,
-          sourceHistory: options.sourceHistory,
-          pendingChangesets: options.pendingChangesets,
-        }).map((record) => [...records, record]),
-      );
-    }
-    return result;
+    const allowUnavailableDefaultSource =
+      options.packages === undefined && overridePackageNames.size === 0;
+    return this.filterUnavailableDefaultPackages(
+      uniquePackages,
+      allowUnavailableDefaultSource,
+      options.sourceRoot,
+    ).andThen((availablePackages) => {
+      let result = okAsync<readonly PackageStagingRecord[], PackagerError>([]);
+      for (const packageName of availablePackages) {
+        const version = effectiveVersions[packageName];
+        const directDependencyRanges = options.dependencyRangeOverrides?.find(
+          (entry) => entry.packageName === packageName,
+        )?.dependencies;
+        const carrierDependencyRanges =
+          carrier.value.dependencyRangeOverrides?.[packageName];
+        const dependencyRanges =
+          directDependencyRanges === undefined
+            ? carrierDependencyRanges
+            : { ...carrierDependencyRanges, ...directDependencyRanges };
+        const changelogOverride =
+          options.changelogOverrides?.[packageName] ??
+          carrier.value.changelogOverrides?.[packageName];
+        result = result.andThen((records) =>
+          this.packDetailed(packageName, root, join(root, "tarballs"), {
+            channel,
+            version,
+            dependencyRanges,
+            changelogOverride,
+            purpose: selectedPurpose,
+            sourceRoot: options.sourceRoot,
+            releasedSha: options.releasedSha,
+            sourceSha: options.sourceSha,
+            canonicalNotesUrl: options.canonicalNotesUrl,
+            sourceHistory: options.sourceHistory,
+            pendingChangesets: options.pendingChangesets,
+          }).map((record) => [...records, record]),
+        );
+      }
+      return result;
+    });
   }
 
   /**
@@ -665,6 +673,46 @@ export class PublicPackagePackager {
           ),
         ),
       );
+  }
+
+  private filterUnavailableDefaultPackages(
+    packageNames: readonly PublicPackageName[],
+    allowUnavailableDefaultSource: boolean,
+    sourceRoot: string | undefined,
+  ): ResultAsync<readonly PublicPackageName[], PackagerError> {
+    if (!allowUnavailableDefaultSource)
+      return okAsync(packageNames);
+    const root = resolve(sourceRoot ?? this.sourceRoot);
+    return ResultAsync.fromPromise(
+      Promise.all(
+        packageNames.map(async (packageName) => {
+          if (packageName !== "@weaveio/weave-adapter-pi")
+            return [packageName, true] as const;
+          const source = PUBLIC_PACKAGE_BUILDS[packageName].entries[0]?.source;
+          return [
+            packageName,
+            source === undefined || (await Bun.file(join(root, source)).exists()),
+          ] as const;
+        }),
+      ),
+      () => ({
+        type: "Filesystem" as const,
+        path: root,
+        operation: "read" as const,
+      }),
+    ).map((availability) => {
+      const unavailable = availability
+        .filter(([, available]) => !available)
+        .map(([packageName]) => packageName);
+      if (unavailable.length > 0)
+        logger.info(
+          { packages: unavailable },
+          "omitting unavailable adapter sources from default release staging",
+        );
+      return availability
+        .filter(([, available]) => available)
+        .map(([packageName]) => packageName);
+    });
   }
 
   /** Applies version overrides to already-created staging manifests only. */

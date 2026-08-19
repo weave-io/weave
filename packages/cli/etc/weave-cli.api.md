@@ -5,58 +5,6 @@
 ```ts
 
 import { Result } from 'neverthrow';
-import { ResultAsync } from 'neverthrow';
-
-// @public (undocumented)
-export type AdapterCliTarget = {
-    readonly adapter: "pi";
-    readonly action: "children.list";
-} | {
-    readonly adapter: "pi";
-    readonly action: "children.show";
-    readonly childId: string;
-    readonly cursor?: string;
-    readonly parentSessionId?: string;
-    readonly content?: boolean;
-    readonly contentCursor?: string;
-} | {
-    readonly adapter: "pi";
-    readonly action: "children.result";
-    readonly childId: string;
-    readonly cursor?: string;
-    readonly parentSessionId?: string;
-} | {
-    readonly adapter: "pi";
-    readonly action: "children.delete";
-    readonly childId: string;
-    readonly parentSessionId?: string;
-} | {
-    readonly adapter: "pi";
-    readonly action: "doctor";
-};
-
-// @public (undocumented)
-export interface AdapterCommandContext {
-    // (undocumented)
-    readonly diagnostic: boolean;
-    // (undocumented)
-    readonly json: boolean;
-    // Warning: (ae-forgotten-export) The symbol "PromptAdapter" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly prompt?: PromptAdapter;
-    // Warning: (ae-forgotten-export) The symbol "AdapterCommandRegistry" needs to be exported by the entry point index.d.ts
-    readonly registry?: AdapterCommandRegistry;
-    // (undocumented)
-    readonly target: AdapterCliTarget;
-    // (undocumented)
-    readonly terminal: TerminalIO;
-    // (undocumented)
-    readonly theme: ThemeColors;
-    readonly workspaceKey?: string;
-    // (undocumented)
-    readonly yes: boolean;
-}
 
 // @public (undocumented)
 export type ArgParseError = {
@@ -99,7 +47,7 @@ export interface CliDeps {
 export type CliError = InvalidArgsError | MissingFileError | FileReadError | ParseFailureError | ValidationFailureError | AgentNotFoundError | CompositionFailureError | UnknownCommandError | EvalValidationError;
 
 // @public (undocumented)
-export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "adapter" | "eval" | "compose" | "unknown";
+export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "unknown";
 
 // @public (undocumented)
 export const defaultThemeManager: ThemeManager;
@@ -135,9 +83,6 @@ export type MissingFileError = {
 };
 
 // @public
-export function parseAdapterTarget(rest: readonly string[]): Result<AdapterCliTarget, CliError>;
-
-// @public
 export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError>;
 
 // @public (undocumented)
@@ -158,8 +103,7 @@ export interface ParsedArgs {
         project: boolean;
         global: boolean;
         limit?: number;
-        namespace?: string;
-        runtimeSubcommand?: "status" | "journal" | "preferences";
+        runtimeSubcommand?: "status" | "journal";
         promptSubcommand?: "inspect" | "list" | "self-modify";
         agentName?: string;
         initSubmode?: "migrate";
@@ -174,11 +118,6 @@ export interface ParsedArgs {
         outDir?: string;
         init?: boolean;
         bootstrapDir?: string;
-        diagnostic?: boolean;
-        content?: boolean;
-        contentCursor?: string;
-        cursor?: string;
-        parentSession?: string;
     };
     rest: string[];
     unknownCommand?: string;
@@ -202,17 +141,11 @@ export class RealTerminal implements TerminalIO {
     stdout(msg: string): void;
 }
 
-// @public (undocumented)
-export function renderAdapterHelp(theme: ThemeColors): string;
-
 // @public
 export function renderLogo(theme: ThemeColors): string[];
 
 // @public
 export function run(deps?: Partial<CliDeps>): Promise<Result<number, CliError>>;
-
-// @public (undocumented)
-export function runAdapter(ctx: AdapterCommandContext): Promise<Result<number, CliError>>;
 
 // @public
 export interface TerminalIO {
