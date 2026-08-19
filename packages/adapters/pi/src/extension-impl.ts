@@ -2910,6 +2910,13 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
   readonly configRefreshForTest: () => PiConfigRefreshCoordinator | undefined;
   /** Bounded diagnostics for verifier/health assertions; never a card input. */
   readonly childUiEventDiagnosticsForTest: () => ChildUiEventDiagnosticsSnapshot;
+  /** Content-free live reasoning ownership counts for cleanup assertions. */
+  readonly liveReasoningCountsForTest: () => {
+    readonly registryEntries: number;
+    readonly retainedBytes: number;
+    readonly inspectorRegistryEntries: number;
+    readonly inspectorRetainedBytes: number;
+  };
 };
 
 export function createPiExtension(
@@ -6781,6 +6788,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
+            timerPort: deps.childTimerPort,
             sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
@@ -6848,6 +6856,7 @@ export function createPiExtension(
             onPrivateOutput: deps.onChildPrivateOutput,
             inspectionRegistry,
             diagnostics: childUiEventDiagnostics,
+            liveReasoningRegistry: liveReasoningRegistryCell.value,
             // One gate, one pipeline. Focus, generation, settlement and
             // repaint coalescing all live in `ChildOverlayLiveStream`; this
             // callback only hands it the event.
@@ -8001,6 +8010,16 @@ export function createPiExtension(
   piAdapterExtension.configRefreshForTest = () => configRefreshCell.coordinator;
   piAdapterExtension.childUiEventDiagnosticsForTest = () =>
     childUiEventDiagnostics.snapshot();
+  piAdapterExtension.liveReasoningCountsForTest = () => {
+    const view = childOverlayCell.controller?.view();
+    const liveReasoning = view?.isOk() ? view.value.liveReasoning : undefined;
+    return {
+      registryEntries: liveReasoningRegistryCell.value?.size() ?? 0,
+      retainedBytes: liveReasoningRegistryCell.value?.retainedBytes() ?? 0,
+      inspectorRegistryEntries: liveReasoning?.registryEntries ?? 0,
+      inspectorRetainedBytes: liveReasoning?.retainedBytes ?? 0,
+    };
+  };
   return piAdapterExtension;
 }
 
