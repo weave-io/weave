@@ -282,7 +282,15 @@ test("stable manifests embed a validated train and nightly manifests omit it", a
   expect(await reset.exited).toBe(0);
   await Bun.write(
     join(stage, "package.json"),
-    JSON.stringify({ name: "@weaveio/weave-cli", version }),
+    JSON.stringify({
+      name: "@weaveio/weave-cli",
+      version,
+      description: "Weave CLI",
+      main: "./dist/index.js",
+      types: "./dist/index.d.ts",
+      publishConfig: { access: "public" },
+      dependencies: { neverthrow: "^8.2.0" },
+    }),
   );
   await Bun.write(join(tarballs, `weaveio-weave-cli-${version}.tgz`), tarball);
   const stable = await writeArtifactManifest(

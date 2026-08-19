@@ -1,12 +1,19 @@
 import { logger } from "@weaveio/weave-engine";
 import { errAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
-import { RELEASE_INPUT_LIMITS } from "./constants.js";
+import {
+  PUBLIC_MANIFEST_FIELDS,
+  RELEASE_INPUT_LIMITS,
+  RUNTIME_DEPENDENCY_FIELDS,
+} from "./constants.js";
+import { parseJsonValue } from "./json.js";
 import {
   ArtifactManifestSchema,
   FullShaSchema,
+  PackageNameSchema,
   packageArtifactFilename,
   ReleaseOperationSchema,
+  SemVerSchema,
   type StableTrainRecord,
   StableTrainRecordSchema,
 } from "./model.js";
@@ -39,12 +46,56 @@ type ManifestDraft = {
   stableTrain?: StableTrainRecord;
 };
 
+const STAGED_PACKAGE_COLLECTION_LIMIT = 128;
+const StagedManifestStringSchema = z
+  .string()
+  .max(RELEASE_INPUT_LIMITS.manifestBytes);
+const StagedDependencyMapSchema = z
+  .record(
+    z.string().max(RELEASE_INPUT_LIMITS.identifierLength),
+    StagedManifestStringSchema,
+  )
+  .superRefine((value, context) => {
+    if (Object.keys(value).length > STAGED_PACKAGE_COLLECTION_LIMIT)
+      context.addIssue({
+        code: "custom",
+        message: "manifest map has too many entries",
+      });
+    for (const name of Object.keys(value))
+      if (name.startsWith("@weaveio/"))
+        context.addIssue({
+          code: "custom",
+          message: "staged manifests cannot declare workspace dependencies",
+        });
+  });
 const StagedPackageSchema = z
   .object({
-    name: z.string().min(1).max(128),
-    version: z.string().min(1).max(128),
+    name: PackageNameSchema,
+    version: SemVerSchema,
   })
-  .strict();
+  .catchall(z.json())
+  .superRefine((value, context) => {
+    for (const field of Object.keys(value))
+      if (
+        !PUBLIC_MANIFEST_FIELDS.some((allowed) => allowed === field) &&
+        !RUNTIME_DEPENDENCY_FIELDS.some((allowed) => allowed === field)
+      )
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "unknown staged manifest field",
+        });
+    for (const field of RUNTIME_DEPENDENCY_FIELDS) {
+      const dependencies = value[field];
+      if (dependencies === undefined) continue;
+      if (!StagedDependencyMapSchema.safeParse(dependencies).success)
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "invalid staged dependency map",
+        });
+    }
+  });
 
 /** Builds the payload manifest from the exact tarballs emitted by release validation. */
 export function writeArtifactManifest(
@@ -123,9 +174,14 @@ async function discoverPackages(
     );
   const packages = await Promise.all(
     stages.map(async (stage): Promise<DiscoveredPackage | null> => {
-      const packageJson = StagedPackageSchema.parse(
-        await Bun.file(stage).json(),
-      );
+      const stagedBytes = await Bun.file(stage).bytes();
+      if (stagedBytes.byteLength > RELEASE_INPUT_LIMITS.manifestBytes)
+        throw new Error("staged package manifest exceeds size limit");
+      const parsed = parseJsonValue(new TextDecoder().decode(stagedBytes));
+      if (parsed.isErr()) throw new Error("invalid staged package manifest");
+      const checked = StagedPackageSchema.safeParse(parsed.value);
+      if (!checked.success) throw new Error("invalid staged package manifest");
+      const packageJson = checked.data;
       if (
         channel === "stable" &&
         packageJson.name === "@weaveio/weave-adapter-claude-code"
