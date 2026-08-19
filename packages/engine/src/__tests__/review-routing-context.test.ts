@@ -13,7 +13,6 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { AgentDescriptor } from "../compose.js";
 import { buildReviewRoutingContext } from "../compose.js";
 import type { MaterializedAgent } from "../materialization.js";
 
@@ -21,35 +20,20 @@ import type { MaterializedAgent } from "../materialization.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeStubDescriptor(name: string): AgentDescriptor {
-  return {
-    name,
-    composedPrompt: "",
-    models: [],
-    mode: "subagent",
-    effectiveToolPolicy: {
-      read: "ask",
-      write: "ask",
-      execute: "ask",
-      delegate: "ask",
-      network: "ask",
-    },
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-  };
-}
+type ReviewRoutingInput = Pick<
+  MaterializedAgent,
+  "agentName" | "source" | "reviewMeta"
+>;
 
 function makeReviewVariant(
   agentName: string,
   sourceAgentName: string,
   reviewModel: string,
-): MaterializedAgent {
+): ReviewRoutingInput {
   return {
     agentName,
     source: "review-variant",
     reviewMeta: { sourceAgentName, reviewModel },
-    descriptor: makeStubDescriptor(agentName),
   };
 }
 
@@ -125,12 +109,11 @@ describe("buildReviewRoutingContext", () => {
   });
 
   it("ignores agents that are not review-variant source", () => {
-    const variants: MaterializedAgent[] = [
+    const variants: ReviewRoutingInput[] = [
       makeReviewVariant("weft-openai-gpt-5", "weft", "openai/gpt-5"),
       {
         agentName: "weft",
         source: "explicit",
-        descriptor: makeStubDescriptor("weft"),
       },
     ];
     const result = buildReviewRoutingContext(variants, ["weft"]);

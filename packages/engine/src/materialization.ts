@@ -19,7 +19,6 @@ import {
   generateReviewVariants,
   type ReviewVariantConflictError,
 } from "./review-variants.js";
-import { evaluateEffectiveToolPolicy } from "./tool-policy.js";
 
 /** Adapter-provided input for public agent materialization. */
 export interface MaterializationInput {
@@ -120,22 +119,6 @@ function filterDisabled(
   disabled: readonly string[],
 ): [string, AgentConfig][] {
   return entries.filter(([agentName]) => !disabled.includes(agentName));
-}
-
-function buildReviewVariantPlaceholder(
-  agentName: string,
-  agentConfig: AgentConfig,
-): AgentDescriptor {
-  return {
-    name: agentName,
-    composedPrompt: "",
-    models: agentConfig.models === undefined ? [] : [...agentConfig.models],
-    mode: agentConfig.mode ?? "subagent",
-    effectiveToolPolicy: evaluateEffectiveToolPolicy(agentConfig.tool_policy),
-    rawToolPolicy: agentConfig.tool_policy,
-    delegationTargets: [],
-    skills: agentConfig.skills === undefined ? [] : [...agentConfig.skills],
-  };
 }
 
 /**
@@ -245,23 +228,20 @@ export function materializeAgents(
 
   const allAgents = Object.fromEntries(allEntries);
 
-  // Build lightweight MaterializedAgent-shaped objects for review variants so
-  // primary-mode agents can receive reviewRouting context during composition.
-  // These are pre-built before the main composition loop (review variants are
-  // generated before composition) so they are available for all primary agents.
-  const prebuiltReviewVariants: MaterializedAgent[] = reviewVariantEntries.map(
-    ({ agentName, agentConfig, entrySource }) => ({
+  type ReviewRoutingInput = Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >;
+
+  const prebuiltReviewVariants: ReviewRoutingInput[] =
+    reviewVariantEntries.map(({ agentName, entrySource }) => ({
       agentName,
-      // The descriptor is a placeholder — only agentName/source/reviewMeta are
-      // used by buildReviewRoutingContext; the real descriptor is composed later.
-      descriptor: buildReviewVariantPlaceholder(agentName, agentConfig),
       source: "review-variant",
       reviewMeta: {
         sourceAgentName: entrySource.sourceAgentName,
         reviewModel: entrySource.reviewModel,
       },
-    }),
-  );
+    }));
 
   const compositionPromises = allTypedEntries.map(
     ({ agentName, agentConfig, entrySource }) => {

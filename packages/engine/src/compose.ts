@@ -461,16 +461,14 @@ function toRendererTemplateContext(
  */
 function renderPromptTemplate(
   source: string,
-  context: AgentPromptTemplateContext,
+  context: TemplateContext,
   agentName: string,
   sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file",
   promptFilePath?: string,
 ): Result<string, ComposeError> {
-  const renderResult = renderTemplate(
-    source,
-    toRendererTemplateContext(context),
-    { allowedPaths: ALLOWED_TEMPLATE_PATHS },
-  );
+  const renderResult = renderTemplate(source, context, {
+    allowedPaths: ALLOWED_TEMPLATE_PATHS,
+  });
 
   if (renderResult.isErr()) {
     return err(
@@ -774,11 +772,12 @@ export function composeWorkflowStepPrompt(
 ): ResultAsync<WorkflowStepComposedPrompt, ComposeError> {
   const contextLabel = `workflow-step:${stepName}`;
   const reader = promptFileReader ?? defaultPromptFileReader;
+  const rendererContext = toRendererTemplateContext(templateContext);
 
   // Render the step's primary prompt as a template
   const renderedPrimaryResult = renderPromptTemplate(
     step.prompt,
-    templateContext,
+    rendererContext,
     contextLabel,
     "prompt",
   );
@@ -834,7 +833,7 @@ export function composeWorkflowStepPrompt(
 
       const renderedAppendResult = renderPromptTemplate(
         appendSource.content,
-        templateContext,
+        rendererContext,
         contextLabel,
         appendSourceKind,
         appendFilePath,
@@ -858,30 +857,30 @@ export function composeWorkflowStepPrompt(
  * Returns `undefined` when no matching groups exist.
  */
 export function buildReviewRoutingContext(
-  reviewVariants: MaterializedAgent[],
+  reviewVariants: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
   delegationTargetNames: string[],
 ): ReviewRoutingContext | undefined {
   const delegationSet = new Set(delegationTargetNames);
 
-  // Filter to review-variant agents only
-  const variants = reviewVariants.filter((a) => a.source === "review-variant");
-
-  // Group by sourceAgentName
   const groups = new Map<string, Array<{ name: string; model: string }>>();
-  for (const variant of variants) {
-    const sourceAgentName = variant.reviewMeta?.sourceAgentName;
-    if (sourceAgentName === undefined) continue;
-    if (!delegationSet.has(sourceAgentName)) continue;
+  for (const variant of reviewVariants) {
+    if (variant.source !== "review-variant") continue;
+    const reviewMeta = variant.reviewMeta;
+    if (reviewMeta === undefined) continue;
+    if (!delegationSet.has(reviewMeta.sourceAgentName)) continue;
 
-    const existing = groups.get(sourceAgentName);
+    const existing = groups.get(reviewMeta.sourceAgentName);
     const entry = {
       name: variant.agentName,
-      model: variant.reviewMeta?.reviewModel ?? "",
+      model: reviewMeta.reviewModel,
     };
     if (existing !== undefined) {
       existing.push(entry);
     } else {
-      groups.set(sourceAgentName, [entry]);
+      groups.set(reviewMeta.sourceAgentName, [entry]);
     }
   }
 
@@ -909,7 +908,10 @@ export function composeAgentDescriptor(
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
-  materializedReviewVariants?: MaterializedAgent[],
+  materializedReviewVariants?: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
   promptFileReader?: PromptFileReader,
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const reader = promptFileReader ?? defaultPromptFileReader;
@@ -951,6 +953,7 @@ export function composeAgentDescriptor(
   }
 
   const templateContext = contextResult.value;
+  const rendererContext = toRendererTemplateContext(templateContext);
   const promptFilePath = agentConfig.prompt_file;
   const primarySourceKind: "prompt" | "prompt_file" =
     agentConfig.prompt !== undefined ? "prompt" : "prompt_file";
@@ -960,7 +963,7 @@ export function composeAgentDescriptor(
       (promptSource): Result<string, ComposeError> =>
         renderPromptTemplate(
           promptSource,
-          templateContext,
+          rendererContext,
           agentName,
           primarySourceKind,
           promptFilePath,
@@ -981,7 +984,7 @@ export function composeAgentDescriptor(
 
             const renderedAppendResult = renderPromptTemplate(
               appendSource.content,
-              templateContext,
+              rendererContext,
               agentName,
               appendSourceKind,
               appendFilePath,
