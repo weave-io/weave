@@ -91,6 +91,7 @@ import {
   syncTranscriptFromEntries,
 } from "./child-overlay-window.js";
 import {
+  isPiAuthoritativeToolEvent,
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
@@ -590,17 +591,20 @@ export class ChildOverlayController {
     if (child.status !== "live") {
       return ok(this.toView(child, state));
     }
-
     const parsed = parsePiChildSessionEvent(event);
     if (!parsed.success) {
       this.diagnostics.invalidEvent();
       return ok(this.toView(child, state));
     }
-    const applied = applyProviderErrorEvent(state.evidence, parsed.data);
+    const applied = isPiAuthoritativeToolEvent(parsed.data)
+      ? { event: parsed.data, evidence: state.evidence }
+      : applyProviderErrorEvent(state.evidence, parsed.data);
     const sessionEvent = applied.event;
     state.evidence = applied.evidence;
-    this.diagnostics.toolDetailLoss(applied.toolDetailLossKey, child.childId);
-
+    this.diagnostics.toolDetailLoss(
+      "toolDetailLossKey" in applied ? applied.toolDetailLossKey : undefined,
+      child.childId,
+    );
     const mapResultOr = this.diagnostics.mappingResultOr;
     const reduceResultOr = this.diagnostics.reductionResultOr;
     const mapped = mapResultOr(
@@ -612,14 +616,10 @@ export class ChildOverlayController {
         reduceChildCompact(state.compact, mapped),
         state.compact,
       );
-
-    // Latest-wins: a parsed report replaces the prior one outright, while an
-    // unparsable one carries no information and leaves it untouched.
+    // Latest-wins usage report.
     const usage = parsePiChildUsageReport(sessionEvent);
     if (usage.isOk()) state.usage = usage.value;
-
-    // Project first so the transcript and window share one stable Pi assistant
-    // lifecycle id, including truncated or interleaved host sequences.
+    // Project first so transcript and window share one assistant lifecycle id.
     const phase = liveAssistantLifecyclePhase(sessionEvent);
     const assistantEntryId =
       phase === undefined ? undefined : resolveLiveAssistantEntry(state, phase);
@@ -634,9 +634,7 @@ export class ChildOverlayController {
         ),
       undefined,
     );
-    // A streamed delta states one fragment; the window keeps the whole answer.
-    // Writing the accumulated text (and one canonical replay step) here is what
-    // lets a rebuilt window still hold an unfinished answer.
+    // The window keeps the accumulated streamed answer and one replay step.
     if (phase === "continue" && assistantEntryId !== undefined) {
       const delta = messageUpdateAnswerText(sessionEvent);
       if (delta !== undefined) {
@@ -666,8 +664,11 @@ export class ChildOverlayController {
       event: sessionEvent,
       ...(overlayEntryId === undefined ? {} : { overlayEntryId }),
     });
-    state.transcript = reduceResultOr(transcriptNext, state.transcript);
-
+    if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
+    else {
+      reduceResultOr(transcriptNext, state.transcript);
+      if (isPiAuthoritativeToolEvent(sessionEvent)) projected = undefined;
+    }
     if (projected !== undefined) {
       this.mergeEntry(state, projected);
       // The new rows land below a manually scrolled viewport; hold position

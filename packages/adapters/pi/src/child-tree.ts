@@ -8,7 +8,6 @@
 import { errAsync, okAsync, Result, type ResultAsync } from "neverthrow";
 import {
   parsePiChildSessionEvent,
-  preserveUnknownChildEvent,
   retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
@@ -283,23 +282,27 @@ export class PiChildInspectionRegistry {
           "checkpoint",
           "checkpoint-failed",
         );
-      } else {
-        this.transcriptStates.set(id, reducer);
-        const listener = this.transcriptListener;
-        if (listener !== undefined) {
-          Result.fromThrowable(
-            () => listener(id),
-            () => undefined,
-          )().match(
-            () => undefined,
-            () =>
-              recordChildUiEventFailure(
-                this.diagnostics,
-                "tree-projection",
-                "callback-failed",
-              ),
-          );
-        }
+        // An impossible native tool event is not a durable fact. Keeping it in
+        // history after the reducer rejected it would let replay manufacture
+        // the same invalid row later. Keep the queue ordered while making the
+        // checkpoint an honest no-op.
+        return this.enqueue(() => okAsync(undefined));
+      }
+      this.transcriptStates.set(id, reducer);
+      const listener = this.transcriptListener;
+      if (listener !== undefined) {
+        Result.fromThrowable(
+          () => listener(id),
+          () => undefined,
+        )().match(
+          () => undefined,
+          () =>
+            recordChildUiEventFailure(
+              this.diagnostics,
+              "tree-projection",
+              "callback-failed",
+            ),
+        );
       }
     }
     return this.enqueue(() =>

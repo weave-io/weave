@@ -10,6 +10,7 @@ import type {
   PiNativeSessionRecord,
 } from "../child-native-sessions.js";
 import type { PiChildRecoveryRecord } from "../child-recovery.js";
+import type { PiChildSessionEvent } from "../child-session-events.js";
 import { SystemTimerPort } from "../child-timer.js";
 import {
   type PiChildInspectionHistoryError,
@@ -2490,6 +2491,7 @@ describe("PiDelegationController", () => {
 
   it("forwards parser-approved session events to onSessionEvent while preserving inspection checkpoints", async () => {
     const sessionEvents: string[] = [];
+    const toolEvents: PiChildSessionEvent[] = [];
     const checkpointEvents: string[] = [];
     const registry = new PiChildInspectionRegistry({
       register: () => okAsync(undefined),
@@ -2515,6 +2517,14 @@ describe("PiDelegationController", () => {
       request({
         onSessionEvent: (event) => {
           sessionEvents.push(event.type);
+          if (
+            event.type === "tool_call" ||
+            event.type === "tool_partial_result" ||
+            event.type === "tool_result" ||
+            event.type === "tool_error"
+          ) {
+            toolEvents.push(event);
+          }
         },
       }),
     );
@@ -2530,6 +2540,33 @@ describe("PiDelegationController", () => {
     expect(
       checkpointEvents.some((entry) => entry.endsWith(":message_update")),
     ).toBe(true);
+    child.emitLine({
+      type: "tool_execution_start",
+      toolCallId: "controller-tool",
+      toolName: "bash",
+      args: { command: "bun test" },
+    });
+    child.emitLine({
+      type: "tool_execution_end",
+      toolCallId: "controller-tool",
+      toolName: "bash",
+      result: { stdout: "83 tests passed" },
+      isError: false,
+    });
+    await flush();
+    expect(toolEvents).toEqual([
+      expect.objectContaining({
+        type: "tool_call",
+        toolCallId: "controller-tool",
+        toolName: "bash",
+        arguments: { command: "bun test" },
+      }),
+      expect.objectContaining({
+        type: "tool_result",
+        toolCallId: "controller-tool",
+        result: { stdout: "83 tests passed" },
+      }),
+    ]);
     await settleRunningChild(child, port, "gen-1", 3);
     expect((await promise).isOk()).toBe(true);
     controller.disposeAll();

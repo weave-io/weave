@@ -12,6 +12,10 @@ import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
 import { PiLiveReasoningRegistry } from "../child-live-reasoning.js";
+import {
+  isPiAuthoritativeToolEvent,
+  type PiChildSessionEvent,
+} from "../child-session-events.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type { PiChildTreeNode } from "../child-tree.js";
 import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
@@ -3329,9 +3333,11 @@ describe("PiRpcChild", () => {
   it("forwards every bounded session event through the observer in wire order", async () => {
     const processPort = new FakeChildProcessPort();
     const observed: string[] = [];
+    const observedEvents: PiChildSessionEvent[] = [];
     const observer: PiChildSessionObserver = {
       onEvent: (event) => {
         observed.push(event.type);
+        observedEvents.push(event);
         return ok(undefined);
       },
     };
@@ -3441,6 +3447,27 @@ describe("PiRpcChild", () => {
       "extension_ui_request",
       "unknown",
     ]);
+    const nativeCall = observedEvents.find(
+      (event) => event.type === "tool_call" && event.toolCallId === "native-1",
+    );
+    expect(nativeCall).toMatchObject({
+      type: "tool_call",
+      toolCallId: "native-1",
+      toolName: "read",
+      arguments: { path: "README.md" },
+    });
+    expect(
+      nativeCall === undefined ? false : isPiAuthoritativeToolEvent(nativeCall),
+    ).toBe(true);
+    const nativeResult = observedEvents.find(
+      (event) =>
+        event.type === "tool_result" && event.toolCallId === "native-1",
+    );
+    expect(nativeResult).toMatchObject({
+      type: "tool_result",
+      toolCallId: "native-1",
+      result: { content: [{ type: "text", text: "done" }] },
+    });
   });
 
   it("accepts a native assistant record over 1 MiB before settlement", async () => {

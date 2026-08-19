@@ -21,11 +21,11 @@
  *   7. the prompt said `turn 3` while the rail said `turn 7` in one frame;
  *   8. SPEND printed one message's accounting as the run's total.
  *
- * So this file starts from the host event, not from the reducer: every case
- * goes through `parsePiChildSessionEvent` → `redactProviderErrorFromEvent` →
- * the transcript reducer → the shipped renderer and the shipped fact
- * projections. Nothing is hand-built, and no fixture carries a real prompt,
- * secret, absolute path, or provider payload.
+ * So this file starts from the host event, not from the reducer. The red
+ * control still calls `redactProviderErrorFromEvent` directly, while the
+ * repaired live seam sends native tool events through the bounded inspector
+ * lane without that provider-error projection. Nothing is hand-built, and no
+ * fixture carries a real prompt, secret, absolute path, or provider payload.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -65,8 +65,12 @@ import {
   redactProviderErrorFromEvent,
   TOOL_ERROR_DETAILS_UNAVAILABLE,
   TOOL_RESULT_DETAILS_UNAVAILABLE,
+  toolDetailProjectionLossKey,
 } from "../child-provider-error.js";
-import { parsePiChildSessionEvent } from "../child-session-events.js";
+import {
+  isPiAuthoritativeToolEvent,
+  parsePiChildSessionEvent,
+} from "../child-session-events.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
 import {
   createPiChildTranscriptState,
@@ -111,7 +115,9 @@ function ingest(
   if (!parsed.success) return state;
   const next = reducePiChildTranscript(state, {
     kind: "event",
-    event: redactProviderErrorFromEvent(parsed.data),
+    event: isPiAuthoritativeToolEvent(parsed.data)
+      ? parsed.data
+      : redactProviderErrorFromEvent(parsed.data),
   });
   expect(next.isOk()).toBe(true);
   return next.isOk() ? next.value : state;
@@ -246,6 +252,103 @@ describe("real Pi tool payloads reach rows as text, never as shapes", () => {
 // ---------------------------------------------------------------------------
 
 describe("real terminal tool events replace the call state", () => {
+  it("renders one bounded, useful row for each supported tool shape", () => {
+    const rows = rowsOf([
+      {
+        type: "tool_execution_start",
+        toolCallId: "read-call",
+        toolName: "read",
+        args: {
+          path: "src/main.ts",
+          startLine: 12,
+          endLine: 18,
+          startColumn: 2,
+        },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId: "read-call",
+        toolName: "read",
+        partialResult: { stdout: "lines 12-18" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "read-call",
+        toolName: "read",
+        result: { stdout: "lines 12-18" },
+        isError: false,
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId: "edit-call",
+        toolName: "edit",
+        args: { path: "src/main.ts", operation: "replace", oldText: "secret" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "edit-call",
+        toolName: "edit",
+        result: { stdout: "edited 1 occurrence" },
+        isError: false,
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId: "other-call",
+        toolName: "question",
+        args: { question: "which check?", options: ["unit", "integration"] },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "other-call",
+        toolName: "question",
+        result: { content: "unit" },
+        isError: false,
+      },
+    ]);
+    const joined = rows.join("\n");
+    expect(joined).toContain(
+      "⚙ read(path: src/main.ts, startLine: 12, endLine: 18",
+    );
+    expect(joined).toContain("⎿ lines 12-18");
+    expect(joined).toContain("⚙ edit(path: src/main.ts, operation: replace)");
+    expect(joined).toContain("⎿ edited 1 occurrence");
+    expect(joined).toContain("⚙ question(question: which check?");
+    expect(joined).toContain("⎿ unit");
+    expect(joined).not.toContain("oldText");
+    expect(joined).not.toContain("/Users/");
+    expect(joined).not.toContain("secret");
+  });
+
+  it("renders the controlled bash command and result in one row", () => {
+    const rows = rowsOf([
+      {
+        type: "tool_execution_start",
+        toolCallId: CALL_ID,
+        toolName: "bash",
+        args: { command: "bun test --filter inspector" },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId: CALL_ID,
+        toolName: "bash",
+        partialResult: { stdout: "83 tests passed" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: CALL_ID,
+        toolName: "bash",
+        result: { stdout: "83 tests passed", stderr: "" },
+        isError: false,
+      },
+    ]);
+    const joined = rows.join("\n");
+    expect(joined).toContain("⚙ bash(command: bun test --filter inspector)");
+    expect(joined).toContain("⎿ 83 tests passed");
+    expect(joined.match(/⚙ bash\(/gu)?.length).toBe(1);
+    expect(joined.match(/⎿ 83 tests passed/gu)?.length).toBe(1);
+    expect(joined).not.toContain("running");
+  });
+
   it("turns running into a result once the call ends", () => {
     const call = {
       type: "tool_execution_start",
@@ -352,6 +455,72 @@ describe("real terminal tool events replace the call state", () => {
     const joined = rows.join("\n");
     expect(joined).toContain("⎿ 3 files pass");
     expect(joined).toContain("⎿ 9 files pass");
+  });
+
+  it("rejects impossible native order and duplicate terminal events once", () => {
+    const beforeStart = parsePiChildSessionEvent({
+      type: "tool_execution_update",
+      toolCallId: CALL_ID,
+      toolName: "read",
+      partialResult: { content: "too early" },
+    });
+    expect(beforeStart.success).toBe(true);
+    if (!beforeStart.success) return;
+    const empty = createPiChildTranscriptState();
+    const rejected = reducePiChildTranscript(empty, {
+      kind: "event",
+      event: beforeStart.data,
+    });
+    expect(rejected.isErr()).toBe(true);
+    if (rejected.isOk()) return;
+    expect(rejected.error).toEqual({
+      type: "TranscriptToolEventInvalid",
+      operation: "tool-event",
+      reason: "tool-event-before-start",
+    });
+
+    const started = parsePiChildSessionEvent({
+      type: "tool_execution_start",
+      toolCallId: CALL_ID,
+      toolName: "read",
+      args: { path: "src/main.ts" },
+    });
+    const ended = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolCallId: CALL_ID,
+      toolName: "read",
+      result: { content: "done" },
+      isError: false,
+    });
+    expect(started.success).toBe(true);
+    expect(ended.success).toBe(true);
+    if (!started.success || !ended.success) return;
+    const afterStart = reducePiChildTranscript(empty, {
+      kind: "event",
+      event: started.data,
+    });
+    expect(afterStart.isOk()).toBe(true);
+    if (afterStart.isErr()) return;
+    const afterEnd = reducePiChildTranscript(afterStart.value, {
+      kind: "event",
+      event: ended.data,
+    });
+    expect(afterEnd.isOk()).toBe(true);
+    if (afterEnd.isErr()) return;
+    const duplicate = reducePiChildTranscript(afterEnd.value, {
+      kind: "event",
+      event: ended.data,
+    });
+    expect(duplicate.isErr()).toBe(true);
+    if (duplicate.isOk()) return;
+    expect(duplicate.error).toEqual({
+      type: "TranscriptToolEventInvalid",
+      operation: "tool-event",
+      reason: "duplicate-terminal",
+    });
+    expect(
+      afterEnd.value.entries.filter((entry) => entry.kind === "tool"),
+    ).toHaveLength(1);
   });
 });
 
@@ -845,6 +1014,10 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
       resolveLiveThreadId: () => child.threadId,
       diagnostics,
     });
+    const cardUpdates: Array<{
+      readonly content: readonly unknown[];
+      readonly details?: unknown;
+    }> = [];
     const card = new PiDelegationCardStream({
       threadId: child.threadId,
       agentName: child.agentName ?? "shuttle",
@@ -852,6 +1025,7 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
       model: child.model,
       timerPort: new ImmediateTimerPort(),
       diagnostics,
+      onUpdate: (update) => cardUpdates.push(update),
     });
     card.start();
 
@@ -870,7 +1044,25 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
             bucket.reason === "tool-detail-redacted",
         );
 
-    let firstLossOrdinal: number | undefined;
+    const event13 = verified.value.fixture.events.find(
+      (captured) => captured.ordinalId === 13,
+    );
+    expect(event13).toBeDefined();
+    if (event13 === undefined) return;
+    const event13Parsed = parsePiChildSessionEvent(event13.payload);
+    expect(event13Parsed.success).toBe(true);
+    if (!event13Parsed.success) return;
+    // Task 3's red control remains red at the old projection seam: the
+    // normalized event is known to carry useful detail, and that projection
+    // still replaces it with the closed privacy placeholder.
+    const redControl = redactProviderErrorFromEvent(event13Parsed.data);
+    expect(toolDetailProjectionLossKey(event13Parsed.data, redControl)).toBe(
+      "tool-call-1",
+    );
+    expect(JSON.stringify(redControl)).not.toContain(
+      "weave capture deterministic workspace file",
+    );
+
     let appliedCount = 0;
     for (const captured of verified.value.fixture.events) {
       const parsed = parsePiChildSessionEvent(captured.payload);
@@ -887,51 +1079,36 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
       if (outcome.kind === "applied") appliedCount += 1;
 
       const bucket = toolBuckets()[0];
-      if (bucket !== undefined && firstLossOrdinal === undefined) {
-        firstLossOrdinal = captured.ordinalId;
-      }
 
       if (captured.ordinalId === 13) {
         const rows = renderRows().join("\n");
-        expect(bucket?.count).toBe(1);
+        expect(bucket).toBeUndefined();
         expect(rows).toContain("⚙ read(path: weave-capture-sample.txt)");
-        expect(rows).toContain("⎿ done");
-        expect(rows).not.toMatch(
-          /⎿ .*weave capture deterministic workspace file/u,
-        );
+        expect(rows).toContain("⎿ weave capture deterministic workspace file");
+        expect(rows).not.toContain(TOOL_RESULT_DETAILS_UNAVAILABLE);
       }
       if (captured.ordinalId === 28) {
         const rows = renderRows().join("\n");
-        expect(bucket?.count).toBe(2);
+        expect(bucket).toBeUndefined();
         expect(rows).toContain("⚙ bash(command: echo weave-capture-ok)");
-        expect(rows).toContain("⎿ running");
-        expect(rows).not.toMatch(/⎿ .*weave-capture-ok/u);
+        expect(rows).toContain("⎿ weave-capture-ok");
       }
       if (captured.ordinalId === 29) {
         const rows = renderRows().join("\n");
-        // The terminal projection succeeds, but it cannot restore the detail
-        // that the earlier partial projection replaced. The same tool id
-        // therefore does not create a second diagnostic.
-        expect(bucket?.count).toBe(2);
+        expect(bucket).toBeUndefined();
         expect(rows).toContain("⚙ bash(command: echo weave-capture-ok)");
-        expect(rows).toContain("⎿ done");
-        expect(rows).not.toMatch(/⎿ .*weave-capture-ok/u);
+        expect(rows).toContain("⎿ weave-capture-ok");
+        // The update and terminal are one in-place correlated row.
+        expect(rows.match(/⚙ bash\(/gu)?.length).toBe(1);
+        expect(rows.match(/⎿ weave-capture-ok/gu)?.length).toBe(1);
       }
     }
 
     const snapshot = diagnostics.snapshot();
-    expect(firstLossOrdinal).toBe(13);
     expect(appliedCount).toBe(verified.value.fixture.events.length);
-    expect(snapshot.buckets).toHaveLength(1);
-    expect(toolBuckets()).toEqual([
-      expect.objectContaining({
-        stage: "overlay-mapping",
-        classification: "application-failure",
-        reason: "tool-detail-redacted",
-        disposition: "failed",
-        count: 2,
-      }),
-    ]);
+    // The old projection still has a red control above, but the live native
+    // path no longer visits it, so no tool-detail-loss bucket is emitted.
+    expect(toolBuckets()).toEqual([]);
     // Diagnostic state is a bounded closed-code aggregate, not a transcript.
     const serializedDiagnostics = JSON.stringify(snapshot);
     expect(serializedDiagnostics).not.toContain("weave-capture");
@@ -946,7 +1123,15 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
       text: "",
       live: false,
     });
-    expect(JSON.stringify(card.facts())).not.toContain(
+    const parentCardSurface = JSON.stringify({
+      facts: card.facts(),
+      details: card.details(),
+      updates: cardUpdates,
+    });
+    expect(parentCardSurface).not.toMatch(
+      /read|bash|tool-call-1|tool-call-2|weave-capture-ok|stdout|stderr|83 tests passed/iu,
+    );
+    expect(parentCardSurface).not.toContain(
       "Weave capture deterministic final answer.",
     );
     stream.dispose();

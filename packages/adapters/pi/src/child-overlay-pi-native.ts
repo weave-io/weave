@@ -34,6 +34,7 @@
  * count matches and place its gutter without ever slicing a painted byte.
  */
 
+import { Result } from "neverthrow";
 import {
   PI_LIVE_REASONING_PARENT_PREFIX,
   PI_LIVE_REASONING_TRUNCATION_MARKER,
@@ -112,6 +113,19 @@ const PI_NATIVE_VALUE_KEYS = 4;
 
 /** Nesting depth {@link normalizeOverlayPayload} walks before it gives up. */
 const PI_NATIVE_NORMALIZE_DEPTH = 6;
+/** Object and array members a display preview may inspect. */
+const PI_NATIVE_NORMALIZE_MEMBERS = 32;
+/** Line and column facts are useful only inside this closed range. */
+const PI_NATIVE_RANGE_LIMIT = 1_000_000;
+const PI_NATIVE_ABSOLUTE_PATH = /(?:^|[\s"'])\/(?:[^/\s"']+\/)*[^/\s"']*/u;
+const PI_NATIVE_WINDOWS_PATH = /(?:^|[\s"'])[A-Za-z]:\\/u;
+const PI_NATIVE_RELATIVE_TRAVERSAL = /(?:^|[/\\])\.\.(?:[/\\]|$)/u;
+const PI_NATIVE_SECRET_TEXT =
+  /(?:SENTINEL|\bBearer\s|\b(?:api[-_ ]?key|secret|token|password)\s*[:=]|(?:ghp_|github_pat_|xox[bp]-|sk-))/iu;
+const PI_NATIVE_SENSITIVE_KEY =
+  /(?:authorization|bearer|cookie|credential|password|secret|token|api[-_ ]?key)/iu;
+const PI_NATIVE_HIDDEN_KEY =
+  /^(?:body|details|env|headers|metadata|payload|raw|reasoning|thinking)$/iu;
 
 /**
  * The sentences the closed reducer projection substitutes for a value it may
@@ -244,15 +258,51 @@ export interface OverlayTranscriptRender {
  * reader cannot use, so a block is normalized to the prose it wraps.
  */
 function contentBlockText(record: Record<string, unknown>): string | undefined {
-  if (typeof record.type !== "string") return undefined;
-  // `thinking` is deliberately absent: a raw reasoning block's prose is never
-  // unwrapped for display.
-  for (const key of ["text"] as const) {
-    const value = record[key];
-    if (typeof value === "string") return value;
-  }
-  return undefined;
+  const type = safeOwnValue(record, "type");
+  if (typeof type !== "string") return undefined;
+  if (type === "thinking" || type === "reasoning") return undefined;
+  const value = safeOwnValue(record, "text");
+  return typeof value === "string" ? value : undefined;
 }
+
+const safeOwnValue = (record: object, key: PropertyKey): unknown => {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record, key),
+    () => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+  return "value" in descriptor.value ? descriptor.value.value : undefined;
+};
+
+const safeObjectKeys = (record: object): readonly string[] => {
+  const keys = Result.fromThrowable(
+    () => Object.keys(record),
+    () => [] as string[],
+  )();
+  return keys.isOk() ? keys.value : [];
+};
+
+const safeArrayLength = (value: object): number | undefined => {
+  const raw = safeOwnValue(value, "length");
+  return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0
+    ? raw
+    : undefined;
+};
+
+const safePreviewString = (value: string): string | undefined => {
+  const clean = safeTrim(value);
+  if (
+    clean.length === 0 ||
+    PI_NATIVE_WITHHELD_TEXT.has(clean) ||
+    PI_NATIVE_ABSOLUTE_PATH.test(clean) ||
+    PI_NATIVE_WINDOWS_PATH.test(clean) ||
+    PI_NATIVE_RELATIVE_TRAVERSAL.test(clean) ||
+    PI_NATIVE_SECRET_TEXT.test(clean)
+  ) {
+    return undefined;
+  }
+  return truncateUtf8(clean, PI_NATIVE_VALUE_CHARS);
+};
 
 /**
  * A payload with its host wrappers removed and its withheld parts dropped.
@@ -269,18 +319,28 @@ export function normalizeOverlayPayload(
   depth = 0,
 ): unknown {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") {
-    const clean = safeTrim(value);
-    if (clean.length === 0) return undefined;
-    return PI_NATIVE_WITHHELD_TEXT.has(clean) ? undefined : value;
+  if (typeof value === "string") return safePreviewString(value);
+  if (typeof value === "number") {
+    return Number.isFinite(value) && Math.abs(value) <= PI_NATIVE_RANGE_LIMIT
+      ? value
+      : undefined;
   }
-  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "boolean") return value;
   if (typeof value !== "object") return undefined;
   if (depth >= PI_NATIVE_NORMALIZE_DEPTH) return undefined;
   if (Array.isArray(value)) {
-    const items = value
-      .map((item) => normalizeOverlayPayload(item, stripBookkeeping, depth + 1))
-      .filter((item) => item !== undefined);
+    const length = safeArrayLength(value);
+    if (length === undefined) return undefined;
+    const items: unknown[] = [];
+    const size = Math.min(length, PI_NATIVE_NORMALIZE_MEMBERS);
+    for (let index = 0; index < size; index += 1) {
+      const item = normalizeOverlayPayload(
+        safeOwnValue(value, String(index)),
+        stripBookkeeping,
+        depth + 1,
+      );
+      if (item !== undefined) items.push(item);
+    }
     if (items.length === 0) return undefined;
     // A normalized content-block array is prose, so it reads as prose.
     return items.every((item) => typeof item === "string")
@@ -288,18 +348,29 @@ export function normalizeOverlayPayload(
       : items;
   }
   const record = value as Record<string, unknown>;
+  const blockType = safeOwnValue(record, "type");
+  if (blockType === "thinking" || blockType === "reasoning") return undefined;
   const blockText = contentBlockText(record);
   if (blockText !== undefined) {
     return normalizeOverlayPayload(blockText, stripBookkeeping, depth + 1);
   }
   const normalized: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(record)) {
+  for (const key of safeObjectKeys(record).slice(
+    0,
+    PI_NATIVE_NORMALIZE_MEMBERS,
+  )) {
     if (stripBookkeeping && PI_NATIVE_RESULT_BOOKKEEPING_KEYS.has(key))
       continue;
-    const next = normalizeOverlayPayload(item, stripBookkeeping, depth + 1);
+    if (PI_NATIVE_SENSITIVE_KEY.test(key) || PI_NATIVE_HIDDEN_KEY.test(key))
+      continue;
+    const next = normalizeOverlayPayload(
+      safeOwnValue(record, key),
+      stripBookkeeping,
+      depth + 1,
+    );
     if (next !== undefined) normalized[key] = next;
   }
-  return Object.keys(normalized).length === 0 ? undefined : normalized;
+  return safeObjectKeys(normalized).length === 0 ? undefined : normalized;
 }
 
 export function summarizeOverlayValue(value: unknown, depth = 0): string {
@@ -312,23 +383,27 @@ export function summarizeOverlayValue(value: unknown, depth = 0): string {
   if (typeof value !== "object") return "";
   if (depth >= PI_NATIVE_VALUE_DEPTH) return "…";
   if (Array.isArray(value)) {
-    const shown = value
-      .slice(0, PI_NATIVE_VALUE_KEYS)
-      .map((item) => summarizeOverlayValue(item, depth + 1))
-      .filter((item) => item.length > 0);
-    const rest = value.length - shown.length;
+    const length = safeArrayLength(value) ?? 0;
+    const shown: string[] = [];
+    const size = Math.min(length, PI_NATIVE_VALUE_KEYS);
+    for (let index = 0; index < size; index += 1) {
+      const item = summarizeOverlayValue(
+        safeOwnValue(value, String(index)),
+        depth + 1,
+      );
+      if (item.length > 0) shown.push(item);
+    }
+    const rest = Math.max(0, length - size);
     return `${shown.join(", ")}${rest > 0 ? ` …+${rest}` : ""}`;
   }
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).slice(0, PI_NATIVE_VALUE_KEYS);
-  const shown = keys
-    .map((key) => {
-      const item = summarizeOverlayValue(record[key], depth + 1);
-      return item.length === 0 ? "" : `${safeTrim(key)}: ${item}`;
-    })
-    .filter((item) => item.length > 0);
-  const rest = Object.keys(record).length - keys.length;
-  return `${shown.join(", ")}${rest > 0 ? ` …+${rest}` : ""}`;
+  const keys = safeObjectKeys(record);
+  const shown = keys.slice(0, PI_NATIVE_VALUE_KEYS).map((key) => {
+    const item = summarizeOverlayValue(safeOwnValue(record, key), depth + 1);
+    return item.length === 0 ? "" : `${safeTrim(key)}: ${item}`;
+  });
+  const rest = Math.max(0, keys.length - PI_NATIVE_VALUE_KEYS);
+  return `${shown.filter((item) => item.length > 0).join(", ")}${rest > 0 ? ` …+${rest}` : ""}`;
 }
 
 /** {@link summarizeOverlayValue}, bounded and stripped of storage locations. */
@@ -341,14 +416,40 @@ export function overlayPayloadText(value: unknown): string {
  * correlation bookkeeping dropped, withheld parts absent.
  */
 export function overlayToolResultText(value: unknown): string {
-  return boundedPayloadText(normalizeOverlayPayload(value, true));
+  const normalized = normalizeOverlayPayload(value, true);
+  if (typeof normalized === "object" && normalized !== null) {
+    const record = normalized as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+    for (const key of ["stdout", "stderr", "output"] as const) {
+      const item = safeOwnValue(record, key);
+      if (typeof item === "string" && item.length > 0) output[key] = item;
+    }
+    const outputKeys = safeObjectKeys(output);
+    if (outputKeys.length === 1) {
+      return boundedPayloadText(safeOwnValue(output, outputKeys[0] ?? ""));
+    }
+    if (outputKeys.length > 0) return boundedPayloadText(output);
+  }
+  return boundedPayloadText(normalized);
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const size = new TextEncoder().encode(character).byteLength;
+    if (bytes + size > maxBytes) break;
+    result += character;
+    bytes += size;
+  }
+  return result;
 }
 
 function boundedPayloadText(normalized: unknown): string {
   if (normalized === undefined) return "";
   const summary = summarizeOverlayValue(unwrapSoleContent(normalized));
   if (summary.length === 0) return "";
-  return stripPathLike(summary).slice(0, PI_NATIVE_VALUE_CHARS).trim();
+  return truncateUtf8(stripPathLike(summary).trim(), PI_NATIVE_VALUE_CHARS);
 }
 
 /**
@@ -374,14 +475,57 @@ function unwrapSoleContent(value: unknown): unknown {
  * first string-valued argument, sanitized like every other payload, and it is
  * absent when the arguments carry no such value — never guessed from the name.
  */
-export function overlayToolTarget(entry: PiChildTranscriptToolEntry): string {
-  if (!entry.argumentsKnown) return "";
+const toolArgumentKeys = (toolName: string): readonly string[] => {
+  const name = toolName.toLowerCase();
+  if (name === "bash" || name === "shell" || name === "exec")
+    return ["command", "cmd", "script", "timeout"];
+  if (name === "read" || name === "grep" || name === "find")
+    return [
+      "path",
+      "file",
+      "range",
+      "startLine",
+      "endLine",
+      "startColumn",
+      "endColumn",
+      "limit",
+      "offset",
+    ];
+  if (name === "edit" || name === "write")
+    return ["path", "file", "range", "startLine", "endLine", "operation"];
+  return [];
+};
+
+function selectedToolArguments(entry: PiChildTranscriptToolEntry): unknown {
+  if (!entry.argumentsKnown) return undefined;
   const args = entry.arguments;
-  if (typeof args === "string") return overlayPayloadText(args);
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
-    return "";
+    return args;
   }
-  for (const value of Object.values(args as Record<string, unknown>)) {
+  const record = args as Record<string, unknown>;
+  const preferred = toolArgumentKeys(entry.toolName);
+  const keys = safeObjectKeys(record);
+  const selected =
+    preferred.length === 0
+      ? keys.slice(0, PI_NATIVE_VALUE_KEYS)
+      : preferred.filter((key) => keys.includes(key));
+  if (selected.length === 0) return undefined;
+  const projected: Record<string, unknown> = {};
+  for (const key of selected.slice(0, PI_NATIVE_VALUE_KEYS)) {
+    const value = safeOwnValue(record, key);
+    if (value !== undefined) projected[key] = value;
+  }
+  return safeObjectKeys(projected).length === 0 ? undefined : projected;
+}
+
+export function overlayToolTarget(entry: PiChildTranscriptToolEntry): string {
+  const selected = selectedToolArguments(entry);
+  if (typeof selected === "string") return overlayPayloadText(selected);
+  if (typeof selected !== "object" || selected === null) return "";
+  const record = selected as Record<string, unknown>;
+  const preferred = toolArgumentKeys(entry.toolName);
+  for (const key of [...preferred, ...safeObjectKeys(record)]) {
+    const value = safeOwnValue(record, key);
     if (typeof value !== "string") continue;
     const text = overlayPayloadText(value);
     if (text.length > 0) return text;
@@ -389,9 +533,9 @@ export function overlayToolTarget(entry: PiChildTranscriptToolEntry): string {
   return "";
 }
 
-/** Every argument of a tool call, as the call signature prints them. */
+/** Every allowlisted argument of a tool call, as the call signature prints it. */
 export function overlayToolArgs(entry: PiChildTranscriptToolEntry): string {
-  return entry.argumentsKnown ? overlayPayloadText(entry.arguments) : "";
+  return overlayPayloadText(selectedToolArguments(entry));
 }
 
 /**

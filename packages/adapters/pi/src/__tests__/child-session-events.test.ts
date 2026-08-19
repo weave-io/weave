@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  isPiAuthoritativeToolEvent,
   PiChildSessionEventSchema,
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
@@ -109,6 +110,32 @@ describe("Pi child session event protocol", () => {
         toolName: "bash",
         error: "command failed",
       });
+    }
+
+    const nested = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolName: "bash",
+      result: {
+        toolCallId: "nested-call",
+        stdout: "SENTINEL output",
+        stderr: "password=hidden",
+      },
+      isError: false,
+    });
+    expect(nested.success).toBe(true);
+    if (nested.success) {
+      expect(nested.data).toMatchObject({
+        type: "tool_result",
+        toolCallId: "nested-call",
+        result: {
+          toolCallId: "nested-call",
+          stdout: "[redacted]",
+          stderr: "[redacted]",
+        },
+      });
+      expect(isPiAuthoritativeToolEvent(nested.data)).toBe(true);
+      expect(JSON.stringify(nested.data)).not.toContain("SENTINEL");
+      expect(JSON.stringify(nested.data)).not.toContain("password=hidden");
     }
   });
 

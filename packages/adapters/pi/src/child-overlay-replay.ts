@@ -33,14 +33,16 @@ import {
   type ChildOverlayMappingError,
   type ChildOverlayReplayStep,
   ChildOverlayRunOrdinalSchema,
-  OpaqueIdSchema,
   RunActionSchema,
 } from "./child-overlay-types.js";
 import {
   historicalAssistantMessageFields,
   redactProviderErrorFromEvent,
+  TOOL_RESULT_DETAILS_UNAVAILABLE,
 } from "./child-provider-error.js";
 import {
+  isPiAuthoritativeToolEvent,
+  markPiAuthoritativeToolEvent,
   type PiChildSessionEvent,
   parsePiChildSessionEvent,
   retainedChildSessionEvent,
@@ -91,9 +93,15 @@ export {
 } from "./child-overlay-native-parts.js";
 
 /** Validates a synthesized child event through the shared bounded schema. */
-function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
+function replayEvent(
+  candidate: unknown,
+  authoritativeTool = false,
+): ChildOverlayReplayStep | undefined {
   const parsed = parsePiChildSessionEvent(candidate);
   if (!parsed.success) return undefined;
+  const normalized = authoritativeTool
+    ? markPiAuthoritativeToolEvent(parsed.data)
+    : parsed.data;
   // Replay steps are retained state: they are serialized with the overlay
   // window and re-reduced on every rebuild, so the shared retention decision
   // is asked here, on the OBSERVED frame, before the step exists.
@@ -104,14 +112,18 @@ function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
   // ordinary answer step that publishes the text beside the hidden thought.
   // Asking first is what keeps this entrance's verdict the same as the
   // transcript reducer's and the registry's.
-  const retained = retainedChildSessionEvent(parsed.data);
+  const retained = retainedChildSessionEvent(normalized);
   if (retained === undefined) return undefined;
-  return { kind: "event", event: redactProviderErrorFromEvent(retained) };
+  const event = isPiAuthoritativeToolEvent(retained)
+    ? retained
+    : redactProviderErrorFromEvent(retained);
+  return { kind: "event", event };
 }
 
 export function pushReplayEvent(
   steps: ChildOverlayReplayStep[],
   candidate: unknown,
+  authoritativeTool = false,
 ): Result<void, ChildOverlayMappingError> {
   if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) {
     return err({
@@ -119,7 +131,7 @@ export function pushReplayEvent(
       operation: "entry-replay-steps",
     });
   }
-  const step = replayEvent(candidate);
+  const step = replayEvent(candidate, authoritativeTool);
   if (step !== undefined) steps.push(step);
   return ok(undefined);
 }
@@ -602,12 +614,16 @@ function assistantEntryFromParts(
     if (pushed.isErr()) return err(pushed.error);
   }
   for (const call of parts.toolCalls) {
-    const pushed = pushReplayEvent(steps, {
-      type: "tool_call",
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      arguments: call.arguments,
-    });
+    const pushed = pushReplayEvent(
+      steps,
+      {
+        type: "tool_call",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        arguments: call.arguments,
+      },
+      true,
+    );
     if (pushed.isErr()) return err(pushed.error);
   }
   const end = pushReplayEvent(steps, {
@@ -679,17 +695,34 @@ function userEntryFromParts(
     });
   }
   for (const result of parts.toolResults) {
+    // Native history can contain a terminal without its assistant call in the
+    // loaded page. Establish a strict placeholder start before the answer;
+    // replay merges it into an existing call when that call is present.
+    const started = pushReplayEvent(
+      steps,
+      { type: "tool_call", toolCallId: result.toolCallId },
+      true,
+    );
+    if (started.isErr()) return err(started.error);
     const pushed = result.isError
-      ? pushReplayEvent(steps, {
-          type: "tool_error",
-          toolCallId: result.toolCallId,
-          error: result.text,
-        })
-      : pushReplayEvent(steps, {
-          type: "tool_result",
-          toolCallId: result.toolCallId,
-          result: { content: result.content, isError: false },
-        });
+      ? pushReplayEvent(
+          steps,
+          {
+            type: "tool_error",
+            toolCallId: result.toolCallId,
+            error: result.text,
+          },
+          true,
+        )
+      : pushReplayEvent(
+          steps,
+          {
+            type: "tool_result",
+            toolCallId: result.toolCallId,
+            result: { content: result.content, isError: false },
+          },
+          true,
+        );
     if (pushed.isErr()) return err(pushed.error);
   }
   for (const mimeType of parts.images) {
@@ -709,7 +742,11 @@ function userEntryFromParts(
       : "tool";
     text = boundText(
       parts.toolResults
-        .map((result) => (result.text.length > 0 ? result.text : "tool result"))
+        .map((result) =>
+          result.text.length > 0
+            ? result.text
+            : TOOL_RESULT_DETAILS_UNAVAILABLE,
+        )
         .join("\n"),
     );
   } else if (!hasText && parts.images.length > 0) {
