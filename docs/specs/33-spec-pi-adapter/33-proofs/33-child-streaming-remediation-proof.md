@@ -432,12 +432,12 @@ payload, prompt, credential, screenshot, scrollback, or transcript.
 
 | Fact | Bounded value |
 | --- | --- |
-| Git subject used for the fresh parent | `9aa25ef1aa5577bd86df6222421f480a1d768e8f` |
+| Git subject used for the fresh parent | `450d1a6f0be10ec475e6e198ed7227b7933fbd89` |
 | Git dirty | `false` |
 | Source-input count | `143` |
-| Build completion | `2026-08-19T13:42:52.276Z` |
+| Build completion | `2026-08-19T14:12:18.899Z` |
 | Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
-| Build-manifest SHA-256 | `89c67bea80ea56d1bb8110be2e973fca01d3bf48c6366fff73d32bba1f3aa9e1` |
+| Build-manifest SHA-256 | `507768241745441a486ac950eeb40f94669776f9f156e9723278ab87574a2e4d` |
 | Symlink during fresh proof | isolated worktree adapter |
 | Pi | `0.84.2`; package SHA-256 `820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0` |
 | pi-ai | `0.84.2`; package SHA-256 `9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9` |
