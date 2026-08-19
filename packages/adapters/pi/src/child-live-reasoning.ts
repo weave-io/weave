@@ -1077,7 +1077,11 @@ export class PiLiveReasoningProjector {
       contentIndex,
       text: this.displayText(),
     };
-    if (update.text.length > 0) {
+    // Fan out the structural start before the first delta. The start carries
+    // no display text, but downstream projectors need it to open the same
+    // correlated block before they can accept deltas. Keep empty lifecycle
+    // updates out of the visible sinks.
+    if (phase === "start" || update.text.length > 0) {
       this.notify(this.parentCardObserver, update);
       this.notify(this.inspectorObserver, update);
     }

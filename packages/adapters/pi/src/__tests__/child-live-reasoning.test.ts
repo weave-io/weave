@@ -69,6 +69,52 @@ function diagnostics(): ChildUiEventDiagnosticsSnapshot {
 }
 
 describe("PiLiveReasoningProjector", () => {
+  it("fans out an empty structural start before downstream deltas", () => {
+    const parent = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+    });
+    const inspector = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+    });
+    const projector = new PiLiveReasoningProjector({
+      childId: CHILD_ID,
+      generationId: GENERATION_ID,
+      parentCardObserver: (update) => parent.apply(update),
+      inspectorObserver: (update) => inspector.apply(update),
+    });
+
+    expect(
+      projector
+        .accept({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "thinking_start",
+            contentIndex: 0,
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      projector
+        .accept({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "thinking_delta",
+            contentIndex: 0,
+            delta: "bounded",
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+
+    expect(parent.snapshot().parentCardLine).toBe(
+      `${PI_LIVE_REASONING_PARENT_PREFIX}bounded`,
+    );
+    expect(inspector.snapshot().inspectorRows).toEqual(["bounded"]);
+  });
+
   it("projects only the captured Pi 0.84.2 thinking lifecycle", () => {
     const updates: string[] = [];
     const projector = new PiLiveReasoningProjector({
