@@ -179,7 +179,7 @@ describe("workflow-sync — agent-evals.yml ALLOWED_CASES matches evals/cases/**
   });
 
   it("ALLOWED_CASES in workflow matches every case fixture ID under evals/cases/**", async () => {
-    const [workflowText] = await Promise.all([Bun.file(WORKFLOW_PATH).text()]);
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
 
     const workflowCases = extractWorkflowAllowedCases(workflowText);
     const casePaths = discoverCaseFilePaths();
@@ -202,7 +202,7 @@ describe("workflow-sync — agent-evals.yml ALLOWED_CASES matches evals/cases/**
   });
 
   it("ALLOWED_CASES in workflow does not contain case IDs absent from evals/cases/**", async () => {
-    const [workflowText] = await Promise.all([Bun.file(WORKFLOW_PATH).text()]);
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
 
     const workflowCases = extractWorkflowAllowedCases(workflowText);
     const casePaths = discoverCaseFilePaths();
@@ -227,7 +227,7 @@ describe("workflow-sync — agent-evals.yml ALLOWED_CASES matches evals/cases/**
   });
 
   it("workflow ALLOWED_CASES count matches the number of case fixture files", async () => {
-    const [workflowText] = await Promise.all([Bun.file(WORKFLOW_PATH).text()]);
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
 
     const workflowCases = extractWorkflowAllowedCases(workflowText);
     const casePaths = discoverCaseFilePaths();

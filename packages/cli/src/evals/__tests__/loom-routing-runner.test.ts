@@ -67,8 +67,8 @@ import type {
   PromptProvider,
   ProvenanceError,
   RawCaseResultArtifact,
+  RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -158,11 +158,18 @@ function makeNormalizedScoreRecord(
  * `promptProvider.getPrompt("loom")` and uses the result as the system prompt.
  * This proves the provider is wired in without requiring real file I/O.
  */
+type LoomTestOptions = LoomRoutingRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
+type LoomTestDependencies = Pick<LoomTestOptions, "modelClient" | "scorer">;
+
 class InMemoryLoomRunner extends LoomRoutingRunner {
   private readonly _promptProvider: PromptProvider | undefined;
+  private readonly _dependencies: LoomTestDependencies;
 
   constructor(
-    options: LoomRoutingRunnerOptions,
+    options: LoomTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
@@ -170,11 +177,15 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     // Capture promptProvider for use in the overridden run()
     this._promptProvider = options.promptProvider;
+    this._dependencies = {
+      modelClient: options.modelClient,
+      scorer: options.scorer,
+    };
   }
 
   override run(
     request: LoomRunRequest = {},
-  ): ResultAsync<RunnerResult, import("../types.js").RunnerError> {
+  ): ResultAsync<RunnerResult, RunnerError> {
     // Re-implement run() using in-memory fixtures instead of file I/O
     const dryRun = request.dryRun ?? false;
     const rawArtifacts = request.rawArtifacts ?? false;
@@ -189,7 +200,7 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
         const known = cases.map((c) => c.id).join(", ") || "(none)";
         return new ResultAsync(
           Promise.resolve(
-            err<RunnerResult, import("../types.js").RunnerError>({
+            err<RunnerResult, RunnerError>({
               type: "CaseFilterNotFound",
               caseId: request.caseFilter,
               message: `Case "${request.caseFilter}" not found. Known: ${known}`,
@@ -203,7 +214,7 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
     if (cases.length === 0) {
       return new ResultAsync(
         Promise.resolve(
-          err<RunnerResult, import("../types.js").RunnerError>({
+          err<RunnerResult, RunnerError>({
             type: "NoCasesFound",
             suite: LOOM_ROUTING_SUITE,
             message: `No cases found in suite "${LOOM_ROUTING_SUITE}".`,
@@ -228,7 +239,7 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
     if (workItems.length === 0) {
       return new ResultAsync(
         Promise.resolve(
-          err<RunnerResult, import("../types.js").RunnerError>({
+          err<RunnerResult, RunnerError>({
             type: "NoCasesFound",
             suite: LOOM_ROUTING_SUITE,
             message: `No cases match model filter "${request.modelFilter}".`,
@@ -251,35 +262,36 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
     if (this._promptProvider !== undefined) {
       return this._promptProvider
         .getPrompt("loom")
-        .mapErr((): import("../types.js").RunnerError => ({
-          type: "PromptProviderFailed",
-          agentName: "loom",
-          message:
-            "Loom prompt provider failed: prompt composition could not complete.",
-        }))
+        .mapErr(
+          (): RunnerError => ({
+            type: "PromptProviderFailed",
+            agentName: "loom",
+            message:
+              "Loom prompt provider failed: prompt composition could not complete.",
+          }),
+        )
         .andThen((_systemPrompt) => {
           // Execute each work item, accumulating results
           const executeAll = workItems.reduce(
             (acc, { evalCase, modelId }) =>
               acc.andThen((results) =>
                 executeCaseWithStubs(
-                  this,
+                  this._dependencies,
                   evalCase,
                   modelId,
                   rubrics,
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(LOOM_ROUTING_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(LOOM_ROUTING_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -289,19 +301,17 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
       (acc, { evalCase, modelId }) =>
         acc.andThen((results) =>
           executeCaseWithStubs(
-            this,
+            this._dependencies,
             evalCase,
             modelId,
             rubrics,
             rawArtifacts,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return (
-      executeAll as ResultAsync<CaseResult[], import("../types.js").RunnerError>
-    ).andThen((caseResults) =>
+    return executeAll.andThen((caseResults) =>
       ResultAsync.fromSafePromise(
         Promise.resolve(assembleRunnerResult(LOOM_ROUTING_SUITE, caseResults)),
       ),
@@ -312,7 +322,7 @@ class InMemoryLoomRunner extends LoomRoutingRunner {
 // Expose internal execution for InMemoryLoomRunner via a module-level helper
 // (avoids accessing private methods by using the public runner interface)
 function executeCaseWithStubs(
-  runner: LoomRoutingRunner,
+  dependencies: LoomTestDependencies,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
@@ -326,13 +336,7 @@ function executeCaseWithStubs(
   const userMessage = `Task to route: ${evalCase.description}`;
   const systemPrompt = "Test Loom system prompt";
 
-  // Access the model client and scorer via duck-typing
-  const anyRunner = runner as unknown as {
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  };
-
-  const modelResultAsync = anyRunner.modelClient.complete({
+  const modelResultAsync = dependencies.modelClient.complete({
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
@@ -358,7 +362,7 @@ function executeCaseWithStubs(
         producedArtifacts: [],
       };
 
-      return anyRunner.scorer
+      return dependencies.scorer
         .score(runOutput, evalCase, rubrics)
         .map((scoreRecord) => ({
           runOutput,
@@ -369,10 +373,7 @@ function executeCaseWithStubs(
     })
     .match<CaseResult>(
       ({ runOutput, scoreRecord, composedPrompt, routingAnalysis }) => {
-        const dimensionScores: Record<
-          ScoringDimension,
-          { score: number; applicable: boolean }
-        > = {
+        const dimensionScores = {
           routingCorrectness: {
             score: scoreRecord.dimensions.routingCorrectness.score,
             applicable: scoreRecord.dimensions.routingCorrectness.applicable,
@@ -389,7 +390,7 @@ function executeCaseWithStubs(
             score: scoreRecord.dimensions.rationaleQuality.score,
             applicable: scoreRecord.dimensions.rationaleQuality.applicable,
           },
-        };
+        } satisfies CaseResultSummary["dimensionScores"];
 
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
@@ -436,14 +437,8 @@ function executeCaseWithStubs(
         return { summary, rawArtifact };
       },
       (error) => {
-        const errorType =
-          "type" in error
-            ? String((error as { type?: string }).type ?? "UnknownError")
-            : "UnknownError";
-        const rawMessage =
-          "message" in error
-            ? String((error as { message?: string }).message ?? "")
-            : undefined;
+        const errorType = error.type;
+        const rawMessage = error.message;
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -1192,11 +1187,7 @@ describe("LoomRoutingRunner — publishable summary raw-data boundary", () => {
   const FAKE_PROMPT = "SENSITIVE_PROMPT_TEXT_DO_NOT_PUBLISH";
   const FAKE_RESPONSE = "SENSITIVE_TRANSCRIPT_CONTENT_DO_NOT_PUBLISH";
 
-  function makeRunnerWithSecrets(): {
-    runner: InMemoryLoomRunner;
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  } {
+  function makeRunnerWithSecrets() {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
@@ -1305,7 +1296,7 @@ describe("LoomRoutingRunner — publishable summary raw-data boundary", () => {
 
     const artifact = runnerResult.caseResults[0]?.rawArtifact;
     expect(artifact?.composedPrompt).toBeDefined();
-    expect(typeof artifact?.composedPrompt).toBe("string");
+    expect(artifact?.composedPrompt?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("dimensionRationales are in rawArtifact, not in publishable summary", async () => {
@@ -1335,9 +1326,9 @@ describe("LoomRoutingRunner — publishable summary raw-data boundary", () => {
     const scores = summary?.dimensionScores;
     expect(scores).toBeDefined();
 
-    for (const [, dimScore] of Object.entries(scores ?? {})) {
-      expect(typeof dimScore.score).toBe("number");
-      expect(typeof dimScore.applicable).toBe("boolean");
+    for (const dimScore of Object.values(scores ?? {})) {
+      expect(Number.isFinite(dimScore.score)).toBe(true);
+      expect([true, false]).toContain(dimScore.applicable);
       // rationale must not be present in the publishable summary
       expect("rationale" in dimScore).toBe(false);
     }
@@ -1765,7 +1756,7 @@ describe("LoomRoutingRunner — module exports", () => {
     const runner = new InMemoryLoomRunner({ modelClient, scorer }, [], []);
 
     const result = runner.run({ dryRun: true });
-    expect(typeof result.then).toBe("function");
+    expect(result).toBeInstanceOf(ResultAsync);
   });
 });
 
@@ -1926,7 +1917,7 @@ describe("LoomRoutingRunner — PromptProvider injection", () => {
     // the artifact is populated and non-empty.
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     expect(artifact?.composedPrompt).toBeDefined();
-    expect(typeof artifact?.composedPrompt).toBe("string");
+    expect(artifact?.composedPrompt?.length ?? 0).toBeGreaterThan(0);
     expect(artifact?.composedPrompt.length).toBeGreaterThan(0);
   });
 });
@@ -1951,7 +1942,7 @@ describe("LoomRoutingRunner — bounded rawArtifact errorSummary", () => {
     const result = await runner.run({ rawArtifacts: true });
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     expect(artifact?.errorSummary?.errorType).toBeDefined();
-    expect(typeof artifact?.errorSummary?.errorType).toBe("string");
+    expect(artifact?.errorSummary?.errorType?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("errorSummary.classification is a sanitized label (never raw error text)", async () => {
@@ -1971,7 +1962,9 @@ describe("LoomRoutingRunner — bounded rawArtifact errorSummary", () => {
     const result = await runner.run({ rawArtifacts: true });
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     // classification is a sanitized label, not the raw error message
-    expect(typeof artifact?.errorSummary?.classification).toBe("string");
+    expect(artifact?.errorSummary?.classification?.length ?? 0).toBeGreaterThan(
+      0,
+    );
     expect(artifact?.errorSummary?.classification.length).toBeGreaterThan(0);
     // The raw sensitive message must NOT appear in classification
     expect(artifact?.errorSummary?.classification).not.toContain(SENSITIVE_MSG);
@@ -2111,7 +2104,9 @@ describe("LoomRoutingRunner — localDiagnostic in rawArtifact errorSummary", ()
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
 
     expect(artifact?.errorSummary?.localDiagnostic).toBeDefined();
-    expect(typeof artifact?.errorSummary?.localDiagnostic).toBe("string");
+    expect(
+      artifact?.errorSummary?.localDiagnostic?.length ?? 0,
+    ).toBeGreaterThan(0);
     // The diagnostic should contain the (non-secret) message text
     expect(artifact?.errorSummary?.localDiagnostic).toContain(
       "LangChain AgentEvals",
@@ -2463,7 +2458,6 @@ describe("LoomRoutingRunner — provider failure prevents model calls", () => {
     // The runner error message should be a fixed sanitized string,
     // not the raw provider error text
     expect(error.message).not.toContain(SENSITIVE_PROVIDER_MSG);
-    expect(typeof error.message).toBe("string");
     expect(error.message.length).toBeGreaterThan(0);
   });
 
@@ -2523,9 +2517,9 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const caseResult = runnerResult.caseResults[0];
     expect(caseResult).toBeDefined();
-    const { publicExplanation } = caseResult!.summary;
+    const publicExplanation = caseResult?.summary.publicExplanation;
     expect(publicExplanation).toBeDefined();
-    expect(typeof publicExplanation?.text).toBe("string");
+    expect(publicExplanation?.text?.length ?? 0).toBeGreaterThan(0);
     expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
   });
 

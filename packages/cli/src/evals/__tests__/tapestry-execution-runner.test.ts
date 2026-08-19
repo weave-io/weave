@@ -53,7 +53,6 @@ import type {
   RawCaseResultArtifact,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -188,16 +187,30 @@ function makeTaskCompletionScoreRecord(
 // InMemoryTapestryRunner — test double that bypasses file I/O
 // ---------------------------------------------------------------------------
 
+type TapestryTestOptions = TapestryExecutionRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
+type TapestryTestDependencies = Pick<
+  TapestryTestOptions,
+  "modelClient" | "scorer"
+>;
+
 class InMemoryTapestryRunner extends TapestryExecutionRunner {
   private readonly _promptProvider: PromptProvider | undefined;
+  private readonly _dependencies: TapestryTestDependencies;
 
   constructor(
-    options: TapestryExecutionRunnerOptions,
+    options: TapestryTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     this._promptProvider = options.promptProvider;
+    this._dependencies = {
+      modelClient: options.modelClient,
+      scorer: options.scorer,
+    };
   }
 
   override run(
@@ -292,23 +305,22 @@ class InMemoryTapestryRunner extends TapestryExecutionRunner {
             (acc, { evalCase, modelId }) =>
               acc.andThen((results) =>
                 executeCaseWithStubs(
-                  this,
+                  this._dependencies,
                   evalCase,
                   modelId,
                   rubrics,
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(TAPESTRY_EXECUTION_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(TAPESTRY_EXECUTION_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -318,30 +330,29 @@ class InMemoryTapestryRunner extends TapestryExecutionRunner {
       (acc, { evalCase, modelId }) =>
         acc.andThen((results) =>
           executeCaseWithStubs(
-            this,
+            this._dependencies,
             evalCase,
             modelId,
             rubrics,
             rawArtifacts,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return (executeAll as ResultAsync<CaseResult[], RunnerError>).andThen(
-      (caseResults) =>
-        ResultAsync.fromSafePromise(
-          Promise.resolve(
-            assembleRunnerResult(TAPESTRY_EXECUTION_SUITE, caseResults),
-          ),
+    return executeAll.andThen((caseResults) =>
+      ResultAsync.fromSafePromise(
+        Promise.resolve(
+          assembleRunnerResult(TAPESTRY_EXECUTION_SUITE, caseResults),
         ),
+      ),
     );
   }
 }
 
 // Module-level helper to execute a case using injected stubs
 function executeCaseWithStubs(
-  runner: TapestryExecutionRunner,
+  dependencies: TapestryTestDependencies,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
@@ -360,12 +371,7 @@ function executeCaseWithStubs(
     userMessage = `Task: ${evalCase.description}`;
   }
 
-  const anyRunner = runner as unknown as {
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  };
-
-  const modelResultAsync = anyRunner.modelClient.complete({
+  const modelResultAsync = dependencies.modelClient.complete({
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
@@ -404,7 +410,7 @@ function executeCaseWithStubs(
         producedArtifacts,
       };
 
-      return anyRunner.scorer
+      return dependencies.scorer
         .score(runOutput, evalCase, rubrics)
         .map((scoreRecord) => ({
           runOutput,
@@ -414,10 +420,7 @@ function executeCaseWithStubs(
     })
     .match<CaseResult>(
       ({ runOutput, scoreRecord, composedPrompt }) => {
-        const dimensionScores: Record<
-          ScoringDimension,
-          { score: number; applicable: boolean }
-        > = {
+        const dimensionScores = {
           routingCorrectness: {
             score: scoreRecord.dimensions.routingCorrectness.score,
             applicable: scoreRecord.dimensions.routingCorrectness.applicable,
@@ -434,7 +437,7 @@ function executeCaseWithStubs(
             score: scoreRecord.dimensions.rationaleQuality.score,
             applicable: scoreRecord.dimensions.rationaleQuality.applicable,
           },
-        };
+        } satisfies CaseResultSummary["dimensionScores"];
 
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
@@ -468,10 +471,7 @@ function executeCaseWithStubs(
         return { summary, rawArtifact };
       },
       (error) => {
-        const errorType =
-          "type" in error
-            ? String((error as { type: string }).type)
-            : "UnknownError";
+        const errorType = error.type;
         const errorSummary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -541,16 +541,28 @@ function normalizeDelegationChainForTest(
   return normalized;
 }
 
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
+
 function buildRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const out: Partial<Record<ScoringDimension, string>> = {};
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      out[dim] = score.rationale;
-    }
+): DimensionRationales {
+  const out: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    out.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    out.delegationCorrectness = dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    out.executionCompleteness = dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    out.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
   return out;
 }
@@ -994,11 +1006,7 @@ describe("TapestryExecutionRunner — publishable summary raw-data boundary", ()
   const FAKE_PROMPT = "SENSITIVE_TAPESTRY_PROMPT_DO_NOT_PUBLISH";
   const FAKE_RESPONSE = "SENSITIVE_TAPESTRY_RESPONSE_DO_NOT_PUBLISH";
 
-  function makeSecretRunner(): {
-    runner: InMemoryTapestryRunner;
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  } {
+  function makeSecretRunner() {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
@@ -1577,7 +1585,7 @@ describe("TapestryExecutionRunner — module exports", () => {
     const runner = new InMemoryTapestryRunner({ modelClient, scorer }, [], []);
 
     const result = runner.run({ dryRun: true });
-    expect(typeof result.then).toBe("function");
+    expect(result).toBeInstanceOf(ResultAsync);
   });
 });
 
@@ -1601,7 +1609,7 @@ describe("CaseResultSummary type boundary", () => {
     const resultAsync = runner.run({ dryRun: true });
 
     // The test verifies that the summary shape is correct
-    expect(typeof resultAsync.then).toBe("function");
+    expect(resultAsync).toBeInstanceOf(ResultAsync);
   });
 
   it("rawArtifact errorSummary carries classification label without raw error text", async () => {
@@ -1622,7 +1630,9 @@ describe("CaseResultSummary type boundary", () => {
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     // errorSummary.classification is a sanitized label — never raw error text
     expect(artifact?.errorSummary?.classification).toBeDefined();
-    expect(typeof artifact?.errorSummary?.classification).toBe("string");
+    expect(artifact?.errorSummary?.classification?.length ?? 0).toBeGreaterThan(
+      0,
+    );
     expect(artifact?.errorSummary?.classification).not.toContain(errorMsg);
     // rawContent should be empty (no model response was received)
     expect(artifact?.rawContent).toBe("");
@@ -1645,9 +1655,7 @@ class MockPromptProvider implements PromptProvider {
     private readonly shouldFail: boolean = false,
   ) {}
 
-  getPrompt(
-    agentName: string,
-  ): import("neverthrow").ResultAsync<string, ProvenanceError> {
+  getPrompt(agentName: string): ResultAsync<string, ProvenanceError> {
     this.calls.push(agentName);
     if (this.shouldFail) {
       return new ResultAsync(
@@ -1772,7 +1780,7 @@ describe("TapestryExecutionRunner — bounded rawArtifact errorSummary", () => {
     const result = await runner.run({ rawArtifacts: true });
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     expect(artifact?.errorSummary?.errorType).toBeDefined();
-    expect(typeof artifact?.errorSummary?.errorType).toBe("string");
+    expect(artifact?.errorSummary?.errorType?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("errorSummary.classification is a sanitized label (not raw error text)", async () => {
@@ -1795,10 +1803,9 @@ describe("TapestryExecutionRunner — bounded rawArtifact errorSummary", () => {
     const result = await runner.run({ rawArtifacts: true });
     const artifact = result._unsafeUnwrap().caseResults[0]?.rawArtifact;
     // classification is a fixed sanitized label, not the raw error message
-    expect(typeof artifact?.errorSummary?.classification).toBe("string");
-    expect(
-      (artifact?.errorSummary?.classification ?? "").length,
-    ).toBeGreaterThan(0);
+    expect(artifact?.errorSummary?.classification?.length ?? 0).toBeGreaterThan(
+      0,
+    );
     expect(artifact?.errorSummary?.classification).not.toContain(SENSITIVE_MSG);
   });
 
@@ -2013,7 +2020,6 @@ describe("TapestryExecutionRunner — provider failure prevents model calls", ()
     // runner error message must be a fixed sanitized string
     const SENSITIVE_PROVIDER_MSG = "MockPromptProvider: configured to fail";
     expect(error.message).not.toContain(SENSITIVE_PROVIDER_MSG);
-    expect(typeof error.message).toBe("string");
     expect(error.message.length).toBeGreaterThan(0);
   });
 
@@ -2069,10 +2075,11 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
     expect(result.isOk()).toBe(true);
     const caseResult = result._unsafeUnwrap().caseResults[0];
     expect(caseResult).toBeDefined();
+    if (caseResult === undefined) return;
 
-    const { publicExplanation } = caseResult!.summary;
+    const { publicExplanation } = caseResult.summary;
     expect(publicExplanation).toBeDefined();
-    expect(typeof publicExplanation?.text).toBe("string");
+    expect(publicExplanation?.text?.length ?? 0).toBeGreaterThan(0);
     expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
   });
 
@@ -2098,7 +2105,8 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    if (caseResult === undefined) return;
+    const { publicExplanation } = caseResult.summary;
     expect(publicExplanation).toBeDefined();
     expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
   });
@@ -2126,7 +2134,8 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    if (caseResult === undefined) return;
+    const { publicExplanation } = caseResult.summary;
     expect((publicExplanation?.text ?? "").length).toBeLessThanOrEqual(
       EXPLANATION_MAX_CHARS,
     );
@@ -2157,8 +2166,8 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const text = caseResult!.summary.publicExplanation?.text ?? "";
-    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+    const text = caseResult?.summary.publicExplanation?.text ?? "";
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
       expect(pattern.test(text)).toBe(false);
     }
   });
@@ -2241,7 +2250,7 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const text = caseResult!.summary.publicExplanation?.text ?? "";
+    const text = caseResult?.summary.publicExplanation?.text ?? "";
 
     // Raw rationale must NOT appear in public explanation
     expect(text).not.toContain(adversarialRationale);
@@ -2274,7 +2283,7 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const text = caseResult!.summary.publicExplanation?.text ?? "";
+    const text = caseResult?.summary.publicExplanation?.text ?? "";
 
     expect(text).not.toContain(leakageSentinel);
     expect(text).not.toContain("TAPESTRY_LEAKAGE_SENTINEL");
@@ -2301,7 +2310,7 @@ describe("TapestryExecutionRunner — publicExplanation field in CaseResultSumma
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const text = caseResult!.summary.publicExplanation?.text ?? "";
+    const text = caseResult?.summary.publicExplanation?.text ?? "";
 
     expect(text).not.toContain("<thinking>");
     expect(text).not.toContain("<cot>");

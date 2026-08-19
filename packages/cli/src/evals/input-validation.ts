@@ -152,9 +152,7 @@ const VALID_IDENTIFIER_RE = /^[A-Za-z0-9_./:@-]+$/;
 export const KNOWN_EVAL_AGENTS = new Set(EVAL_AGENT_FILTERS);
 
 /** Sorted array of permitted agent filter values (for error messages). */
-export const KNOWN_EVAL_AGENTS_SORTED: readonly string[] = [
-  ...KNOWN_EVAL_AGENTS,
-].sort();
+export const KNOWN_EVAL_AGENTS_SORTED = [...KNOWN_EVAL_AGENTS].sort();
 
 /**
  * Validate the `--agent` filter value against the closed allowlist.
@@ -166,17 +164,13 @@ export const KNOWN_EVAL_AGENTS_SORTED: readonly string[] = [
 function validateAgentAllowlist(
   value: string,
 ): Result<string, EvalInputValidationError> {
-  if (
-    KNOWN_EVAL_AGENTS.has(
-      value as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-    )
-  ) {
+  if (KNOWN_EVAL_AGENTS.has(value)) {
     return ok(value);
   }
   return err({
     type: "UnknownAgentFilter",
     value,
-    allowedValues: KNOWN_EVAL_AGENTS_SORTED as string[],
+    allowedValues: KNOWN_EVAL_AGENTS_SORTED,
     message:
       `--agent "${value}" is not a recognised eval agent or suite. ` +
       `Allowed values: ${KNOWN_EVAL_AGENTS_SORTED.join(", ")}`,
@@ -253,15 +247,17 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
  */
 function validateEvalEnvKey(
   key: string,
-): Result<void, EvalInputValidationError> {
-  if (KNOWN_EVAL_ENV_KEYS.has(key)) return ok(undefined);
+): Result<true, EvalInputValidationError> {
+  if (KNOWN_EVAL_ENV_KEYS.has(key)) return ok(true);
   return err({
     type: "InvalidFilterIdentifier",
     filter: key,
     value: key,
-    message:
-      `Unknown eval env var "${key}"; allowed WEAVE_EVAL_* vars are: ` +
-      [...KNOWN_EVAL_ENV_KEYS].sort().join(", "),
+    message: `Unknown eval env var "${key}"; allowed WEAVE_EVAL_* vars are: ${[
+      ...KNOWN_EVAL_ENV_KEYS,
+    ]
+      .sort()
+      .join(", ")}`,
   });
 }
 
@@ -318,43 +314,44 @@ export function parseEvalRunRequest(
   if (agentMerge.isErr()) return err(agentMerge.error);
   const rawAgent = agentMerge.value;
 
-  const agentValidation =
-    rawAgent !== undefined
-      ? validateIdentifier("agent", rawAgent)
-      : ok(undefined);
-  if (agentValidation.isErr()) return err(agentValidation.error);
-  const syntaxValidatedAgent = agentValidation.value;
+  let syntaxValidatedAgent: string | undefined;
+  if (rawAgent !== undefined) {
+    const validation = validateIdentifier("agent", rawAgent);
+    if (validation.isErr()) return err(validation.error);
+    syntaxValidatedAgent = validation.value;
+  }
 
   // Allowlist validation: unknown agent values fail closed before any execution
-  const agentAllowlistValidation =
-    syntaxValidatedAgent !== undefined
-      ? validateAgentAllowlist(syntaxValidatedAgent)
-      : ok(undefined);
-  if (agentAllowlistValidation.isErr())
-    return err(agentAllowlistValidation.error);
-  const validatedAgent = agentAllowlistValidation.value;
+  let validatedAgent: string | undefined;
+  if (syntaxValidatedAgent !== undefined) {
+    const validation = validateAgentAllowlist(syntaxValidatedAgent);
+    if (validation.isErr()) return err(validation.error);
+    validatedAgent = validation.value;
+  }
 
   // Resolve model filter
   const modelMerge = detectDuplicate("model", inputs.model, envModel);
   if (modelMerge.isErr()) return err(modelMerge.error);
   const rawModel = modelMerge.value;
 
-  const modelValidation =
-    rawModel !== undefined
-      ? validateIdentifier("model", rawModel)
-      : ok(undefined);
-  if (modelValidation.isErr()) return err(modelValidation.error);
-  const validatedModel = modelValidation.value;
+  let validatedModel: string | undefined;
+  if (rawModel !== undefined) {
+    const validation = validateIdentifier("model", rawModel);
+    if (validation.isErr()) return err(validation.error);
+    validatedModel = validation.value;
+  }
 
   // Resolve case filter
   const caseMerge = detectDuplicate("case", inputs.case, envCase);
   if (caseMerge.isErr()) return err(caseMerge.error);
   const rawCase = caseMerge.value;
 
-  const caseValidation =
-    rawCase !== undefined ? validateIdentifier("case", rawCase) : ok(undefined);
-  if (caseValidation.isErr()) return err(caseValidation.error);
-  const validatedCase = caseValidation.value;
+  let validatedCase: string | undefined;
+  if (rawCase !== undefined) {
+    const validation = validateIdentifier("case", rawCase);
+    if (validation.isErr()) return err(validation.error);
+    validatedCase = validation.value;
+  }
 
   // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
   // control var, not a filter, but it is part of the eval env contract.

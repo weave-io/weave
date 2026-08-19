@@ -21,7 +21,6 @@ import type { ModelClient } from "./openrouter-client.js";
 import type {
   CaseResult,
   CaseResultSummary,
-  DimensionScore,
   EvalCase,
   EvalRubric,
   ModelRunOutput,
@@ -32,7 +31,6 @@ import type {
   RawErrorSummary,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
   TranscriptMessage,
 } from "./types.js";
 
@@ -258,15 +256,12 @@ function buildErrorResult(
   rawMessage?: string,
 ): CaseResult {
   const scoredAt = new Date().toISOString();
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -307,15 +302,12 @@ function buildErrorResult(
 
 function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
   const scoredAt = new Date().toISOString();
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   return {
     summary: {
@@ -460,12 +452,11 @@ export class ShuttleExecutionRunner {
             err<RunnerResult, RunnerError>({
               type: "NoCasesFound",
               suite: SHUTTLE_EXECUTION_SUITE,
-              message:
-                `No cases found in suite "${SHUTTLE_EXECUTION_SUITE}"` +
-                (request.caseFilter !== undefined
+              message: `No cases found in suite "${SHUTTLE_EXECUTION_SUITE}"${
+                request.caseFilter !== undefined
                   ? ` matching case filter "${request.caseFilter}"`
-                  : "") +
-                ".",
+                  : ""
+              }.`,
             }),
           ),
         );
@@ -566,10 +557,10 @@ export class ShuttleExecutionRunner {
             systemPrompt,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return executeAll as ResultAsync<CaseResult[], never>;
+    return executeAll;
   }
 
   private executeSingleCase(
@@ -642,18 +633,10 @@ export class ShuttleExecutionRunner {
           return { summary, rawArtifact };
         },
         (error) => {
-          const errorType =
-            "type" in error
-              ? String((error as { type: string }).type)
-              : "UnknownError";
+          const errorType = error.type;
           const dimension =
-            "dimension" in error
-              ? String((error as { dimension: string }).dimension)
-              : undefined;
-          const rawMessage =
-            "message" in error
-              ? String((error as { message: string }).message)
-              : undefined;
+            error.type === "ScorerAdapterError" ? error.dimension : undefined;
+          const rawMessage = error.message;
 
           return buildErrorResult(
             evalCase,
@@ -737,7 +720,7 @@ function makeDefaultShuttlePromptProvider(): PromptProvider {
 
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Record<ScoringDimension, { score: number; applicable: boolean }> {
+) {
   return {
     routingCorrectness: {
       score: dimensions.routingCorrectness.score,
@@ -755,20 +738,34 @@ function buildDimensionScoreSummary(
       score: dimensions.rationaleQuality.score,
       applicable: dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
+
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
 
 function buildDimensionRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
 
-  for (const [dimension, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dimension] = score.rationale;
-    }
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
 
   return rationales;

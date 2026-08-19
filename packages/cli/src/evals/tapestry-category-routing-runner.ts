@@ -103,11 +103,12 @@ import type {
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
+  ScoringError,
   TranscriptMessage,
 } from "./types.js";
 
@@ -646,7 +647,7 @@ export function scoreExecutionCompleteness(
 
   // Task evidence shapes: Unix forward-slash paths, Windows backslash paths,
   // ordinary filenames with extensions, and domain terms.
-  const evidenceShapes = [
+  const evidencePatterns = [
     /\b\w+\/\w+/, // Unix path segment (src/api)
     /\b\w+\\\w+/, // Windows backslash path segment (src\api)
     /[A-Za-z]:\\\S+/, // Windows absolute path (C:\app\screen.tsx)
@@ -663,7 +664,9 @@ export function scoreExecutionCompleteness(
     /\bclient\b/,
   ];
 
-  const hasTaskEvidence = evidenceShapes.some((shape) => shape.test(lower));
+  const hasTaskEvidence = evidencePatterns.some((pattern) =>
+    pattern.test(lower),
+  );
 
   if (hasTaskEvidence) {
     return {
@@ -839,15 +842,12 @@ function buildErrorResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -897,15 +897,12 @@ function buildDryRunResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   // Derive `required` from the rubric when available; fall back to true
   // (conservative default) when no rubric is present for this case.
@@ -1064,7 +1061,7 @@ function buildUserMessage(evalCase: EvalCase): string {
 
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Record<ScoringDimension, { score: number; applicable: boolean }> {
+) {
   return {
     routingCorrectness: {
       score: dimensions.routingCorrectness.score,
@@ -1082,19 +1079,33 @@ function buildDimensionScoreSummary(
       score: dimensions.rationaleQuality.score,
       applicable: dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
+
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
 
 function buildDimensionRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dim] = score.rationale;
-    }
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
   return rationales;
 }
@@ -1431,10 +1442,10 @@ export class TapestryCategoryRoutingRunner {
             systemPrompt,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return executeAll as ResultAsync<CaseResult[], never>;
+    return executeAll;
   }
 
   private executeSingleCase(
@@ -1479,11 +1490,12 @@ export class TapestryCategoryRoutingRunner {
               scoreRecord: NormalizedScoreRecord;
               composedPrompt: string;
             },
-            { type: string; message: string }
+            ScoringError
           >(
             Promise.resolve(
               err({
                 type: "RubricNotFound",
+                caseId: evalCase.id,
                 message: `No rubric found for case "${evalCase.id}" in suite "${evalCase.suite}".`,
               }),
             ),
@@ -1504,21 +1516,6 @@ export class TapestryCategoryRoutingRunner {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
             .score(runOutput, evalCase, rubrics)
-            .mapErr(
-              (
-                scoringError,
-              ): { type: string; message: string; dimension?: string } => ({
-                type: "ScorerAdapterError",
-                message:
-                  "message" in scoringError
-                    ? String(scoringError.message)
-                    : "Scorer returned an error.",
-                dimension:
-                  "dimension" in scoringError
-                    ? String((scoringError as { dimension: string }).dimension)
-                    : undefined,
-              }),
-            )
             .map((scorerRecord) => ({
               runOutput,
               scoreRecord: mergeWithScorerDimensions(
@@ -1590,18 +1587,10 @@ export class TapestryCategoryRoutingRunner {
           return { summary, rawArtifact };
         },
         (error) => {
-          const errorType =
-            "type" in error
-              ? String((error as { type: string }).type)
-              : "UnknownError";
+          const errorType = error.type;
           const dimension =
-            "dimension" in error
-              ? String((error as { dimension: string }).dimension)
-              : undefined;
-          const rawMessage =
-            "message" in error
-              ? String((error as { message: string }).message)
-              : undefined;
+            error.type === "ScorerAdapterError" ? error.dimension : undefined;
+          const rawMessage = error.message;
           return buildErrorResult(
             evalCase,
             modelId,
@@ -1650,7 +1639,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
     getPrompt: (agentName: string) => {
       const importPromise = ResultAsync.fromPromise(
         import("./prompt-snapshots.js"),
-        (cause): import("./types.js").ProvenanceError => ({
+        (cause): ProvenanceError => ({
           type: "PromptCompositionError",
           agentName,
           message: `Dynamic import of prompt-snapshots failed: ${String(cause)}`,
@@ -1659,7 +1648,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
 
       return importPromise.andThen(({ composeAgentSnapshots }) =>
         composeAgentSnapshots({ agentNames: [agentName], rawArtifacts: true })
-          .mapErr((provErr): import("./types.js").ProvenanceError => provErr)
+          .mapErr((provErr): ProvenanceError => provErr)
           .andThen((snapshotResult) => {
             const raw = snapshotResult.rawArtifacts.find(
               (a) => a.agentName === agentName,
@@ -1669,12 +1658,9 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
                 Promise.resolve(raw.composedPrompt),
               );
             }
-            return new ResultAsync<
-              string,
-              import("./types.js").ProvenanceError
-            >(
+            return new ResultAsync<string, ProvenanceError>(
               Promise.resolve(
-                err<string, import("./types.js").ProvenanceError>({
+                err<string, ProvenanceError>({
                   type: "PromptCompositionError",
                   agentName,
                   message: `No raw artifact found for agent "${agentName}" after composition.`,

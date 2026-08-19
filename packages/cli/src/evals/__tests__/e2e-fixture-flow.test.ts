@@ -51,12 +51,7 @@ import {
 } from "../dashboard-indexes.js";
 import { DASHBOARD_MANIFEST_SCHEMA_VERSION } from "../report-schema.js";
 import { assertJsonPublishSafe } from "../sanitizer.js";
-import type {
-  CaseResult,
-  CaseResultSummary,
-  RunnerResult,
-  ScoringDimension,
-} from "../types.js";
+import type { CaseResult, CaseResultSummary, RunnerResult } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Test directory helpers
@@ -101,16 +96,13 @@ const LEGACY_REPO = "pgermishuys/opencode-weave";
 // Fixture builders (inline — no real runners, no model calls)
 // ---------------------------------------------------------------------------
 
-function makeDimensionScores(): Record<
-  ScoringDimension,
-  { score: number; applicable: boolean }
-> {
+function makeDimensionScores() {
   return {
     routingCorrectness: { score: 1.0, applicable: true },
     delegationCorrectness: { score: 1.0, applicable: false },
     executionCompleteness: { score: 1.0, applicable: false },
     rationaleQuality: { score: 0.8, applicable: true },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
 
 function makeCaseResultSummary(
@@ -437,8 +429,8 @@ function makeRun2Results(): RunnerResult[] {
 // Helper: isSafeId (mirrors dashboard-data.js website implementation)
 // ---------------------------------------------------------------------------
 
-function isSafeId(id: unknown): boolean {
-  return typeof id === "string" && /^[a-zA-Z0-9_-]+$/.test(id);
+function isSafeId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -897,8 +889,8 @@ describe("E2E fixture flow: publish two runs → rebuild indexes → validate we
     );
 
     // Missing schemaVersion must also be rejected
-    const noVersionManifest = { ...manifestAfterRaw };
-    delete (noVersionManifest as Record<string, unknown>).schemaVersion;
+    const { schemaVersion, ...noVersionManifest } = manifestAfterRaw;
+    void schemaVersion;
     const noVersionCompat =
       validateDashboardManifestCompatibility(noVersionManifest);
     expect(noVersionCompat.isErr()).toBe(true);

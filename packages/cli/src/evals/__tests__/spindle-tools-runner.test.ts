@@ -22,11 +22,13 @@ import type {
   ProvenanceError,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 type ResultAsyncRunnerError = ResultAsync<RunnerResult, RunnerError>;
-
+type SpindleTestOptions = SpindleToolsRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
 const SCORED_AT = "2026-01-01T00:00:00.000Z";
 
 function makeResearchCase(overrides: Partial<EvalCase> = {}): EvalCase {
@@ -134,12 +136,27 @@ class InMemorySpindleRunner extends SpindleToolsRunner {
   private readonly _promptProvider: PromptProvider | undefined;
 
   constructor(
-    options: SpindleToolsRunnerOptions,
+    options: SpindleTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     this._promptProvider = options.promptProvider;
+  }
+
+  executeCaseForTest(
+    evalCase: EvalCase,
+    modelId: string,
+    rubrics: EvalRubric[],
+    rawArtifacts: boolean,
+  ): ResultAsync<CaseResult, never> {
+    return this.executeSingleCase(
+      evalCase,
+      modelId,
+      rubrics,
+      rawArtifacts,
+      "You are Spindle.",
+    );
   }
 
   override run(request: SpindleToolsRunRequest = {}): ResultAsyncRunnerError {
@@ -234,16 +251,15 @@ class InMemorySpindleRunner extends SpindleToolsRunner {
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(SPINDLE_TOOLS_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(SPINDLE_TOOLS_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -258,15 +274,12 @@ function makeDryRunSummary(
   evalCase: EvalCase,
   modelId: string,
 ): CaseResultSummary {
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   return {
     caseId: evalCase.id,
@@ -302,29 +315,13 @@ function assembleRunnerResult(
 }
 
 function executeCaseWithStubs(
-  runner: SpindleToolsRunner,
+  runner: InMemorySpindleRunner,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
   rawArtifacts: boolean,
 ): ResultAsync<CaseResult, never> {
-  const anyRunner = runner as unknown as {
-    executeSingleCase: (
-      evalCase: EvalCase,
-      modelId: string,
-      rubrics: EvalRubric[],
-      rawArtifacts: boolean,
-      systemPrompt: string,
-    ) => ResultAsync<CaseResult, never>;
-  };
-
-  return anyRunner.executeSingleCase(
-    evalCase,
-    modelId,
-    rubrics,
-    rawArtifacts,
-    "You are Spindle.",
-  );
+  return runner.executeCaseForTest(evalCase, modelId, rubrics, rawArtifacts);
 }
 
 describe("extractSpindleResearchSignals", () => {

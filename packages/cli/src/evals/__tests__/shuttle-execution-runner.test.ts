@@ -27,10 +27,17 @@ import type {
   RawCaseResultArtifact,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 type ResultAsyncRunnerError = ResultAsync<RunnerResult, RunnerError>;
+type ShuttleTestOptions = ShuttleExecutionRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
+type ShuttleTestDependencies = Pick<
+  ShuttleTestOptions,
+  "modelClient" | "scorer"
+>;
 
 const SCORED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -134,14 +141,19 @@ function makeExecutionScoreRecord(
 
 class InMemoryShuttleRunner extends ShuttleExecutionRunner {
   private readonly _promptProvider: PromptProvider | undefined;
+  private readonly _dependencies: ShuttleTestDependencies;
 
   constructor(
-    options: ShuttleExecutionRunnerOptions,
+    options: ShuttleTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     this._promptProvider = options.promptProvider;
+    this._dependencies = {
+      modelClient: options.modelClient,
+      scorer: options.scorer,
+    };
   }
 
   override run(
@@ -233,23 +245,22 @@ class InMemoryShuttleRunner extends ShuttleExecutionRunner {
             (acc, { evalCase, modelId }) =>
               acc.andThen((results) =>
                 executeCaseWithStubs(
-                  this,
+                  this._dependencies,
                   evalCase,
                   modelId,
                   rubrics,
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(SHUTTLE_EXECUTION_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(SHUTTLE_EXECUTION_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -258,29 +269,28 @@ class InMemoryShuttleRunner extends ShuttleExecutionRunner {
       (acc, { evalCase, modelId }) =>
         acc.andThen((results) =>
           executeCaseWithStubs(
-            this,
+            this._dependencies,
             evalCase,
             modelId,
             rubrics,
             rawArtifacts,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-      (caseResults) =>
-        ResultAsync.fromSafePromise(
-          Promise.resolve(
-            assembleRunnerResult(SHUTTLE_EXECUTION_SUITE, caseResults),
-          ),
+    return executeAll.andThen((caseResults) =>
+      ResultAsync.fromSafePromise(
+        Promise.resolve(
+          assembleRunnerResult(SHUTTLE_EXECUTION_SUITE, caseResults),
         ),
+      ),
     );
   }
 }
 
 function executeCaseWithStubs(
-  runner: ShuttleExecutionRunner,
+  dependencies: ShuttleTestDependencies,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
@@ -290,12 +300,7 @@ function executeCaseWithStubs(
     "You are Shuttle. Execute delegated tasks and report evidence.";
   const userMessage = buildUserMessage(evalCase);
 
-  const anyRunner = runner as unknown as {
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  };
-
-  const modelResultAsync = anyRunner.modelClient.complete({
+  const modelResultAsync = dependencies.modelClient.complete({
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
@@ -330,7 +335,7 @@ function executeCaseWithStubs(
         producedArtifacts: signals.producedArtifacts,
       };
 
-      return anyRunner.scorer
+      return dependencies.scorer
         .score(runOutput, evalCase, rubrics)
         .map((scoreRecord) => ({
           runOutput,
@@ -390,10 +395,7 @@ function executeCaseWithStubs(
         return { summary, rawArtifact };
       },
       (error) => {
-        const errorType =
-          "type" in error
-            ? String((error as { type: string }).type)
-            : "UnknownError";
+        const errorType = error.type;
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -435,16 +437,28 @@ function executeCaseWithStubs(
   );
 }
 
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
+
 function buildRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const out: Partial<Record<ScoringDimension, string>> = {};
-  for (const [dimension, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      out[dimension] = score.rationale;
-    }
+): DimensionRationales {
+  const out: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    out.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    out.delegationCorrectness = dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    out.executionCompleteness = dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    out.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
   return out;
 }

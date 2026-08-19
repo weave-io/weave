@@ -77,17 +77,16 @@ import type { ModelClient } from "./openrouter-client.js";
 import type {
   CaseResult,
   CaseResultSummary,
-  DimensionScore,
   EvalCase,
   EvalRubric,
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
   TranscriptMessage,
 } from "./types.js";
 
@@ -743,15 +742,12 @@ function buildErrorResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -804,15 +800,12 @@ function buildErrorResult(
 function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -1159,10 +1152,10 @@ export class LoomRoutingRunner {
             systemPrompt,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return executeAll as ResultAsync<CaseResult[], never>;
+    return executeAll;
   }
 
   /**
@@ -1239,7 +1232,7 @@ export class LoomRoutingRunner {
                   evalCase,
                   analyzeLoomRouting(runOutput.rawContent),
                 );
-                return {
+                const artifact: RawCaseResultArtifact = {
                   caseId: evalCase.id,
                   modelId,
                   composedPrompt,
@@ -1248,29 +1241,22 @@ export class LoomRoutingRunner {
                   dimensionRationales: buildDimensionRationales(
                     scoreRecord.dimensions,
                   ),
-                  ...(routingDiagnostics !== undefined
-                    ? { runnerDiagnostics: routingDiagnostics }
-                    : {}),
                 };
+                if (routingDiagnostics !== undefined) {
+                  artifact.runnerDiagnostics = routingDiagnostics;
+                }
+                return artifact;
               })()
             : undefined;
 
           return { summary, rawArtifact };
         },
         (error) => {
-          const errorType =
-            "type" in error
-              ? String((error as { type: string }).type)
-              : "UnknownError";
+          const errorType = error.type;
           const dimension =
-            "dimension" in error
-              ? String((error as { dimension: string }).dimension)
-              : undefined;
+            error.type === "ScorerAdapterError" ? error.dimension : undefined;
           // Extract the raw message for local diagnostic (redacted of secrets before storage)
-          const rawMessage =
-            "message" in error
-              ? String((error as { message: string }).message)
-              : undefined;
+          const rawMessage = error.message;
           return buildErrorResult(
             evalCase,
             modelId,
@@ -1340,7 +1326,7 @@ function makeDefaultLoomPromptProvider(): PromptProvider {
       // when the default provider is actually used.
       const importPromise = ResultAsync.fromPromise(
         import("./prompt-snapshots.js"),
-        (cause): import("./types.js").ProvenanceError => ({
+        (cause): ProvenanceError => ({
           type: "PromptCompositionError",
           agentName,
           message: `Dynamic import of prompt-snapshots failed: ${String(cause)}`,
@@ -1349,7 +1335,7 @@ function makeDefaultLoomPromptProvider(): PromptProvider {
 
       return importPromise.andThen(({ composeAgentSnapshots }) =>
         composeAgentSnapshots({ agentNames: [agentName], rawArtifacts: true })
-          .mapErr((provErr): import("./types.js").ProvenanceError => provErr)
+          .mapErr((provErr): ProvenanceError => provErr)
           .andThen((snapshotResult) => {
             const raw = snapshotResult.rawArtifacts.find(
               (a) => a.agentName === agentName,
@@ -1361,12 +1347,9 @@ function makeDefaultLoomPromptProvider(): PromptProvider {
             }
             // Composition succeeded but raw artifact not found — hard fail.
             // No fallback to hardcoded prompts; caller must handle the error.
-            return new ResultAsync<
-              string,
-              import("./types.js").ProvenanceError
-            >(
+            return new ResultAsync<string, ProvenanceError>(
               Promise.resolve(
-                err<string, import("./types.js").ProvenanceError>({
+                err<string, ProvenanceError>({
                   type: "PromptCompositionError",
                   agentName,
                   message: `No raw artifact found for agent "${agentName}" after composition.`,
@@ -1395,7 +1378,7 @@ function buildUserMessage(evalCase: EvalCase): string {
  */
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Record<ScoringDimension, { score: number; applicable: boolean }> {
+) {
   return {
     routingCorrectness: {
       score: dimensions.routingCorrectness.score,
@@ -1413,8 +1396,15 @@ function buildDimensionScoreSummary(
       score: dimensions.rationaleQuality.score,
       applicable: dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
+
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
 
 /**
  * Build a mapping of dimension name → rationale string for local-only
@@ -1422,15 +1412,22 @@ function buildDimensionScoreSummary(
  */
 function buildDimensionRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
 
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dim] = score.rationale;
-    }
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
 
   return rationales;
