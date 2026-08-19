@@ -13,6 +13,7 @@
 import { dirname, relative, sep } from "node:path";
 import { Kysely, sql } from "kysely";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import { logger } from "../../logger.js";
 import {
@@ -123,6 +124,7 @@ import {
 } from "../store.js";
 import type {
   AdapterPreferenceRecord,
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -132,6 +134,7 @@ import type {
   ExecutionLeaseId,
   JournalQueryFilter,
   JsonObject,
+  JsonValue,
   OwnerId,
   RetentionPruneStats,
   RuntimeJournalEntry,
@@ -152,8 +155,10 @@ import type {
 import {
   createArtifactId,
   createExecutionLeaseId,
+  createOwnerId,
   createRuntimeJournalEntryId,
   createSessionSnapshotId,
+  createUsageObservationId,
   createWorkflowInstanceId,
 } from "../types.js";
 import {
@@ -173,8 +178,11 @@ import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import type {
   AdapterPreferenceRow,
   ExecutionLeaseRow,
+  PermissionGrantRow,
   RuntimeJournalEntryRow,
   SessionSnapshotRow,
+  UsageObservationRow,
+  UsageRollupRow,
   WeaveDatabase,
   WorkflowInstanceRow,
 } from "./schema.js";
@@ -190,94 +198,425 @@ function newId(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Row ↔ Domain mappers
+// Row ↔ Domain parsers
 // ---------------------------------------------------------------------------
 
-function rowToWorkflowInstance(row: WorkflowInstanceRow): WorkflowInstance {
-  const artifacts = JSON.parse(row.artifacts_json) as ArtifactRef[];
-  // step_attempts_json may be absent in rows created before migration 2
-  const stepAttempts: readonly StepAttemptRecord[] = row.step_attempts_json
-    ? (JSON.parse(row.step_attempts_json) as StepAttemptRecord[])
-    : [];
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
+const jsonObjectSchema: z.ZodType<JsonObject> = z.record(
+  z.string(),
+  jsonValueSchema,
+);
+const metadataSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number().finite(), z.boolean()]),
+);
+const artifactIntegritySchema = z.object({
+  algorithm: z.literal("sha256"),
+  digest: z.string(),
+});
+const artifactApprovalActorSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("user"),
+    provenance: z.record(
+      z.string(),
+      z.union([z.string(), z.number().finite(), z.boolean()]),
+    ),
+  }),
+  z.object({
+    kind: z.literal("agent"),
+    agentName: z.string(),
+    gate: z.enum(["review", "security"]),
+  }),
+]);
+const storedArtifactSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  path: z.string(),
+  revision: z.number().int().positive(),
+  approvalState: z.enum(["pending", "approved", "rejected"]),
+  producerAgent: z.string().optional(),
+  approvalActor: artifactApprovalActorSchema.optional(),
+  approvalDecidedAt: z.string().optional(),
+  mimeType: z.string().optional(),
+  description: z.string().optional(),
+  integrity: artifactIntegritySchema.optional(),
+});
+const storedConsumedArtifactSchema = z.object({
+  artifactId: z.string(),
+  name: z.string(),
+  revision: z.number().int().positive(),
+});
+const storedStepAttemptSchema = z.object({
+  stepName: z.string(),
+  attemptNumber: z.number().int().positive(),
+  dispatchedAt: z.string(),
+  consumedArtifacts: z.array(storedConsumedArtifactSchema),
+});
+const workflowInstanceRowSchema = z.object({
+  id: z.string(),
+  workflow_name: z.string(),
+  goal: z.string(),
+  slug: z.string(),
+  status: z.enum([
+    "created",
+    "running",
+    "paused",
+    "blocked",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  current_step_name: z.string().nullable(),
+  artifacts_json: z.string(),
+  step_attempts_json: z.string().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  completed_at: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+const executionLeaseRowSchema = z.object({
+  id: z.string(),
+  workflow_instance_id: z.string(),
+  owner_id: z.string(),
+  acquired_at: z.string(),
+  expires_at: z.string(),
+  last_heartbeat_at: z.string().nullable(),
+});
+const sessionSnapshotRowSchema = z.object({
+  id: z.string(),
+  workflow_instance_id: z.string(),
+  lease_id: z.string().nullable(),
+  harness_name: z.string(),
+  harness_version: z.string().nullable(),
+  agent_name: z.string(),
+  model_id: z.string().nullable(),
+  step_name: z.string().nullable(),
+  session_status: z.enum(["active", "idle", "terminated"]),
+  recorded_at: z.string(),
+  metadata_json: z.string(),
+});
+const journalRowSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  source_kind: z.enum(["engine", "adapter"]),
+  source_name: z.string(),
+  event_type: z.string(),
+  execution_id: z.string().nullable(),
+  workflow_instance_id: z.string().nullable(),
+  step_id: z.string().nullable(),
+  severity: z.enum(["debug", "info", "warn", "error"]),
+  data_json: z.string(),
+});
+const usageObservationRowSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  source_kind: z.enum(["engine", "adapter"]),
+  source_name: z.string(),
+  workflow_instance_id: z.string().nullable(),
+  step_id: z.string().nullable(),
+  agent_name: z.string().nullable(),
+  model: z.string().nullable(),
+  input_tokens: z.number().nullable(),
+  output_tokens: z.number().nullable(),
+  cache_read_tokens: z.number().nullable(),
+  cache_write_tokens: z.number().nullable(),
+  total_tokens: z.number().nullable(),
+  cost: z.number().nullable(),
+  normalized_json: z.string(),
+});
+const usageRollupRowSchema = z.object({
+  rollup_key: z.string(),
+  source_kind: z.enum(["engine", "adapter"]),
+  source_name: z.string(),
+  workflow_instance_id: z.string().nullable(),
+  step_id: z.string().nullable(),
+  agent_name: z.string().nullable(),
+  model: z.string().nullable(),
+  input_tokens: z.number().nullable(),
+  output_tokens: z.number().nullable(),
+  cache_read_tokens: z.number().nullable(),
+  cache_write_tokens: z.number().nullable(),
+  total_tokens: z.number().nullable(),
+  cost: z.number().nullable(),
+  observation_count: z.number(),
+});
+const adapterPreferenceRowSchema = z.object({
+  namespace: z.string(),
+  key: z.string(),
+  value_json: z.string(),
+  updated_at: z.string(),
+});
+const permissionGrantRowSchema = z.object({
+  grant_id: z.string(),
+  project_identity: z.string(),
+  agent_name: z.string(),
+  registration_owner: z.string(),
+  tool_identity: z.string(),
+  registration_revision: z.string(),
+  policy_fingerprint: z.string(),
+  request_schema_version: z.string(),
+  request_digest: z.string(),
+  display_summary: z.string(),
+  display_details: z.string().nullable(),
+  created_at: z.number(),
+  expires_at: z.number().nullable(),
+  revoked_at: z.number().nullable(),
+  state: z.enum(["active", "revoked"]),
+});
+const normalizedUsageSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  sourceKind: z.enum(["engine", "adapter"]),
+  sourceName: z.string(),
+  workflowInstanceId: z.string().optional(),
+  stepId: z.string().optional(),
+  agentName: z.string().optional(),
+  model: z.string().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cacheReadTokens: z.number().optional(),
+  cacheWriteTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+  cost: z.number().optional(),
+});
+const runtimeMetadataValueRowSchema = z.object({ value: z.string() });
+const runtimeStoreErrorCauseSchema = z.object({
+  name: z.string().optional(),
+  message: z.string(),
+  stack: z.string().optional(),
+});
+const runtimeStoreErrorSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("initialization"),
+    message: z.string(),
+    cause: runtimeStoreErrorCauseSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("migration_version"),
+    foundVersion: z.number(),
+    supportedVersion: z.number(),
+    message: z.string(),
+  }),
+  z.object({
+    type: z.literal("serialization"),
+    message: z.string(),
+    cause: runtimeStoreErrorCauseSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("query"),
+    message: z.string(),
+    cause: runtimeStoreErrorCauseSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("not_found"),
+    entity: z.string(),
+    id: z.string(),
+    message: z.string(),
+  }),
+  z.object({
+    type: z.literal("conflict"),
+    entity: z.string(),
+    message: z.string(),
+    conflictingId: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("validation"),
+    message: z.string(),
+    field: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("journal_write"),
+    message: z.string(),
+    cause: runtimeStoreErrorCauseSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("invariant_violation"),
+    entity: z.string(),
+    message: z.string(),
+    id: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("retention"),
+    message: z.string(),
+    cause: runtimeStoreErrorCauseSchema.optional(),
+  }),
+]);
+
+type StoredArtifact = z.infer<typeof storedArtifactSchema>;
+type StoredStepAttempt = z.infer<typeof storedStepAttemptSchema>;
+type NormalizedUsage = z.infer<typeof normalizedUsageSchema>;
+
+type MutableDomain<T> = { -readonly [Key in keyof T]: T[Key] };
+type WorkflowInstanceBuilder = MutableDomain<WorkflowInstance>;
+type ExecutionLeaseBuilder = MutableDomain<ExecutionLease>;
+type SessionSnapshotBuilder = MutableDomain<SessionSnapshot>;
+type RuntimeJournalEntryBuilder = MutableDomain<RuntimeJournalEntry>;
+type UsageRollupBuilder = MutableDomain<UsageRollup>;
+type NormalizedUsageBuilder = MutableDomain<NormalizedUsageObservation>;
+type ArtifactBuilder = MutableDomain<ArtifactRef>;
+
+function parseStoredJson<T>(
+  value: string,
+  schema: z.ZodType<T>,
+  message: string,
+): T {
+  const parsed = Result.fromThrowable(
+    (): JsonValue => JSON.parse(value),
+    () => new Error(message),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  const checked = schema.safeParse(parsed.value);
+  if (!checked.success) throw new Error(message);
+  return checked.data;
+}
+
+function storedArtifactToDomain(stored: StoredArtifact): ArtifactRef {
+  const result: ArtifactBuilder = {
+    id: createArtifactId(stored.id),
+    name: stored.name,
+    path: stored.path,
+    revision: stored.revision,
+    approvalState: stored.approvalState,
+  };
+  if (stored.producerAgent !== undefined)
+    result.producerAgent = stored.producerAgent;
+  if (stored.approvalActor !== undefined)
+    result.approvalActor = stored.approvalActor;
+  if (stored.approvalDecidedAt !== undefined)
+    result.approvalDecidedAt = stored.approvalDecidedAt;
+  if (stored.mimeType !== undefined) result.mimeType = stored.mimeType;
+  if (stored.description !== undefined) result.description = stored.description;
+  if (stored.integrity !== undefined) result.integrity = stored.integrity;
+  return result;
+}
+
+function storedStepAttemptToDomain(
+  stored: StoredStepAttempt,
+): StepAttemptRecord {
   return {
-    id: createWorkflowInstanceId(row.id),
-    workflowName: row.workflow_name,
-    goal: row.goal,
-    slug: row.slug,
-    status: row.status as WorkflowInstanceStatus,
-    ...(row.current_step_name !== null
-      ? { currentStepName: row.current_step_name }
-      : {}),
+    stepName: stored.stepName,
+    attemptNumber: stored.attemptNumber,
+    dispatchedAt: stored.dispatchedAt,
+    consumedArtifacts: stored.consumedArtifacts.map((artifact) => ({
+      artifactId: createArtifactId(artifact.artifactId),
+      name: artifact.name,
+      revision: artifact.revision,
+    })),
+  };
+}
+
+function rowToWorkflowInstance(row: WorkflowInstanceRow): WorkflowInstance {
+  const parsed = workflowInstanceRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid workflow_instances row");
+  const stored = parsed.data;
+  const artifacts = parseStoredJson(
+    stored.artifacts_json,
+    z.array(storedArtifactSchema),
+    "Invalid workflow_instances artifacts_json",
+  ).map(storedArtifactToDomain);
+  const stepAttempts =
+    stored.step_attempts_json === undefined
+      ? []
+      : parseStoredJson(
+          stored.step_attempts_json,
+          z.array(storedStepAttemptSchema),
+          "Invalid workflow_instances step_attempts_json",
+        ).map(storedStepAttemptToDomain);
+  const result: WorkflowInstanceBuilder = {
+    id: createWorkflowInstanceId(stored.id),
+    workflowName: stored.workflow_name,
+    goal: stored.goal,
+    slug: stored.slug,
+    status: stored.status,
     artifacts,
     stepAttempts,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
-    ...(row.error_message !== null ? { errorMessage: row.error_message } : {}),
+    createdAt: stored.created_at,
+    updatedAt: stored.updated_at,
   };
+  if (stored.current_step_name !== null)
+    result.currentStepName = stored.current_step_name;
+  if (stored.completed_at !== null) result.completedAt = stored.completed_at;
+  if (stored.error_message !== null) result.errorMessage = stored.error_message;
+  return result;
 }
 
 function rowToExecutionLease(row: ExecutionLeaseRow): ExecutionLease {
-  return {
-    id: createExecutionLeaseId(row.id),
-    workflowInstanceId: createWorkflowInstanceId(row.workflow_instance_id),
-    ownerId: row.owner_id as OwnerId,
-    acquiredAt: row.acquired_at,
-    expiresAt: row.expires_at,
-    ...(row.last_heartbeat_at !== null
-      ? { lastHeartbeatAt: row.last_heartbeat_at }
-      : {}),
+  const parsed = executionLeaseRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid execution_leases row");
+  const stored = parsed.data;
+  const result: ExecutionLeaseBuilder = {
+    id: createExecutionLeaseId(stored.id),
+    workflowInstanceId: createWorkflowInstanceId(stored.workflow_instance_id),
+    ownerId: createOwnerId(stored.owner_id),
+    acquiredAt: stored.acquired_at,
+    expiresAt: stored.expires_at,
   };
+  if (stored.last_heartbeat_at !== null)
+    result.lastHeartbeatAt = stored.last_heartbeat_at;
+  return result;
 }
 
 function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
-  const metadata = JSON.parse(row.metadata_json) as Record<
-    string,
-    string | number | boolean
-  >;
-  return {
-    id: createSessionSnapshotId(row.id),
-    workflowInstanceId: createWorkflowInstanceId(row.workflow_instance_id),
-    ...(row.lease_id !== null
-      ? { leaseId: createExecutionLeaseId(row.lease_id) }
-      : {}),
-    harnessName: row.harness_name,
-    ...(row.harness_version !== null
-      ? { harnessVersion: row.harness_version }
-      : {}),
-    agentName: row.agent_name,
-    ...(row.model_id !== null ? { modelId: row.model_id } : {}),
-    ...(row.step_name !== null ? { stepName: row.step_name } : {}),
-    sessionStatus: row.session_status as SessionSnapshot["sessionStatus"],
-    recordedAt: row.recorded_at,
+  const parsed = sessionSnapshotRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid session_snapshots row");
+  const stored = parsed.data;
+  const metadata = parseStoredJson(
+    stored.metadata_json,
+    metadataSchema,
+    "Invalid session_snapshots metadata_json",
+  );
+  const result: SessionSnapshotBuilder = {
+    id: createSessionSnapshotId(stored.id),
+    workflowInstanceId: createWorkflowInstanceId(stored.workflow_instance_id),
+    harnessName: stored.harness_name,
+    agentName: stored.agent_name,
+    sessionStatus: stored.session_status,
+    recordedAt: stored.recorded_at,
     metadata,
   };
+  if (stored.lease_id !== null)
+    result.leaseId = createExecutionLeaseId(stored.lease_id);
+  if (stored.harness_version !== null)
+    result.harnessVersion = stored.harness_version;
+  if (stored.model_id !== null) result.modelId = stored.model_id;
+  if (stored.step_name !== null) result.stepName = stored.step_name;
+  return result;
 }
 
 function rowToJournalEntry(row: RuntimeJournalEntryRow): RuntimeJournalEntry {
-  const data = JSON.parse(row.data_json) as JsonObject;
-  return {
-    id: createRuntimeJournalEntryId(row.id),
-    timestamp: row.timestamp,
-    source: {
-      kind: row.source_kind as "engine" | "adapter",
-      name: row.source_name,
-    },
-    eventType: row.event_type,
-    ...(row.execution_id !== null
-      ? { executionId: createExecutionLeaseId(row.execution_id) }
-      : {}),
-    ...(row.workflow_instance_id !== null
-      ? {
-          workflowInstanceId: createWorkflowInstanceId(
-            row.workflow_instance_id,
-          ),
-        }
-      : {}),
-    ...(row.step_id !== null ? { stepId: row.step_id } : {}),
-    severity: row.severity as RuntimeJournalEntry["severity"],
+  const parsed = journalRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid runtime_journal_entries row");
+  const stored = parsed.data;
+  const data = parseStoredJson(
+    stored.data_json,
+    jsonObjectSchema,
+    "Invalid runtime_journal_entries data_json",
+  );
+  const result: RuntimeJournalEntryBuilder = {
+    id: createRuntimeJournalEntryId(stored.id),
+    timestamp: stored.timestamp,
+    source: { kind: stored.source_kind, name: stored.source_name },
+    eventType: stored.event_type,
+    severity: stored.severity,
     data,
   };
+  if (stored.execution_id !== null)
+    result.executionId = createExecutionLeaseId(stored.execution_id);
+  if (stored.workflow_instance_id !== null)
+    result.workflowInstanceId = createWorkflowInstanceId(
+      stored.workflow_instance_id,
+    );
+  if (stored.step_id !== null) result.stepId = stored.step_id;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +630,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
     input: CreateWorkflowInstanceInput,
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const now = new Date().toISOString();
-    const id = input.id ? (input.id as string) : newId();
+    const id = input.id ? input.id : newId();
     return ResultAsync.fromPromise(
       this.db
         .insertInto("workflow_instances")
@@ -329,7 +668,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
       this.db
         .selectFrom("workflow_instances")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((row) => (row ? rowToWorkflowInstance(row) : null)),
       (cause) => queryError("Failed to find WorkflowInstance", cause),
@@ -341,7 +680,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     return this.findById(id).andThen((instance) => {
       if (!instance) {
-        return errAsync(notFoundError("WorkflowInstance", id as string));
+        return errAsync(notFoundError("WorkflowInstance", id));
       }
       return okAsync(instance);
     });
@@ -379,11 +718,11 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
       this.db
         .selectFrom("workflow_instances")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((existing) => {
           if (!existing) {
-            throw new NotFoundSentinel("WorkflowInstance", id as string);
+            throw new NotFoundSentinel("WorkflowInstance", id);
           }
           return existing;
         })
@@ -411,14 +750,14 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           return this.db
             .updateTable("workflow_instances")
             .set(patch)
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .execute();
         })
         .then(() =>
           this.db
             .selectFrom("workflow_instances")
             .selectAll()
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .executeTakeFirstOrThrow(),
         )
         .then(rowToWorkflowInstance),
@@ -446,15 +785,14 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
       this.db
         .selectFrom("workflow_instances")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((existing) => {
           if (!existing) {
-            throw new NotFoundSentinel("WorkflowInstance", id as string);
+            throw new NotFoundSentinel("WorkflowInstance", id);
           }
-          const artifacts = JSON.parse(
-            existing.artifacts_json,
-          ) as ArtifactRef[];
+          const current = rowToWorkflowInstance(existing);
+          const artifacts = [...current.artifacts];
 
           // Find existing artifact with same name to determine revision (last occurrence)
           const prior =
@@ -464,22 +802,20 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           // Reuse stable id across revisions; assign new id for first occurrence
           const artifactId = prior ? prior.id : createArtifactId(newId());
 
-          const ref: ArtifactRef = {
+          const ref: ArtifactBuilder = {
             id: artifactId,
             name: artifact.name,
             path: artifact.path,
             revision,
             // New revision always resets approvalState to pending, invalidating prior approval.
             approvalState: "pending",
-            ...(artifact.producerAgent
-              ? { producerAgent: artifact.producerAgent }
-              : {}),
-            ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-            ...(artifact.description
-              ? { description: artifact.description }
-              : {}),
-            ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
           };
+          if (artifact.producerAgent)
+            ref.producerAgent = artifact.producerAgent;
+          if (artifact.mimeType) ref.mimeType = artifact.mimeType;
+          if (artifact.description) ref.description = artifact.description;
+          if (artifact.integrity !== undefined)
+            ref.integrity = artifact.integrity;
           artifacts.push(ref);
           return this.db
             .updateTable("workflow_instances")
@@ -487,14 +823,14 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
               artifacts_json: JSON.stringify(artifacts),
               updated_at: new Date().toISOString(),
             })
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .execute();
         })
         .then(() =>
           this.db
             .selectFrom("workflow_instances")
             .selectAll()
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .executeTakeFirstOrThrow(),
         )
         .then(rowToWorkflowInstance),
@@ -512,7 +848,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
     approval?: {
-      readonly actor: import("../types.js").ArtifactApprovalActor;
+      readonly actor: ArtifactApprovalActor;
       readonly decidedAt: string;
       readonly expectedRevision: number;
       readonly expectedDigest?: string;
@@ -523,12 +859,13 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
         const existing = await transaction
           .selectFrom("workflow_instances")
           .selectAll()
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .executeTakeFirst();
         if (!existing) {
-          throw new NotFoundSentinel("WorkflowInstance", id as string);
+          throw new NotFoundSentinel("WorkflowInstance", id);
         }
-        const artifacts = JSON.parse(existing.artifacts_json) as ArtifactRef[];
+        const current = rowToWorkflowInstance(existing);
+        const artifacts = [...current.artifacts];
         let artifactIndex = -1;
         for (let i = artifacts.length - 1; i >= 0; i--) {
           if (artifacts[i].id === artifactId) {
@@ -537,7 +874,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           }
         }
         if (artifactIndex === -1) {
-          throw new NotFoundSentinel("ArtifactRef", artifactId as string);
+          throw new NotFoundSentinel("ArtifactRef", artifactId);
         }
         const currentArtifact = artifacts[artifactIndex];
         if (
@@ -547,7 +884,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           throw new ConflictSentinel(
             "ArtifactRevision",
             "Artifact revision changed before approval commit",
-            artifactId as string,
+            artifactId,
           );
         }
         if (
@@ -558,7 +895,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           throw new ConflictSentinel(
             "ArtifactDigest",
             "Artifact digest changed before approval commit",
-            artifactId as string,
+            artifactId,
           );
         }
         const updatedArtifacts = artifacts.map((artifact, index) => {
@@ -577,12 +914,12 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
             artifacts_json: JSON.stringify(updatedArtifacts),
             updated_at: new Date().toISOString(),
           })
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .execute();
         const updated = await transaction
           .selectFrom("workflow_instances")
           .selectAll()
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .executeTakeFirstOrThrow();
         return rowToWorkflowInstance(updated);
       }),
@@ -614,15 +951,14 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
       this.db
         .selectFrom("workflow_instances")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((existing) => {
           if (!existing) {
-            throw new NotFoundSentinel("WorkflowInstance", id as string);
+            throw new NotFoundSentinel("WorkflowInstance", id);
           }
-          const stepAttempts: StepAttemptRecord[] = existing.step_attempts_json
-            ? (JSON.parse(existing.step_attempts_json) as StepAttemptRecord[])
-            : [];
+          const current = rowToWorkflowInstance(existing);
+          const stepAttempts = [...current.stepAttempts];
           const priorAttempts = stepAttempts.filter(
             (a) => a.stepName === stepName,
           ).length;
@@ -639,14 +975,14 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
               step_attempts_json: JSON.stringify(stepAttempts),
               updated_at: new Date().toISOString(),
             })
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .execute();
         })
         .then(() =>
           this.db
             .selectFrom("workflow_instances")
             .selectAll()
-            .where("id", "=", id as string)
+            .where("id", "=", id)
             .executeTakeFirstOrThrow(),
         )
         .then(rowToWorkflowInstance),
@@ -702,8 +1038,8 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
           .insertInto("execution_leases")
           .values({
             id,
-            workflow_instance_id: input.workflowInstanceId as string,
-            owner_id: input.ownerId as string,
+            workflow_instance_id: input.workflowInstanceId,
+            owner_id: input.ownerId,
             acquired_at: nowIso,
             expires_at: expiresAt,
             last_heartbeat_at: null,
@@ -763,7 +1099,7 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
       this.db
         .selectFrom("execution_leases")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((row) => (row ? rowToExecutionLease(row) : null)),
       (cause) => queryError("Failed to find ExecutionLease", cause),
@@ -775,7 +1111,7 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
   ): ResultAsync<ExecutionLease, RuntimeStoreError> {
     return this.findById(id).andThen((lease) => {
       if (!lease) {
-        return errAsync(notFoundError("ExecutionLease", id as string));
+        return errAsync(notFoundError("ExecutionLease", id));
       }
       return okAsync(lease);
     });
@@ -795,24 +1131,20 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
         const row = await this.db
           .selectFrom("execution_leases")
           .selectAll()
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .executeTakeFirst();
 
         if (!row) {
-          throw new NotFoundSentinel("ExecutionLease", id as string);
+          throw new NotFoundSentinel("ExecutionLease", id);
         }
         if (row.expires_at <= nowIso) {
-          throw new ConflictSentinel(
-            "ExecutionLease",
-            "Lease has expired",
-            id as string,
-          );
+          throw new ConflictSentinel("ExecutionLease", "Lease has expired", id);
         }
-        if (row.owner_id !== (ownerId as string)) {
+        if (row.owner_id !== ownerId) {
           throw new ConflictSentinel(
             "ExecutionLease",
             "Lease is owned by a different owner",
-            id as string,
+            id,
           );
         }
 
@@ -822,13 +1154,13 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
             last_heartbeat_at: nowIso,
             expires_at: newExpiresAt,
           })
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .execute();
 
         const updated = await this.db
           .selectFrom("execution_leases")
           .selectAll()
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .executeTakeFirstOrThrow();
 
         return rowToExecutionLease(updated);
@@ -858,23 +1190,23 @@ class SqliteExecutionLeaseRepository implements ExecutionLeaseRepository {
         const row = await this.db
           .selectFrom("execution_leases")
           .selectAll()
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .executeTakeFirst();
 
         if (!row) {
-          throw new NotFoundSentinel("ExecutionLease", id as string);
+          throw new NotFoundSentinel("ExecutionLease", id);
         }
-        if (row.owner_id !== (ownerId as string)) {
+        if (row.owner_id !== ownerId) {
           throw new ConflictSentinel(
             "ExecutionLease",
             "Lease is owned by a different owner",
-            id as string,
+            id,
           );
         }
 
         await this.db
           .deleteFrom("execution_leases")
-          .where("id", "=", id as string)
+          .where("id", "=", id)
           .execute();
       })(),
       (cause) => {
@@ -927,8 +1259,8 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
         .insertInto("session_snapshots")
         .values({
           id,
-          workflow_instance_id: input.workflowInstanceId as string,
-          lease_id: input.leaseId as string,
+          workflow_instance_id: input.workflowInstanceId,
+          lease_id: input.leaseId,
           harness_name: input.harnessName,
           harness_version: input.harnessVersion ?? null,
           agent_name: input.agentName,
@@ -958,7 +1290,7 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
       this.db
         .selectFrom("session_snapshots")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((row) => (row ? rowToSessionSnapshot(row) : null)),
       (cause) => queryError("Failed to find SessionSnapshot", cause),
@@ -970,7 +1302,7 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
   ): ResultAsync<SessionSnapshot, RuntimeStoreError> {
     return this.findById(id).andThen((snap) => {
       if (!snap) {
-        return errAsync(notFoundError("SessionSnapshot", id as string));
+        return errAsync(notFoundError("SessionSnapshot", id));
       }
       return okAsync(snap);
     });
@@ -983,7 +1315,7 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
       this.db
         .selectFrom("session_snapshots")
         .selectAll()
-        .where("workflow_instance_id", "=", workflowInstanceId as string)
+        .where("workflow_instance_id", "=", workflowInstanceId)
         .orderBy("recorded_at", "asc")
         .execute()
         .then((rows) => rows.map(rowToSessionSnapshot)),
@@ -1002,7 +1334,7 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
       this.db
         .selectFrom("session_snapshots")
         .selectAll()
-        .where("workflow_instance_id", "=", workflowInstanceId as string)
+        .where("workflow_instance_id", "=", workflowInstanceId)
         .orderBy("recorded_at", "desc")
         .executeTakeFirst()
         .then((row) => (row ? rowToSessionSnapshot(row) : null)),
@@ -1073,7 +1405,7 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
       this.db
         .selectFrom("runtime_journal_entries")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst()
         .then((row) => (row ? rowToJournalEntry(row) : null)),
       (cause) => queryError("Failed to find RuntimeJournalEntry", cause),
@@ -1085,7 +1417,7 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
   ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
     return this.findById(id).andThen((entry) => {
       if (!entry) {
-        return errAsync(notFoundError("RuntimeJournalEntry", id as string));
+        return errAsync(notFoundError("RuntimeJournalEntry", id));
       }
       return okAsync(entry);
     });
@@ -1105,15 +1437,11 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
           query = query.where(
             "workflow_instance_id",
             "=",
-            filter.workflowInstanceId as string,
+            filter.workflowInstanceId,
           );
         }
         if (filter?.executionId) {
-          query = query.where(
-            "execution_id",
-            "=",
-            filter.executionId as string,
-          );
+          query = query.where("execution_id", "=", filter.executionId);
         }
         if (filter?.sourceKind) {
           query = query.where("source_kind", "=", filter.sourceKind);
@@ -1198,56 +1526,89 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
 // ---------------------------------------------------------------------------
 
 function rowToNormalizedUsage(
-  row: import("./schema.js").UsageObservationRow,
+  row: UsageObservationRow,
 ): Result<NormalizedUsageObservation, RuntimeStoreError> {
+  const parsedRow = usageObservationRowSchema.safeParse(row);
+  if (!parsedRow.success) {
+    return err(serializationError("Invalid usage_observations row"));
+  }
   return Result.fromThrowable(
-    () => JSON.parse(row.normalized_json) as NormalizedUsageObservation,
+    () => JSON.parse(parsedRow.data.normalized_json),
     (cause) =>
       serializationError(
         "Failed to parse usage observation normalized_json",
         cause,
       ),
   )().andThen((parsed) => {
-    if (typeof parsed !== "object" || parsed === null) {
+    const checked = normalizedUsageSchema.safeParse(parsed);
+    if (!checked.success) {
       return err(
         serializationError(
-          "usage observation normalized_json is not an object",
+          "usage observation normalized_json has an invalid shape",
         ),
       );
     }
-    return ok(parsed);
+    const normalized: NormalizedUsage = checked.data;
+    const result: NormalizedUsageBuilder = {
+      id: createUsageObservationId(normalized.id),
+      timestamp: normalized.timestamp,
+      sourceKind: normalized.sourceKind,
+      sourceName: normalized.sourceName,
+    };
+    if (normalized.workflowInstanceId !== undefined) {
+      result.workflowInstanceId = createWorkflowInstanceId(
+        normalized.workflowInstanceId,
+      );
+    }
+    if (normalized.stepId !== undefined) result.stepId = normalized.stepId;
+    if (normalized.agentName !== undefined) {
+      result.agentName = normalized.agentName;
+    }
+    if (normalized.model !== undefined) result.model = normalized.model;
+    if (normalized.inputTokens !== undefined) {
+      result.inputTokens = normalized.inputTokens;
+    }
+    if (normalized.outputTokens !== undefined) {
+      result.outputTokens = normalized.outputTokens;
+    }
+    if (normalized.cacheReadTokens !== undefined) {
+      result.cacheReadTokens = normalized.cacheReadTokens;
+    }
+    if (normalized.cacheWriteTokens !== undefined) {
+      result.cacheWriteTokens = normalized.cacheWriteTokens;
+    }
+    if (normalized.totalTokens !== undefined) {
+      result.totalTokens = normalized.totalTokens;
+    }
+    if (normalized.cost !== undefined) result.cost = normalized.cost;
+    return ok<NormalizedUsageObservation, RuntimeStoreError>(result);
   });
 }
 
-function rowToUsageRollup(
-  row: import("./schema.js").UsageRollupRow,
-): UsageRollup {
-  return {
-    source: {
-      kind: row.source_kind as "engine" | "adapter",
-      name: row.source_name,
-    },
-    observationCount: row.observation_count,
-    ...(row.workflow_instance_id
-      ? {
-          workflowInstanceId:
-            row.workflow_instance_id as UsageRollup["workflowInstanceId"],
-        }
-      : {}),
-    ...(row.step_id ? { stepId: row.step_id } : {}),
-    ...(row.agent_name ? { agentName: row.agent_name } : {}),
-    ...(row.model ? { model: row.model } : {}),
-    ...(row.input_tokens !== null ? { inputTokens: row.input_tokens } : {}),
-    ...(row.output_tokens !== null ? { outputTokens: row.output_tokens } : {}),
-    ...(row.cache_read_tokens !== null
-      ? { cacheReadTokens: row.cache_read_tokens }
-      : {}),
-    ...(row.cache_write_tokens !== null
-      ? { cacheWriteTokens: row.cache_write_tokens }
-      : {}),
-    ...(row.total_tokens !== null ? { totalTokens: row.total_tokens } : {}),
-    ...(row.cost !== null ? { cost: row.cost } : {}),
+function rowToUsageRollup(row: UsageRollupRow): UsageRollup {
+  const parsed = usageRollupRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid usage_rollups row");
+  const stored = parsed.data;
+  const result: UsageRollupBuilder = {
+    source: { kind: stored.source_kind, name: stored.source_name },
+    observationCount: stored.observation_count,
   };
+  if (stored.workflow_instance_id !== null)
+    result.workflowInstanceId = createWorkflowInstanceId(
+      stored.workflow_instance_id,
+    );
+  if (stored.step_id !== null) result.stepId = stored.step_id;
+  if (stored.agent_name !== null) result.agentName = stored.agent_name;
+  if (stored.model !== null) result.model = stored.model;
+  if (stored.input_tokens !== null) result.inputTokens = stored.input_tokens;
+  if (stored.output_tokens !== null) result.outputTokens = stored.output_tokens;
+  if (stored.cache_read_tokens !== null)
+    result.cacheReadTokens = stored.cache_read_tokens;
+  if (stored.cache_write_tokens !== null)
+    result.cacheWriteTokens = stored.cache_write_tokens;
+  if (stored.total_tokens !== null) result.totalTokens = stored.total_tokens;
+  if (stored.cost !== null) result.cost = stored.cost;
+  return result;
 }
 
 class SqliteUsageRepository implements UsageRepository {
@@ -1366,14 +1727,8 @@ class SqliteUsageRepository implements UsageRepository {
         };
       }),
       (cause) => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "type" in cause &&
-          (cause as RuntimeStoreError).type !== undefined
-        ) {
-          return cause as RuntimeStoreError;
-        }
+        const parsedCause = runtimeStoreErrorSchema.safeParse(cause);
+        if (parsedCause.success) return parsedCause.data;
         return queryError("Failed to record usage observation", cause);
       },
     );
@@ -1386,7 +1741,7 @@ class SqliteUsageRepository implements UsageRepository {
       this.db
         .selectFrom("usage_observations")
         .selectAll()
-        .where("id", "=", id as string)
+        .where("id", "=", id)
         .executeTakeFirst(),
       (cause) => queryError("Failed to find usage observation", cause),
     ).andThen((row) => {
@@ -1411,7 +1766,7 @@ class SqliteUsageRepository implements UsageRepository {
           query = query.where(
             "workflow_instance_id",
             "=",
-            filter.workflowInstanceId as string,
+            filter.workflowInstanceId,
           );
         }
         if (filter?.sourceKind) {
@@ -1446,14 +1801,8 @@ class SqliteUsageRepository implements UsageRepository {
         return observations;
       })(),
       (cause) => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "type" in cause &&
-          (cause as RuntimeStoreError).type !== undefined
-        ) {
-          return cause as RuntimeStoreError;
-        }
+        const parsedCause = runtimeStoreErrorSchema.safeParse(cause);
+        if (parsedCause.success) return parsedCause.data;
         return queryError("Failed to list usage observations", cause);
       },
     );
@@ -1470,7 +1819,7 @@ class SqliteUsageRepository implements UsageRepository {
           query = query.where(
             "workflow_instance_id",
             "=",
-            filter.workflowInstanceId as string,
+            filter.workflowInstanceId,
           );
         }
         if (filter?.sourceKind) {
@@ -1579,7 +1928,7 @@ class JournalWriterRepository implements RuntimeJournalRepository {
         workflowInstanceId: entry.workflowInstanceId,
         stepId: entry.stepId,
         severity: entry.severity,
-        data: entry.data as JsonObject,
+        data: entry.data,
       })
       .andThen((result) => {
         if (result === undefined) {
@@ -1591,7 +1940,7 @@ class JournalWriterRepository implements RuntimeJournalRepository {
             source: entry.source,
             eventType: entry.eventType,
             severity: entry.severity,
-            data: entry.data as JsonObject,
+            data: entry.data,
           };
           return okAsync(synthetic);
         }
@@ -1625,13 +1974,12 @@ class JournalWriterRepository implements RuntimeJournalRepository {
   }
 }
 
-const validPermissionString = (value: unknown): value is string =>
-  typeof value === "string" &&
+const validPermissionString = (value: string): boolean =>
   value.length > 0 &&
   new TextEncoder().encode(value).byteLength <= 256 &&
   !/[\uD800-\uDFFF]/u.test(value);
-const validPermissionTimestamp = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const validPermissionTimestamp = (value: number): boolean =>
+  Number.isSafeInteger(value) && value >= 0;
 
 /**
  * Bound concurrent-writer retries when SQLite reports a transient lock.
@@ -1648,12 +1996,12 @@ const PERMISSION_SQLITE_BUSY_RETRIES = 32;
  */
 const PERMISSION_WALL_CLOCK_HIGH_WATER_KEY = "permission_wall_clock_high_water";
 
-type PermissionGrantRow = import("./schema.js").PermissionGrantRow;
-
 function rowToGrant(
   row: PermissionGrantRow,
 ): Result<DurablePermissionGrantRecord, PermissionError> {
-  return hydrateDurableGrant(row);
+  const parsed = permissionGrantRowSchema.safeParse(row);
+  if (!parsed.success) return err({ type: "repository_failure" });
+  return hydrateDurableGrant(parsed.data);
 }
 
 function hydrateGrantRows(
@@ -1668,25 +2016,11 @@ function hydrateGrantRows(
   return ok(records);
 }
 
-/**
- * Read a SQLite driver error code without string-matching messages or leaking
- * raw driver text into permission errors.
- */
-function readSqliteErrorCode(error: unknown): string | undefined {
-  const read = Result.fromThrowable(
-    () => {
-      if (!error || typeof error !== "object") return undefined;
-      const code = Reflect.get(error, "code");
-      return typeof code === "string" ? code : undefined;
-    },
-    () => undefined,
-  )();
-  return read.isOk() ? read.value : undefined;
-}
+const sqliteDriverErrorSchema = z.object({
+  code: z.string().optional(),
+});
 
-function isSqliteConstraintConflict(error: unknown): boolean {
-  const code = readSqliteErrorCode(error);
-  if (!code) return false;
+function isSqliteConstraintCode(code: string | undefined): boolean {
   return (
     code === "SQLITE_CONSTRAINT" ||
     code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
@@ -1694,9 +2028,7 @@ function isSqliteConstraintConflict(error: unknown): boolean {
   );
 }
 
-function isSqliteBusy(error: unknown): boolean {
-  const code = readSqliteErrorCode(error);
-  if (!code) return false;
+function isSqliteBusyCode(code: string | undefined): boolean {
   return (
     code === "SQLITE_BUSY" ||
     code === "SQLITE_BUSY_RECOVERY" ||
@@ -1754,8 +2086,8 @@ export class SqlitePermissionApprovalRepository
       },
     );
     this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     );
     return ResultAsync.fromPromise(
       run,
@@ -1786,9 +2118,8 @@ export class SqlitePermissionApprovalRepository
   /**
    * Parse a persisted high-water metadata value. Malformed rows fail closed.
    */
-  private parseHighWaterValue(value: unknown): Result<number, PermissionError> {
-    if (typeof value !== "string" || value.length === 0 || value.length > 32)
-      return err(this.failure());
+  private parseHighWaterValue(value: string): Result<number, PermissionError> {
+    if (value.length === 0 || value.length > 32) return err(this.failure());
     if (!/^[0-9]+$/.test(value)) return err(this.failure());
     const parsed = Number(value);
     if (!validPermissionTimestamp(parsed)) return err(this.failure());
@@ -1811,7 +2142,12 @@ export class SqlitePermissionApprovalRepository
       try {
         return await work();
       } catch (error) {
-        if (isSqliteBusy(error) && attempt < PERMISSION_SQLITE_BUSY_RETRIES) {
+        const parsedError = sqliteDriverErrorSchema.safeParse(error);
+        if (
+          parsedError.success &&
+          isSqliteBusyCode(parsedError.data.code) &&
+          attempt < PERMISSION_SQLITE_BUSY_RETRIES
+        ) {
           lastBusy = error;
           // Backoff so the holding writer can commit before re-preflight.
           // attempt 0 yields; later attempts sleep up to 16ms.
@@ -1849,7 +2185,9 @@ export class SqlitePermissionApprovalRepository
         let previous = this.#wallHighWater;
         const row = rows.rows[0];
         if (row) {
-          const parsed = this.parseHighWaterValue(row.value);
+          const parsedRow = runtimeMetadataValueRowSchema.safeParse(row);
+          if (!parsedRow.success) throw new PermissionHydrationSentinel();
+          const parsed = this.parseHighWaterValue(parsedRow.data.value);
           if (parsed.isErr()) throw new PermissionHydrationSentinel();
           previous = Math.max(previous, parsed.value);
         }
@@ -1875,7 +2213,7 @@ export class SqlitePermissionApprovalRepository
         return effective;
       } catch (error) {
         if (!options.inTransaction) {
-          await sql`ROLLBACK`.execute(this.db).catch(() => undefined);
+          await sql`ROLLBACK`.execute(this.db).catch(() => {});
         }
         throw error;
       }
@@ -1978,7 +2316,7 @@ export class SqlitePermissionApprovalRepository
       await sql`COMMIT`.execute(this.db);
       return Object.freeze(copies);
     } catch (error) {
-      await sql`ROLLBACK`.execute(this.db).catch(() => undefined);
+      await sql`ROLLBACK`.execute(this.db).catch(() => {});
       throw error;
     }
   }
@@ -2019,9 +2357,11 @@ export class SqlitePermissionApprovalRepository
           this.insertGrantBatch(copies, ids, identities),
         ),
         (error): PermissionError => {
+          const parsedError = sqliteDriverErrorSchema.safeParse(error);
           if (
             error instanceof PermissionConflictSentinel ||
-            isSqliteConstraintConflict(error)
+            (parsedError.success &&
+              isSqliteConstraintCode(parsedError.data.code))
           ) {
             return {
               type: "invalid_output" as const,
@@ -2128,7 +2468,9 @@ export class SqlitePermissionApprovalRepository
               if (!equal.value) continue;
               return summarizeDurableGrant(candidate);
             }
-            return ok(undefined);
+            return ok<PermissionGrantSummary | undefined, PermissionError>(
+              void 0,
+            );
           })
           .mapErr(() => this.failure()),
       ),
@@ -2167,7 +2509,7 @@ export class SqlitePermissionApprovalRepository
       return this.observeWallNow(undefined, this.failure(), {
         inTransaction: false,
       }).andThen((revokedAt) => {
-        if (hydrated.value.state === "revoked") return okAsync(undefined);
+        if (hydrated.value.state === "revoked") return okAsync();
         if (revokedAt < hydrated.value.createdAt)
           return errAsync({
             type: "invalid_output",
@@ -2182,7 +2524,7 @@ export class SqlitePermissionApprovalRepository
             .where("state", "=", "active")
             .execute(),
           () => this.failure(),
-        ).map(() => undefined);
+        ).map(() => void 0);
       });
     });
   }
@@ -2198,11 +2540,16 @@ export class SqlitePermissionApprovalRepository
 function rowToAdapterPreference(
   row: AdapterPreferenceRow,
 ): AdapterPreferenceRecord {
+  const parsed = adapterPreferenceRowSchema.safeParse(row);
+  if (!parsed.success) throw new Error("Invalid adapter_preferences row");
+  const validatedValue = validateAdapterPreferenceValue(parsed.data.value_json);
+  if (validatedValue.isErr())
+    throw new Error("Invalid adapter_preferences value_json");
   return {
-    namespace: row.namespace,
-    key: row.key,
-    valueJson: row.value_json,
-    updatedAt: row.updated_at,
+    namespace: parsed.data.namespace,
+    key: parsed.data.key,
+    valueJson: parsed.data.value_json,
+    updatedAt: parsed.data.updated_at,
   };
 }
 
@@ -2325,7 +2672,7 @@ class SqliteAdapterPreferenceRepository implements AdapterPreferenceRepository {
         .where("namespace", "=", namespace)
         .where("key", "=", key)
         .execute()
-        .then(() => undefined),
+        .then(() => {}),
       (cause) => queryError("Failed to remove adapter preference", cause),
     );
   }
@@ -2498,6 +2845,31 @@ export interface SqliteRuntimeStoreOptions {
   readonly directoryGuard?: RuntimeDirectoryGuard;
 }
 
+interface LazyRepositorySet {
+  readonly instances: WorkflowInstanceRepository;
+  readonly leases: ExecutionLeaseRepository;
+  readonly snapshots: SessionSnapshotRepository;
+  readonly journal: RuntimeJournalRepository;
+  readonly usage: UsageRepository;
+  readonly preferences: AdapterPreferenceRepository;
+  readonly permissions: PermissionApprovalRepository;
+}
+
+type LazyRepositoryFactory = (
+  store: SqliteRuntimeStore,
+  clock: () => Date,
+) => LazyRepositorySet;
+
+interface LazyRepositoryFactoryHolder {
+  create: LazyRepositoryFactory;
+}
+
+const lazyRepositoryFactory: LazyRepositoryFactoryHolder = {
+  create: () => {
+    throw new Error("Lazy repository factory is not initialized");
+  },
+};
+
 /**
  * SQLite-backed implementation of `RuntimeStore`.
  *
@@ -2548,15 +2920,14 @@ export class SqliteRuntimeStore implements RuntimeStore {
       options.directoryGuard ?? new BunRuntimeDirectoryGuard();
 
     // Repositories are lazy — they call ensureInitialized() on first use
-    this.instances = new LazyWorkflowInstanceRepository(this);
-    this.leases = new LazyExecutionLeaseRepository(this);
-    this.snapshots = new LazySessionSnapshotRepository(this);
-    this.journal = new LazyRuntimeJournalRepository(this);
-    this.usage = new LazyUsageRepository(this);
-    this.preferences = new LazyAdapterPreferenceRepository(this, this.clock);
-    this.#permissions = new LazyPermissionApprovalRepository(this, () =>
-      this.clock().getTime(),
-    );
+    const repositories = lazyRepositoryFactory.create(this, this.clock);
+    this.instances = repositories.instances;
+    this.leases = repositories.leases;
+    this.snapshots = repositories.snapshots;
+    this.journal = repositories.journal;
+    this.usage = repositories.usage;
+    this.preferences = repositories.preferences;
+    this.#permissions = repositories.permissions;
     registerPermissionApprovalRepository(this, this.#permissions);
   }
 
@@ -2618,9 +2989,12 @@ export class SqliteRuntimeStore implements RuntimeStore {
     dirHandle?: RuntimeDirectoryHandle,
   ): Promise<Result<void, RuntimeStoreError>> {
     if (db !== null) {
-      await ResultAsync.fromPromise(db.destroy(), () => undefined).match(
-        () => undefined,
-        () => undefined,
+      await ResultAsync.fromPromise(
+        db.destroy(),
+        () => initializationError("Failed to destroy Runtime Store database"),
+      ).match(
+        () => {},
+        () => {},
       );
       if (this.db === db) this.db = null;
     }
@@ -2769,9 +3143,13 @@ export class SqliteRuntimeStore implements RuntimeStore {
           .prepare(
             "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
           )
-          .get() as { value: string } | null;
-
-        if (saltRow) return saltRow.value;
+          .get();
+        const parsedSaltRow = runtimeMetadataValueRowSchema
+          .nullable()
+          .safeParse(saltRow);
+        if (!parsedSaltRow.success)
+          throw new Error("Invalid project_salt metadata row");
+        if (parsedSaltRow.data) return parsedSaltRow.data.value;
 
         const newSalt = createProjectSalt();
         rawDb
@@ -2847,7 +3225,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
       { dbPath: this.options.dbPath, schemaVersion: CURRENT_SCHEMA_VERSION },
       "Runtime store initialized",
     );
-    return ok(undefined);
+    return ok();
   }
 
   /**
@@ -2858,7 +3236,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
    */
   private revalidateLeafIdentity(): ResultAsync<void, RuntimeStoreError> {
     if (!this.dirHandle || !this.leafName || !this.boundLeafIdentity) {
-      return okAsync(undefined);
+      return okAsync();
     }
     const boundIdentity = this.boundLeafIdentity;
     return this.dirHandle
@@ -2876,7 +3254,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
             ),
           );
         }
-        return ok(undefined);
+        return ok();
       });
   }
 
@@ -2932,11 +3310,11 @@ export class SqliteRuntimeStore implements RuntimeStore {
 
     const waitInit =
       this.initializingPromise === null
-        ? okAsync(undefined)
+        ? okAsync()
         : ResultAsync.fromPromise(
             this.initializingPromise.then(
-              () => undefined,
-              () => undefined,
+              () => {},
+              () => {},
             ),
             (cause) => queryError("Failed to close Runtime Store", cause),
           );
@@ -2954,11 +3332,11 @@ export class SqliteRuntimeStore implements RuntimeStore {
       this.leafName = null;
       this.boundLeafIdentity = null;
 
-      if (!db) return okAsync(undefined);
+      if (!db) return okAsync();
 
       return ResultAsync.fromPromise(db.destroy(), (cause) =>
         queryError("Failed to close Runtime Store", cause),
-      ).map(() => undefined);
+      ).map(() => void 0);
     });
 
     return this.closingResult;
@@ -3033,7 +3411,7 @@ class LazyWorkflowInstanceRepository implements WorkflowInstanceRepository {
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
     approval?: {
-      readonly actor: import("../types.js").ArtifactApprovalActor;
+      readonly actor: ArtifactApprovalActor;
       readonly decidedAt: string;
       readonly expectedRevision: number;
       readonly expectedDigest?: string;
@@ -3056,7 +3434,10 @@ class LazyWorkflowInstanceRepository implements WorkflowInstanceRepository {
 }
 
 class LazyExecutionLeaseRepository implements ExecutionLeaseRepository {
-  constructor(private readonly store: SqliteRuntimeStore) {}
+  constructor(
+    private readonly store: SqliteRuntimeStore,
+    private readonly clock: () => Date,
+  ) {}
 
   private repo(): ResultAsync<
     SqliteExecutionLeaseRepository,
@@ -3064,13 +3445,7 @@ class LazyExecutionLeaseRepository implements ExecutionLeaseRepository {
   > {
     return this.store
       .ensureInitialized()
-      .map(
-        (db) =>
-          new SqliteExecutionLeaseRepository(
-            db,
-            (this.store as unknown as { clock: () => Date }).clock,
-          ),
-      );
+      .map((db) => new SqliteExecutionLeaseRepository(db, this.clock));
   }
 
   acquire(
@@ -3295,6 +3670,12 @@ class LazyAdapterPreferenceRepository implements AdapterPreferenceRepository {
   }
 }
 
+interface PermissionRepositoryAttemptRef {
+  value?: Promise<
+    Result<SqlitePermissionApprovalRepository, PermissionError>
+  >;
+}
+
 class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
   /** One cached repo so the per-instance mutation queue is shared across calls. */
   private cached: SqlitePermissionApprovalRepository | null = null;
@@ -3325,10 +3706,10 @@ class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
     if (this.cached) return okAsync(this.cached);
 
     if (!this.resolving) {
-      let attempt!: Promise<
+      const attemptRef: PermissionRepositoryAttemptRef = {};
+      const attempt: Promise<
         Result<SqlitePermissionApprovalRepository, PermissionError>
-      >;
-      attempt = (async (): Promise<
+      > = (async (): Promise<
         Result<SqlitePermissionApprovalRepository, PermissionError>
       > => {
         try {
@@ -3360,15 +3741,18 @@ class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
         } finally {
           // Clear before waiters observe settlement so the next call can retry
           // after failure. Only this attempt may clear its own slot.
-          if (this.resolving === attempt) this.resolving = null;
+          if (this.resolving === attemptRef.value) this.resolving = null;
         }
       })();
+      attemptRef.value = attempt;
       this.resolving = attempt;
     }
 
     return ResultAsync.fromPromise(
       this.resolving,
-      (): PermissionError => ({ type: "repository_failure" }),
+      (): PermissionError => ({
+        type: "repository_failure",
+      }),
     ).andThen((result) => {
       if (this.store.isStoreClosed()) {
         this.cached = null;
@@ -3389,7 +3773,9 @@ class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
       (async (): Promise<Result<T, PermissionError>> => {
         const started = Result.fromThrowable(
           run,
-          (): PermissionError => ({ type: "repository_failure" }),
+          (): PermissionError => ({
+            type: "repository_failure",
+          }),
         )();
         if (started.isErr()) return err(started.error);
         // await ResultAsync → Result; keeps this boundary rejection-safe.
@@ -3411,6 +3797,18 @@ class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
     return this.invoke(() => this.repo().andThen((x) => x.revoke(p, id)));
   }
 }
+
+lazyRepositoryFactory.create = (store, clock) => ({
+  instances: new LazyWorkflowInstanceRepository(store),
+  leases: new LazyExecutionLeaseRepository(store, clock),
+  snapshots: new LazySessionSnapshotRepository(store),
+  journal: new LazyRuntimeJournalRepository(store),
+  usage: new LazyUsageRepository(store),
+  preferences: new LazyAdapterPreferenceRepository(store, clock),
+  permissions: new LazyPermissionApprovalRepository(store, () =>
+    clock().getTime(),
+  ),
+});
 
 // ---------------------------------------------------------------------------
 // Factory

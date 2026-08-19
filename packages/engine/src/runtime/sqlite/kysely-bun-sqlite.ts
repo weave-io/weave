@@ -8,9 +8,9 @@
  * @internal
  */
 
+import type { SQLQueryBindings } from "bun:sqlite";
 import { Database } from "bun:sqlite";
 import type {
-  CompiledQuery,
   DatabaseConnection,
   DatabaseIntrospector,
   Dialect,
@@ -20,11 +20,44 @@ import type {
   QueryCompiler,
   QueryResult,
 } from "kysely";
-import { SqliteAdapter, SqliteIntrospector, SqliteQueryCompiler } from "kysely";
+import {
+  CompiledQuery,
+  SqliteAdapter,
+  SqliteIntrospector,
+  SqliteQueryCompiler,
+} from "kysely";
+import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // BunSqliteConnection
 // ---------------------------------------------------------------------------
+
+const sqliteBindingSchema = z.union([
+  z.string(),
+  z.number(),
+  z.bigint(),
+  z.boolean(),
+  z.null(),
+  z.instanceof(Uint8Array),
+  z.instanceof(Int8Array),
+  z.instanceof(Uint8ClampedArray),
+  z.instanceof(Int16Array),
+  z.instanceof(Uint16Array),
+  z.instanceof(Int32Array),
+  z.instanceof(Uint32Array),
+  z.instanceof(Float32Array),
+  z.instanceof(Float64Array),
+]);
+
+function parseSqliteParameters(
+  parameters: readonly unknown[],
+): SQLQueryBindings[] {
+  const parsed = sqliteBindingSchema.array().safeParse(parameters);
+  if (!parsed.success) {
+    throw new TypeError("Kysely emitted an unsupported SQLite parameter");
+  }
+  return parsed.data;
+}
 
 /**
  * A single synchronous connection wrapping a `bun:sqlite` Database.
@@ -34,8 +67,8 @@ class BunSqliteConnection implements DatabaseConnection {
 
   executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
     const { sql, parameters } = compiledQuery;
-    const stmt = this.db.prepare(sql);
-    const params = parameters as Parameters<typeof stmt.all>;
+    const stmt = this.db.prepare<R, SQLQueryBindings[]>(sql);
+    const params = parseSqliteParameters(parameters);
 
     // Determine whether this is a SELECT-like query (returns rows) or
     // a DML/DDL statement (returns metadata only).
@@ -53,14 +86,14 @@ class BunSqliteConnection implements DatabaseConnection {
     const isReturningDml = !isSelect && /\bRETURNING\b/i.test(sql);
 
     if (isSelect || isReturningDml) {
-      const rows = stmt.all(...params) as R[];
+      const rows = stmt.all(...params);
       return Promise.resolve({ rows });
     }
 
     // DML/DDL: use run() to get changes and lastInsertRowid
     const meta = stmt.run(...params);
     return Promise.resolve({
-      rows: [] as R[],
+      rows: [],
       numAffectedRows: BigInt(meta.changes),
       insertId:
         meta.lastInsertRowid !== undefined
@@ -109,39 +142,15 @@ class BunSqliteDriver implements Driver {
   }
 
   async beginTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "BEGIN",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["BEGIN"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("BEGIN"));
   }
 
   async commitTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "COMMIT",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["COMMIT"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("COMMIT"));
   }
 
   async rollbackTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "ROLLBACK",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["ROLLBACK"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("ROLLBACK"));
   }
 
   async releaseConnection(_connection: DatabaseConnection): Promise<void> {
@@ -297,8 +306,8 @@ class BunSqliteMemoryConnection implements DatabaseConnection {
     // The tail always recovers (success or failure) so one failed statement
     // never poisons every later statement queued on this connection.
     this.queueTail = started.then(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     );
     return started;
   }
@@ -334,14 +343,14 @@ class BunSqliteMemoryConnection implements DatabaseConnection {
 
     let result: QueryResult<R>;
     try {
-      const stmt = this.db.prepare(sql);
-      const params = parameters as Parameters<typeof stmt.all>;
+      const stmt = this.db.prepare<R, SQLQueryBindings[]>(sql);
+      const params = parseSqliteParameters(parameters);
       if (isSelect || isReturningDml) {
-        result = { rows: stmt.all(...params) as R[] };
+        result = { rows: stmt.all(...params) };
       } else {
         const meta = stmt.run(...params);
         result = {
-          rows: [] as R[],
+          rows: [],
           numAffectedRows: BigInt(meta.changes),
           insertId:
             meta.lastInsertRowid !== undefined
@@ -396,39 +405,15 @@ class BunSqliteMemoryDriver implements Driver {
   }
 
   async beginTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "BEGIN",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["BEGIN"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("BEGIN"));
   }
 
   async commitTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "COMMIT",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["COMMIT"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("COMMIT"));
   }
 
   async rollbackTransaction(connection: DatabaseConnection): Promise<void> {
-    await connection.executeQuery({
-      sql: "ROLLBACK",
-      parameters: [],
-      query: {
-        kind: "RawNode",
-        sqlFragments: ["ROLLBACK"],
-        parameters: [],
-      } as never,
-    });
+    await connection.executeQuery(CompiledQuery.raw("ROLLBACK"));
   }
 
   async releaseConnection(_connection: DatabaseConnection): Promise<void> {

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
+import { z } from "zod";
 import type { PermissionApprovalRepository } from "../permissions/types.js";
 import { getPermissionApprovalRepository } from "../runtime/permission-repository.js";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../runtime/sqlite/runtime-directory-guard.js";
 import {
   createSqliteRuntimeStore,
+  type SqliteRuntimeStore,
   type SqliteRuntimeStoreOptions,
 } from "../runtime/sqlite/store.js";
 import {
@@ -42,8 +44,34 @@ import {
 // ---------------------------------------------------------------------------
 
 let testDir: string;
-function permissionRepository(store: object): PermissionApprovalRepository {
+function permissionRepository(
+  store: SqliteRuntimeStore,
+): PermissionApprovalRepository {
   return getPermissionApprovalRepository(store)._unsafeUnwrap();
+}
+
+const countRowSchema = z.object({ cnt: z.number() });
+const migrationRowSchema = z.object({
+  version: z.number(),
+  name: z.string(),
+});
+const migrationVersionRowSchema = z.object({ version: z.number() });
+const metadataValueRowSchema = z.object({ value: z.string() });
+const indexNameRowSchema = z.object({ name: z.string() });
+const indexCollationRowSchema = z.object({
+  coll: z.string(),
+  key: z.number(),
+  name: z.string().nullable(),
+});
+
+function parseTestRow<T>(
+  value: z.input<z.ZodType<T>>,
+  schema: z.ZodType<T>,
+  label: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error(`Invalid ${label}`);
+  return parsed.data;
 }
 
 function makeTempDir(): string {
@@ -326,11 +354,15 @@ describe("lazy initialization", () => {
 
     // Verify the DB is usable and consistent — only one schema_version row
     const db = new Database(makeDbPath(testDir));
-    const rows = db
-      .prepare(
-        "SELECT COUNT(*) as cnt FROM runtime_metadata WHERE key = 'schema_version'",
-      )
-      .get() as { cnt: number };
+    const rows = parseTestRow(
+      db
+        .prepare(
+          "SELECT COUNT(*) as cnt FROM runtime_metadata WHERE key = 'schema_version'",
+        )
+        .get(),
+      countRowSchema,
+      "schema version count row",
+    );
     db.close();
     expect(rows.cnt).toBe(1);
 
@@ -540,9 +572,11 @@ describe("migrations", () => {
 
     // Verify schema_migrations table has the initial migration
     const db = new Database(makeDbPath(testDir));
-    const row = db
-      .prepare("SELECT * FROM schema_migrations WHERE version = 1")
-      .get() as { version: number; name: string } | null;
+    const row = parseTestRow(
+      db.prepare("SELECT * FROM schema_migrations WHERE version = 1").get(),
+      migrationRowSchema.nullable(),
+      "schema migration row",
+    );
     db.close();
 
     expect(row).not.toBeNull();
@@ -555,11 +589,15 @@ describe("migrations", () => {
     await store.instances.list();
 
     const db = new Database(makeDbPath(testDir));
-    const row = db
-      .prepare(
-        "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
-      )
-      .get() as { value: string } | null;
+    const row = parseTestRow(
+      db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
+        )
+        .get(),
+      metadataValueRowSchema.nullable(),
+      "schema version metadata row",
+    );
     db.close();
 
     expect(row).not.toBeNull();
@@ -576,9 +614,13 @@ describe("migrations", () => {
     expect(result.isOk()).toBe(true);
     expect(readSchemaVersion(db)).toBe(6);
 
-    const migrations = db
-      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
-      .all() as Array<{ version: number; name: string }>;
+    const migrations = parseTestRow(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+      migrationRowSchema.array(),
+      "schema migration rows",
+    );
     expect(migrations).toEqual([
       { version: 1, name: "initial_schema" },
       { version: 2, name: "add_step_attempts_json" },
@@ -614,9 +656,13 @@ describe("migrations", () => {
     const second = runMigrations(db);
     expect(second.isOk()).toBe(true);
 
-    const rows = db
-      .prepare("SELECT version FROM schema_migrations ORDER BY version")
-      .all() as Array<{ version: number }>;
+    const rows = parseTestRow(
+      db
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all(),
+      migrationVersionRowSchema.array(),
+      "schema migration version rows",
+    );
     expect(rows).toEqual([
       { version: 1 },
       { version: 2 },
@@ -775,7 +821,9 @@ describe("migrations", () => {
     assertNoPermissionGrantsTable(db);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-    ).toEqual({ count: 0 });
+    ).toEqual({
+      count: 0,
+    });
     db.close();
   });
 
@@ -1815,14 +1863,22 @@ describe("migrations", () => {
       db.exec(fixture.ddl);
 
       // Prove the hostile collation is live before migration rejects it.
-      const envelopeIndex = db
-        .prepare(
-          "SELECT name FROM pragma_index_list('permission_grants') WHERE origin = 'u'",
-        )
-        .get() as { name: string };
-      const collRows = db
-        .prepare(`PRAGMA index_xinfo(${JSON.stringify(envelopeIndex.name)})`)
-        .all() as Array<{ coll: string; key: number; name: string | null }>;
+      const envelopeIndex = parseTestRow(
+        db
+          .prepare(
+            "SELECT name FROM pragma_index_list('permission_grants') WHERE origin = 'u'",
+          )
+          .get(),
+        indexNameRowSchema,
+        "permission envelope index row",
+      );
+      const collRows = parseTestRow(
+        db
+          .prepare(`PRAGMA index_xinfo(${JSON.stringify(envelopeIndex.name)})`)
+          .all(),
+        indexCollationRowSchema.array(),
+        "permission index collation rows",
+      );
       expect(
         collRows.some((row) => row.key === 1 && row.coll === fixture.coll),
       ).toBe(true);
@@ -2106,7 +2162,9 @@ describe("migrations", () => {
     ).toEqual(metaSqlBefore);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-    ).toEqual({ count: 0 });
+    ).toEqual({
+      count: 0,
+    });
     db.close();
   });
 
@@ -2585,7 +2643,6 @@ describe("project salt lifecycle", () => {
     const store = makeStore(testDir);
     await store.instances.list(); // trigger initialization
     expect(store.projectSalt).toBeDefined();
-    expect(typeof store.projectSalt).toBe("string");
     expect(store.projectSalt.length).toBe(32); // 16 bytes = 32 hex chars
     await store.close();
   });
@@ -2631,9 +2688,15 @@ describe("project salt lifecycle", () => {
     await store.close();
 
     const db = new Database(makeDbPath(testDir));
-    const row = db
-      .prepare("SELECT value FROM runtime_metadata WHERE key = 'project_salt'")
-      .get() as { value: string } | null;
+    const row = parseTestRow(
+      db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
+        )
+        .get(),
+      metadataValueRowSchema.nullable(),
+      "project salt metadata row",
+    );
     db.close();
 
     expect(row).not.toBeNull();
@@ -2699,10 +2762,44 @@ describe("WorkflowInstance CRUD", () => {
 
     const found = (await store.instances.findById(created.id))._unsafeUnwrap();
     expect(found).not.toBeNull();
-    expect((found as NonNullable<typeof found>).id as string).toBe(
-      created.id as string,
-    );
+    if (found === null) throw new Error("created instance was not found");
+    expect(found.id).toBe(created.id);
     await store.close();
+  });
+
+  it("returns typed query errors for malformed persisted rows", async () => {
+    const store = makeStore(testDir);
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const journalEntry = (
+      await store.journal.append({
+        source: { kind: "engine", name: "runtime-test" },
+        eventType: "test",
+        severity: "info",
+        data: { valid: true },
+      })
+    )._unsafeUnwrap();
+    await store.close();
+
+    const db = new Database(makeDbPath(testDir));
+    db.prepare(
+      "UPDATE workflow_instances SET artifacts_json = ? WHERE id = ?",
+    ).run("{}", created.id);
+    db.prepare(
+      "UPDATE runtime_journal_entries SET data_json = ? WHERE id = ?",
+    ).run("[]", journalEntry.id);
+    db.close();
+
+    const reopened = makeStore(testDir);
+    const instanceResult = await reopened.instances.findById(created.id);
+    expect(instanceResult.isErr()).toBe(true);
+    expect(instanceResult._unsafeUnwrapErr().type).toBe("query");
+
+    const journalResult = await reopened.journal.findById(journalEntry.id);
+    expect(journalResult.isErr()).toBe(true);
+    expect(journalResult._unsafeUnwrapErr().type).toBe("query");
+    await reopened.close();
   });
 
   it("list returns all instances", async () => {
@@ -2727,7 +2824,7 @@ describe("WorkflowInstance CRUD", () => {
       await store.instances.list({ status: "running" })
     )._unsafeUnwrap();
     expect(running).toHaveLength(1);
-    expect(running[0].id as string).toBe(a.id as string);
+    expect(running[0].id).toBe(a.id);
     await store.close();
   });
 
@@ -2749,7 +2846,9 @@ describe("WorkflowInstance CRUD", () => {
     const store = makeStore(testDir);
     const result = await store.instances.update(
       createWorkflowInstanceId("missing"),
-      { status: "running" },
+      {
+        status: "running",
+      },
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("not_found");
@@ -2780,7 +2879,10 @@ describe("WorkflowInstance CRUD", () => {
     const store = makeStore(testDir);
     const result = await store.instances.addArtifact(
       createWorkflowInstanceId("missing"),
-      { name: "plan", path: ".weave/plans/g.md" },
+      {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      },
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("not_found");
@@ -2806,8 +2908,8 @@ describe("ExecutionLease CRUD and conflicts", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("owner-001");
-    expect(lease.workflowInstanceId as string).toBe(wfi.id as string);
+    expect(lease.ownerId).toBe(createOwnerId("owner-001"));
+    expect(lease.workflowInstanceId).toBe(wfi.id);
     await store.close();
   });
 
@@ -2866,7 +2968,7 @@ describe("ExecutionLease CRUD and conflicts", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("new-owner");
+    expect(lease.ownerId).toBe(createOwnerId("new-owner"));
     await store.close();
   });
 
@@ -3341,12 +3443,15 @@ describe("strict journal mode", () => {
         .create({ workflowName: "wf", goal: "in-tx", slug: "in-tx" })
         .andThen(() => {
           // Pass an invalid source.kind to trigger writer validation failure
-          return tx.journal.append({
-            source: { kind: "invalid-kind" as "engine", name: "runner" },
-            eventType: "test",
-            severity: "info",
-            data: {},
-          });
+          const invalidEntry = JSON.parse(
+            JSON.stringify({
+              source: { kind: "invalid-kind", name: "runner" },
+              eventType: "test",
+              severity: "info",
+              data: {},
+            }),
+          );
+          return tx.journal.append(invalidEntry);
         });
     });
 
@@ -3426,7 +3531,7 @@ describe("best-effort journal mode (default)", () => {
               source: { kind: "engine", name: "runner" },
               eventType: "instance.created",
               severity: "info",
-              data: { instanceId: instance.id as string },
+              data: { instanceId: instance.id },
             })
             .map(() => instance);
         });
@@ -3456,7 +3561,7 @@ describe("best-effort journal mode (default)", () => {
               source: { kind: "engine", name: "runner" },
               eventType: "instance.created",
               severity: "info",
-              data: { instanceId: instance.id as string },
+              data: { instanceId: instance.id },
             })
             .map(() => instance);
         });
@@ -3626,9 +3731,9 @@ describe("no-follow directory guard (Pi adapter contract) — isolated (MemoryRu
           // No real locking needed: this fake only ever backs a single
           // store instance within one test, so the coordinator's
           // acquire()/discard() cycle just needs to satisfy the interface.
-          lockLeaf: () => okAsync(undefined),
-          unlockLeaf: () => okAsync(undefined),
-          close: () => undefined,
+          lockLeaf: () => okAsync(),
+          unlockLeaf: () => okAsync(),
+          close: () => {},
         };
         return okAsync(handle);
       }
@@ -3650,7 +3755,7 @@ describe("no-follow directory guard (Pi adapter contract) — isolated (MemoryRu
     // The first transaction's pre-commit revalidation is the second
     // `verifyLeaf` call for `weave.db`, which the fake now answers with a
     // different ino — simulating an out-of-band replacement.
-    const txResult = await store.transaction(() => okAsync(undefined));
+    const txResult = await store.transaction(() => okAsync());
     expect(txResult.isErr()).toBe(true);
     if (txResult.isErr()) {
       expect(txResult.error.type).toBe("initialization");
@@ -3690,8 +3795,7 @@ describe("artifact provenance: identity and revision", () => {
     expect(art.revision).toBe(1);
     expect(art.approvalState).toBe("pending");
     expect(art.id).toBeDefined();
-    expect(typeof art.id).toBe("string");
-    expect((art.id as string).length).toBeGreaterThan(0);
+    expect(art.id.length).toBeGreaterThan(0);
     await store.close();
   });
 
@@ -3758,7 +3862,7 @@ describe("artifact provenance: identity and revision", () => {
     const idV2 = v2.artifacts[1].id;
 
     // Stable identity: same ArtifactId across revisions
-    expect(idV1 as string).toBe(idV2 as string);
+    expect(idV1).toBe(idV2);
     await store.close();
   });
 
@@ -3784,7 +3888,7 @@ describe("artifact provenance: identity and revision", () => {
 
     const planId = withPlan.artifacts[0].id;
     const reportId = withReport.artifacts[1].id;
-    expect(planId as string).not.toBe(reportId as string);
+    expect(planId).not.toBe(reportId);
     await store.close();
   });
 
@@ -3811,7 +3915,7 @@ describe("artifact provenance: identity and revision", () => {
     const store2 = makeStore(testDir);
     const found = (await store2.instances.findById(created.id))._unsafeUnwrap();
     expect(found).not.toBeNull();
-    expect(found?.artifacts[0].id as string).toBe(idV1 as string);
+    expect(found?.artifacts[0].id).toBe(idV1);
     expect(found?.artifacts[0].revision).toBe(1);
     await store2.close();
   });
@@ -4148,9 +4252,7 @@ describe("artifact provenance: recordStepAttempt", () => {
     expect(attempt.attemptNumber).toBe(1);
     expect(attempt.dispatchedAt).toBeDefined();
     expect(attempt.consumedArtifacts).toHaveLength(1);
-    expect(attempt.consumedArtifacts[0].artifactId as string).toBe(
-      artifactId as string,
-    );
+    expect(attempt.consumedArtifacts[0].artifactId).toBe(artifactId);
     expect(attempt.consumedArtifacts[0].name).toBe("plan");
     expect(attempt.consumedArtifacts[0].revision).toBe(1);
     await store.close();
@@ -4232,9 +4334,9 @@ describe("artifact provenance: recordStepAttempt", () => {
 
     const store2 = makeStore(testDir);
     const found = (await store2.instances.getById(created.id))._unsafeUnwrap();
-    expect(
-      found.stepAttempts[0].consumedArtifacts[0].artifactId as string,
-    ).toBe(artifactId as string);
+    expect(found.stepAttempts[0].consumedArtifacts[0].artifactId).toBe(
+      artifactId,
+    );
     expect(found.stepAttempts[0].consumedArtifacts[0].revision).toBe(3);
     await store2.close();
   });
