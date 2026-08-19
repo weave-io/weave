@@ -99,6 +99,34 @@ Weave resolves and exposes thinking intent, but adapters own applying it to thei
 
 Adapters may lower these declared readiness values through runtime capability evaluation, but the engine does not apply harness-specific thinking settings. See [Adapter Boundary](../architecture/adapter-boundary.md#model-thinking-activation) for ownership rules.
 
+### Optional Pi runtime model fallback
+
+Pi keeps the `models [...]` list as ordered model intent. Its optional
+`runtime-model-fallback` host surface may use the next distinct eligible entry
+when a provider failure remains after Pi's own retry, overflow-compaction, and
+queued-message recovery. The first low-level Pi run has already emitted its
+payloadless `agent_settled` event; Weave then keeps its visible child, tool, or
+session pending while it starts a hidden custom-message turn in the same process
+and native session. This is two low-level runs, not one run with a suppressed
+settlement.
+
+The recovery turn uses public `setModel` and `sendMessage` only. It does not run
+`before_agent_start`. Exact `message_start` for the hidden marker proves
+dispatch, and a bounded timeout fails closed when that proof is absent. The
+provider-only `context` handler removes only the exact failed assistant and its
+marker after fingerprint and adjacency checks. Durable native history retains
+both entries, no synthetic provider user message is added, and successful output
+stays separate from failed partial output.
+
+Fallback uses a bounded ordered candidate snapshot. A manual model change latches
+fallback off until explicit Weave agent activation. Catalog or authentication
+misses skip a candidate; an overflow failure requires a strictly larger declared
+context window; and an applied model remains the reported model even if later
+recovery proof fails. Pi `0.84.2` is the exact-tested host for this optional
+behavior. The supported floor remains `0.81.1`; missing or unproven surfaces
+keep health ready and preserve legacy settlement rather than enabling health-only
+mode. The engine and DSL do not add a fallback field.
+
 ### Authenticated child propagation
 
 Pi's ordinary delegation and direct-step transports carry a selected `thinkingLevel` as an optional core-owned bootstrap field when a suffixed intent is resolved. It remains separate from the authenticated compact model identity (`provider`, `id`, and optional `name`), so host-specific model fields do not cross the transport boundary. The child validates the field with the shared vocabulary and applies it through `pi.setThinkingLevel()` only after successful model activation. Missing levels do not call the host; throwing or rejecting host calls remain isolated from model/bootstrap success.

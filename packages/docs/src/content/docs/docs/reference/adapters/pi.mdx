@@ -107,6 +107,37 @@ On Pi 0.84.2 the backend reported `service_tier: "default"`, standard speed, for
 
 This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or child bootstrap.
 
+## Runtime model fallback
+
+Pi can optionally try the next model in an agent's ordered `models [...]` list
+when a provider failure remains after Pi finishes its own retry,
+overflow-compaction, and queued-message recovery. Pi settles that first
+low-level run internally. Weave keeps the visible child, tool call, or session
+pending and starts a second low-level run in the same Pi process and native
+session.
+
+The recovery turn uses public Pi APIs. It applies the next eligible model with
+`setModel`, then sends one hidden custom message with `triggerTurn: true`. It
+does not run `before_agent_start`. Only `message_start` for the exact hidden
+`weave.model-fallback.recovery-marker` proves dispatch; a bounded timeout fails
+closed. The provider context removes only the exact failed assistant and marker.
+Both remain in durable native history, no synthetic provider user message is
+added, and successful output remains separate from failed partial output.
+
+A manual model change disables automatic fallback until you explicitly switch
+Weave agents. Candidate selection stays ordered, distinct, and bounded. A
+catalog or authentication miss skips the current candidate. A context-overflow
+failure can use only a candidate with a strictly larger context window. Pi
+reports a model as applied even when later recovery proof fails.
+
+Pi `0.84.2` is the exact-tested host for this optional behavior. The supported
+floor remains `0.81.1`. If a public fallback surface is missing or unproven,
+Pi stays ready and uses legacy settlement; it does not enter health-only mode.
+A recovery-confirmed switch shows one read-only Model Fallback event. An
+applied-only switch or exhausted candidate list shows no event. The event and
+the delegation-card geometry are defined in the
+[Weave UI design record](https://github.com/weave-io/weave/blob/main/docs/specs/33-spec-pi-adapter/33-weave-ui-design.md).
+
 ## Private children
 
 Pi can run private child agents for delegated work and direct workflow steps. Child sessions inherit the authenticated configuration and count toward the configured parallel-child limit. Finished children release that capacity.

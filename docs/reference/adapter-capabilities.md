@@ -95,7 +95,9 @@ The Pi adapter declares four severities:
 | `rendering-fallback` | The harness's default rendering is used |
 | `feature-only` | An optional host feature stays off; health stays ready and the overlay is unchanged |
 
-Pi's `post-recovery-model-switch` surface is `feature-only`. The adapter probes `pi.features.agent_recovery_exhausted` once per activation. A missing hook reports `agent-recovery-exhausted-unsupported` on the adapter health and host-surface capability surfaces and never enters health-only mode or the overlay fallback. This surface does not add an engine capability ID.
+Pi's `runtime-model-fallback` surface is `feature-only`. It is an adapter host surface, not an engine capability ID. The adapter probes only public surface presence: payloadless `agent_settled` registration, terminal `message_end`, replacement-returning `context`, `message_start`, `model_select`, callable `setModel`, fire-and-forget `sendMessage`, and callable idle and pending-message helpers. Static presence does not prove event ordering; each recovery attempt still requires exact marker `message_start` and provider-context repair.
+
+Pi `0.84.2` is the exact-tested host for this optional behavior. The support floor stays `0.81.1`. If a surface is missing or unproven, the adapter reports bounded unsupported evidence, keeps health ready, and uses legacy visible and child settlement. It does not enter health-only mode or select the overlay fallback. The fallback coordinator then remains inactive.
 
 Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
 

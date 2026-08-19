@@ -795,8 +795,10 @@ log file.
 
 ## 16. Capability probes and compatibility
 
-- Host version floor stays `0.81.1`, with no maximum. The Pi-native live proof
-  target is Pi `0.84.1`.
+- Host version floor stays `0.81.1`, with no maximum. Pi `0.84.2` is the
+  exact-tested host for the optional runtime model fallback. Historical
+  native-session proof material may name Pi `0.84.1`; it does not define the
+  current fallback contract.
 - Required probes: persistent RPC session and restore, `appendEntry`,
   `get_entries`/`get_tree`, and custom session directory support.
 - Pi addresses native sessions by filesystem path. Containment is proven by the
@@ -826,6 +828,66 @@ log file.
 - An overlay-only capability gap does not force health-only mode; it routes to
   the existing custom-editor fallback (§7).
 
+### 16.1 Optional runtime model fallback
+
+`runtime-model-fallback` is an optional, feature-only Pi host surface. It is not
+an engine capability or a new `.weave` setting. The adapter probes these public
+surfaces: payloadless `agent_settled` registration, terminal `message_end`, a
+replacement-returning `context` handler, `message_start`, `model_select`,
+callable `setModel`, fire-and-forget `sendMessage`, and callable idle and
+pending-message helpers. Static presence is not proof of lifecycle ordering.
+
+Pi owns its native retry, overflow-compaction, and queued-message recovery. It
+emits payloadless `agent_settled` after those paths finish. This creates an
+exact two-low-level-run compromise:
+
+1. Pi internally settles the first low-level run.
+2. Weave keeps the visible child, tool call, and session pending, selects the
+   next eligible model, and starts a hidden public custom-message turn.
+3. The turn runs in the same Pi process and native session. It is a new
+   low-level run. Weave neither suppresses Pi's internal event nor replaces the
+   process or session.
+
+The recovery turn does not run `before_agent_start`. Weave calls public
+`pi.setModel` and then invokes public `pi.sendMessage` with
+`{ triggerTurn: true }`. The marker has custom type
+`weave.model-fallback.recovery-marker`, fixed bounded content, `display: false`,
+and strict details `{ schemaVersion: 1, token: <RFC 4122 version-4 UUID> }`.
+Only `message_start` for that exact marker and token proves dispatch. The
+`sendMessage` return value is not an acknowledgment. Missing marker proof fails
+closed after a bounded timeout.
+
+The public `context` handler receives a provider-only message clone. It removes
+exactly two entries: the failed assistant immediately before the exact marker,
+after matching the retained bounded assistant fingerprint and marker token. The
+marker and failed assistant remain in durable native history. No synthetic
+provider user message is inserted. Successful fallback output is a separate
+assistant entry, so failed partial output cannot be concatenated with it.
+Handlers registered after Weave receive Weave's filtered list as trusted
+composition partners. This boundary does not isolate the session from a
+malicious full-access extension that can inspect or rewrite the same context or
+history.
+
+Each explicit Weave agent activation freezes a distinct ordered candidate list,
+with a bounded maximum of 64 entries. The cursor starts after the applied failed
+model and never wraps. A manual, unmatched, delayed, duplicate, or ambiguous
+`model_select` latches fallback off until explicit Weave agent activation;
+ordinary turns do not clear that latch. Catalog misses and unavailable provider
+authentication skip only the current candidate. For a context-overflow failure,
+a candidate is eligible only when its declared context window is strictly
+larger than the failed model's. Other failure classes do not use that rule. Once
+Pi applies a model, Weave reports that applied model even if marker or context
+proof later fails. A recovery-confirmed switch produces one read-only
+`weave.model-failover` event; an applied-only switch and ordinary exhaustion
+produce no Model Fallback event. The event and card geometry are normative in
+the [Weave UI design record](33-weave-ui-design.md).
+
+When any optional fallback surface is missing or unproven, the adapter keeps
+health ready and uses legacy visible and child settlement. It does not enter
+health-only mode and does not select the overlay fallback. The adapter claims
+exact fallback behavior only for the tested Pi `0.84.2` host; the `0.81.1` floor
+remains supported through the legacy path.
+
 ## 17. Superseded rules
 
 The following earlier rules are amended and replaced, not additive. No
@@ -844,7 +906,7 @@ implementation may apply a superseded rule alongside its replacement.
 | Publish a `weave-task` plan-task footer beside the plan widget. | The Plan Rail above the parent editor is the single owner of ambient parent context (§7, design record §4). |
 | Cancel a child subtree with a double `Escape` within `750 ms`. | `Escape` closes inspection only; empty-draft `q` / `Q` opens the cancel confirmation (§7, §8.1). |
 | Blanket prohibition on private-child auto-resume. | Explicit thread retry and continue with ownership, capacity, and integrity semantics (§9). |
-| Settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, `orphan_retention_days`, `recovery_enabled`, `recovery_countdown_seconds`. | Removed. Storage is native, unquota'd, and cleaned up explicitly. |
+| Settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, `orphan_retention_days`. | Removed with the old JSONL store. Current `child_inspection` settings `recovery_enabled`, `recovery_countdown_seconds`, and `keys` remain; they control inspection and are not runtime-model-fallback settings. |
 
 Controller-generation checks, force-kill boundaries, one-shot settlement, and the
 export boundary in §13 are not amended. `/weave:resume` for workflow attempts

@@ -359,7 +359,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - No stale callback, duplicate control body, replayed entry, or delayed host event creates a second event or settlement.
     - Security tests prove no raw errors, credentials, marker tokens, or failed content reach UI, telemetry, child control, or sanitized diagnostics.
 
-- [ ] 11. Update current capability, model, adapter, security, and smoke documentation
+- [x] 11. Update current capability, model, adapter, security, and smoke documentation
   - **What**: Remove obsolete design material and document the public Pi 0.84.2 behavior, optional compatibility policy, lifecycle compromise, trust boundary, and UI contract.
   - **Files**: delete `docs/specs/33-spec-pi-adapter/33-post-recovery-hook-design.md`; update `docs/adapters/pi.md`, `docs/reference/models.md`, `docs/reference/adapter-capabilities.md`, `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `docs/specs/33-spec-pi-adapter/33-threat-model.md`, `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`, `packages/docs/src/content/docs/docs/reference/adapters/pi.mdx`, `packages/docs/src/content/docs/docs/prompts-models-policy.mdx`, and any exact links found by `rg`.
   - **Depends on**: Tasks 3–10.

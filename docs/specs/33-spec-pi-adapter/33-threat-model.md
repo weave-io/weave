@@ -7,7 +7,7 @@ rendering and diagnostic surfaces defined in
 
 ## Boundary statements
 
-Two statements constrain every mitigation below.
+Three statements constrain every mitigation below.
 
 1. **Pi concepts stay in the Pi adapter.** Session identity, session files, entry
    parsing, transcript rendering, and child process control are Pi adapter
@@ -18,6 +18,11 @@ Two statements constrain every mitigation below.
    files are the only authority. The SQLite metadata cache is derivative and
    fully rebuildable. No security decision — ownership, authority, retryability,
    deletion — may rest on a cache row.
+3. **Runtime fallback has a provider-only context boundary.** Pi's optional
+   `runtime-model-fallback` path may compose with trusted context handlers that
+   run after Weave. Those handlers receive Weave's filtered provider list. This
+   composition is not an isolation boundary against a malicious full-access
+   extension, which can inspect or rewrite the same session context and history.
 
 ## Threats
 
@@ -181,6 +186,31 @@ the same rule: no raw prompt or transcript content.
 
 **Owner.** `errors.ts` (code registry and shapes); `telemetry.ts` (sanitizer);
 `child-doctor.ts` (report assembly); `adapter-cli-commands.ts` (output redaction).
+
+### T9 — Runtime fallback context and lifecycle confusion
+
+**Threat.** A provider failure could cause Weave to remove the wrong message,
+join failed partial output to a successful retry, add a synthetic provider user
+message, or claim one uninterrupted low-level run. A later extension could also
+misread the hidden recovery marker or receive unfiltered context.
+
+**Mitigation.** Pi completes native retry, overflow-compaction, and queued-message
+recovery before its payloadless `agent_settled`; Weave then keeps its visible
+child, tool, and session pending while it starts a new low-level run in the same
+process and native session. Recovery dispatch requires the exact custom marker's
+`message_start` and a bounded timeout. The provider-only `context` clone removes
+only the immediately preceding failed assistant and its exact marker after
+bounded fingerprint and token checks. Both entries remain in durable history; no
+synthetic provider user message is created, and fallback output remains a
+separate assistant entry. Later context handlers are trusted composition partners
+and receive the filtered list. A malicious full-access extension is outside this
+isolation guarantee.
+
+**Owner.** `model-failover-coordinator.ts` and `model-failover-context.ts`
+(marker, fingerprint, context repair, and timeout); `extension-impl.ts`
+(public lifecycle routing and settlement deferral); `child-session-events.ts`
+and `child-overlay-search.ts` (hidden-marker suppression);
+`model-failover-record.ts` (durable event validation).
 
 ## Residual risks
 

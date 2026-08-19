@@ -34,6 +34,23 @@ agent planner {
 
 This is a preference, not a guarantee. Availability, authentication, and harness-specific model names remain outside Weave.
 
+### Pi runtime fallback
+
+On Pi, the adapter may try the next usable model after Pi finishes its own
+retry, overflow-compaction, and queued-message recovery. This optional behavior
+uses the same process and native session, but it is a second low-level run. The
+visible child or tool stays pending while Weave starts that run with a hidden
+custom message. Pi `0.84.2` is the exact-tested host; the `0.81.1` floor keeps
+legacy settlement when the public fallback surfaces are missing or unproven.
+
+A manual model change disables automatic fallback until you explicitly activate
+a Weave agent again. Candidates stay in declared order, and a context-overflow
+failure may use only a model with a larger declared context window. A successful
+model application remains the reported model even if recovery later fails. Only
+a recovery-confirmed switch produces the read-only Model Fallback event; an
+applied-only switch or exhausted list produces no event. See the [Pi adapter
+reference](../reference/adapters/pi/) for lifecycle and provider-context rules.
+
 ## Set abstract tool policy
 
 ```weave

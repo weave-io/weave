@@ -1,15 +1,17 @@
 # Pi child-session smoke checklist
 
-Version: 7
+Version: 8
 
 This checklist covers the acceptance surfaces defined in
 [Spec 33](33-spec-pi-adapter.md) and the geometry, drop order, and honesty rules
-fixed by the [Weave UI design record](33-weave-ui-design.md). A row is `Pending` until a real-harness Pi
-`0.84.1` run records a proof under [`33-proofs/`](33-proofs/), indexed by
-[`33-proofs/README.md`](33-proofs/README.md). Every live row runs in a fresh
-Herdr pane that the test creates and closes, with isolated Pi config, data,
-session, and project roots. The driver records the exact subject, artifact and
-dist hashes, package provenance, Pi version, commands, observations, and cleanup.
+fixed by the [Weave UI design record](33-weave-ui-design.md). Runtime model
+fallback rows are `Pending` until a real-harness Pi `0.84.2` run records the
+required sanitized facts. Rows explicitly marked historical/native-session may
+retain Pi `0.84.1` evidence; that evidence does not prove runtime fallback.
+Every live row runs in a fresh Herdr pane that the test creates and closes, with
+isolated Pi config, data, session, and project roots. The driver records the
+exact subject, artifact and dist hashes, package provenance, Pi version,
+commands, observations, and cleanup.
 
 Rows citing [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md)
 were proven on Pi `0.84.2` under an explicit user-approved version deviation,
@@ -23,7 +25,41 @@ failed-card rendering. No row below claims the failed card was observed at the
 final bytes. `Partial` means part of the row was observed live and the rest was
 not; the proof record names exactly which part.
 
-## Pi 0.84.1 native-session contract
+## Optional runtime model fallback (Pi 0.84.2)
+
+This section is the current live target for the optional
+`runtime-model-fallback` host surface. Pi `0.84.2` is the exact-tested host;
+the support floor remains `0.81.1`. A missing or unproven optional surface must
+leave health ready and use legacy visible and child settlement. The release
+harness records bounded facts in its ephemeral report; this checklist does not
+create a standalone proof file.
+
+Run the exact packed adapter in a fresh Pi `0.84.2` TUI with isolated config,
+data, session, and project roots. Use a deterministic provider fixture that
+produces one terminal provider failure after Pi's native retry, overflow, and
+queued-message recovery paths have had control. Observe these facts without
+recording raw provider bodies, failed assistant content, credentials, or marker
+tokens:
+
+| ID | Required observation | Result |
+|---|---|---|
+| RF01 | Pi emits `message_end`, then payloadless `agent_settled`; Weave keeps the visible child/tool/session pending, applies the next candidate, and starts a second low-level run in the same process and native session. | Pending |
+| RF02 | Recovery does not use `before_agent_start`; exact `message_start` for `weave.model-fallback.recovery-marker` proves dispatch, and missing proof reaches the bounded timeout. | Pending |
+| RF03 | The provider-only context list removes only the fingerprinted failed assistant and its exact marker. Durable native history retains both; no synthetic provider user message exists; successful output is a separate assistant entry. | Pending |
+| RF04 | Manual model selection latches fallback off until explicit Weave activation; candidates stay ordered, distinct, and bounded; catalog/auth misses skip locally; overflow advances only to a strictly larger context window; applied model truth remains visible when later recovery proof fails. | Pending |
+| RF05 | A recovery-confirmed switch produces one read-only Model Fallback event. Applied-only switches and exhaustion produce none. Use the [Weave UI design record](33-weave-ui-design.md) for the normative event and card geometry; do not add a second card or duplicate geometry. | Pending |
+| RF06 | Removing or failing one optional public fallback surface keeps `/weave:health` ready and uses legacy settlement. It does not enter health-only mode or select the overlay fallback. | Pending |
+
+The context-handler check proves trusted composition only: a handler registered
+after Weave receives the filtered provider list. It does not prove isolation from
+a malicious full-access extension. The exact marker's `message_start` is the only
+dispatch proof; a returned `sendMessage` promise, a bare `turn_start`, or a
+payloadless settlement is not proof.
+
+## Historical/native-session Pi 0.84.1 contract
+
+This section preserves the historical/native-session contract and its proof
+references. It is not evidence for the optional runtime model fallback.
 
 Pi `0.84.1` provides native path sessions through `SessionManager.create` and
 `SessionManager.open`. The adapter validates Pi's generated path, ID, parent,
@@ -41,10 +77,10 @@ altering the global Pi install.
 
 The earlier Pi `0.83.0` descriptor-only acceptance model and its fail-closed
 proofs are historical. Their observations remain intact, but their readiness
-conclusion does not govern this checklist. Version 6 requires live Pi 0.84.1
-evidence for native child create, streaming, settlement, continue, historical
-reopen, direct workflow persistence, lifecycle, readiness-gated deletion, and
-path non-disclosure.
+conclusion does not govern this checklist. The historical Version 6 checklist
+required live Pi 0.84.1 evidence for native child create, streaming, settlement,
+continue, historical reopen, direct workflow persistence, lifecycle,
+readiness-gated deletion, and path non-disclosure.
 
 Version 6 also adds sanitized child provider-error evidence. Controlled child
 events must cover 429, 500 with no body, connection/timeout, and unknown JSON
@@ -88,9 +124,11 @@ The surfaces a proof must name are:
 
 ## Overlay UX live procedure (rows S051, S070–S080)
 
-Run every step in one fresh Pi `0.84.1` TUI on a real PTY, through the exact
-packaged adapter artifact, after confirming the loaded `dist/extension.js` and
-`dist/index.js` SHA-256 values and package provenance. Delegate
+For historical/native-session rows, run every step in one fresh Pi `0.84.1`
+TUI on a real PTY. Current rows that cite Pi `0.84.2` use that host instead.
+In either case, use the exact packaged adapter artifact after confirming the
+loaded `dist/extension.js` and `dist/index.js` SHA-256 values and package
+provenance. Delegate
 one child that produces enough output to overflow the viewport, and open it with
 `Alt+I`.
 
