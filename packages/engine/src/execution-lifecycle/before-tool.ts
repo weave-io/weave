@@ -8,6 +8,7 @@
  */
 
 import { err, errAsync, ok, okAsync, Result } from "neverthrow";
+import { z } from "zod";
 import {
   authorizePermissionSessionCall,
   validatePermissionSession,
@@ -45,18 +46,11 @@ const PERMISSION_CONTEXT_FIELDS = [
 ] as const;
 
 type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
-type ObjectLike<T> = T & object;
+type BeforeToolRecord =
+  | RegisteredBeforeToolInput
+  | RegisteredBeforeToolInput["permission"];
 
-const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
-  value !== null && Object(value) === value;
-
-const primitiveTag = <T>(value: T): string => {
-  const tagged = Result.fromThrowable(
-    () => Object.prototype.toString.call(value),
-    () => "[object Object]",
-  )();
-  return tagged.isOk() ? tagged.value : "[object Object]";
-};
+const primitiveStringSchema = z.string();
 
 const invalidPlainRecord = (
   path: string,
@@ -67,36 +61,37 @@ const invalidPlainRecord = (
  * Snapshot a trusted-shaped record without invoking getters. All reflection is
  * inside one neverthrow boundary so hostile proxies cannot escape as throws.
  */
-function snapshotPlainRecord<T>(
-  input: T,
+function snapshotPlainRecord(
+  input: BeforeToolRecord,
   fields: readonly string[],
   path: string,
 ): Result<SnapshotFields, LifecycleValidationError> {
   const reflected = Result.fromThrowable(
     () => {
-      if (!isObjectLike(input)) return err(invalidPlainRecord(path));
       const prototype = Object.getPrototypeOf(input);
       if (prototype !== Object.prototype && prototype !== null)
         return err(invalidPlainRecord(path));
 
       const allowed = new Set(fields);
       const descriptors = new Map<string, PropertyDescriptor>();
-      for (const key of Reflect.ownKeys(input)) {
-        if (Object.prototype.toString.call(key) !== "[object String]")
+      const keys = Reflect.ownKeys(input);
+      if (keys.length !== fields.length)
+        return err(
+          lifecycleValidationError(
+            `${path} has unexpected or missing fields`,
+            path,
+          ),
+        );
+      for (const key of keys) {
+        const parsedKey = primitiveStringSchema.safeParse(key);
+        if (!parsedKey.success || !allowed.has(parsedKey.data))
           return err(
             lifecycleValidationError(
               `${path} has unexpected or missing fields`,
               path,
             ),
           );
-        const field = String(key);
-        if (!allowed.has(field))
-          return err(
-            lifecycleValidationError(
-              `${path} has unexpected or missing fields`,
-              path,
-            ),
-          );
+        const field = parsedKey.data;
         const descriptor = Object.getOwnPropertyDescriptor(input, field);
         if (
           descriptor === undefined ||
@@ -137,13 +132,10 @@ function requiredText(
   fields: SnapshotFields,
   field: string,
 ): Result<string, LifecycleValidationError> {
-  const value = fields.get(field)?.value;
-  if (primitiveTag(value) !== "[object String]")
+  const parsed = primitiveStringSchema.safeParse(fields.get(field)?.value);
+  if (!parsed.success || parsed.data.length === 0)
     return err(lifecycleValidationError(`${field} is required`, field));
-  const text = String(value);
-  if (text.length === 0)
-    return err(lifecycleValidationError(`${field} is required`, field));
-  return ok(text);
+  return ok(parsed.data);
 }
 
 function requiredBoolean(
@@ -156,8 +148,8 @@ function requiredBoolean(
   return ok(value);
 }
 
-function captureRegisteredInput<T>(
-  input: T,
+function captureRegisteredInput(
+  input: RegisteredBeforeToolInput,
 ): Result<RegisteredBeforeToolInput, LifecycleValidationError> {
   const topLevel = snapshotPlainRecord(input, REGISTERED_INPUT_FIELDS, "input");
   if (topLevel.isErr()) return err(topLevel.error);
@@ -275,7 +267,9 @@ export function previewToolPolicy(
  * {@link authorizePermissionSessionCall} entry so attacker-controlled own or
  * prototype `authorizeCall` methods cannot redirect the decision.
  */
-export function beforeTool<T>(input: T): RegisteredBeforeToolResult {
+export function beforeTool(
+  input: RegisteredBeforeToolInput,
+): RegisteredBeforeToolResult {
   const captured = captureRegisteredInput(input);
   if (captured.isErr()) return errAsync(captured.error);
   const permission = captured.value.permission;

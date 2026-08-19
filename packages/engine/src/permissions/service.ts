@@ -1,4 +1,5 @@
 import { err, errAsync, ok, Result, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 import { getPermissionApprovalRepository } from "../runtime/permission-repository.js";
 import type { RuntimeStore } from "../runtime/store.js";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
@@ -35,8 +36,11 @@ const POLICY_FIELDS = [
   "delegate",
   "network",
 ] as const;
-type ObjectLike<T> = T & object;
 type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type ActivationRecord =
+  | PermissionServiceActivationInput
+  | Readonly<Record<string, EffectiveToolPolicy>>
+  | EffectiveToolPolicy;
 type CapturedActivation = {
   readonly project: string;
   readonly session: string;
@@ -47,67 +51,56 @@ type CapturedActivation = {
 
 const invalidActivation = (): PermissionError => ({ type: "invalid_output" });
 
-const primitiveTag = <T>(value: T): string => {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  if (Object(value) === value) return "object";
-  const tagged = Result.fromThrowable(
-    () => Object.prototype.toString.call(value),
-    () => "[object Object]",
-  )();
-  return tagged.isOk() ? tagged.value : "[object Object]";
-};
-
-const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
-  value !== null && value !== undefined && Object(value) === value;
-
-const parseText = <T>(
-  value: T,
-  maxBytes: number,
-): Result<string, PermissionError> => {
-  if (primitiveTag(value) !== "[object String]")
-    return err(invalidActivation());
-  const text = String(value);
-  if (text.length === 0 || new TextEncoder().encode(text).byteLength > maxBytes)
-    return err(invalidActivation());
-  return ok(text);
-};
+const primitiveStringSchema = z.string();
+const encoder = new TextEncoder();
+const MAX_POLICY_AGENTS = 1_024;
 
 type PolicyDecision = EffectiveToolPolicy[keyof EffectiveToolPolicy];
 
-const parseDecision = <T>(
-  value: T,
-): Result<PolicyDecision, PermissionError> => {
-  if (primitiveTag(value) !== "[object String]")
+const parseText = (
+  value: PermissionServiceActivationInput["project"],
+  maxBytes: number,
+): Result<string, PermissionError> => {
+  const parsed = primitiveStringSchema.safeParse(value);
+  if (!parsed.success || parsed.data.length === 0)
     return err(invalidActivation());
-  const text = String(value);
-  if (text === "allow") return ok("allow");
-  if (text === "deny") return ok("deny");
-  if (text === "ask") return ok("ask");
+  if (encoder.encode(parsed.data).byteLength > maxBytes)
+    return err(invalidActivation());
+  return ok(parsed.data);
+};
+
+const parseDecision = (
+  value: PolicyDecision,
+): Result<PolicyDecision, PermissionError> => {
+  const parsed = primitiveStringSchema.safeParse(value);
+  if (!parsed.success) return err(invalidActivation());
+  if (parsed.data === "allow") return ok("allow");
+  if (parsed.data === "deny") return ok("deny");
+  if (parsed.data === "ask") return ok("ask");
   return err(invalidActivation());
 };
 
-function snapshotOwnFields<T>(
-  input: T,
+function snapshotOwnFields(
+  input: ActivationRecord,
   allowed: readonly string[] | undefined,
   required: readonly string[],
+  maxProperties: number,
 ): Result<SnapshotFields, PermissionError> {
   return Result.fromThrowable(
     () => {
-      if (!isObjectLike(input) || Array.isArray(input))
-        return err(invalidActivation());
       if (Object.getPrototypeOf(input) !== Object.prototype)
         return err(invalidActivation());
       const keys = Reflect.ownKeys(input);
+      if (keys.length > maxProperties) return err(invalidActivation());
       if (allowed !== undefined && keys.length > allowed.length)
         return err(invalidActivation());
       if (keys.length < required.length) return err(invalidActivation());
       const allowedSet = allowed === undefined ? undefined : new Set(allowed);
       const fields = new Map<string, PropertyDescriptor>();
       for (const key of keys) {
-        if (Object.prototype.toString.call(key) !== "[object String]")
-          return err(invalidActivation());
-        const text = String(key);
+        const parsedKey = primitiveStringSchema.safeParse(key);
+        if (!parsedKey.success) return err(invalidActivation());
+        const text = parsedKey.data;
         if (allowedSet !== undefined && !allowedSet.has(text))
           return err(invalidActivation());
         const descriptor = Object.getOwnPropertyDescriptor(input, text);
@@ -128,17 +121,20 @@ function snapshotOwnFields<T>(
   )().andThen((result) => result);
 }
 
-function capturePolicies<T>(
-  value: T,
+function capturePolicies(
+  value: Readonly<Record<string, EffectiveToolPolicy>>,
 ): Result<Readonly<Record<string, EffectiveToolPolicy>>, PermissionError> {
-  const top = snapshotOwnFields(value, undefined, []);
+  const top = snapshotOwnFields(value, undefined, [], MAX_POLICY_AGENTS);
   if (top.isErr() || top.value.size === 0) return err(invalidActivation());
   const entries: Array<[string, EffectiveToolPolicy]> = [];
-  for (const [agent, descriptor] of top.value) {
+  for (const [agentName, descriptor] of top.value) {
+    const agent = parseText(agentName, 256);
+    if (agent.isErr()) return err(invalidActivation());
     const policyFields = snapshotOwnFields(
       descriptor.value,
       POLICY_FIELDS,
       POLICY_FIELDS,
+      POLICY_FIELDS.length,
     );
     if (policyFields.isErr()) return err(invalidActivation());
     const read = parseDecision(policyFields.value.get("read")?.value);
@@ -161,14 +157,14 @@ function capturePolicies<T>(
       delegate: delegate.value,
       network: network.value,
     };
-    entries.push([agent, Object.freeze(policy)]);
+    entries.push([agent.value, Object.freeze(policy)]);
   }
   return ok(Object.freeze(Object.fromEntries(entries)));
 }
 
 /** Snapshot activation input without invoking accessors or live proxy reads. */
-function snapshotActivationInput<T>(
-  input: T,
+function snapshotActivationInput(
+  input: PermissionServiceActivationInput,
 ): Result<CapturedActivation, PermissionError> {
   return Result.fromThrowable(
     () => {
@@ -176,6 +172,7 @@ function snapshotActivationInput<T>(
         input,
         ACTIVATION_FIELDS,
         ACTIVATION_FIELDS,
+        ACTIVATION_FIELDS.length,
       );
       if (fields.isErr()) return err(fields.error);
       const project = parseText(fields.value.get("project")?.value, 256);
@@ -229,7 +226,9 @@ export class PermissionService {
     this.#store = store;
   }
 
-  activate<T>(input: T): ResultAsync<PermissionSession, PermissionError> {
+  activate(
+    input: PermissionServiceActivationInput,
+  ): ResultAsync<PermissionSession, PermissionError> {
     const captured = snapshotActivationInput(input);
     if (captured.isErr()) return errAsync(captured.error);
     const repository = getPermissionApprovalRepository(this.#store);

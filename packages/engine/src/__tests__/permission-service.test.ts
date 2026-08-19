@@ -204,8 +204,70 @@ describe("PermissionService", () => {
       controllerSession: "controller",
       registry: generation,
       policies: { agent: policy },
+      requestSchemaVersion: "1",
     };
+    Object.defineProperty(omitted, "requestSchemaVersion", {
+      value: null,
+    });
     expect((await service.activate(omitted)).isErr()).toBe(true);
+
+    const boxed = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(boxed, "project", {
+      value: Reflect.construct(String, ["project"]),
+    });
+    expect((await service.activate(boxed)).isErr()).toBe(true);
+
+    let tagReads = 0;
+    const tagged = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(tagged, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    expect((await service.activate(tagged)).isErr()).toBe(true);
+    expect(tagReads).toBe(0);
+
+    const spoofedValue = {};
+    Object.defineProperty(spoofedValue, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    const spoofed = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(spoofed, "project", { value: spoofedValue });
+    expect((await service.activate(spoofed)).isErr()).toBe(true);
+    expect(tagReads).toBe(0);
+
+    const callable = Object.assign(() => null, {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    });
+    expect((await service.activate(callable)).isErr()).toBe(true);
 
     // One-shot data-descriptor capture: mutating the input object after the
     // snapshot begins cannot change the values the session binds.

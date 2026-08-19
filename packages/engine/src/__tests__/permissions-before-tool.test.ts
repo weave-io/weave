@@ -82,11 +82,6 @@ type RegisteredWithLegacyFields = RegisteredBeforeToolInput & {
   effectiveToolPolicy?: EffectiveToolPolicy;
   toolCapability?: string;
 };
-type MissingRegisteredInput = Pick<
-  RegisteredBeforeToolInput,
-  "workflowInstanceId" | "leaseId" | "agentName" | "toolName"
->;
-
 const registered = (
   session: PermissionSession,
   registryGeneration: string,
@@ -208,14 +203,17 @@ describe("beforeTool registered permission overload", () => {
   });
 
   it("rejects a legacy-shaped input instead of bypassing the session", async () => {
-    const legacy = {
-      workflowInstanceId: createWorkflowInstanceId("legacy"),
-      leaseId: createExecutionLeaseId("legacy"),
-      agentName: "agent",
-      toolCapability: "read",
-      toolName: "tool",
-      effectiveToolPolicy: policy("allow"),
-    };
+    const a = await activate("allow");
+    const legacy = registered(a.session, a.registry.id);
+    Object.defineProperty(legacy, "permission", { value: undefined });
+    Object.defineProperty(legacy, "toolCapability", {
+      enumerable: true,
+      value: "read",
+    });
+    Object.defineProperty(legacy, "effectiveToolPolicy", {
+      enumerable: true,
+      value: policy("allow"),
+    });
     expect(await errorType(beforeTool(legacy))).toBe("validation");
   });
 
@@ -239,6 +237,59 @@ describe("beforeTool registered permission overload", () => {
     expect(await errorType(beforeTool(hidden))).toBe("validation");
   });
 
+  it("rejects hostile strings and callable or tagged lifecycle inputs", async () => {
+    const a = await activate("allow");
+    const boxed = registered(a.session, a.registry.id);
+    Object.defineProperty(boxed, "agentName", {
+      value: Reflect.construct(String, ["agent"]),
+    });
+    expect(await errorType(beforeTool(boxed))).toBe("validation");
+
+    const callable = Object.assign(
+      () => null,
+      registered(a.session, a.registry.id),
+    );
+    expect(await errorType(beforeTool(callable))).toBe("validation");
+
+    let tagReads = 0;
+    const tagged = registered(a.session, a.registry.id);
+    Object.defineProperty(tagged, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    expect(await errorType(beforeTool(tagged))).toBe("validation");
+    expect(tagReads).toBe(0);
+
+    const spoofedValue = {};
+    Object.defineProperty(spoofedValue, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    const spoofed = registered(a.session, a.registry.id);
+    Object.defineProperty(spoofed, "agentName", {
+      value: spoofedValue,
+    });
+    expect(await errorType(beforeTool(spoofed))).toBe("validation");
+    expect(tagReads).toBe(0);
+
+    const hostile = new Proxy(registered(a.session, a.registry.id), {
+      ownKeys: () => {
+        throw new Error("ownKeys trap");
+      },
+    });
+    const settled = await Promise.allSettled([beforeTool(hostile)]);
+    expect(settled[0]?.status).toBe("fulfilled");
+    if (settled[0]?.status !== "fulfilled") return;
+    expect(settled[0].value.isErr()).toBe(true);
+    expect(settled[0].value._unsafeUnwrapErr().type).toBe("validation");
+  });
+
   it("validates lifecycle context before calling the session", async () => {
     const a = await activate();
     const calls: string[] = [];
@@ -258,12 +309,10 @@ describe("beforeTool registered permission overload", () => {
         return a.session.authorizeCall(call);
       },
     });
-    const omittedPermission: MissingRegisteredInput = {
-      workflowInstanceId: createWorkflowInstanceId("workflow"),
-      leaseId: createExecutionLeaseId("lease"),
-      agentName: "agent",
-      toolName: "tool",
-    };
+    const omittedPermission = registered(session, a.registry.id);
+    Object.defineProperty(omittedPermission, "permission", {
+      value: null,
+    });
     const missing = [
       registered(session, a.registry.id, {
         workflowInstanceId: createWorkflowInstanceId(""),
