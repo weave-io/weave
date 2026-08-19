@@ -108,6 +108,108 @@ spawns a real Pi process, so it is not part of `bun test`. RPC mode proves
 module loading only: readiness and behavior still need the five stages above in
 a fresh interactive TUI.
 
+## Verify Pi child streaming
+
+The Pi child-streaming remediation has a stricter identity gate than a normal
+package smoke test. Run it from the isolated worktree with Pi `0.84.2`:
+
+```bash
+bun scripts/pi/verify-child-streaming.ts identity \\
+  --pi "$(command -v pi)" \\
+  --require-current-build
+```
+
+The verifier independently matches the source-input SHA-256, path-free build
+manifest, built output SHA-256 values, loaded artifact SHA-256, on-disk artifact
+SHA-256, extension load time, and process start time. It refuses
+`stale-on-disk`, `manifest-mismatch`, corrupt, missing, and `unverifiable`
+states. Modification time is ordering evidence only. The required negative
+controls load build A while build B is on disk, corrupt the sidecar or output,
+and prove that `/reload` adopts the new bytes without making an already-open
+parent current. A final live proof starts a fresh parent after the artifact is
+complete.
+
+Capture and replay use real Pi `0.84.2` session/RPC/extension machinery at the
+public event boundary:
+
+```bash
+bun scripts/pi/verify-child-streaming.ts capture \\
+  --pi "$(command -v pi)" \\
+  --require-host-version 0.84.2 \\
+  --omit-reasoning-content \\
+  --sanitize \\
+  --verify-bounds
+
+bun scripts/pi/verify-child-streaming.ts replay \\
+  --fixture packages/adapters/pi/src/__fixtures__/pi-0.84.2-child-ui-events.v1.json \\
+  --inject-controlled-reasoning-in-memory \\
+  --verify-manifest \\
+  --run-red-controls
+```
+
+The fixture preserves generic `thinking_start` / `thinking_delta` /
+`thinking_end` structure, own enumerable field names, value kinds, ordering,
+lifecycle, tool correlation, bounded sanitized tool data, and incremental
+assistant ordering. The capture omits thinking text online before any fixture,
+manifest, report, snapshot, or failure output is written. It keeps only
+content-free byte/line counts and truncation state. Replay may inject a
+controlled reasoning string in process memory; it never writes raw reasoning,
+a prefix, suffix, hash, encoding, screenshot, terminal capture, credential,
+absolute path, or uncontrolled output.
+
+The live proof uses only four lanes:
+
+```bash
+bun scripts/pi/verify-child-streaming.ts live \\
+  --pi "$(command -v pi)" \\
+  --require-fresh-parent \\
+  --require-current-build \\
+  --proof-lanes parent-raw-reasoning-live,inspector-raw-reasoning-live,inspector-tool-details,inspector-assistant-reply-live \\
+  --content-free-report /tmp/weave-pi-child-streaming-proof.json \\
+  --no-screen-capture
+```
+
+The parent card must show only `↪ reasoning • <text>` for live child activity;
+its settled `weave_delegate` result remains authoritative but its custom card
+does not render the result as activity. The focused inspector must show the
+same reasoning row, one bounded sanitized correlated tool row, and incremental
+assistant text. The reasoning projection uses one 4 KiB UTF-8 process-memory
+buffer per active surface, a 240-code-point one-line parent view, a three-row
+inspector view, 100 ms card coalescing, 50 ms inspector coalescing, terminal-
+control normalization only, and honest `… [truncated]` output for omitted
+non-empty text. A non-printable non-empty value uses `[unprintable reasoning]`;
+no blank row is valid.
+
+Raw reasoning may exist only in those bounded UI buffers. Weave does not copy it
+to parent messages or model input, tool-result `content`, persisted card
+`details`, Runtime Store records, checkpoints, transcript/replay/search state,
+logs, diagnostics, proof artifacts, reports, or files. Pi's host-managed native
+child session may persist reasoning under Pi's rules; that host boundary is not
+Weave persistence, and Weave does not duplicate it. Release both buffers on
+settlement, disposal, inspector close, focus change, generation replacement,
+component disposal, and session shutdown; reopening a historical child starts
+empty.
+
+Diagnostics and reports are content-free. They may contain only closed
+stage/reason codes, saturated counts, bounded times, identity facts, lane
+status, and cleanup facts. They must contain no reasoning, assistant text, tool
+payload, prompt, credential, path, exception text, or content-derived digest.
+Run red controls for stale identity, malformed or mixed carriers, stale
+identity/focus/correlation, bounds and truncation, terminal controls, sink
+leakage, late updates after lifecycle release, missing assistant deltas, broken
+tool correlation, duplicate tool terminals, and parent-card assistant/tool
+leakage. No separate provenance predicate or obsolete non-rendering rule is
+part of this proof.
+
+Do not save pane captures, screenshots, terminal transcripts, scrollback
+exports, or raw reasoning. The verifier may hold display text in memory only
+long enough for bounded assertions. After the run, verify both transient
+registries are empty, no child process or Runtime Store lease remains, no
+temporary provider/workspace remains, and the test-created Herdr pane is
+closed. The current 2026-08-18 run is preserved as RED evidence; deterministic
+Task 9 tests are separate evidence and do not turn that live run into a pass.
+See [`33-child-streaming-remediation-proof.md`](../specs/33-spec-pi-adapter/33-proofs/33-child-streaming-remediation-proof.md).
+
 ## Minimum adapter checks
 
 ### Pi
@@ -118,9 +220,13 @@ a fresh interactive TUI.
 - `/weave:health` reports `Weave adapter mode: ready`, `host runtime:
   single-copy`, and required capabilities at their declared readiness.
 - `/weave:status` reports trusted interactive mode and `health-only: false`.
+- For child-streaming changes, run the exact four-lane proof in [Verify Pi child
+  streaming](#verify-pi-child-streaming); do not replace it with a settled
+  snapshot or a post-settlement-only check.
 - Run one ordinary delegation and one direct workflow-step completion when the
   change touches child transport or settlement.
-- Verify no execution leases or child processes remain after completion.
+- Verify no execution leases, transient reasoning registry entries, or child
+  processes remain after completion.
 
 ### OpenCode
 
@@ -156,5 +262,5 @@ results and harness state decide success.
 
 An adapter task is complete only when isolated tests pass **and** an LLM can
 reproduce the install, loading, readiness, and real behavior checks above. If a
-live harness cannot be run, report the missing proof as a blocker rather than
-claiming the adapter works.
+live harness cannot be run, report the missing proof as incomplete and do not
+claim the adapter works.
