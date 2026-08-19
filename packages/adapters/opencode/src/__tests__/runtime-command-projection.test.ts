@@ -32,6 +32,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { WorkflowConfig } from "@weaveio/weave-core";
 import type {
   AgentDescriptor,
   PlanStateError,
@@ -143,7 +144,7 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Used for tests that need a successful execution without plan-oriented
  * completion methods.
  */
-const SIMPLE_WORKFLOWS: Record<string, unknown> = {
+const SIMPLE_WORKFLOWS: Record<string, WorkflowConfig> = {
   "simple-workflow": {
     description: "Simple 2-step workflow for testing",
     version: 1,
@@ -176,7 +177,7 @@ const SIMPLE_WORKFLOWS: Record<string, unknown> = {
  *
  * Used to test `handleAdvanceStep` with `review_verdict` approved/rejected signals.
  */
-const GATE_WORKFLOWS: Record<string, unknown> = {
+const GATE_WORKFLOWS: Record<string, WorkflowConfig> = {
   "gate-workflow": {
     description: "Gate workflow with review_verdict step for testing",
     version: 1,
@@ -207,7 +208,7 @@ const GATE_WORKFLOWS: Record<string, unknown> = {
  *
  * Used to test the degraded fallback when `planStateProvider` is absent.
  */
-const PLAN_COMPLETION_WORKFLOWS: Record<string, unknown> = {
+const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
   "plan-completion-workflow": {
     description: "Plan completion workflow for testing",
     version: 1,

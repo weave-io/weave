@@ -46,8 +46,10 @@ import type {
   ExecutionStartedData,
   ExecutionStatusData,
   PlanStateProvider,
+  RunNamedWorkflowInput,
   RuntimeHealthData,
   RuntimeStore,
+  StartPlanInput,
   StepAdvancedData,
 } from "@weaveio/weave-engine";
 import {
@@ -186,8 +188,8 @@ export interface StartPlanProjectionInput {
   readonly store: RuntimeStore;
   /** Provider for plan file existence checks. */
   readonly planStateProvider: PlanStateProvider;
-  /** Workflow registry — maps workflow names to workflow configs. */
-  readonly workflows: Record<string, unknown>;
+  /** Normalized workflow registry — maps workflow names to workflow configs. */
+  readonly workflows: StartPlanInput["workflows"];
   /** OpenCode adapter instance — `spawnSubagent` is called for each DispatchAgentEffect. */
   readonly adapter: OpenCodeAdapter;
   /** Optional ISO-8601 timestamp override (for testing). */
@@ -211,8 +213,8 @@ export interface RunWorkflowProjectionInput {
   readonly ownerId: string;
   /** Runtime store for persisting the workflow instance and lease. */
   readonly store: RuntimeStore;
-  /** Workflow registry — maps workflow names to workflow configs. */
-  readonly workflows: Record<string, unknown>;
+  /** Normalized workflow registry — maps workflow names to workflow configs. */
+  readonly workflows: RunNamedWorkflowInput["workflows"];
   /** OpenCode adapter instance — `spawnSubagent` is called for each DispatchAgentEffect. */
   readonly adapter: OpenCodeAdapter;
   /** Optional plan state provider for plan_created/plan_complete steps. */
