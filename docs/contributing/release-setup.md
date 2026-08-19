@@ -33,6 +33,35 @@ side effects `none`. Do not use a normal `workflow_dispatch` operation as a
 substitute. The preflight does not install dependencies, query npm, mint OIDC
 or App credentials, publish packages, or mutate refs.
 
+### Workflow-run identity contract
+
+The doctor reads GitHub's [list workflow runs for a workflow](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow)
+response, scoped to `publish.yml` and protected `main`. The matching
+[official OpenAPI example](https://github.com/github/rest-api-description/blob/main/descriptions/api.github.com/api.github.com.json)
+uses the same `Workflow Run` shape. GitHub's documented response schema
+requires the run ID, workflow `path`, `head_branch`, `event`,
+`conclusion`, `created_at`, `updated_at`, `repository`,
+`head_repository`, and `display_title`. The repository objects must contain
+`full_name`. GitHub permits `name` to be null in the schema, so the doctor
+rejects a null or missing name instead of treating it as an identified
+`Publish control plane` run. `run_started_at` is optional; the doctor uses the
+required `updated_at` timestamp for the 90-day bound.
+
+The accepted workflow path is the exact old path
+`.github/workflows/publish.yml`. The API's documented examples also show the
+same path with an exact `@main` suffix, so the doctor accepts only that known
+form (including the documented repository-qualified form), never a missing or
+other path. `workflow_ref` is not part of the list-runs response schema and is
+therefore not required; if an enriched response supplies it, it must still
+match `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
+
+A scheduled success is accepted only with the exact workflow name, repository
+and head-repository identity, protected `main`, successful conclusion, valid
+ID and timestamps, and `event: schedule`. A dispatch is accepted only when
+those fields also identify `event: workflow_dispatch` and
+`display_title: legacy-publisher-preflight`. Missing or malformed identity
+fields fail closed.
+
 ## Manual setup
 
 Complete these steps in GitHub and npm. Do not put credential values in a

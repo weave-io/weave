@@ -43,6 +43,15 @@ import {
 
 const log = logger.child({ module: "release-doctor" });
 
+const OLD_WORKFLOW_REF = `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@refs/heads/main`;
+// GitHub's list-runs examples use the bare path and the @main forms below.
+// These are exact compatibility forms, not optional identity fields.
+const OLD_WORKFLOW_API_PATHS = [
+  RELEASE_WORKFLOW_PATH,
+  `${RELEASE_WORKFLOW_PATH}@main`,
+  `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@main`,
+] as const;
+
 export { LEGACY_PREFLIGHT_RUN_NAME };
 
 export const DOCTOR_MODES = [
@@ -1868,29 +1877,25 @@ function isProtectedOldRun(run: Record<string, unknown>): boolean {
   )
     return false;
   if (
-    !matchesOptionalString(
-      run,
-      ["path", "workflow_path"],
-      RELEASE_WORKFLOW_PATH,
-    )
+    typeof run.path !== "string" ||
+    !OLD_WORKFLOW_API_PATHS.some((path) => path === run.path)
   )
     return false;
-  if (
-    !matchesOptionalString(
-      run,
-      ["workflow_ref", "workflowRef"],
-      `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@refs/heads/main`,
-    )
-  )
-    return false;
-  if (!matchesOptionalString(run, ["name"], "Publish control plane"))
-    return false;
+  if (run.name !== "Publish control plane") return false;
+  if (!isDateTime(run.created_at) || !isDateTime(run.updated_at)) return false;
   for (const key of ["repository", "head_repository"]) {
-    const value = run[key];
-    if (value === undefined) continue;
-    const repository = asRecord(value);
+    const repository = asRecord(run[key]);
     if (repository?.full_name !== RELEASE_REPOSITORY) return false;
   }
+  for (const key of ["workflow_ref", "workflowRef"]) {
+    const workflowRef = run[key];
+    if (
+      workflowRef !== undefined &&
+      (typeof workflowRef !== "string" || workflowRef !== OLD_WORKFLOW_REF)
+    )
+      return false;
+  }
+  if (typeof run.display_title !== "string") return false;
   return true;
 }
 
@@ -1905,39 +1910,24 @@ function oldRunKind(
 }
 
 function oldRunIdentity(run: Record<string, unknown>): string | undefined {
-  const values: string[] = [];
-  for (const key of ["display_title", "run_name"]) {
-    const value = run[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string") return undefined;
-    values.push(value);
-  }
-  if (values.length === 0 || values.some((value) => value !== values[0]))
-    return undefined;
-  return values[0];
+  const displayTitle = run.display_title;
+  if (typeof displayTitle !== "string") return undefined;
+  const runName = run.run_name;
+  if (runName !== undefined && runName !== displayTitle) return undefined;
+  return displayTitle;
 }
 
 function runTimestamp(run: Record<string, unknown>): string | undefined {
   const updated = run.updated_at;
-  if (typeof updated === "string" && !Number.isNaN(Date.parse(updated)))
-    return updated;
-  const started = run.run_started_at;
-  if (typeof started === "string" && !Number.isNaN(Date.parse(started)))
-    return started;
-  return undefined;
+  return isDateTime(updated) ? updated : undefined;
 }
 
-function matchesOptionalString(
-  record: Record<string, unknown>,
-  keys: readonly string[],
-  expected: string,
-): boolean {
-  for (const key of keys) {
-    const value = record[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value !== expected) return false;
-  }
-  return true;
+function isDateTime(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.includes("T") &&
+    !Number.isNaN(Date.parse(value))
+  );
 }
 
 async function readAttestationWorkflow(
