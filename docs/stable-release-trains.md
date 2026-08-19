@@ -6,6 +6,10 @@ Only stable-partition Changesets are consumed. Claude-only and post-cut files ar
 
 `stable-fix` accepts only explicit green commits proven merged to `main`. It never merges `main`; the `release-refs` environment creates/updates refs with a read-current-head then ordinary non-force GitHub ref update. A changed head is a typed stale-CAS failure. A fix removes recorded artifact IDs and manifest binding so a new release SHA must rebuild and bind artifacts before any future OIDC action.
 
-The `release` environment authorizes plan generation, while the separate `release-refs` environment alone holds the App token for ref mutation. Build/pack callers must verify `git status --porcelain` is empty before and after treating the release checkout as input.
+The `release` environment authorizes plan generation, while the separate
+`release-refs` environment protects the App ID and private key used to mint a
+short-lived installation token for ref mutation. Build/pack callers must
+verify `git status --porcelain` is empty before and after treating the release
+checkout as input.
 
 Metadata replay, OIDC publishing, promotion, and finalization are intentionally deferred to their subsequent release-control stages.

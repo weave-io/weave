@@ -68,9 +68,16 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
-    env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-checks: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -85,6 +92,7 @@ jobs:
           path: ${{ runner.temp }}/docs-audit-followup
       - name: Post follow-up check and comment
         env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: >-
           bun scripts/release/docs-audit/followup-main.ts
@@ -105,10 +113,17 @@ jobs:
       contents: read
       checks: write
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       FOLLOWUP_RESULT: ${{ needs.followup-post.result }}
       CONTROLLER_SHA: ${{ github.sha }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-checks: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -125,6 +140,7 @@ jobs:
           path: ${{ runner.temp }}/docs-audit-followup
       - name: Rerun the terminal docs-audit check
         env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           followup_path="$RUNNER_TEMP/docs-audit-followup/docs-audit-followup.json"
@@ -157,10 +173,15 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    env:
-      GH_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -175,6 +196,7 @@ jobs:
           path: ${{ runner.temp }}/docs-audit-followup
       - name: Apply only validated proposals to protected main
         env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           APPROVED_BY: ${{ github.actor }}
         run: >-
@@ -188,6 +210,7 @@ jobs:
           --approved-by "$APPROVED_BY"
       - name: Open a normal patch PR
         env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           git config user.name "weave-release-app"

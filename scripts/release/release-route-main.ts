@@ -165,7 +165,8 @@ if (import.meta.main) {
     if (topology.isErr()) {
       process.exitCode = 2;
     } else {
-      const markerToken = env.RELEASE_APP_TOKEN ?? env.GITHUB_TOKEN;
+      const markerToken =
+        env.RELEASE_APP_INSTALLATION_TOKEN ?? env.GITHUB_TOKEN;
       const marker =
         markerToken === undefined || env.GITHUB_REPOSITORY === undefined
           ? undefined

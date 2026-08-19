@@ -54,27 +54,41 @@ Both controls are required.
 
 ### Release GitHub App and team
 
-Install the release GitHub App on `weave-io/weave`. Its installation must have
-at least:
+Install the release GitHub App on `weave-io/weave`. Its installation must
+have the following contract:
 
 - **Contents: write**
 - **Pull requests: write**
+- **Checks: write** when a release or docs job updates a check
+- **Members: read** for organization/team maintainer authorization
 
-Create or retain the `weave-io/release-maintainers` team. The team is the
-authorization source for stable release requests. The doctor requires that
-GitHub can read the team and its membership.
+Each workflow job requests only the permissions that it uses when it mints an
+installation token. Create or retain the `weave-io/release-maintainers` team.
+The team is the authorization source for stable release requests. The doctor
+requires that GitHub can read the team and its membership.
 
-### Secret names
+### Protected App credentials and secret names
 
-Create the required secret names in the repository or the environment where
-the workflow contract places them:
+Create these exact names as environment secrets. Do not create App credentials
+at repository scope:
 
-- `RELEASE_APP_TOKEN`
-- `WEAVE_RELEASE_AI_API_KEY`
+- `release-app`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
+- `docs-audit-patch`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
+- `release-refs`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` for retained
+  legacy `publish.yml`
+- `release-ai`: `WEAVE_RELEASE_AI_API_KEY`
 
-The doctor verifies names only. It never reads, prints, or writes a secret
-value. Code cannot set secrets. A maintainer must create them in **Settings →
-Secrets and variables → Actions**.
+The App ID and private key are protected credentials. Every App-authority job
+runs the pinned official `actions/create-github-app-token` action and passes
+only its output to the controller or `gh` step as the ephemeral
+`RELEASE_APP_INSTALLATION_TOKEN`. GitHub App installation tokens expire after
+one hour. Never store that token as a secret or create an installation-token
+secret name.
+
+The doctor verifies names and environment placement only. It never reads,
+prints, or writes a secret value. Code cannot set secrets. A maintainer must
+create them in **Settings → Secrets and variables → Actions** and configure
+the required reviewers on all three App environments.
 
 Harness proof credentials belong only to the proof job's protected environment.
 They must not be passed to the npm publication job. Never add `NPM_TOKEN`,

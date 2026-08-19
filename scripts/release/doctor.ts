@@ -66,8 +66,22 @@ export const REQUIRED_RULESET_CHECKS = [
 ] as const;
 
 /** Secret names are checked only as metadata. Values never enter a report. */
+export const RELEASE_APP_CREDENTIAL_NAMES = [
+  "RELEASE_APP_ID",
+  "RELEASE_APP_PRIVATE_KEY",
+] as const;
+export const RELEASE_APP_SECRET_ENVIRONMENTS = [
+  "release-app",
+  "docs-audit-patch",
+  "release-refs",
+] as const;
+const OBSOLETE_STORED_INSTALLATION_SECRET_NAME = [
+  "RELEASE",
+  "APP",
+  "TOKEN",
+].join("_");
 export const REQUIRED_RELEASE_SECRET_NAMES = [
-  "RELEASE_APP_TOKEN",
+  ...RELEASE_APP_CREDENTIAL_NAMES,
   "WEAVE_RELEASE_AI_API_KEY",
 ] as const;
 
@@ -181,15 +195,15 @@ export interface DoctorAppObservation {
   readonly permissions: {
     readonly contents: string;
     readonly pullRequests: string;
+    readonly checks: string;
+    readonly members: string;
   };
 }
 
 export interface DoctorSecretObservation {
   readonly readable: boolean;
   readonly repositoryNames: readonly string[];
-  readonly environmentNames: Readonly<
-    Record<"release" | "prerelease", readonly string[]>
-  >;
+  readonly environmentNames: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface DoctorGitHubObservation {
@@ -859,6 +873,18 @@ function verifyApp(
       `GitHub App Pull requests permission is ${github.app.permissions.pullRequests}, expected write`,
       "verify manually: grant the release App Pull requests: write permission in the GitHub App installation and accept the pending permission update",
     );
+  if (github.app.permissions.checks !== "write")
+    return failCheck(
+      "github.app",
+      `GitHub App Checks permission is ${github.app.permissions.checks}, expected write`,
+      "verify manually: grant the release App Checks: write permission in the GitHub App installation and accept the pending permission update",
+    );
+  if (github.app.permissions.members !== "read")
+    return failCheck(
+      "github.app",
+      `GitHub App Members permission is ${github.app.permissions.members}, expected read`,
+      "verify manually: grant the release App Members: read organization permission in the GitHub App installation and accept the pending permission update",
+    );
   return ok(undefined);
 }
 
@@ -869,20 +895,67 @@ function verifySecrets(
     return failCheck(
       "github.secrets",
       "secret-name metadata is unreadable",
-      "verify manually: inspect repository and release/prerelease environment secret names in GitHub; never print or paste secret values",
+      "verify manually: inspect repository and protected environment secret names in GitHub; never print or paste secret values",
     );
+  const environmentEntries = Object.entries(github.secrets.environmentNames);
+  const obsoleteSecretPresent =
+    github.secrets.repositoryNames.includes(
+      OBSOLETE_STORED_INSTALLATION_SECRET_NAME,
+    ) ||
+    environmentEntries.some(([, names]) =>
+      names.includes(OBSOLETE_STORED_INSTALLATION_SECRET_NAME),
+    );
+  if (obsoleteSecretPresent)
+    return failCheck(
+      "github.secrets",
+      "the obsolete stored App installation-token secret name is present",
+      "remove the obsolete installation-token secret from repository and environment metadata; only short-lived action output may carry an App token",
+    );
+  for (const name of RELEASE_APP_CREDENTIAL_NAMES)
+    if (github.secrets.repositoryNames.includes(name))
+      return failCheck(
+        "github.secrets",
+        `repository-wide App credential ${name} is not allowed`,
+        `remove ${name} from repository secrets and keep it only in the exact protected App environments: ${RELEASE_APP_SECRET_ENVIRONMENTS.join(", ")}`,
+      );
+  for (const [environment, names] of environmentEntries) {
+    if (
+      RELEASE_APP_SECRET_ENVIRONMENTS.includes(
+        environment as (typeof RELEASE_APP_SECRET_ENVIRONMENTS)[number],
+      )
+    )
+      continue;
+    const misplaced = RELEASE_APP_CREDENTIAL_NAMES.find((name) =>
+      names.includes(name),
+    );
+    if (misplaced !== undefined)
+      return failCheck(
+        "github.secrets",
+        `${environment}: protected App credential ${misplaced} is outside the authorized App environment set`,
+        `remove ${misplaced} from ${environment}; keep it only in ${RELEASE_APP_SECRET_ENVIRONMENTS.join(", ")}`,
+      );
+  }
   const secretNames = new Set([
     ...github.secrets.repositoryNames,
-    ...github.secrets.environmentNames.release,
-    ...github.secrets.environmentNames.prerelease,
+    ...Object.values(github.secrets.environmentNames).flat(),
   ]);
   for (const name of REQUIRED_RELEASE_SECRET_NAMES)
     if (!secretNames.has(name))
       return failCheck(
         "github.secrets",
-        `repository or release-environment secret name ${name} is missing`,
-        `verify manually: in GitHub Settings → Secrets and variables → Actions, create the ${name} secret name at repository or protected release/prerelease scope; code cannot create secrets`,
+        `required secret name ${name} is missing`,
+        `verify manually: in GitHub Settings → Secrets and variables → Actions, create the ${name} secret name at the documented protected scope; code cannot create secrets`,
       );
+  for (const environment of RELEASE_APP_SECRET_ENVIRONMENTS) {
+    const names = new Set(github.secrets.environmentNames[environment] ?? []);
+    for (const name of RELEASE_APP_CREDENTIAL_NAMES)
+      if (!names.has(name))
+        return failCheck(
+          "github.secrets",
+          `${environment}: protected App credential name ${name} is missing`,
+          `verify manually: create ${name} in the ${environment} environment; do not create a repository-wide App credential or store an installation token`,
+        );
+  }
   return ok(undefined);
 }
 
@@ -1802,6 +1875,10 @@ async function collectGitHub(
     secrets,
     releaseSecrets,
     prereleaseSecrets,
+    releaseAiSecrets,
+    releaseAppSecrets,
+    docsAuditPatchSecrets,
+    releaseRefsSecrets,
   ] = await Promise.all([
     api.readEnvironment("release"),
     api.readEnvironment("prerelease"),
@@ -1811,6 +1888,10 @@ async function collectGitHub(
     api.readSecrets(),
     api.readEnvironmentSecrets("release"),
     api.readEnvironmentSecrets("prerelease"),
+    api.readEnvironmentSecrets("release-ai"),
+    api.readEnvironmentSecrets("release-app"),
+    api.readEnvironmentSecrets("docs-audit-patch"),
+    api.readEnvironmentSecrets("release-refs"),
   ]);
   const environmentValue = (name: "release" | "prerelease", value: unknown) => {
     const present = value !== undefined;
@@ -1829,10 +1910,16 @@ async function collectGitHub(
   if (team.isErr()) errors["github.team"] = team.error.message;
   if (app.isErr()) errors["github.app"] = app.error.message;
   if (secrets.isErr()) errors["github.secrets"] = secrets.error.message;
-  if (releaseSecrets.isErr())
-    errors["github.secrets.release"] = releaseSecrets.error.message;
-  if (prereleaseSecrets.isErr())
-    errors["github.secrets.prerelease"] = prereleaseSecrets.error.message;
+  const environmentSecretReads = [
+    ["release", releaseSecrets],
+    ["prerelease", prereleaseSecrets],
+    ["release-ai", releaseAiSecrets],
+    ["release-app", releaseAppSecrets],
+    ["docs-audit-patch", docsAuditPatchSecrets],
+    ["release-refs", releaseRefsSecrets],
+  ] as const;
+  for (const [name, result] of environmentSecretReads)
+    if (result.isErr()) errors[`github.secrets.${name}`] = result.error.message;
   const repositorySecrets = secrets.isOk()
     ? normalizeSecrets(secrets.value)
     : unavailableSecrets();
@@ -1862,22 +1949,24 @@ async function collectGitHub(
       ? normalizeApp(app.value)
       : {
           installationReadable: false,
-          permissions: { contents: "", pullRequests: "" },
+          permissions: {
+            contents: "",
+            pullRequests: "",
+            checks: "",
+            members: "",
+          },
         },
     secrets: {
       readable:
         repositorySecrets.readable &&
-        releaseSecrets.isOk() &&
-        prereleaseSecrets.isOk(),
+        environmentSecretReads.every(([, result]) => result.isOk()),
       repositoryNames: repositorySecrets.repositoryNames,
-      environmentNames: {
-        release: releaseSecrets.isOk()
-          ? normalizeSecrets(releaseSecrets.value).repositoryNames
-          : [],
-        prerelease: prereleaseSecrets.isOk()
-          ? normalizeSecrets(prereleaseSecrets.value).repositoryNames
-          : [],
-      },
+      environmentNames: Object.fromEntries(
+        environmentSecretReads.map(([name, result]) => [
+          name,
+          result.isOk() ? normalizeSecrets(result.value).repositoryNames : [],
+        ]),
+      ),
     },
   };
 }
@@ -1897,12 +1986,17 @@ function unavailableGitHub(): DoctorGitHubObservation {
     },
     app: {
       installationReadable: false,
-      permissions: { contents: "", pullRequests: "" },
+      permissions: {
+        contents: "",
+        pullRequests: "",
+        checks: "",
+        members: "",
+      },
     },
     secrets: {
       readable: false,
       repositoryNames: [],
-      environmentNames: { release: [], prerelease: [] },
+      environmentNames: emptySecretEnvironmentNames(),
     },
   };
 }
@@ -1911,7 +2005,20 @@ function unavailableSecrets(): DoctorSecretObservation {
   return {
     readable: false,
     repositoryNames: [],
-    environmentNames: { release: [], prerelease: [] },
+    environmentNames: emptySecretEnvironmentNames(),
+  };
+}
+
+function emptySecretEnvironmentNames(): Readonly<
+  Record<string, readonly string[]>
+> {
+  return {
+    release: [],
+    prerelease: [],
+    "release-ai": [],
+    "release-app": [],
+    "docs-audit-patch": [],
+    "release-refs": [],
   };
 }
 
@@ -2052,6 +2159,9 @@ function normalizeApp(value: unknown): DoctorAppObservation {
       contents:
         typeof permissions?.contents === "string" ? permissions.contents : "",
       pullRequests,
+      checks: typeof permissions?.checks === "string" ? permissions.checks : "",
+      members:
+        typeof permissions?.members === "string" ? permissions.members : "",
     },
   };
 }
@@ -2069,10 +2179,16 @@ function normalizeSecrets(value: unknown): DoctorSecretObservation {
     : [];
   const names = [...new Set([...directNames, ...listedNames])];
   const environments = asRecord(record?.environmentNames);
-  const environmentNames = {
-    release: arrayOfStrings(environments?.release),
-    prerelease: arrayOfStrings(environments?.prerelease),
-  } as const;
+  const environmentNames: Record<string, readonly string[]> = {};
+  for (const name of [
+    "release",
+    "prerelease",
+    "release-ai",
+    "release-app",
+    "docs-audit-patch",
+    "release-refs",
+  ])
+    environmentNames[name] = arrayOfStrings(environments?.[name]);
   return {
     readable: record !== undefined,
     repositoryNames: names,

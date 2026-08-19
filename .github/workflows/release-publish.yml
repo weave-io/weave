@@ -94,8 +94,15 @@ jobs:
       INPUT_PI: ${{ inputs.pi }}
       RELEASE_MAINTAINER_AUTHORIZED: ${{ github.event_name == 'pull_request' || github.actor == github.repository_owner }}
       RELEASE_ROLLOUT_MODE: ${{ vars.RELEASE_ROLLOUT_MODE }}
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        if: inputs.channel != 'nightly'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: refs/heads/main
@@ -106,6 +113,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - id: route
         name: Validate event, topology, and marker lifecycle
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
           if [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
@@ -503,8 +512,15 @@ jobs:
       pull-requests: write
     env:
       CHANNEL: ${{ inputs.channel || 'stable' }}
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: refs/heads/main
@@ -518,6 +534,8 @@ jobs:
           artifact-ids: ${{ needs.registry-verification.outputs.publication-artifact-id }}
           path: ${{ runner.temp }}/release
       - name: Create immutable release refs or prerelease notes
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
           if [[ "$CHANNEL" == "next" ]]; then
