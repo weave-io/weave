@@ -283,14 +283,35 @@
   - interface PiChildLifecycleSettingsIssue
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
-- `packages/adapters/pi/src/child-live-reasoning.ts`
-  - function emptyPiLiveReasoningSnapshot: (registryEntries) => PiLiveReasoningSnapshot
-  - function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry
+- `packages/adapters/pi/src/child-live-reasoning-carrier.ts`
+  - function readPiLiveReasoningCarrier: (value) => Result<PiLiveReasoningCarrier | undefined, PiLiveReasoningRejectionReason>
+  - function readPiLiveReasoningUpdate: (value) => Result<PiLiveReasoningUpdate, PiLiveReasoningRejectionReason>
+  - function makePiLiveReasoningRejection: (reason) => PiLiveReasoningRejection
+- `packages/adapters/pi/src/child-live-reasoning-display.ts`
+  - function normalizeTerminalText: (value) => PiLiveReasoningNormalizedText
+  - function normalizeTerminalFragment: (value) => PiLiveReasoningNormalizedText
+  - function newestWithMarker: (value, maxCodePoints) => string
+  - function markerWithinCodePointBound: (value, maxCodePoints) => string
+  - function newestUtf8: (value, maxBytes) => void
+  - function reconcileEnd: (current, ending) => string
+  - _...6 more_
+- `packages/adapters/pi/src/child-live-reasoning-fanout.ts`
+  - function notifyPiLiveReasoningObserver: (observer, update, diagnostics) => void
+  - function invalidatePiLiveReasoningObservers: (observers) => void
+  - type PiLiveReasoningDiagnosticsProvider
+- `packages/adapters/pi/src/child-live-reasoning-projector.ts`
   - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
   - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
-  - function formatPiLiveReasoningParentLine: (text) => string
-  - function formatPiLiveReasoningInspectorRows: (text) => readonly string[]
-  - _...23 more_
+  - class PiLiveReasoningProjector
+- `packages/adapters/pi/src/child-live-reasoning-registry.ts` — function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry, class PiLiveReasoningRegistry
+- `packages/adapters/pi/src/child-live-reasoning-types.ts`
+  - function emptyPiLiveReasoningSnapshot: (registryEntries) => PiLiveReasoningSnapshot
+  - interface PiLiveReasoningUpdate
+  - interface PiLiveReasoningRejection
+  - interface PiLiveReasoningSnapshot
+  - interface PiLiveReasoningProjectorConfig
+  - type PiLiveReasoningPhase
+  - _...15 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -760,7 +781,7 @@
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
   - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
-  - _...26 more_
+  - _...28 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
@@ -1838,14 +1859,32 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
-- `scripts/pi/child-stream-capture.ts`
+- `scripts/pi/child-stream-capture-contract.ts`
+  - function blocked: (type) => CaptureFailure
+  - function invalidFixture: (type) => FixtureValidationFailure
+  - interface CaptureManifestBounds
+  - interface CaptureFailure
+  - interface FixtureValidationFailure
+  - interface SanitizedEvent
+  - _...24 more_
+- `scripts/pi/child-stream-capture-harness.ts` — function captureChildEvents: (input) => ResultAsync<CaptureSuccess, CaptureFailure>
+- `scripts/pi/child-stream-capture-replay.ts` — function injectControlledReasoningInMemory: (payload, unknown>, ordinalId) => Record<string, unknown>, function replayFixtureThroughAdapter: (fixture, options) => Result<ReplayFacts, FixtureValidationFailure>
+- `scripts/pi/child-stream-capture-sanitizer.ts`
+  - function isRecord: (value) => value is Record<string, unknown>
+  - function utf8Bytes: (value) => number
   - function sha256HexOfText: (text) => string
   - function containsForbiddenContent: (value) => boolean
   - function omitReasoningProse: (rawEvent) => Result<unknown, CaptureFailure>
-  - function sanitizeRawEvent: (rawEvent, ordinalId, toolCallIds, string>) => void
-  - function sanitizeRawEvents: (rawEvents) => Result<readonly SanitizedEvent[], CaptureFailure>
+  - function createOrdinalState: (toolCallIds, string>) => void
+  - _...7 more_
+- `scripts/pi/child-stream-capture-verifier.ts`
   - function serializeFixture: (events) => string
-  - _...36 more_
+  - function buildCaptureManifest: (input) => CaptureManifest
+  - function verifyCaptureManifest: (fixtureText, manifestText) => Result<
+  - function validateFixtureStructure: (fixture) => Result<FixtureStructuralFacts, FixtureValidationFailure>
+  - function runFixtureRedControls: (fixtureText, manifestText) => Result<
+  - function deriveManifestPath: (fixturePath) => string
+  - _...1 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void

@@ -3,7 +3,7 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
-- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture.ts
+- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture-harness.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
