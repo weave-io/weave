@@ -22,7 +22,7 @@
  *   - No file I/O, git, or shell calls.
  */
 
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type { EvalEnv } from "../env.js";
 import { DEFAULT_OPENROUTER_BASE_URL } from "../env.js";
 import {
@@ -53,47 +53,56 @@ const MINIMAL_REQUEST: ModelRequest = {
   messages: MINIMAL_MESSAGES,
 };
 
+type TestFetch = (
+  input: URL | RequestInfo,
+  init?: RequestInit,
+) => Promise<Response>;
+
+function installFetch(stub: TestFetch): void {
+  globalThis.fetch = Object.assign(stub, {
+    preconnect: globalThis.fetch.preconnect,
+  });
+}
+
 /** Build a mock `fetch` that returns the given JSON body with status 200. */
-function mockFetchOk(body: unknown): typeof fetch {
-  return mock(async (_url: URL | RequestInfo, _init?: RequestInit) => {
-    return new Response(JSON.stringify(body), {
+function mockFetchOk<T>(body: T) {
+  return async (_url: URL | RequestInfo, _init?: RequestInit) =>
+    new Response(JSON.stringify(body), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-  }) as unknown as typeof fetch;
 }
 
 /** Build a mock `fetch` that returns the given HTTP status with optional body. */
-function mockFetchHttpError(status: number, body = ""): typeof fetch {
-  return mock(async (_url: URL | RequestInfo, _init?: RequestInit) => {
-    return new Response(body, { status, statusText: `HTTP ${status}` });
-  }) as unknown as typeof fetch;
+function mockFetchHttpError(status: number, body = "") {
+  return async (_url: URL | RequestInfo, _init?: RequestInit) =>
+    new Response(body, { status, statusText: `HTTP ${status}` });
 }
 
 /** Build a mock `fetch` that rejects with a network error. */
-function mockFetchNetworkError(message: string): typeof fetch {
-  return mock(
-    async (_url: URL | RequestInfo, _init?: RequestInit): Promise<Response> => {
-      throw new Error(message);
-    },
-  ) as unknown as typeof fetch;
+function mockFetchNetworkError(message: string) {
+  return async (
+    _url: URL | RequestInfo,
+    _init?: RequestInit,
+  ): Promise<Response> => {
+    throw new Error(message);
+  };
 }
 
 /** Build a mock `fetch` that returns a non-JSON body with status 200. */
-function mockFetchBadJson(): typeof fetch {
-  return mock(async (_url: URL | RequestInfo, _init?: RequestInit) => {
-    return new Response("this is not json {{{", {
+function mockFetchBadJson() {
+  return async (_url: URL | RequestInfo, _init?: RequestInit) =>
+    new Response("this is not json {{{", {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-  }) as unknown as typeof fetch;
 }
 
 /** Build a canonical successful OpenRouter response body. */
 function openRouterSuccess(
   content: string,
   model = "anthropic/claude-sonnet-4.5",
-): unknown {
+) {
   return {
     id: "chatcmpl-test",
     model,
@@ -119,7 +128,7 @@ describe("OpenRouterClient — successful responses", () => {
   it("returns ok(ModelResponse) for a well-formed 200 response", async () => {
     const stubFetch = mockFetchOk(openRouterSuccess("Four."));
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete(MINIMAL_REQUEST);
     expect(result.isOk()).toBe(true);
@@ -132,7 +141,7 @@ describe("OpenRouterClient — successful responses", () => {
       openRouterSuccess("Answer", "anthropic/claude-opus-4.5"),
     );
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete({
       ...MINIMAL_REQUEST,
@@ -147,7 +156,7 @@ describe("OpenRouterClient — successful responses", () => {
       openRouterSuccess("This is the response text."),
     );
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete(MINIMAL_REQUEST);
     expect(result._unsafeUnwrap().content).toBe("This is the response text.");
@@ -156,7 +165,7 @@ describe("OpenRouterClient — successful responses", () => {
   it("ModelResponse.usage is populated when the provider returns it", async () => {
     const stubFetch = mockFetchOk(openRouterSuccess("Answer"));
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete(MINIMAL_REQUEST);
     const response = result._unsafeUnwrap();
@@ -174,7 +183,7 @@ describe("OpenRouterClient — successful responses", () => {
     };
     const stubFetch = mockFetchOk(body);
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete(MINIMAL_REQUEST);
     expect(result.isOk()).toBe(true);
@@ -188,7 +197,7 @@ describe("OpenRouterClient — successful responses", () => {
     };
     const stubFetch = mockFetchOk(body);
     const client = new OpenRouterClient(VALID_ENV);
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const result = await client.complete({
       ...MINIMAL_REQUEST,
@@ -208,18 +217,16 @@ describe("OpenRouterClient — request construction", () => {
     let capturedUrl: string | undefined;
     let capturedMethod: string | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (url: URL | RequestInfo, init?: RequestInit) => {
-        capturedUrl = url.toString();
-        capturedMethod = init?.method;
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (url: URL | RequestInfo, init?: RequestInit) => {
+      capturedUrl = url.toString();
+      capturedMethod = init?.method;
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
@@ -232,20 +239,20 @@ describe("OpenRouterClient — request construction", () => {
   it("sends the Authorization header with Bearer prefix", async () => {
     let capturedHeaders: Record<string, string> | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (_url: URL | RequestInfo, init?: RequestInit) => {
-        const h = new Headers(init?.headers as HeadersInit);
-        capturedHeaders = Object.fromEntries(
-          Array.from(h as unknown as Iterable<[string, string]>),
-        );
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      const headers: Record<string, string> = {};
+      h.forEach((value, key) => {
+        headers[key] = value;
+      });
+      capturedHeaders = headers;
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
@@ -256,20 +263,20 @@ describe("OpenRouterClient — request construction", () => {
   it("sends Content-Type: application/json", async () => {
     let capturedHeaders: Record<string, string> | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (_url: URL | RequestInfo, init?: RequestInit) => {
-        const h = new Headers(init?.headers as HeadersInit);
-        capturedHeaders = Object.fromEntries(
-          Array.from(h as unknown as Iterable<[string, string]>),
-        );
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      const headers: Record<string, string> = {};
+      h.forEach((value, key) => {
+        headers[key] = value;
+      });
+      capturedHeaders = headers;
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
@@ -280,20 +287,20 @@ describe("OpenRouterClient — request construction", () => {
   it("sends HTTP-Referer and X-Title attribution headers", async () => {
     let capturedHeaders: Record<string, string> | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (_url: URL | RequestInfo, init?: RequestInit) => {
-        const h = new Headers(init?.headers as HeadersInit);
-        capturedHeaders = Object.fromEntries(
-          Array.from(h as unknown as Iterable<[string, string]>),
-        );
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const h = new Headers(init?.headers);
+      const headers: Record<string, string> = {};
+      h.forEach((value, key) => {
+        headers[key] = value;
+      });
+      capturedHeaders = headers;
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
@@ -305,17 +312,15 @@ describe("OpenRouterClient — request construction", () => {
   it("uses baseUrl override from EvalEnv when constructing the URL", async () => {
     let capturedUrl: string | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (url: URL | RequestInfo, _init?: RequestInit) => {
-        capturedUrl = url.toString();
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (url: URL | RequestInfo) => {
+      capturedUrl = url.toString();
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const customEnv: EvalEnv = {
       apiKey: FAKE_API_KEY,
@@ -329,45 +334,37 @@ describe("OpenRouterClient — request construction", () => {
   });
 
   it("includes model and messages in the request body", async () => {
-    let capturedBody: unknown;
+    let capturedBody: { model?: string; messages?: ChatMessage[] } | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (_url: URL | RequestInfo, init?: RequestInit) => {
-        capturedBody = JSON.parse(init?.body as string);
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      capturedBody = await new Response(init?.body).json();
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
 
-    expect((capturedBody as Record<string, unknown>).model).toBe(
-      "anthropic/claude-sonnet-4.5",
-    );
-    expect(
-      Array.isArray((capturedBody as Record<string, unknown>).messages),
-    ).toBe(true);
+    expect(capturedBody?.model).toBe("anthropic/claude-sonnet-4.5");
+    expect(capturedBody?.messages).toBeInstanceOf(Array);
   });
 
   it("API key does NOT appear in the request body", async () => {
     let capturedBodyStr: string | undefined;
 
-    const stubFetch: typeof fetch = mock(
-      async (_url: URL | RequestInfo, init?: RequestInit) => {
-        capturedBodyStr = init?.body as string;
-        return new Response(JSON.stringify(openRouterSuccess("ok")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      },
-    ) as unknown as typeof fetch;
+    const stubFetch = async (_url: URL | RequestInfo, init?: RequestInit) => {
+      capturedBodyStr = await new Response(init?.body).text();
+      return new Response(JSON.stringify(openRouterSuccess("ok")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
 
-    globalThis.fetch = stubFetch;
+    installFetch(stubFetch);
 
     const client = new OpenRouterClient(VALID_ENV);
     await client.complete(MINIMAL_REQUEST);
@@ -382,7 +379,7 @@ describe("OpenRouterClient — request construction", () => {
 
 describe("OpenRouterClient — network errors", () => {
   it("returns NetworkError when fetch rejects", async () => {
-    globalThis.fetch = mockFetchNetworkError("connection refused");
+    installFetch(mockFetchNetworkError("connection refused"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -393,7 +390,7 @@ describe("OpenRouterClient — network errors", () => {
   });
 
   it("NetworkError message does not contain the API key", async () => {
-    globalThis.fetch = mockFetchNetworkError("ECONNREFUSED");
+    installFetch(mockFetchNetworkError("ECONNREFUSED"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -405,7 +402,7 @@ describe("OpenRouterClient — network errors", () => {
 
 describe("OpenRouterClient — HTTP errors", () => {
   it("returns HttpError for 401 Unauthorized", async () => {
-    globalThis.fetch = mockFetchHttpError(401, "Unauthorized");
+    installFetch(mockFetchHttpError(401, "Unauthorized"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -419,7 +416,7 @@ describe("OpenRouterClient — HTTP errors", () => {
   });
 
   it("returns HttpError for 429 Too Many Requests", async () => {
-    globalThis.fetch = mockFetchHttpError(429, "Rate limited");
+    installFetch(mockFetchHttpError(429, "Rate limited"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -433,7 +430,7 @@ describe("OpenRouterClient — HTTP errors", () => {
   });
 
   it("returns HttpError for 500 Internal Server Error", async () => {
-    globalThis.fetch = mockFetchHttpError(500, "Internal error");
+    installFetch(mockFetchHttpError(500, "Internal error"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -447,7 +444,7 @@ describe("OpenRouterClient — HTTP errors", () => {
   });
 
   it("HttpError message does NOT contain the API key", async () => {
-    globalThis.fetch = mockFetchHttpError(403, "Forbidden");
+    installFetch(mockFetchHttpError(403, "Forbidden"));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -459,7 +456,7 @@ describe("OpenRouterClient — HTTP errors", () => {
 
 describe("OpenRouterClient — parse errors", () => {
   it("returns ParseError when response body is not valid JSON", async () => {
-    globalThis.fetch = mockFetchBadJson();
+    installFetch(mockFetchBadJson());
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -476,7 +473,7 @@ describe("OpenRouterClient — empty response", () => {
       model: "anthropic/claude-sonnet-4.5",
       choices: [],
     };
-    globalThis.fetch = mockFetchOk(body);
+    installFetch(mockFetchOk(body));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -491,7 +488,7 @@ describe("OpenRouterClient — empty response", () => {
       model: "anthropic/claude-sonnet-4.5",
       choices: [{ message: { role: "assistant", content: null } }],
     };
-    globalThis.fetch = mockFetchOk(body);
+    installFetch(mockFetchOk(body));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -505,7 +502,7 @@ describe("OpenRouterClient — empty response", () => {
       model: "anthropic/claude-sonnet-4.5",
       choices: [{ message: { role: "assistant", content: "" } }],
     };
-    globalThis.fetch = mockFetchOk(body);
+    installFetch(mockFetchOk(body));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -523,7 +520,7 @@ describe("OpenRouterClient — inline error in 200 response", () => {
         code: 503,
       },
     };
-    globalThis.fetch = mockFetchOk(body);
+    installFetch(mockFetchOk(body));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -550,9 +547,7 @@ describe("OpenRouterClient — default model matrix models", () => {
 
   for (const modelId of defaultModelIds) {
     it(`accepts model ID "${modelId}" and returns ok`, async () => {
-      globalThis.fetch = mockFetchOk(
-        openRouterSuccess("Response text", modelId),
-      );
+      installFetch(mockFetchOk(openRouterSuccess("Response text", modelId)));
 
       const client = new OpenRouterClient(VALID_ENV);
       const result = await client.complete({
@@ -727,7 +722,7 @@ describe("StubModelClient — ModelClient interface compliance", () => {
 
     const result = stub.complete(MINIMAL_REQUEST);
     // Must be thenable (Promise-like)
-    expect(typeof result.then).toBe("function");
+    expect(result.then).toBeDefined();
 
     const resolved = await result;
     expect(resolved.isOk()).toBe(true);
@@ -761,7 +756,7 @@ describe("StubModelClient — ModelClient interface compliance", () => {
 
 describe("ModelResponse security", () => {
   it("ModelResponse does not contain the API key", async () => {
-    globalThis.fetch = mockFetchOk(openRouterSuccess("The answer is 4."));
+    installFetch(mockFetchOk(openRouterSuccess("The answer is 4.")));
 
     const client = new OpenRouterClient(VALID_ENV);
     const result = await client.complete(MINIMAL_REQUEST);
@@ -772,9 +767,8 @@ describe("ModelResponse security", () => {
   });
 
   it("HttpError body does not contain the API key", async () => {
-    globalThis.fetch = mockFetchHttpError(
-      401,
-      `{"error": "invalid key: ${FAKE_API_KEY}"}`,
+    installFetch(
+      mockFetchHttpError(401, `{"error": "invalid key: ${FAKE_API_KEY}"}`),
     );
 
     const client = new OpenRouterClient(VALID_ENV);

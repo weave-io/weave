@@ -106,11 +106,13 @@
 
 import { basename, join } from "node:path";
 import { logger } from "@weaveio/weave-engine";
-import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   EVAL_RESULTS_REPO_TOKEN_ENV_VAR,
   type RemoteSequenceReader,
 } from "./artifact-bundle.js";
+import { DashboardManifestSchema } from "./report-schema.js";
 import {
   enforcePublishPolicy,
   type PublishBundleRequest,
@@ -286,6 +288,26 @@ export type FetchImpl = (input: Request) => Promise<Response>;
  * Injected in tests to avoid real file-system reads.
  */
 export type FileReader = (path: string) => Promise<string>;
+
+interface GitHubContentsRequestBody {
+  message: string;
+  content: string;
+  branch: string;
+  sha?: string;
+}
+
+const GitHubContentsMetadataSchema = z.object({
+  sha: z.string().min(1).optional(),
+  content: z.string().optional(),
+});
+
+const GitHubCommitResponseSchema = z.object({
+  commit: z
+    .object({
+      sha: z.string().min(1).optional(),
+    })
+    .optional(),
+});
 
 // ---------------------------------------------------------------------------
 // GitHubContentsPublisher
@@ -655,7 +677,7 @@ export class GitHubContentsPublisher
     // Build the API URL — no token in URL
     const apiUrl = `${GITHUB_API_BASE}/repos/${TARGET_REPO}/contents/${remotePath}`;
 
-    const requestBody: Record<string, unknown> = {
+    const requestBody: GitHubContentsRequestBody = {
       message: `chore: publish eval bundle ${remotePath}`,
       content: encodedContent,
       branch: TARGET_BRANCH,
@@ -753,26 +775,33 @@ export class GitHubContentsPublisher
       },
     });
 
+    let response: Response;
     try {
-      const response = await this.fetchImpl(request);
-      if (response.status === 404) {
-        // File does not exist — safe to create
-        return { exists: false, sha: null };
-      }
-      if (!response.ok) {
-        // Non-404 error — treat as "unknown, proceed with create attempt"
-        return { exists: false, sha: null };
-      }
-      // File exists — extract its SHA for mutable updates
-      const body = (await response.json()) as Record<string, unknown>;
-      const sha = body.sha;
-      const resolvedSha =
-        typeof sha === "string" && sha.length > 0 ? sha : null;
-      return { exists: true, sha: resolvedSha };
+      response = await this.fetchImpl(request);
     } catch {
-      // Network or parse failure — proceed without SHA (create attempt)
+      // Network failure — proceed without SHA (create attempt)
       return { exists: false, sha: null };
     }
+    if (response.status === 404) {
+      // File does not exist — safe to create
+      return { exists: false, sha: null };
+    }
+    if (!response.ok) {
+      // Non-404 error — treat as "unknown, proceed with create attempt"
+      return { exists: false, sha: null };
+    }
+
+    const bodyResult = await ResultAsync.fromThrowable(
+      () => response.json(),
+      () => null,
+    )();
+    if (bodyResult.isErr()) return { exists: false, sha: null };
+
+    const body = GitHubContentsMetadataSchema.safeParse(bodyResult.value);
+    if (!body.success) return { exists: false, sha: null };
+
+    // File exists — extract its SHA for mutable updates
+    return { exists: true, sha: body.data.sha ?? null };
   }
 
   // ---------------------------------------------------------------------------
@@ -845,50 +874,36 @@ export class GitHubContentsPublisher
     }
 
     // The GitHub Contents API returns file metadata including a base64-encoded
-    // `content` field.  Decode and parse the manifest JSON.
-    let manifestText: string;
-    try {
-      const body = (await response.json()) as Record<string, unknown>;
-      const rawContent = body.content;
-      if (typeof rawContent !== "string") return [];
-      // GitHub API base64-encodes file content with newlines every 60 chars;
-      // strip whitespace before decoding.
-      const cleanedContent = rawContent.replace(/\s/g, "");
-      manifestText = Buffer.from(cleanedContent, "base64").toString("utf-8");
-    } catch {
-      return [];
-    }
+    // `content` field. Decode and parse the manifest JSON at the owner seam.
+    const bodyResult = await ResultAsync.fromThrowable(
+      () => response.json(),
+      () => null,
+    )();
+    if (bodyResult.isErr()) return [];
 
-    // Parse the manifest JSON and extract run IDs that match the prefix.
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(manifestText);
-    } catch {
-      return [];
-    }
+    const body = GitHubContentsMetadataSchema.safeParse(bodyResult.value);
+    if (!body.success || body.data.content === undefined) return [];
 
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !Array.isArray((parsed as Record<string, unknown>).runs)
-    ) {
-      return [];
-    }
+    // GitHub API base64-encodes file content with newlines every 60 chars;
+    // strip whitespace before decoding.
+    const cleanedContent = body.data.content.replace(/\s/g, "");
+    const manifestText = Buffer.from(cleanedContent, "base64").toString(
+      "utf-8",
+    );
 
-    const runs = (parsed as Record<string, unknown>).runs as unknown[];
-    const matchingIds: string[] = [];
+    const jsonResult = Result.fromThrowable(
+      () => JSON.parse(manifestText),
+      () => null,
+    )();
+    if (jsonResult.isErr()) return [];
+
+    const manifest = DashboardManifestSchema.safeParse(jsonResult.value);
+    if (!manifest.success) return [];
+
     const prefixDash = `${prefix}-`;
-
-    for (const run of runs) {
-      if (typeof run !== "object" || run === null) continue;
-      const runId = (run as Record<string, unknown>).runId;
-      if (typeof runId !== "string") continue;
-      if (runId.startsWith(prefixDash)) {
-        matchingIds.push(runId);
-      }
-    }
-
-    return matchingIds;
+    return manifest.data.runs
+      .map((run) => run.runId)
+      .filter((runId) => runId.startsWith(prefixDash));
   }
 
   // ---------------------------------------------------------------------------
@@ -896,17 +911,15 @@ export class GitHubContentsPublisher
   // ---------------------------------------------------------------------------
 
   private async extractCommitSha(response: Response): Promise<string | null> {
-    try {
-      const body = (await response.json()) as Record<string, unknown>;
-      const commit = body.commit as Record<string, unknown> | undefined;
-      if (commit !== undefined) {
-        const sha = commit.sha;
-        if (typeof sha === "string") return sha;
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    const bodyResult = await ResultAsync.fromThrowable(
+      () => response.json(),
+      () => null,
+    )();
+    if (bodyResult.isErr()) return null;
+
+    const body = GitHubCommitResponseSchema.safeParse(bodyResult.value);
+    if (!body.success) return null;
+    return body.data.commit?.sha ?? null;
   }
 
   // ---------------------------------------------------------------------------

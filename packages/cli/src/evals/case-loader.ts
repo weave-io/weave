@@ -21,7 +21,7 @@
  */
 
 import { resolve } from "node:path";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import {
   EVAL_SUITE_IDS,
   type EvalCase,
@@ -79,6 +79,18 @@ export const KNOWN_AGENTS = new Set([
 // Helpers
 // ---------------------------------------------------------------------------
 
+type FixtureJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | FixtureJsonValue[]
+  | FixtureJsonObject;
+
+interface FixtureJsonObject {
+  readonly [key: string]: FixtureJsonValue;
+}
+
 function zodIssuesToPairs(
   issues: { path: PropertyKey[]; message: string }[],
 ): Array<{ path: string; message: string }> {
@@ -94,25 +106,22 @@ function zodIssuesToPairs(
  */
 function readFixtureFile(
   filePath: string,
-): ResultAsync<unknown, FixtureSchemaError> {
-  return ResultAsync.fromPromise(
-    Bun.file(filePath).json() as Promise<unknown>,
-    (cause) => {
-      const msg = cause instanceof Error ? cause.message : String(cause);
-      if (msg.includes("ENOENT") || msg.includes("No such file")) {
-        return {
-          type: "FixtureFileNotFound" as const,
-          file: filePath,
-          message: `Fixture file not found: ${filePath}`,
-        } satisfies FixtureSchemaError;
-      }
+): ResultAsync<FixtureJsonValue, FixtureSchemaError> {
+  return ResultAsync.fromPromise(Bun.file(filePath).json(), (cause) => {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    if (msg.includes("ENOENT") || msg.includes("No such file")) {
       return {
-        type: "FixtureParseError" as const,
+        type: "FixtureFileNotFound",
         file: filePath,
-        message: `Failed to parse fixture as JSON: ${filePath} — ${msg}`,
+        message: `Fixture file not found: ${filePath}`,
       } satisfies FixtureSchemaError;
-    },
-  );
+    }
+    return {
+      type: "FixtureParseError",
+      file: filePath,
+      message: `Failed to parse fixture as JSON: ${filePath} — ${msg}`,
+    } satisfies FixtureSchemaError;
+  });
 }
 
 /**
@@ -237,7 +246,7 @@ export function loadCaseFile(
     const parsed = EvalCaseSchema.safeParse(raw);
     if (!parsed.success) {
       return err({
-        type: "FixtureValidationFailed" as const,
+        type: "FixtureValidationFailed",
         file: filePath,
         message: `Case fixture schema validation failed: ${filePath}`,
         issues: zodIssuesToPairs(parsed.error.issues),
@@ -276,7 +285,7 @@ export function loadRubricFile(
     const parsed = EvalRubricSchema.safeParse(raw);
     if (!parsed.success) {
       return err({
-        type: "FixtureValidationFailed" as const,
+        type: "FixtureValidationFailed",
         file: filePath,
         message: `Rubric fixture schema validation failed: ${filePath}`,
         issues: zodIssuesToPairs(parsed.error.issues),
@@ -305,9 +314,7 @@ export function loadSuiteCases(
 ): ResultAsync<EvalCase[], FixtureSchemaError> {
   const suiteError = validateKnownSuite(suite);
   if (suiteError !== undefined) {
-    return ResultAsync.fromSafePromise(
-      Promise.resolve([] as EvalCase[]),
-    ).andThen(() => err(suiteError));
+    return errAsync<EvalCase[], FixtureSchemaError>(suiteError);
   }
 
   const casesDir = resolve(evalsRoot, "cases", suite);
@@ -321,22 +328,18 @@ export function loadSuiteCases(
   }
 
   if (fileNames.length === 0) {
-    return ResultAsync.fromSafePromise(Promise.resolve([] as EvalCase[]));
+    return okAsync<EvalCase[], FixtureSchemaError>([]);
   }
 
   const loadAll = fileNames.map((name) =>
     loadCaseFile(resolve(casesDir, name)),
   );
 
-  return ResultAsync.fromSafePromise(Promise.resolve(null)).andThen(() => {
-    // Chain sequentially so the first error surfaces with its file path intact
-    return loadAll.reduce(
-      (acc, loader) => acc.andThen((cases) => loader.map((c) => [...cases, c])),
-      ResultAsync.fromSafePromise(
-        Promise.resolve([] as EvalCase[]),
-      ) as ResultAsync<EvalCase[], FixtureSchemaError>,
-    );
-  });
+  // Chain sequentially so the first error surfaces with its file path intact
+  return loadAll.reduce(
+    (acc, loader) => acc.andThen((cases) => loader.map((c) => [...cases, c])),
+    okAsync<EvalCase[], FixtureSchemaError>([]),
+  );
 }
 
 /**
@@ -351,9 +354,7 @@ export function loadSuiteRubrics(
 ): ResultAsync<EvalRubric[], FixtureSchemaError> {
   const suiteError = validateKnownSuite(suite);
   if (suiteError !== undefined) {
-    return ResultAsync.fromSafePromise(
-      Promise.resolve([] as EvalRubric[]),
-    ).andThen(() => err(suiteError));
+    return errAsync<EvalRubric[], FixtureSchemaError>(suiteError);
   }
 
   const rubricsDir = resolve(evalsRoot, "rubrics", suite);
@@ -367,22 +368,18 @@ export function loadSuiteRubrics(
   }
 
   if (fileNames.length === 0) {
-    return ResultAsync.fromSafePromise(Promise.resolve([] as EvalRubric[]));
+    return okAsync<EvalRubric[], FixtureSchemaError>([]);
   }
 
   const loadAll = fileNames.map((name) =>
     loadRubricFile(resolve(rubricsDir, name)),
   );
 
-  return ResultAsync.fromSafePromise(Promise.resolve(null)).andThen(() => {
-    return loadAll.reduce(
-      (acc, loader) =>
-        acc.andThen((rubrics) => loader.map((r) => [...rubrics, r])),
-      ResultAsync.fromSafePromise(
-        Promise.resolve([] as EvalRubric[]),
-      ) as ResultAsync<EvalRubric[], FixtureSchemaError>,
-    );
-  });
+  return loadAll.reduce(
+    (acc, loader) =>
+      acc.andThen((rubrics) => loader.map((r) => [...rubrics, r])),
+    okAsync<EvalRubric[], FixtureSchemaError>([]),
+  );
 }
 
 // ---------------------------------------------------------------------------

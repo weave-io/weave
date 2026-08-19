@@ -36,7 +36,8 @@
  * `Authorization` header and never reads it back.
  */
 
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { EvalEnv } from "./env.js";
 
 // ---------------------------------------------------------------------------
@@ -189,23 +190,37 @@ export interface ModelClient {
  * Minimal shape of the OpenRouter chat completion response body.
  * Only fields consumed by this client are typed; extras are ignored.
  */
-interface OpenRouterChatCompletionResponse {
-  model?: string;
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-    };
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-  error?: {
-    message?: string;
-    code?: number | string;
-  };
-}
+const OpenRouterChatCompletionResponseSchema = z.object({
+  model: z.string().optional(),
+  choices: z
+    .array(
+      z.object({
+        message: z
+          .object({
+            content: z.string().nullable().optional(),
+          })
+          .optional(),
+      }),
+    )
+    .optional(),
+  usage: z
+    .object({
+      prompt_tokens: z.number().optional(),
+      completion_tokens: z.number().optional(),
+      total_tokens: z.number().optional(),
+    })
+    .optional(),
+  error: z
+    .object({
+      message: z.string().optional(),
+      code: z.union([z.number(), z.string()]).optional(),
+    })
+    .optional(),
+});
+
+type OpenRouterChatCompletionResponse = z.infer<
+  typeof OpenRouterChatCompletionResponseSchema
+>;
 
 // ---------------------------------------------------------------------------
 // OpenRouter client implementation
@@ -255,7 +270,7 @@ export class OpenRouterClient implements ModelClient {
     });
 
     // Build headers. The API key is placed here and nowhere else.
-    const headers: Record<string, string> = {
+    const headers = {
       Authorization: `Bearer ${this.apiKey}`,
       "Content-Type": "application/json",
       // Attribution headers per OpenRouter docs. These are recommended (not
@@ -300,60 +315,86 @@ export class OpenRouterClient implements ModelClient {
       }
 
       return ResultAsync.fromPromise(
-        response.json() as Promise<OpenRouterChatCompletionResponse>,
+        response.json(),
         (cause): ModelClientError => ({
           type: "ParseError",
           message: `Failed to parse OpenRouter response as JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
-      ).andThen((data): ResultAsync<ModelResponse, ModelClientError> => {
-        // OpenRouter may embed an error object inside a 200 response
-        if (data.error !== undefined) {
-          return new ResultAsync(
-            Promise.resolve(
-              err<ModelResponse, ModelClientError>({
-                type: "HttpError",
-                statusCode:
-                  typeof data.error.code === "number" ? data.error.code : 0,
-                message: `OpenRouter error: ${data.error.message ?? "unknown error"}`,
-              }),
-            ),
-          );
-        }
-
-        const content = data.choices?.[0]?.message?.content;
-        if (content === undefined || content === null || content === "") {
-          return new ResultAsync(
-            Promise.resolve(
-              err<ModelResponse, ModelClientError>({
-                type: "EmptyResponse",
+      )
+        .andThen(
+          (
+            raw,
+          ): ResultAsync<
+            OpenRouterChatCompletionResponse,
+            ModelClientError
+          > => {
+            const parsed =
+              OpenRouterChatCompletionResponseSchema.safeParse(raw);
+            if (!parsed.success) {
+              return errAsync<
+                OpenRouterChatCompletionResponse,
+                ModelClientError
+              >({
+                type: "ParseError",
                 message:
-                  "OpenRouter returned a response with no content in choices[0].message.content",
+                  "OpenRouter response did not match the supported response schema.",
+              });
+            }
+            return okAsync<OpenRouterChatCompletionResponse, ModelClientError>(
+              parsed.data,
+            );
+          },
+        )
+        .andThen((data): ResultAsync<ModelResponse, ModelClientError> => {
+          // OpenRouter may embed an error object inside a 200 response
+          if (data.error !== undefined) {
+            return new ResultAsync(
+              Promise.resolve(
+                err<ModelResponse, ModelClientError>({
+                  type: "HttpError",
+                  statusCode: Number.isFinite(Number(data.error.code))
+                    ? Number(data.error.code)
+                    : 0,
+                  message: `OpenRouter error: ${data.error.message ?? "unknown error"}`,
+                }),
+              ),
+            );
+          }
+
+          const content = data.choices?.[0]?.message?.content;
+          if (content === undefined || content === null || content === "") {
+            return new ResultAsync(
+              Promise.resolve(
+                err<ModelResponse, ModelClientError>({
+                  type: "EmptyResponse",
+                  message:
+                    "OpenRouter returned a response with no content in choices[0].message.content",
+                }),
+              ),
+            );
+          }
+
+          const modelId = data.model ?? request.model;
+
+          const usage =
+            data.usage !== undefined
+              ? {
+                  promptTokens: data.usage.prompt_tokens ?? 0,
+                  completionTokens: data.usage.completion_tokens ?? 0,
+                  totalTokens: data.usage.total_tokens ?? 0,
+                }
+              : undefined;
+
+          return new ResultAsync(
+            Promise.resolve(
+              ok<ModelResponse, ModelClientError>({
+                model: modelId,
+                content,
+                usage,
               }),
             ),
           );
-        }
-
-        const modelId = data.model ?? request.model;
-
-        const usage =
-          data.usage !== undefined
-            ? {
-                promptTokens: data.usage.prompt_tokens ?? 0,
-                completionTokens: data.usage.completion_tokens ?? 0,
-                totalTokens: data.usage.total_tokens ?? 0,
-              }
-            : undefined;
-
-        return new ResultAsync(
-          Promise.resolve(
-            ok<ModelResponse, ModelClientError>({
-              model: modelId,
-              content,
-              usage,
-            }),
-          ),
-        );
-      });
+        });
     });
   }
 }

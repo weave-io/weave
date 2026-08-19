@@ -127,8 +127,10 @@ export function assembleCaseEntry(
     required: row.required,
     dryRun: row.dryRun,
     scoredAt: row.scoredAt,
-    ...(explanation !== undefined ? { explanation } : {}),
   };
+  if (explanation !== undefined) {
+    entry.explanation = explanation;
+  }
 
   return entry;
 }
@@ -187,11 +189,11 @@ export function assembleSuiteSummary(
     passedCases,
     failedCases,
     suiteGreen,
-    ...(suiteExplanation !== undefined
-      ? { explanation: suiteExplanation }
-      : {}),
     cases,
   };
+  if (suiteExplanation !== undefined) {
+    candidate.explanation = suiteExplanation;
+  }
 
   const parsed = SuiteSummaryEntrySchema.safeParse(candidate);
   if (!parsed.success) {
@@ -423,7 +425,7 @@ export function assembleModelComparisonManifest(
       ? modelExplanationValidated.data
       : undefined;
 
-    models.push({
+    const model: ModelComparisonEntry = {
       modelId,
       displayName: modelId, // Use modelId as displayName when no model matrix available
       totalCases: stats.total,
@@ -432,10 +434,11 @@ export function assembleModelComparisonManifest(
       passRate,
       perSuitePassRates,
       overallBucket,
-      ...(modelExplanation !== undefined
-        ? { explanation: modelExplanation }
-        : {}),
-    });
+    };
+    if (modelExplanation !== undefined) {
+      model.explanation = modelExplanation;
+    }
+    models.push(model);
   }
 
   // Sort by modelId for deterministic output

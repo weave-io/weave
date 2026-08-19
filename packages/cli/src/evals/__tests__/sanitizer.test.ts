@@ -275,10 +275,11 @@ describe("sanitizeCaseResultSummary", () => {
   });
 
   it("drops unknown top-level fields", () => {
-    // Cast to any to add extra fields simulating future additions
-    const summary = makeCaseResultSummary();
-    (summary as unknown as Record<string, unknown>).unknownField =
-      "should-be-dropped";
+    // Add an extra field to simulate a future runner addition.
+    const summary = {
+      ...makeCaseResultSummary(),
+      unknownField: "should-be-dropped",
+    };
 
     const sanitized = sanitizeCaseResultSummary(summary);
     expect("unknownField" in sanitized).toBe(false);
@@ -528,7 +529,7 @@ describe("dropUnknownFields", () => {
     const result = dropUnknownFields(input, ["safe"]);
     expect("secret" in result).toBe(false);
     expect("rawContent" in result).toBe(false);
-    expect((result as Record<string, unknown>).safe).toBe("value");
+    expect(result.safe).toBe("value");
   });
 
   it("does not mutate the input object", () => {
@@ -569,13 +570,13 @@ describe("assertPublishSafe", () => {
 
   it("returns err for an object with transcript", () => {
     const obj = { transcript: [{ role: "user", content: "hello" }] };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
   });
 
   it("returns err with RawArtifactInPublishOutput when rawArtifact is present", () => {
     const obj = { rawArtifact: { caseId: "test" } };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("RawArtifactInPublishOutput");
@@ -583,7 +584,7 @@ describe("assertPublishSafe", () => {
 
   it("returns err with RawArtifactInPublishOutput when rawArtifacts array is present", () => {
     const obj = { rawArtifacts: [] };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("RawArtifactInPublishOutput");
@@ -599,19 +600,19 @@ describe("assertPublishSafe", () => {
 
   it("returns err for an object with env field", () => {
     const obj = { env: { API_KEY: "secret" } };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
   });
 
   it("returns err for an object with cause field", () => {
     const obj = { cause: new Error("network failure") };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
   });
 
   it("returns err for an object with logTail field", () => {
     const obj = { logTail: ["line 1", "line 2"] };
-    const result = assertPublishSafe(obj as unknown as Record<string, unknown>);
+    const result = assertPublishSafe(obj);
     expect(result.isErr()).toBe(true);
   });
 
@@ -757,18 +758,14 @@ describe("sanitize then assertPublishSafe (round-trip)", () => {
   it("sanitized CaseResultSummary passes assertPublishSafe", () => {
     const summary = makeCaseResultSummary();
     const sanitized = sanitizeCaseResultSummary(summary);
-    const result = assertPublishSafe(
-      sanitized as unknown as Record<string, unknown>,
-    );
+    const result = assertPublishSafe(sanitized);
     expect(result.isOk()).toBe(true);
   });
 
   it("sanitized ScoreRecord passes assertPublishSafe", () => {
     const record = makeNormalizedScoreRecord();
     const sanitized = sanitizeScoreRecord(record);
-    const result = assertPublishSafe(
-      sanitized as unknown as Record<string, unknown>,
-    );
+    const result = assertPublishSafe(sanitized);
     expect(result.isOk()).toBe(true);
   });
 
@@ -813,10 +810,7 @@ describe("SENSITIVE_FIELD_NAMES includes localDiagnostic", () => {
       classification: "scoring-adapter-failure",
       localDiagnostic: "LangChain call failed: timeout after 30s",
     };
-    const result = assertPublishSafe(
-      obj as unknown as Record<string, unknown>,
-      "RawErrorSummary",
-    );
+    const result = assertPublishSafe(obj, "RawErrorSummary");
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("PublishSafetyViolation");
@@ -847,10 +841,7 @@ describe("SENSITIVE_FIELD_NAMES includes localDiagnostic", () => {
       errorType: "ScorerAdapterError",
       classification: "scoring-adapter-failure",
     };
-    const result = assertPublishSafe(
-      obj as unknown as Record<string, unknown>,
-      "RawErrorSummary",
-    );
+    const result = assertPublishSafe(obj, "RawErrorSummary");
     expect(result.isOk()).toBe(true);
   });
 });
@@ -1195,8 +1186,7 @@ describe("buildExplanation", () => {
 
   // Length check fires before pattern check
   it("returns ExplanationTooLong before ExplanationForbiddenPattern when both fail", () => {
-    const paddedRationale =
-      "rationale: some text " + "A".repeat(EXPLANATION_MAX_CHARS);
+    const paddedRationale = `rationale: some text ${"A".repeat(EXPLANATION_MAX_CHARS)}`;
     const result = buildExplanation(
       paddedRationale,
       "operator_note",

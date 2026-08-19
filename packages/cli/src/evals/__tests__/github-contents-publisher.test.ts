@@ -60,7 +60,7 @@ import {
   TARGET_REPO,
   TARGET_RUNS_PREFIX,
 } from "../github-contents-publisher.js";
-import type { EvalBundle, ResultsRepoError } from "../types.js";
+import type { EvalBundle } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -71,6 +71,13 @@ const FIXED_GIT_SHA = "abc123def456abc123def456abc123def456abc1";
 const FIXED_TIMESTAMP = "2026-06-11T12:00:00.000Z";
 const BUNDLE_DIR_NAME = "abc123d-2026-06-11-001";
 const LOCAL_BUNDLE_DIR = `/tmp/eval-bundles/runs/${BUNDLE_DIR_NAME}`;
+
+interface ContentsRequestBody {
+  message: string;
+  content: string;
+  branch: string;
+  sha?: string;
+}
 
 function makeEvalBundle(overrides: Partial<EvalBundle> = {}): EvalBundle {
   return {
@@ -126,24 +133,35 @@ function makeDryRunBundle(): EvalBundle {
   return makeEvalBundle({ dryRun: true });
 }
 
-function makeEnvWithToken(
-  token = FAKE_TOKEN,
-): Record<string, string | undefined> {
+function makeEnvWithToken(token = FAKE_TOKEN) {
   return { [EVAL_RESULTS_REPO_TOKEN_ENV_VAR]: token };
 }
 
-function makeEnvWithoutToken(): Record<string, string | undefined> {
+function makeEnvWithoutToken() {
   return {};
+}
+
+function requireRequest(value: Request | undefined): Request {
+  if (value === undefined) {
+    throw new Error("Expected a captured request");
+  }
+  return value;
+}
+
+function requireContentsBody(
+  value: ContentsRequestBody | null,
+): ContentsRequestBody {
+  if (value === null) {
+    throw new Error("Expected a captured contents request body");
+  }
+  return value;
 }
 
 /**
  * Build a stub fetchImpl that returns a 201 Created response for PUT requests
  * and a 404 response for GET requests (file does not exist — create mode).
  */
-function makeSuccessFetch(): {
-  fetchImpl: FetchImpl;
-  requests: Request[];
-} {
+function makeSuccessFetch() {
   const requests: Request[] = [];
   const fetchImpl: FetchImpl = async (req) => {
     requests.push(req);
@@ -429,7 +447,7 @@ describe("GitHubContentsPublisher — token validation", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("TokenMissing");
   });
 
@@ -446,7 +464,7 @@ describe("GitHubContentsPublisher — token validation", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("TokenMissing");
   });
 
@@ -463,7 +481,7 @@ describe("GitHubContentsPublisher — token validation", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("TokenMissing");
   });
 
@@ -480,7 +498,7 @@ describe("GitHubContentsPublisher — token validation", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as { message: string };
+    const error = result._unsafeUnwrapErr();
     // Message must not contain the actual fake token value
     expect(error.message).not.toContain(FAKE_TOKEN);
     // Message must name the env var (helpful for users) but not its value
@@ -522,7 +540,7 @@ describe("GitHubContentsPublisher — dry-run policy", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("DryRunPublishBlocked");
   });
 
@@ -561,7 +579,7 @@ describe("GitHubContentsPublisher — score file policy", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("NoScoreFilesToPublish");
   });
 });
@@ -673,7 +691,7 @@ describe("GitHubContentsPublisher — public artifact allowlist", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as ResultsRepoError;
+    const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("PublishFailed");
     // Error message must not contain the token
     expect(error.message).not.toContain(FAKE_TOKEN);
@@ -1145,10 +1163,7 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
    * GET for index paths and any first-publish path returns 404.
    * PUT succeeds with 201.
    */
-  function makeExistingRunArtifactFetch(existingRunPath: string): {
-    fetchImpl: FetchImpl;
-    requests: Request[];
-  } {
+  function makeExistingRunArtifactFetch(existingRunPath: string) {
     const requests: Request[] = [];
     const fetchImpl: FetchImpl = async (req) => {
       requests.push(req);
@@ -1185,10 +1200,7 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
    * GET for run artifact paths returns 404.
    * PUT succeeds with 200.
    */
-  function makeExistingIndexFetch(): {
-    fetchImpl: FetchImpl;
-    requests: Request[];
-  } {
+  function makeExistingIndexFetch() {
     const requests: Request[] = [];
     const fetchImpl: FetchImpl = async (req) => {
       requests.push(req);
@@ -1235,10 +1247,10 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
 
     // Must fail because run artifact already exists
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr() as {
-      type: string;
-      message: string;
-    };
+    if (result.isOk()) {
+      throw new Error("expected immutable run artifact publication to fail");
+    }
+    const error = result.error;
     expect(error.type).toBe("PublishFailed");
     // Error message must not contain the token
     expect(error.message).not.toContain(FAKE_TOKEN);
@@ -1322,16 +1334,13 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
     );
     expect(indexPut).toBeDefined();
     if (indexPut === undefined) return;
-    const body = JSON.parse(await indexPut.clone().text()) as Record<
-      string,
-      unknown
-    >;
+    const body: ContentsRequestBody = JSON.parse(await indexPut.clone().text());
     expect(body.sha).toBe("existing-index-sha-xyz789");
   });
 
   it("index file PUT body contains existing SHA (atomic update contract)", async () => {
     const existingIndexSha = "index-blob-sha-123";
-    let capturedBody: Record<string, unknown> | null = null;
+    let capturedBody: ContentsRequestBody | null = null;
     const fetchImpl: FetchImpl = async (req) => {
       if (req.method === "GET") {
         if (req.url.includes("indexes/v1/")) {
@@ -1346,7 +1355,7 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
       }
       if (req.url.includes("indexes/v1/")) {
         // Capture the PUT body for assertion
-        capturedBody = JSON.parse(await req.text()) as Record<string, unknown>;
+        capturedBody = JSON.parse(await req.text());
       }
       return new Response(
         JSON.stringify({ content: {}, commit: { sha: "new-sha" } }),
@@ -1369,16 +1378,14 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
     });
 
     // The PUT body for the index file must include the existing SHA
-    expect(capturedBody).not.toBeNull();
-    if (capturedBody === null) return;
-    const body = capturedBody as Record<string, unknown>;
+    const body = requireContentsBody(capturedBody);
     expect(body.sha).toBe(existingIndexSha);
   });
 
   it("run artifact PUT body does NOT include existing SHA even if one exists (create-only enforcement)", async () => {
     // This test verifies the implementation does not accidentally include a SHA
     // in the PUT body for immutable run artifacts when the file is new (404).
-    let capturedRunBody: Record<string, unknown> | null = null;
+    let capturedRunBody: ContentsRequestBody | null = null;
     const fetchImpl: FetchImpl = async (req) => {
       if (req.method === "GET") {
         return new Response(JSON.stringify({ message: "Not Found" }), {
@@ -1386,10 +1393,7 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
         });
       }
       if (req.url.includes("runs/v1/")) {
-        capturedRunBody = JSON.parse(await req.text()) as Record<
-          string,
-          unknown
-        >;
+        capturedRunBody = JSON.parse(await req.text());
       }
       return new Response(
         JSON.stringify({ content: {}, commit: { sha: "new-sha" } }),
@@ -1410,10 +1414,8 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
     });
 
     // Run artifact PUT body must NOT include a sha field (new file — no SHA for create)
-    expect(capturedRunBody).not.toBeNull();
-    if (capturedRunBody === null) return;
-    const runBody = capturedRunBody as Record<string, unknown>;
-    expect(runBody.sha).toBeUndefined();
+    const body = requireContentsBody(capturedRunBody);
+    expect(body.sha).toBeUndefined();
   });
 });
 
@@ -1677,7 +1679,7 @@ describe("GitHubContentsPublisher — readRemoteRunIds", () => {
     await publisher.readRemoteRunIds("abc123d-2026-06-19", FAKE_TOKEN);
 
     expect(capturedRequests).toHaveLength(1);
-    const req = capturedRequests[0]!;
+    const req = requireRequest(capturedRequests[0]);
     // Token must be in Authorization header ONLY
     expect(req.headers.get("Authorization")).toBe(`Bearer ${FAKE_TOKEN}`);
     // Token must NOT appear in the URL
@@ -1703,7 +1705,7 @@ describe("GitHubContentsPublisher — readRemoteRunIds", () => {
     await publisher.readRemoteRunIds("abc123d-2026-06-19", FAKE_TOKEN);
 
     expect(capturedRequests).toHaveLength(1);
-    const req = capturedRequests[0]!;
+    const req = requireRequest(capturedRequests[0]);
     expect(req.url).toContain("indexes/v1/dashboard-manifest.json");
     expect(req.url).toContain("weave-io/weave-agent-evals");
   });

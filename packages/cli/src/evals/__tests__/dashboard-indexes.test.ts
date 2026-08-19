@@ -31,7 +31,6 @@ import {
   buildScenarioHistories,
   DASHBOARD_MANIFEST_FILE,
   DashboardIndexWriter,
-  DEFAULT_LAST_N,
   generateDashboardIndexes,
   LAST_N_RUNS_FILE,
   LATEST_SNAPSHOT_FILE,
@@ -63,6 +62,13 @@ const TEMP_DIR = tmpdir();
 let _counter = 0;
 function uid(): string {
   return String(Date.now()) + String(++_counter);
+}
+
+function requireFixtureValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) {
+    throw new Error(`Missing fixture value: ${label}`);
+  }
+  return value;
 }
 
 const FIXED_UPDATED_AT = "2026-01-20T10:00:00.000Z";
@@ -242,7 +248,10 @@ describe("generateDashboardIndexes — single run", () => {
       singleRun(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const entry = indexes.dashboardManifest.runs[0]!;
+    const entry = requireFixtureValue(
+      indexes.dashboardManifest.runs[0],
+      "dashboard manifest run",
+    );
     // Public consumer paths MUST include the remote layout version segment v1
     expect(entry.bundleReportPath).toBe(`runs/v1/${RUN_ID}/public-report.json`);
     expect(entry.bundleReportPath).toMatch(/^runs\/v1\//);
@@ -258,7 +267,10 @@ describe("generateDashboardIndexes — single run", () => {
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
     expect(indexes.suiteHistories.has("loom-routing")).toBe(true);
-    const history = indexes.suiteHistories.get("loom-routing")!;
+    const history = requireFixtureValue(
+      indexes.suiteHistories.get("loom-routing"),
+      "loom-routing suite history",
+    );
     expect(history.history).toHaveLength(1);
   });
 
@@ -267,8 +279,14 @@ describe("generateDashboardIndexes — single run", () => {
       singleRun(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const history = indexes.suiteHistories.get("loom-routing")!;
-    const point = history.history[0]!;
+    const history = requireFixtureValue(
+      indexes.suiteHistories.get("loom-routing"),
+      "loom-routing suite history",
+    );
+    const point = requireFixtureValue(
+      history.history[0],
+      "suite history point",
+    );
     expect(point.runId).toBe(RUN_ID);
     expect(point.assembledAt).toBe(ASSEMBLED_AT);
   });
@@ -286,7 +304,10 @@ describe("generateDashboardIndexes — single run", () => {
       singleRun(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const comparison = indexes.modelComparisons.get(RUN_ID)!;
+    const comparison = requireFixtureValue(
+      indexes.modelComparisons.get(RUN_ID),
+      "model comparison",
+    );
     const modelIds = comparison.models.map((m) => m.modelId);
     const sorted = [...modelIds].sort();
     expect(modelIds).toEqual(sorted);
@@ -351,7 +372,10 @@ describe("generateDashboardIndexes — multiple runs ordering", () => {
     );
     // Each entry must be >= the next (newest-first)
     for (let i = 0; i < assembledAts.length - 1; i++) {
-      expect(assembledAts[i]! >= assembledAts[i + 1]!).toBe(true);
+      expect(
+        requireFixtureValue(assembledAts[i], "assembled timestamp") >=
+          requireFixtureValue(assembledAts[i + 1], "next assembled timestamp"),
+      ).toBe(true);
     }
   });
 
@@ -378,11 +402,17 @@ describe("generateDashboardIndexes — multiple runs ordering", () => {
       threeRuns(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const history = indexes.suiteHistories.get("loom-routing")!;
+    const history = requireFixtureValue(
+      indexes.suiteHistories.get("loom-routing"),
+      "loom-routing suite history",
+    );
     const assembledAts = history.history.map((p) => p.assembledAt);
     // Each entry must be <= the next (oldest-first)
     for (let i = 0; i < assembledAts.length - 1; i++) {
-      expect(assembledAts[i]! <= assembledAts[i + 1]!).toBe(true);
+      expect(
+        requireFixtureValue(assembledAts[i], "assembled timestamp") <=
+          requireFixtureValue(assembledAts[i + 1], "next assembled timestamp"),
+      ).toBe(true);
     }
   });
 
@@ -391,7 +421,10 @@ describe("generateDashboardIndexes — multiple runs ordering", () => {
       threeRuns(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const history = indexes.suiteHistories.get("loom-routing")!;
+    const history = requireFixtureValue(
+      indexes.suiteHistories.get("loom-routing"),
+      "loom-routing suite history",
+    );
     expect(history.history).toHaveLength(3);
   });
 
@@ -411,7 +444,10 @@ describe("generateDashboardIndexes — multiple runs ordering", () => {
     )._unsafeUnwrap();
     const assembledAts = indexes.lastNRuns.runs.map((r) => r.assembledAt);
     for (let i = 0; i < assembledAts.length - 1; i++) {
-      expect(assembledAts[i]! >= assembledAts[i + 1]!).toBe(true);
+      expect(
+        requireFixtureValue(assembledAts[i], "assembled timestamp") >=
+          requireFixtureValue(assembledAts[i + 1], "next assembled timestamp"),
+      ).toBe(true);
     }
   });
 
@@ -580,7 +616,10 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
       multiSuiteRuns(),
       FIXED_UPDATED_AT,
     )._unsafeUnwrap();
-    const comparison = indexes.modelComparisons.get("abc1234-2026-01-15-001")!;
+    const comparison = requireFixtureValue(
+      indexes.modelComparisons.get("abc1234-2026-01-15-001"),
+      "model comparison",
+    );
     const claudeEntry = comparison.models.find(
       (m) => m.modelId === "anthropic/claude-sonnet-4.5",
     );
@@ -1284,7 +1323,10 @@ describe("DashboardIndexWriter.rebuildFromRuns", () => {
     );
     // Must be oldest-first
     for (let i = 0; i < assembledAts.length - 1; i++) {
-      expect(assembledAts[i]! <= assembledAts[i + 1]!).toBe(true);
+      expect(
+        requireFixtureValue(assembledAts[i], "assembled timestamp") <=
+          requireFixtureValue(assembledAts[i + 1], "next assembled timestamp"),
+      ).toBe(true);
     }
   });
 });
@@ -1366,7 +1408,7 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
     expect(h.schemaVersion).toBe(SCENARIO_HISTORY_SCHEMA_VERSION);
   });
 
@@ -1375,7 +1417,7 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
     expect(h.suite).toBe(SUITE);
   });
 
@@ -1384,7 +1426,7 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
     expect(h.updatedAt).toBe(FIXED_UPDATED_AT);
   });
 
@@ -1393,9 +1435,11 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
     expect(h.scenarios).toHaveLength(1);
-    expect(h.scenarios[0]!.caseId).toBe("route-to-shuttle");
+    expect(requireFixtureValue(h.scenarios[0], "scenario").caseId).toBe(
+      "route-to-shuttle",
+    );
   });
 
   it("scenario entry title defaults to caseId", () => {
@@ -1403,8 +1447,10 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
-    expect(h.scenarios[0]!.title).toBe("route-to-shuttle");
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
+    expect(requireFixtureValue(h.scenarios[0], "scenario").title).toBe(
+      "route-to-shuttle",
+    );
   });
 
   it("scenario entry lastRuns has one entry for the single run", () => {
@@ -1412,8 +1458,8 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
-    const scenario = h.scenarios[0]!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
+    const scenario = requireFixtureValue(h.scenarios[0], "scenario");
     expect(scenario.lastRuns).toHaveLength(1);
   });
 
@@ -1422,8 +1468,11 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
-    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
+    const runEntry = requireFixtureValue(
+      requireFixtureValue(h.scenarios[0], "scenario").lastRuns[0],
+      "scenario run",
+    );
     expect(runEntry.runId).toBe(RUN_ID);
     expect(runEntry.assembledAt).toBe(ASSEMBLED_AT);
   });
@@ -1433,8 +1482,11 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
-    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
+    const runEntry = requireFixtureValue(
+      requireFixtureValue(h.scenarios[0], "scenario").lastRuns[0],
+      "scenario run",
+    );
     expect(runEntry.status).toBe("pass");
     expect(runEntry.passed).toBe(true);
   });
@@ -1444,8 +1496,11 @@ describe("buildScenarioHistories — single run, two models", () => {
       singleRunTwoModels(),
       FIXED_UPDATED_AT,
     );
-    const h = histories.get(SUITE)!;
-    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    const h = requireFixtureValue(histories.get(SUITE), "scenario history");
+    const runEntry = requireFixtureValue(
+      requireFixtureValue(h.scenarios[0], "scenario").lastRuns[0],
+      "scenario run",
+    );
     expect(runEntry.totalModels).toBe(2);
     expect(runEntry.passedModels).toBe(2);
     expect(runEntry.failedModels).toBe(0);
@@ -1516,7 +1571,14 @@ describe("buildScenarioHistories — aggregation status rules", () => {
       [{ passed: false }, { passed: false }],
     );
     const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
-    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    const entry = requireFixtureValue(
+      requireFixtureValue(
+        requireFixtureValue(histories.get(SUITE), "scenario history")
+          .scenarios[0],
+        "scenario",
+      ).lastRuns[0],
+      "scenario run",
+    );
     expect(entry.status).toBe("fail");
     expect(entry.passed).toBe(false);
     expect(entry.passedModels).toBe(0);
@@ -1532,7 +1594,14 @@ describe("buildScenarioHistories — aggregation status rules", () => {
       [{ passed: true }, { passed: false }, { passed: true }],
     );
     const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
-    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    const entry = requireFixtureValue(
+      requireFixtureValue(
+        requireFixtureValue(histories.get(SUITE), "scenario history")
+          .scenarios[0],
+        "scenario",
+      ).lastRuns[0],
+      "scenario run",
+    );
     expect(entry.status).toBe("partial");
     expect(entry.passed).toBe(false);
     expect(entry.passedModels).toBe(2);
@@ -1550,7 +1619,14 @@ describe("buildScenarioHistories — aggregation status rules", () => {
       ],
     );
     const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
-    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    const entry = requireFixtureValue(
+      requireFixtureValue(
+        requireFixtureValue(histories.get(SUITE), "scenario history")
+          .scenarios[0],
+        "scenario",
+      ).lastRuns[0],
+      "scenario run",
+    );
     expect(entry.status).toBe("skip");
     expect(entry.passed).toBe(false);
     expect(entry.totalModels).toBe(0);
@@ -1565,7 +1641,14 @@ describe("buildScenarioHistories — aggregation status rules", () => {
       [{ passed: false, dryRun: false, scoreBucket: "skip" }],
     );
     const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
-    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    const entry = requireFixtureValue(
+      requireFixtureValue(
+        requireFixtureValue(histories.get(SUITE), "scenario history")
+          .scenarios[0],
+        "scenario",
+      ).lastRuns[0],
+      "scenario run",
+    );
     expect(entry.status).toBe("skip");
     expect(entry.totalModels).toBe(0);
     expect(entry.skippedModels).toBe(1);
@@ -1630,12 +1713,22 @@ describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
       makeSimpleRun("r3", "2026-01-15T12:00:00.000Z", true),
     ];
     const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
-    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    const scenario = requireFixtureValue(
+      requireFixtureValue(histories.get(SUITE), "scenario history")
+        .scenarios[0],
+      "scenario",
+    );
     expect(scenario.lastRuns).toHaveLength(3);
     // Oldest-first: r1, r2, r3
-    expect(scenario.lastRuns[0]!.runId).toBe("r1");
-    expect(scenario.lastRuns[1]!.runId).toBe("r2");
-    expect(scenario.lastRuns[2]!.runId).toBe("r3");
+    expect(
+      requireFixtureValue(scenario.lastRuns[0], "scenario run").runId,
+    ).toBe("r1");
+    expect(
+      requireFixtureValue(scenario.lastRuns[1], "scenario run").runId,
+    ).toBe("r2");
+    expect(
+      requireFixtureValue(scenario.lastRuns[2], "scenario run").runId,
+    ).toBe("r3");
   });
 
   it("lastRuns is capped at SCENARIO_HISTORY_MAX_RUNS (10)", () => {
@@ -1649,7 +1742,11 @@ describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
       );
     });
     const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
-    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    const scenario = requireFixtureValue(
+      requireFixtureValue(histories.get(SUITE), "scenario history")
+        .scenarios[0],
+      "scenario",
+    );
     expect(scenario.lastRuns).toHaveLength(SCENARIO_HISTORY_MAX_RUNS);
   });
 
@@ -1659,10 +1756,18 @@ describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
       return makeSimpleRun(`r${i + 1}`, `2026-01-${day}T12:00:00.000Z`, true);
     });
     const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
-    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    const scenario = requireFixtureValue(
+      requireFixtureValue(histories.get(SUITE), "scenario history")
+        .scenarios[0],
+      "scenario",
+    );
     // After capping at 10, runs r3..r12 (the last 10) should remain
-    expect(scenario.lastRuns[0]!.runId).toBe("r3");
-    expect(scenario.lastRuns[9]!.runId).toBe("r12");
+    expect(
+      requireFixtureValue(scenario.lastRuns[0], "scenario run").runId,
+    ).toBe("r3");
+    expect(
+      requireFixtureValue(scenario.lastRuns[9], "scenario run").runId,
+    ).toBe("r12");
   });
 });
 
@@ -1714,7 +1819,11 @@ describe("buildScenarioHistories — description from explanation", () => {
       },
     ];
     const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
-    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    const scenario = requireFixtureValue(
+      requireFixtureValue(histories.get(SUITE), "scenario history")
+        .scenarios[0],
+      "scenario",
+    );
     expect(scenario.description).toBeUndefined();
   });
 
@@ -1766,19 +1875,31 @@ describe("buildScenarioHistories — description from explanation", () => {
       },
     ];
     const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
-    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    const scenario = requireFixtureValue(
+      requireFixtureValue(histories.get(SUITE), "scenario history")
+        .scenarios[0],
+      "scenario",
+    );
     expect(scenario.description).toBe("Routing matched the expected agent.");
   });
 
   it("description is updated from the newest non-empty explanation.text", () => {
     const oldBundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
-    oldBundle.suiteSummaries[0]!.cases[0]!.explanation = {
+    requireFixtureValue(
+      requireFixtureValue(oldBundle.suiteSummaries[0], "old suite summary")
+        .cases[0],
+      "old case",
+    ).explanation = {
       text: "Older explanation.",
       source: "score_bucket_label",
     };
 
     const newBundle = makeBundle({ assembledAt: "2026-01-16T12:00:00.000Z" });
-    newBundle.suiteSummaries[0]!.cases[0]!.explanation = {
+    requireFixtureValue(
+      requireFixtureValue(newBundle.suiteSummaries[0], "new suite summary")
+        .cases[0],
+      "new case",
+    ).explanation = {
       text: "Newer explanation.",
       source: "score_bucket_label",
     };
@@ -1791,9 +1912,16 @@ describe("buildScenarioHistories — description from explanation", () => {
       FIXED_UPDATED_AT,
     );
 
-    const scenario = histories
-      .get(SUITE)!
-      .scenarios.find((entry) => entry.caseId === "route-to-shuttle")!;
+    const scenarioHistory = requireFixtureValue(
+      histories.get(SUITE),
+      "scenario history",
+    );
+    const scenario = requireFixtureValue(
+      scenarioHistory.scenarios.find(
+        (entry) => entry.caseId === "route-to-shuttle",
+      ),
+      "route-to-shuttle scenario",
+    );
     expect(scenario.description).toBe("Newer explanation.");
   });
 });
@@ -1860,13 +1988,34 @@ describe("buildScenarioHistories — multi-suite", () => {
     expect(histories.has("loom-routing")).toBe(true);
     expect(histories.has("tapestry-execution")).toBe(true);
 
-    const loom = histories.get("loom-routing")!;
-    expect(loom.scenarios[0]!.caseId).toBe("loom-case");
-    expect(loom.scenarios[0]!.lastRuns[0]!.status).toBe("pass");
+    const loom = requireFixtureValue(
+      histories.get("loom-routing"),
+      "loom-routing scenario history",
+    );
+    expect(requireFixtureValue(loom.scenarios[0], "loom scenario").caseId).toBe(
+      "loom-case",
+    );
+    expect(
+      requireFixtureValue(
+        requireFixtureValue(loom.scenarios[0], "loom scenario").lastRuns[0],
+        "loom scenario run",
+      ).status,
+    ).toBe("pass");
 
-    const tapestry = histories.get("tapestry-execution")!;
-    expect(tapestry.scenarios[0]!.caseId).toBe("tapestry-case");
-    expect(tapestry.scenarios[0]!.lastRuns[0]!.status).toBe("fail");
+    const tapestry = requireFixtureValue(
+      histories.get("tapestry-execution"),
+      "tapestry-execution scenario history",
+    );
+    expect(
+      requireFixtureValue(tapestry.scenarios[0], "tapestry scenario").caseId,
+    ).toBe("tapestry-case");
+    expect(
+      requireFixtureValue(
+        requireFixtureValue(tapestry.scenarios[0], "tapestry scenario")
+          .lastRuns[0],
+        "tapestry scenario run",
+      ).status,
+    ).toBe("fail");
   });
 });
 
@@ -2077,7 +2226,10 @@ describe("DashboardIndexWriter.rebuildFromRuns — scenario-history files", () =
     );
     // Must be oldest-first
     for (let i = 0; i < assembledAts.length - 1; i++) {
-      expect(assembledAts[i]! <= assembledAts[i + 1]!).toBe(true);
+      expect(
+        requireFixtureValue(assembledAts[i], "assembled timestamp") <=
+          requireFixtureValue(assembledAts[i + 1], "next assembled timestamp"),
+      ).toBe(true);
     }
   });
 

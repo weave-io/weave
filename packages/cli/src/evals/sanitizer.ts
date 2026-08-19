@@ -155,6 +155,18 @@ export const SENSITIVE_FIELD_NAMES = new Set<string>([
 // Sanitized run summary
 // ---------------------------------------------------------------------------
 
+type SanitizerJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | SanitizerJsonValue[]
+  | SanitizerJsonObject;
+
+interface SanitizerJsonObject {
+  [key: string]: SanitizerJsonValue;
+}
+
 /**
  * Allowlisted shape of a sanitized per-case run summary.
  *
@@ -212,10 +224,7 @@ export function sanitizeCaseResultSummary(
   summary: CaseResultSummary,
 ): SanitizedCaseResultSummary {
   // Build dimension scores allowlist projection (score + applicable only)
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: {
       score: summary.dimensionScores.routingCorrectness.score,
       applicable: summary.dimensionScores.routingCorrectness.applicable,
@@ -232,11 +241,11 @@ export function sanitizeCaseResultSummary(
       score: summary.dimensionScores.rationaleQuality.score,
       applicable: summary.dimensionScores.rationaleQuality.applicable,
     },
-  };
+  } satisfies SanitizedCaseResultSummary["dimensionScores"];
 
   // Explicit field-by-field construction (allowlist pattern):
   // Unknown fields from the input are simply not included here.
-  return {
+  const sanitized = {
     caseId: summary.caseId,
     modelId: summary.modelId,
     suite: summary.suite,
@@ -246,16 +255,19 @@ export function sanitizeCaseResultSummary(
     dimensionScores,
     scoredAt: summary.scoredAt,
     dryRun: summary.dryRun,
-    // publicExplanation is allowlisted: it contains only bounded structured-signal
-    // text with no raw model output, rationale, or transcript content
-    ...(summary.publicExplanation !== undefined
-      ? {
-          publicExplanation: {
-            text: summary.publicExplanation.text,
-            source: summary.publicExplanation.source,
-          },
-        }
-      : {}),
+  };
+  if (summary.publicExplanation === undefined) {
+    return sanitized;
+  }
+
+  // publicExplanation is allowlisted: it contains only bounded structured-signal
+  // text with no raw model output, rationale, or transcript content.
+  return {
+    ...sanitized,
+    publicExplanation: {
+      text: summary.publicExplanation.text,
+      source: summary.publicExplanation.source,
+    },
   };
 }
 
@@ -294,10 +306,7 @@ export interface SanitizedScoreRecord {
 export function sanitizeScoreRecord(
   record: NormalizedScoreRecord,
 ): SanitizedScoreRecord {
-  const dimensions: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensions = {
     routingCorrectness: {
       score: record.dimensions.routingCorrectness.score,
       applicable: record.dimensions.routingCorrectness.applicable,
@@ -314,7 +323,7 @@ export function sanitizeScoreRecord(
       score: record.dimensions.rationaleQuality.score,
       applicable: record.dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies SanitizedScoreRecord["dimensions"];
 
   return {
     caseId: record.caseId,
@@ -388,14 +397,16 @@ export function sanitizeProvenanceRecord(
  * @param manifest - Raw provenance manifest.
  * @returns Sanitized publishable manifest.
  */
+export interface SanitizedProvenanceManifest {
+  readonly version: number;
+  readonly producedAt: string;
+  readonly gitSha: string;
+  readonly records: SanitizedProvenanceRecord[];
+}
+
 export function sanitizeProvenanceManifest(
   manifest: PromptProvenanceManifest,
-): {
-  version: number;
-  producedAt: string;
-  gitSha: string;
-  records: SanitizedProvenanceRecord[];
-} {
+): SanitizedProvenanceManifest {
   return {
     version: manifest.version,
     producedAt: manifest.producedAt,
@@ -422,18 +433,16 @@ export function sanitizeProvenanceManifest(
  * @param allowedKeys - The set of permitted top-level key names.
  * @returns A new object with only the allowlisted keys present.
  */
-export function dropUnknownFields<T extends object>(
-  input: T,
+export function dropUnknownFields(
+  input: SanitizerJsonObject,
   allowedKeys: ReadonlyArray<string>,
-): Partial<T> {
+): SanitizerJsonObject {
   const allowedSet = new Set(allowedKeys);
-  const output: Partial<T> = {};
+  const output: SanitizerJsonObject = {};
 
-  for (const key of Object.keys(input)) {
+  for (const [key, value] of Object.entries(input)) {
     if (allowedSet.has(key)) {
-      (output as Record<string, unknown>)[key] = (
-        input as Record<string, unknown>
-      )[key];
+      output[key] = value;
     }
   }
 
@@ -459,10 +468,10 @@ export function dropUnknownFields<T extends object>(
  * @param context - Optional description of what is being checked (for error messages).
  * @returns `ok(undefined)` when safe; `err(SanitizerError)` when a violation is found.
  */
-export function assertPublishSafe(
-  obj: Record<string, unknown>,
+export function assertPublishSafe<T extends object>(
+  obj: T,
   context = "object",
-): Result<undefined, SanitizerError> {
+): Result<null, SanitizerError> {
   // Check for rawArtifact specifically (separate error type for clarity)
   if ("rawArtifact" in obj || "rawArtifacts" in obj) {
     const field = "rawArtifact" in obj ? "rawArtifact" : "rawArtifacts";
@@ -489,7 +498,7 @@ export function assertPublishSafe(
     }
   }
 
-  return ok(undefined);
+  return ok(null);
 }
 
 /**
@@ -506,7 +515,7 @@ export function assertPublishSafe(
 export function assertJsonPublishSafe(
   json: string,
   context = "JSON output",
-): Result<undefined, SanitizerError> {
+): Result<null, SanitizerError> {
   for (const field of SENSITIVE_FIELD_NAMES) {
     // Search for the field name as a JSON key: `"fieldName":` or `"fieldName" :`
     if (json.includes(`"${field}"`)) {
@@ -520,7 +529,7 @@ export function assertJsonPublishSafe(
     }
   }
 
-  return ok(undefined);
+  return ok(null);
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +573,7 @@ export const FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS = new Set<string>([
  */
 export function truncateExplanation(text: string): string {
   if (text.length <= EXPLANATION_MAX_CHARS) return text;
-  return text.slice(0, EXPLANATION_MAX_CHARS - 1) + "…";
+  return `${text.slice(0, EXPLANATION_MAX_CHARS - 1)}…`;
 }
 
 /**
@@ -659,7 +668,7 @@ export function buildExplanation(
 export function assertExplanationSafe(
   text: string,
   context = "explanation field",
-): Result<undefined, ReportSchemaError> {
+): Result<null, ReportSchemaError> {
   if (text.length > EXPLANATION_MAX_CHARS) {
     return err({
       type: "ExplanationTooLong",
@@ -683,5 +692,5 @@ export function assertExplanationSafe(
     }
   }
 
-  return ok(undefined);
+  return ok(null);
 }

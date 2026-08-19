@@ -59,7 +59,6 @@ import {
   assembleModelComparisonManifest,
   assemblePublicReportBundle,
   assembleSuiteSummary,
-  buildDashboardEntry,
 } from "../report-bundle.js";
 import { StubResultsRepoPublisher } from "../results-repo.js";
 import { assertJsonPublishSafe } from "../sanitizer.js";
@@ -70,7 +69,6 @@ import type {
   PromptProvenanceManifest,
   PromptProvenanceRecord,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +80,13 @@ const TEMP_DIR = tmpdir();
 let _counter = 0;
 function uid(): string {
   return String(Date.now()) + String(++_counter);
+}
+
+function requireValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) {
+    throw new Error(`Missing expected test value: ${label}`);
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,15 +102,12 @@ function makeCaseResult(
   modelId = "anthropic/claude-sonnet-4.5",
   passed = true,
 ): CaseResult {
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: passed ? 1.0 : 0.0, applicable: true },
     delegationCorrectness: { score: 1.0, applicable: false },
     executionCompleteness: { score: 1.0, applicable: false },
     rationaleQuality: { score: 0.8, applicable: true },
-  };
+  } satisfies CaseResult["summary"]["dimensionScores"];
 
   return {
     summary: {
@@ -166,7 +168,7 @@ function makeProvenanceManifest(): PromptProvenanceManifest {
   };
 }
 
-function makeEnvWithToken(): Record<string, string | undefined> {
+function makeEnvWithToken() {
   return { [EVAL_RESULTS_REPO_TOKEN_ENV_VAR]: "test-token-value" };
 }
 
@@ -627,7 +629,7 @@ describe("assemblePromptHashRecords", () => {
     expect(hash?.hash).toBe("a".repeat(64));
     expect(hash?.byteLength).toBe(4096);
     expect(hash?.charLength).toBe(4000);
-    expect(typeof hash?.summary).toBe("string");
+    expect(hash?.summary).toBeDefined();
   });
 
   it("records contain no raw prompt text", () => {
@@ -1391,7 +1393,6 @@ describe("ArtifactBundleWriter — immutable runs/ layout", () => {
 
     expect(result.isOk()).toBe(true);
     const { runId } = result._unsafeUnwrap();
-    expect(typeof runId).toBe("string");
     expect(runId.length).toBeGreaterThan(0);
     // Format: <sha7>-<YYYY-MM-DD>-<NNN>
     expect(runId).toMatch(/^[a-f0-9]{7}-\d{4}-\d{2}-\d{2}-\d{3}$/);
@@ -1421,7 +1422,7 @@ describe("ArtifactBundleWriter — immutable runs/ layout", () => {
 
     const opts = {
       runnerResults: [makeRunnerResult()],
-      provenanceManifest: null as null,
+      provenanceManifest: null,
       gitSha: FIXED_GIT_SHA,
       assembledAt: FIXED_TIMESTAMP,
       mode: "local" as const,
@@ -1478,7 +1479,6 @@ describe("ArtifactBundleWriter — immutable runs/ layout", () => {
     const content = await Bun.file(indexFile).json();
 
     // MANDATORY: public bundle-index.json must carry schemaVersion for compatibility checks
-    expect(typeof content.schemaVersion).toBe("number");
     expect(content.schemaVersion).toBe(1);
 
     // Must NOT carry the old internal `version` field at the top level
@@ -1542,8 +1542,8 @@ describe("ArtifactBundleWriter — immutable runs/ layout", () => {
     const content = await Bun.file(indexFile).json();
 
     // publicFiles must be a flat array of string file names, not nested objects
-    for (const entry of content.publicFiles as unknown[]) {
-      expect(typeof entry).toBe("string");
+    for (const entry of content.publicFiles) {
+      expect(entry).toEqual(expect.any(String));
     }
 
     // No internal fields: scoreFiles or provenanceRef must not appear in bundle-index.json
@@ -1696,9 +1696,7 @@ describe("ArtifactBundleWriter — public-report.json", () => {
     );
     if (!reportFile) throw new Error("public-report.json not written");
     const content = await Bun.file(reportFile).json();
-    expect(typeof content.schemaVersion).toBe("number");
     expect(content.schemaVersion).toBeGreaterThan(0);
-    expect(typeof content.gitSha).toBe("string");
     expect(content.gitSha).toBe(FIXED_GIT_SHA);
   });
 
@@ -2013,7 +2011,7 @@ describe("ArtifactBundleWriter — generateIndexes option", () => {
 
     const opts = {
       runnerResults: [makeRunnerResult()],
-      provenanceManifest: null as null,
+      provenanceManifest: null,
       gitSha: FIXED_GIT_SHA,
       assembledAt: FIXED_TIMESTAMP,
       mode: "local" as const,
@@ -2076,13 +2074,15 @@ describe("publicExplanation threading through artifact bundle assembly", () => {
       false,
     );
     expect(scoreFile.results).toHaveLength(1);
-    const row = scoreFile.results[0];
-    expect(row).toBeDefined();
-    expect(row!.publicExplanation).toBeDefined();
-    expect(row!.publicExplanation!.text).toBe(
+    const row = requireValue(scoreFile.results[0], "score file row");
+    expect(row.publicExplanation).toBeDefined();
+    if (row.publicExplanation === undefined) {
+      throw new Error("expected public explanation on score row");
+    }
+    expect(row.publicExplanation.text).toBe(
       "required routing case passed; dimensions: routingCorrectness, rationaleQuality",
     );
-    expect(row!.publicExplanation!.source).toBe("structured_signal");
+    expect(row.publicExplanation.source).toBe("structured_signal");
   });
 
   it("assembleScoreFile result rows without publicExplanation have no explanation field", () => {
@@ -2122,9 +2122,8 @@ describe("publicExplanation threading through artifact bundle assembly", () => {
       FIXED_TIMESTAMP,
       false,
     );
-    const row = scoreFile.results[0];
-    expect(row).toBeDefined();
-    expect(row!.publicExplanation).toBeUndefined();
+    const row = requireValue(scoreFile.results[0], "score file row");
+    expect(row.publicExplanation).toBeUndefined();
   });
 
   it("publicExplanation is preserved in aggregateScoreFile for multi-model runs", () => {
@@ -2175,10 +2174,16 @@ describe("publicExplanation threading through artifact bundle assembly", () => {
       false,
     );
     expect(scoreFile.results).toHaveLength(2);
-    const row1 = scoreFile.results.find((r) => r.modelId === "model-a");
-    const row2 = scoreFile.results.find((r) => r.modelId === "model-b");
-    expect(row1!.publicExplanation?.text).toContain("passed");
-    expect(row2!.publicExplanation?.text).toContain("failed");
+    const row1 = requireValue(
+      scoreFile.results.find((r) => r.modelId === "model-a"),
+      "model-a score row",
+    );
+    const row2 = requireValue(
+      scoreFile.results.find((r) => r.modelId === "model-b"),
+      "model-b score row",
+    );
+    expect(row1.publicExplanation?.text).toContain("passed");
+    expect(row2.publicExplanation?.text).toContain("failed");
   });
 
   it("publicExplanation text never contains forbidden patterns in assembled score file", () => {
@@ -2221,9 +2226,6 @@ describe("publicExplanation threading through artifact bundle assembly", () => {
       FIXED_TIMESTAMP,
       false,
     );
-    const row = scoreFile.results[0];
-    const text = row?.publicExplanation?.text ?? "";
-
     // Verify JSON serialization of the score file does not contain forbidden patterns
     const json = JSON.stringify(scoreFile);
     const safetyCheck = assertJsonPublishSafe(
@@ -2278,9 +2280,8 @@ describe("publicExplanation threading through artifact bundle assembly", () => {
     expect(bundleResult.isOk()).toBe(true);
     const bundle = bundleResult._unsafeUnwrap();
     expect(bundle.scoreFiles).toHaveLength(1);
-    const sf = bundle.scoreFiles[0];
-    expect(sf).toBeDefined();
-    const row = sf!.results[0];
+    const sf = requireValue(bundle.scoreFiles[0], "bundle score file");
+    const row = sf.results[0];
     expect(row?.publicExplanation).toBeDefined();
     expect(row?.publicExplanation?.text).toBe(
       "required routing case passed; dimensions: routingCorrectness",
@@ -2553,7 +2554,7 @@ describe("assembleSuiteSummary — public suite summary with explanation", () =>
     const summary = result._unsafeUnwrap();
     for (const caseEntry of summary.cases) {
       if (caseEntry.explanation !== undefined) {
-        for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+        for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
           expect(pattern.test(caseEntry.explanation.text)).toBe(false);
         }
       }
@@ -2620,7 +2621,7 @@ describe("assemblePublicReportBundle — public report bundle assembly with expl
     passed = true,
     withExplanation = true,
   ): BundleScoreFile["results"][number] {
-    return {
+    const row = {
       caseId: "route-to-shuttle",
       modelId: "anthropic/claude-sonnet-4.5",
       passed,
@@ -2634,16 +2635,17 @@ describe("assemblePublicReportBundle — public report bundle assembly with expl
       },
       scoredAt: FIXED_TIMESTAMP,
       dryRun: false,
-      ...(withExplanation
-        ? {
-            publicExplanation: {
-              text: passed
-                ? "required routing case passed; dimensions: routingCorrectness"
-                : "required routing case failed; dimensions: routingCorrectness",
-              source: "structured_signal" as const,
-            },
-          }
-        : {}),
+    };
+    if (!withExplanation) return row;
+
+    return {
+      ...row,
+      publicExplanation: {
+        text: passed
+          ? "required routing case passed; dimensions: routingCorrectness"
+          : "required routing case failed; dimensions: routingCorrectness",
+        source: "structured_signal" as const,
+      },
     };
   }
 
@@ -2717,7 +2719,7 @@ describe("assemblePublicReportBundle — public report bundle assembly with expl
     for (const suiteSummary of report.suiteSummaries) {
       for (const caseEntry of suiteSummary.cases) {
         if (caseEntry.explanation !== undefined) {
-          for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+          for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
             expect(pattern.test(caseEntry.explanation.text)).toBe(false);
           }
         }
@@ -2859,7 +2861,7 @@ describe("Suite-level explanation — fixture-driven boundary tests", () => {
     const summary = result._unsafeUnwrap();
     // The suite-level explanation must be present
     expect(summary.explanation).toBeDefined();
-    expect(typeof summary.explanation?.text).toBe("string");
+    expect(summary.explanation?.text).toBeDefined();
     expect((summary.explanation?.text ?? "").length).toBeGreaterThan(0);
   });
 
@@ -2888,7 +2890,7 @@ describe("Suite-level explanation — fixture-driven boundary tests", () => {
     const result = assembleSuiteSummary(sf, FIXED_GIT_SHA, FIXED_TIMESTAMP);
     const summary = result._unsafeUnwrap();
     const text = summary.explanation?.text ?? "";
-    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
       expect(pattern.test(text)).toBe(false);
     }
   });
@@ -3052,7 +3054,7 @@ describe("Model-level explanation — fixture-driven boundary tests", () => {
     // Each model entry must have an explanation
     const modelEntry = manifest.models[0];
     expect(modelEntry?.explanation).toBeDefined();
-    expect(typeof modelEntry?.explanation?.text).toBe("string");
+    expect(modelEntry?.explanation?.text).toBeDefined();
     expect((modelEntry?.explanation?.text ?? "").length).toBeGreaterThan(0);
   });
 
@@ -3106,7 +3108,7 @@ describe("Model-level explanation — fixture-driven boundary tests", () => {
     )._unsafeUnwrap();
     for (const modelEntry of manifest.models) {
       const text = modelEntry.explanation?.text ?? "";
-      for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
         expect(pattern.test(text)).toBe(false);
       }
     }
@@ -3261,12 +3263,15 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
     expect(result.isOk()).toBe(true);
     expect(stub.calls).toHaveLength(1);
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     // localBundleRoot must be the bundleRoot (not the run dir)
     expect(publishRequest.localBundleRoot).toBe(bundleRoot);
     // indexFileNames must be non-empty (dashboard-manifest.json etc)
     expect(publishRequest.indexFileNames).toBeDefined();
-    expect(publishRequest.indexFileNames!.length).toBeGreaterThan(0);
+    if (publishRequest.indexFileNames === undefined) {
+      throw new Error("expected generated index file names");
+    }
+    expect(publishRequest.indexFileNames.length).toBeGreaterThan(0);
   });
 
   it("publisher request indexFileNames contains expected dashboard index files", async () => {
@@ -3286,7 +3291,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
       env: makeEnvWithToken(),
     });
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     const indexNames = publishRequest.indexFileNames ?? [];
     // Must contain the key dashboard index files
     expect(indexNames).toContain("dashboard-manifest.json");
@@ -3317,7 +3322,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
       env: makeEnvWithToken(),
     });
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     const runFileNames = new Set(publishRequest.fileNames ?? []);
     const indexNames = publishRequest.indexFileNames ?? [];
 
@@ -3354,7 +3359,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
       env: makeEnvWithToken(),
     });
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     // When no indexes are generated, these fields must not be set
     expect(publishRequest.localBundleRoot).toBeUndefined();
     expect(publishRequest.indexFileNames).toBeUndefined();
@@ -3377,7 +3382,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
       env: makeEnvWithToken(),
     });
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     expect(publishRequest.localBundleRoot).toBeUndefined();
     expect(publishRequest.indexFileNames).toBeUndefined();
   });
@@ -3401,7 +3406,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
 
     expect(result.isOk()).toBe(true);
     const { indexFilesWritten } = result._unsafeUnwrap();
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
 
     // The indexFilesWritten from the write result must exactly match
     // the indexFileNames passed to the publisher
@@ -3432,7 +3437,7 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
     // Publisher was called exactly once (not split into two calls)
     expect(stub.calls).toHaveLength(1);
 
-    const publishRequest = stub.calls[0]!;
+    const publishRequest = requireValue(stub.calls[0], "publisher request");
     // Run artifacts are in fileNames
     expect((publishRequest.fileNames ?? []).length).toBeGreaterThan(0);
     // Index files are in indexFileNames
@@ -3605,7 +3610,9 @@ describe("ArtifactBundleWriter — remoteSequenceReader", () => {
     // Reader that always returns ok([]) to simulate unavailable remote
     const silentFallbackReader: RemoteSequenceReader = {
       readRemoteRunIds(_prefix, _token): ResultAsync<string[], never> {
-        return ResultAsync.fromSafePromise(Promise.resolve([] as string[]));
+        return ResultAsync.fromSafePromise<string[], never>(
+          Promise.resolve([]),
+        );
       },
     };
 
@@ -3691,7 +3698,7 @@ describe("ArtifactBundleWriter — remoteSequenceReader", () => {
     });
 
     expect(remoteReader.calls).toHaveLength(1);
-    const call = remoteReader.calls[0]!;
+    const call = requireValue(remoteReader.calls[0], "remote reader call");
     expect(call.prefix).toBe(
       computeRunIdPrefix(FIXED_GIT_SHA, FIXED_TIMESTAMP),
     );
