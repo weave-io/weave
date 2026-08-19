@@ -24,7 +24,7 @@ const Input = z
   .strict();
 const input = Input.safeParse({
   authorization: Bun.env.RELEASE_PROMOTION_AUTHORIZATION,
-  appToken: Bun.env.RELEASE_APP_TOKEN,
+  appToken: Bun.env.RELEASE_APP_INSTALLATION_TOKEN,
   payloadDirectory: Bun.env.RELEASE_PAYLOAD_DIRECTORY,
   notes: Bun.env.RELEASE_RELEASE_NOTES,
   awaitingTrain: Bun.env.RELEASE_AWAITING_STABLE_TRAIN,

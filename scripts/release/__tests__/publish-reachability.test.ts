@@ -4,6 +4,7 @@ import {
   analyzePublishReachability,
   assertAttestationWorkflowContract,
   assertStableWorkflowGraph,
+  GITHUB_APP_TOKEN_ACTION_REF,
   INCIDENT_INTEGRATION_TEST,
   INCIDENT_SEAM_PATH,
   INDEPENDENT_ATTEST_WORKFLOW,
@@ -101,6 +102,73 @@ describe("publish reachability boundary", () => {
             ...workflow,
             jobs: workflow.jobs.map((job) =>
               job.id === "publish" ? { ...job, environment: "release" } : job,
+            ),
+          }
+        : workflow,
+    );
+    expect(lintPhaseCSecurity(changed).isErr()).toBe(true);
+  });
+
+  it("rejects the obsolete stored App token and unauthorized App credentials", async () => {
+    const workflows = await phaseWorkflows();
+    const obsoleteName = ["RELEASE", "APP", "TOKEN"].join("_");
+    const fixture = parseWorkflowShape(
+      "fixture.yml",
+      [
+        "jobs:",
+        "  unauthorized:",
+        "    env:",
+        `      APP_TOKEN: ${secretRef(obsoleteName)}`,
+      ].join("\n"),
+    )._unsafeUnwrap();
+    expect(lintPhaseCSecurity([...workflows, fixture]).isErr()).toBe(true);
+  });
+
+  it("rejects an App-token output passed to a non-App job", async () => {
+    const workflows = await phaseWorkflows();
+    const fixture = parseWorkflowShape(
+      "fixture.yml",
+      [
+        "jobs:",
+        "  unauthorized:",
+        "    steps:",
+        "      - name: use token",
+        "        env:",
+        [
+          "          GH_TOKEN: $",
+          "{{ steps.release-app-token.outputs.token }}",
+        ].join(""),
+        "        run: gh api /user",
+      ].join("\n"),
+    )._unsafeUnwrap();
+    expect(lintPhaseCSecurity([...workflows, fixture]).isErr()).toBe(true);
+  });
+
+  it("requires a pinned mint step before every App-token use", async () => {
+    const workflows = await phaseWorkflows();
+    const changed = workflows.map((workflow) =>
+      workflow.path === TRUSTED_PUBLISH_WORKFLOW
+        ? {
+            ...workflow,
+            text: workflow.text.replace(
+              `uses: ${GITHUB_APP_TOKEN_ACTION_REF}`,
+              "uses: ./local-action",
+            ),
+          }
+        : workflow,
+    );
+    expect(lintPhaseCSecurity(changed).isErr()).toBe(true);
+  });
+
+  it("keeps the nightly route outside the App-token path", async () => {
+    const workflows = await phaseWorkflows();
+    const changed = workflows.map((workflow) =>
+      workflow.path === TRUSTED_PUBLISH_WORKFLOW
+        ? {
+            ...workflow,
+            text: workflow.text.replaceAll(
+              "if: inputs.channel != 'nightly'",
+              "if: always()",
             ),
           }
         : workflow,

@@ -4,6 +4,7 @@ import { loadActionFiles, verifyActionPins } from "../verify-action-pins.js";
 const PIN = "34e114876b0b11c390a56381ad16ebd13914f8d5";
 const UPLOAD_ARTIFACT_PIN = "ea165f8d65b6e75b540449e92b4886f43607fa02";
 const DOWNLOAD_ARTIFACT_PIN = "d3f86a106a0bac45b974a628896c90dbdf5c8093";
+const CREATE_GITHUB_APP_TOKEN_PIN = "bcd2ba49218906704ab6c1aa796996da409d3eb1";
 const DEPRECATED_UPLOAD_ARTIFACT_PIN =
   "0b7f8abb1508181956e8e162db84b466c27e18ce";
 
@@ -43,14 +44,24 @@ describe("verifyActionPins", () => {
     ).toBe(true);
   });
 
-  it("accepts the current supported artifact-action pins", () => {
+  it("accepts the current supported artifact and App-token pins", () => {
     expect(
       verifyActionPins({
         "fixture.yml": [
           `uses: actions/upload-artifact@${UPLOAD_ARTIFACT_PIN}`,
           `uses: actions/download-artifact@${DOWNLOAD_ARTIFACT_PIN}`,
+          `uses: actions/create-github-app-token@${CREATE_GITHUB_APP_TOKEN_PIN}`,
         ].join("\n"),
       }).isOk(),
+    ).toBe(true);
+  });
+
+  it("rejects an unsupported create-github-app-token commit", () => {
+    expect(
+      verifyActionPins({
+        "fixture.yml":
+          "uses: actions/create-github-app-token@0000000000000000000000000000000000000000",
+      }).isErr(),
     ).toBe(true);
   });
 

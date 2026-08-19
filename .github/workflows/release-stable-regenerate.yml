@@ -19,11 +19,17 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       REGENERATION_ACTOR: ${{ github.actor }}
       GITHUB_EVENT_NAME: ${{ github.event_name }}
       GITHUB_REF: ${{ github.ref }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-members: read
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -33,9 +39,11 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - name: Verify the retry actor
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # The production adapter injects Task 9's
-          # assertStableRequestAuthorized(actor) with RELEASE_APP_TOKEN here.
+          # assertStableRequestAuthorized(actor) with the ephemeral App token here.
           # This phase has no create operation and cannot make a release PR.
           bun scripts/release/regenerate-main.ts --phase detect --attempt 1 --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF"
 
@@ -212,12 +220,20 @@ jobs:
       pull-requests: write
       checks: write
     env:
-      RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
       GITHUB_EVENT_NAME: ${{ github.event_name }}
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
       REGENERATION_ATTRIBUTION: ${{ github.event_name == 'workflow_dispatch' && 'maintainer-retry' || 'automatic-main-advance' }}
     steps:
+      - id: release-app-token
+        name: Mint short-lived release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: write
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
@@ -239,6 +255,8 @@ jobs:
           name: stable-regeneration-changelog-ai
           path: ${{ runner.temp }}/changelog-ai
       - name: Update only through Task 9 regeneration
+        env:
+          RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
           # This is the sole workflow job that invokes Task 9's regenerate

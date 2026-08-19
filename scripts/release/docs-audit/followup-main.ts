@@ -56,7 +56,7 @@ export const FOLLOWUP_MAIN_SCHEMA_VERSION = 1 as const;
 export const FOLLOWUP_CONTROLLER_REF = "refs/heads/main" as const;
 export const DOCS_AUDIT_FOLLOWUP_CHECK_NAME = "docs-audit-followup" as const;
 export const DOCS_AUDIT_CHECK_NAME = "docs-audit" as const;
-export const FOLLOWUP_APP_TOKEN_ENV = "RELEASE_APP_TOKEN" as const;
+export const FOLLOWUP_APP_TOKEN_ENV = "RELEASE_APP_INSTALLATION_TOKEN" as const;
 export const FOLLOWUP_READ_TOKEN_ENV = "GITHUB_TOKEN" as const;
 export const FOLLOWUP_REPOSITORY = "weave-io/weave" as const;
 

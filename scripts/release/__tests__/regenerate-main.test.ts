@@ -691,7 +691,7 @@ describe("workflow and CLI contract", () => {
     expect(workflow.match(/--phase update-pr/g)).toHaveLength(1);
     expect(workflow).not.toContain("npm publish");
     expect(workflow).not.toContain("createPullRequest");
-    expect(workflow).toContain("RELEASE_APP_TOKEN");
+    expect(workflow).toContain("RELEASE_APP_INSTALLATION_TOKEN");
     expect(workflow).toContain("WEAVE_RELEASE_AI_API_KEY");
     expect(
       workflow.match(/@[0-9a-f]{40}(?:\s+#.*)?$/gm)?.length,
