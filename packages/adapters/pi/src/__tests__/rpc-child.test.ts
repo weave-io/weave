@@ -13,6 +13,7 @@ import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type { PiChildTreeNode } from "../child-tree.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import {
   encodePromptChunks,
   PROMPT_CHUNK_COMMAND,
@@ -2919,12 +2920,14 @@ describe("PiRpcChild", () => {
 
   it("refuses a frame that carries answer text and raw reasoning at once", async () => {
     const processPort = new FakeChildProcessPort();
+    const diagnostics = createChildUiEventDiagnostics();
     const streamingUpdates: PiChildTreeNode[] = [];
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
+      diagnostics,
       onStreamingUpdate: (snapshot) => streamingUpdates.push(snapshot),
     });
     const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
@@ -2948,6 +2951,43 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().reasoningObserved).toBe(false);
     expect(JSON.stringify(child.snapshot())).not.toContain("SECRET-COT");
     expect(JSON.stringify(streamingUpdates)).not.toContain("SECRET-COT");
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "live-reasoning-projection",
+        classification: "invalid-input",
+        reason: "mapping-invalid",
+        disposition: "rejected",
+        count: 1,
+      }),
+    );
+
+    // A schema rejection is the first loss. It must not also be reported as a
+    // later reasoning projection rejection for the same native frame.
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        delta: "x".repeat(16_385),
+      },
+    });
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "rpc-parse",
+        classification: "application-failure",
+        reason: "parser-failed",
+        disposition: "failed",
+        count: 1,
+      }),
+    );
+    expect(
+      diagnostics
+        .snapshot()
+        .buckets.find(
+          (bucket) =>
+            bucket.stage === "live-reasoning-projection" &&
+            bucket.reason === "mapping-invalid",
+        )?.count,
+    ).toBe(1);
 
     // The unambiguous frame that follows is published normally.
     spawned.emitLine({
@@ -3417,14 +3457,16 @@ describe("PiRpcChild", () => {
     expect(JSON.stringify(result)).not.toContain(rawPayload);
   });
 
-  it("turns observer failures into safe typed child failures without logging payloads", async () => {
+  it("keeps observer failures isolated and records only a bounded outcome", async () => {
     const processPort = new FakeChildProcessPort();
     const logs: Array<Record<string, unknown>> = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const rawPayload = "observer-secret-payload";
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
+      diagnostics,
       logger: {
         debug: () => undefined,
         info: () => undefined,
@@ -3432,8 +3474,9 @@ describe("PiRpcChild", () => {
         error: () => undefined,
       },
       sessionObserver: {
-        onEvent: () => {
-          throw new Error(rawPayload);
+        onEvent: (event) => {
+          if (event.type === "text") throw new Error(rawPayload);
+          return ok(undefined);
         },
       },
     });
@@ -3450,15 +3493,28 @@ describe("PiRpcChild", () => {
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
     await waitFor(() => child.snapshot().status === "running");
     spawned.emitLine({ type: "text", text: rawPayload });
+    spawned.emitLine(terminalAssistantMessage("safe answer"));
+    await responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", assistantOutput: "safe answer" },
+      secretBytes,
+    );
 
     const result = await runPromise;
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.code).toBe("ChildInteractionUnavailable");
-      expect(result.error.safeMessage).not.toContain(rawPayload);
-    }
+    expect(result.isOk()).toBe(true);
     expect(JSON.stringify(logs)).not.toContain(rawPayload);
-    expect(child.snapshot().status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain(rawPayload);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(rawPayload);
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "fanout",
+        classification: "application-failure",
+        reason: "fanout-failed",
+        disposition: "failed",
+        count: 1,
+      }),
+    );
     expect(spawned.forceKilled).toBe(true);
   });
 

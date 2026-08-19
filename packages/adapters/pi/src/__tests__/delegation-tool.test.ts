@@ -3,6 +3,7 @@ import type { DelegationTarget } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { PiDelegationCardFacts } from "../child-card-model.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -555,8 +556,10 @@ describe("buildDelegationToolRegistration", () => {
 
   it("renderResult: degrades when the theme helper throws", () => {
     const codes: string[] = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const registration = buildDelegationToolRegistration(
       baseDeps({
+        diagnostics,
         onCompactRenderFailure: (code) => {
           codes.push(code);
         },
@@ -583,6 +586,15 @@ describe("buildDelegationToolRegistration", () => {
     expect(rendered).toContain("delegation card unavailable");
     expect(codes).toEqual([CARD_RENDER_FAILED_CODE]);
     expect(JSON.stringify(codes)).not.toContain("/secret");
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "native-render",
+        classification: "application-failure",
+        reason: "native-render-failed",
+        disposition: "failed",
+      }),
+    );
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain("/secret");
   });
 
   it("renderCall: names the agent with the model and reasoning level it will run on", () => {

@@ -17,6 +17,7 @@ import {
   type PiChildInspectionRegistration,
   PiChildInspectionRegistry,
 } from "../child-tree.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import {
   PiDelegationController,
   type PiDelegationRequest,
@@ -2536,6 +2537,7 @@ describe("PiDelegationController", () => {
 
   it("isolates onSessionEvent exceptions from child execution on spawn and restore", async () => {
     const warns: Array<{ code?: unknown; msg?: string }> = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const logger = {
       ...noopLogger,
       warn: (obj: Record<string, unknown>, msg?: string) => {
@@ -2543,7 +2545,10 @@ describe("PiDelegationController", () => {
       },
     };
     const port = new FakeChildProcessPort();
-    const controller = makeController(config(GENEROUS), port, { logger });
+    const controller = makeController(config(GENEROUS), port, {
+      logger,
+      diagnostics,
+    });
     const promise = controller.delegate(
       request({
         onSessionEvent: () => {
@@ -2562,15 +2567,21 @@ describe("PiDelegationController", () => {
     await settleRunningChild(child, port, "gen-1", 3);
     const result = await promise;
     expect(result.isOk()).toBe(true);
-    expect(warns.some((entry) => entry.code === "onSessionEvent_failed")).toBe(
-      true,
-    );
+    expect(warns).toHaveLength(0);
     expect(JSON.stringify(warns)).not.toContain("/secret/path");
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "fanout",
+        reason: "callback-failed",
+        disposition: "failed",
+      }),
+    );
     controller.disposeAll();
 
     const restorePort = new FakeChildProcessPort();
     const restoreWarns: Array<{ code?: unknown }> = [];
     const restoreController = recoveryController(restorePort, {
+      diagnostics,
       logger: {
         ...noopLogger,
         warn: (obj: Record<string, unknown>) => {
@@ -2596,9 +2607,10 @@ describe("PiDelegationController", () => {
       "gen-1",
     );
     expect((await restorePromise).isOk()).toBe(true);
-    expect(
-      restoreWarns.some((entry) => entry.code === "onSessionEvent_failed"),
-    ).toBe(true);
+    expect(restoreWarns).toHaveLength(0);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(
+      "restore callback boom",
+    );
     restoreController.disposeAll();
   });
 
@@ -2733,8 +2745,10 @@ describe("PiDelegationController", () => {
 
   it("isolates onChildSessionEvent exceptions from child execution", async () => {
     const warns: Array<{ code?: unknown }> = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const port = new FakeChildProcessPort();
     const controller = makeController(config(GENEROUS), port, {
+      diagnostics,
       logger: {
         ...noopLogger,
         warn: (obj: Record<string, unknown>) => {
@@ -2756,10 +2770,18 @@ describe("PiDelegationController", () => {
     await flush();
     await settleRunningChild(child, port, "gen-1", 3);
     expect((await promise).isOk()).toBe(true);
-    expect(
-      warns.some((entry) => entry.code === "onChildSessionEvent_failed"),
-    ).toBe(true);
+    expect(warns).toHaveLength(0);
     expect(JSON.stringify(warns)).not.toContain("/secret/path");
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(
+      "/secret/path",
+    );
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "fanout",
+        reason: "callback-failed",
+        disposition: "failed",
+      }),
+    );
     controller.disposeAll();
   });
 

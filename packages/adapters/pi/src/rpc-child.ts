@@ -106,6 +106,11 @@ import {
   truncateFinalOutput,
   truncateLatestOutput,
 } from "./child-tree.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  recordChildUiEventFailure,
+  recordChildUiEventInvalid,
+} from "./child-ui-event-diagnostics.js";
 import { DelegateRequestAssembler } from "./delegate-request-chunking.js";
 import {
   makeChildAbortFailedFailure,
@@ -289,6 +294,8 @@ export interface PiRpcChildDeps {
   ) => PiChildSessionObserverResult;
   /** Receives the new count after Pi accepts a live-session intervention. */
   readonly onInterventionCountChanged?: (count: number) => void;
+  /** Content-free aggregate sink for parser and independent UI fanout. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
 }
 
 /**
@@ -912,6 +919,7 @@ export class PiRpcChild {
   private readonly onInterventionCountChanged:
     | ((count: number) => void)
     | undefined;
+  private readonly diagnostics: ChildUiEventDiagnosticsSink | undefined;
   private cwd = "";
 
   private secret: ErasableSecret | undefined;
@@ -1092,6 +1100,7 @@ export class PiRpcChild {
     this.onPrivateOutput = deps.onPrivateOutput;
     this.onRestoreContextVerified = deps.onRestoreContextVerified;
     this.onInterventionCountChanged = deps.onInterventionCountChanged;
+    this.diagnostics = deps.diagnostics;
   }
 
   getId(): string {
@@ -1235,7 +1244,7 @@ export class PiRpcChild {
       );
     }
     this.status = "spawning";
-    this.onStreamingUpdate?.(this.snapshot());
+    this.emitStreamingUpdate();
     this.cwd = input.cwd;
     this.secret = generateChildSecret(this.randomPort);
     this.authState = new PiChildAuthState(this.childId, this.generationId);
@@ -1287,7 +1296,7 @@ export class PiRpcChild {
         }
         this.process = spawned;
         this.status = "handshaking";
-        this.onStreamingUpdate?.(this.snapshot());
+        this.emitStreamingUpdate();
         // Install the resolver *before* wiring the transport, so any
         // authenticated handshake dispatched the instant the listener is
         // attached (or, in principle, buffered/replayed by the port)
@@ -1478,7 +1487,7 @@ export class PiRpcChild {
         return;
       }
       this.status = "running";
-      this.onStreamingUpdate?.(this.snapshot());
+      this.emitStreamingUpdate();
       const resolvers = this.bootstrapAckResolvers;
       this.bootstrapAckResolvers = undefined;
       resolvers.resolve(parsedAck.value);
@@ -1617,11 +1626,7 @@ export class PiRpcChild {
           );
           return;
         }
-        this.onDelegationRequest?.(
-          this.childId,
-          envelope.correlationId,
-          parsed.value,
-        );
+        this.notifyDelegationRequest(envelope.correlationId, parsed.value);
         return;
       }
       const chunk = parseControlBody("delegate-request-chunk", envelope.body);
@@ -1661,11 +1666,7 @@ export class PiRpcChild {
         );
         return;
       }
-      this.onDelegationRequest?.(
-        this.childId,
-        envelope.correlationId,
-        parsed.value,
-      );
+      this.notifyDelegationRequest(envelope.correlationId, parsed.value);
       return;
     }
     // `envelope.kind` is one of the closed `PiControlKind` enum, but the
@@ -1938,13 +1939,32 @@ export class PiRpcChild {
 
   private handleLiveRpcResponse(record: Record<string, JsonValue>): void {
     const responseId = record.id;
-    if (typeof responseId !== "string") return;
+    if (typeof responseId !== "string") {
+      recordChildUiEventInvalid(
+        this.diagnostics,
+        "rpc-parse",
+        "rpc-response-invalid",
+      );
+      return;
+    }
     const pending = this.liveRpcPending.get(responseId);
     // Unknown ids are late or duplicate replies. They must not affect a new
     // call, its count, or the child's lifecycle.
-    if (pending === undefined) return;
+    if (pending === undefined) {
+      recordChildUiEventFailure(
+        this.diagnostics,
+        "rpc-parse",
+        "unknown-response",
+      );
+      return;
+    }
     const parsed = LiveRpcResponseSchema.safeParse(record);
     if (!parsed.success) {
+      recordChildUiEventInvalid(
+        this.diagnostics,
+        "rpc-parse",
+        "rpc-response-invalid",
+      );
       this.settleLiveRpc(
         responseId,
         err(
@@ -1957,6 +1977,7 @@ export class PiRpcChild {
       return;
     }
     if (parsed.data.command !== pending.command) {
+      recordChildUiEventFailure(this.diagnostics, "rpc-parse", "late-response");
       this.settleLiveRpc(
         parsed.data.id,
         err(
@@ -2026,7 +2047,53 @@ export class PiRpcChild {
     Result.fromThrowable(
       () => callback(this.interventionCount),
       () => undefined,
-    )();
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
+  }
+
+  private notifyDelegationRequest(
+    correlationId: string,
+    request: PiDelegateRequestBody,
+  ): void {
+    const callback = this.onDelegationRequest;
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => callback(this.childId, correlationId, request),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
+  }
+
+  /** UI observers are independent sinks: a repaint failure never fails a child. */
+  private emitStreamingUpdate(): void {
+    const callback = this.onStreamingUpdate;
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => callback(this.snapshot()),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
   }
 
   /**
@@ -2400,8 +2467,10 @@ export class PiRpcChild {
   }
 
   private handleOrdinaryEvent(json: JsonValue): void {
-    if (typeof json !== "object" || json === null || Array.isArray(json))
+    if (typeof json !== "object" || json === null || Array.isArray(json)) {
+      recordChildUiEventInvalid(this.diagnostics, "rpc-parse", "event-invalid");
       return;
+    }
     const record = json as Record<string, JsonValue>;
     if (record.type === "response") {
       this.handleLiveRpcResponse(record);
@@ -2409,6 +2478,11 @@ export class PiRpcChild {
     }
     const normalized = this.normalizeUiRequestForSession(record);
     if (normalized.isErr()) {
+      recordChildUiEventFailure(
+        this.diagnostics,
+        "durable-normalization",
+        "normalization-failed",
+      );
       this.failOutstanding(normalized.error);
       return;
     }
@@ -2427,6 +2501,11 @@ export class PiRpcChild {
       }
       this.forwardSessionEvent(parsed.data);
       this.observeResultContractEvent(parsed.data);
+    } else {
+      // Pi may send host-native events that the durable Weave parser does not
+      // retain. Keep the native state machine below active, but make the parser
+      // boundary observable without retaining the frame.
+      recordChildUiEventFailure(this.diagnostics, "rpc-parse", "parser-failed");
     }
     const type = normalized.value.type;
     if (type === "turn_start") {
@@ -2438,7 +2517,7 @@ export class PiRpcChild {
       // No message is being written between turns, whatever the preview still
       // shows.
       this.closeLiveAnswer();
-      this.onStreamingUpdate?.(this.snapshot());
+      this.emitStreamingUpdate();
       return;
     }
     if (type === "message_start") {
@@ -2451,12 +2530,12 @@ export class PiRpcChild {
     if (type === "tool_execution_start") {
       const toolName = (normalized.value as Record<string, JsonValue>).toolName;
       if (typeof toolName === "string") this.currentTool = toolName;
-      this.onStreamingUpdate?.(this.snapshot());
+      this.emitStreamingUpdate();
       return;
     }
     if (type === "tool_execution_end") {
       this.currentTool = undefined;
-      this.onStreamingUpdate?.(this.snapshot());
+      this.emitStreamingUpdate();
       return;
     }
     if (type === "message_update") {
@@ -2465,6 +2544,16 @@ export class PiRpcChild {
       // chain-of-thought as the parent-visible preview nor claim the child was
       // only thinking while it spoke.
       const carrier = classifyPiMessageUpdate(record);
+      // A durable-parser rejection is the first loss. Native Pi state still
+      // advances below, but it must not also be counted as a later reasoning
+      // projection rejection for the same frame.
+      if (parsed.success && carrier.kind === "rejected") {
+        recordChildUiEventInvalid(
+          this.diagnostics,
+          "live-reasoning-projection",
+          "mapping-invalid",
+        );
+      }
       if (carrier.kind === "answer") {
         if (this.resetPreviewOnNextDelta) {
           this.latestOutput = "";
@@ -2488,7 +2577,7 @@ export class PiRpcChild {
         // Real answer text always wins over reasoning: once the model starts
         // speaking, the reasoning marker stops being what the parent shows.
         this.reasoningObserved = false;
-        this.onStreamingUpdate?.(this.snapshot());
+        this.emitStreamingUpdate();
         return;
       }
       if (carrier.kind === "reasoning") {
@@ -2504,7 +2593,7 @@ export class PiRpcChild {
         // a reasoning model can think for a long time before its first
         // token, and a silent snapshot makes a working child look frozen.
         if (this.latestOutput.length === 0) {
-          this.onStreamingUpdate?.(this.snapshot());
+          this.emitStreamingUpdate();
         }
       }
       return;
@@ -2563,8 +2652,8 @@ export class PiRpcChild {
 
   /**
    * Delivers only parser-approved, bounded events to the injected observer.
-   * Observer failures are deliberately collapsed to a safe child failure: an
-   * observer must not be able to leak event payloads through logs or errors.
+   * Observer failures are fanout failures: durable execution and the other UI
+   * sinks continue independently, while the first loss is counted by code only.
    */
   private forwardSessionEvent(event: PiChildSessionEvent): void {
     const observer = this.sessionObserver;
@@ -2572,34 +2661,29 @@ export class PiRpcChild {
 
     const callback = Result.fromThrowable(
       () => observer.onEvent(event),
-      () => makeChildInteractionUnavailableFailure(this.childId),
+      () => undefined,
     )();
     if (callback.isErr()) {
-      this.handleSessionObserverFailure();
+      recordChildUiEventFailure(this.diagnostics, "fanout", "fanout-failed");
       return;
     }
 
     const result = callback.value;
     if (result instanceof ResultAsync) {
-      void ResultAsync.fromPromise(result, () =>
-        makeChildInteractionUnavailableFailure(this.childId),
-      ).match(
+      void result.match(
         () => undefined,
-        () => this.handleSessionObserverFailure(),
+        () =>
+          recordChildUiEventFailure(
+            this.diagnostics,
+            "fanout",
+            "fanout-failed",
+          ),
       );
       return;
     }
-    if (result.isErr()) this.handleSessionObserverFailure();
-  }
-
-  private handleSessionObserverFailure(): void {
-    if (this.disposed) return;
-    const failure = makeChildInteractionUnavailableFailure(this.childId);
-    this.logger.warn(
-      { childId: this.childId, code: failure.code },
-      "child session observer failed",
-    );
-    this.failOutstanding(failure);
+    if (result.isErr()) {
+      recordChildUiEventFailure(this.diagnostics, "fanout", "fanout-failed");
+    }
   }
 
   private projectUsageFromMessage(record: Record<string, JsonValue>): void {
@@ -2633,7 +2717,21 @@ export class PiRpcChild {
       cost: extractCostTotal(usageRecord),
     };
     this.usage = addUsage(this.usage, projected);
-    this.onAssistantUsageObserved?.({ id, ...projected });
+    const callback = this.onAssistantUsageObserved;
+    if (callback !== undefined) {
+      Result.fromThrowable(
+        () => callback({ id, ...projected }),
+        () => undefined,
+      )().match(
+        () => undefined,
+        () =>
+          recordChildUiEventFailure(
+            this.diagnostics,
+            "fanout",
+            "callback-failed",
+          ),
+      );
+    }
   }
 
   private awaitHandshake(): ResultAsync<void, PiAdapterFailure> {

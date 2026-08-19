@@ -20,19 +20,14 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import {
-  type ChildCompactState,
-  createChildCompactState,
   mapPiChildSessionEventToCompactInput,
-  reduceChildCompactSafe,
+  reduceChildCompact,
 } from "./child-compact-render.js";
 import {
-  boundText,
   degradedCapacityEntry,
   liveAssistantLifecyclePhase,
   mergeReplaySteps,
-  messageText,
   projectLiveEntry,
-  transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
 import {
   anchorFromScroll,
@@ -41,9 +36,6 @@ import {
   markTailGrowth,
   maxScrollRows,
   type OverlayLayoutSpan,
-  type OverlayScrollState,
-  restoreAfterOlderEntries,
-  restoreScrollAnchor,
   scrollDelta,
 } from "./child-overlay-scroll.js";
 import {
@@ -60,7 +52,6 @@ import {
   deriveChildOverlayIdentity,
   deriveChildOverlayTelemetry,
   latestUsageInWindow,
-  NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
   readChildOverlayPlanContext,
   terminalErrorOf,
@@ -68,7 +59,6 @@ import {
 import {
   boundOverlayText,
   CHILD_OVERLAY_BOUNDS,
-  type ChildOverlayAnchor,
   type ChildOverlayChild,
   ChildOverlayChildSchema,
   type ChildOverlayConfig,
@@ -79,7 +69,6 @@ import {
   type ChildOverlayInputOutcome,
   type ChildOverlayMutationPort,
   type ChildOverlayPage,
-  type ChildOverlayReplayStep,
   type ChildOverlaySourceError,
   type ChildOverlaySourcePort,
   type ChildOverlayView,
@@ -101,11 +90,15 @@ import {
   syncTranscriptFromEntries,
 } from "./child-overlay-window.js";
 import {
-  type PiChildUsageReport,
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
 import { reducePiChildTranscript } from "./child-transcript.js";
+import {
+  type ChildOverlayUiDiagnostics,
+  type ChildUiEventDiagnosticsSink,
+  createChildOverlayUiDiagnostics,
+} from "./child-ui-event-diagnostics.js";
 import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
@@ -121,6 +114,7 @@ export class ChildOverlayController {
   private readonly maxSearchPages: number;
   private readonly saved = new Map<string, SavedChildState>();
   private readonly planContext: ChildOverlayPlanContextPort | undefined;
+  private readonly diagnostics: ChildOverlayUiDiagnostics;
   private openChild: ChildOverlayChild | undefined;
   private clock = 0;
   /**
@@ -137,10 +131,12 @@ export class ChildOverlayController {
     config: ChildOverlayConfig = {},
     mutations?: ChildOverlayMutationPort,
     planContext?: ChildOverlayPlanContextPort,
+    diagnostics?: ChildUiEventDiagnosticsSink,
   ) {
     this.source = source;
     this.mutations = mutations;
     this.planContext = planContext;
+    this.diagnostics = createChildOverlayUiDiagnostics(diagnostics);
     this.pageSize = clampPageSize(
       config.pageSize ?? CHILD_OVERLAY_BOUNDS.defaultPageSize,
     );
@@ -598,42 +594,46 @@ export class ChildOverlayController {
     }
 
     const parsed = parsePiChildSessionEvent(event);
-    if (!parsed.success) return ok(this.toView(child, state));
+    if (!parsed.success) {
+      this.diagnostics.invalidEvent();
+      return ok(this.toView(child, state));
+    }
     const applied = applyProviderErrorEvent(state.evidence, parsed.data);
     const sessionEvent = applied.event;
     state.evidence = applied.evidence;
 
-    const mapped = mapPiChildSessionEventToCompactInput(sessionEvent);
-    if (mapped.isOk() && mapped.value !== undefined) {
-      state.compact = reduceChildCompactSafe(state.compact, mapped.value);
-    }
+    const mapResultOr = this.diagnostics.mappingResultOr;
+    const reduceResultOr = this.diagnostics.reductionResultOr;
+    const mapped = mapResultOr(
+      mapPiChildSessionEventToCompactInput(sessionEvent),
+      undefined,
+    );
+    if (mapped !== undefined)
+      state.compact = reduceResultOr(
+        reduceChildCompact(state.compact, mapped),
+        state.compact,
+      );
 
     // Latest-wins: a parsed report replaces the prior one outright, while an
     // unparsable one carries no information and leaves it untouched.
     const usage = parsePiChildUsageReport(sessionEvent);
     if (usage.isOk()) state.usage = usage.value;
 
-    // Project first so the transcript reduce can be told which overlay entry
-    // this event belongs to. Reducing first would label rendered rows with
-    // reducer-local ids (`thinking-0`) while the overlay window uses overlay
-    // ids (`live-thinking-0`), and the viewport anchor would lose its entry.
-    // Projection is pure, so ordering it earlier changes nothing else.
-    // Real Pi 0.84 assistant lifecycle identity. `AssistantMessage` has no
-    // `id`, and `state.entries.length` changes between `message_start` and
-    // `message_end`, so one stable overlay id is allocated at start and reused
-    // for every update/end of that lifecycle even when thinking and tool
-    // entries interleave. A lifecycle that arrives without its start
-    // (historical, truncated, or unusual host sequence) allocates on first
-    // sight, so update/end still share one entry instead of fanning out.
+    // Project first so the transcript and window share one stable Pi assistant
+    // lifecycle id, including truncated or interleaved host sequences.
     const phase = liveAssistantLifecyclePhase(sessionEvent);
     const assistantEntryId =
       phase === undefined ? undefined : resolveLiveAssistantEntry(state, phase);
 
-    let projected = projectLiveEntry(
-      sessionEvent,
-      state.entries.length,
-      state.globalExpanded,
-      assistantEntryId,
+    let projected = this.diagnostics.mappingCallOr(
+      () =>
+        projectLiveEntry(
+          sessionEvent,
+          state.entries.length,
+          state.globalExpanded,
+          assistantEntryId,
+        ),
+      undefined,
     );
     // A streamed delta states one fragment; the window keeps the whole answer.
     // Writing the accumulated text (and one canonical replay step) here is what
@@ -667,7 +667,7 @@ export class ChildOverlayController {
       event: sessionEvent,
       ...(overlayEntryId === undefined ? {} : { overlayEntryId }),
     });
-    if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
+    state.transcript = reduceResultOr(transcriptNext, state.transcript);
 
     if (projected !== undefined) {
       this.mergeEntry(state, projected);
@@ -1091,6 +1091,7 @@ export class ChildOverlayController {
       const next = [...state.entries];
       const mergedReplay = mergeReplaySteps(existing?.replay, entry.replay);
       if (mergedReplay.isErr()) {
+        this.diagnostics.capacityExceeded();
         next[index] = degradedCapacityEntry(
           entry.id,
           entry.sequence,
@@ -1190,6 +1191,8 @@ export function createChildOverlayController(
   config?: ChildOverlayConfig,
   mutations?: ChildOverlayMutationPort,
   planContext?: ChildOverlayPlanContextPort,
+  diagnostics?: ChildUiEventDiagnosticsSink,
 ): ChildOverlayController {
-  return new ChildOverlayController(source, config, mutations, planContext);
+  const args = [source, config, mutations, planContext, diagnostics] as const;
+  return new ChildOverlayController(...args);
 }

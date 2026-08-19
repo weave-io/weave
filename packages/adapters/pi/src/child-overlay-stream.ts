@@ -16,6 +16,11 @@
 import { Result } from "neverthrow";
 import type { ChildOverlayController } from "./child-overlay-controller.js";
 import type { TimerPort } from "./child-timer.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  recordChildUiEventDrop,
+  recordChildUiEventFailure,
+} from "./child-ui-event-diagnostics.js";
 import { UiUpdateCoalescer } from "./ui-update-coalescer.js";
 
 /**
@@ -48,7 +53,12 @@ export type ChildOverlayLiveEventDrop =
 
 export type ChildOverlayLiveEventOutcome =
   | { readonly kind: "applied" }
-  | { readonly kind: "dropped"; readonly reason: ChildOverlayLiveEventDrop };
+  | { readonly kind: "dropped"; readonly reason: ChildOverlayLiveEventDrop }
+  | {
+      readonly kind: "failed";
+      readonly stage: "stream-ingest";
+      readonly reason: "stream-apply-failed";
+    };
 
 /** What the mounted pane exposes to a repaint request. */
 export interface ChildOverlayRepaintPort {
@@ -70,6 +80,8 @@ export interface ChildOverlayLiveStreamConfig {
    */
   readonly resolveLiveThreadId?: (childId: string) => string | undefined;
   readonly intervalMs?: number;
+  /** Content-free aggregate sink; never exposed through the overlay view. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
 }
 
 /**
@@ -89,6 +101,7 @@ export class ChildOverlayLiveStream {
     | ((childId: string) => string | undefined)
     | undefined;
   private readonly coalescer: UiUpdateCoalescer;
+  private readonly diagnostics: ChildUiEventDiagnosticsSink | undefined;
   /**
    * The focused child whose final frame has already been published.
    *
@@ -125,6 +138,7 @@ export class ChildOverlayLiveStream {
     this.generationId = config.generationId;
     this.currentGenerationId = config.currentGenerationId;
     this.resolveLiveThreadId = config.resolveLiveThreadId;
+    this.diagnostics = config.diagnostics;
     this.coalescer = new UiUpdateCoalescer(
       () => this.paint(),
       config.timer,
@@ -145,13 +159,38 @@ export class ChildOverlayLiveStream {
    * It is reported so the caller can count it rather than guess.
    */
   ingest(childId: string, event: unknown): ChildOverlayLiveEventOutcome {
-    if (this.disposed) return dropped("stream-disposed");
+    const result = Result.fromThrowable(
+      () => this.ingestUnsafe(childId, event),
+      () => "stream_ingest_failed" as const,
+    )();
+    return result.match(
+      (outcome) => outcome,
+      () => {
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "stream-ingest",
+          "stream-apply-failed",
+        );
+        return {
+          kind: "failed",
+          stage: "stream-ingest",
+          reason: "stream-apply-failed",
+        };
+      },
+    );
+  }
+
+  private ingestUnsafe(
+    childId: string,
+    event: unknown,
+  ): ChildOverlayLiveEventOutcome {
+    if (this.disposed) return this.drop("stream-disposed");
     if (this.currentGenerationId() !== this.generationId) {
-      return dropped("stale-generation");
+      return this.drop("stale-generation");
     }
-    if (!this.controller.isOpen()) return dropped("overlay-closed");
+    if (!this.controller.isOpen()) return this.drop("overlay-closed");
     const view = this.controller.view();
-    if (view.isErr()) return dropped("overlay-closed");
+    if (view.isErr()) return this.drop("overlay-closed");
     const open = view.value.child;
     const threadId = this.resolveLiveThreadId?.(childId) ?? childId;
     if (
@@ -159,21 +198,47 @@ export class ChildOverlayLiveStream {
       open.childId !== childId &&
       open.childId !== threadId
     ) {
-      return dropped("unfocused-child");
+      return this.drop("unfocused-child");
     }
-    if (open.childId === this.settledChildId) return dropped("settled");
-    if (open.childId === this.refreshingChildId) return dropped("settled");
+    if (open.childId === this.settledChildId) return this.drop("settled");
+    if (open.childId === this.refreshingChildId) return this.drop("settled");
     // A settled or orphaned child is read-only history. `applyLiveEvent`
     // already refuses to mutate it, and repainting for an event that changed
     // nothing would only cost frames.
-    if (open.status !== "live") return dropped("settled");
+    if (open.status !== "live") return this.drop("settled");
 
     const applied = Result.fromThrowable(
       () => this.controller.applyLiveEvent(event),
       () => "overlay_live_event_failed" as const,
     )();
-    if (applied.isErr() || applied.value.isErr()) return dropped("settled");
-    this.coalescer.request("coalesced");
+    if (applied.isErr() || applied.value.isErr()) {
+      recordChildUiEventFailure(
+        this.diagnostics,
+        "stream-ingest",
+        "stream-apply-failed",
+      );
+      return {
+        kind: "failed",
+        stage: "stream-ingest",
+        reason: "stream-apply-failed",
+      };
+    }
+    const requested = Result.fromThrowable(
+      () => this.coalescer.request("coalesced"),
+      () => "repaint_request_failed" as const,
+    )();
+    if (requested.isErr()) {
+      recordChildUiEventFailure(
+        this.diagnostics,
+        "stream-ingest",
+        "stream-apply-failed",
+      );
+      return {
+        kind: "failed",
+        stage: "stream-ingest",
+        reason: "stream-apply-failed",
+      };
+    }
     return { kind: "applied" };
   }
 
@@ -191,7 +256,18 @@ export class ChildOverlayLiveStream {
     // move while an authoritative refresh is in flight.
     if (expectedChildId !== undefined && expectedChildId !== childId) return;
     this.settledChildId = childId;
-    this.coalescer.flush();
+    Result.fromThrowable(
+      () => this.coalescer.flush(),
+      () => "settlement_flush_failed" as const,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "native-render",
+          "native-render-failed",
+        ),
+    );
   }
 
   /**
@@ -280,14 +356,26 @@ export class ChildOverlayLiveStream {
     const stillClaimsLive =
       refreshed.isOk() && refreshed.value.child.status === "live";
     if (refreshed.isErr() || stillClaimsLive) {
-      this.controller.markOpenChildReadOnly();
+      const marked = this.controller.markOpenChildReadOnly();
+      if (marked.isErr()) {
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "overlay-reduction",
+          "overlay-reduction-failed",
+        );
+      }
     }
     // The run is over, so the session file is now the complete record of it.
     // A reconcile that fails or answers nothing leaves the mounted transcript
     // untouched, so this can only ever add the facts the live window missed.
     await this.controller.reconcileOpenChild().match(
       () => undefined,
-      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "overlay-mapping",
+          "overlay-mapping-failed",
+        ),
     );
     if (this.disposed) return;
     if (this.currentGenerationId() !== this.generationId) return;
@@ -310,30 +398,57 @@ export class ChildOverlayLiveStream {
       () => {
         this.liveRefreshInFlight = false;
         if (this.disposed || this.isSettled()) return;
-        this.coalescer.request("coalesced");
+        Result.fromThrowable(
+          () => this.coalescer.request("coalesced"),
+          () => "refresh_repaint_request_failed" as const,
+        )().match(
+          () => undefined,
+          () =>
+            recordChildUiEventFailure(
+              this.diagnostics,
+              "native-render",
+              "native-render-failed",
+            ),
+        );
       },
       () => {
         this.liveRefreshInFlight = false;
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "overlay-mapping",
+          "overlay-mapping-failed",
+        );
       },
     );
   }
 
   private paint(): void {
-    // A host repaint that throws must never take the child stream down.
+    // A host repaint that throws must never take the child stream down. The
+    // failure belongs to the native-render stage, not to child execution.
     Result.fromThrowable(
       () => {
         this.repaint.invalidate();
         this.repaint.requestRender();
       },
+      () => "native_render_failed" as const,
+    )().match(
       () => undefined,
-    )();
+      () => {
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "native-render",
+          "native-render-failed",
+        );
+      },
+    );
   }
-}
 
-function dropped(
-  reason: ChildOverlayLiveEventDrop,
-): ChildOverlayLiveEventOutcome {
-  return { kind: "dropped", reason };
+  private drop(
+    reason: ChildOverlayLiveEventDrop,
+  ): ChildOverlayLiveEventOutcome {
+    recordChildUiEventDrop(this.diagnostics, "stream-ingest", reason);
+    return { kind: "dropped", reason };
+  }
 }
 
 export function createChildOverlayLiveStream(

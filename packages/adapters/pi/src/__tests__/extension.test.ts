@@ -41,6 +41,10 @@ import type { PiChildRefRecord } from "../child-session-refs.js";
 import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "../child-tree.js";
+import {
+  createChildUiEventDiagnostics,
+  recordChildUiEventDrop,
+} from "../child-ui-event-diagnostics.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import {
@@ -1110,6 +1114,45 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(message).toContain("capability: child-overlay-lifecycle");
     expect(message).toContain("mode: custom-editor-fallback");
     expect(message).toContain("child inspection: custom-editor");
+  });
+
+  it("exposes bounded child-event aggregates to health and the verifier only", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const diagnostics = createChildUiEventDiagnostics({ now: () => 42 });
+    const factory = installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader([], true),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      childUiEventDiagnostics: diagnostics,
+    });
+    await host.triggerSessionStart();
+    recordChildUiEventDrop(diagnostics, "stream-ingest", "unfocused-child");
+
+    const verifierSnapshot = factory.childUiEventDiagnosticsForTest();
+    expect(verifierSnapshot).toEqual(diagnostics.snapshot());
+    await host.invokeCommand("weave:health");
+    const health = host.notifyCalls.at(-1)?.message ?? "";
+    expect(health).toContain("child-ui-event-diagnostics: bytes=");
+    expect(health).toContain("stream-ingest/lifecycle-drop/unfocused-child");
+    const diagnosticLine = health
+      .split("\n")
+      .find((line) => line.startsWith("child-ui-event-diagnostics:"));
+    expect(diagnosticLine).toBeDefined();
+    expect(diagnosticLine).not.toContain("childId");
+    expect(diagnosticLine).not.toContain("/Users/");
+    expect(diagnosticLine).not.toContain("prompt");
   });
 
   it("reads once per session generation and keeps each normalized report immutable", async () => {

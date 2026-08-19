@@ -330,7 +330,7 @@
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
   - function createChildOverlayDraftEditor: (tui, theme, keybindings) => CustomEditor
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?, diagnostics?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-facts.ts`
   - function formatOverlayTokenCount: (count) => string | undefined
   - function formatOverlayElapsed: (elapsedMs) => string | undefined
@@ -601,6 +601,18 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - _...20 more_
+- `packages/adapters/pi/src/child-ui-event-diagnostics.ts`
+  - function createChildUiEventDiagnostics: (config) => ChildUiEventDiagnostics
+  - function recordChildUiEventDiagnostic: (sink, outcome, "classification" | "disposition"
+  > &
+    Partial<
+      Pick<ChildUiEventDiagnosticOutcome, "classification" | "disposition">
+    >) => void
+  - function recordChildUiEventDrop: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventInvalid: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventFailure: (sink, stage, reason, atMs?) => void
+  - function childUiEventResultOr: (result, E>, sink, stage, reason, fallback) => T
+  - _...29 more_
 - `packages/adapters/pi/src/codex-fast/attempt.ts`
   - function createCodexFastAttempt: (eligibility) => CodexFastAttempt
   - type CodexFastState

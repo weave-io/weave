@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 340 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~38,000 tokens. Without it, AI exploration would cost ~107,700 tokens. **Saves ~69,700 tokens per conversation.**
-> **Last scanned:** 2026-08-18 22:03 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 341 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~38,200 tokens. Without it, AI exploration would cost ~108,000 tokens. **Saves ~69,800 tokens per conversation.**
+> **Last scanned:** 2026-08-19 00:27 — re-run after significant changes
 
 ---
 
@@ -341,7 +341,7 @@
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
   - function createChildOverlayDraftEditor: (tui, theme, keybindings) => CustomEditor
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?, diagnostics?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-facts.ts`
   - function formatOverlayTokenCount: (count) => string | undefined
   - function formatOverlayElapsed: (elapsedMs) => string | undefined
@@ -612,6 +612,18 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - _...20 more_
+- `packages/adapters/pi/src/child-ui-event-diagnostics.ts`
+  - function createChildUiEventDiagnostics: (config) => ChildUiEventDiagnostics
+  - function recordChildUiEventDiagnostic: (sink, outcome, "classification" | "disposition"
+  > &
+    Partial<
+      Pick<ChildUiEventDiagnosticOutcome, "classification" | "disposition">
+    >) => void
+  - function recordChildUiEventDrop: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventInvalid: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventFailure: (sink, stage, reason, atMs?) => void
+  - function childUiEventResultOr: (result, E>, sink, stage, reason, fallback) => T
+  - _...29 more_
 - `packages/adapters/pi/src/codex-fast/attempt.ts`
   - function createCodexFastAttempt: (eligibility) => CodexFastAttempt
   - type CodexFastState
@@ -2223,7 +2235,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 373 test files found
+> 374 test files found
 
 ---
 

@@ -80,6 +80,12 @@ import {
   subtreeIds,
 } from "./child-tree.js";
 import {
+  type ChildUiEventDiagnosticsSink,
+  type ChildUiEventDiagnosticsSnapshot,
+  EMPTY_CHILD_UI_EVENT_DIAGNOSTICS,
+  recordChildUiEventFailure,
+} from "./child-ui-event-diagnostics.js";
+import {
   EMPTY_PI_DISPATCH_SNAPSHOT,
   type PiDelegationContext,
   type PiDispatchSnapshot,
@@ -214,6 +220,8 @@ export interface PiDelegationControllerDeps {
     event: PiChildSessionEvent,
   ) => void;
   readonly inspectionRegistry?: PiChildInspectionRegistry;
+  /** Content-free aggregate sink shared by child projection stages. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
   readonly pathContainment?: PathContainmentPort;
   readonly currentCwd?: () => string;
   readonly currentEnv?: () => Readonly<Record<string, string>>;
@@ -766,6 +774,30 @@ export class PiDelegationController {
 
   constructor(private readonly deps: PiDelegationControllerDeps) {
     this.sessionStorageAuthority = deps.sessionStorageAuthority;
+  }
+
+  /** Bounded child-UI diagnostics exposed to health/verifier readers only. */
+  diagnosticsSnapshot(): ChildUiEventDiagnosticsSnapshot {
+    return (
+      this.deps.diagnostics?.snapshot() ??
+      EMPTY_CHILD_UI_EVENT_DIAGNOSTICS.snapshot()
+    );
+  }
+
+  /**
+   * Consumes an inspection write without creating a second history diagnostic.
+   * PiChildInspectionRegistry records its first typed checkpoint failure before
+   * returning the aggregate error; this explicit match prevents an unhandled
+   * ResultAsync while preserving one outcome for the failing write.
+   */
+  private consumeInspectionWrite(
+    result: ResultAsync<void, PiChildInspectionHistoryError> | undefined,
+  ): void {
+    if (result === undefined) return;
+    void result.match(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   /**
@@ -2600,17 +2632,49 @@ export class PiDelegationController {
       () => cache.upsertRef(record, workspaceKey),
       () => undefined,
     )().match(
-      () => undefined,
-      () => undefined,
+      (result) => {
+        if (result.isErr()) {
+          recordChildUiEventFailure(
+            this.deps.diagnostics,
+            "durable-normalization",
+            "normalization-failed",
+          );
+        }
+      },
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "durable-normalization",
+          "normalization-failed",
+        ),
     );
   }
 
   /**
    * Delivers one parser-approved session event to an optional caller sink.
-   * Failures are logged with a stable code and never propagate to the child.
+   * Failures produce a closed diagnostic and never propagate to the child.
    */
+  private invokeSnapshotCallback(
+    callback: ((snapshot: PiChildTreeNode) => void) | undefined,
+    snapshot: PiChildTreeNode,
+  ): void {
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => callback(snapshot),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
+  }
+
   private invokeSessionEventCallback(
-    childId: string,
+    _childId: string,
     callback: ((event: PiChildSessionEvent) => void) | undefined,
     event: PiChildSessionEvent,
   ): void {
@@ -2622,18 +2686,19 @@ export class PiDelegationController {
       () => "onSessionEvent_failed" as const,
     )().match(
       () => undefined,
-      (code) => {
-        this.deps.logger.warn(
-          { childId, code },
-          "delegation onSessionEvent callback failed",
-        );
-      },
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
     );
   }
 
   /**
    * Delivers one parser-approved session event to the controller-deps sink
-   * after inspection checkpointing. Failures are logged and never propagate.
+   * after inspection checkpointing. Failures produce a closed diagnostic and
+   * never propagate.
    */
   private invokeChildSessionEventDep(
     childId: string,
@@ -2648,18 +2713,18 @@ export class PiDelegationController {
       () => "onChildSessionEvent_failed" as const,
     )().match(
       () => undefined,
-      (code) => {
-        this.deps.logger.warn(
-          { childId, code },
-          "delegation onChildSessionEvent callback failed",
-        );
-      },
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
     );
   }
 
   /**
    * Reports the assigned retry/continue run identity before spawn. Failures
-   * are logged with a stable code and never propagate to the child.
+   * produce a closed diagnostic and never propagate to the child.
    */
   private invokeRunAssignedCallback(
     callback: ((assignment: PiThreadRunAssignment) => void) | undefined,
@@ -2673,12 +2738,12 @@ export class PiDelegationController {
       () => "onRunAssigned_failed" as const,
     )().match(
       () => undefined,
-      (code) => {
-        this.deps.logger.warn(
-          { childId: assignment.childId, code },
-          "delegation onRunAssigned callback failed",
-        );
-      },
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
     );
   }
 
@@ -2712,6 +2777,7 @@ export class PiDelegationController {
         responseDrainMs: this.deps.responseDrainMs,
         baseEnv: this.deps.baseEnv,
         logger: this.deps.logger,
+        diagnostics: this.deps.diagnostics,
         command: this.deps.command,
         resolveExtensionArgs: this.deps.resolveExtensionArgs,
         now: this.deps.now,
@@ -2722,24 +2788,32 @@ export class PiDelegationController {
         ) =>
           this.handleChildDelegationRequest(relayChildId, correlationId, body),
         onAssistantUsageObserved: (usage) => {
-          this.deps.telemetry
-            ?.recordAssistantUsage({
-              id: usage.id,
-              source: "child",
-              agentName: request.agentName,
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              cacheReadTokens: usage.cacheReadTokens,
-              cacheWriteTokens: usage.cacheWriteTokens,
-              cost: usage.cost,
-            })
-            .orElse(() => okAsync("noop" as const));
+          const telemetry = this.deps.telemetry?.recordAssistantUsage({
+            id: usage.id,
+            source: "child",
+            agentName: request.agentName,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens,
+            cost: usage.cost,
+          });
+          if (telemetry !== undefined) {
+            void telemetry.match(
+              () => undefined,
+              () =>
+                recordChildUiEventFailure(
+                  this.deps.diagnostics,
+                  "durable-normalization",
+                  "normalization-failed",
+                ),
+            );
+          }
         },
         sessionObserver: {
           onEvent: (event) => {
-            this.deps.inspectionRegistry?.checkpointEvent(childId, event).match(
-              () => undefined,
-              () => undefined,
+            this.consumeInspectionWrite(
+              this.deps.inspectionRegistry?.checkpointEvent(childId, event),
             );
             this.recordQueueDepth(childId, event);
             this.invokeChildSessionEventDep(childId, event);
@@ -2752,10 +2826,9 @@ export class PiDelegationController {
           },
         },
         onStreamingUpdate: (snapshot) => {
-          request.onUpdate?.(snapshot);
-          this.deps.inspectionRegistry?.checkpoint(childId).match(
-            () => undefined,
-            () => undefined,
+          this.invokeSnapshotCallback(request.onUpdate, snapshot);
+          this.consumeInspectionWrite(
+            this.deps.inspectionRegistry?.checkpoint(childId),
           );
           this.notifyTreeChanged();
         },
@@ -2900,7 +2973,20 @@ export class PiDelegationController {
   }
 
   private notifyTreeChanged(): void {
-    this.deps.onTreeChanged?.();
+    const callback = this.deps.onTreeChanged;
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => callback(),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.deps.diagnostics,
+          "tree-projection",
+          "callback-failed",
+        ),
+    );
   }
 
   private ensureTreeRefreshTimer(): void {
@@ -3413,32 +3499,38 @@ export class PiDelegationController {
             responseDrainMs: this.deps.responseDrainMs,
             baseEnv: this.deps.baseEnv,
             logger: this.deps.logger,
+            diagnostics: this.deps.diagnostics,
             command: this.deps.command,
             resolveExtensionArgs: this.deps.resolveExtensionArgs,
             now: this.deps.now,
             onDelegationRequest: (relayId, correlationId, body) =>
               this.handleChildDelegationRequest(relayId, correlationId, body),
             onAssistantUsageObserved: (usage) => {
-              this.deps.telemetry
-                ?.recordAssistantUsage({
-                  id: usage.id,
-                  source: "child",
-                  agentName: input.descriptor.name,
-                  inputTokens: usage.inputTokens,
-                  outputTokens: usage.outputTokens,
-                  cacheReadTokens: usage.cacheReadTokens,
-                  cacheWriteTokens: usage.cacheWriteTokens,
-                  cost: usage.cost,
-                })
-                .match(
+              const telemetry = this.deps.telemetry?.recordAssistantUsage({
+                id: usage.id,
+                source: "child",
+                agentName: input.descriptor.name,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cacheReadTokens,
+                cacheWriteTokens: usage.cacheWriteTokens,
+                cost: usage.cost,
+              });
+              if (telemetry !== undefined) {
+                void telemetry.match(
                   () => undefined,
-                  () => undefined,
+                  () =>
+                    recordChildUiEventFailure(
+                      this.deps.diagnostics,
+                      "durable-normalization",
+                      "normalization-failed",
+                    ),
                 );
+              }
             },
             onStreamingUpdate: () => {
-              this.deps.inspectionRegistry?.checkpoint(childId).match(
-                () => undefined,
-                () => undefined,
+              this.consumeInspectionWrite(
+                this.deps.inspectionRegistry?.checkpoint(childId),
               );
               this.notifyTreeChanged();
             },
@@ -3446,12 +3538,9 @@ export class PiDelegationController {
               this.persistPrivateOutput(childId, capture),
             sessionObserver: {
               onEvent: (event) => {
-                this.deps.inspectionRegistry
-                  ?.checkpointEvent(childId, event)
-                  .match(
-                    () => undefined,
-                    () => undefined,
-                  );
+                this.consumeInspectionWrite(
+                  this.deps.inspectionRegistry?.checkpointEvent(childId, event),
+                );
                 this.invokeChildSessionEventDep(childId, event);
                 this.invokeSessionEventCallback(
                   childId,

@@ -57,6 +57,7 @@ import {
 import { preserveUnknownChildEvent } from "../child-session-events.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
 import type { PiChildTranscriptState } from "../child-transcript.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type { PiUiThemePort } from "../types.js";
 
 initTheme("default");
@@ -381,6 +382,7 @@ interface StreamHarness {
   invalidates: number;
   generation: string;
   liveChildren: Set<string>;
+  diagnostics: ReturnType<typeof createChildUiEventDiagnostics>;
 }
 
 async function harness(
@@ -390,6 +392,7 @@ async function harness(
   const { controller } = openLive(child, others);
   expect((await controller.open(child.childId)).isOk()).toBe(true);
   const timer = new ScriptedTimerPort();
+  const diagnostics = createChildUiEventDiagnostics();
   const state: StreamHarness = {
     controller,
     timer,
@@ -401,6 +404,7 @@ async function harness(
         .filter((candidate) => candidate.status === "live")
         .map((candidate) => candidate.childId),
     ),
+    diagnostics,
     stream: undefined as never,
   };
   // The harness IS the mutable state the stream reads: a copy would let the
@@ -420,6 +424,7 @@ async function harness(
     currentGenerationId: () => state.generation,
     resolveLiveThreadId: (childId) =>
       state.liveChildren.has(childId) ? childId : undefined,
+    diagnostics,
   });
   return state;
 }
@@ -472,6 +477,30 @@ describe("the live stream drops what must not reach the pane", () => {
     expect(h.repaints).toBe(0);
   });
 
+  it("returns a typed stream failure when overlay application rejects", async () => {
+    const h = await harness();
+    const originalApply = h.controller.applyLiveEvent;
+    h.controller.applyLiveEvent = () => err({ type: "OverlayNotOpen" });
+    const outcome = h.stream.ingest(CHILD_ID, {
+      type: "thinking",
+      text: "rejected",
+    });
+    h.controller.applyLiveEvent = originalApply;
+
+    expect(outcome).toEqual({
+      kind: "failed",
+      stage: "stream-ingest",
+      reason: "stream-apply-failed",
+    });
+    expect(h.diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "stream-ingest",
+        reason: "stream-apply-failed",
+        disposition: "failed",
+      }),
+    );
+  });
+
   it("drops every event that arrives after the focused child settled", async () => {
     const h = await harness();
     expect(
@@ -520,6 +549,12 @@ describe("the live stream drops what must not reach the pane", () => {
     expect(
       drops([h.stream.ingest(CHILD_ID, { type: "thinking", text: "x" })]),
     ).toEqual(["stream-disposed"]);
+    expect(h.diagnostics.snapshot().buckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "overlay-closed" }),
+        expect.objectContaining({ reason: "stream-disposed" }),
+      ]),
+    );
   });
 });
 

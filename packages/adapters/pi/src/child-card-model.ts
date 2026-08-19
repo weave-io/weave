@@ -30,7 +30,7 @@
  * Never throws on an expected path: malformed input returns a typed
  * {@link PiDelegationCardError} and leaves the prior facts untouched.
  */
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import { appendAssistantStreamDelta } from "./assistant-stream-text.js";
 import {
   boundChildCompactId,
@@ -50,6 +50,10 @@ import {
 } from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  recordChildUiEventFailure,
+} from "./child-ui-event-diagnostics.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1192,8 @@ export interface PiChildCardProjectionConfig {
   readonly now?: PiCardClock;
   /** Controller-authenticated identity labels for provider failures, if any. */
   readonly providerErrorDescriptor?: PiChildProviderErrorDescriptor;
+  /** Content-free aggregate sink for rejected card mapping/reduction. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
 }
 
 export interface PiChildCardStartRunInput {
@@ -1318,14 +1324,54 @@ export class PiChildCardProjection {
    * projection the overlay prints.
    */
   applySessionEvent(event: PiChildSessionEvent): PiDelegationCardFacts {
-    if (this.settled) return this.facts();
+    return this.applySessionEventResult(event).match(
+      (facts) => facts,
+      () => this.facts(),
+    );
+  }
+
+  /**
+   * Result-bearing event projection. The compatibility wrapper above keeps the
+   * historical facts-only API, while callers that own a fanout boundary can
+   * identify the first card mapping or reduction failure.
+   */
+  applySessionEventResult(
+    event: PiChildSessionEvent,
+  ): Result<PiDelegationCardFacts, PiDelegationCardError> {
+    if (this.settled) return ok(this.facts());
     const itemId = this.correlateItemId(event);
-    const mapped = mapPiChildSessionEventToCompactInput(event, itemId);
-    if (mapped.isErr() || mapped.value === undefined) {
-      return this.applyEventProviderError(event);
+    const mapped = Result.fromThrowable(
+      () => mapPiChildSessionEventToCompactInput(event, itemId),
+      () => ({
+        type: "PiDelegationCardFailed" as const,
+        operation: "map" as const,
+        detail: "mapper_exception",
+      }),
+    )();
+    if (mapped.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-mapping-failed",
+      );
+      return err(mapped.error);
     }
-    const input = mapped.value;
-    if (input.kind === "settle") return this.facts();
+    if (mapped.value.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-mapping-failed",
+      );
+      return err({
+        type: "PiDelegationCardFailed",
+        operation: "map",
+        detail: "mapper_rejected",
+      });
+    }
+    if (mapped.value.value === undefined)
+      return this.applyEventProviderErrorResult(event);
+    const input = mapped.value.value;
+    if (input.kind === "settle") return ok(this.facts());
     // Only a fragment the mapper could identify authoritatively is eligible for
     // duplicate suppression. Streamed deltas carry no identity on the wire, so
     // they arrive unkeyed and are always applied: repeating a word is not
@@ -1333,23 +1379,59 @@ export class PiChildCardProjection {
     // never gave.
     if (input.kind === "assistant_fragment" && input.dedupKey !== undefined) {
       const dedupKey = boundChildCompactId(input.dedupKey);
-      if (this.dedupKeys.has(dedupKey)) return this.facts();
+      if (this.dedupKeys.has(dedupKey)) return ok(this.facts());
       this.retainDedupKey(dedupKey);
     }
-    this.applyInput(input);
-    return this.applyEventProviderError(event);
+    const reduced = this.applyInputResult(input);
+    if (reduced.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-reduction-failed",
+      );
+      return err(reduced.error);
+    }
+    return this.applyEventProviderErrorResult(event);
   }
 
   /** Folds one already-sanitized provider failure in. */
   applyProviderError(error: PiChildProviderError): PiDelegationCardFacts {
-    if (this.settled) return this.facts();
-    applyDelegationCardProviderError(this.state, error, this.now).match(
-      (next) => {
-        this.state = next;
-      },
-      () => undefined,
+    return this.applyProviderErrorResult(error).match(
+      (facts) => facts,
+      () => this.facts(),
     );
-    return this.facts();
+  }
+
+  private applyProviderErrorResult(
+    error: PiChildProviderError,
+  ): Result<PiDelegationCardFacts, PiDelegationCardError> {
+    if (this.settled) return ok(this.facts());
+    const reduced = Result.fromThrowable(
+      () => applyDelegationCardProviderError(this.state, error, this.now),
+      () => ({
+        type: "PiDelegationCardFailed" as const,
+        operation: "apply" as const,
+        detail: "provider_reducer_exception",
+      }),
+    )();
+    if (reduced.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-reduction-failed",
+      );
+      return err(reduced.error);
+    }
+    if (reduced.value.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-reduction-failed",
+      );
+      return err(reduced.value.error);
+    }
+    this.state = reduced.value.value;
+    return ok(this.facts());
   }
 
   /**
@@ -1378,23 +1460,56 @@ export class PiChildCardProjection {
     return projectDelegationCardFacts(this.state);
   }
 
-  private applyEventProviderError(
+  private applyEventProviderErrorResult(
     event: PiChildSessionEvent,
-  ): PiDelegationCardFacts {
-    const projected = parsePiChildProviderError(
-      event,
-      this.config.providerErrorDescriptor,
-    );
-    if (projected.isErr()) return this.facts();
-    return this.applyProviderError(projected.value);
+  ): Result<PiDelegationCardFacts, PiDelegationCardError> {
+    const projected = Result.fromThrowable(
+      () =>
+        parsePiChildProviderError(event, this.config.providerErrorDescriptor),
+      () => ({
+        type: "PiDelegationCardFailed" as const,
+        operation: "map" as const,
+        detail: "provider_mapper_exception",
+      }),
+    )();
+    if (projected.isErr()) {
+      recordChildUiEventFailure(
+        this.config.diagnostics,
+        "card-reduction",
+        "card-mapping-failed",
+      );
+      return err(projected.error);
+    }
+    if (projected.value.isErr()) return ok(this.facts());
+    return this.applyProviderErrorResult(projected.value.value);
+  }
+
+  private applyInputResult(
+    input: unknown,
+  ): Result<PiDelegationCardState, PiDelegationCardError> {
+    const reduced = Result.fromThrowable(
+      () => applyDelegationCardInput(this.state, input, this.now),
+      () => ({
+        type: "PiDelegationCardFailed" as const,
+        operation: "apply" as const,
+        detail: "reducer_exception",
+      }),
+    )();
+    if (reduced.isErr()) return err(reduced.error);
+    if (reduced.value.isErr()) return err(reduced.value.error);
+    this.state = reduced.value.value;
+    return ok(this.state);
   }
 
   private applyInput(input: unknown): void {
-    applyDelegationCardInput(this.state, input, this.now).match(
-      (next) => {
-        this.state = next;
-      },
+    this.applyInputResult(input).match(
       () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.config.diagnostics,
+          "card-reduction",
+          "card-reduction-failed",
+        ),
     );
   }
 

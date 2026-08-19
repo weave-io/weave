@@ -16,11 +16,13 @@ import {
   CARD_VIEWPORT_RING_ROWS,
   CARD_VIEWPORT_ROWS,
   createDelegationCardState,
+  PiChildCardProjection,
   type PiDelegationCardFacts,
   type PiDelegationCardState,
   projectDelegationCardFacts,
 } from "../child-card-model.js";
 import type { PiChildSessionEvent } from "../child-session-events.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -844,6 +846,36 @@ describe("child-card-model failure isolation", () => {
 
     // Prior facts survive every rejected input.
     expect(facts(state)).toEqual(before);
+  });
+
+  it("diagnoses a card reducer rejection without retaining event content", () => {
+    let now = 1_000;
+    const diagnostics = createChildUiEventDiagnostics();
+    const projection = new PiChildCardProjection({
+      threadId: "thread-opaque-1",
+      agentName: "shuttle",
+      assignment: "do it",
+      now: () => now,
+      diagnostics,
+    });
+    now = Number.NaN;
+    const result = projection.applySessionEventResult({
+      type: "text",
+      text: "CARD_EVENT_SECRET_SENTINEL",
+    });
+    expect(result.isErr()).toBe(true);
+    const snapshot = diagnostics.snapshot();
+    expect(snapshot.buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "card-reduction",
+        classification: "application-failure",
+        reason: "card-reduction-failed",
+        disposition: "failed",
+      }),
+    );
+    expect(JSON.stringify(snapshot)).not.toContain(
+      "CARD_EVENT_SECRET_SENTINEL",
+    );
   });
 
   it("rejects an unusable clock rather than inventing an elapsed", () => {

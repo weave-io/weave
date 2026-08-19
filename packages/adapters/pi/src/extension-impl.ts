@@ -215,6 +215,12 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  type ChildUiEventDiagnosticsSnapshot,
+  createChildUiEventDiagnostics,
+  EMPTY_CHILD_UI_EVENT_DIAGNOSTICS,
+} from "./child-ui-event-diagnostics.js";
 import type {
   CodexFastAttemptSink,
   CodexFastIntent,
@@ -665,6 +671,8 @@ export interface PiExtensionDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly logger: PiAdapterLogger;
+  /** Optional test/verifier sink; production uses one bounded generation sink. */
+  readonly childUiEventDiagnostics?: ChildUiEventDiagnosticsSink;
   readonly logRedirector: PiSharedLogRedirector;
   readonly configActivator: PiConfigActivator;
   readonly envPort: PiEnvPort;
@@ -1638,6 +1646,8 @@ async function applyChildBootstrap(
       onCompactRenderFailure: (code) => {
         deps.logger.warn({ code }, "weave_delegate compact render failed");
       },
+      diagnostics:
+        deps.childUiEventDiagnostics ?? createChildUiEventDiagnostics(),
     }),
     // Only a direct-step child (Pi adapter contract) ever receives
     // `weave_complete_step`; nested helpers it may itself spawn always use
@@ -2261,6 +2271,18 @@ function effectiveHealthOnly(generation: {
  */
 const MAX_RENDERED_HOST_SURFACE_GAPS = 10;
 
+function renderChildUiEventDiagnostics(
+  snapshot: ChildUiEventDiagnosticsSnapshot,
+): string {
+  const buckets = snapshot.buckets
+    .map(
+      (bucket) =>
+        `${bucket.stage}/${bucket.classification}/${bucket.reason}/${bucket.disposition}:${bucket.count}${bucket.saturated ? "!" : ""}@${bucket.firstAtMs}-${bucket.lastAtMs}`,
+    )
+    .join(",");
+  return `child-ui-event-diagnostics: bytes=${snapshot.serializedBytes}/${snapshot.maxSerializedBytes} omitted=${snapshot.omittedBuckets} buckets=${buckets || "none"}`;
+}
+
 function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
@@ -2277,6 +2299,7 @@ function renderHealthMessage(
       manifestReason: "artifact-path-missing",
     },
   ),
+  childUiEventDiagnostics: ChildUiEventDiagnosticsSnapshot = EMPTY_CHILD_UI_EVENT_DIAGNOSTICS.snapshot(),
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -2293,6 +2316,7 @@ function renderHealthMessage(
   const result = [`Weave adapter mode: ${mode}`, ...lines];
   result.push(hostRuntimeHealthLineFromOutcome(getHostModuleOutcome()));
   result.push(renderExtensionIdentityHealthLine(extensionIdentityHealth));
+  result.push(renderChildUiEventDiagnostics(childUiEventDiagnostics));
 
   for (const diagnostic of generation.preflight.hostSurfaceGapDiagnostics.slice(
     0,
@@ -2880,6 +2904,8 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
    * boundary attempt the triggers run, without spawning a child process.
    */
   readonly configRefreshForTest: () => PiConfigRefreshCoordinator | undefined;
+  /** Bounded diagnostics for verifier/health assertions; never a card input. */
+  readonly childUiEventDiagnosticsForTest: () => ChildUiEventDiagnosticsSnapshot;
 };
 
 export function createPiExtension(
@@ -2902,6 +2928,8 @@ export function createPiExtension(
       ? { configSourceFsPort: undefined }
       : {}),
   };
+  const childUiEventDiagnostics =
+    deps.childUiEventDiagnostics ?? createChildUiEventDiagnostics();
   // A custom logger denotes an embedding/test-owned sink. Production uses
   // the shared logger and must redirect it before any session log can reach
   // Pi's stdout. Supplying a redirector explicitly opts back into this path.
@@ -3666,6 +3694,7 @@ export function createPiExtension(
                 "weave_delegate compact render failed",
               );
             },
+            diagnostics: childUiEventDiagnostics,
           }),
         ];
       },
@@ -4539,6 +4568,7 @@ export function createPiExtension(
           lastBootActivationFailure,
           overlayKeysCell.diagnostics,
           extensionBuildIdentityHealthCell.value,
+          childUiEventDiagnostics.snapshot(),
         ),
         "info",
       );
@@ -6461,7 +6491,14 @@ export function createPiExtension(
       // Durable child records live in the parent session's child-ref ledger
       // and the native session tree, so the registry keeps no adapter-owned
       // persistence port of its own.
-      const inspectionRegistry = new PiChildInspectionRegistry();
+      childUiEventDiagnostics.clear().match(
+        () => undefined,
+        () => undefined,
+      );
+      const inspectionRegistry = new PiChildInspectionRegistry(
+        undefined,
+        childUiEventDiagnostics,
+      );
       inspectionRegistryCell.registry = inspectionRegistry;
       ctx.ui.setStatus(
         "weave",
@@ -6779,13 +6816,24 @@ export function createPiExtension(
             },
             onPrivateOutput: deps.onChildPrivateOutput,
             inspectionRegistry,
+            diagnostics: childUiEventDiagnostics,
             // One gate, one pipeline. Focus, generation, settlement and
             // repaint coalescing all live in `ChildOverlayLiveStream`; this
             // callback only hands it the event.
             onChildSessionEvent: (childId, event) => {
               if (!startupOwnsGeneration()) return;
               if (childOverlayCell.generationId !== generation.id) return;
-              childOverlayLiveStream?.ingest(childId, event);
+              const outcome = childOverlayLiveStream?.ingest(childId, event);
+              if (outcome === undefined) return;
+              // The stream owns diagnosis and repaint policy. The extension
+              // consumes every closed outcome without retrying, cancelling, or
+              // reclassifying a healthy child.
+              switch (outcome.kind) {
+                case "applied":
+                case "dropped":
+                case "failed":
+                  return;
+              }
             },
             // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
             // populated once the Runtime Store opens successfully, below -
@@ -6872,6 +6920,7 @@ export function createPiExtension(
             // active-plan view `active-plan-ui-state.ts` owns, and never starts
             // a plan lookup of its own from a repaint.
             () => readActivePlanBreadcrumb(activePlanUiState.view()),
+            childUiEventDiagnostics,
           );
           childOverlayLiveStream?.dispose();
           childOverlayLiveStream = createChildOverlayLiveStream({
@@ -6893,6 +6942,7 @@ export function createPiExtension(
               delegationControllerCell.controller?.resolveThreadIdForLiveChild(
                 childId,
               ),
+            diagnostics: childUiEventDiagnostics,
           });
         }
 
@@ -7897,6 +7947,8 @@ export function createPiExtension(
     extensionBuildIdentityHealthCell.value;
   piAdapterExtension.catalogCellForTest = () => catalogCellHolder.cell;
   piAdapterExtension.configRefreshForTest = () => configRefreshCell.coordinator;
+  piAdapterExtension.childUiEventDiagnosticsForTest = () =>
+    childUiEventDiagnostics.snapshot();
   return piAdapterExtension;
 }
 
