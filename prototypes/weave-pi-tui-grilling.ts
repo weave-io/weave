@@ -194,7 +194,27 @@ type EventKind =
 	| "tool"
 	| "assistant"
 	| "error"
-	| "queue";
+	| "queue"
+	| "fallback";
+
+type ModelFallbackPhase =
+	| "none"
+	| "applied-only"
+	| "recovery-confirmed"
+	| "exhaustion";
+
+interface ModelIdentity {
+	readonly provider: string;
+	readonly model: string;
+}
+
+interface ModelFallbackFacts {
+	readonly phase: Exclude<ModelFallbackPhase, "none">;
+	readonly from: ModelIdentity;
+	readonly to: ModelIdentity;
+	/** Closed, safe failure vocabulary. Provider payload text never crosses here. */
+	readonly failureClass: string;
+}
 
 interface ChildEvent {
 	readonly at: string;
@@ -207,7 +227,52 @@ interface ChildEvent {
 	readonly result?: string;
 	readonly tone?: Tone;
 	readonly streaming?: boolean;
+	readonly fallback?: ModelFallbackFacts;
 }
+
+const MODEL_FALLBACK_EVENT_KIND = "model-fallback" as const;
+const MODEL_FALLBACK_FROM = {
+	provider: "anthropic",
+	model: "claude-sonnet-4-5",
+} as const satisfies ModelIdentity;
+const MODEL_FALLBACK_TO = {
+	provider: "openai-codex",
+	model: "gpt-5.6-luna",
+} as const satisfies ModelIdentity;
+const MODEL_FALLBACK_FAILURE_CLASS = "provider unavailable";
+
+/**
+ * The visible event has one admission point. An applied-only transition owns
+ * model truth, and exhaustion owns the ordinary failure surface; neither is a
+ * user-facing fallback announcement. Only a parser-approved recovery proof
+ * produces one read-only event.
+ */
+function modelFallbackEventForPhase(
+	phase: ModelFallbackPhase,
+	at = "14:22:53",
+): ChildEvent | undefined {
+	if (phase !== "recovery-confirmed") return undefined;
+	const fallback: ModelFallbackFacts = {
+		phase,
+		from: MODEL_FALLBACK_FROM,
+		to: MODEL_FALLBACK_TO,
+		failureClass: MODEL_FALLBACK_FAILURE_CLASS,
+	};
+	return {
+		at,
+		kind: "fallback",
+		title: "MODEL FALLBACK",
+		body: `${fallback.from.provider}/${fallback.from.model} → ${fallback.to.provider}/${fallback.to.model}`,
+		result:
+			`${fallback.failureClass} · native recovery exhausted · continuing in this session`,
+		tone: "warn",
+		fallback,
+	};
+}
+
+const RECOVERY_CONFIRMED_EVENT = modelFallbackEventForPhase(
+	"recovery-confirmed",
+);
 
 /**
  * Shared spine of every state: delegation prompt, reasoning SUMMARY, a read
@@ -545,6 +610,9 @@ const STATES: readonly ChildState[] = [
 				body: "attempt 1 failed at the width sweep · resumed from the applied edit to fitLineWithSuffix · earlier turns are not replayed",
 				tone: "warn",
 			},
+			...(RECOVERY_CONFIRMED_EVENT === undefined
+				? []
+				: [RECOVERY_CONFIRMED_EVENT]),
 			{
 				at: "14:23:05",
 				kind: "tool",
@@ -1435,6 +1503,8 @@ function navEventLabel(event: ChildEvent): string {
 			return (event.title.split(" · ")[0] ?? "queue").trim();
 		case "sys":
 			return "session";
+		case "fallback":
+			return "model fallback";
 	}
 }
 
@@ -2252,6 +2322,8 @@ function kindGlyph(kind: EventKind): string {
 			return "✖";
 		case "queue":
 			return "↯";
+		case "fallback":
+			return "▌";
 	}
 }
 
@@ -2260,6 +2332,7 @@ function eventTone(event: ChildEvent): Tone {
 	if (event.kind === "error") return "bad";
 	if (event.kind === "assistant") return "run";
 	if (event.kind === "prompt") return "run";
+	if (event.kind === "fallback") return "warn";
 	return "mute";
 }
 
@@ -2318,6 +2391,212 @@ function withCaret(
 
 /** Two-column role gutter, mirroring Pi's own primary transcript. */
 const PI_NATIVE_INDENT = "  ";
+
+/* --- Model Fallback event: semantic rows, measured before paint ------------ */
+
+type FallbackInk = "text" | "acc" | "warn" | "dim" | "bold";
+
+interface Seg {
+	readonly ink: FallbackInk;
+	readonly t: string;
+}
+
+type Row = readonly Seg[];
+
+type ModelFallbackBand =
+	| "wide"
+	| "secondary-dropped"
+	| "origin-dropped"
+	| "fallback-title"
+	| "micro";
+
+const MODEL_FALLBACK_WIDE_MIN = 77;
+const MODEL_FALLBACK_ORIGIN_MIN = 55;
+const MODEL_FALLBACK_DESTINATION_MIN = 27;
+const MODEL_FALLBACK_TITLE_MIN = 16;
+const MODEL_FALLBACK_MIN_WIDTH = 10;
+
+/** Widths at the measured boundaries; all snapshots use plain paint. */
+const MODEL_FALLBACK_SNAPSHOT_WIDTHS = [
+	80,
+	77,
+	76,
+	55,
+	54,
+	27,
+	26,
+	16,
+	12,
+	10,
+	9,
+] as const;
+
+function modelFallbackBand(width: number): ModelFallbackBand {
+	const w = Math.max(1, Math.floor(width));
+	if (w >= MODEL_FALLBACK_WIDE_MIN) return "wide";
+	if (w >= MODEL_FALLBACK_ORIGIN_MIN) return "secondary-dropped";
+	if (w >= MODEL_FALLBACK_DESTINATION_MIN) return "origin-dropped";
+	if (w >= MODEL_FALLBACK_MIN_WIDTH) return "fallback-title";
+	return "micro";
+}
+
+/** Content segments sanitize; these two glyphs are trusted shape, not content. */
+function fallbackSeg(ink: FallbackInk, text: string): Seg {
+	return { ink, t: safeText(text) };
+}
+
+/** Trusted spacing keeps the exact copy after prose sanitization trims edges. */
+function fallbackSpace(ink: FallbackInk): Seg {
+	return { ink, t: " " };
+}
+
+function fallbackGlyph(ink: FallbackInk, text: "▌" | "→"): Seg {
+	return { ink, t: text };
+}
+
+function fallbackRowWidth(row: Row): number {
+	return row.reduce((sum, part) => sum + visibleWidth(part.t), 0);
+}
+
+/** Clip once at the row boundary, so every lossy row states its loss with `…`. */
+function clipFallbackRow(row: Row, width: number): Row {
+	const limit = Math.max(0, Math.floor(width));
+	if (limit === 0 || fallbackRowWidth(row) === 0) return [];
+	if (fallbackRowWidth(row) <= limit) return row;
+	const out: Seg[] = [];
+	let used = 0;
+	for (const part of row) {
+		const room = limit - used;
+		if (room <= 0) break;
+		const partWidth = visibleWidth(part.t);
+		if (partWidth <= room) {
+			out.push(part);
+			used += partWidth;
+			continue;
+		}
+		const clipped = truncateFallbackText(part.t, room);
+		if (clipped.length > 0) out.push({ ink: part.ink, t: clipped });
+		break;
+	}
+	return out;
+}
+
+function truncateFallbackText(text: string, width: number): string {
+	const limit = Math.max(0, Math.floor(width));
+	if (limit === 0) return "";
+	if (visibleWidth(text) <= limit) return text;
+	if (limit === 1) return "…";
+	const room = limit - 1;
+	let out = "";
+	let used = 0;
+	for (const char of text) {
+		const charWidth = visibleWidth(char);
+		if (used + charWidth > room) break;
+		out += char;
+		used += charWidth;
+	}
+	return `${out}…`;
+}
+
+function emitModelFallbackRow(row: Row, width: number, p: Paint): string {
+	return clipFallbackRow(row, width)
+		.map((part) => p[part.ink](part.t))
+		.join("");
+}
+
+function fallbackTitleRow(width: number): Row {
+	const full: Row = [
+		fallbackGlyph("warn", "▌"),
+		fallbackSpace("bold"),
+		fallbackSeg("bold", "MODEL FALLBACK"),
+	];
+	if (width >= MODEL_FALLBACK_TITLE_MIN) return full;
+	return clipFallbackRow(
+		[
+			fallbackGlyph("warn", "▌"),
+			fallbackSpace("bold"),
+			fallbackSeg("bold", "FALLBACK"),
+		],
+		width,
+	);
+}
+
+function fallbackIdentityRow(facts: ModelFallbackFacts): Row {
+	return [
+		fallbackSeg("text", `${facts.from.provider}/${facts.from.model}`),
+		fallbackSpace("text"),
+		fallbackGlyph("acc", "→"),
+		fallbackSpace("text"),
+		fallbackSeg("text", `${facts.to.provider}/${facts.to.model}`),
+	];
+}
+
+function fallbackDestinationRow(facts: ModelFallbackFacts): Row {
+	return [
+		fallbackGlyph("acc", "→"),
+		fallbackSpace("acc"),
+		fallbackSeg("acc", `${facts.to.provider}/${facts.to.model}`),
+	];
+}
+
+function fallbackSecondaryRow(facts: ModelFallbackFacts): Row {
+	return [
+		fallbackSeg(
+			"dim",
+			`${facts.failureClass} · native recovery exhausted · continuing in this session`,
+		),
+	];
+}
+
+/**
+ * The exact wide event is three rows. Narrowing sheds the secondary row first,
+ * then the origin identity; the arrow and destination remain the second row.
+ * Every shed row is replaced by one explicit ellipsis, never by silent loss.
+ */
+function renderModelFallbackEvent(
+	facts: ModelFallbackFacts,
+	width: number,
+	p: Paint,
+): string[] {
+	if (facts.phase !== "recovery-confirmed") return [];
+	const w = Math.max(1, Math.floor(width));
+	const title = fallbackTitleRow(w);
+	const ellipsis: Row = [fallbackSeg("dim", "…")];
+	const band = modelFallbackBand(w);
+	const rows: Row[] =
+		band === "wide"
+			? [title, fallbackIdentityRow(facts), fallbackSecondaryRow(facts)]
+			: band === "secondary-dropped"
+				? [title, fallbackIdentityRow(facts), ellipsis]
+				: band === "origin-dropped"
+					? [title, fallbackDestinationRow(facts), ellipsis]
+					: [title, fallbackDestinationRow(facts), ellipsis];
+	return rows.map((row) => emitModelFallbackRow(row, w, p));
+}
+
+interface ModelFallbackPrototypeSnapshot {
+	readonly width: number;
+	readonly band: ModelFallbackBand;
+	readonly lines: readonly string[];
+	readonly height: number;
+	readonly plainPaint: true;
+}
+
+function modelFallbackPrototypeSnapshots(): readonly ModelFallbackPrototypeSnapshot[] {
+	const facts = RECOVERY_CONFIRMED_EVENT?.fallback;
+	if (facts === undefined) return [];
+	const p = plainPaint();
+	return MODEL_FALLBACK_SNAPSHOT_WIDTHS.map((width) => {
+		const lines = renderModelFallbackEvent(facts, width, p);
+		return {
+			width,
+			band: modelFallbackBand(width),
+			lines,
+			height: lines.length,
+			plainPaint: true,
+		};
+	});
+}
 
 function renderPiNative(v: View, width: number): string[] {
 	const { p } = v;
@@ -2423,6 +2702,13 @@ function renderPiNative(v: View, width: number): string[] {
 						p.dim(l),
 					),
 				);
+				break;
+			}
+			case "fallback": {
+				const facts = event.fallback;
+				if (facts !== undefined) {
+					out.push(...renderModelFallbackEvent(facts, width, p));
+				}
 				break;
 			}
 			case "sys": {
@@ -3597,6 +3883,20 @@ export const __prototype = {
 	NAV_QUERY,
 	NAV_START_MATCH,
 	STATES,
+	MODEL_FALLBACK_EVENT_KIND,
+	MODEL_FALLBACK_FROM,
+	MODEL_FALLBACK_TO,
+	MODEL_FALLBACK_FAILURE_CLASS,
+	RECOVERY_CONFIRMED_EVENT,
+	MODEL_FALLBACK_WIDE_MIN,
+	MODEL_FALLBACK_ORIGIN_MIN,
+	MODEL_FALLBACK_DESTINATION_MIN,
+	MODEL_FALLBACK_TITLE_MIN,
+	MODEL_FALLBACK_SNAPSHOT_WIDTHS,
+	modelFallbackEventForPhase,
+	modelFallbackBand,
+	renderModelFallbackEvent,
+	modelFallbackPrototypeSnapshots,
 	CONTEXT,
 	CHILD,
 	CHILD_DRAFT,

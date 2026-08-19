@@ -25,9 +25,9 @@
  *   4  NATIVE LINE. Beneath the assignment the right body carries exactly ONE
  *      quiet, Pi-like activity row: a semantic glyph plus the single most
  *      meaningful thing the child has produced.
- *   5  STATUS FIRST RAIL. The rail leads with the STATE, in upper case behind a
- *      toned bar (`▌FAILED`), the child name second and the elapsed time third.
- *      Ten columns.
+ *   5  APPLIED IDENTITY RAIL. The rail leads with the STATE, then the
+ *      authenticated provider and model in a stacked pair. Its third row is
+ *      blank; elapsed lives only in the footer. Provider leaves before model.
  *   6  BALANCED EDGE FOOTER. One bottom border, two sides, one weight: run,
  *      phase, elapsed, tokens and cost on the left, and the truthful
  *      `Ctrl+O expand · Alt+I inspect child` on the right. `Alt+I` is PRINTED
@@ -116,7 +116,7 @@
  *     the expanded viewport and `summary · …` on the collapsed Native Line.
  *   - Failure text is the already-redacted, human-safe reason, expanded or not.
  *   - The one file name any region may print is the bounded, RELATIVE demo path
- *     `child-overlay-component.ts`.
+ *     `model-failover.ts`.
  *
  * Launch:
  *   pi --no-extensions -e ./prototypes/weave-delegate-tool-grilling.ts \
@@ -164,7 +164,7 @@ import {
 
 const DEMO_MARK = "DEMO DATA";
 
-/** The tool name under review. Printed verbatim on the card's top edge. */
+/** The production tool name used by the demo controller and status text. */
 const TOOL = "weave_delegate";
 
 /** Parent-side identity: who issued the delegation. */
@@ -176,8 +176,10 @@ const PARENT = {
 /** Child-side identity: one child, identical across every state. */
 const CHILD = {
 	agent: "shuttle",
+	displayName: "Shuttle",
 	role: "implementer",
-	model: "gpt-5.6-sol",
+	provider: "openai-codex",
+	model: "gpt-5.6-luna",
 	childId: "9f31…c4",
 	thread: "thread 2 · leaf 7",
 } as const;
@@ -188,10 +190,10 @@ const CHILD = {
  * right now, but what it was asked to do. It is static — a tool failure does
  * not change an assignment — and it is the card's top body row, verbatim.
  */
-const ASSIGNMENT = "Fix header suffix width handling and run the focused sweep.";
+const ASSIGNMENT = "Rewrite the retry coordinator.";
 
 /** Same assignment, already bounded hard for a one-line slot. */
-const ASSIGNMENT_SHORT = "Fix header suffix width · focused sweep";
+const ASSIGNMENT_SHORT = "Rewrite retry coordinator.";
 
 /** The action/run descriptor production prints on its third line. */
 const ACTION = "run 1 · start";
@@ -203,6 +205,19 @@ type Tone = "run" | "ok" | "warn" | "bad" | "mute";
  * choosing a better hierarchy, order and width — never by inventing data
  * another rail was denied.
  */
+interface AppliedIdentity {
+	/** Authenticated provider identity, never inferred from configured intent. */
+	readonly provider: string;
+	readonly model: string;
+	readonly authenticated: true;
+}
+
+const APPLIED_IDENTITY: AppliedIdentity = {
+	provider: CHILD.provider,
+	model: CHILD.model,
+	authenticated: true,
+};
+
 interface StateFacts {
 	/** Direct checkpoint key. */
 	readonly key: string;
@@ -214,6 +229,8 @@ interface StateFacts {
 	/** Finer phase (`tool call`, `bootstrap`), used by the footer. */
 	readonly phase: string;
 	readonly tone: Tone;
+	/** One atomically applied, authenticated provider/model pair, when known. */
+	readonly appliedIdentity?: AppliedIdentity;
 	/** True once the child can no longer act. */
 	readonly settled: boolean;
 	/** Latest meaningful reasoning SUMMARY — never raw chain-of-thought. */
@@ -290,7 +307,7 @@ const STATES: readonly StateFacts[] = [
 		settled: false,
 		summary:
 			"Reserving the trailing status suffix before the title truncates, then re-running the width sweep.",
-		tool: "edit · child-overlay-component.ts",
+		tool: "edit · model-failover.ts",
 		toolResult: "1 replacement · +6 −3",
 		elapsed: "1m12s",
 		tokens: "9.8k tok",
@@ -641,6 +658,19 @@ function toneInk(tone: Tone): Ink {
 	}
 }
 
+/** Display-only title case; canonical agent names remain lowercase facts. */
+function displayAgentName(agent: string): string {
+	return safeTrim(agent)
+		.split(/[-_\s]+/u)
+		.filter((part) => part.length > 0)
+		.map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+		.join(" ");
+}
+
+function appliedIdentityFor(f: StateFacts): AppliedIdentity {
+	return f.appliedIdentity ?? APPLIED_IDENTITY;
+}
+
 /* ==========================================================================
    4. SHARED FACT SELECTORS
 
@@ -706,10 +736,9 @@ function demoTagFor(width: number, lead = "  "): Row {
      - every interior row starts and ends with `│`;
      - no corner glyph ever appears inside the card, so there are no nested
        cards and no second border competing for the eye;
-     - collapsed height stays inside 5–7 rows at every width and every state;
-     - the rail and the latest activity survive narrowing first, the assignment
-       truncates rather than disappears, and telemetry drops before the inspect
-       hint.
+     - collapsed height stays inside 5–6 rows at every width and every state;
+     - body minimum, assignment, Native Line and status are protected; the
+       provider drops before the model, then the rail folds into identity rows.
    ========================================================================== */
 
 /**
@@ -717,7 +746,7 @@ function demoTagFor(width: number, lead = "  "): Row {
  * entry applies, so the width a rail lays out for is always the width `emit`
  * clips to and the frame can never be cut in half.
  */
-const MIN_CARD_WIDTH = 12;
+const MIN_CARD_WIDTH = 16;
 
 /** `╭─ left ────── right ─╮` style edge, width-safe and right-droppable. */
 function cardEdge(width: number, open: boolean, left: Row, right: Row): Row {
@@ -777,6 +806,7 @@ type Slot =
 	| "frame-bottom"
 	| "rule"
 	| "identity"
+	| "identity-detail"
 	| "task"
 	| "activity"
 	| "activity-detail"
@@ -834,18 +864,33 @@ function ruleRow(width: number): CardRow {
    ------------------------------------------------------------------------ */
 
 /**
- * Folded identity, used only when the terminal is too narrow to pay for a rail
- * column. `weave_delegate` already owns the top edge, so this row carries the
- * child and its status alone. It is a BODY row, not a footer row: this is the
- * one place the card prints identity outside the rail, and no footer may
- * duplicate it.
+ * First folded identity row. The status bar and word stay intact before any
+ * secondary identity is allowed to narrow. The card's top frame owns the
+ * Title Case agent name, so this row does not repeat it.
  */
 function identityRow(f: StateFacts): Row {
 	return [
-		seg("text", CHILD.agent),
-		seg("dim", " · "),
-		seg(toneInk(f.tone), f.status),
+		glyph(toneInk(f.tone), "▌"),
+		seg(toneInk(f.tone), ` ${f.status.toUpperCase()}`),
 	];
+}
+
+/**
+ * Folded identity rows replace the rail only after the provider has been shed.
+ * The second row keeps the display identity and the applied model bounded in
+ * one row; provider and elapsed remain absent here and in the footer only
+ * respectively.
+ */
+function identityRows(f: StateFacts, bodyWidth: number): readonly Row[] {
+	const identity = appliedIdentityFor(f);
+	return [
+		identityRow(f),
+		[
+			seg("bold", displayAgentName(CHILD.displayName)),
+			seg("dim", " · "),
+			seg("text", identity.model),
+		],
+	].map((row) => clipRow(row, bodyWidth));
 }
 
 /** The first candidate that fits the budget. Candidates are richest-first. */
@@ -1186,12 +1231,12 @@ const BOOT_NOTE = "child thread provisioned · tool policy inherited";
 const SUMMARY_TEXT =
 	"Reserving the trailing status suffix before the title truncates, then re-running the width sweep.";
 const M1_TEXT = "Reading the component before touching the suffix arithmetic.";
-const READ_CALL = "read · child-overlay-component.ts";
+const READ_CALL = "read · model-failover.ts";
 const READ_PROGRESS = "reading · 96 of 142 lines";
 const READ_RESULT = "142 lines · suffix handling sits at the title truncation";
 const M2_TEXT =
 	"Reserving the suffix width before the title truncates, then re-running the focused sweep.";
-const EDIT_CALL = "edit · child-overlay-component.ts";
+const EDIT_CALL = "edit · model-failover.ts";
 const EDIT_RESULT = "1 replacement · +6 −3";
 const STEER_TEXT = "from LOOM: also keep the 40 to 200 column sweep green";
 const STEER_QUEUED = `${STEER_TEXT} · 1 queued`;
@@ -1859,6 +1904,9 @@ function factsAt(path: PathId, step: number): StateFacts {
 	const live = liveStream(path, step);
 	return {
 		...factsFor(path, step),
+		// The demo models the authenticated applied fact the production card will
+		// receive. The pair is one object so a transition cannot paint it half-new.
+		appliedIdentity: APPLIED_IDENTITY,
 		elapsed: live.at,
 		tokens: live.tokens,
 		cost: live.cost,
@@ -2001,7 +2049,7 @@ function contRows(
 	});
 }
 
-/** `⚙ read(child-overlay-component.ts)`, with a caret while the call is open. */
+/** `⚙ read(model-failover.ts)`, with a caret while the call is open. */
 function toolCallRow(l: LiveEvent, ctx: DetailCtx): Row {
 	const parts = l.text.split(" · ");
 	const name = safeTrim(parts[0] ?? l.text);
@@ -2476,11 +2524,11 @@ function activeTerminal(
 }
 
 /**
- * The card's top-edge left side. `weave_delegate`, always — settlement never
- * writes a verdict onto the frame.
+ * The card's top-edge left side. The display name is Title Case and bold;
+ * canonical `CHILD.agent` remains the protocol/lookup identity.
  */
 function cardTitle(): Row {
-	return [seg("alt", TOOL)];
+	return [seg("bold", displayAgentName(CHILD.displayName))];
 }
 
 /**
@@ -2506,7 +2554,7 @@ function terminalBody(
    The top body row is ONE IMPERATIVE SENTENCE, in the parent's own words, in
    text ink, from the first column:
 
-     Fix header suffix width handling and run the focused sweep.
+     Rewrite the retry coordinator.
 
    No provenance prefix, no acceptance clause, no scope fields, no routing
    rationale, and never a second row: the card is FOUR or FIVE rows tall at
@@ -2518,7 +2566,7 @@ function terminalBody(
    across every lifecycle state and every microstep.
 
    THE TASK SURVIVES LAST. The ladder is richest-first and ends on the bare
-   `Fix suffix width`, so narrowing only ever removes words from the tail, and
+   `Retry coord`, so narrowing only ever removes words from the tail, and
    never the work itself.
    ------------------------------------------------------------------------ */
 
@@ -2528,8 +2576,8 @@ function terminalBody(
  * meaning added.
  */
 const TASK_MID = ASSIGNMENT_SHORT;
-const TASK_TIGHT = "Fix header suffix width · sweep";
-const TASK_MIN = "Fix suffix width";
+const TASK_TIGHT = "Rewrite retry";
+const TASK_MIN = "Retry coord";
 
 /**
  * Fit the assignment row from the richest-first ladder. If not even the floor
@@ -2653,7 +2701,7 @@ function nativeLine(
  *
  * A tool RESULT is reported as its CALL plus its result, which is what makes
  * this converge exactly on `latestActivity(f)` at the final step of every
- * state: `edit · child-overlay-component.ts · 1 replacement · +6 −3` is the
+ * state: `edit · model-failover.ts · 1 replacement · +6 −3` is the
  * same sentence the locked card printed before the stream existed.
  */
 function liveActivity(f: StateFacts, live: LiveStream): Activity {
@@ -2728,17 +2776,19 @@ function bodyActivity(
 }
 
 /* ==========================================================================
-   5c. THE LEFT RAIL — STATUS FIRST
+   5c. THE APPLIED IDENTITY RAIL — STATUS FIRST
 
    Its three cells, top to bottom:
 
-     ▌RUNNING    the state, upper case behind a toned bar, loudest in the card
-     shuttle     the child, second
-     38s         the elapsed time, third — droppable when the body gets tight
+     ▌RUNNING openai-codex    status plus authenticated provider
+               gpt-5.6-luna    authenticated model, stacked below provider
+                              a deliberate blank row
 
-   Ten columns, one for the bar and nine for the widest status word, so the rail
-   never truncates the fact it exists to align. The state word is the ONE thing
-   the authoritative settlement rewrites here.
+   The rail protects status, then the assignment and Native Line in the body.
+   At the provider-dropped band it keeps the model and removes only the
+   provider. At the folded band it becomes two bounded identity rows. Elapsed
+   time belongs in the footer only; the authoritative settlement rewrites the
+   state word and nothing else in the identity rail.
    ========================================================================== */
 
 /** Gutter, divider, gutter. One column of air on each side of the rule. */
@@ -2748,30 +2798,47 @@ function railDivider(): Seg {
 
 const RAIL_DIVIDER_W = 3;
 
-/** The settled rail width: one bar column plus the widest status word. */
-const RAIL_W = 10;
+/**
+ * The rail width includes the status bar/word and the authenticated provider.
+ * `TOOL ERROR` is the widest status, so the provider never displaces status.
+ */
+const RAIL_W = 25;
 
-/** Below this body width the rail cannot pay for itself, and identity folds. */
+/** Body minimum protected by the rail before it folds. */
 const RAIL_MIN_BODY = 17;
 
 /**
- * The body columns the rail must leave over its own width before it may print
- * its DROPPABLE cell. This is the rail's own drop order made mechanical: the
- * state and the child name always survive; ELAPSED is the cell that leaves —
- * which is exactly the fact the Balanced Edge footer is also carrying.
+ * The full band pays twelve extra columns beyond the protected body. In the
+ * tight band those columns are shed by dropping the provider, not the model.
  */
-const RAIL_TIGHT_SLACK = 16;
+const RAIL_TIGHT_SLACK = 12;
 
-/** The rail uses at most three cells. */
+/** The rail always owns three rows; the third is deliberately blank. */
 const RAIL_CELL_MAX = 3;
+const RAIL_MODEL_INDENT = 10;
+
+/** Exact outer-width bands after the four frame columns are reserved. */
+const CARD_WIDE_MIN =
+	RAIL_W + RAIL_DIVIDER_W + RAIL_MIN_BODY + RAIL_TIGHT_SLACK + 4;
+const CARD_PROVIDER_DROPPED_MIN =
+	RAIL_W + RAIL_DIVIDER_W + RAIL_MIN_BODY + 4;
+const CARD_WIDTH_BANDS = {
+	wide: { min: CARD_WIDE_MIN },
+	providerDropped: {
+	min: CARD_PROVIDER_DROPPED_MIN,
+	max: CARD_WIDE_MIN - 1,
+	},
+	folded: { min: MIN_CARD_WIDTH, max: CARD_PROVIDER_DROPPED_MIN - 1 },
+} as const;
 
 /**
- * STATUS FIRST — the state is the loudest thing in the card.
+ * Status first, then the atomically applied provider/model pair:
  *
- * Optimised for the failure hunt: scanning a long transcript for the one
- * delegation that broke. `▌FAILED` sits at the top, the child name second, the
- * elapsed time third — because "failed after 15m02s" is the pair a reader wants
- * when something is wrong.
+ *   ▌ RUNNING openai-codex
+ *             gpt-5.6-luna
+ *
+ * The third row is blank. Elapsed is footer-only. In the tight band the
+ * provider leaves first, while the status and model keep their positions.
  */
 function railStatusFirst(
 	f: StateFacts,
@@ -2779,15 +2846,23 @@ function railStatusFirst(
 	tight: boolean,
 ): readonly Row[] {
 	const ink = toneInk(f.tone);
-	const cells: Row[] = [
-		[
-			glyph(ink, "▌"),
-			seg(ink, clipText(f.status.toUpperCase(), Math.max(1, w - 1))),
-		],
-		[seg("text", clipText(CHILD.agent, w))],
+	const identity = appliedIdentityFor(f);
+	const status: Row = [
+		glyph(ink, "▌"),
+		seg(ink, ` ${f.status.toUpperCase()}`),
 	];
-	if (!tight) cells.push([seg("dim", clipText(f.elapsed, w))]);
-	return cells;
+	if (!tight) {
+		status.push(seg("dim", " "), seg("acc", identity.provider));
+	}
+	const model: Row = [
+		fill("dim", " ", RAIL_MODEL_INDENT),
+		seg("text", identity.model),
+	];
+	return [
+		clipRow(status, w),
+		clipRow(model, w),
+		[],
+	];
 }
 
 /**
@@ -2804,10 +2879,12 @@ function railPlan(width: number): {
 } {
 	const w = Math.max(MIN_CARD_WIDTH, Math.floor(width));
 	const inner = Math.max(6, w - 4);
-	const tight = inner < RAIL_W + RAIL_MIN_BODY + RAIL_TIGHT_SLACK;
+	const folded = inner < RAIL_W + RAIL_DIVIDER_W + RAIL_MIN_BODY;
+	const tight =
+		!folded &&
+		inner < RAIL_W + RAIL_DIVIDER_W + RAIL_MIN_BODY + RAIL_TIGHT_SLACK;
 	const railW = RAIL_W;
-	const folded = inner < railW + RAIL_MIN_BODY;
-	const bodyW = folded ? inner : Math.max(6, inner - railW - RAIL_DIVIDER_W);
+	const bodyW = folded ? inner : inner - railW - RAIL_DIVIDER_W;
 	return { tight, railW, folded, bodyW };
 }
 
@@ -2818,19 +2895,19 @@ function railPlan(width: number): {
    CHILD VIEWPORT for exactly one region: the rows BELOW the interior separator,
    and only when the entry is expanded.
 
-     row 0        `╭─ weave_delegate ── DEMO DATA ─╮`
-     row 1        ▌RUNNING  │  the Direct Task assignment row
-     row 2        shuttle   │  the Native Line activity row
-     row 3        38s       │  (blank body cell, at widths that pay for it)
+     row 0        `╭─ Shuttle ─────────────╮`
+     row 1        ▌ RUNNING openai-codex │ Rewrite the retry coordinator.
+     row 2                  gpt-5.6-luna │ ⏵ edit · model-failover.ts
+     row 3                              │
      (expanded)   the shell's interior rule
      (expanded)   the Child Viewport
      last         the Balanced Edge bottom border
 
-   THE GEOMETRY DOES NOT MOVE AT SETTLEMENT. Collapsed height is five rows at
-   ordinary and folded widths and four in the tight band where the rail drops
-   its elapsed cell, running or settled, because Native Settle adds no row and
-   writes no verdict onto the frame. What the settlement changes is the WORDS:
-   the rail's state, the Native Line's sentence and the footer's expand verb.
+   THE GEOMETRY DOES NOT MOVE AT SETTLEMENT. Collapsed height is five rows with
+   the three-cell rail and six rows after the rail folds into two bounded
+   identity rows. The provider drops before the model, and the protected body,
+   assignment, Native Line and status never pay for that narrowing. Settlement
+   changes only the rail state, Native Line sentence and footer expand verb.
 
    Every zipped row records its rail cell and its body cell beside the composed
    line, so the card can be checked column by column as well as byte by byte.
@@ -2857,12 +2934,18 @@ function renderCard(
 	const f = factsAt(path, step);
 	const rows: CardRow[] = [];
 
-	rows.push(edgeTop(w, cardTitle(), demoTagFor(w, "")));
+	rows.push(edgeTop(w, cardTitle(), []));
 
 	if (plan.folded) {
-		// FOLDED RAIL. The terminal cannot pay for a rail column, so identity folds
-		// into one body row, and the card is five rows tall.
-		rows.push(bodyRow(w, "identity", identityRow(f)));
+		// FOLDED RAIL. Provider leaves before model; bounded identity rows keep
+		// status and the applied model visible without starving the body.
+		for (const [i, identity] of identityRows(f, inner).entries()) {
+			rows.push({
+				slot: i === 0 ? "identity" : "identity-detail",
+				row: cardBody(w, identity),
+				body: identity,
+			});
+		}
 		for (const row of assignmentRows(inner)) {
 			rows.push({ slot: "task", row: cardBody(w, row), body: row });
 		}
@@ -2919,6 +3002,60 @@ function renderCard(
 	}
 	rows.push(...cardFooter(w, f, expanded));
 	return rows;
+}
+
+type CardWidthBand = "wide" | "provider-dropped" | "folded";
+
+/** Every measured boundary is represented in the plain snapshot set. */
+const CARD_SNAPSHOT_WIDTHS = [
+	80,
+	CARD_WIDE_MIN,
+	CARD_WIDE_MIN - 1,
+	CARD_PROVIDER_DROPPED_MIN,
+	CARD_PROVIDER_DROPPED_MIN - 1,
+	MIN_CARD_WIDTH,
+] as const;
+const CARD_TERMINAL_PATHS = ["completed", "failed", "cancelled"] as const;
+
+function cardWidthBand(width: number): CardWidthBand {
+	const plan = railPlan(width);
+	if (plan.folded) return "folded";
+	return plan.tight ? "provider-dropped" : "wide";
+}
+
+interface CardPrototypeSnapshot {
+	readonly path: (typeof CARD_TERMINAL_PATHS)[number];
+	readonly width: number;
+	readonly band: CardWidthBand;
+	readonly lines: readonly string[];
+	readonly height: number;
+	readonly plainPaint: true;
+}
+
+/**
+ * Plain, collapsed snapshots for every terminal state and measured width band.
+ * The height is part of each record so the stable-height contract is testable
+ * without reading painted ANSI or demo-controller state.
+ */
+function cardPrototypeSnapshots(): readonly CardPrototypeSnapshot[] {
+	const p = plainPaint();
+	const snapshots: CardPrototypeSnapshot[] = [];
+	for (const path of CARD_TERMINAL_PATHS) {
+		for (const width of CARD_SNAPSHOT_WIDTHS) {
+			const lines = renderCard(path, width, false, streamSteps(path)).map((row) =>
+				emit(row.row, Math.max(MIN_CARD_WIDTH, width), p),
+			);
+			snapshots.push({
+				path,
+				width,
+				band: cardWidthBand(width),
+				lines,
+				height: lines.length,
+				plainPaint: true,
+			});
+		}
+	}
+	return snapshots;
 }
 
 /* ==========================================================================
@@ -3420,13 +3557,14 @@ export default function (pi: ExtensionAPI): void {
 }
 
 /** Exported for the noninteractive smoke test; unused by pi at runtime. */
-/** Exported for the noninteractive smoke test; unused by pi at runtime. */
 export const __prototype = {
 	// the terminal seam
 	TERMINAL_BODY_MAX,
 	terminalFacts,
 	activeTerminal,
 	terminalBody,
+	displayAgentName,
+	appliedIdentityFor,
 	cardTitle,
 	settledRow,
 	authoritativeText,
@@ -3438,6 +3576,7 @@ export const __prototype = {
 	TOOL,
 	PARENT,
 	CHILD,
+	APPLIED_IDENTITY,
 	ASSIGNMENT,
 	ASSIGNMENT_SHORT,
 	ACTION,
@@ -3486,6 +3625,7 @@ export const __prototype = {
 	composeEdge,
 	cardFooter,
 	identityRow,
+	identityRows,
 	runParts,
 	// the assignment
 	ASSIGNMENT_ROW_MAX,
@@ -3574,7 +3714,15 @@ export const __prototype = {
 	RAIL_MIN_BODY,
 	RAIL_TIGHT_SLACK,
 	RAIL_CELL_MAX,
+	RAIL_MODEL_INDENT,
 	RAIL_W,
+	CARD_WIDE_MIN,
+	CARD_PROVIDER_DROPPED_MIN,
+	CARD_WIDTH_BANDS,
+	CARD_SNAPSHOT_WIDTHS,
+	CARD_TERMINAL_PATHS,
+	cardWidthBand,
+	cardPrototypeSnapshots,
 	// the card, the entry and the controller
 	renderCard,
 	DemoStore,
@@ -3620,4 +3768,5 @@ export type {
 	Seg,
 	Slot,
 	StateFacts,
+	AppliedIdentity,
 };

@@ -279,7 +279,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - The captured provider request contains no synthetic provider-level user message.
     - Later fallback errors advance boundedly, and all success/failure/race cases produce no double settlement.
 
-- [ ] 8. Amend the prototype and normative UI design record
+- [x] 8. Amend the prototype and normative UI design record
   - **What**: Preserve the approved read-only Model Fallback event and lock the latest delegation-card geometry before production rendering changes.
   - **Files**: `prototypes/weave-pi-tui-grilling.ts`, `prototypes/weave-delegate-tool-grilling.ts`, `docs/specs/33-spec-pi-adapter/33-weave-ui-design.md`.
   - **Depends on**: Tasks 6–7.
