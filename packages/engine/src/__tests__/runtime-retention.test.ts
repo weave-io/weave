@@ -5,6 +5,7 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_RUNTIME_SETTINGS } from "@weaveio/weave-core";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import type { RetentionTimerHandle } from "../runtime/retention.js";
 import {
   createInMemoryRuntimeStore,
   createUsageObservationId,
@@ -12,7 +13,6 @@ import {
   type RetentionPruneStats,
   type RetentionScheduler,
   RuntimeRetentionService,
-  type RuntimeStore,
   type RuntimeStoreError,
   type UsageObservation,
 } from "../index.js";
@@ -94,7 +94,7 @@ describe("RuntimeRetentionService", () => {
       store,
       settings: makeSettings({ usageMax: 2, journalMax: 10_000 }),
       clock: () => new Date("2026-01-01T12:00:00.000Z"),
-      scheduler: { schedule: () => null, cancel: () => undefined },
+      scheduler: { schedule: () => null, cancel: () => {} },
     });
 
     const result = await service.onActivation();
@@ -113,7 +113,7 @@ describe("RuntimeRetentionService", () => {
       writeThreshold: 3,
       intervalMs: 60_000,
       clock: () => new Date("2026-01-01T00:00:00.000Z"),
-      scheduler: { schedule: () => null, cancel: () => undefined },
+      scheduler: { schedule: () => null, cancel: () => {} },
     });
 
     // Seed last run so interval alone does not force immediately.
@@ -157,14 +157,14 @@ describe("RuntimeRetentionService", () => {
       usage: {
         pruneDetails: () => okAsync(stats),
       },
-    } as unknown as RuntimeStore;
+    };
 
     const service = new RuntimeRetentionService({
       store,
       settings: makeSettings(),
       writeThreshold: 1,
       clock: () => new Date("2026-01-01T00:00:00.000Z"),
-      scheduler: { schedule: () => null, cancel: () => undefined },
+      scheduler: { schedule: () => null, cancel: () => {} },
     });
 
     const a = service.onActivation();
@@ -193,14 +193,14 @@ describe("RuntimeRetentionService", () => {
       usage: {
         pruneDetails: () => okAsync(stats),
       },
-    } as unknown as RuntimeStore;
+    };
 
     const service = new RuntimeRetentionService({
       store,
       settings: makeSettings(),
       writeThreshold: 1,
       clock: () => new Date("2026-01-01T00:00:00.000Z"),
-      scheduler: { schedule: () => null, cancel: () => undefined },
+      scheduler: { schedule: () => null, cancel: () => {} },
     });
 
     const first = await service.onActivation();
@@ -215,10 +215,10 @@ describe("RuntimeRetentionService", () => {
   });
 
   it("arms interval timer and cancels on stop", async () => {
-    const handles: unknown[] = [];
+    const handles: RetentionTimerHandle[] = [];
     const scheduler: RetentionScheduler = {
       schedule(cb, delayMs) {
-        const handle = { cb, delayMs };
+        const handle = { callback: cb, delayMs };
         handles.push(handle);
         return handle;
       },
@@ -239,7 +239,7 @@ describe("RuntimeRetentionService", () => {
 
     await service.onActivation();
     expect(handles).toHaveLength(1);
-    expect((handles[0] as { delayMs: number }).delayMs).toBe(15 * 60 * 1000);
+    expect(handles[0]?.delayMs).toBe(15 * 60 * 1000);
     service.stop();
     expect(handles).toHaveLength(0);
   });
@@ -252,7 +252,7 @@ describe("RuntimeRetentionService", () => {
     const service = new RuntimeRetentionService({
       store: createInMemoryRuntimeStore(),
       settings: makeSettings(),
-      scheduler: { schedule: () => null, cancel: () => undefined },
+      scheduler: { schedule: () => null, cancel: () => {} },
     });
     service.stop();
     const result = await service.onActivation();

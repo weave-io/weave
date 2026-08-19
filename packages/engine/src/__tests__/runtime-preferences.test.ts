@@ -477,6 +477,7 @@ describe("adapter preferences — migration v6", () => {
     expect(CURRENT_SCHEMA_VERSION).toBe(6);
     expect(readSchemaVersion(db)).toBe(6);
 
+    // SAFETY: PRAGMA table_info returns rows with the selected column fields.
     const columns = (
       db.prepare("PRAGMA table_info(adapter_preferences)").all() as Array<{
         name: string;

@@ -38,38 +38,38 @@ export interface NoFollowFfiError {
 
 export interface LibcSymbols {
   readonly open: (
-    path: Pointer | TypedArray | string | null,
+    path: Pointer | TypedArray | null,
     flags: number,
-    mode?: number,
+    mode: number,
   ) => number;
   readonly openat: (
     dirfd: number,
-    path: Pointer | TypedArray | string | null,
+    path: Pointer | TypedArray | null,
     flags: number,
-    mode?: number,
+    mode: number,
   ) => number;
   readonly mkdirat: (
     dirfd: number,
-    path: Pointer | TypedArray | string | null,
+    path: Pointer | TypedArray | null,
     mode: number,
   ) => number;
   readonly close: (fd: number) => number;
   readonly write: (
     fd: number,
-    buf: Pointer | TypedArray | string | null,
+    buf: Pointer | TypedArray | null,
     count: number,
   ) => number;
   readonly fchmod: (fd: number, mode: number) => number;
   readonly umask: (mask: number) => number;
   readonly renameat: (
     olddirfd: number,
-    oldpath: Pointer | TypedArray | string | null,
+    oldpath: Pointer | TypedArray | null,
     newdirfd: number,
-    newpath: Pointer | TypedArray | string | null,
+    newpath: Pointer | TypedArray | null,
   ) => number;
   readonly unlinkat: (
     dirfd: number,
-    path: Pointer | TypedArray | string | null,
+    path: Pointer | TypedArray | null,
     flags: number,
   ) => number;
   readonly fsync: (fd: number) => number;
@@ -172,8 +172,10 @@ export function libcPath(): string | undefined {
   return undefined;
 }
 
+type ErrnoSymbolName = "__error" | "__errno_location";
+
 /** Errno accessor's exported C symbol name. libc only exposes `errno` via a function on both platforms. */
-function errnoAccessorName(): string | undefined {
+function errnoAccessorName(): ErrnoSymbolName | undefined {
   const currentPlatform = platform();
   if (currentPlatform === "darwin") return "__error";
   if (currentPlatform === "linux") return "__errno_location";
@@ -198,9 +200,20 @@ export function toResultAsync<T, E>(result: Result<T, E>): ResultAsync<T, E> {
  * pointers, buffers, or other internal state that must not leak into logs
  * or typed error messages.
  */
-export function sanitizeCause(cause: unknown): string {
+export function sanitizeCause<T>(cause: T): string {
   if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
+  if (Object(cause) === cause) return "no-follow filesystem native call failed";
+  const tag = Result.fromThrowable(
+    () => Object.prototype.toString.call(cause),
+    () => "[object Other]",
+  )();
+  if (tag.isOk() && tag.value === "[object String]") {
+    const text = Result.fromThrowable(
+      () => String(cause),
+      () => "no-follow filesystem native call failed",
+    )();
+    if (text.isOk()) return text.value;
+  }
   return "no-follow filesystem native call failed";
 }
 
@@ -248,6 +261,75 @@ export interface LoadedLibc {
   readonly readErrno: () => number;
 }
 
+const COMMON_LIBC_DEFINITIONS = {
+  open: {
+    args: ["ptr", "i32", "i32"],
+    returns: "i32",
+  },
+  openat: {
+    args: ["i32", "ptr", "i32", "i32"],
+    returns: "i32",
+  },
+  mkdirat: {
+    args: ["i32", "ptr", "u32"],
+    returns: "i32",
+  },
+  close: { args: ["i32"], returns: "i32" },
+  write: { args: ["i32", "ptr", "i32"], returns: "i32" },
+  fchmod: { args: ["i32", "i32"], returns: "i32" },
+  umask: { args: ["u32"], returns: "u32" },
+  renameat: {
+    args: ["i32", "ptr", "i32", "ptr"],
+    returns: "i32",
+  },
+  unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
+  fsync: { args: ["i32"], returns: "i32" },
+  flock: { args: ["i32", "i32"], returns: "i32" },
+} as const;
+
+function makeLoadedLibc(
+  library: ReturnType<typeof dlopen>,
+  symbols: LibcSymbols,
+  readErrno: () => number,
+): LoadedLibc {
+  return { library, symbols, readErrno };
+}
+
+function openLibc(
+  libraryPath: string,
+  errnoSymbol: ErrnoSymbolName,
+): LoadedLibc {
+  if (errnoSymbol === "__error") {
+    const library = dlopen(libraryPath, {
+      ...COMMON_LIBC_DEFINITIONS,
+      __error: { args: [], returns: "ptr" },
+    });
+    const loaded = library.symbols;
+    return makeLoadedLibc(
+      library,
+      loaded,
+      () => {
+        const pointer = loaded.__error();
+        return pointer === null ? -1 : read.i32(pointer, 0);
+      },
+    );
+  }
+
+  const library = dlopen(libraryPath, {
+    ...COMMON_LIBC_DEFINITIONS,
+    __errno_location: { args: [], returns: "ptr" },
+  });
+  const loaded = library.symbols;
+  return makeLoadedLibc(
+    library,
+    loaded,
+    () => {
+      const pointer = loaded.__errno_location();
+      return pointer === null ? -1 : read.i32(pointer, 0);
+    },
+  );
+}
+
 export function loadLibc(): Result<LoadedLibc, NoFollowFfiError> {
   const libraryPath = libcPath();
   const errnoSymbol = errnoAccessorName();
@@ -258,51 +340,7 @@ export function loadLibc(): Result<LoadedLibc, NoFollowFfiError> {
   }
 
   return Result.fromThrowable(
-    () => {
-      const library = dlopen(libraryPath, {
-        open: {
-          args: ["ptr", "i32", "i32"],
-          returns: "i32",
-        },
-        openat: {
-          args: ["i32", "ptr", "i32", "i32"],
-          returns: "i32",
-        },
-        mkdirat: {
-          args: ["i32", "ptr", "u32"],
-          returns: "i32",
-        },
-        close: { args: ["i32"], returns: "i32" },
-        // Both the count argument and the return value are declared as
-        // 32-bit here (not the syscall's native `size_t`/`ssize_t`), so bun:ffi
-        // returns a plain `number` rather than a `bigint` for every call site
-        // in this module. A single `write()` for a `weave.db` snapshot never
-        // approaches the 2^31 byte boundary, and callers already loop to
-        // handle partial writes.
-        write: { args: ["i32", "ptr", "i32"], returns: "i32" },
-        fchmod: { args: ["i32", "i32"], returns: "i32" },
-        // `umask` is fixed-arity (`mode_t umask(mode_t)`), unlike `open`/
-        // `openat` below — see `withRestrictiveCreateMask` for why that
-        // distinction matters.
-        umask: { args: ["u32"], returns: "u32" },
-        renameat: {
-          args: ["i32", "ptr", "i32", "ptr"],
-          returns: "i32",
-        },
-        unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
-        fsync: { args: ["i32"], returns: "i32" },
-        // Fixed-arity (`int flock(int, int)`), unlike `open`/`openat` above.
-        flock: { args: ["i32", "i32"], returns: "i32" },
-        [errnoSymbol]: { args: [], returns: "ptr" },
-      });
-      const symbols = library.symbols as unknown as LibcSymbols &
-        Record<string, () => Pointer>;
-      return {
-        library,
-        symbols,
-        readErrno: () => read.i32(symbols[errnoSymbol](), 0),
-      };
-    },
+    () => openLibc(libraryPath, errnoSymbol),
     (cause) =>
       ({
         message: "failed to load libc for no-follow filesystem I/O",
@@ -320,14 +358,14 @@ export function identityFromFd(
   fd: number,
   expectedKind: "file" | "directory",
 ): ResultAsync<FdIdentity, NoFollowFfiError> {
-  return ResultAsync.fromPromise(
-    Bun.file(fd).stat(),
+  return ResultAsync.fromThrowable(
+    () => Bun.file(fd).stat(),
     (cause) =>
       ({
         message: "failed to fstat no-follow descriptor",
         cause: sanitizeCause(cause),
       }) satisfies NoFollowFfiError,
-  ).andThen((stat) => {
+  )().andThen((stat) => {
     const matchesKind =
       expectedKind === "file" ? stat.isFile() : stat.isDirectory();
     if (!matchesKind) {
@@ -396,8 +434,19 @@ export function ensureDirectoryTree(
         message: "failed to create directory tree",
         cause: sanitizeCause(cause),
       }) satisfies NoFollowFfiError,
-  ).map((value) => {
-    library.close();
-    return value;
-  });
+  ).andThen((value) =>
+    toResultAsync(
+      Result.fromThrowable(
+        () => {
+          library.close();
+          return value;
+        },
+        (cause) =>
+          ({
+            message: "failed to close libc after creating directory tree",
+            cause: sanitizeCause(cause),
+          }) satisfies NoFollowFfiError,
+      )(),
+    ),
+  );
 }

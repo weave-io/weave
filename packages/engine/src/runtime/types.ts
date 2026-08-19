@@ -19,21 +19,37 @@
 // ---------------------------------------------------------------------------
 
 /**
- * A JSON primitive value: string, number, boolean, or null.
+ * A JSON primitive accepted by engine-owned persisted contracts.
+ *
+ * `undefined`, functions, symbols, bigint values, and non-finite numbers are
+ * deliberately excluded. Boundary parsers reject those values instead of
+ * relying on JSON.stringify's lossy coercions.
  */
 export type JsonPrimitive = string | number | boolean | null;
 
 /**
- * A JSON object with string keys and `JsonValue` values.
+ * A recursively valid JSON object owned by the Runtime Store boundary.
+ *
+ * This is a domain contract, not a type for unvalidated caller input. Runtime
+ * parsers must produce it from descriptor-safe snapshots before persistence.
  */
 export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
-/**
- * Any valid JSON value: primitive, object, or array.
- */
-export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+/** Any valid JSON value owned by an engine persistence contract. */
+export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
+
+/** Journal payload contract after descriptor-safe sanitization. */
+export type JournalData = JsonObject;
+
+/** Scalar values allowed in a SessionSnapshot metadata record. */
+export type SnapshotMetadataValue = string | number | boolean;
+
+/** Flat metadata contract for a persisted SessionSnapshot. */
+export interface SnapshotMetadata {
+  readonly [key: string]: SnapshotMetadataValue;
+}
 
 // ---------------------------------------------------------------------------
 // Branded ID types
@@ -99,16 +115,22 @@ export type ArtifactId = string & { readonly __brand: "ArtifactId" };
 
 /** Cast a raw string to WorkflowInstanceId. */
 export function createWorkflowInstanceId(raw: string): WorkflowInstanceId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as WorkflowInstanceId;
 }
 
 /** Cast a raw string to ExecutionLeaseId. */
 export function createExecutionLeaseId(raw: string): ExecutionLeaseId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as ExecutionLeaseId;
 }
 
 /** Cast a raw string to SessionSnapshotId. */
 export function createSessionSnapshotId(raw: string): SessionSnapshotId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as SessionSnapshotId;
 }
 
@@ -116,21 +138,29 @@ export function createSessionSnapshotId(raw: string): SessionSnapshotId {
 export function createRuntimeJournalEntryId(
   raw: string,
 ): RuntimeJournalEntryId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as RuntimeJournalEntryId;
 }
 
 /** Cast a raw string to UsageObservationId. */
 export function createUsageObservationId(raw: string): UsageObservationId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as UsageObservationId;
 }
 
 /** Cast a raw string to OwnerId. */
 export function createOwnerId(raw: string): OwnerId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as OwnerId;
 }
 
 /** Cast a raw string to ArtifactId. */
 export function createArtifactId(raw: string): ArtifactId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as ArtifactId;
 }
 
@@ -581,7 +611,7 @@ export interface SessionSnapshot {
    * Structured, sanitized metadata about the session.
    * Must not contain raw prompts, completions, credentials, or tokens.
    */
-  readonly metadata: Record<string, string | number | boolean>;
+  readonly metadata: SnapshotMetadata;
 }
 
 // ---------------------------------------------------------------------------

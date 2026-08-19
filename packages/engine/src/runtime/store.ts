@@ -29,6 +29,7 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  SnapshotMetadata,
   UsageObservation,
   UsageObservationId,
   UsageObservationQueryFilter,
@@ -290,7 +291,7 @@ export interface RecordSessionSnapshotInput {
    * Sanitized metadata. Must not contain raw prompts, completions,
    * credentials, tokens, cookies, authorization headers, or PII.
    */
-  readonly metadata: Record<string, string | number | boolean>;
+  readonly metadata: SnapshotMetadata;
 }
 
 /**
@@ -490,6 +491,17 @@ export function clampAdapterPreferenceListLimit(limit?: number): number {
   );
 }
 
+function isStringValue<T>(value: T): value is T & string {
+  if (Object(value) === value) return false;
+  return Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Other]",
+  )().match(
+    (tag) => tag === "[object String]",
+    () => false,
+  );
+}
+
 function hasControlOrNul(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -510,14 +522,14 @@ function rejectControlChars(
       ),
     );
   }
-  return ok(undefined);
+  return ok(void 0);
 }
 
 /** Validate a preference namespace: non-empty, bounded, no control chars or NUL. */
 export function validateAdapterPreferenceNamespace(
   namespace: string,
 ): Result<void, RuntimeStoreError> {
-  if (typeof namespace !== "string") {
+  if (!isStringValue(namespace)) {
     return err(
       validationError(
         "Adapter preference namespace must be a string",
@@ -548,7 +560,7 @@ export function validateAdapterPreferenceNamespace(
 export function validateAdapterPreferenceKey(
   key: string,
 ): Result<void, RuntimeStoreError> {
-  if (typeof key !== "string") {
+  if (!isStringValue(key)) {
     return err(
       validationError("Adapter preference key must be a string", "key"),
     );
@@ -579,7 +591,7 @@ export function validateAdapterPreferenceKey(
 export function validateAdapterPreferenceValue(
   valueJson: string,
 ): Result<void, RuntimeStoreError> {
-  if (typeof valueJson !== "string") {
+  if (!isStringValue(valueJson)) {
     return err(
       validationError(
         "Adapter preference value must be a JSON string",
@@ -602,12 +614,12 @@ export function validateAdapterPreferenceValue(
     );
   }
   const parsed = Result.fromThrowable(
-    () => JSON.parse(valueJson) as unknown,
+    () => JSON.parse(valueJson),
     () =>
       validationError("Adapter preference value must be valid JSON", "value"),
   )();
   if (parsed.isErr()) return err(parsed.error);
-  return ok(undefined);
+  return ok(void 0);
 }
 
 /** Validate a preference namespace and key together. */

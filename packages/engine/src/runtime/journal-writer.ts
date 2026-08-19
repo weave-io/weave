@@ -20,19 +20,22 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   type ResultAsync,
 } from "neverthrow";
 import { logger } from "../logger.js";
 import type { RuntimeStoreError } from "./errors.js";
 import { journalWriteError } from "./errors.js";
-import { sanitizeJournalData } from "./sanitizer.js";
+import {
+  jsonUtf8ByteLength,
+  sanitizeJournalData,
+} from "./sanitizer.js";
 import type { RuntimeJournalRepository } from "./store.js";
 import type {
   ExecutionLeaseId,
   JournalEntrySource,
   JournalSeverity,
-  JsonObject,
+  JournalData,
   RuntimeJournalEntry,
   WorkflowInstanceId,
 } from "./types.js";
@@ -75,7 +78,7 @@ export interface WriteJournalEntryInput {
    * Must not contain raw prompts, completions, credentials, tokens, or PII.
    * Fingerprints (SHA-256 hex strings) may be stored here instead of raw content.
    */
-  readonly data: JsonObject;
+  readonly data: JournalData;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +97,22 @@ export interface WriteJournalEntryInput {
  *
  * Returns `ok(undefined)` if valid, or `err(journal_write)` if invalid.
  */
-function validateEnvelope(
+function isStringValue<T>(value: T): value is T & string {
+  if (Object(value) === value) return false;
+  return Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Other]",
+  )().match(
+    (tag) => tag === "[object String]",
+    () => false,
+  );
+}
+
+function isObjectLike<T>(value: T): value is T & object {
+  return value !== null && value !== undefined && Object(value) === value;
+}
+
+function validateEnvelopeUnsafe(
   input: WriteJournalEntryInput,
 ): Result<undefined, RuntimeStoreError> {
   if (input.source.kind !== "engine" && input.source.kind !== "adapter") {
@@ -106,20 +124,17 @@ function validateEnvelope(
   }
 
   if (
-    typeof input.source.name !== "string" ||
+    !isStringValue(input.source.name) ||
     input.source.name.trim().length === 0
   ) {
     return err(journalWriteError("source.name must be a non-empty string."));
   }
 
-  if (
-    typeof input.eventType !== "string" ||
-    input.eventType.trim().length === 0
-  ) {
+  if (!isStringValue(input.eventType) || input.eventType.trim().length === 0) {
     return err(journalWriteError("eventType must be a non-empty string."));
   }
 
-  if (!(JOURNAL_SEVERITIES as readonly string[]).includes(input.severity)) {
+  if (!JOURNAL_SEVERITIES.includes(input.severity)) {
     return err(
       journalWriteError(
         `Invalid severity: "${input.severity}". Must be one of: ${JOURNAL_SEVERITIES.join(", ")}.`,
@@ -129,7 +144,7 @@ function validateEnvelope(
 
   if (
     input.data === null ||
-    typeof input.data !== "object" ||
+    !isObjectLike(input.data) ||
     Array.isArray(input.data)
   ) {
     return err(
@@ -139,7 +154,16 @@ function validateEnvelope(
     );
   }
 
-  return ok(undefined);
+  return ok(void 0);
+}
+
+function validateEnvelope(
+  input: WriteJournalEntryInput,
+): Result<undefined, RuntimeStoreError> {
+  return Result.fromThrowable(
+    () => validateEnvelopeUnsafe(input),
+    (cause) => journalWriteError("Journal envelope validation failed", cause),
+  )().andThen((result) => result);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,21 +176,14 @@ function validateEnvelope(
  * Returns `ok(undefined)` if within limit, or `err(journal_write)` if exceeded.
  */
 function checkPayloadSize(
-  data: JsonObject,
+  data: JournalData,
 ): Result<undefined, RuntimeStoreError> {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(data);
-  } catch (cause) {
-    return err(
-      journalWriteError(
-        "Failed to serialize journal entry data for size check",
-        cause,
-      ),
-    );
-  }
-
-  const byteLength = new TextEncoder().encode(serialized).byteLength;
+  const byteLengthResult = Result.fromThrowable(
+    () => jsonUtf8ByteLength(data),
+    (cause) => journalWriteError("Failed to measure journal entry data", cause),
+  )();
+  if (byteLengthResult.isErr()) return err(byteLengthResult.error);
+  const byteLength = byteLengthResult.value;
   if (byteLength > MAX_DATA_BYTES) {
     return err(
       journalWriteError(
@@ -176,7 +193,7 @@ function checkPayloadSize(
     );
   }
 
-  return ok(undefined);
+  return ok(void 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +283,7 @@ export class RuntimeJournalWriter {
           },
           "Journal append failed (best-effort mode)",
         );
-        return okAsync(undefined);
+        return okAsync(void 0);
       });
   }
 

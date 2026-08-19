@@ -45,6 +45,7 @@ import {
 } from "./store.js";
 import type {
   AdapterPreferenceRecord,
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -53,7 +54,6 @@ import type {
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
-  JsonObject,
   OwnerId,
   RetentionPruneStats,
   RuntimeJournalEntry,
@@ -160,6 +160,23 @@ export interface InMemoryRuntimeStoreOptions {
   readonly failOn?: InMemoryRuntimeStoreFailureConfig;
 }
 
+type MutableWorkflowInstance = {
+  -readonly [K in keyof WorkflowInstance]: WorkflowInstance[K];
+};
+
+type MutableArtifactRef = {
+  -readonly [K in keyof ArtifactRef]: ArtifactRef[K];
+};
+
+type MutableSessionSnapshot = {
+  -readonly [K in keyof SessionSnapshot]: SessionSnapshot[K];
+};
+
+interface InMemoryUsageSnapshot {
+  readonly observations: Map<string, NormalizedUsageObservation>;
+  readonly rollups: Map<string, UsageRollup>;
+}
+
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
@@ -219,7 +236,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const instance = this.store.get(id);
     if (!instance) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     return okAsync(instance);
   }
@@ -243,7 +260,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     const now = new Date().toISOString();
     const isTerminal =
@@ -251,30 +268,18 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       input.status === "failed" ||
       input.status === "cancelled";
 
-    let stepPatch: Partial<WorkflowInstance> = {};
-    if (input.currentStepName !== undefined) {
-      stepPatch =
-        input.currentStepName !== null
-          ? { currentStepName: input.currentStepName }
-          : { currentStepName: undefined };
-    }
-
-    let errorPatch: Partial<WorkflowInstance> = {};
-    if (input.errorMessage !== undefined) {
-      errorPatch =
-        input.errorMessage !== null
-          ? { errorMessage: input.errorMessage }
-          : { errorMessage: undefined };
-    }
-
-    const updated: WorkflowInstance = {
+    const updated: MutableWorkflowInstance = {
       ...existing,
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...stepPatch,
-      ...errorPatch,
-      ...(isTerminal && !existing.completedAt ? { completedAt: now } : {}),
       updatedAt: now,
     };
+    if (input.status !== undefined) updated.status = input.status;
+    if (input.currentStepName !== undefined) {
+      updated.currentStepName = input.currentStepName ?? undefined;
+    }
+    if (input.errorMessage !== undefined) {
+      updated.errorMessage = input.errorMessage ?? undefined;
+    }
+    if (isTerminal && !existing.completedAt) updated.completedAt = now;
     this.store.set(id, updated);
     return okAsync(updated);
   }
@@ -295,7 +300,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
 
     // Find existing artifact with same name to determine revision (last occurrence)
@@ -306,20 +311,18 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     // Reuse stable id across revisions; assign new id for first occurrence
     const artifactId = prior ? prior.id : createArtifactId(newId());
 
-    const ref: ArtifactRef = {
+    const ref: MutableArtifactRef = {
       id: artifactId,
       name: artifact.name,
       path: artifact.path,
       revision,
       // New revision always resets approvalState to pending, invalidating prior approval.
       approvalState: "pending",
-      ...(artifact.producerAgent
-        ? { producerAgent: artifact.producerAgent }
-        : {}),
-      ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      ...(artifact.description ? { description: artifact.description } : {}),
-      ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
     };
+    if (artifact.producerAgent) ref.producerAgent = artifact.producerAgent;
+    if (artifact.mimeType) ref.mimeType = artifact.mimeType;
+    if (artifact.description) ref.description = artifact.description;
+    if (artifact.integrity) ref.integrity = artifact.integrity;
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: [...existing.artifacts, ref],
@@ -336,7 +339,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
 
     // Compute attempt number: count prior attempts for this step + 1
@@ -366,7 +369,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
     approval?: {
-      readonly actor: import("./types.js").ArtifactApprovalActor;
+      readonly actor: ArtifactApprovalActor;
       readonly decidedAt: string;
       readonly expectedRevision: number;
       readonly expectedDigest?: string;
@@ -377,7 +380,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     // Find the last index of the artifact with the given id
     let artifactIndex = -1;
@@ -388,7 +391,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       }
     }
     if (artifactIndex === -1) {
-      return errAsync(notFoundError("ArtifactRef", artifactId as string));
+      return errAsync(notFoundError("ArtifactRef", artifactId));
     }
     const currentArtifact = existing.artifacts[artifactIndex];
     if (
@@ -399,7 +402,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
         conflictError(
           "ArtifactRevision",
           `Artifact revision changed before approval commit`,
-          artifactId as string,
+          artifactId,
         ),
       );
     }
@@ -412,7 +415,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
         conflictError(
           "ArtifactDigest",
           `Artifact digest changed before approval commit`,
-          artifactId as string,
+          artifactId,
         ),
       );
     }
@@ -540,7 +543,7 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
   ): ResultAsync<ExecutionLease, RuntimeStoreError> {
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     return okAsync(lease);
   }
@@ -555,13 +558,13 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
     }
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     const now = this.clock();
     const nowIso = now.toISOString();
     if (lease.expiresAt <= nowIso) {
       return errAsync(
-        conflictError("ExecutionLease", "Lease has expired", id as string),
+        conflictError("ExecutionLease", "Lease has expired", id),
       );
     }
     if (lease.ownerId !== ownerId) {
@@ -569,7 +572,7 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
         conflictError(
           "ExecutionLease",
           "Lease is owned by a different owner",
-          id as string,
+          id,
         ),
       );
     }
@@ -591,14 +594,14 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
     }
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     if (lease.ownerId !== ownerId) {
       return errAsync(
         conflictError(
           "ExecutionLease",
           "Lease is owned by a different owner",
-          id as string,
+          id,
         ),
       );
     }
@@ -607,7 +610,7 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
     // SessionSnapshot references to the released lease instead of dropping
     // the snapshot itself.
     this.onRelease?.(id);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   /** Snapshot current store state for transaction staging. */
@@ -651,7 +654,7 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
     for (const [id, snapshot] of this.store) {
       if (snapshot.leaseId !== leaseId) continue;
       const { leaseId: _severed, ...rest } = snapshot;
-      this.store.set(id, rest as SessionSnapshot);
+      this.store.set(id, rest);
     }
   }
 
@@ -665,19 +668,19 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
     if (sanitizeResult.isErr()) {
       return errAsync(sanitizeResult.error);
     }
-    const snapshot: SessionSnapshot = {
+    const snapshot: MutableSessionSnapshot = {
       id: createSessionSnapshotId(newId()),
       workflowInstanceId: input.workflowInstanceId,
       leaseId: input.leaseId,
       harnessName: input.harnessName,
-      ...(input.harnessVersion ? { harnessVersion: input.harnessVersion } : {}),
       agentName: input.agentName,
-      ...(input.modelId ? { modelId: input.modelId } : {}),
-      ...(input.stepName ? { stepName: input.stepName } : {}),
       sessionStatus: input.sessionStatus,
       recordedAt: new Date().toISOString(),
       metadata: { ...sanitizeResult.value },
     };
+    if (input.harnessVersion) snapshot.harnessVersion = input.harnessVersion;
+    if (input.modelId) snapshot.modelId = input.modelId;
+    if (input.stepName) snapshot.stepName = input.stepName;
     this.store.set(snapshot.id, snapshot);
     return okAsync(snapshot);
   }
@@ -694,7 +697,7 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
   ): ResultAsync<SessionSnapshot, RuntimeStoreError> {
     const snap = this.store.get(id);
     if (!snap) {
-      return errAsync(notFoundError("SessionSnapshot", id as string));
+      return errAsync(notFoundError("SessionSnapshot", id));
     }
     return okAsync(snap);
   }
@@ -775,7 +778,7 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
   ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
     const entry = this.store.get(id);
     if (!entry) {
-      return errAsync(notFoundError("RuntimeJournalEntry", id as string));
+      return errAsync(notFoundError("RuntimeJournalEntry", id));
     }
     return okAsync(entry);
   }
@@ -981,20 +984,14 @@ class InMemoryUsageRepository implements UsageRepository {
     );
   }
 
-  snapshot(): {
-    observations: Map<string, NormalizedUsageObservation>;
-    rollups: Map<string, UsageRollup>;
-  } {
+  snapshot(): InMemoryUsageSnapshot {
     return {
       observations: new Map(this.observations),
       rollups: new Map(this.rollups),
     };
   }
 
-  restore(snapshot: {
-    observations: Map<string, NormalizedUsageObservation>;
-    rollups: Map<string, UsageRollup>;
-  }): void {
+  restore(snapshot: InMemoryUsageSnapshot): void {
     this.observations.clear();
     for (const [k, v] of snapshot.observations) {
       this.observations.set(k, v);
@@ -1139,7 +1136,7 @@ class InMemoryAdapterPreferenceRepository
     const identity = validateAdapterPreferenceIdentity(namespace, key);
     if (identity.isErr()) return errAsync(identity.error);
     this.store.delete(preferenceMapKey(namespace, key));
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   snapshot(): Map<string, AdapterPreferenceRecord> {
@@ -1187,7 +1184,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
         workflowInstanceId: entry.workflowInstanceId,
         stepId: entry.stepId,
         severity: entry.severity,
-        data: entry.data as JsonObject,
+        data: entry.data,
       })
       .andThen((result) => {
         if (result === undefined) {
@@ -1198,7 +1195,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
             source: entry.source,
             eventType: entry.eventType,
             severity: entry.severity,
-            data: entry.data as JsonObject,
+            data: entry.data,
           };
           return okAsync(synthetic);
         }
@@ -1258,7 +1255,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   constructor(options: InMemoryRuntimeStoreOptions = {}) {
     this.clock = options.clock ?? (() => new Date());
     this.strictJournal = options.strictJournal ?? false;
-    this.failureConfig = { ...(options.failOn ?? {}) };
+    this.failureConfig = { ...options.failOn };
 
     this.instances = new InMemoryWorkflowInstanceRepository(this.failureConfig);
     this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
@@ -1324,9 +1321,10 @@ export class InMemoryRuntimeStore implements RuntimeStore {
       preferences: this.preferences,
     };
 
-    return ResultAsync.fromPromise(Promise.resolve(callback(tx)), (cause) =>
-      queryError("Transaction callback threw unexpectedly", cause),
-    ).andThen((result) => {
+    return ResultAsync.fromThrowable(
+      async () => callback(tx),
+      (cause) => queryError("Transaction callback threw unexpectedly", cause),
+    )().andThen((result) => {
       if (result.isErr()) {
         // Rollback: restore all snapshots
         this.instances.restore(instancesSnap);
@@ -1346,7 +1344,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     if (this.failureConfig.close) {
       return errAsync(this.failureConfig.close);
     }
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 

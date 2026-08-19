@@ -11,13 +11,19 @@
  */
 
 import type { RuntimeSettings } from "@weaveio/weave-core";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, type ResultAsync } from "neverthrow";
 import { logger } from "../logger.js";
 import { type RuntimeStoreError, retentionError } from "./errors.js";
 import type { RuntimeStore } from "./store.js";
 import type { RetentionPruneStats } from "./types.js";
 
 const log = logger.child({ module: "runtime-retention" });
+
+/** Runtime Store surface consumed by retention. */
+export type RuntimeRetentionStore = {
+  readonly journal: Pick<RuntimeStore["journal"], "prune">;
+  readonly usage: Pick<RuntimeStore["usage"], "pruneDetails">;
+};
 
 /** Default relevant-write threshold before the next prune attempt. */
 export const DEFAULT_RETENTION_WRITE_THRESHOLD = 256;
@@ -26,7 +32,7 @@ export const DEFAULT_RETENTION_WRITE_THRESHOLD = 256;
 export const DEFAULT_RETENTION_INTERVAL_MS = 15 * 60 * 1000;
 
 export interface RuntimeRetentionServiceOptions {
-  readonly store: RuntimeStore;
+  readonly store: RuntimeRetentionStore;
   readonly settings: RuntimeSettings;
   /** Injected clock for deterministic tests. Default: `() => new Date()`. */
   readonly clock?: () => Date;
@@ -46,9 +52,21 @@ export interface RuntimeRetentionServiceOptions {
   readonly scheduler?: RetentionScheduler;
 }
 
+export interface RetentionTimerHandle {
+  /** Native handle used by the default scheduler. Test schedulers may omit it. */
+  readonly native?: ReturnType<typeof setTimeout>;
+  /** Optional test-observable delay. */
+  readonly delayMs?: number;
+  /** Optional test-observable callback. */
+  readonly callback?: () => void;
+}
+
 export interface RetentionScheduler {
-  schedule(callback: () => void, delayMs: number): unknown;
-  cancel(handle: unknown): void;
+  schedule(
+    callback: () => void,
+    delayMs: number,
+  ): RetentionTimerHandle | null;
+  cancel(handle: RetentionTimerHandle): void;
 }
 
 export interface RetentionRunResult {
@@ -59,10 +77,10 @@ export interface RetentionRunResult {
 
 const defaultScheduler: RetentionScheduler = {
   schedule(callback, delayMs) {
-    return setTimeout(callback, delayMs);
+    return { native: setTimeout(callback, delayMs) };
   },
   cancel(handle) {
-    clearTimeout(handle as ReturnType<typeof setTimeout>);
+    if (handle.native !== undefined) clearTimeout(handle.native);
   },
 };
 
@@ -72,7 +90,7 @@ const defaultScheduler: RetentionScheduler = {
  * Stateful coordination lives on this class — no module-level mutable state.
  */
 export class RuntimeRetentionService {
-  private readonly store: RuntimeStore;
+  private readonly store: RuntimeRetentionStore;
   private readonly settings: RuntimeSettings;
   private readonly clock: () => Date;
   private readonly writeThreshold: number;
@@ -84,7 +102,7 @@ export class RuntimeRetentionService {
   private inFlight: ResultAsync<RetentionRunResult, RuntimeStoreError> | null =
     null;
   private pendingSafeBoundary = false;
-  private timerHandle: unknown = null;
+  private timerHandle: RetentionTimerHandle | null = null;
   private stopped = false;
 
   constructor(options: RuntimeRetentionServiceOptions) {
@@ -161,7 +179,7 @@ export class RuntimeRetentionService {
       // safe boundary (`runIfDue` / `onRelevantWrite` / `onActivation`).
       // If nothing else is running, attempt immediately as a safe boundary.
       void this.runSingleFlight().match(
-        () => undefined,
+        () => {},
         (error) => {
           log.warn({ err: error }, "scheduled retention prune failed");
         },
@@ -183,7 +201,16 @@ export class RuntimeRetentionService {
     if (this.inFlight) return this.inFlight;
 
     this.pendingSafeBoundary = false;
-    const started = this.executePrune().map((result) => {
+    const startedResult = Result.fromThrowable(
+      () => this.executePrune(),
+      (cause) => retentionError("retention prune failed", cause),
+    )();
+    const started: ResultAsync<RetentionRunResult, RuntimeStoreError> =
+      startedResult.match(
+        (result) => result,
+        (error) => errAsync<RetentionRunResult, RuntimeStoreError>(error),
+      );
+    const settled = started.map((result) => {
       this.writesSinceLastRun = 0;
       this.lastRunAtMs = this.clock().getTime();
       return result;
@@ -191,25 +218,7 @@ export class RuntimeRetentionService {
 
     // Keep the same ResultAsync instance for single-flight joiners. Clear the
     // slot after settlement so the next safe boundary can retry failures.
-    this.inFlight = ResultAsync.fromPromise(
-      started.match(
-        (value) => value,
-        (error) => {
-          throw error;
-        },
-      ),
-      (cause) => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "type" in cause &&
-          (cause as RuntimeStoreError).type !== undefined
-        ) {
-          return cause as RuntimeStoreError;
-        }
-        return retentionError("retention prune failed", cause);
-      },
-    )
+    this.inFlight = settled
       .map((result) => {
         this.inFlight = null;
         return result;
