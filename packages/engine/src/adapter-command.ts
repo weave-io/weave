@@ -12,7 +12,7 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   type ResultAsync,
 } from "neverthrow";
 import { z } from "zod";
@@ -51,7 +51,7 @@ type AdapterCommandInputCallable = (
 ) => AdapterCommandInput;
 
 /** Runtime candidates accepted at the opaque envelope boundary before parsing. */
-type AdapterCommandInput =
+export type AdapterCommandInput =
   | AdapterCommandInputRecord
   | readonly AdapterCommandInput[]
   | AdapterCommandInputCallable
@@ -129,21 +129,132 @@ export function createAdapterCommandRegistry(
 // Validation + dispatch
 // ---------------------------------------------------------------------------
 
+const invalidEnvelope = (issues: readonly string[]): AdapterCommandError => ({
+  type: "InvalidEnvelope",
+  issues,
+});
+
+function snapshotAdapterCommandRequest(
+  value: AdapterCommandInput,
+): Result<ReadonlyMap<string, PropertyDescriptor>, AdapterCommandError> {
+  const reflected = Result.fromThrowable(
+    () => {
+      const objectValue = new Object(value);
+      if (value === null || objectValue !== value)
+        return err(invalidEnvelope(["(root): expected a plain object"]));
+
+      const callable = Result.fromThrowable(
+        () => Function.prototype.toString.call(objectValue),
+        () => "not-callable",
+      )();
+      if (callable.isOk())
+        return err(
+          invalidEnvelope(["(root): expected a non-callable object"]),
+        );
+
+      const prototype = Object.getPrototypeOf(objectValue);
+      if (prototype !== Object.prototype && prototype !== null)
+        return err(invalidEnvelope(["(root): expected a plain object"]));
+
+      const keys = Reflect.ownKeys(objectValue);
+      if (keys.length !== 3)
+        return err(
+          invalidEnvelope(["(root): expected exactly three envelope fields"]),
+        );
+
+      const allowed = new Set(["adapter", "command", "payloadJson"]);
+      const fields = new Map<string, PropertyDescriptor>();
+      for (const key of keys) {
+        const parsedKey = z.string().safeParse(key);
+        if (!parsedKey.success || !allowed.has(parsedKey.data))
+          return err(
+            invalidEnvelope([
+              "(root): envelope fields must be named string fields",
+            ]),
+          );
+        const descriptor = Object.getOwnPropertyDescriptor(
+          objectValue,
+          parsedKey.data,
+        );
+        if (
+          descriptor === undefined ||
+          descriptor.enumerable !== true ||
+          !("value" in descriptor)
+        )
+          return err(
+            invalidEnvelope([
+              `${parsedKey.data}: expected an own data property`,
+            ]),
+          );
+        fields.set(parsedKey.data, descriptor);
+      }
+      if (fields.size !== 3)
+        return err(invalidEnvelope(["(root): envelope fields must be unique"]));
+      return ok(fields);
+    },
+    () => invalidEnvelope(["(root): unable to inspect envelope"]),
+  )();
+  return reflected.andThen((result) => result);
+}
+
 /** Validates envelope shape only. Never inspects payload semantics. */
 export function parseAdapterCommandRequest(
   value: AdapterCommandInput,
 ): Result<AdapterCommandRequest, AdapterCommandError> {
-  const parsed = AdapterCommandRequestSchema.safeParse(value);
-  if (!parsed.success) {
-    return err({
-      type: "InvalidEnvelope",
-      issues: parsed.error.issues.map((issue) => {
-        const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  const snapshot = snapshotAdapterCommandRequest(value);
+  if (snapshot.isErr()) return err(snapshot.error);
+
+  const parsed = Result.fromThrowable(
+    () => ({
+      adapter: opaqueNameSchema.safeParse(
+        snapshot.value.get("adapter")?.value,
+      ),
+      command: opaqueNameSchema.safeParse(
+        snapshot.value.get("command")?.value,
+      ),
+      payloadJson: payloadJsonSchema.safeParse(
+        snapshot.value.get("payloadJson")?.value,
+      ),
+    }),
+    () => invalidEnvelope(["(root): unable to parse envelope"]),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+
+  const { adapter, command, payloadJson } = parsed.value;
+  const issues: string[] = [];
+  if (!adapter.success) {
+    issues.push(
+      ...adapter.error.issues.map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "adapter";
         return `${path}: ${issue.message}`;
       }),
-    });
+    );
   }
-  return ok(parsed.data);
+  if (!command.success) {
+    issues.push(
+      ...command.error.issues.map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "command";
+        return `${path}: ${issue.message}`;
+      }),
+    );
+  }
+  if (!payloadJson.success) {
+    issues.push(
+      ...payloadJson.error.issues.map((issue) => {
+        const path =
+          issue.path.length > 0 ? issue.path.join(".") : "payloadJson";
+        return `${path}: ${issue.message}`;
+      }),
+    );
+  }
+  if (!adapter.success || !command.success || !payloadJson.success)
+    return err(invalidEnvelope(issues));
+
+  return ok({
+    adapter: adapter.data,
+    command: command.data,
+    payloadJson: payloadJson.data,
+  });
 }
 
 /**
