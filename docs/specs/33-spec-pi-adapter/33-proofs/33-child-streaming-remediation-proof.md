@@ -298,3 +298,121 @@ input, parent message, card detail, or proof field.
 Task 11 is not marked complete. Weft and Warp are pending. The live proof has
 an identity-green subject and a passing tool-detail lane, but it is not a
 four-lane green proof.
+
+## Task 11 remediation: exact-identity fresh green lanes
+
+Date of remediation run: 2026-08-19
+
+Evidence type: fresh Herdr Pi `0.84.2` run after the remediation build. This
+append-only section does not revise either earlier RED record. It contains only
+bounded counts, statuses, and digests. It contains no reasoning text, assistant
+text, tool payload, prompt, credential, screenshot, scrollback, transcript, or
+config contents.
+
+### Exact identity and controls
+
+| Fact | Bounded value |
+| --- | --- |
+| Git subject | `ed0986889b18dd43e8c38248254981f9a34dec07` |
+| Git dirty | `false` |
+| Source-input count | `143` |
+| Build completion | `2026-08-19T13:20:21.969Z` |
+| Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| Build-manifest SHA-256 | `6b4ad65ff5ae459f31b7b2cf7eddd4a04092089af0ef8a10fdfc504cee6a4e96` |
+| Pi | `0.84.2`; package SHA-256 `820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0` |
+| pi-ai | `0.84.2`; package SHA-256 `9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9` |
+| pi-tui | `0.84.2`; package SHA-256 `2c19fb7e3d1e83a461b6f020b2ffc118b435dcd78a07af8c8def72864cd09e6e` |
+| Independent verifier | **PASS** — `current`; child streaming permitted |
+
+Built adapter output digests:
+
+| Output | SHA-256 |
+| --- | --- |
+| `cli` | `9d39ca336f49291f24964e5de2a3890d9c0410cc9ca48736de00fcecac1a418a` |
+| `cli-declarations` | `5984be53878a216ed0a054094be409679635219c00519c70e86b6c853369b9e8` |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| `extension-build-identity` | `cdae357c6587a31da95e39f94aa8ab57dfafc7af8ea37799dfec4a9d27c6feb5` |
+| `extension-declarations` | `3373de113af5f106448d6adc21b21632a7995da0db9b2af6fb641cac942fe009` |
+| `extension-impl` | `bfa80249dddb5bd61caab3efdba8314de4a60e5687a127cd1b3fb91cf6298a5c` |
+| `extension-impl-declarations` | `a621a0bb2212fcd1b57ac8d4ce78350bea5017920812a6431c8adf11ff3c4c9c` |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` |
+| `index` | `58fd868f3944805c4ce2bf8e018b5c7e66610e2104ed856bab5b2b69237ea41b` |
+| `index-declarations` | `f92b2bf8b4eb0bfa8cf7991ed31b2a6cf6d8bfc77846ee513dc1d02cef4c2cf7` |
+
+The proof loaded build A, replaced only ignored on-disk adapter outputs with a
+second digest, and observed **PASS** for `stale-on-disk`. `/reload` adopted the
+second digest and observed **PASS** for `current`. The control process exited
+before the fresh parent started. The final parent started after build A was
+restored and the independent identity gate was current.
+
+The recovered global configuration was validated before the proof and restored
+after it to SHA-256
+`734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75` with mode
+`0644`. A mode-`0600` exact backup remained available through the proof and
+matched the same digest. The adapter symlink and launcher were restored to their
+pre-proof identities.
+
+### Fresh live lanes
+
+The fresh parent delegated exactly one bounded `shuttle-mini` child. The child
+ran one bounded tool call and then streamed a long response so the pre-settlement
+assistant projection could be sampled twice. The live TUI was the only reasoning
+observation surface.
+
+| Lane | Status | Content-free observation |
+| --- | --- | --- |
+| Parent raw reasoning live | **PASS** | Exact reasoning-prefix observations: `1`; parent card live activity remained reasoning-only. |
+| Inspector raw reasoning live | **PASS** | Exact reasoning-prefix observations: `3`; one bounded live reasoning buffer. |
+| Inspector tool details | **PASS** | Correlated tool starts: `1`; terminal results: `1`; duplicate terminal rows: `0`. |
+| Inspector assistant reply live | **PASS** | Streaming-header observations: `1`; pre-settlement indented body samples: `2`; body growth: `1`. |
+
+The settled parent card answer-leak predicate was **false**. The card contained
+no child assistant or tool activity. The inspector remained read-only after
+settlement and retained no live reasoning row.
+
+### Sink isolation and cleanup counts
+
+| Check | Status | Bounded result |
+| --- | --- | --- |
+| Parent card registry after settlement/close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Inspector reasoning registry after settlement/close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Parent card live activity | **PASS** | Reasoning-only; no child assistant/tool payload |
+| Tool-result semantics | **PASS** | One authoritative settled result; no duplicate terminal result |
+| Content-free capture | **PASS** | `47` events; independent manifest |
+| Content-free replay and red controls | **PASS** | `5` red controls; `4` lanes |
+| Durable Weave reasoning sinks | **PASS** | No parent input, message, card details, Runtime Store, checkpoint, replay, search, log, diagnostic, fixture, or proof content |
+| Runtime Store after cleanup | **PASS** | No active lease; `0` workflow instances; schema `6` |
+| Herdr proof pane/process | **PASS** | Fresh pane closed; no child or provider process remained |
+
+The zero counts come from the bounded production-extension integration seam
+that reads only registry sizes and retained byte totals. It does not expose
+reasoning text, keys, IDs, or payloads. The host-managed native child session
+remains the Pi persistence boundary; Weave did not duplicate its content.
+
+### Remediation validation
+
+| Gate | Result |
+| --- | --- |
+| Focused remediation suite | PASS — `477` tests, `0` failures, `23403` expectations, `8` files |
+| Full Pi suite | PASS — `4198` tests, `0` failures, `879726` expectations, `178` files |
+| Script tests | PASS — `52` tests, `0` failures, `205` expectations, `3` files |
+| `bun run typecheck` | PASS — `0` errors; existing docs hints only |
+| `bun run lint` | PASS — exit `0`; existing `350` warnings and `67` infos; declaration validation passed |
+| `bun run build` | PASS — packages and docs completed; existing Astro warning only |
+| Global and project config validation | PASS |
+| `bun run docs:check-links` | PASS |
+| Runtime status | PASS — no active lease and `0` workflow instances |
+
+### Focused commits
+
+The production wiring and deterministic evidence are split into these focused
+Conventional Commits:
+
+- `4ba81ed0` — `fix(pi): fan out structural reasoning starts`
+- `6063e490` — `fix(pi): wire live reasoning cleanup state`
+- `50aab65e` — `test(pi): prove exact-identity child streaming lanes`
+- `ed098688` — `test(pi): update structural reasoning fanout bound`
+
+The earlier exact-identity RED remains recorded under `695e15a2`, and the
+historical 2026-08-18 RED remains unchanged above. Task 11 remains unchecked in
+`.weave/plans/pi-child-streaming-remediation.md`. Weft and Warp were not run.
