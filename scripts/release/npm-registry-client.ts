@@ -1,6 +1,24 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { CommandRunner } from "./command-runner.js";
+import { RELEASE_INPUT_LIMITS } from "./constants.js";
 import type { RegistryError } from "./errors.js";
+
+const NPM_TEXT_LIMIT = 64 * 1024;
+const NPM_VERSION_SCHEMA = z.string().min(1).max(128);
+const NPM_VERSIONS_SCHEMA = z
+  .array(NPM_VERSION_SCHEMA)
+  .max(RELEASE_INPUT_LIMITS.artifactCount * 256);
+const NPM_DIST_TAGS_SCHEMA = z
+  .record(z.string().min(1).max(64), NPM_VERSION_SCHEMA)
+  .refine(
+    (tags) => Object.keys(tags).length <= 32,
+    "npm dist-tags response has too many tags",
+  );
+
+function registryFailure(operation: string, message: string): RegistryError {
+  return { type: "RegistryError", operation, message };
+}
 
 export interface NpmRegistryClient {
   publish(
@@ -33,56 +51,57 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
   ): ResultAsync<void, RegistryError> {
     return this.commands
       .run(["npm", "publish", tarballPath, "--access", "public", "--tag", tag])
-      .map(() => undefined)
-      .mapErr((error) => ({
-        type: "RegistryError",
-        operation: "publish",
-        message: error.type,
-      }));
+      .andThen(() =>
+        ResultAsync.fromPromise(Promise.resolve(), () =>
+          registryFailure("publish", "publish result unavailable"),
+        ),
+      )
+      .mapErr(() => registryFailure("publish", "npm publish failed"));
   }
   viewVersion(packageName: string): ResultAsync<string, RegistryError> {
     return this.commands
       .run(["npm", "view", packageName])
-      .map((result) => result.stdout.trim())
-      .mapErr((error) => ({
-        type: "RegistryError",
-        operation: "viewVersion",
-        message: error.type,
-      }));
+      .andThen((result) => {
+        const version = NPM_VERSION_SCHEMA.safeParse(result.stdout.trim());
+        return version.success
+          ? okAsync(version.data)
+          : errAsync(
+              registryFailure("viewVersion", "invalid npm version response"),
+            );
+      })
+      .mapErr(() => registryFailure("viewVersion", "npm view failed"));
   }
   listVersions(
     packageName: string,
   ): ResultAsync<readonly string[], RegistryError> {
     return this.commands
       .run(["npm", "view", packageName, "versions", "--json"])
-      .andThen((result) =>
-        ResultAsync.fromThrowable(
-          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
-          () => ({
-            type: "RegistryError" as const,
-            operation: "listVersions",
-            message: "invalid npm versions response",
-          }),
-        )(),
-      )
-      .andThen((value) =>
-        Array.isArray(value) &&
-        value.every((version) => typeof version === "string")
-          ? okAsync(value)
-          : errAsync({
-              type: "RegistryError" as const,
-              operation: "listVersions",
-              message: "invalid npm versions response",
-            }),
-      )
-      .mapErr((error) =>
-        error.type === "RegistryError"
-          ? error
-          : {
-              type: "RegistryError" as const,
-              operation: "listVersions",
-              message: error.type,
-            },
+      .andThen((result) => {
+        if (result.stdout.length > NPM_TEXT_LIMIT)
+          return errAsync<readonly string[], RegistryError>(
+            registryFailure(
+              "listVersions",
+              "npm versions response is too large",
+            ),
+          );
+        return ResultAsync.fromThrowable(
+          () => JSON.parse(result.stdout),
+          () =>
+            registryFailure("listVersions", "invalid npm versions response"),
+        )().andThen((value) => {
+          const parsed = NPM_VERSIONS_SCHEMA.safeParse(value);
+          return parsed.success
+            ? okAsync<readonly string[], RegistryError>(parsed.data)
+            : errAsync<readonly string[], RegistryError>(
+                registryFailure(
+                  "listVersions",
+                  "invalid npm versions response",
+                ),
+              );
+        });
+      })
+      .mapErr(() =>
+        registryFailure("listVersions", "npm versions lookup failed"),
       );
   }
   viewDistTags(
@@ -90,72 +109,57 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
   ): ResultAsync<Record<string, string>, RegistryError> {
     return this.commands
       .run(["npm", "view", packageName, "dist-tags"])
-      .andThen((result) =>
-        ResultAsync.fromThrowable(
-          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
-          () => ({
-            type: "RegistryError" as const,
-            operation: "viewDistTags",
-            message: "invalid npm dist-tags response",
-          }),
-        )(),
-      )
-      .andThen((value) =>
-        typeof value === "object" &&
-        value !== null &&
-        !Array.isArray(value) &&
-        Object.values(value).every((version) => typeof version === "string")
-          ? okAsync(value as Record<string, string>)
-          : errAsync({
-              type: "RegistryError" as const,
-              operation: "viewDistTags",
-              message: "invalid npm dist-tags response",
-            }),
-      )
-      .mapErr((error) => ({
-        type: "RegistryError",
-        operation: "viewDistTags",
-        message: error.type,
-      }));
+      .andThen((result) => {
+        if (result.stdout.length > NPM_TEXT_LIMIT)
+          return errAsync<Record<string, string>, RegistryError>(
+            registryFailure(
+              "viewDistTags",
+              "npm dist-tags response is too large",
+            ),
+          );
+        return ResultAsync.fromThrowable(
+          () => JSON.parse(result.stdout),
+          () =>
+            registryFailure("viewDistTags", "invalid npm dist-tags response"),
+        )().andThen((value) => {
+          const parsed = NPM_DIST_TAGS_SCHEMA.safeParse(value);
+          return parsed.success
+            ? okAsync<Record<string, string>, RegistryError>(parsed.data)
+            : errAsync<Record<string, string>, RegistryError>(
+                registryFailure(
+                  "viewDistTags",
+                  "invalid npm dist-tags response",
+                ),
+              );
+        });
+      })
+      .mapErr(() =>
+        registryFailure("viewDistTags", "npm dist-tags lookup failed"),
+      );
   }
   distTagLs(
     packageName: string,
   ): ResultAsync<Record<string, string>, RegistryError> {
     return this.commands
       .run(["npm", "dist-tag", "ls", packageName, "--json"])
-      .andThen((result) =>
-        ResultAsync.fromThrowable(
-          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
-          () => ({
-            type: "RegistryError" as const,
-            operation: "distTagLs",
-            message: "invalid npm dist-tag response",
-          }),
-        )(),
-      )
-      .andThen((value) => {
-        if (
-          typeof value !== "object" ||
-          value === null ||
-          Array.isArray(value) ||
-          Object.values(value).some((version) => typeof version !== "string")
-        )
-          return errAsync({
-            type: "RegistryError" as const,
-            operation: "distTagLs",
-            message: "invalid npm dist-tag response",
-          });
-        return okAsync(value as Record<string, string>);
+      .andThen((result) => {
+        if (result.stdout.length > NPM_TEXT_LIMIT)
+          return errAsync<Record<string, string>, RegistryError>(
+            registryFailure("distTagLs", "npm dist-tag response is too large"),
+          );
+        return ResultAsync.fromThrowable(
+          () => JSON.parse(result.stdout),
+          () => registryFailure("distTagLs", "invalid npm dist-tag response"),
+        )().andThen((value) => {
+          const parsed = NPM_DIST_TAGS_SCHEMA.safeParse(value);
+          return parsed.success
+            ? okAsync<Record<string, string>, RegistryError>(parsed.data)
+            : errAsync<Record<string, string>, RegistryError>(
+                registryFailure("distTagLs", "invalid npm dist-tag response"),
+              );
+        });
       })
-      .mapErr((error) =>
-        error.type === "RegistryError"
-          ? error
-          : {
-              type: "RegistryError" as const,
-              operation: "distTagLs",
-              message: error.type,
-            },
-      );
+      .mapErr(() => registryFailure("distTagLs", "npm dist-tag lookup failed"));
   }
   verifyPublished(
     packageName: string,
@@ -163,31 +167,33 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
     expectedSha256: string,
   ): ResultAsync<void, RegistryError> {
     const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/-/${packageName.split("/").pop()}-${version}.tgz`;
-    return ResultAsync.fromPromise(
-      fetch(url).then(async (response) => ({
-        response,
-        bytes: new Uint8Array(await response.arrayBuffer()),
-      })),
-      (cause) => ({
-        type: "RegistryError" as const,
-        operation: "verifyPublished",
-        message: String(cause),
-      }),
-    ).andThen(({ response, bytes }) => {
+    return ResultAsync.fromThrowable(
+      async () => {
+        const response = await fetch(url);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return { response, bytes };
+      },
+      () => registryFailure("verifyPublished", "npm tarball request failed"),
+    )().andThen(({ response, bytes }) => {
       if (!response.ok)
-        return errAsync({
-          type: "RegistryError" as const,
-          operation: "verifyPublished",
-          message: `HTTP ${response.status}`,
-        });
+        return errAsync<undefined, RegistryError>(
+          registryFailure("verifyPublished", "npm tarball request failed"),
+        );
+      if (bytes.byteLength > RELEASE_INPUT_LIMITS.artifactBytes)
+        return errAsync<undefined, RegistryError>(
+          registryFailure(
+            "verifyPublished",
+            "npm tarball response is too large",
+          ),
+        );
       const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
       if (digest !== expectedSha256)
-        return errAsync({
-          type: "RegistryError" as const,
-          operation: "verifyPublished",
-          message: "tarball digest mismatch",
-        });
-      return okAsync(undefined);
+        return errAsync<undefined, RegistryError>(
+          registryFailure("verifyPublished", "tarball digest mismatch"),
+        );
+      return ResultAsync.fromPromise(Promise.resolve(), () =>
+        registryFailure("verifyPublished", "verification result unavailable"),
+      );
     });
   }
 }

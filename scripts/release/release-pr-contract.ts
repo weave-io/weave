@@ -65,6 +65,7 @@ import type {
   GitHubMarkerRefClient,
   GitHubPullRequestClient,
   GitHubPullRequestSummary,
+  GitHubPullRequestWriteError,
   GitHubRefWriteError,
   GitHubTeamClient,
 } from "./github-client.js";
@@ -571,7 +572,7 @@ export function validateReleasePrDiff(
     }
     return err({ type: "ForbiddenReleasePrPath", path: change.path });
   }
-  return ok(undefined);
+  return ok(void 0);
 }
 
 function validateManifestChange(
@@ -589,7 +590,7 @@ function validateManifestChange(
   for (const field of change.manifestFields)
     if (field !== "version")
       return err({ type: "ForbiddenManifestField", path: change.path, field });
-  return ok(undefined);
+  return ok(void 0);
 }
 
 /**
@@ -617,7 +618,7 @@ export function validateCleanupPrDiff(input: {
     if (!consumed.has(change.path))
       return err({ type: "UnconsumedChangesetDeletion", path: change.path });
   }
-  return ok(undefined);
+  return ok(void 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -917,7 +918,7 @@ export function renderReleasePrEnvelope(
       type: "InvalidReleasePrEnvelope",
       issues: describeIssues(parsed.error.issues),
     });
-  const body = JSON.stringify(sortValue(parsed.data), null, 2);
+  const body = JSON.stringify(sortEnvelope(parsed.data), null, 2);
   const text = `${COMMENT_OPEN} ${RELEASE_PR_ENVELOPE_MARKER}:${RELEASE_PR_ENVELOPE_SCHEMA_VERSION}\n${body}\n${COMMENT_CLOSE}`;
   const bytes = utf8ByteLength(text);
   if (bytes > RELEASE_PR_BOUNDS.envelopeBytes)
@@ -967,6 +968,14 @@ function collectEnvelopeBlocks(text: string): string[] {
   return blocks;
 }
 
+const parseJson = Result.fromThrowable(
+  (source: string) => JSON.parse(source),
+  (cause): ReleasePrError => ({
+    type: "InvalidReleasePrEnvelope",
+    issues: [cause instanceof Error ? cause.message : "invalid JSON"],
+  }),
+);
+
 function readEnvelopeBlock(
   block: string,
 ): Result<ReleasePrEnvelope, ReleasePrError> {
@@ -991,14 +1000,6 @@ function readEnvelopeBlock(
     });
   return ok(parsed.data);
 }
-
-const parseJson = Result.fromThrowable(
-  (source: string) => JSON.parse(source) as unknown,
-  (cause): ReleasePrError => ({
-    type: "InvalidReleasePrEnvelope",
-    issues: [cause instanceof Error ? cause.message : String(cause)],
-  }),
-);
 
 // ---------------------------------------------------------------------------
 // Outcomes
@@ -1123,7 +1124,7 @@ export function validatePreparedRelease(
   for (const file of prepared.files)
     if (!declared.has(file.path))
       return err({ type: "UndeclaredCommitFile", path: file.path });
-  return ok(undefined);
+  return ok(void 0);
 }
 
 export function recordEntryProse(
@@ -1152,7 +1153,16 @@ export function cleanupPending(
   };
 }
 
-export function portFailure(port: string, failure: unknown): ReleasePrError {
+type ReleaseBoundaryFailure =
+  | GitHubError
+  | GitHubPullRequestWriteError
+  | GitHubRefWriteError
+  | ReleasePrError;
+
+export function portFailure(
+  port: string,
+  failure: GitHubError | GitHubRefWriteError,
+): ReleasePrError {
   return {
     type: "ReleasePrPortFailed",
     port,
@@ -1165,15 +1175,19 @@ export function describeRefWriteError(failure: GitHubRefWriteError): string {
     return `reference ${failure.ref} already exists`;
   if (failure.type === "ReferenceLeaseLost")
     return `lease lost on ${failure.ref}: expected ${failure.expectedSha}, found ${failure.actualSha ?? "nothing"}`;
-  return failure.message;
+  return `GitHub reference operation failed (${failure.operation})`;
 }
 
-export function describeError(failure: unknown): string {
-  if (typeof failure !== "object" || failure === null) return String(failure);
-  const record = failure as Record<string, unknown>;
-  if (typeof record.message === "string") return record.message;
-  if (typeof record.type === "string") return record.type;
-  return JSON.stringify(failure);
+export function describeError(failure: ReleaseBoundaryFailure): string {
+  if (failure.type === "GitHubError")
+    return `GitHub operation failed (${failure.operation})`;
+  if (failure.type === "PullRequestWriteAmbiguous")
+    return `pull request operation was ambiguous (${failure.operation})`;
+  if (failure.type === "ReferenceAlreadyExists")
+    return `reference ${failure.ref} already exists`;
+  if (failure.type === "ReferenceLeaseLost")
+    return `lease lost on ${failure.ref}`;
+  return failure.type;
 }
 
 export function defaultOwnerGeneration(): string {
@@ -1193,15 +1207,20 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  return Object.fromEntries(
-    Object.keys(record)
-      .sort(compareText)
-      .map((key) => [key, sortValue(record[key])]),
-  );
+function sortEnvelope(envelope: ReleasePrEnvelope): ReleasePrEnvelope {
+  return {
+    baseSha: envelope.baseSha,
+    entryProse: envelope.entryProse.map((record) => ({
+      digest: record.digest,
+      key: record.key,
+    })),
+    evidenceDigest: envelope.evidenceDigest,
+    ownerGeneration: envelope.ownerGeneration,
+    plannedBaseSha: envelope.plannedBaseSha,
+    ref: envelope.ref,
+    regeneratedFrom: [...envelope.regeneratedFrom],
+    schemaVersion: envelope.schemaVersion,
+  };
 }
 
 function describeIssues(

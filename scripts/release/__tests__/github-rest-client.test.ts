@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { z } from "zod";
 import {
   GitHubRestClient,
   type GitHubRestClientOptions,
@@ -25,9 +26,20 @@ const MARKER_REF = "refs/heads/release-pr/stable";
 const BASE = "a".repeat(40);
 const MARKER = "b".repeat(40);
 
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonObject
+  | readonly JsonValue[];
+interface JsonObject {
+  [key: string]: JsonValue;
+}
+
 interface Route {
   status?: number;
-  body?: unknown;
+  body?: JsonValue;
   reject?: string;
   headers?: Record<string, string>;
 }
@@ -48,6 +60,46 @@ interface GitObject {
   message?: string;
 }
 
+interface FakeMutation {
+  repositoryId: string | undefined;
+  name: string;
+  afterOid: string;
+  beforeOid: string;
+  force: boolean | undefined;
+}
+
+type RouteTable = Record<string, Route>;
+
+const CommitRequestSchema = z
+  .object({ tree: z.string(), message: z.string() })
+  .strip();
+const GraphqlRequestSchema = z
+  .object({
+    query: z.string(),
+    variables: z
+      .object({
+        input: z
+          .object({
+            repositoryId: z.string(),
+            refUpdates: z
+              .array(
+                z
+                  .object({
+                    name: z.string(),
+                    afterOid: z.string(),
+                    beforeOid: z.string(),
+                    force: z.boolean(),
+                  })
+                  .strip(),
+              )
+              .length(1),
+          })
+          .strip(),
+      })
+      .strip(),
+  })
+  .strip();
+
 /**
  * A GitHub object store plus its atomic `updateRefs` mutation.
  *
@@ -60,7 +112,7 @@ class FakeGitHub {
   readonly objects = new Map<string, GitObject>();
   readonly refs = new Map<string, string>();
   readonly calls: Call[] = [];
-  readonly mutations: Record<string, unknown>[] = [];
+  readonly mutations: FakeMutation[] = [];
   /** Runs at the server boundary, after the mutation is parsed, before apply. */
   concurrentWriter: (() => void) | null = null;
   /** Injects a failure that is not a lost lease. */
@@ -73,7 +125,7 @@ class FakeGitHub {
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const method = init?.method ?? "GET";
     const path = url.replace("https://api.github.com", "");
-    const body = typeof init?.body === "string" ? init.body : null;
+    const body = await requestBody(init?.body);
     this.calls.push({ method, url, body });
     if (method === "GET" && path === "/repos/weave-io/weave")
       return json({ node_id: REPO_NODE_ID });
@@ -85,11 +137,12 @@ class FakeGitHub {
       const object = this.objects.get(sha);
       if (object?.type !== "commit" || object.tree === undefined)
         return new Response("{}", { status: 404, statusText: "Not Found" });
-      return json({
+      const response: JsonObject = {
         sha,
-        message: object.message,
         tree: { sha: object.tree },
-      });
+      };
+      if (object.message !== undefined) response.message = object.message;
+      return json(response);
     }
     if (method === "POST" && path === "/repos/weave-io/weave/git/trees") {
       const sha = digest(`tree:${body ?? ""}`);
@@ -97,16 +150,12 @@ class FakeGitHub {
       return json({ sha }, 201);
     }
     if (method === "POST" && path === "/repos/weave-io/weave/git/commits") {
-      const parsed = parseJson(body);
+      const parsed = CommitRequestSchema.safeParse(parseJson(body));
       const sha = digest(`commit:${body ?? ""}`);
       this.objects.set(sha, {
         type: "commit",
-        tree:
-          isRecord(parsed) && isString(parsed.tree) ? parsed.tree : undefined,
-        message:
-          isRecord(parsed) && isString(parsed.message)
-            ? parsed.message
-            : undefined,
+        tree: parsed.success ? parsed.data.tree : undefined,
+        message: parsed.success ? parsed.data.message : undefined,
       });
       return json({ sha }, 201);
     }
@@ -115,30 +164,15 @@ class FakeGitHub {
   };
 
   private graphql(body: string | null): Response {
-    const parsed = parseJson(body);
-    if (
-      !isRecord(parsed) ||
-      !isString(parsed.query) ||
-      !parsed.query.includes("updateRefs")
-    )
+    const parsed = GraphqlRequestSchema.safeParse(parseJson(body));
+    if (!parsed.success || !parsed.data.query.includes("updateRefs"))
       return json({ errors: [{ message: "expected updateRefs mutation" }] });
-    const input =
-      isRecord(parsed.variables) && isRecord(parsed.variables.input)
-        ? parsed.variables.input
-        : undefined;
-    const update =
-      input !== undefined && Array.isArray(input.refUpdates)
-        ? input.refUpdates[0]
-        : undefined;
-    if (
-      !isRecord(update) ||
-      !isString(update.name) ||
-      !isString(update.afterOid) ||
-      !isString(update.beforeOid)
-    )
+    const input = parsed.data.variables.input;
+    const update = input.refUpdates[0];
+    if (update === undefined)
       return json({ errors: [{ message: "invalid updateRefs input" }] });
     this.mutations.push({
-      repositoryId: input?.repositoryId,
+      repositoryId: input.repositoryId,
       name: update.name,
       afterOid: update.afterOid,
       beforeOid: update.beforeOid,
@@ -146,7 +180,7 @@ class FakeGitHub {
     });
     this.concurrentWriter?.();
     if (this.denied !== null)
-      return json({ errors: [{ type: "FORBIDDEN", message: this.denied }] });
+      return json({ errors: [{ message: this.denied }] });
     if (update.afterOid !== ZERO_OID && !this.objects.has(update.afterOid))
       return json({
         data: { updateRefs: null },
@@ -174,7 +208,7 @@ class FakeGitHub {
   }
 }
 
-function json(body: unknown, status = 200): Response {
+function json(body: JsonValue, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     statusText: status === 201 ? "Created" : "OK",
@@ -185,26 +219,28 @@ function digest(value: string): string {
   return new Bun.CryptoHasher("sha1").update(value).digest("hex");
 }
 
-function parseJson(body: string | null): unknown {
+function parseJson(body: string | null) {
   return body === null ? undefined : JSON.parse(body);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+async function requestBody(
+  body: BodyInit | null | undefined,
+): Promise<string | null> {
+  if (body === null || body === undefined) return null;
+  if (body instanceof Blob) return body.text();
+  return String(body);
 }
 
-function isString(value: unknown): value is string {
-  return typeof value === "string";
+interface ClientHarness {
+  client: GitHubRestClient;
+  calls: Call[];
 }
 
 function client(
-  routes: Record<string, Route>,
+  routes: RouteTable,
   options: GitHubRestClientOptions = {},
   token = "token",
-): {
-  client: GitHubRestClient;
-  calls: Call[];
-} {
+): ClientHarness {
   const calls: Call[] = [];
   const fetchLike = async (
     url: string,
@@ -214,7 +250,7 @@ function client(
     calls.push({
       method,
       url,
-      body: typeof init?.body === "string" ? init.body : null,
+      body: await requestBody(init?.body),
       authorization: new Headers(init?.headers).get("authorization"),
     });
     const key = `${method} ${url.replace("https://api.github.com", "")}`;
@@ -526,13 +562,13 @@ test("compareCommits and readCommitMessage read git data by type", async () => {
   ).toContain("claim");
 });
 
-function trunkRoutes(extra: Record<string, Route> = {}): Record<string, Route> {
+function trunkRoutes(extra: RouteTable = {}) {
   return {
     "GET /repos/weave-io/weave/git/ref/heads/main": {
       body: { object: { sha: BASE } },
     },
     ...extra,
-  };
+  } satisfies RouteTable;
 }
 
 function statusPage(items: readonly { context: string; state: string }[]) {

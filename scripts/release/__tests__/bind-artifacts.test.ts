@@ -67,10 +67,10 @@ class MemoryFiles implements FileSystem {
     contents: string,
   ): ResultAsync<void, FileSystemError> {
     this.writes.set(path, contents);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
   delete(): ResultAsync<void, FileSystemError> {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 class MockGitHub implements GitHubClient {
@@ -106,10 +106,10 @@ class MockGitHub implements GitHubClient {
     return okAsync(new Uint8Array());
   }
   createRelease() {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
   createTag() {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 

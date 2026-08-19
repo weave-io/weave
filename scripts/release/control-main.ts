@@ -1,8 +1,9 @@
 import { logger } from "@weaveio/weave-engine";
-import { okAsync, Result } from "neverthrow";
+import { okAsync, Result, ResultAsync } from "neverthrow";
 
 import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
+import type { RegistryError } from "./errors.js";
 import { BunFileSystem } from "./filesystem.js";
 import { GitHubRestClient } from "./github-client.js";
 import {
@@ -10,7 +11,14 @@ import {
   validateReleaseControlEnvironment,
   validateReleaseInvocation,
 } from "./input-validation.js";
-import { StableTrainRecordSchema } from "./model.js";
+import {
+  type ArtifactBindingRecord,
+  ArtifactBindingRecordSchema,
+  type ArtifactManifest,
+  ArtifactManifestSchema,
+  type StableTrainRecord,
+  StableTrainRecordSchema,
+} from "./model.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { promotionCommandsFromRegistry } from "./promotion-commands.js";
@@ -71,24 +79,24 @@ if (invocation.value.eventName !== "workflow_dispatch") {
   log.error("control only permits workflow dispatch publication");
   process.exit(2);
 }
+const manifest = ArtifactManifestSchema.safeParse(manifestJson.value);
+const binding = ArtifactBindingRecordSchema.safeParse(bindingJson.value);
+if (!manifest.success || !binding.success) {
+  log.error("release inputs do not match their schemas");
+  process.exit(2);
+}
 const stableTrain = StableTrainRecordSchema.safeParse(
-  typeof manifestJson.value === "object" && manifestJson.value !== null
-    ? (manifestJson.value as { stableTrain?: unknown }).stableTrain
-    : undefined,
+  manifest.data.stableTrain,
 );
 const boundStableTrain = stableTrain.success
-  ? stableTrainFromBinding(bindingJson.value, stableTrain.data)
+  ? stableTrainFromBinding(binding.data, stableTrain.data)
   : undefined;
 if (invocation.value.channel === "stable" && boundStableTrain === undefined) {
   log.error("stable control requires a validated stable train record");
   process.exit(2);
 }
 const manifestDigest = digest(manifestText.value);
-const manifestFiles = artifactFiles(manifestJson.value);
-if (manifestFiles === undefined) {
-  log.error("manifest has no verifiable files");
-  process.exit(2);
-}
+const manifestFiles = artifactFiles(manifest.data);
 // Bun.argv[0] remains Bun's launcher in compiled executables; execPath is the
 // standalone control binary that the binding record authenticates.
 const controlBytes = await files.readBytes(process.execPath);
@@ -103,10 +111,10 @@ const result = await new ReleaseOrchestrator(
   new SystemClock(),
 ).publish({
   invocation: invocation.value,
-  manifest: manifestJson.value,
+  manifest: manifest.data,
   artifactDirectory,
   bindingVerification: {
-    record: bindingJson.value,
+    record: binding.data,
     context: {
       expectedWorkflowSha: environment.value.workflowSha,
       expectedRunId: environment.value.runId,
@@ -114,7 +122,7 @@ const result = await new ReleaseOrchestrator(
       expectedOperation: invocation.value.operation,
       expectedHeadRef: environment.value.headRef,
       expectedHeadSha: environment.value.headSha,
-      expectedManifest: manifestJson.value as never,
+      expectedManifest: manifest.data,
       expectedManifestDigest: manifestDigest,
       expectedFiles: [
         ...manifestFiles,
@@ -132,7 +140,7 @@ const result = await new ReleaseOrchestrator(
   stableTrain: boundStableTrain,
 });
 if (result.isErr()) {
-  log.error({ error: result.error }, "release failed");
+  log.error({ type: result.error.type }, "release failed");
   process.exit(1);
 }
 if (
@@ -145,7 +153,7 @@ if (
   );
   if (commands.isErr()) {
     log.error(
-      { error: commands.error },
+      { type: commands.error.type },
       "unable to generate promotion commands",
     );
     process.exit(1);
@@ -168,21 +176,9 @@ if (dryRun)
 log.info("release completed");
 
 function artifactFiles(
-  value: unknown,
-): readonly { filename: string; sha256: string }[] | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const artifacts = (value as { artifacts?: unknown }).artifacts;
-  if (!Array.isArray(artifacts)) return undefined;
-  const files = artifacts.map((artifact) => {
-    if (typeof artifact !== "object" || artifact === null) return undefined;
-    const { filename, sha256 } = artifact as Record<string, unknown>;
-    return typeof filename === "string" && typeof sha256 === "string"
-      ? { filename, sha256 }
-      : undefined;
-  });
-  return files.some((file) => file === undefined)
-    ? undefined
-    : (files as { filename: string; sha256: string }[]);
+  value: ArtifactManifest,
+): readonly { filename: string; sha256: string }[] {
+  return value.artifacts.map(({ filename, sha256 }) => ({ filename, sha256 }));
 }
 
 function digest(value: string | Uint8Array): string {
@@ -191,18 +187,16 @@ function digest(value: string | Uint8Array): string {
 
 function parseJson(value: string) {
   return Result.fromThrowable(
-    () => JSON.parse(value) as unknown,
+    () => JSON.parse(value),
     () => ({ type: "InvalidJson" as const }),
   )();
 }
 
 function stableTrainFromBinding(
-  binding: unknown,
-  manifestTrain: import("./model.js").StableTrainRecord,
-) {
-  if (typeof binding !== "object" || binding === null) return undefined;
-  const candidate = (binding as { stableTrain?: unknown }).stableTrain;
-  const parsed = validateStableTrain(candidate);
+  binding: ArtifactBindingRecord,
+  manifestTrain: StableTrainRecord,
+): StableTrainRecord | undefined {
+  const parsed = validateStableTrain(binding.stableTrain);
   if (parsed.isErr() || parsed.value.state !== "bound") return undefined;
   if (
     parsed.value.subjectSha !== manifestTrain.subjectSha ||
@@ -231,12 +225,20 @@ function plannedCommands(
 function registryClient(): NpmRegistryClient {
   if (!dryRun) return new NpmCliRegistryClient(new BunCommandRunner());
   return {
-    publish: () => okAsync(undefined),
+    publish: emptyRegistrySuccess,
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     distTagLs: (packageName) =>
       okAsync({ latest: `0.0.0-${packageName.length}` }),
-    verifyPublished: () => okAsync(undefined),
+    verifyPublished: emptyRegistrySuccess,
   };
+}
+
+function emptyRegistrySuccess(): ResultAsync<void, RegistryError> {
+  return ResultAsync.fromPromise(Promise.resolve(), () => ({
+    type: "RegistryError" as const,
+    operation: "dryRun",
+    message: "dry-run result unavailable",
+  }));
 }

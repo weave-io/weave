@@ -208,11 +208,10 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
           await this.context.sleep(this.context.bounds.pollDelayMs);
         continue;
       }
-      lastAuthoritative = {
-        ...lastAuthoritative,
+      lastAuthoritative = Object.assign({}, lastAuthoritative, {
         markerSha: before.value.markerSha,
         envelope: before.value.envelope,
-      };
+      });
       if (
         before.value.markerSha !== target.markerSha ||
         !releasePrEnvelopesMatch(before.value.envelope, target.envelope)
@@ -267,11 +266,10 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
             await this.context.sleep(this.context.bounds.pollDelayMs);
           continue;
         }
-        lastAuthoritative = {
-          ...lastAuthoritative,
+        lastAuthoritative = Object.assign({}, lastAuthoritative, {
           markerSha: afterPatch.value.markerSha,
           envelope: afterPatch.value.envelope,
-        };
+        });
         if (
           afterPatch.value.markerSha !== target.markerSha ||
           !releasePrEnvelopesMatch(afterPatch.value.envelope, target.envelope)
@@ -307,11 +305,10 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
             input.pullRequest.url,
           );
           if (afterLabelFailure.isOk())
-            lastAuthoritative = {
-              ...lastAuthoritative,
+            lastAuthoritative = Object.assign({}, lastAuthoritative, {
               markerSha: afterLabelFailure.value.markerSha,
               envelope: afterLabelFailure.value.envelope,
-            };
+            });
           if (attempt < this.context.bounds.metadataRepairAttempts)
             await this.context.sleep(this.context.bounds.pollDelayMs);
           continue;
@@ -326,11 +323,10 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
             await this.context.sleep(this.context.bounds.pollDelayMs);
           continue;
         }
-        lastAuthoritative = {
-          ...lastAuthoritative,
+        lastAuthoritative = Object.assign({}, lastAuthoritative, {
           markerSha: afterLabel.value.markerSha,
           envelope: afterLabel.value.envelope,
-        };
+        });
         if (
           afterLabel.value.markerSha !== target.markerSha ||
           !releasePrEnvelopesMatch(afterLabel.value.envelope, target.envelope)
@@ -367,11 +363,10 @@ export class ReleasePrMetadataLifecycle implements ReleasePrMetadataPort {
           await this.context.sleep(this.context.bounds.pollDelayMs);
         continue;
       }
-      lastAuthoritative = {
-        ...lastAuthoritative,
+      lastAuthoritative = Object.assign({}, lastAuthoritative, {
         markerSha: final.value.markerSha,
         envelope: final.value.envelope,
-      };
+      });
       if (
         final.value.markerSha !== target.markerSha ||
         !releasePrEnvelopesMatch(final.value.envelope, target.envelope)

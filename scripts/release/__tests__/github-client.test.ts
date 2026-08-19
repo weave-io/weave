@@ -9,6 +9,7 @@ import type {
   GitHubReleaseAsset,
   GitHubReleaseClient,
 } from "../github-client.js";
+import type { StableTrainRecord } from "../model.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
 import { trainRecordDigest } from "../stable-train.js";
@@ -18,6 +19,10 @@ const VERSIONS = {
   "@weaveio/weave-cli": "1.2.3",
   "@weaveio/weave-adapter-opencode": "4.5.6",
 };
+const PACKAGES: StableTrainRecord["packages"] = [
+  "@weaveio/weave-cli",
+  "@weaveio/weave-adapter-opencode",
+];
 const TAGS = ["weave-cli-v1.2.3", "weave-adapter-opencode-v4.5.6"] as const;
 const bytes = new Uint8Array([1, 2, 3]);
 const checksum = new TextEncoder().encode("checksum");
@@ -58,7 +63,7 @@ class MockReleaseClient implements GitHubReleaseClient {
   createRef(ref: string, sha: string) {
     this.calls.push(`createRef:${ref}`);
     this.refs.set(ref, sha);
-    return okAsync<void, GitHubError>(undefined);
+    return okAsync<undefined, GitHubError>(void 0);
   }
   getRelease(tag: string) {
     const release = this.releases.get(tag);
@@ -111,7 +116,7 @@ class MockReleaseClient implements GitHubReleaseClient {
     this.calls.push(`delete:${releaseId}:${assetId}`);
     const release = this.release(releaseId);
     release.assets = release.assets.filter((asset) => asset.id !== assetId);
-    return okAsync<void, GitHubError>(undefined);
+    return okAsync<undefined, GitHubError>(void 0);
   }
   publishRelease(releaseId: number) {
     this.calls.push(`publish:${releaseId}`);
@@ -140,22 +145,22 @@ function orchestrator(sleeps: number[] = []): ReleaseOrchestrator {
     exists: () => okAsync(false),
     readBytes: (path) => okAsync(path.endsWith(".sha256") ? checksum : bytes),
     readText: () => okAsync(""),
-    writeText: () => okAsync(undefined),
-    delete: () => okAsync(undefined),
+    writeText: () => okAsync(void 0),
+    delete: () => okAsync(void 0),
   };
   const npm: NpmRegistryClient = {
-    publish: () => okAsync(undefined),
+    publish: () => okAsync(void 0),
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     distTagLs: () => okAsync({}),
-    verifyPublished: () => okAsync(undefined),
+    verifyPublished: () => okAsync(void 0),
   };
   const clock: Clock = {
     now: () => new Date(),
     sleep: (milliseconds) => {
       sleeps.push(milliseconds);
-      return okAsync(undefined);
+      return okAsync(void 0);
     },
   };
   return new ReleaseOrchestrator(files, npm, clock);
@@ -178,7 +183,7 @@ function request(github: MockReleaseClient, attempts?: number) {
     cutAt: "2030-01-01T00:00:00.000Z",
     expiresAt: "2030-01-08T00:00:00.000Z",
     state: "awaiting-promotion" as const,
-    packages: Object.keys(VERSIONS),
+    packages: PACKAGES,
     versions: VERSIONS,
     artifactManifestDigest: digest(bytes),
     artifactIds: [1, 2],
@@ -189,7 +194,7 @@ function request(github: MockReleaseClient, attempts?: number) {
       operation: "stable-publish",
       state: "awaiting-promotion",
       subjectSha: SHA,
-      packages: Object.keys(VERSIONS),
+      packages: PACKAGES,
       versions: VERSIONS,
       artifactDigests: Object.fromEntries(
         Object.keys(VERSIONS).map((name) => [name, digest(bytes)]),
@@ -204,7 +209,7 @@ function request(github: MockReleaseClient, attempts?: number) {
       schemaVersion: 1,
       releaseSubjectSha: SHA,
       channel: "stable",
-      packages: Object.keys(VERSIONS),
+      packages: PACKAGES,
       versions: VERSIONS,
       artifacts,
     },
@@ -220,9 +225,9 @@ function request(github: MockReleaseClient, attempts?: number) {
       cutAt: "2030-01-01T00:00:00.000Z",
       expiresAt: "2030-01-08T00:00:00.000Z",
       state: "promoted",
-      packages: Object.keys(VERSIONS),
+      packages: PACKAGES,
       versions: VERSIONS,
-    } as never,
+    } satisfies StableTrainRecord,
   };
 }
 
