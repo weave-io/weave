@@ -601,6 +601,7 @@ export class ChildOverlayController {
     const applied = applyProviderErrorEvent(state.evidence, parsed.data);
     const sessionEvent = applied.event;
     state.evidence = applied.evidence;
+    this.diagnostics.toolDetailLoss(applied.toolDetailLossKey, child.childId);
 
     const mapResultOr = this.diagnostics.mappingResultOr;
     const reduceResultOr = this.diagnostics.reductionResultOr;

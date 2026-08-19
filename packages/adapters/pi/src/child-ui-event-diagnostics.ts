@@ -63,6 +63,7 @@ export const CHILD_UI_EVENT_FAILURE_REASONS = [
   "callback-failed",
   "late-response",
   "unknown-response",
+  "tool-detail-redacted",
 ] as const;
 
 export type ChildUiEventFailureReason =
@@ -484,6 +485,7 @@ export interface ChildOverlayUiDiagnostics {
   mappingCallOr<T>(operation: () => T, fallback: T): T;
   reductionResultOr<T, E>(result: Result<T, E>, fallback: T): T;
   capacityExceeded(): void;
+  toolDetailLoss(key?: string, scope?: string): void;
 }
 
 export function createChildOverlayUiDiagnostics(
@@ -501,6 +503,20 @@ export function createChildOverlayUiDiagnostics(
       "overlay-mapping",
       "overlay-mapping-failed",
     );
+  const toolDetailDiagnosticKeys = new Set<string>();
+  const toolDetailLoss = (key?: string, scope?: string): void => {
+    if (key === undefined) return;
+    if (key.length > 0) {
+      const scopedKey = `${scope ?? ""}\u0000${key.slice(0, 256)}`;
+      if (toolDetailDiagnosticKeys.has(scopedKey)) return;
+      if (toolDetailDiagnosticKeys.size >= 256) {
+        const oldest = toolDetailDiagnosticKeys.values().next().value;
+        if (typeof oldest === "string") toolDetailDiagnosticKeys.delete(oldest);
+      }
+      toolDetailDiagnosticKeys.add(scopedKey);
+    }
+    recordChildUiEventFailure(sink, "overlay-mapping", "tool-detail-redacted");
+  };
   return {
     invalidEvent: () =>
       recordChildUiEventInvalid(sink, "overlay-mapping", "event-invalid"),
@@ -523,6 +539,7 @@ export function createChildOverlayUiDiagnostics(
       ),
     capacityExceeded: () =>
       recordChildUiEventFailure(sink, "overlay-reduction", "capacity-exceeded"),
+    toolDetailLoss,
   };
 }
 

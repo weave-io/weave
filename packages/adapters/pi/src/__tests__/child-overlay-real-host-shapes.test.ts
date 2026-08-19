@@ -38,7 +38,14 @@ import {
   verifyCaptureManifest,
 } from "../../../../../scripts/pi/child-stream-capture.js";
 import { createChildCompactState } from "../child-compact-render.js";
-import { createChildOverlayController } from "../child-overlay-controller.js";
+import {
+  createMemoryChildOverlaySource,
+  type MemoryOverlaySourceChild,
+} from "../child-overlay.js";
+import {
+  ChildOverlayController,
+  createChildOverlayController,
+} from "../child-overlay-controller.js";
 import {
   childOverlayPromptFacts,
   childOverlayRailFacts,
@@ -66,6 +73,8 @@ import {
   type PiChildTranscriptState,
   reducePiChildTranscript,
 } from "../child-transcript.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
+import { PiDelegationCardStream } from "../delegation-tool.js";
 import { plainPaint } from "../ui-paint.js";
 
 // ---------------------------------------------------------------------------
@@ -783,5 +792,158 @@ describe("authoritative Pi 0.84.2 capture shape", () => {
     expect(replay.value.syntheticReasoningLeaked).toBe(false);
     expect(replay.value.inspectorToolDetailsLaneAvailable).toBe(true);
     expect(replay.value.inspectorAssistantReplyLaneAvailable).toBe(true);
+  });
+
+  it("diagnoses the first live tool-detail loss through both sinks", async () => {
+    const fixturePath = join(
+      import.meta.dir,
+      "../__fixtures__/pi-0.84.2-child-ui-events.v1.json",
+    );
+    const loaded = await readFixtureAndManifest(fixturePath);
+    expect(loaded.isOk()).toBe(true);
+    if (loaded.isErr()) return;
+    const verified = verifyCaptureManifest(
+      loaded.value.fixtureText,
+      loaded.value.manifestText,
+    );
+    expect(verified.isOk()).toBe(true);
+    if (verified.isErr()) return;
+
+    const child: MemoryOverlaySourceChild = {
+      childId: "fixture-child",
+      threadId: "fixture-child",
+      status: "live",
+      title: "fixture child",
+      generationId: "fixture-generation",
+      parentChildId: undefined,
+      agentName: "shuttle",
+      model: "fixture-model",
+      runs: [{ run: 1, action: "start" }],
+      branchIds: ["main"],
+      descendantChildIds: [],
+      entries: [],
+    };
+    const diagnostics = createChildUiEventDiagnostics({
+      now: () => 1_700_000_000_000,
+    });
+    const controller = new ChildOverlayController(
+      createMemoryChildOverlaySource([child]),
+      {},
+      undefined,
+      undefined,
+      diagnostics,
+    );
+    const opened = await controller.open(child.childId);
+    expect(opened.isOk()).toBe(true);
+    if (opened.isErr()) return;
+
+    const stream = createChildOverlayLiveStream({
+      controller,
+      repaint: { invalidate: () => {}, requestRender: () => {} },
+      timer: new ImmediateTimerPort(),
+      generationId: "fixture-generation",
+      currentGenerationId: () => "fixture-generation",
+      resolveLiveThreadId: () => child.threadId,
+      diagnostics,
+    });
+    const card = new PiDelegationCardStream({
+      threadId: child.threadId,
+      agentName: child.agentName ?? "shuttle",
+      assignment: "replay the authoritative capture",
+      model: child.model,
+      timerPort: new ImmediateTimerPort(),
+      diagnostics,
+    });
+    card.start();
+
+    const renderRows = (): readonly string[] =>
+      renderOverlayPiNative(
+        plainPaint(),
+        childOverlayTranscriptInput(controller.view()._unsafeUnwrap()),
+        96,
+      ).plain.map((line) => line.replace(/\s+$/u, ""));
+    const toolBuckets = () =>
+      diagnostics
+        .snapshot()
+        .buckets.filter(
+          (bucket) =>
+            bucket.stage === "overlay-mapping" &&
+            bucket.reason === "tool-detail-redacted",
+        );
+
+    let firstLossOrdinal: number | undefined;
+    let appliedCount = 0;
+    for (const captured of verified.value.fixture.events) {
+      const parsed = parsePiChildSessionEvent(captured.payload);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+
+      // This is the same order as PiDelegationController's observer fanout:
+      // checkpoint-approved events reach the focused overlay first, then the
+      // independent delegation-card sink. Both sinks receive the same parsed
+      // event; neither reads the other's projection.
+      const outcome = stream.ingest(child.childId, parsed.data);
+      card.applyEvent(parsed.data);
+      expect(outcome.kind).toBe("applied");
+      if (outcome.kind === "applied") appliedCount += 1;
+
+      const bucket = toolBuckets()[0];
+      if (bucket !== undefined && firstLossOrdinal === undefined) {
+        firstLossOrdinal = captured.ordinalId;
+      }
+
+      if (captured.ordinalId === 13) {
+        const rows = renderRows().join("\n");
+        expect(bucket?.count).toBe(1);
+        expect(rows).toContain("⚙ read(path: weave-capture-sample.txt)");
+        expect(rows).toContain("⎿ done");
+        expect(rows).not.toMatch(
+          /⎿ .*weave capture deterministic workspace file/u,
+        );
+      }
+      if (captured.ordinalId === 28) {
+        const rows = renderRows().join("\n");
+        expect(bucket?.count).toBe(2);
+        expect(rows).toContain("⚙ bash(command: echo weave-capture-ok)");
+        expect(rows).toContain("⎿ running");
+        expect(rows).not.toMatch(/⎿ .*weave-capture-ok/u);
+      }
+      if (captured.ordinalId === 29) {
+        const rows = renderRows().join("\n");
+        // The terminal projection succeeds, but it cannot restore the detail
+        // that the earlier partial projection replaced. The same tool id
+        // therefore does not create a second diagnostic.
+        expect(bucket?.count).toBe(2);
+        expect(rows).toContain("⚙ bash(command: echo weave-capture-ok)");
+        expect(rows).toContain("⎿ done");
+        expect(rows).not.toMatch(/⎿ .*weave-capture-ok/u);
+      }
+    }
+
+    const snapshot = diagnostics.snapshot();
+    expect(firstLossOrdinal).toBe(13);
+    expect(appliedCount).toBe(verified.value.fixture.events.length);
+    expect(snapshot.buckets).toHaveLength(1);
+    expect(toolBuckets()).toEqual([
+      expect.objectContaining({
+        stage: "overlay-mapping",
+        classification: "application-failure",
+        reason: "tool-detail-redacted",
+        disposition: "failed",
+        count: 2,
+      }),
+    ]);
+    // Diagnostic state is a bounded closed-code aggregate, not a transcript.
+    const serializedDiagnostics = JSON.stringify(snapshot);
+    expect(serializedDiagnostics).not.toContain("weave-capture");
+    expect(serializedDiagnostics).not.toContain("<reasoning-omitted>");
+
+    const finalRows = renderRows().join("\n");
+    expect(finalRows).toContain("Weave capture deterministic final answer.");
+    expect(card.facts().activity.text).toBe(
+      "Weave capture deterministic final answer.",
+    );
+    stream.dispose();
+    card.dispose();
   });
 });

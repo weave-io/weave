@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 341 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~38,200 tokens. Without it, AI exploration would cost ~108,000 tokens. **Saves ~69,800 tokens per conversation.**
-> **Last scanned:** 2026-08-19 00:27 — re-run after significant changes
+> **Last scanned:** 2026-08-19 00:58 — re-run after significant changes
 
 ---
 
@@ -490,11 +490,11 @@
 - `packages/adapters/pi/src/child-provider-error.ts`
   - function projectAssistantProviderError: (message, descriptor?) => Result<PiChildProviderError, PiChildProviderErrorAbsence>
   - function parsePiChildProviderError: (event, descriptor?) => Result<PiChildProviderError, PiChildProviderErrorAbsence>
+  - function toolDetailProjectionLossKey: (original, projected) => string | undefined
   - function redactProviderErrorFromEvent: (event) => PiChildSessionEvent
   - function historicalProviderErrorFacts: (message) => |
   - function historicalAssistantMessageFields: (message) => Record<string, unknown>
-  - interface PiChildProviderErrorDescriptor
-  - _...22 more_
+  - _...23 more_
 - `packages/adapters/pi/src/child-recovery.ts`
   - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildRecoveryRecord[]
   - function boundedRecoveryOutput: (value) => string
