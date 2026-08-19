@@ -47,6 +47,17 @@ function failedFingerprint(): PiAssistantFingerprint {
   return result._unsafeUnwrap();
 }
 
+function contextMessages(event: unknown): readonly unknown[] | undefined {
+  if (typeof event !== "object" || event === null) return undefined;
+  const payload = event as {
+    readonly type?: unknown;
+    readonly messages?: unknown;
+  };
+  return payload.type === "context" && Array.isArray(payload.messages)
+    ? payload.messages
+    : undefined;
+}
+
 interface ContextHarness {
   readonly host: RecordingFakePiHost;
   readonly timer: RecordingFakeTimerPort;
@@ -96,11 +107,12 @@ function createContextHarness(
   host.api.on("agent_settled", () => coordinator.handleAgentSettled(undefined));
   host.api.on("model_select", (event) => coordinator.onModelSelect(event));
   host.api.on("message_start", (event) => coordinator.onMessageStart(event));
-  host.api.on("context", (messages) => {
-    if (!Array.isArray(messages)) return undefined;
+  host.api.on("context", (event) => {
+    const messages = contextMessages(event);
+    if (messages === undefined) return undefined;
     const repaired = coordinator.onContext(messages);
     return repaired.match(
-      (value) => (value === messages ? undefined : value),
+      (value) => (value === messages ? undefined : { messages: value }),
       () => undefined,
     );
   });
@@ -248,6 +260,31 @@ function malformedMessages(
 }
 
 describe("Pi model fallback provider-context integration", () => {
+  it("models Pi 0.84.2 context result composition", async () => {
+    const host = new RecordingFakePiHost();
+    const original = [{ role: "user", content: "original" }];
+    const replacement = [{ role: "user", content: "replacement" }];
+    const laterInputs: Array<readonly unknown[]> = [];
+
+    host.api.on("context", () => replacement);
+    host.api.on("context", () => ({ unrelated: replacement }));
+    host.api.on("context", (event) => {
+      const messages = contextMessages(event);
+      if (messages !== undefined) laterInputs.push(messages);
+      return { extra: true, messages: replacement };
+    });
+
+    const result = await host.triggerContext(original);
+
+    expect(laterInputs).toEqual([original]);
+    expect(result).toEqual(replacement);
+    expect(host.contextResults).toEqual([
+      replacement,
+      { unrelated: replacement },
+      { extra: true, messages: replacement },
+    ]);
+  });
+
   it("runs the exact public lifecycle and preserves real context at provider conversion", async () => {
     const harness = createContextHarness();
     const trace: string[] = [];
@@ -256,8 +293,9 @@ describe("Pi model fallback provider-context integration", () => {
     // This is a later trusted handler. The test proves composition ordering,
     // not hostile-extension isolation: a full-access extension is outside the
     // adapter's trust boundary.
-    harness.host.api.on("context", (messages) => {
-      trustedContextInputs.push(messages as readonly unknown[]);
+    harness.host.api.on("context", (event) => {
+      const messages = contextMessages(event);
+      if (messages !== undefined) trustedContextInputs.push(messages);
       return undefined;
     });
 

@@ -447,6 +447,7 @@ import type {
   Clock,
   IdGenerator,
   PiAdapterLogger,
+  PiContextEventResult,
   PiEnvPort,
   PiExtensionApi,
   PiModelInfo,
@@ -2553,23 +2554,23 @@ async function activateChildModeIfApplicable(
     return undefined;
   });
 
-  pi.on("context", (event, eventCtx) => {
+  pi.on("context", (event, eventCtx): PiContextEventResult | undefined => {
     latestChildCtx = eventCtx;
     const coordinator = childFailoverCoordinator;
     if (coordinator === undefined) return undefined;
-    let messages: readonly unknown[] | undefined;
-    if (Array.isArray(event)) {
-      messages = event;
-    } else {
-      const payload = readPiOwnEnumerableData(event, "messages");
-      if (payload.state === "data" && Array.isArray(payload.value)) {
-        messages = payload.value as readonly unknown[];
-      }
+    const type = readPiOwnEnumerableData(event, "type");
+    if (type.state !== "data" || type.value !== "context") return undefined;
+    const payload = readPiOwnEnumerableData(event, "messages");
+    if (payload.state !== "data" || !Array.isArray(payload.value)) {
+      return undefined;
     }
-    if (messages === undefined) return undefined;
+    const messages = payload.value as readonly unknown[];
     const repaired = coordinator.onContext(messages, childFailoverScope());
     return repaired.match(
-      (value) => (value === messages ? undefined : value),
+      (value) =>
+        value === messages
+          ? undefined
+          : ({ messages: value } satisfies PiContextEventResult),
       () => undefined,
     );
   });
@@ -4327,25 +4328,25 @@ export function createPiExtension(
 
   const routePrimaryFailoverContext = (
     event: unknown,
-  ): readonly unknown[] | undefined => {
+  ): PiContextEventResult | undefined => {
     const coordinator = readPrimaryModelFailover();
     if (coordinator === undefined) return undefined;
-    let messages: readonly unknown[] | undefined;
-    if (Array.isArray(event)) {
-      messages = event;
-    } else {
-      const payload = readPiOwnEnumerableData(event, "messages");
-      if (payload.state === "data" && Array.isArray(payload.value)) {
-        messages = payload.value as readonly unknown[];
-      }
+    const type = readPiOwnEnumerableData(event, "type");
+    if (type.state !== "data" || type.value !== "context") return undefined;
+    const payload = readPiOwnEnumerableData(event, "messages");
+    if (payload.state !== "data" || !Array.isArray(payload.value)) {
+      return undefined;
     }
-    if (messages === undefined) return undefined;
+    const messages = payload.value as readonly unknown[];
     const repaired = coordinator.onContext(
       messages,
       currentModelFailoverEventScope(),
     );
     return repaired.match(
-      (value) => (value === messages ? undefined : value),
+      (value) =>
+        value === messages
+          ? undefined
+          : ({ messages: value } satisfies PiContextEventResult),
       () => undefined,
     );
   };

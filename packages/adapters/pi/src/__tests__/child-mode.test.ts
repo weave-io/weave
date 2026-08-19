@@ -104,6 +104,8 @@ class FakeOutputPort {
 class MinimalFakeHost implements PiExtensionApi {
   readonly commands = new Map<string, PiCommandRegistration>();
   readonly events = new Map<string, PiEventHandler[]>();
+  /** Raw context handler results, for asserting the public Pi envelope. */
+  readonly contextResults: unknown[] = [];
   registerCommand(name: string, registration: PiCommandRegistration): void {
     this.commands.set(name, registration);
   }
@@ -213,19 +215,39 @@ class MinimalFakeHost implements PiExtensionApi {
     ctx: PiSessionContext,
   ): Promise<unknown> {
     const handlers = this.events.get(event) ?? [];
-    let currentPayload = payload;
+    if (event === "context") {
+      let initialMessages: unknown;
+      if (Array.isArray(payload)) {
+        initialMessages = payload;
+      } else if (typeof payload === "object" && payload !== null) {
+        initialMessages = (payload as { readonly messages?: unknown }).messages;
+      }
+      let currentMessages = Array.isArray(initialMessages)
+        ? initialMessages
+        : [];
+      for (const handler of handlers) {
+        const outcome = await handler(
+          { type: "context", messages: currentMessages },
+          ctx,
+        );
+        this.contextResults.push(outcome);
+        const replacement =
+          typeof outcome === "object" &&
+          outcome !== null &&
+          "messages" in outcome
+            ? (outcome as { readonly messages?: unknown }).messages
+            : undefined;
+        // Pi's runner consumes only result?.messages. Raw arrays and other
+        // result shapes do not become the next provider context.
+        if (Array.isArray(replacement)) currentMessages = replacement;
+      }
+      return currentMessages;
+    }
+
     let result: unknown;
     for (const handler of handlers) {
-      const outcome = await handler(currentPayload, ctx);
-      if (outcome !== undefined) {
-        result = outcome;
-        // Pi's context event is replacement-returning. Later trusted
-        // composition handlers receive Weave's filtered list; this models
-        // trusted composition, not hostile-extension isolation.
-        if (event === "context" && Array.isArray(outcome)) {
-          currentPayload = outcome;
-        }
-      }
+      const outcome = await handler(payload, ctx);
+      if (outcome !== undefined) result = outcome;
     }
     return result;
   }
@@ -599,8 +621,11 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     const userMessage = { role: "user", content: "keep this history" };
     const providerInput = [userMessage, failedMessage, marker];
     const trustedContextInputs: Array<readonly unknown[]> = [];
-    host.on("context", (messages) => {
-      trustedContextInputs.push(messages as readonly unknown[]);
+    host.on("context", (event) => {
+      if (typeof event !== "object" || event === null) return undefined;
+      const messages = (event as { readonly messages?: unknown }).messages;
+      if (!Array.isArray(messages)) return undefined;
+      trustedContextInputs.push(messages);
       return undefined;
     });
     const contextResult = await host.fire(
@@ -637,6 +662,12 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       },
     });
     expect(contextResult).toEqual([userMessage]);
+    const repairedContextResult = host.contextResults.find(
+      (result) =>
+        typeof result === "object" && result !== null && "messages" in result,
+    );
+    expect(repairedContextResult).toEqual({ messages: [userMessage] });
+    expect(Object.keys(repairedContextResult as object)).toEqual(["messages"]);
     expect(trustedContextInputs).toEqual([[userMessage]]);
     expect(providerInput).toEqual([userMessage, failedMessage, marker]);
     expect(

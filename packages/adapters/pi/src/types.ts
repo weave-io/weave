@@ -495,6 +495,17 @@ export interface PiCommandRegistration {
   readonly handler: PiCommandHandler;
 }
 
+/**
+ * Public `context` event result from Pi 0.84.2.
+ *
+ * Pi's runner consumes only `result?.messages`; a raw array is ignored. This
+ * adapter keeps the shape local instead of importing Pi's private extension
+ * implementation types.
+ */
+export interface PiContextEventResult {
+  readonly messages: readonly unknown[];
+}
+
 /** Lifecycle event handler signature used by `pi.on(...)`. */
 export type PiEventHandler = (
   event: unknown,

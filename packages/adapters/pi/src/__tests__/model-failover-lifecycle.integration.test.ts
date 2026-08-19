@@ -70,6 +70,17 @@ function fingerprint(message: unknown): PiAssistantFingerprint {
   return result._unsafeUnwrap();
 }
 
+function contextMessages(event: unknown): readonly unknown[] | undefined {
+  if (typeof event !== "object" || event === null) return undefined;
+  const payload = event as {
+    readonly type?: unknown;
+    readonly messages?: unknown;
+  };
+  return payload.type === "context" && Array.isArray(payload.messages)
+    ? payload.messages
+    : undefined;
+}
+
 interface LifecycleHarness {
   readonly host: RecordingFakePiHost;
   readonly timer: RecordingFakeTimerPort;
@@ -133,11 +144,12 @@ function createLifecycleHarness(
   host.api.on("agent_settled", () => coordinator.handleAgentSettled(undefined));
   host.api.on("model_select", (event) => coordinator.onModelSelect(event));
   host.api.on("message_start", (event) => coordinator.onMessageStart(event));
-  host.api.on("context", (messages) => {
-    if (!Array.isArray(messages)) return undefined;
+  host.api.on("context", (event) => {
+    const messages = contextMessages(event);
+    if (messages === undefined) return undefined;
     const repaired = coordinator.onContext(messages);
     return repaired.match(
-      (value) => (value === messages ? undefined : value),
+      (value) => (value === messages ? undefined : { messages: value }),
       () => undefined,
     );
   });

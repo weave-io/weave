@@ -13812,11 +13812,10 @@ describe("createPiExtension: primary model fallback C4a", () => {
     // The marker dispatch was proven, but this provider context does not carry
     // the exact failed assistant/marker pair. Admission fails closed without
     // changing the model that Pi already applied.
-    await host.triggerEvent("context", [
-      { role: "user", content: "unrelated context" },
-    ]);
+    await host.triggerContext([{ role: "user", content: "unrelated context" }]);
     await flushBackgroundWork();
 
+    expect(host.contextResults.at(-1)).toBeUndefined();
     expect(host.getCurrentModel()).toBe(loomFallback);
     expect(extension.providerFastLatestForTest()).toEqual(
       UNSUPPORTED_FAST_SNAPSHOT,
@@ -13946,8 +13945,11 @@ describe("createPiExtension: primary model fallback C4a", () => {
     ];
     const durableInputSnapshot = [...durableInput];
     const trustedContextInputs: Array<readonly unknown[]> = [];
-    host.api.on("context", (messages) => {
-      trustedContextInputs.push(messages as readonly unknown[]);
+    host.api.on("context", (event) => {
+      if (typeof event !== "object" || event === null) return undefined;
+      const messages = (event as { readonly messages?: unknown }).messages;
+      if (!Array.isArray(messages)) return undefined;
+      trustedContextInputs.push(messages);
       return undefined;
     });
     host.appendDurableHistory(userMessage);
@@ -13958,6 +13960,10 @@ describe("createPiExtension: primary model fallback C4a", () => {
       host.createSessionContext(),
     );
     expect(repairedContext).toEqual([userMessage, successfulAssistant]);
+    expect(host.contextResults[0]).toEqual({
+      messages: [userMessage, successfulAssistant],
+    });
+    expect(Object.keys(host.contextResults[0] as object)).toEqual(["messages"]);
     expect(repairedContext).not.toContain(failedAssistant);
     expect(repairedContext).not.toContain(marker);
     expect(repairedContext).toContain(successfulAssistant);

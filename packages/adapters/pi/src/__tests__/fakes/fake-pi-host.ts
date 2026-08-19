@@ -311,6 +311,8 @@ export class RecordingFakePiHost {
   readonly durableHistory: unknown[] = [];
   /** Captures provider-bound replacement lists without logging raw bodies. */
   readonly providerConversions: RecordedProviderConversion[] = [];
+  /** Raw context handler results, for asserting the public Pi envelope. */
+  readonly contextResults: unknown[] = [];
   beforeAgentStartCalls = 0;
   getSystemPromptOptionsCalls = 0;
   getSystemPromptCalls = 0;
@@ -1026,9 +1028,9 @@ export class RecordingFakePiHost {
   }
 
   /**
-   * Mirrors Pi's replacement-returning `context` chain. The first handler may
-   * return a filtered list; a later trusted composition handler then receives
-   * that list, while an undefined return keeps the current list unchanged.
+   * Mirrors Pi 0.84.2's replacement-returning `context` chain. Each handler
+   * receives `{ type: "context", messages }`; only `result?.messages` becomes
+   * the next provider list. Raw arrays and unrelated result shapes are ignored.
    */
   async triggerContext(
     messages: readonly unknown[],
@@ -1036,7 +1038,12 @@ export class RecordingFakePiHost {
   ): Promise<readonly unknown[]> {
     let current = messages;
     for (const handler of this.handlers.get("context") ?? []) {
-      const replacement = await handler(current, ctx);
+      const result = await handler({ type: "context", messages: current }, ctx);
+      this.contextResults.push(result);
+      const replacement =
+        typeof result === "object" && result !== null && "messages" in result
+          ? (result as { readonly messages?: unknown }).messages
+          : undefined;
       if (Array.isArray(replacement)) current = replacement;
     }
     return current;
