@@ -73,6 +73,10 @@ export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
     file: "packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts",
     name: "pages >10k entries through readSessionEntryPage only with opaque cursors",
   },
+  P013: {
+    file: "scripts/release/__tests__/pi-model-failover-smoke.test.ts",
+    name: "accepts real ready health and legacy rollback facts only with both shim phases",
+  },
 };
 
 export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequirement[] =
@@ -195,8 +199,16 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           file: "packages/adapters/pi/src/__tests__/model-resolution.test.ts",
           name: "tries later entries in order when an earlier entry is unavailable",
         },
+        T004: {
+          file: "scripts/release/__tests__/pi-model-failover-smoke.test.ts",
+          name: "accepts the bounded fallback facts only when provider and native history differ correctly",
+        },
+        T005: {
+          file: "scripts/release/__tests__/pi-model-failover-smoke.test.ts",
+          name: "accepts real ready health and legacy rollback facts only with both shim phases",
+        },
       },
-      packedProof: { required: true, evidenceIds: ["P001"] },
+      packedProof: { required: true, evidenceIds: ["P001", "P013"] },
       liveSmoke: { required: true, checklistIds: ["S007", "S009"] },
       result: "pass",
     },

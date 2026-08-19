@@ -380,7 +380,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Current and public docs agree on public surfaces, optional degradation, exact-tested Pi 0.84.2, and the lifecycle compromise.
     - `bun run docs:check-links` passes.
 
-- [ ] 12. Add repeatable Pi 0.84.2 release smoke tooling
+- [x] 12. Add repeatable Pi 0.84.2 release smoke tooling
   - **What**: Add a bounded release script that drives the exact packed adapter through a real Pi 0.84.2 TUI and captures sanitized proof facts.
   - **Files**: `scripts/release/pi-model-failover-smoke.ts` (new), `scripts/release/__tests__/pi-model-failover-smoke.test.ts` (new), `scripts/release/pi-acceptance/smoke-checklist.md`, `scripts/release/acceptance-manifest-data.ts`, existing release harness helpers discovered beside `scripts/release/pi-child-inspection-smoke.ts`.
   - **Depends on**: Tasks 7–11.
