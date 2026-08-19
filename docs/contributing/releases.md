@@ -130,6 +130,44 @@ command only after it reports the authoritative marker and PR state. Do not
 manually delete `release-pr/stable` or edit the release PR to repair a failed
 creation.
 
+### Automatic regeneration
+
+[`release-stable-regenerate.yml`](../../.github/workflows/release-stable-regenerate.yml)
+starts only from a push to `main`. `workflow_dispatch` is a guarded maintainer
+retry, not a request to create or prepare a release. It never creates a PR, and
+there is no shared release-PR concurrency group. Task 9 marker ownership and
+CAS leases provide writer coordination while every main push remains eligible.
+
+The detect phase is read-only. No marker and no open stable PR is a neutral
+successful no-op. A marker without a visible PR is creation-in-progress and
+gets a bounded wait. Neither state creates a PR. A self release merge or
+Changeset-cleanup merge skips regeneration only when no pending Changeset
+changed. A changed pending set continues through the pipeline.
+
+The plan, docs-release-audit, changelog-ai, and update-pr jobs use separate
+credentials and bounded, SHA-bound artifacts. The docs re-audit runs the
+Task 19 deterministic checker and required AI gate at the latest green `main`
+SHA. Only update-pr calls Task 9 `regenerate`, with the release App credential;
+no other job can mutate the PR. A docs failure leaves the PR and marker
+byte-identical, publishes the typed `docs-audit` blocking check, and keeps the
+`release-policy` freshness check blocking merge. Fix `main` and rerun; do not
+manually edit the marker.
+
+A successful update preserves human edits when the `sourceChangesets` identity
+set is unchanged. It asks AI only for new or changed identity sets. If a human
+edit conflicts with newly generated prose, `EditConflict` returns both versions
+and leaves the PR unchanged. The result records explicit
+`automatic-main-advance` or `maintainer-retry` attribution and
+`regeneratedFrom` audit provenance.
+
+Task 9 rechecks `main` immediately before CAS, uses force-with-lease, retries
+within a bound, rejects non-monotonic freshness, and returns
+`RegenerationSuperseded` when another run wins so later runs converge. Ruleset
+stale-approval dismissal and the required `release-policy` freshness check
+invalidate approvals tied to an older base. Recovery is to resolve the docs or
+prose issue, wait for a new `main` push, or use the guarded retry. Never create
+a replacement PR.
+
 ## Pi acceptance assets
 
 Machine-consumed Pi acceptance files live under [`scripts/release/pi-acceptance/`](../../scripts/release/pi-acceptance), not in documentation. Generation and validation scripts own their format. Human documentation may link to them but must not duplicate their requirement rows.
