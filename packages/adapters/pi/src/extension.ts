@@ -6,10 +6,11 @@
  * This file must not statically import the implementation or any module
  * that imports a Pi package.
  *
- * It also records one fact only this module can know: the absolute path Pi
- * loaded this adapter from. `import.meta.path` is absent on a host module
- * loader that does not provide it, and the accessor stores nothing in that
- * case rather than inventing a path.
+ * It also records the absolute path Pi loaded this adapter from only as an
+ * internal read capability. The identity loader hashes the complete runtime
+ * output graph, including the implementation, before that graph is evaluated.
+ * `import.meta.path` is absent on a host module loader that does not provide it,
+ * and the accessor stores nothing in that case rather than inventing a path.
  */
 import {
   loadExtensionBuildIdentity,

@@ -19,6 +19,34 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const SAFE_OUTPUT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
+/**
+ * JavaScript outputs evaluated by the Pi extension loader. Declarations and
+ * the package's CLI/index entries are not part of this runtime graph.
+ *
+ * File names stay an internal loader detail. Only the logical names and
+ * digests cross the identity/proof boundary.
+ */
+const RUNTIME_OUTPUT_FILES = [
+  { name: "extension", fileName: "extension.js" },
+  {
+    name: "extension-build-identity",
+    fileName: "extension-build-identity.js",
+  },
+  { name: "extension-impl", fileName: "extension-impl.js" },
+  { name: "host-module-loader", fileName: "host-module-loader.js" },
+] as const;
+
+/** Every runtime-loaded output is required for an exact loader attestation. */
+export const EXTENSION_RUNTIME_OUTPUT_NAMES = Object.freeze(
+  RUNTIME_OUTPUT_FILES.map((output) => output.name),
+);
+
+/** A bounded, path-free digest for one logical build output. */
+export interface ExtensionBuildOutputDigest {
+  readonly name: string;
+  readonly sha256: string;
+}
+
 export type ExtensionBuildIdentityState =
   | "current"
   | "stale-on-disk"
@@ -71,7 +99,10 @@ export interface ExtensionBuildIdentityManifest {
  */
 export interface ExtensionLoadedIdentity {
   readonly artifactPath?: string;
+  /** The legacy entry digest, retained as the stable top-level fact. */
   readonly artifactSha256?: string;
+  /** Digests captured before the loader evaluates the runtime graph. */
+  readonly loadedOutputs?: readonly ExtensionBuildOutputDigest[];
   readonly loadTimeMs?: number;
   readonly processStartMs: number;
   readonly loadReason?: ExtensionBuildIdentityReason;
@@ -80,7 +111,9 @@ export interface ExtensionLoadedIdentity {
 export interface ExtensionBuildIdentityHealth {
   readonly state: ExtensionBuildIdentityState;
   readonly loadedArtifactSha256?: string;
+  readonly loadedOutputs?: readonly ExtensionBuildOutputDigest[];
   readonly diskArtifactSha256?: string;
+  readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
   readonly manifestArtifactSha256?: string;
   readonly loadTimeMs?: number;
   readonly processStartMs?: number;
@@ -94,6 +127,7 @@ export interface ExtensionBuildIdentityHealth {
 export interface ExtensionBuildIdentityProof {
   readonly schemaVersion: typeof EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION;
   readonly artifactSha256?: string;
+  readonly loadedOutputs?: readonly ExtensionBuildOutputDigest[];
   readonly loadTimeMs?: number;
   readonly processStartMs?: number;
 }
@@ -164,11 +198,65 @@ function isSortedUnique(values: readonly string[]): boolean {
   return true;
 }
 
+function isSafeOutputName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    isBoundedString(value, 64) &&
+    SAFE_OUTPUT_NAME_PATTERN.test(value)
+  );
+}
+
+/** Parse a bounded output digest list without allowing path-shaped names. */
+function parseOutputDigestList(
+  value: unknown,
+): readonly ExtensionBuildOutputDigest[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_EXTENSION_BUILD_OUTPUTS
+  ) {
+    return undefined;
+  }
+  const outputs: ExtensionBuildOutputDigest[] = [];
+  const names: string[] = [];
+  for (const rawOutput of value) {
+    if (
+      !isRecord(rawOutput) ||
+      !isSafeOutputName(rawOutput.name) ||
+      typeof rawOutput.sha256 !== "string" ||
+      !SHA256_PATTERN.test(rawOutput.sha256)
+    ) {
+      return undefined;
+    }
+    outputs.push({ name: rawOutput.name, sha256: rawOutput.sha256 });
+    names.push(rawOutput.name);
+  }
+  return isSortedUnique(names) ? outputs : undefined;
+}
+
+function outputDigestFromList(
+  outputs: readonly ExtensionBuildOutputDigest[] | undefined,
+  name: string,
+): string | undefined {
+  return outputs?.find((output) => output.name === name)?.sha256;
+}
+
 function outputDigest(
   manifest: ExtensionBuildIdentityManifest,
   name: string,
 ): string | undefined {
   return manifest.outputs.find((output) => output.name === name)?.sha256;
+}
+
+function hasEveryRuntimeOutput(
+  outputs: readonly ExtensionBuildOutputDigest[] | undefined,
+): outputs is readonly ExtensionBuildOutputDigest[] {
+  return (
+    outputs !== undefined &&
+    EXTENSION_RUNTIME_OUTPUT_NAMES.every(
+      (name) => outputDigestFromList(outputs, name) !== undefined,
+    )
+  );
 }
 
 function manifestFailureReason(
@@ -364,7 +452,38 @@ export function parseExtensionBuildManifestText(
   return parsed.andThen(parseExtensionBuildManifest);
 }
 
-/** Capture the exact bytes the extension loader loaded from its entry path. */
+/** Read every JavaScript output evaluated by the Pi adapter loader. */
+function readRuntimeOutputDigests(
+  artifactPath: string,
+): ResultAsync<
+  readonly ExtensionBuildOutputDigest[],
+  ExtensionBuildIdentityError
+> {
+  let result = okAsync<
+    ExtensionBuildOutputDigest[],
+    ExtensionBuildIdentityError
+  >([]);
+  const artifactDirectory = dirname(artifactPath);
+  for (const output of RUNTIME_OUTPUT_FILES) {
+    const path =
+      output.name === "extension"
+        ? artifactPath
+        : join(artifactDirectory, output.fileName);
+    result = result.andThen((digests) =>
+      readArtifactSha256(path).map((sha256) => [
+        ...digests,
+        { name: output.name, sha256 },
+      ]),
+    );
+  }
+  return result;
+}
+
+/**
+ * Capture the exact bytes the extension loader is about to evaluate. The
+ * entry and implementation are both recorded, so an unchanged thin loader
+ * cannot hide a stale in-memory implementation.
+ */
 export function loadExtensionBuildIdentity(
   artifactPath: unknown,
 ): ResultAsync<ExtensionLoadedIdentity, never> {
@@ -376,10 +495,11 @@ export function loadExtensionBuildIdentity(
   ) {
     return okAsync(unverifiableExtensionLoadIdentity("artifact-path-missing"));
   }
-  return readArtifactSha256(artifactPath)
-    .map((artifactSha256) => ({
+  return readRuntimeOutputDigests(artifactPath)
+    .map((loadedOutputs) => ({
       artifactPath,
-      artifactSha256,
+      artifactSha256: outputDigestFromList(loadedOutputs, "extension"),
+      loadedOutputs,
       loadTimeMs,
       processStartMs: PROCESS_START_MS,
     }))
@@ -398,11 +518,13 @@ function healthFromLoaded(
   state: ExtensionBuildIdentityState,
   extra: Partial<ExtensionBuildIdentityHealth> = {},
 ): ExtensionBuildIdentityHealth {
+  const loadedOutputs = parseOutputDigestList(loaded.loadedOutputs);
   return {
     state,
     ...(loaded.artifactSha256 === undefined
       ? {}
       : { loadedArtifactSha256: loaded.artifactSha256 }),
+    ...(loadedOutputs === undefined ? {} : { loadedOutputs }),
     ...(loaded.loadTimeMs === undefined
       ? {}
       : { loadTimeMs: loaded.loadTimeMs }),
@@ -420,24 +542,30 @@ function healthFromLoaded(
 export function evaluateExtensionBuildIdentity(input: {
   readonly loaded: ExtensionLoadedIdentity;
   readonly diskArtifactSha256?: string;
+  readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
   readonly manifest?: ExtensionBuildIdentityManifest;
   readonly manifestReason?: ExtensionBuildIdentityReason;
 }): ExtensionBuildIdentityHealth {
   const { loaded, diskArtifactSha256, manifest } = input;
+  const loadedOutputs = parseOutputDigestList(loaded.loadedOutputs);
   if (
     loaded.artifactSha256 === undefined ||
     loaded.loadTimeMs === undefined ||
     !isSafeMilliseconds(loaded.loadTimeMs) ||
-    !isSafeMilliseconds(loaded.processStartMs)
+    !isSafeMilliseconds(loaded.processStartMs) ||
+    !hasEveryRuntimeOutput(loadedOutputs)
   ) {
     return healthFromLoaded(loaded, "unverifiable", {
       reason:
         input.manifestReason ?? loaded.loadReason ?? "loaded-artifact-missing",
     });
   }
+
+  const diskOutputDigests = parseOutputDigestList(input.diskOutputs);
   if (
     diskArtifactSha256 === undefined ||
-    !SHA256_PATTERN.test(diskArtifactSha256)
+    !SHA256_PATTERN.test(diskArtifactSha256) ||
+    !hasEveryRuntimeOutput(diskOutputDigests)
   ) {
     return healthFromLoaded(loaded, "unverifiable", {
       reason: input.manifestReason ?? "artifact-read-failed",
@@ -446,29 +574,61 @@ export function evaluateExtensionBuildIdentity(input: {
   if (manifest === undefined) {
     return healthFromLoaded(loaded, "unverifiable", {
       diskArtifactSha256,
+      diskOutputs: diskOutputDigests,
       reason: input.manifestReason ?? "manifest-malformed",
     });
   }
 
+  const loadedEntrySha256 = outputDigestFromList(loadedOutputs, "extension");
+  const diskEntrySha256 = outputDigestFromList(diskOutputDigests, "extension");
   const manifestArtifactSha256 = outputDigest(manifest, "extension");
   const buildCompletedAtMs = Date.parse(manifest.buildCompletedAt);
   const base = {
     diskArtifactSha256,
+    loadedOutputs,
+    diskOutputs: diskOutputDigests,
     ...(manifestArtifactSha256 === undefined ? {} : { manifestArtifactSha256 }),
     buildCompletedAt: manifest.buildCompletedAt,
     sourceInputCount: manifest.buildInputs.length,
     gitSubject: manifest.git.subject,
     gitDirty: manifest.git.dirty,
   };
-  if (loaded.artifactSha256 !== diskArtifactSha256) {
-    return healthFromLoaded(loaded, "stale-on-disk", base);
-  }
+
   if (
-    manifestArtifactSha256 === undefined ||
-    manifestArtifactSha256 !== diskArtifactSha256
+    loaded.artifactSha256 !== loadedEntrySha256 ||
+    diskArtifactSha256 !== diskEntrySha256
   ) {
-    return healthFromLoaded(loaded, "manifest-mismatch", base);
+    return healthFromLoaded(loaded, "unverifiable", {
+      ...base,
+      reason:
+        loaded.artifactSha256 !== loadedEntrySha256
+          ? "loaded-artifact-missing"
+          : "artifact-read-failed",
+    });
   }
+
+  for (const name of EXTENSION_RUNTIME_OUTPUT_NAMES) {
+    const loadedSha256 = outputDigestFromList(loadedOutputs, name);
+    const diskSha256 = outputDigestFromList(diskOutputDigests, name);
+    const manifestSha256 = outputDigest(manifest, name);
+    if (
+      loadedSha256 === undefined ||
+      diskSha256 === undefined ||
+      manifestSha256 === undefined
+    ) {
+      return healthFromLoaded(loaded, "manifest-mismatch", {
+        ...base,
+        reason: "manifest-output-missing",
+      });
+    }
+    if (loadedSha256 !== diskSha256) {
+      return healthFromLoaded(loaded, "stale-on-disk", base);
+    }
+    if (diskSha256 !== manifestSha256) {
+      return healthFromLoaded(loaded, "manifest-mismatch", base);
+    }
+  }
+
   if (!Number.isFinite(buildCompletedAtMs)) {
     return healthFromLoaded(loaded, "unverifiable", {
       ...base,
@@ -500,9 +660,17 @@ export function readExtensionBuildIdentityHealth(
     dirname(loaded.artifactPath),
     EXTENSION_BUILD_MANIFEST_FILENAME,
   );
-  const disk = readArtifactSha256(loaded.artifactPath)
-    .map((diskArtifactSha256) => ({ diskArtifactSha256 }))
-    .orElse(() => okAsync<{ diskArtifactSha256?: string }>({}));
+  const disk = readRuntimeOutputDigests(loaded.artifactPath)
+    .map((diskOutputs) => ({
+      diskOutputs,
+      diskArtifactSha256: outputDigestFromList(diskOutputs, "extension"),
+    }))
+    .orElse(() =>
+      okAsync<{
+        readonly diskArtifactSha256?: string;
+        readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
+      }>({}),
+    );
   const manifest = ResultAsync.fromPromise(
     Bun.file(manifestPath).text(),
     (): ExtensionBuildIdentityError => ({ type: "ManifestReadFailed" }),
@@ -525,6 +693,7 @@ export function readExtensionBuildIdentityHealth(
       evaluateExtensionBuildIdentity({
         loaded,
         diskArtifactSha256: diskValue.diskArtifactSha256,
+        diskOutputs: diskValue.diskOutputs,
         manifest: manifestValue.manifest,
         manifestReason:
           diskValue.diskArtifactSha256 === undefined
@@ -550,6 +719,17 @@ function boundedSubject(value: string | undefined): string {
   return value.slice(0, MAX_EXTENSION_BUILD_SUBJECT_LENGTH);
 }
 
+function boundedOutputDigests(
+  value: readonly ExtensionBuildOutputDigest[] | undefined,
+): string {
+  const outputs = parseOutputDigestList(value);
+  if (outputs === undefined) return "unknown";
+  return outputs
+    .slice(0, MAX_EXTENSION_BUILD_OUTPUTS)
+    .map((output) => `${output.name}:${output.sha256}`)
+    .join(",");
+}
+
 /** Render exact bounded identity facts without any filesystem path. */
 export function renderExtensionBuildIdentityHealthLine(
   health: ExtensionBuildIdentityHealth,
@@ -565,6 +745,8 @@ export function renderExtensionBuildIdentityHealthLine(
     `inputs=${health.sourceInputCount === undefined ? "unknown" : Math.min(health.sourceInputCount, MAX_EXTENSION_BUILD_INPUTS)}`,
     `subject=${boundedSubject(health.gitSubject)}`,
     `dirty=${health.gitDirty === undefined ? "unknown" : String(health.gitDirty)}`,
+    `loaded-outputs=${boundedOutputDigests(health.loadedOutputs)}`,
+    `disk-outputs=${boundedOutputDigests(health.diskOutputs)}`,
     ...(health.reason === undefined ? [] : [`reason=${health.reason}`]),
   ].join("; ");
   return line.length <= MAX_EXTENSION_BUILD_IDENTITY_LINE_LENGTH
@@ -576,12 +758,14 @@ export function renderExtensionBuildIdentityHealthLine(
 export function renderExtensionBuildIdentityProofLine(
   identity: ExtensionLoadedIdentity,
 ): string {
+  const loadedOutputs = parseOutputDigestList(identity.loadedOutputs);
   const proof: ExtensionBuildIdentityProofLine = {
     weaveExtensionBuildIdentity: {
       schemaVersion: EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION,
       ...(identity.artifactSha256 === undefined
         ? {}
         : { artifactSha256: boundedHash(identity.artifactSha256) }),
+      ...(loadedOutputs === undefined ? {} : { loadedOutputs }),
       ...(identity.loadTimeMs === undefined
         ? {}
         : {
@@ -631,11 +815,19 @@ export function parseExtensionBuildIdentityProof(
   ) {
     return err({ type: "ManifestMalformed" });
   }
+  const loadedOutputs =
+    raw.loadedOutputs === undefined
+      ? undefined
+      : parseOutputDigestList(raw.loadedOutputs);
+  if (raw.loadedOutputs !== undefined && loadedOutputs === undefined) {
+    return err({ type: "ManifestMalformed" });
+  }
   return ok({
     schemaVersion: EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION,
     ...(raw.artifactSha256 === undefined
       ? {}
       : { artifactSha256: raw.artifactSha256 }),
+    ...(loadedOutputs === undefined ? {} : { loadedOutputs }),
     ...(raw.loadTimeMs === undefined ? {} : { loadTimeMs: raw.loadTimeMs }),
     ...(raw.processStartMs === undefined
       ? {}

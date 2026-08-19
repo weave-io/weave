@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import {
   createExtensionBuildManifest,
+  EXTENSION_RUNTIME_OUTPUT_NAMES,
   type ExtensionBuildIdentityManifest,
   type ExtensionLoadedIdentity,
   evaluateExtensionBuildIdentity,
@@ -24,7 +25,19 @@ const C = "c".repeat(64);
 const SUBJECT = "1".repeat(40);
 const BUILD_COMPLETED_AT = "1970-01-01T00:00:00.100Z";
 
-function manifest(extension = A): ExtensionBuildIdentityManifest {
+function runtimeOutputs(digest: string): { name: string; sha256: string }[] {
+  return EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+    name,
+    sha256: digest,
+  }));
+}
+
+function manifest(
+  extension = A,
+  implementation = extension,
+  buildIdentity = extension,
+  hostLoader = extension,
+): ExtensionBuildIdentityManifest {
   const created = createExtensionBuildManifest({
     subject: SUBJECT,
     dirty: false,
@@ -32,6 +45,9 @@ function manifest(extension = A): ExtensionBuildIdentityManifest {
     outputs: [
       { name: "index", sha256: B },
       { name: "extension", sha256: extension },
+      { name: "extension-build-identity", sha256: buildIdentity },
+      { name: "extension-impl", sha256: implementation },
+      { name: "host-module-loader", sha256: hostLoader },
     ],
     buildCompletedAt: BUILD_COMPLETED_AT,
   });
@@ -42,10 +58,14 @@ function manifest(extension = A): ExtensionBuildIdentityManifest {
 function loaded(
   artifactSha256: string | undefined,
   loadTimeMs = 200,
+  outputDigest = artifactSha256,
 ): ExtensionLoadedIdentity {
   return {
     artifactPath: "/artifact/extension.js",
     ...(artifactSha256 === undefined ? {} : { artifactSha256 }),
+    ...(outputDigest === undefined
+      ? {}
+      : { loadedOutputs: runtimeOutputs(outputDigest) }),
     loadTimeMs,
     processStartMs: 1,
   };
@@ -59,6 +79,9 @@ function facts(
     currentBuildInputs: [A, B],
     currentOutputs: [
       { name: "extension", sha256: A },
+      { name: "extension-build-identity", sha256: A },
+      { name: "extension-impl", sha256: A },
+      { name: "host-module-loader", sha256: A },
       { name: "index", sha256: B },
     ],
     currentSubject: SUBJECT,
@@ -66,6 +89,7 @@ function facts(
     loadedProof: {
       schemaVersion: 1 as const,
       artifactSha256: A,
+      loadedOutputs: runtimeOutputs(A),
       loadTimeMs: 200,
       processStartMs: 1,
     },
@@ -85,6 +109,9 @@ describe("extension build identity manifest", () => {
     expect(parsed.buildInputs).toEqual([A, B]);
     expect(parsed.outputs.map((output) => output.name)).toEqual([
       "extension",
+      "extension-build-identity",
+      "extension-impl",
+      "host-module-loader",
       "index",
     ]);
     expect(parsed.git).toEqual({ subject: SUBJECT, dirty: false });
@@ -104,6 +131,7 @@ describe("extension runtime identity states", () => {
     const health = evaluateExtensionBuildIdentity({
       loaded: loaded(A),
       diskArtifactSha256: A,
+      diskOutputs: runtimeOutputs(A),
       manifest: manifest(),
     });
     expect(health.state).toBe("current");
@@ -117,6 +145,7 @@ describe("extension runtime identity states", () => {
     const health = evaluateExtensionBuildIdentity({
       loaded: loaded(A),
       diskArtifactSha256: B,
+      diskOutputs: runtimeOutputs(B),
       manifest: manifest(B),
     });
     expect(health.state).toBe("stale-on-disk");
@@ -126,9 +155,25 @@ describe("extension runtime identity states", () => {
     const health = evaluateExtensionBuildIdentity({
       loaded: loaded(A),
       diskArtifactSha256: A,
+      diskOutputs: runtimeOutputs(A),
       manifest: manifest(B),
     });
     expect(health.state).toBe("manifest-mismatch");
+  });
+
+  it("is RED when the implementation changes while the thin entry stays unchanged", () => {
+    const health = evaluateExtensionBuildIdentity({
+      loaded: loaded(A),
+      diskArtifactSha256: A,
+      diskOutputs: [
+        { name: "extension", sha256: A },
+        { name: "extension-build-identity", sha256: A },
+        { name: "extension-impl", sha256: B },
+        { name: "host-module-loader", sha256: A },
+      ],
+      manifest: manifest(A, B, A, A),
+    });
+    expect(health.state).toBe("stale-on-disk");
   });
 
   it("is RED and unverifiable when the sidecar or output cannot be read", () => {
@@ -158,6 +203,7 @@ describe("extension runtime identity states", () => {
       evaluateExtensionBuildIdentity({
         loaded: loaded(A),
         diskArtifactSha256: B,
+        diskOutputs: runtimeOutputs(B),
         manifest: manifest(B),
       }).state,
     ).toBe("stale-on-disk");
@@ -165,6 +211,7 @@ describe("extension runtime identity states", () => {
       evaluateExtensionBuildIdentity({
         loaded: loaded(B),
         diskArtifactSha256: B,
+        diskOutputs: runtimeOutputs(B),
         manifest: manifest(B),
       }).state,
     ).toBe("current");
@@ -196,6 +243,9 @@ describe("independent child-streaming verifier gate", () => {
         facts({
           currentOutputs: [
             { name: "extension", sha256: B },
+            { name: "extension-build-identity", sha256: B },
+            { name: "extension-impl", sha256: B },
+            { name: "host-module-loader", sha256: B },
             { name: "index", sha256: B },
           ],
         }),
@@ -207,6 +257,7 @@ describe("independent child-streaming verifier gate", () => {
           loadedProof: {
             schemaVersion: 1,
             artifactSha256: B,
+            loadedOutputs: runtimeOutputs(B),
             loadTimeMs: 200,
             processStartMs: 1,
           },
@@ -222,6 +273,25 @@ describe("independent child-streaming verifier gate", () => {
       verifyIdentityFacts(facts({ loadedProof: undefined }))._unsafeUnwrapErr()
         .type,
     ).toBe("unverifiable");
+  });
+
+  it("rejects a stale implementation when the thin loader entry is unchanged", () => {
+    const result = verifyIdentityFacts(
+      facts({
+        // Build B changed only the runtime implementation graph. The thin
+        // extension entry remains build A's exact bytes.
+        manifest: manifest(A, B, A, A),
+        currentOutputs: [
+          { name: "extension", sha256: A },
+          { name: "extension-build-identity", sha256: A },
+          { name: "extension-impl", sha256: B },
+          { name: "host-module-loader", sha256: A },
+          { name: "index", sha256: B },
+        ],
+      }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("stale-on-disk");
+    expect(result._unsafeUnwrapErr().state).toBe("stale-on-disk");
   });
 
   it("blocks all later checks when identity fails", async () => {
@@ -270,6 +340,25 @@ describe("independent child-streaming verifier gate", () => {
     const parsed = parseExtensionBuildIdentityProof(JSON.parse(line));
     expect(parsed.isOk()).toBe(true);
     expect(parsed._unsafeUnwrap().artifactSha256).toBe(C);
+    expect(
+      parsed
+        ._unsafeUnwrap()
+        .loadedOutputs?.find((output) => output.name === "extension-impl")
+        ?.sha256,
+    ).toBe(C);
+  });
+
+  it("rejects path-shaped loaded output facts", () => {
+    const parsed = parseExtensionBuildIdentityProof({
+      weaveExtensionBuildIdentity: {
+        schemaVersion: 1,
+        artifactSha256: C,
+        loadedOutputs: [{ name: "/tmp/extension-impl.js", sha256: C }],
+        loadTimeMs: 200,
+        processStartMs: 1,
+      },
+    });
+    expect(parsed.isErr()).toBe(true);
   });
 
   it("distinguishes stale screenshots, the post-build RED repro, and identity-proven proof", () => {
@@ -280,6 +369,7 @@ describe("independent child-streaming verifier gate", () => {
             loadedProof: {
               schemaVersion: 1,
               artifactSha256: B,
+              loadedOutputs: runtimeOutputs(B),
               loadTimeMs: 200,
               processStartMs: 1,
             },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createExtensionBuildManifest,
+  EXTENSION_RUNTIME_OUTPUT_NAMES,
   evaluateExtensionBuildIdentity,
 } from "../extension-build-identity.js";
 import {
@@ -20,6 +21,13 @@ import {
   UNKNOWN_HOST_VERSION,
 } from "../host-compatibility.js";
 import { PI_HOST_MODULE_SPECIFIERS } from "../host-module-redirect.js";
+
+function runtimeOutputs(digest: string): { name: string; sha256: string }[] {
+  return EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+    name,
+    sha256: digest,
+  }));
+}
 
 describe("renderHostCapabilityGapDiagnostic", () => {
   const diagnostic: HostCapabilityGapDiagnostic = {
@@ -366,7 +374,12 @@ describe("renderExtensionIdentityHealthLine", () => {
     subject,
     dirty: false,
     buildInputs: [digestA],
-    outputs: [{ name: "extension", sha256: digestA }],
+    outputs: [
+      { name: "extension", sha256: digestA },
+      { name: "extension-build-identity", sha256: digestA },
+      { name: "extension-impl", sha256: digestA },
+      { name: "host-module-loader", sha256: digestA },
+    ],
     buildCompletedAt: "1970-01-01T00:00:00.100Z",
   });
 
@@ -377,10 +390,12 @@ describe("renderExtensionIdentityHealthLine", () => {
         loaded: {
           artifactPath: "/tmp/extension.js",
           artifactSha256: digestA,
+          loadedOutputs: runtimeOutputs(digestA),
           loadTimeMs: 200,
           processStartMs: 1,
         },
         diskArtifactSha256: digestA,
+        diskOutputs: runtimeOutputs(digestA),
         manifest: manifest._unsafeUnwrap(),
       }),
     );
@@ -400,10 +415,12 @@ describe("renderExtensionIdentityHealthLine", () => {
         evaluateExtensionBuildIdentity({
           loaded: {
             artifactSha256: digestA,
+            loadedOutputs: runtimeOutputs(digestA),
             loadTimeMs: 200,
             processStartMs: 1,
           },
           diskArtifactSha256: digestB,
+          diskOutputs: runtimeOutputs(digestB),
           manifest: parsed,
         }),
       ),
@@ -413,10 +430,12 @@ describe("renderExtensionIdentityHealthLine", () => {
         evaluateExtensionBuildIdentity({
           loaded: {
             artifactSha256: digestA,
+            loadedOutputs: runtimeOutputs(digestA),
             loadTimeMs: 200,
             processStartMs: 1,
           },
           diskArtifactSha256: digestA,
+          diskOutputs: runtimeOutputs(digestA),
           manifest: {
             ...parsed,
             outputs: [{ name: "extension", sha256: digestB }],

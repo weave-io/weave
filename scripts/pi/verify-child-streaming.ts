@@ -3,6 +3,7 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   EXTENSION_BUILD_IDENTITY_PROOF_ENV,
   EXTENSION_BUILD_MANIFEST_FILENAME,
+  EXTENSION_RUNTIME_OUTPUT_NAMES,
   type ExtensionBuildIdentityManifest,
   type ExtensionBuildIdentityProof,
   type ExtensionBuildIdentityState,
@@ -195,13 +196,40 @@ export function verifyIdentityFacts(
   if (
     loaded === undefined ||
     loaded.artifactSha256 === undefined ||
+    loaded.loadedOutputs === undefined ||
     loaded.loadTimeMs === undefined ||
     loaded.processStartMs === undefined
   ) {
     return err(blocked("unverifiable", "unverifiable"));
   }
+  if (
+    loaded.loadedOutputs.length !== EXTENSION_RUNTIME_OUTPUT_NAMES.length ||
+    loaded.loadedOutputs.some(
+      (output, index) =>
+        output.name !== EXTENSION_RUNTIME_OUTPUT_NAMES[index] ||
+        !/^[0-9a-f]{64}$/u.test(output.sha256),
+    )
+  ) {
+    return err(blocked("unverifiable", "unverifiable"));
+  }
   if (loaded.artifactSha256 !== extensionOutput.sha256) {
     return err(blocked("stale-on-disk", "stale-on-disk"));
+  }
+  for (const name of EXTENSION_RUNTIME_OUTPUT_NAMES) {
+    const current = input.currentOutputs.find((output) => output.name === name);
+    const loadedOutput = loaded.loadedOutputs.find(
+      (output) => output.name === name,
+    );
+    const expected = outputDigest(input.manifest, name);
+    if (current === undefined || loadedOutput === undefined) {
+      return err(blocked("unverifiable", "unverifiable"));
+    }
+    if (loadedOutput.sha256 !== current.sha256) {
+      return err(blocked("stale-on-disk", "stale-on-disk"));
+    }
+    if (expected === undefined || current.sha256 !== expected) {
+      return err(blocked("output-mismatch", "manifest-mismatch"));
+    }
   }
   const completedAtMs = Date.parse(input.manifest.buildCompletedAt);
   const nowMs = input.nowMs ?? Date.now();

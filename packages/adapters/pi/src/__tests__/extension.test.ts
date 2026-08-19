@@ -63,6 +63,7 @@ import type {
   PiThreadSessionPort,
 } from "../delegation-controller.js";
 import type { PiAdapterFailure } from "../errors.js";
+import { EXTENSION_RUNTIME_OUTPUT_NAMES } from "../extension-build-identity.js";
 import {
   createPiExtension,
   PI_SHARED_LOG_PATH,
@@ -2036,6 +2037,10 @@ describe("createPiExtension: stale-runtime identity gate", () => {
   function loadedIdentity(sha256: string) {
     return {
       artifactSha256: sha256,
+      loadedOutputs: EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+        name,
+        sha256,
+      })),
       loadTimeMs: 200,
       processStartMs: 1,
     };
@@ -8997,8 +9002,7 @@ describe("createPiExtension: real-dispatch active-child shortcut", () => {
         { expanded: false, isPartial: true },
         theme,
         renderContext,
-      )
-        ?.render(120)
+      )?.render(120)
         .join("\n") ?? "";
 
     const parentReasoning = renderCard(updates.at(-1) ?? updates[0]);

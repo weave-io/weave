@@ -463,9 +463,9 @@ let loadedPiExtensionIdentity: ExtensionLoadedIdentity =
   unverifiableExtensionLoadIdentity();
 
 /**
- * Called by the thin loader after it hashes the exact entry it loaded. The
- * setter is intentionally narrow: the implementation owns the generation
- * snapshot, while the loader owns the load-time fact.
+ * Called by the thin loader after it hashes the complete runtime output graph.
+ * The setter is intentionally narrow: the implementation owns the generation
+ * snapshot, while the loader owns the load-time facts.
  */
 export function setLoadedPiExtensionIdentity(
   identity: ExtensionLoadedIdentity,
