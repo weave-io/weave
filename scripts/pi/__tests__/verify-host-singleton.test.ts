@@ -8,6 +8,7 @@ import {
   buildProofEnv,
   checkoutCopyExistsFromListing,
   classifyMappedPaths,
+  closeProofInput,
   decideSkip,
   evaluateSingletonProof,
   extractProofLineFromOutput,
@@ -19,12 +20,16 @@ import {
   isPathInside,
   nativePackageRootFromPath,
   type ParsedHostModuleProof,
+  type ProofSubprocess,
   parseHostPackageIdentity,
   parseLinuxMapsOutput,
   parseLsofDefaultOutput,
   parseLsofFnOutput,
   parseProofLine,
   parseVerifyArgs,
+  readUntilProof,
+  type SpawnedProof,
+  terminateSpawned,
 } from "../verify-host-singleton.js";
 
 const HOST_ROOT = "/opt/pi/node_modules/@earendil-works/pi-coding-agent";
@@ -239,6 +244,214 @@ describe("parseProofLine", () => {
   });
 });
 
+function outputStream(
+  chunks: readonly string[],
+  delayMs = 0,
+): ReadableStream<Uint8Array> {
+  const encoded = chunks.map((chunk) => new TextEncoder().encode(chunk));
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const chunk = encoded[index];
+      index += 1;
+      if (chunk === undefined) {
+        controller.close();
+        return;
+      }
+      if (delayMs > 0) await Bun.sleep(delayMs);
+      controller.enqueue(chunk);
+    },
+  });
+}
+
+function neverClosingStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise(() => undefined);
+    },
+  });
+}
+
+function proofProcess(input: {
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  readonly exited?: Promise<number>;
+  readonly exitCode?: number | null;
+}): SpawnedProof {
+  const subprocess: ProofSubprocess = {
+    stdin: undefined,
+    stdout: input.stdout,
+    stderr: input.stderr,
+    exited: input.exited ?? Promise.resolve(0),
+    exitCode: input.exitCode ?? 0,
+    killed: false,
+    pid: 4242,
+    kill: () => undefined,
+  };
+  return { subprocess, pid: 4242, output: "" };
+}
+
+describe("readUntilProof", () => {
+  const proofLine = JSON.stringify({
+    weaveHostModuleProof: redirectedProof(),
+  });
+
+  it("returns a valid proof from either child output stream", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: outputStream(["ordinary output\n"]),
+        stderr: outputStream([
+          proofLine.slice(0, 20),
+          proofLine.slice(20),
+          "\n",
+        ]),
+      }),
+      100,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value).toEqual(redirectedProof());
+  });
+
+  it("reports missing proof after both streams close and the child exits", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: outputStream(["ordinary output\n"]),
+        stderr: outputStream(["no proof here\n"]),
+        exited: Promise.resolve(7),
+        exitCode: 7,
+      }),
+      100,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("ProofMissing");
+    expect(result.error.message).toContain("exited 7");
+  });
+
+  it("preserves malformed and oversized proof diagnostics", async () => {
+    const malformed = await readUntilProof(
+      proofProcess({
+        stdout: outputStream([]),
+        stderr: outputStream(['{"weaveHostModuleProof":']),
+        exited: Promise.resolve(1),
+        exitCode: 1,
+      }),
+      100,
+    );
+    expect(malformed.isErr()).toBe(true);
+    if (malformed.isOk()) return;
+    expect(malformed.error.type).toBe("ProofInvalid");
+
+    const oversized = JSON.stringify({
+      weaveHostModuleProof: { specifiers: [], pad: "x".repeat(40_000) },
+    });
+    const tooLarge = await readUntilProof(
+      proofProcess({
+        stdout: outputStream([]),
+        stderr: outputStream([oversized]),
+        exited: Promise.resolve(1),
+        exitCode: 1,
+      }),
+      100,
+    );
+    expect(tooLarge.isErr()).toBe(true);
+    if (tooLarge.isOk()) return;
+    expect(tooLarge.error.type).toBe("ProofInvalid");
+  });
+
+  it("fails closed on an exit rejection", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: outputStream([]),
+        stderr: outputStream([]),
+        exited: Promise.reject(new Error("exit status unavailable")),
+        exitCode: null,
+      }),
+      100,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("SpawnFailed");
+  });
+
+  it("returns ProofTimeout and cancels open output streams", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: neverClosingStream(),
+        stderr: neverClosingStream(),
+        exited: new Promise(() => undefined),
+        exitCode: null,
+      }),
+      10,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("ProofTimeout");
+  });
+
+  it("waits for stream close after child exit before declaring proof missing", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: outputStream([], 20),
+        stderr: outputStream([proofLine], 20),
+        exited: Promise.resolve(0),
+        exitCode: 0,
+      }),
+      100,
+    );
+    expect(result.isOk()).toBe(true);
+  });
+});
+
+describe("proof child cleanup", () => {
+  it("closes stdin before terminating the owned child", async () => {
+    const events: string[] = [];
+    let resolveExit: ((code: number) => void) | undefined;
+    const exited = new Promise<number>((resolve) => {
+      resolveExit = resolve;
+    });
+    const stdin = {
+      end: () => {
+        events.push("stdin.end");
+      },
+    } as unknown as Bun.FileSink;
+    const subprocess: ProofSubprocess = {
+      stdin,
+      stdout: outputStream([]),
+      stderr: outputStream([]),
+      exited,
+      exitCode: null,
+      killed: false,
+      pid: 4242,
+      kill: (signal) => {
+        events.push(String(signal));
+        resolveExit?.(0);
+      },
+    };
+    const spawned: SpawnedProof = { subprocess, pid: 4242, output: "" };
+
+    const result = await terminateSpawned(spawned);
+
+    expect(result.isOk()).toBe(true);
+    expect(events).toEqual(["stdin.end", "SIGTERM"]);
+  });
+
+  it("does not touch absent stdin", () => {
+    const subprocess: ProofSubprocess = {
+      stdin: undefined,
+      stdout: outputStream([]),
+      stderr: outputStream([]),
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      killed: false,
+      pid: 4242,
+      kill: () => undefined,
+    };
+    expect(() => closeProofInput(subprocess)).not.toThrow();
+  });
+});
+
 describe("lsof and maps classification", () => {
   it("parses lsof -Fn name records", () => {
     const output = [
@@ -447,11 +660,13 @@ describe("buildProofEnv", () => {
     const env = buildProofEnv(
       {
         PATH: "/bin",
+        BUN_INSTALL: "/Users/jose/.bun",
+        HOME: "/Users/jose",
+        OPENAI_API_KEY: "must-not-cross-process-boundary",
         WEAVE_CHILD_SECRET: "secret",
         WEAVE_CHILD_ID: "child",
         [WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV]: "1",
         PI_CODING_AGENT_DIR: "/tmp/agent",
-        HOME: "/Users/jose",
       },
       {
         WEAVE_PI_HOST_MODULE_PROOF: "1",
@@ -459,7 +674,9 @@ describe("buildProofEnv", () => {
       },
     );
     expect(env.PATH).toBe("/bin");
-    expect(env.HOME).toBe("/Users/jose");
+    expect(env.BUN_INSTALL).toBe("/Users/jose/.bun");
+    expect(env.HOME).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.WEAVE_PI_HOST_MODULE_PROOF).toBe("1");
     expect(env.PI_OFFLINE).toBe("1");
     expect(env.WEAVE_CHILD_SECRET).toBeUndefined();

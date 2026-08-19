@@ -57,6 +57,19 @@ const CHILD_ENV_OMIT = [
   "PI_CODING_AGENT_DIR",
 ] as const;
 
+// The proof child must not inherit credentials or a user's active Pi home.
+// Keep only process-launch and locale values; executeVerify supplies isolated
+// HOME/XDG paths for the short-lived proof process.
+const PROOF_ENV_ALLOW = [
+  "PATH",
+  "BUN_INSTALL",
+  "VOLTA_HOME",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+] as const;
+
 const CHECKOUT_COPY_MARKERS = [
   "node_modules/@earendil-works/pi-coding-agent",
   "node_modules/@earendil-works/pi-ai",
@@ -322,11 +335,14 @@ export function parseProofLine(
 export function extractProofLineFromOutput(
   output: string,
 ): Result<ParsedHostModuleProof, VerifyFailure> {
+  let firstInvalid: VerifyFailure | undefined;
   for (const line of output.split(/\r?\n/)) {
     if (!line.includes("weaveHostModuleProof")) continue;
     const parsed = parseProofLine(line);
     if (parsed.isOk()) return parsed;
+    firstInvalid ??= parsed.error;
   }
+  if (firstInvalid !== undefined) return err(firstInvalid);
   return err({
     type: "ProofMissing",
     message: "no weaveHostModuleProof line in process output",
@@ -580,10 +596,11 @@ export function buildProofEnv(
   overrides: Readonly<Record<string, string>>,
 ): Record<string, string> {
   const omitted = new Set<string>(CHILD_ENV_OMIT);
+  const allowed = new Set<string>(PROOF_ENV_ALLOW);
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (value === undefined) continue;
-    if (omitted.has(key)) continue;
+  for (const key of allowed) {
+    const value = source[key];
+    if (value === undefined || omitted.has(key)) continue;
     env[key] = value;
   }
   for (const [key, value] of Object.entries(overrides)) {
@@ -823,15 +840,6 @@ function appendBounded(current: string, chunk: string): string {
   return next.slice(next.length - MAX_CAPTURED_OUTPUT_CHARS);
 }
 
-function signalPid(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
-  Result.fromThrowable(
-    () => {
-      process.kill(pid, signal);
-    },
-    () => undefined,
-  )();
-}
-
 async function inspectMappedPaths(
   pid: number,
 ): Promise<Result<readonly string[], VerifyFailure>> {
@@ -881,40 +889,98 @@ async function inspectMappedPathsWithSettle(
   return ok(last);
 }
 
-type SpawnedProof = {
-  readonly subprocess: ReturnType<typeof Bun.spawn>;
+export type ProofSubprocess = {
+  readonly stdin: Bun.FileSink | number | undefined;
+  readonly stdout: ReadableStream<Uint8Array> | number | undefined;
+  readonly stderr: ReadableStream<Uint8Array> | number | undefined;
+  readonly exited: Promise<number>;
+  readonly exitCode: number | null;
+  readonly killed: boolean;
+  readonly pid?: number;
+  readonly kill: ReturnType<typeof Bun.spawn>["kill"];
+};
+
+export type SpawnedProof = {
+  readonly subprocess: ProofSubprocess;
   readonly pid: number;
   output: string;
 };
 
-async function terminateSpawned(
+export function closeProofInput(subprocess: ProofSubprocess): void {
+  const stdin = subprocess.stdin;
+  if (stdin === undefined || typeof stdin === "number") return;
+  Result.fromThrowable(
+    () => stdin.end(),
+    () => undefined,
+  )();
+}
+
+function requestKill(
+  subprocess: ProofSubprocess,
+  signal: "SIGTERM" | "SIGKILL",
+): void {
+  Result.fromThrowable(
+    () => subprocess.kill(signal),
+    () => undefined,
+  )();
+}
+
+function exitedCode(subprocess: ProofSubprocess): Promise<
+  | { readonly kind: "exited"; readonly code: number }
+  | {
+      readonly kind: "rejected";
+    }
+> {
+  return subprocess.exited.then(
+    (code) => ({ kind: "exited" as const, code }),
+    () => ({ kind: "rejected" as const }),
+  );
+}
+
+export async function terminateSpawned(
   spawned: SpawnedProof | undefined,
 ): Promise<Result<{ readonly exitCode: number }, VerifyFailure>> {
   if (spawned === undefined) return ok({ exitCode: 0 });
   const { subprocess, pid } = spawned;
-  if (subprocess.killed || subprocess.exitCode !== null) {
+  closeProofInput(subprocess);
+  if (
+    subprocess.killed ||
+    (subprocess.exitCode !== null && subprocess.exitCode !== undefined)
+  ) {
     return ok({ exitCode: subprocess.exitCode ?? 0 });
   }
-  subprocess.kill("SIGTERM");
-  signalPid(pid, "SIGTERM");
+  requestKill(subprocess, "SIGTERM");
   const term = await Promise.race([
-    subprocess.exited.then((exitCode) => ({ exitCode })),
+    exitedCode(subprocess),
     delay(KILL_WAIT_MS).then(() => undefined),
   ]);
-  if (term !== undefined) return ok(term);
-  subprocess.kill("SIGKILL");
-  signalPid(pid, "SIGKILL");
+  if (term !== undefined) {
+    if (term.kind === "rejected") {
+      return err({
+        type: "CleanupFailed",
+        message: `child pid ${pid ?? "unknown"} exit status was rejected`,
+      });
+    }
+    return ok({ exitCode: term.code });
+  }
+  requestKill(subprocess, "SIGKILL");
   const killed = await Promise.race([
-    subprocess.exited.then((exitCode) => ({ exitCode })),
+    exitedCode(subprocess),
     delay(KILL_WAIT_MS).then(() => undefined),
   ]);
   if (killed === undefined) {
     return err({
       type: "CleanupFailed",
-      message: `child pid ${pid} did not exit after SIGKILL`,
+      message: `child pid ${pid ?? "unknown"} did not exit after SIGKILL`,
     });
   }
-  return ok(killed);
+  if (killed.kind === "rejected") {
+    return err({
+      type: "CleanupFailed",
+      message: `child pid ${pid ?? "unknown"} exit status was rejected`,
+    });
+  }
+  return ok({ exitCode: killed.code });
 }
 
 async function removeDir(path: string): Promise<Result<void, VerifyFailure>> {
@@ -942,11 +1008,10 @@ async function createTempCwd(): Promise<Result<string, VerifyFailure>> {
   return ok(path);
 }
 
-async function readUntilProof(
+export async function readUntilProof(
   spawned: SpawnedProof,
   timeoutMs: number,
 ): Promise<Result<ParsedHostModuleProof, VerifyFailure>> {
-  const decoder = new TextDecoder();
   const stdout = spawned.subprocess.stdout;
   const stderr = spawned.subprocess.stderr;
   if (
@@ -960,59 +1025,134 @@ async function readUntilProof(
       message: "spawned process is missing stdio pipes",
     });
   }
-  const stdoutReader = stdout.getReader();
-  const stderrReader = stderr.getReader();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void stdoutReader.cancel();
-    void stderrReader.cancel();
-  }, timeoutMs);
 
-  const absorb = async (
-    reader: ReadableStreamDefaultReader<Uint8Array>,
-  ): Promise<void> => {
-    while (true) {
-      const chunk = await ResultAsync.fromPromise(
-        reader.read(),
-        () => undefined,
-      );
-      if (chunk.isErr() || chunk.value.done) return;
-      spawned.output = appendBounded(
-        spawned.output,
-        decoder.decode(chunk.value.value, { stream: true }),
-      );
+  const stdoutReaderResult = Result.fromThrowable(
+    () => stdout.getReader(),
+    (): VerifyFailure => ({
+      type: "SpawnFailed",
+      message: "failed to open host stdout",
+    }),
+  )();
+  if (stdoutReaderResult.isErr()) return err(stdoutReaderResult.error);
+  const stderrReaderResult = Result.fromThrowable(
+    () => stderr.getReader(),
+    (): VerifyFailure => ({
+      type: "SpawnFailed",
+      message: "failed to open host stderr",
+    }),
+  )();
+  if (stderrReaderResult.isErr()) return err(stderrReaderResult.error);
+
+  const stdoutReader = stdoutReaderResult.value;
+  const stderrReader = stderrReaderResult.value;
+  const appendDecoded = (decoder: TextDecoder, bytes: Uint8Array): void => {
+    const text = decoder.decode(bytes, { stream: true });
+    if (text.length > 0) {
+      spawned.output = appendBounded(spawned.output, text);
+    }
+  };
+  const finishDecoder = (decoder: TextDecoder): void => {
+    const text = decoder.decode();
+    if (text.length > 0) {
+      spawned.output = appendBounded(spawned.output, text);
     }
   };
 
-  const wait = (async (): Promise<
-    Result<ParsedHostModuleProof, VerifyFailure>
-  > => {
-    void Promise.all([absorb(stdoutReader), absorb(stderrReader)]);
+  const absorb = async (
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    decoder: TextDecoder,
+  ): Promise<Result<void, VerifyFailure>> => {
     while (true) {
-      const extracted = extractProofLineFromOutput(spawned.output);
-      if (extracted.isOk()) return extracted;
-      if (timedOut) {
-        return err({
-          type: "ProofTimeout",
-          message: `proof line not seen within ${timeoutMs}ms`,
-        });
+      const chunk = await ResultAsync.fromPromise(
+        reader.read(),
+        (): VerifyFailure => ({
+          type: "SpawnFailed",
+          message: "failed to read host process output",
+        }),
+      );
+      if (chunk.isErr()) return err(chunk.error);
+      if (chunk.value.done) {
+        finishDecoder(decoder);
+        return ok(undefined);
       }
-      if (spawned.subprocess.exitCode !== null) {
-        const late = extractProofLineFromOutput(spawned.output);
-        if (late.isOk()) return late;
-        return err({
-          type: "ProofMissing",
-          message: `host exited ${spawned.subprocess.exitCode} before emitting a proof line`,
-        });
-      }
-      await delay(50);
+      appendDecoded(decoder, chunk.value.value);
+      // A valid line can be returned before the child exits. The complete
+      // output promises below still drain both pipes before classifying an
+      // already-exited child as ProofMissing.
+      const proof = extractProofLineFromOutput(spawned.output);
+      if (proof.isOk()) resolveProof(proof);
     }
-  })();
+  };
 
-  const result = await wait;
-  clearTimeout(timer);
-  return result;
+  let proofResolved = false;
+  let resolveProof!: (
+    proof: Result<ParsedHostModuleProof, VerifyFailure>,
+  ) => void;
+  const proofFound = new Promise<Result<ParsedHostModuleProof, VerifyFailure>>(
+    (resolve) => {
+      resolveProof = (proof) => {
+        if (proofResolved) return;
+        proofResolved = true;
+        resolve(proof);
+      };
+    },
+  );
+
+  const outputDone = Promise.all([
+    absorb(stdoutReader, new TextDecoder()),
+    absorb(stderrReader, new TextDecoder()),
+  ]);
+  const completion = Promise.all([outputDone, exitedCode(spawned.subprocess)]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ readonly kind: "timeout" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+  });
+
+  const winner = await Promise.race([
+    proofFound.then((proof) => ({ kind: "proof" as const, proof })),
+    completion.then((value) => ({ kind: "completed" as const, value })),
+    timeout,
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
+
+  if (winner.kind === "proof") return winner.proof;
+  if (winner.kind === "timeout") {
+    await Promise.all([
+      ResultAsync.fromThrowable(
+        () => stdoutReader.cancel(),
+        () => undefined,
+      )(),
+      ResultAsync.fromThrowable(
+        () => stderrReader.cancel(),
+        () => undefined,
+      )(),
+    ]);
+    return err({
+      type: "ProofTimeout",
+      message: `proof line not seen within ${timeoutMs}ms`,
+    });
+  }
+
+  const [outputResults, exit] = winner.value;
+  const [stdoutResult, stderrResult] = outputResults;
+  if (stdoutResult.isErr()) return err(stdoutResult.error);
+  if (stderrResult.isErr()) return err(stderrResult.error);
+  const proof = extractProofLineFromOutput(spawned.output);
+  if (proof.isOk()) return proof;
+  if (exit.kind === "rejected") {
+    return err({
+      type: "SpawnFailed",
+      message: "host process exit status was rejected",
+    });
+  }
+  return err({
+    ...proof.error,
+    ...(proof.error.type === "ProofMissing"
+      ? {
+          message: `host exited ${exit.code} before emitting a proof line`,
+        }
+      : {}),
+  });
 }
 
 async function runOneProofProcess(input: {
@@ -1045,6 +1185,9 @@ async function runOneProofProcess(input: {
             input.extensionPath,
           ],
           cwd: input.cwd,
+          // Keep the input pipe open until mapped paths are captured. Pi's RPC
+          // process can exit before lsof sees its module mappings when stdin
+          // is ignored; terminateSpawned closes this pipe before signalling.
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
@@ -1065,8 +1208,9 @@ async function runOneProofProcess(input: {
         message: "host CLI spawned without a pid",
       });
     }
-    spawned = { subprocess, pid, output: "" };
-    const proof = await readUntilProof(spawned, PROOF_WAIT_MS);
+    const proofProcess: SpawnedProof = { subprocess, pid, output: "" };
+    spawned = proofProcess;
+    const proof = await readUntilProof(proofProcess, PROOF_WAIT_MS);
     if (proof.isErr()) return err(proof.error);
     const mapped = await inspectMappedPathsWithSettle(pid);
     if (mapped.isErr()) return err(mapped.error);
@@ -1133,6 +1277,11 @@ async function executeVerify(input: {
   const commonEnv = {
     [WEAVE_PI_HOST_MODULE_PROOF_ENV]: "1",
     PI_OFFLINE: "1",
+    HOME: tempCwd.value,
+    XDG_CONFIG_HOME: tempCwd.value,
+    XDG_DATA_HOME: tempCwd.value,
+    XDG_CACHE_HOME: tempCwd.value,
+    TMPDIR: tempCwd.value,
   } as const;
 
   try {
