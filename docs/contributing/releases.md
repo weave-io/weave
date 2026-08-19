@@ -47,6 +47,41 @@ job runs only after every registry digest is verified. It creates tags and
 releases without updating an existing conflicting ref, then opens the
 changeset-cleanup PR.
 
+## The `next` channel
+
+`next` is a guarded manual operation in the same trusted workflow. The caller
+sets `channel: next` and exactly four boolean package inputs: `cli`,
+`opencode`, `claude-code`, and `pi`. At least one must be true. The route
+accepts only `workflow_dispatch` on `weave-io/weave` at `refs/heads/main` and
+requires Task 9 maintainer authorization. It explains the selected seed and
+its closure in the workflow summary.
+
+The closure uses the stable shared-changeset and bundled-artifact rules. The
+controller reads current green `main`, computes
+`<stable>-next.YYYYMMDD.sha12` in UTC, and stages version, dependency-range,
+and deterministic scratch-changelog overrides outside the checkout. It never
+consumes or deletes a changeset. Source package manifests and changelogs are
+snapshotted and compared byte-for-byte after packing. The scratch changelog is
+bounded and contains only the fixed prerelease notice, source/package identity,
+history, pending changeset identities, and the canonical notes URL. It has no
+AI prose and does not replace the canonical stable changelog.
+
+The `next` path preserves the full proof order. Independent attestation must
+match the exact released SHA, plan digest, and every tarball digest. Clean
+consumers cover every closure member. Changed adapters (the adapter members of
+the closure) must each pass all five harness stages. Any missing, skipped, or
+mismatched result stops the chain before approval and before OIDC. The protected
+`prerelease` environment supplies the workflow-internal approval; npm trust
+has no environment claim. Only `publish` has `id-token: write`, and it uses
+npm's `next` dist-tag. Registry verification precedes create-once GitHub tags
+and prerelease entries. The final notes artifact uses the deterministic wrapper
+and raw pending-changeset identities. `latest` and the stable changelog never
+move.
+
+Reruns recompute authority and compare exact digests. Matching registry bytes,
+tags, and prereleases are idempotent; conflicts fail closed. A `next` run does
+not mutate Git source files or provide a Git mutation path for repair.
+
 ## Rollout modes
 
 The checked-in `rollout-stage.ts` declaration, the external mode, and the

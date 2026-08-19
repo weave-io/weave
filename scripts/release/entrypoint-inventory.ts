@@ -12,8 +12,9 @@
  * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root; Task 22 adds
  * the CI API report controller; Task 23 adds the stable preparation
  * controller; Task 24 adds the automatic regeneration controller; Task 25
- * registers every stable publish and independent-attestation workflow root.
- * Later tasks add, rename, or remove entries in the same change.
+ * registers every stable publish and independent-attestation workflow root;
+ * Task 26 adds the guarded `next` prerelease controller. Later tasks add,
+ * rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -119,6 +120,12 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 25 executable rollout tuple verifier. It performs no build, proof, OIDC, registry, or GitHub mutation.",
+  },
+  {
+    path: "scripts/release/next-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 26 guarded next prerelease controller. It computes closure, stages scratch versions and notes without source mutation, and gates prerelease refs after the shared proof chain.",
   },
   {
     path: "scripts/release/resume-main.ts",
