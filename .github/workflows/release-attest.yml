@@ -1,0 +1,105 @@
+name: Attest stable release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Numeric source release workflow run ID
+        required: true
+        type: string
+      artifact_id:
+        description: Numeric bound artifact ID
+        required: true
+        type: string
+      released_sha:
+        description: Forty-character released source SHA
+        required: true
+        type: string
+      plan_digest:
+        description: SHA-256 digest of the recomputed plan
+        required: true
+        type: string
+      tarball_digests:
+        description: JSON array of package tarball digests
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  attest:
+    name: Independently attest bound artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.released_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - name: Download the numeric bound artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release
+      - id: request
+        name: Independently verify source, plan, and tarball identities
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+          RELEASED_SHA: ${{ inputs.released_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          TARBALL_DIGESTS: ${{ inputs.tarball_digests }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_RUN_ID" -gt 0
+          test "$ARTIFACT_ID" -gt 0
+          test "$(git rev-parse HEAD)" = "$RELEASED_SHA"
+          mkdir -p "$RUNNER_TEMP/attestation"
+          plan="$RUNNER_TEMP/release/plan.json"
+          test -s "$plan"
+          observed_plan_digest="sha256:$(jq -cS '.plan' "$plan" | tr -d '\n' | sha256sum | cut -d' ' -f1)"
+          test "$observed_plan_digest" = "$PLAN_DIGEST"
+          plan_released_sha="$(jq -er '.plan.releasedSha // .releasedSha' "$plan")"
+          test "$plan_released_sha" = "$RELEASED_SHA"
+          observed_tarballs='[]'
+          shopt -s nullglob
+          tarballs=("$RUNNER_TEMP"/release/artifacts/*.tgz)
+          test "${#tarballs[@]}" -gt 0
+          for tarball in "${tarballs[@]}"; do
+            package_name="$(tar -xOf "$tarball" package/package.json | jq -er '.name')"
+            subject_digest="sha256:$(sha256sum "$tarball" | cut -d' ' -f1)"
+            observed_tarballs="$(jq -c --arg packageName "$package_name" --arg sha256 "$subject_digest" '. + [{packageName:$packageName,sha256:$sha256}]' <<<"$observed_tarballs")"
+          done
+          observed_tarballs="$(jq -cS 'sort_by(.packageName)' <<<"$observed_tarballs")"
+          requested_tarballs="$(jq -cS --argjson value "$TARBALL_DIGESTS" '$value | sort_by(.packageName)')"
+          bound_tarballs="$(jq -cS '[.plan.binding.tarballs[] | {packageName,sha256}] | sort_by(.packageName)' "$plan")"
+          test "$observed_tarballs" = "$requested_tarballs"
+          test "$observed_tarballs" = "$bound_tarballs"
+          jq -n --arg sourceSha "$RELEASED_SHA" --arg planDigest "$observed_plan_digest" --argjson tarballDigests "$observed_tarballs" '{sourceSha:$sourceSha,planDigest:$planDigest,tarballDigests:$tarballDigests}' > "$RUNNER_TEMP/attestation/observed.json"
+          jq -n --argjson tarballDigests "$requested_tarballs" --arg sourceRunId "$SOURCE_RUN_ID" --arg artifactId "$ARTIFACT_ID" --arg releasedSha "$RELEASED_SHA" --arg planDigest "$PLAN_DIGEST" '{schemaVersion:1,sourceRunId:($sourceRunId|tonumber),artifactId:($artifactId|tonumber),releasedSha:$releasedSha,planDigest:$planDigest,tarballDigests:$tarballDigests}' > "$RUNNER_TEMP/attestation/request.json"
+          bun scripts/release/attest-main.ts --request "$RUNNER_TEMP/attestation/request.json" --observed "$RUNNER_TEMP/attestation/observed.json" --output "$RUNNER_TEMP/attestation/result.json"
+      - name: Create the GitHub artifact attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: ${{ runner.temp }}/release/artifacts/*.tgz
+      - name: Report a digest-bound check result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASED_SHA: ${{ inputs.released_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/attestation/result.json"
+          jq --arg sha "$RELEASED_SHA" --arg digest "$PLAN_DIGEST" '{name:"release-attestation",head_sha:$sha,status:"completed",conclusion:"success",output:{title:"Independent release attestation",summary:("plan=" + $digest),text:(.check.subjects | map(.packageName + "=" + .subjectDigest) | join("\n"))}}' "$RUNNER_TEMP/attestation/result.json" > "$RUNNER_TEMP/attestation/check.json"
+          gh api "repos/${GITHUB_REPOSITORY}/check-runs" --method POST --input "$RUNNER_TEMP/attestation/check.json" >/dev/null

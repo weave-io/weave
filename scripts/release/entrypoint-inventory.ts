@@ -11,8 +11,9 @@
  * Task 14 registers the one pre-existing new-pipeline root,
  * `publish-main.ts`; Task 15 adds the read-only `doctor.ts` root; Task 22 adds
  * the CI API report controller; Task 23 adds the stable preparation
- * controller; Task 24 adds the automatic regeneration controller. Later tasks
- * add, rename, or remove entries in the same change.
+ * controller; Task 24 adds the automatic regeneration controller; Task 25
+ * registers every stable publish and independent-attestation workflow root.
+ * Later tasks add, rename, or remove entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -100,6 +101,77 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 24 automatic main-advance regeneration controller. It delegates only compare-and-swap updates to Task 9 and never creates a pull request.",
+  },
+  {
+    path: "scripts/release/attest-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 independent non-reusable artifact-attestation controller. It validates nonsecret identity and cannot reach the publish executor.",
+  },
+  {
+    path: "scripts/release/release-route-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 stable route gate. It validates event lineage, rollout topology, and best-effort marker cleanup before downstream work.",
+  },
+  {
+    path: "scripts/release/rollout-gate.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 executable rollout tuple verifier. It performs no build, proof, OIDC, registry, or GitHub mutation.",
+  },
+  {
+    path: "scripts/release/resume-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 stable-resume boundary over the Task 14 state machine. Authority is reread by injected transition ports.",
+  },
+  {
+    path: "scripts/release/incident-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 authorized incident generate/readback boundary. It never executes deprecate, unpublish, publish, or latest mutation.",
+  },
+  {
+    path: "scripts/release/build-bind-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 build-bind chain step. It validates the released SHA and plan binding before independent attestation.",
+  },
+  {
+    path: "scripts/release/await-attest-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 attestation gate chain step. Missing, pending, failed, or foreign digest results block proof and publish.",
+  },
+  {
+    path: "scripts/release/consumer-proof-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 clean-consumer proof chain step over exact bound tarball digests.",
+  },
+  {
+    path: "scripts/release/harness-proof-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 changed-adapter harness proof chain step over all five required stages.",
+  },
+  {
+    path: "scripts/release/registry-verify-main.ts",
+    role: "legacy",
+    rationale: "Task 25 post-publish registry digest verification chain step.",
+  },
+  {
+    path: "scripts/release/refs-cleanup-main.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 refs and changeset-cleanup chain boundary. It runs only after registry verification.",
+  },
+  {
+    path: "scripts/release/publish-reachability.ts",
+    role: "legacy",
+    rationale:
+      "Task 25 semantic workflow, script, module, permission, and deprecate-free reachability lint.",
   },
 ] as const satisfies readonly ProductionEntrypoint[];
 

@@ -1,173 +1,140 @@
 # Releases
 
-Weave uses an artifact-first release pipeline. Protected control code builds public tarballs, binds their identities and digests to a release record, then publishes through npm trusted publishing.
+Weave uses a source-bound, artifact-first release pipeline. The trusted
+publisher is `.github/workflows/release-publish.yml`. The independent
+`.github/workflows/release-attest.yml` workflow creates artifact provenance and
+a digest-bound check; it is top-level, non-reusable, and never npm-trusted.
 
-The operator procedure lives in [`RELEASING.md`](../../RELEASING.md). Executable policy lives in [`scripts/release/`](../../scripts/release). This page explains the invariants contributors must preserve.
+See [`RELEASING.md`](../../RELEASING.md) for the operator runbook. This page
+defines the authority and security boundaries contributors must preserve.
 
----
+## Publication chain and authority
 
-## Public packages
+The stable chain is:
 
-Stable and nightly trains publish the CLI and OpenCode adapter. Standalone Claude Code and Pi adapters are nightly unless the release policy explicitly promotes them. Core, config, and engine remain bundled internal layers rather than consumer npm dependencies.
-
-Published versions are immutable and are never unpublished. Dist-tags are mutable pointers, never proof of artifact identity.
-
-## Artifact identity
-
-A release binding ties together:
-
-- release subject SHA;
-- protected workflow SHA and path;
-- GitHub run, attempt, and completed `build` job identity;
-- server artifact IDs and digests;
-- package versions;
-- tarball paths and SHA-256 values;
-- the release manifest.
-
-The control binary runs in a clean room. Before and after treating a checkout as input, callers verify that `git status --porcelain` is empty. Registry verification fetches public versioned tarballs without credentials and compares their hashes with the bound artifacts.
-
-## Channels
-
-- `nightly` receives nightly builds.
-- `next` receives a stable train before promotion.
-- `latest` changes only after a second maintainer verifies both `next` tarballs and performs the MFA-protected promotion.
-
-npm trusted publishing cannot currently run `npm dist-tag add`, so tokenless automatic `latest` promotion is unavailable. Do not replace this control with a long-lived npm automation token.
-
-The npm CLI used for OIDC publication is the one approved exception to the Bun-only runtime rule.
-
-## Stable train
-
-A stable cut starts at a green protected `main` SHA and uses GitHub server time as `cutAt`. The train expires at `cutAt + 7 days`; the boundary is exclusive.
-
-Its content-addressed record holds the release ref, deterministic versions, consumed stable Changesets with preimage digests, preserved post-cut or Claude-only Changesets, and metadata writes needed for replay.
-
-Only packages in the stable public boundary and stable-partition Changesets enter the worktree plan.
-
-## State machine
-
-[`scripts/release/stable-train.ts`](../../scripts/release/stable-train.ts) is the source of truth for states and legal transitions. Every transition creates a new content-addressed record.
-
-```mermaid
-stateDiagram-v2
-  prepared --> built --> bound --> published-next --> awaiting-promotion --> promoted
-  published-next --> partial
-  awaiting-promotion --> partial
-  promoted --> release-draft --> finalized --> metadata-pending
-  metadata-pending --> finalized
-  prepared --> abandoned
-  built --> abandoned
-  bound --> abandoned
-  partial --> abandoned
-  expired --> abandoned
+```text
+route → recompute → build-bind → await-attest → consumer-proof
+      → harness-proof → release-approval → publish
+      → registry-verification → refs-cleanup
 ```
 
-Expiry forbids publish, finalize, and fix. A partial publish cannot be promoted; recovery reserves used versions and starts a fresh cut from green `main`. Published artifacts are never replaced.
+`route` accepts only a closed stable PR or a maintainer-authorized
+`stable-resume` or `incident-resolution` dispatch on `refs/heads/main`. It
+validates the checked-in rollout stage, `RELEASE_ROLLOUT_MODE`, and observed
+workflow topology before work starts. The Task 25 file has no schedule trigger
+and no `workflow_call` trigger.
 
-## Fixes and concurrency
+A closed stable PR deletes the `release-pr/stable` marker whether it merged or
+not. A deletion failure is recorded as `MarkerCleanupPending`; a merged release
+does not stop. The marker is an active-PR lock, never release authority.
 
-`stable-fix` accepts only explicit green commits proved merged to `main`. It never merges `main` into a train. Release-ref mutation uses read-current-head plus ordinary non-force update; a changed head is a typed stale-CAS failure.
+`recompute` is the authority boundary. It rereads the merged commit, manifests,
+ledger, changelogs, plan, audit, and registry state. Workflow artifacts,
+comments, check summaries, and cached plans are evidence or cache only. Resume
+uses the same recompute boundary, so a successful rerun does not depend on old
+artifact availability.
 
-A fix invalidates prior artifact IDs and manifest binding. The new release SHA must rebuild and bind fresh artifacts before any OIDC action.
+`build-bind` creates the candidate bytes at `releasedSha`. `await-attest` then
+dispatches the independent workflow with nonsecret identifiers. It accepts only
+a completed success whose check result contains the exact released SHA, plan
+digest, and every tarball digest. Missing, pending, failed, or foreign results
+block consumer proof, harness proof, environment approval, and publish.
 
-Trains remain serialized until required metadata replay merges. After promotion, fix forward on `main` and cut a new train.
+The `release` environment approval follows all proof jobs. Only the `publish`
+job in the trusted workflow has `id-token: write`, and it has no App token. It
+invokes the existing `publish-main.ts` entrypoint. The App-token `refs-cleanup`
+job runs only after every registry digest is verified. It creates tags and
+releases without updating an existing conflicting ref, then opens the
+changeset-cleanup PR.
 
-## Trust boundaries
+## Rollout modes
 
-- The `release` environment authorizes plan generation and OIDC publication.
-- The separate `release-refs` environment owns the GitHub App token for ref mutation.
-- Workflows contain no npm token.
-- The clean-room job does not execute untrusted workspace code for manual promotion.
-- Release pull requests reference their related issue.
+The checked-in `rollout-stage.ts` declaration, the external mode, and the
+workflow topology form one tuple:
 
-The pipeline accepts GitHub artifact identity, npm provenance, and platform immutable-release attestations. It does not invent a separate attestation or SBOM format.
+- `disabled` exits before build, attestation, proof, OIDC, and publish;
+- `dry-run` runs the chain and skips publish and OIDC;
+- `ready` plus `enabled`, with the correct topology, is the only publication
+  tuple.
 
-## Stable release PR
+Task 25 starts in `pre-cutover`. The old scheduled publisher remains separate
+until the later cutover task. No schedule is added here. A frozen or
+pre-cutover stage can never publish, even if an external variable says
+`enabled`.
 
-The only maintainer-request entry point is
-`.github/workflows/release-stable-prepare.yml`. A dispatch has four exact
-package booleans (`cli`, `opencode`, `claude-code`, and `pi`) and a `thinking`
-choice whose default is `medium`. At least one package must be selected. The
-workflow rejects the request before closure calculation or model work when the
-selection is empty, the actor is not in the `release-maintainer` team, `main` is
-not green, an open stable release PR already exists, or the recomputed merged
-release is not terminal. `CompleteWithIncident` is terminal and allows
-fix-forward. A second request is not a regeneration and never silently edits the
-existing PR.
+## Resume and artifact expiry
 
-The plan records the exact green `plannedBaseSha`, selection closure, consumed
-Changeset identities, versions, and evidence. The deterministic docs checker,
-conditional docs AI, and shared Task 19 gate all use that SHA. Style findings
-are warnings; deterministic failures, missing/skipped/cancelled required AI,
-and hard findings are terminal failures. The gate runs again for every stale-head
-replan. The final release PR carries the docs-audit metadata with
-`auditedSha === baseSha`.
+Dispatch the trusted workflow with `channel: stable-resume` and the merged
+`released_sha`. The recomputed post-merge state selects the remaining Task 14
+transitions. A fully published release with missing tags or releases runs only
+the missing refs. A cleanup failure runs only the cleanup PR. A terminal release
+with a leftover marker runs only safe marker cleanup after merged/closed proof.
 
-Task 9 owns the marker race, ownership generation, finalization, and cleanup.
-There is no shared release-PR concurrency group: every explicit request reaches
-a typed result. A losing marker race polls for and reports `ReleasePrExists` with
-the visible URL. A `PreparationStale` result triggers a statically bounded
-`plan → docs-release-audit → changelog-ai → open-pr` sequence. The replan
-recomputes the closure and evidence and applies the prose reuse rule: reuse is
-allowed only for unchanged Changeset identity sets; unseen Changesets require
-fresh prose. The workflow never calls `regenerate` and never runs `npm publish`.
+Artifacts are cache, not authority. If an artifact expired:
 
-Every failure after marker ownership uses `abortOwnedCreation`. A visible PR
-keeps the marker. A proven absent PR permits only an owned-marker CAS delete.
-An ABA successor marker is never deleted by an older run. An unverifiable cleanup
-returns `CreationCleanupPending` with the doctor/resume recovery link. Exhausted
-freshness returns retryable `PreparationFreshnessExhausted` and deletes only the
-run's marker. These rules prevent a silent `(marker, no PR)` orphan. The PR diff
-contains only permitted public manifest version fields and changelog files plus
-bounded release metadata.
+- a published member is controlled by its immutable registry digest and
+  provenance; rebuild it and require the complete proof chain before any
+  repair;
+- an unpublished member has no prior registry bytes, so a fresh binding must
+  pass independent attestation, clean-consumer proof, and harness proof;
+- a changed source or plan is a new candidate and cannot reuse the old binding.
 
-### Operator recovery
+Normal resume may not cross `IntegrityIncident`. It may clear only a safe
+marker. This prevents a cached success from blessing unreproducible bytes.
 
-For a failed request, open the run summary and follow its recovery link. Fix
-source or documentation failures on `main`, then dispatch a new request. For
-`CreationCleanupPending`, run the read-only doctor first and use its resume
-command only after it reports the authoritative marker and PR state. Do not
-manually delete `release-pr/stable` or edit the release PR to repair a failed
-creation.
+## IntegrityIncident recovery
 
-### Automatic regeneration
+`IntegrityIncident` has one exit. An authorized maintainer dispatches the
+`incident-resolution` channel and receives protected `release` environment
+approval.
 
-[`release-stable-regenerate.yml`](../../.github/workflows/release-stable-regenerate.yml)
-starts only from a push to `main`. `workflow_dispatch` is a guarded maintainer
-retry, not a request to create or prepare a release. It never creates a PR, and
-there is no shared release-PR concurrency group. Task 9 marker ownership and
-CAS leases provide writer coordination while every main push remains eligible.
+The first phase verifies immutable registry bytes and writes a bounded,
+nonsecret authorization record. It emits exact shell-escaped `npm deprecate`
+commands and stops with `IncidentDeprecationPending`. The maintainer runs those
+commands interactively outside CI with npm login and MFA. CI never receives an
+npm token and never executes the commands.
 
-The detect phase is read-only. No marker and no open stable PR is a neutral
-successful no-op. A marker without a visible PR is creation-in-progress and
-gets a bounded wait. Neither state creates a PR. A self release merge or
-Changeset-cleanup merge skips regeneration only when no pending Changeset
-changed. A changed pending set continues through the pipeline.
+A later authorized dispatch reads each affected version's registry `deprecated`
+field. Missing or mismatched text blocks completion. After exact readback, the
+controller records the incident warning, safe tags/releases, check evidence,
+and changeset cleanup, then the state becomes `CompleteWithIncident`.
 
-The plan, docs-release-audit, changelog-ai, and update-pr jobs use separate
-credentials and bounded, SHA-bound artifacts. The docs re-audit runs the
-Task 19 deterministic checker and required AI gate at the latest green `main`
-SHA. Only update-pr calls Task 9 `regenerate`, with the release App credential;
-no other job can mutate the PR. A docs failure leaves the PR and marker
-byte-identical, publishes the typed `docs-audit` blocking check, and keeps the
-`release-policy` freshness check blocking merge. Fix `main` and rerun; do not
-manually edit the marker.
+The incident workflow never deprecates, publishes, unpublishes, or moves
+`latest`. Do not replace immutable bytes. Fix forward from a new patch on
+`main`; preserve the incident record and registry evidence.
 
-A successful update preserves human edits when the `sourceChangesets` identity
-set is unchanged. It asks AI only for new or changed identity sets. If a human
-edit conflicts with newly generated prose, `EditConflict` returns both versions
-and leaves the PR unchanged. The result records explicit
-`automatic-main-advance` or `maintainer-retry` attribution and
-`regeneratedFrom` audit provenance.
+## Reachability and permissions
 
-Task 9 rechecks `main` immediately before CAS, uses force-with-lease, retries
-within a bound, rejects non-monotonic freshness, and returns
-`RegenerationSuperseded` when another run wins so later runs converge. Ruleset
-stale-approval dismissal and the required `release-policy` freshness check
-invalidate approvals tied to an older base. Recovery is to resolve the docs or
-prose issue, wait for a new `main` push, or use the guarded retry. Never create
-a replacement PR.
+`scripts/release/publish-reachability.ts` semantically walks every workflow,
+local action, package production script and alias, and relative TypeScript
+module edge. It rejects:
 
-## Pi acceptance assets
+- a second workflow or script reaching `publish-main.ts`;
+- a second entrypoint importing the publication executor;
+- reusable-workflow indirection or `workflow_call` on the trusted or attest
+  workflow;
+- an extra or broadened permission, including an unlisted `id-token: write`;
+- `npm deprecate`, direct `npm publish`, or production access to the local
+  incident fixture or integration test.
 
-Machine-consumed Pi acceptance files live under [`scripts/release/pi-acceptance/`](../../scripts/release/pi-acceptance), not in documentation. Generation and validation scripts own their format. Human documentation may link to them but must not duplicate their requirement rows.
+The production entrypoint inventory is maintained with each executable root.
+Tests and test globs remain test-only roots and do not authorize production
+commands.
+
+## Stable release PRs
+
+`release-stable-prepare.yml` creates one stable PR and
+`release-stable-regenerate.yml` updates it when `main` advances. The marker's
+owner generation and compare-and-swap lease prevent two writers from replacing
+one another. A failed creation cleanup is reported as `CreationCleanupPending`
+and is recovered through authoritative doctor/resume checks. Do not manually
+delete the marker or create a replacement PR.
+
+## Validation
+
+```bash
+bun scripts/release/publish-reachability.ts
+bun scripts/ci/verify-action-pins.ts
+actionlint .github/workflows/release-publish.yml .github/workflows/release-attest.yml
+bun run docs:check-links
+```

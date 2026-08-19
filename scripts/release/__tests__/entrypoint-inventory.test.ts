@@ -21,38 +21,25 @@ import {
 const ROOT = resolve(import.meta.dir, "../../..");
 
 describe("entrypoint inventory", () => {
-  it("registers the Task 14, 15, 22, 23, and 24 production roots", () => {
-    expect(PRODUCTION_ENTRYPOINTS).toEqual([
-      {
-        path: "scripts/release/publish-main.ts",
-        role: "oidc-publish",
-        rationale:
-          "Task 11 standalone OIDC publication entry. The only new-pipeline executable root that exists when Task 14 creates the inventory.",
-      },
-      {
-        path: "scripts/release/doctor.ts",
-        role: "legacy",
-        rationale:
-          "Task 15 read-only release setup verifier. It performs no publication mutation and is classified so production reachability cannot hide it.",
-      },
-      {
-        path: "scripts/release/api-reports.ts",
-        role: "legacy",
-        rationale:
-          "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
-      },
-      {
-        path: "scripts/release/prepare-main.ts",
-        role: "legacy",
-        rationale:
-          "Task 23 stable release-PR preparation controller. It validates the maintainer request and delegates marker ownership/finalization to Task 9; it never publishes.",
-      },
-      {
-        path: "scripts/release/regenerate-main.ts",
-        role: "legacy",
-        rationale:
-          "Task 24 automatic main-advance regeneration controller. It delegates only compare-and-swap updates to Task 9 and never creates a pull request.",
-      },
+  it("registers the Task 14, 15, 22, 23, 24, and 25 production roots", () => {
+    expect(PRODUCTION_ENTRYPOINTS.map((entry) => entry.path)).toEqual([
+      "scripts/release/publish-main.ts",
+      "scripts/release/doctor.ts",
+      "scripts/release/api-reports.ts",
+      "scripts/release/prepare-main.ts",
+      "scripts/release/regenerate-main.ts",
+      "scripts/release/attest-main.ts",
+      "scripts/release/release-route-main.ts",
+      "scripts/release/rollout-gate.ts",
+      "scripts/release/resume-main.ts",
+      "scripts/release/incident-main.ts",
+      "scripts/release/build-bind-main.ts",
+      "scripts/release/await-attest-main.ts",
+      "scripts/release/consumer-proof-main.ts",
+      "scripts/release/harness-proof-main.ts",
+      "scripts/release/registry-verify-main.ts",
+      "scripts/release/refs-cleanup-main.ts",
+      "scripts/release/publish-reachability.ts",
     ]);
     expect(validateEntrypointInventory().isOk()).toBe(true);
     expect(inventoriedPaths()).toContain("scripts/release/publish-main.ts");
@@ -60,6 +47,13 @@ describe("entrypoint inventory", () => {
     expect(inventoriedPaths()).toContain("scripts/release/api-reports.ts");
     expect(inventoriedPaths()).toContain("scripts/release/prepare-main.ts");
     expect(inventoriedPaths()).toContain("scripts/release/regenerate-main.ts");
+    expect(inventoriedPaths()).toContain("scripts/release/attest-main.ts");
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/refs-cleanup-main.ts",
+    );
+    expect(inventoriedPaths()).toContain(
+      "scripts/release/publish-reachability.ts",
+    );
     expect(PRODUCTION_ROOT_CLASSES).toHaveLength(14);
   });
 
