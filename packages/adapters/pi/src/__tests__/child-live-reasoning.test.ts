@@ -229,8 +229,8 @@ describe("PiLiveReasoningProjector", () => {
       ).toBe(true);
     }
     const snapshot = projector.snapshot();
-    // The structural start has no row, so only nonblank deltas reach sinks.
-    expect(updates).toBe(20_000);
+    // The structural start reaches both sinks so they can correlate later deltas.
+    expect(updates).toBe(20_002);
     expect(snapshot.retainedBytes).toBeLessThanOrEqual(
       PI_LIVE_REASONING_MAX_BYTES,
     );
