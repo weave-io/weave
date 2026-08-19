@@ -106,14 +106,14 @@ jobs:
       # The standalone control binary is compiled independently of payload build.
       - run: bun run release:control:build
       - id: payload
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-payload
           path: .release
           if-no-files-found: error
           retention-days: 30
       - id: control
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-control
           path: dist-release-control
@@ -171,7 +171,7 @@ jobs:
           RELEASE_CONTROL_PATH: control-metadata/release-control
           RELEASE_MANIFEST_PATH: payload-metadata/manifest.json
       - id: binding
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-binding
           path: .release/binding.json

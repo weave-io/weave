@@ -42,7 +42,7 @@ jobs:
           --content-root "$GITHUB_WORKSPACE"
           --audited-sha "$AUDITED_SHA"
           --output "$RUNNER_TEMP/docs-deterministic.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: docs-audit-deterministic-${{ github.run_id }}
@@ -80,7 +80,7 @@ jobs:
           --content-root "$GITHUB_WORKSPACE"
           --audited-sha "$AUDITED_SHA"
           --output "$RUNNER_TEMP/docs-ai.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: docs-audit-ai-${{ github.run_id }}
@@ -130,7 +130,8 @@ jobs:
       # bounded data and are never imported as controller code.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: main
+          repository: ${{ github.repository }}
+          ref: refs/heads/main
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:

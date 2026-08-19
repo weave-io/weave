@@ -80,8 +80,8 @@ jobs:
         name: Run the non-creating discovery phase
         env:
           PENDING_CHANGES_CHANGED: ${{ steps.pending.outputs.pending }}
-          SELF_RELEASE_MERGE: ${{ contains(github.event.head_commit.message, 'chore(release): version packages') }}
-          CHANGESET_CLEANUP_MERGE: ${{ contains(github.event.head_commit.message, 'chore(release): remove consumed changesets') }}
+          SELF_RELEASE_MERGE: "${{ contains(github.event.head_commit.message, 'chore(release): version packages') }}"
+          CHANGESET_CLEANUP_MERGE: "${{ contains(github.event.head_commit.message, 'chore(release): remove consumed changesets') }}"
         run: |
           set -euo pipefail
           # Task 9 discovery returns a neutral green no-op for absent marker +
@@ -120,7 +120,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Compute the latest green-main plan
         run: bun scripts/release/regenerate-main.ts --phase plan --attempt 1 --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --output "$RUNNER_TEMP/regeneration-plan.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stable-regeneration-plan
           path: ${{ runner.temp }}/regeneration-plan.json
@@ -156,7 +156,7 @@ jobs:
           path: ${{ runner.temp }}/regeneration-plan
       - name: Run deterministic checker, conditional docs agent, and shared gate
         run: bun scripts/release/regenerate-main.ts --phase docs-release-audit --attempt 1 --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --input "$RUNNER_TEMP/regeneration-plan/regeneration-plan.json" --output "$RUNNER_TEMP/docs-audit.json" --report-check true
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stable-regeneration-docs-audit
           path: ${{ runner.temp }}/docs-audit.json
@@ -194,7 +194,7 @@ jobs:
           path: ${{ runner.temp }}/docs-audit
       - name: Run the isolated changelog agent
         run: bun scripts/release/regenerate-main.ts --phase changelog-ai --attempt 1 --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --input "$RUNNER_TEMP/regeneration-plan/regeneration-plan.json" --docs-audit "$RUNNER_TEMP/docs-audit/docs-audit.json" --output "$RUNNER_TEMP/changelog-ai.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stable-regeneration-changelog-ai
           path: ${{ runner.temp }}/changelog-ai.json

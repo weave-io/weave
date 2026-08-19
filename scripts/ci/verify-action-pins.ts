@@ -3,12 +3,23 @@ import { logger } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
 export const ALLOWED_ACTION_OWNERS = new Set(["actions", "oven-sh"]);
+export const REQUIRED_ARTIFACT_ACTION_PINS = {
+  "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+  "actions/download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+} as const;
 const FULL_SHA = /^[a-f0-9]{40}$/i;
 
 export type ActionPinError =
   | { type: "InvalidActionReference"; file: string; value: string }
   | { type: "UnapprovedActionOwner"; file: string; owner: string }
-  | { type: "UnresolvedActionReference"; file: string; value: string };
+  | { type: "UnresolvedActionReference"; file: string; value: string }
+  | {
+      type: "UnsupportedArtifactActionPin";
+      file: string;
+      action: keyof typeof REQUIRED_ARTIFACT_ACTION_PINS;
+      value: string;
+      expected: string;
+    };
 
 export function verifyActionPins(
   files: Readonly<Record<string, string>>,
@@ -40,6 +51,24 @@ export function verifyActionPins(
           type: "UnapprovedActionOwner",
           file,
           owner: owner ?? "",
+        });
+        continue;
+      }
+      const actionName = `${owner}/${action[2] ?? ""}`;
+      const expectedArtifactPin =
+        REQUIRED_ARTIFACT_ACTION_PINS[
+          actionName as keyof typeof REQUIRED_ARTIFACT_ACTION_PINS
+        ];
+      if (
+        expectedArtifactPin !== undefined &&
+        action[3] !== expectedArtifactPin
+      ) {
+        errors.push({
+          type: "UnsupportedArtifactActionPin",
+          file,
+          action: actionName as keyof typeof REQUIRED_ARTIFACT_ACTION_PINS,
+          value,
+          expected: expectedArtifactPin,
         });
       }
     }
