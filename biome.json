@@ -37,17 +37,23 @@
       "packages/**/*.ts",
       "packages/**/*.tsx",
       "scripts/**/*.ts",
+      "config/**/*.json",
+      "biome.json",
+      "package.json",
+      "tsconfig.json",
       "!packages/**/dist",
       "!packages/**/dist-types"
     ]
   },
   "overrides": [
     {
-      "includes": ["scripts/**/*.ts"],
+      "includes": [
+        "packages/adapters/claude-code/src/__tests__/integration.test.ts"
+      ],
       "linter": {
         "rules": {
-          "suspicious": {
-            "noConsole": "off"
+          "style": {
+            "noNonNullAssertion": "off"
           }
         }
       }
