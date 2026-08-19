@@ -25,7 +25,10 @@ import {
   type PiExtensionDeps,
 } from "../extension-impl.js";
 import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
-import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "../structured-completion.js";
+import {
+  serializeCompletionCandidate,
+  WEAVE_COMPLETE_STEP_TOOL_NAME,
+} from "../structured-completion.js";
 import type {
   PiCommandRegistration,
   PiEnvPort,
@@ -683,6 +686,279 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       1,
     );
     expect(host.appendedEntries).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      label: "delegated",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: false,
+    },
+    {
+      label: "nested",
+      context: { parentAgentName: "shuttle", parentDepth: 1 },
+      directStep: false,
+    },
+    {
+      label: "direct-step",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: true,
+    },
+  ] as const)("preserves one fallback epoch across the %s mode matrix", async ({
+    label,
+    context,
+    directStep,
+  }) => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+      hasPendingMessages: () => false,
+    });
+    const { host, output, secretBytes } =
+      await buildChildExtension(recoveryCtx);
+    const modeFields = directStep
+      ? {
+          mode: "direct-step" as const,
+          workflowInstanceId: "workflow-1",
+          leaseId: "lease-1",
+          stepName: "review",
+          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        }
+      : { mode: "ordinary" as const };
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        ...modeFields,
+        models: ["origin/first", "fallback/second"],
+        context: { ...context, cwd: "/project" },
+      }),
+      recoveryCtx,
+    );
+    await waitForMicrotasks(() =>
+      output.lines.some((line) => line.kind === "bootstrap-ack"),
+    );
+
+    const failedText = `failed-${label}-credential-shaped-output`;
+    const failedMessage = {
+      role: "assistant",
+      id: `failed-${label}`,
+      stopReason: "error",
+      error: { status: 503, message: `provider-${label}-secret` },
+      content: [{ type: "text", text: failedText }],
+    } as const;
+    const deferred = host.deferNextSetModel();
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: failedMessage },
+      recoveryCtx,
+    );
+    const pendingSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    await deferred.called;
+    expect(host.setModelCalls.at(-1)).toBe(fallback);
+
+    // The native model proof may arrive while setModel is unresolved. A
+    // marker is not allowed until both facts are true.
+    await host.fire(
+      "model_select",
+      { type: "model_select", model: fallback },
+      recoveryCtx,
+    );
+    expect(host.sentMessages).toHaveLength(0);
+    deferred.settle(true);
+    await pendingSettlement;
+    await waitForMicrotasks(() => host.sentMessages.length === 1);
+    const marker = host.sentMessages[0];
+    expect(marker?.customType).toBe("weave.model-fallback.recovery-marker");
+    if (marker === undefined) throw new Error("fallback marker is missing");
+
+    await host.fire(
+      "message_start",
+      { type: "message_start", message: marker },
+      recoveryCtx,
+    );
+    const firstUserMessage = {
+      role: "user",
+      content: `retain-${label}`,
+    };
+    const queuedRealMessage = {
+      role: "user",
+      content: `queued-${label}`,
+    };
+    const providerInput = [
+      firstUserMessage,
+      failedMessage,
+      marker,
+      queuedRealMessage,
+    ];
+    const repaired = await host.fire("context", providerInput, recoveryCtx);
+    expect(repaired).toEqual([firstUserMessage, queuedRealMessage]);
+    expect(providerInput).toEqual([
+      firstUserMessage,
+      failedMessage,
+      marker,
+      queuedRealMessage,
+    ]);
+
+    await host.fire("turn_start", { type: "turn_start" }, recoveryCtx);
+    const successfulMessage = {
+      role: "assistant",
+      id: `success-${label}`,
+      stopReason: "stop",
+      content: [{ type: "text", text: `success-${label}` }],
+    } as const;
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: successfulMessage },
+      recoveryCtx,
+    );
+    if (directStep) {
+      const completionTool = host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME);
+      expect(completionTool).toBeDefined();
+      if (completionTool === undefined)
+        throw new Error("direct-step completion tool is missing");
+      const completion = await completionTool.execute(
+        `tool-call-${label}`,
+        { outcome: "success", method: "agent_signal" },
+        undefined,
+        undefined,
+        recoveryCtx,
+      );
+      expect(completion.content[0]?.text).toContain('"ok":true');
+    }
+    const settledLine = waitForOutputLine(
+      output,
+      (line) => line.kind === "settled",
+    );
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    const settled = await settledLine;
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+    const settledBody = settled.body as Record<string, unknown>;
+    expect(settledBody.outcome).toBe("completed");
+    if (directStep) {
+      expect(settledBody.completionCandidate).toBe(
+        serializeCompletionCandidate({
+          outcome: "success",
+          method: "agent_signal",
+        }),
+      );
+    } else {
+      expect(settledBody.assistantOutput).toBe(`success-${label}`);
+    }
+
+    // Child identity is carried by every authenticated output envelope. The
+    // failed body, marker token, and provider error never enter the parent
+    // projection, even though the failed message was retained durably.
+    for (const line of output.lines) {
+      expect(line.childId).toBe("child-1");
+      expect(line.generationId).toBe("gen-1");
+    }
+    const outputText = JSON.stringify(output.lines);
+    expect(outputText).not.toContain(failedText);
+    expect(outputText).not.toContain(`provider-${label}-secret`);
+    expect(outputText).not.toContain(marker.content);
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+  });
+
+  it.each([
+    "false",
+    "throw",
+    "reject",
+  ] as const)("settles the child without waiting for an impossible %s model proof", async (behavior) => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+    });
+    const { host, output, secretBytes } =
+      await buildChildExtension(recoveryCtx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        models: ["origin/first", "fallback/second"],
+      }),
+      recoveryCtx,
+    );
+    await waitForMicrotasks(() =>
+      output.lines.some((line) => line.kind === "bootstrap-ack"),
+    );
+
+    if (behavior === "false") {
+      host.modelAccepted = false;
+    } else if (behavior === "throw") {
+      host.setModel = ((model: PiModelInfo) => {
+        host.setModelCalls.push(model);
+        throw new Error("raw-child-setModel-secret");
+      }) as typeof host.setModel;
+    } else {
+      host.setModel = ((model: PiModelInfo) => {
+        host.setModelCalls.push(model);
+        return Promise.reject(new Error("raw-child-setModel-secret"));
+      }) as typeof host.setModel;
+    }
+
+    const failedText = `failed-${behavior}-must-not-leak`;
+    await host.fire(
+      "message_end",
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          id: `impossible-${behavior}`,
+          stopReason: "error",
+          error: { status: 401, message: "raw-auth-error-secret" },
+          content: [{ type: "text", text: failedText }],
+        },
+      },
+      recoveryCtx,
+    );
+    const settledLine = waitForOutputLine(
+      output,
+      (line) => line.kind === "settled",
+    );
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    const settled = await settledLine;
+    expect(settled.body).toMatchObject({ outcome: "failed" });
+    expect(host.sentMessages).toHaveLength(0);
+    expect(JSON.stringify(output.lines)).not.toContain(failedText);
+    expect(JSON.stringify(output.lines)).not.toContain("raw-auth-error-secret");
+    expect(JSON.stringify(output.lines)).not.toContain(
+      "raw-child-setModel-secret",
+    );
+
+    // No model_select, marker start, context repair, or second settlement is
+    // required after Pi has made activation impossible.
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
   });
 
   it("retries settlement once after a failed output write without leaving a sequence gap", async () => {

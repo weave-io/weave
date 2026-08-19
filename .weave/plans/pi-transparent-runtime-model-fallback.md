@@ -338,7 +338,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - Card snapshot tests match the exact wide geometry and every measured narrow band, including footer-only elapsed and blank third row.
     - Old card facts parse without inventing an applied model.
 
-- [ ] 10. Close cross-mode, race, security, and boundedness coverage
+- [x] 10. Close cross-mode, race, security, and boundedness coverage
   - **What**: Exercise one implementation across primary, delegated, direct-step, and nested modes, including every no-settlement host error and race.
   - **Files**: `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/direct-dispatch.test.ts`, `packages/adapters/pi/src/__tests__/direct-dispatch-transport.test.ts`, `packages/adapters/pi/src/__tests__/delegation-controller.test.ts`, `packages/adapters/pi/src/__tests__/rpc-child-settlement-race.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-prototype-parity.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-render-width.test.ts`, `packages/adapters/pi/src/__tests__/weave-ui-accessibility.test.ts`.
   - **Depends on**: Tasks 7–9.

@@ -160,6 +160,41 @@ describe("child RPC settlement epoch races", () => {
     expect(terminal).toEqual(["original"]);
   });
 
+  it("suppresses duplicate, ambiguous, and late fallback evidence after one epoch decision", () => {
+    const timer = new FakeTimerPort();
+    const terminal: string[] = [];
+    const fallback = new PiChildFallbackSettlementGate({
+      timerPort: timer,
+      onExpire: (value) => terminal.push(value.reason),
+      recoveryTimeoutMs: 30,
+    });
+    const epoch = fallbackEpoch(1);
+    const wrongEpoch = fallbackEpoch(2);
+
+    expect(fallback.beginFallback(failure("one-attempt"), epoch)).toEqual({
+      kind: "admit",
+    });
+    expect(fallback.observeMarker(wrongEpoch)).toMatchObject({
+      kind: "suppress",
+    });
+    expect(fallback.observeMarker(epoch)).toEqual({ kind: "admit" });
+    expect(fallback.observeMarker(epoch)).toMatchObject({ kind: "suppress" });
+    expect(fallback.observeContextRepair(wrongEpoch)).toMatchObject({
+      kind: "suppress",
+    });
+    expect(fallback.observeContextRepair(epoch)).toEqual({ kind: "admit" });
+    expect(fallback.observeContextRepair(epoch)).toMatchObject({
+      kind: "suppress",
+    });
+    expect(fallback.admitSuccess(epoch)).toEqual({ kind: "admit" });
+    expect(fallback.admitSuccess(epoch)).toMatchObject({ kind: "suppress" });
+    fallback.fail(epoch);
+    expect(terminal).toEqual([]);
+    timer.fireAll();
+    expect(terminal).toEqual([]);
+    expect(timer.pending()).toBe(0);
+  });
+
   it("closes both epochs on cancellation without publishing a failed race", () => {
     const timer = new FakeTimerPort();
     const terminal: string[] = [];

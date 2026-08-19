@@ -324,6 +324,18 @@ describe("prompt group parity", () => {
 // 5. Rail search and the marker gutter
 // ---------------------------------------------------------------------------
 
+describe("inspector width bounds", () => {
+  it("keeps every framed row within the requested width at and beyond limits", () => {
+    for (const width of [27, 54, 76, 77, 120, 200, 512]) {
+      const out = regions({ width });
+      expect(out.lines).toHaveLength(HEIGHT);
+      for (const line of out.lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+});
+
 describe("search parity", () => {
   const open = buildOverlayNavFacts(NAV_ROWS, {
     query: "width",

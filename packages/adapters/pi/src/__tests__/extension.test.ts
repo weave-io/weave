@@ -14063,4 +14063,198 @@ describe("createPiExtension: primary model fallback C4a", () => {
       "bounded provider failure",
     );
   });
+  it.each([
+    "false",
+    "throw",
+    "reject",
+  ] as const)("settles the primary failure without waiting for an impossible %s model application", async (behavior) => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+
+    if (behavior === "false") host.declineNextSetModel();
+    if (behavior === "throw") host.poisonSetModel();
+    if (behavior === "reject") host.rejectSetModel();
+
+    const rawFailure = `raw-${behavior}-provider-error token=sk-test-secret`;
+    await host.triggerEvent("message_end", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        id: `primary-impossible-${behavior}`,
+        stopReason: "error",
+        error: { status: 503, message: rawFailure },
+        content: [{ type: "text", text: `failed-${behavior}-content` }],
+      },
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+
+    // A false result, synchronous throw, or rejected promise is terminal
+    // evidence. None can manufacture a model_select or hidden marker.
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.getCurrentModel()).toBe(loomOrigin);
+    const serialized = JSON.stringify({
+      journalEntries,
+      notifyCalls: host.notifyCalls,
+      statusCalls: host.statusCalls,
+      sendMessageCalls: host.sendMessageCalls,
+    });
+    expect(serialized).not.toContain(rawFailure);
+    expect(serialized).not.toContain("failed-");
+    expect(serialized).not.toContain("sk-test-secret");
+    // No model-fallback success/recovery record is emitted without an
+    // applied candidate; the terminal primary turn remains a host outcome.
+    expect(
+      modelFallbackRecords(journalEntries).some(
+        (record) => record.outcome === "recovery-confirmed",
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when the fallback candidate is absent from the native catalog", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+    const callsAtBoot = host.setModelCalls.length;
+
+    await host.triggerEvent("message_end", {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        id: "catalog-miss-failure",
+        stopReason: "error",
+        error: { status: 503, message: "catalog-miss-raw-secret" },
+        content: [{ type: "text", text: "catalog-miss-failed-content" }],
+      },
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+
+    expect(host.setModelCalls).toHaveLength(callsAtBoot);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.getCurrentModel()).toBe(loomOrigin);
+    expect(JSON.stringify(journalEntries)).not.toContain(
+      "catalog-miss-raw-secret",
+    );
+    expect(JSON.stringify(journalEntries)).not.toContain(
+      "catalog-miss-failed-content",
+    );
+  });
+
+  it("does not consume a real queued input when pending input wins the preflight race", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+    const callsAtBoot = host.setModelCalls.length;
+    host.setPendingMessages(true);
+
+    const failed = {
+      role: "assistant",
+      id: "pending-race-failure",
+      stopReason: "error",
+      error: { status: 503, message: "pending-race-provider-secret" },
+      content: [{ type: "text", text: "pending-race-failed-content" }],
+    };
+    await host.triggerEvent("message_end", {
+      type: "message_end",
+      message: failed,
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+
+    expect(host.setModelCalls).toHaveLength(callsAtBoot);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    const realUser = { role: "user", content: "real input before fallback" };
+    const queued = { role: "user", content: "real input during fallback" };
+    const providerInput = [realUser, failed, queued];
+    expect(await host.triggerContext(providerInput)).toEqual(providerInput);
+    expect(providerInput).toEqual([realUser, failed, queued]);
+    expect(
+      JSON.stringify({ journalEntries, status: host.statusCalls }),
+    ).not.toContain("pending-race-provider-secret");
+  });
+
+  it("drops a stale primary fallback when a generation is replaced during model application", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+
+    const deferred = host.deferNextSetModel();
+    await host.triggerEvent("message_end", failureEvent("stale-fallback"));
+    const staleSettlement = host.triggerEvent("agent_settled", {
+      type: "agent_settled",
+    });
+    await deferred.called;
+    expect(host.setModelCalls.at(-1)).toBe(loomFallback);
+
+    // Replacement revokes the old generation while its host call is still in
+    // flight. Resolving that old call must not emit a marker or settle twice.
+    const replacement = host.triggerSessionStart();
+    deferred.settle(true);
+    await staleSettlement;
+    await replacement;
+    await flushBackgroundWork();
+
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(
+      modelFallbackRecords(journalEntries).some(
+        (record) => record.outcome === "recovery-confirmed",
+      ),
+    ).toBe(false);
+  });
+
+  it("closes a primary fallback on shutdown and ignores its late model proof", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+
+    const deferred = host.deferNextSetModel();
+    await host.triggerEvent("message_end", failureEvent("shutdown-fallback"));
+    const staleSettlement = host.triggerEvent("agent_settled", {
+      type: "agent_settled",
+    });
+    await deferred.called;
+    await host.triggerSessionShutdown();
+    deferred.settle(true);
+    await staleSettlement;
+    await flushBackgroundWork();
+
+    await host.triggerModelSelect(loomFallback, "set");
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(JSON.stringify(journalEntries)).not.toContain("shutdown-fallback");
+  });
 });
