@@ -1,10 +1,13 @@
 import { err, ok, type Result } from "neverthrow";
 import {
   boundedCount,
+  type FixtureControlFacts,
   type FixtureLifecycleFacts,
   type FixtureSnapshot,
   failure,
   MAX_COMMAND_TIMEOUT_MS,
+  type NativeSessionObservation,
+  type SafeModelIdentity,
   type ScenarioObservation,
   SHA256,
   type SmokeCase,
@@ -21,6 +24,182 @@ import {
   sameNumberArray,
 } from "./observation-comparison.js";
 import { boundedTimestamp } from "./provider-observation.js";
+
+/** Pi 0.84.2 writes at most two idempotent initial model records before a fallback. */
+export const MAX_NATIVE_INITIAL_MODEL_ENTRIES = 2;
+/** Keep the complete native model timeline small while retaining initialization records. */
+export const MAX_NATIVE_MODEL_TIMELINE_ENTRIES =
+  MAX_NATIVE_INITIAL_MODEL_ENTRIES + 1;
+
+function isSafeModelIdentity(
+  identity: SafeModelIdentity | undefined,
+): identity is SafeModelIdentity {
+  return (
+    identity !== undefined &&
+    typeof identity.provider === "string" &&
+    identity.provider.length > 0 &&
+    identity.provider.length <= 64 &&
+    typeof identity.id === "string" &&
+    identity.id.length > 0 &&
+    identity.id.length <= 128
+  );
+}
+
+function identityFromRequest(
+  request: Readonly<{ provider: string; model: string }> | undefined,
+): SafeModelIdentity | undefined {
+  if (request === undefined) return undefined;
+  const identity = { provider: request.provider, id: request.model };
+  return isSafeModelIdentity(identity) ? identity : undefined;
+}
+
+function rejectModelTimeline(detail: string): Result<void, SmokeFailure> {
+  return err(failure("CaptureMalformed", detail));
+}
+
+/**
+ * Bind native `model_change` records to the authenticated control phase. Pi
+ * writes idempotent initialization records, so the native count is not a
+ * fallback-attempt count. The first provider request supplies the bounded
+ * origin identity; control and native applied identities supply the
+ * destination identity.
+ */
+function validateNativeModelTimeline(input: {
+  readonly native: NativeSessionObservation;
+  readonly control: FixtureControlFacts;
+  readonly snapshot: FixtureSnapshot;
+  readonly smokeCase: Exclude<SmokeCase, "all">;
+}): Result<void, SmokeFailure> {
+  const { native, control, snapshot, smokeCase } = input;
+  const timeline = native.modelTransitionIdentities;
+  const timestamps = native.modelTransitionTimesMs;
+  const transitionCount = native.modelTransitions;
+  if (
+    !boundedCount(transitionCount) ||
+    transitionCount < 1 ||
+    transitionCount > MAX_NATIVE_MODEL_TIMELINE_ENTRIES ||
+    timeline.length !== transitionCount ||
+    timestamps.length !== transitionCount
+  ) {
+    return rejectModelTimeline("native model timeline is missing or unbounded");
+  }
+  if (
+    timestamps.some((timestamp) => !boundedTimestamp(timestamp)) ||
+    timestamps.some(
+      (timestamp, index) => index > 0 && timestamp < timestamps[index - 1],
+    ) ||
+    timeline.some((identity) => !isSafeModelIdentity(identity))
+  ) {
+    return rejectModelTimeline("native model timeline is malformed");
+  }
+
+  const originIdentity = identityFromRequest(snapshot.requests[0]);
+  if (!isSafeModelIdentity(originIdentity)) {
+    return rejectModelTimeline("native model origin identity is missing");
+  }
+  const nativeAppliedIdentity = native.appliedIdentity;
+  const controlAppliedIdentity = control.lifecycle.appliedIdentity;
+  const snapshotAppliedIdentity = snapshot.lifecycle.appliedIdentity;
+  const finalNativeIdentity = timeline.at(-1);
+  if (
+    !isSafeModelIdentity(finalNativeIdentity) ||
+    !isSafeModelIdentity(nativeAppliedIdentity) ||
+    !sameIdentity(nativeAppliedIdentity, finalNativeIdentity)
+  ) {
+    return rejectModelTimeline(
+      "native model timeline has no stable applied identity",
+    );
+  }
+
+  if (smokeCase === "rollback") return ok(undefined);
+
+  const modelSelectTimes = control.lifecycle.modelSelectTimesMs;
+  if (
+    modelSelectTimes.length !== control.lifecycle.modelSelectCount ||
+    modelSelectTimes.some((timestamp) => !boundedTimestamp(timestamp))
+  ) {
+    return rejectModelTimeline("public model selection phase is incomplete");
+  }
+
+  // Parent fallback sessions retain only the initial model. Their native
+  // history can contain two idempotent origin records, while the control
+  // observer has no applied model-selection event.
+  if (snapshot.role === "parent") {
+    if (
+      control.lifecycle.modelSelectCount !== 0 ||
+      modelSelectTimes.length !== 0 ||
+      timeline.length > MAX_NATIVE_INITIAL_MODEL_ENTRIES ||
+      !timeline.every((identity) => sameIdentity(identity, originIdentity)) ||
+      !sameIdentity(nativeAppliedIdentity, originIdentity) ||
+      (controlAppliedIdentity !== undefined &&
+        !sameIdentity(controlAppliedIdentity, originIdentity)) ||
+      (snapshotAppliedIdentity !== undefined &&
+        !sameIdentity(snapshotAppliedIdentity, originIdentity))
+    ) {
+      return rejectModelTimeline(
+        "native model timeline does not contain only the authenticated origin",
+      );
+    }
+    return ok(undefined);
+  }
+
+  if (
+    control.lifecycle.modelSelectCount !== 1 ||
+    !isSafeModelIdentity(controlAppliedIdentity) ||
+    !isSafeModelIdentity(snapshotAppliedIdentity) ||
+    !sameIdentity(controlAppliedIdentity, nativeAppliedIdentity) ||
+    !sameIdentity(controlAppliedIdentity, snapshotAppliedIdentity)
+  ) {
+    return rejectModelTimeline(
+      "control and native applied identities disagree",
+    );
+  }
+  const destinationIdentity = identityFromRequest(snapshot.requests.at(-1));
+  if (
+    !isSafeModelIdentity(destinationIdentity) ||
+    !sameIdentity(destinationIdentity, controlAppliedIdentity) ||
+    sameIdentity(originIdentity, controlAppliedIdentity)
+  ) {
+    return rejectModelTimeline(
+      "native model timeline origin or destination identity is invalid",
+    );
+  }
+
+  const destinationIndexes = timeline.flatMap((identity, index) =>
+    sameIdentity(identity, controlAppliedIdentity) ? [index] : [],
+  );
+  const originEntries = timeline.slice(0, -1);
+  if (
+    destinationIndexes.length !== 1 ||
+    destinationIndexes[0] !== timeline.length - 1 ||
+    originEntries.length < 1 ||
+    originEntries.length > MAX_NATIVE_INITIAL_MODEL_ENTRIES ||
+    originEntries.some((identity) => !sameIdentity(identity, originIdentity))
+  ) {
+    return rejectModelTimeline(
+      "native model timeline does not contain one ordered fallback destination",
+    );
+  }
+
+  const publicAppliedAt = modelSelectTimes[0];
+  const recoveryAt = control.lifecycle.markerMessageStartTimesMs.at(-1);
+  const settlementAt = control.lifecycle.settlementTimesMs.at(-1);
+  // Pi appends the native model_change record before it emits model_select.
+  // Bind the public control phase to recovery and settlement instead; native
+  // and control timestamps are separate observations.
+  if (
+    publicAppliedAt === undefined ||
+    recoveryAt === undefined ||
+    settlementAt === undefined ||
+    publicAppliedAt > recoveryAt ||
+    publicAppliedAt > settlementAt
+  ) {
+    return rejectModelTimeline(
+      "control model selection did not precede recovery and settlement",
+    );
+  }
+  return ok(undefined);
+}
 
 function validateObservationBindings(
   observation: ScenarioObservation,
@@ -88,6 +267,13 @@ function validateObservationBindings(
         ),
       );
     }
+    const modelTimeline = validateNativeModelTimeline({
+      native,
+      control,
+      snapshot,
+      smokeCase,
+    });
+    if (modelTimeline.isErr()) return err(modelTimeline.error);
     const mismatches = [
       [
         "provider.requestCount",
@@ -157,14 +343,6 @@ function validateObservationBindings(
         "native.history",
         snapshot.history !== undefined &&
           !sameHistoryFacts(native.history, snapshot.history),
-      ],
-      [
-        "native.modelTransitions",
-        (smokeCase === "rollback"
-          ? native.modelTransitions < control.lifecycle.modelSelectCount
-          : native.modelTransitions !== control.lifecycle.modelSelectCount) ||
-          native.modelTransitionTimesMs.length !== native.modelTransitions ||
-          native.modelTransitionIdentities.length !== native.modelTransitions,
       ],
       [
         "native.recoveryMarkerCount",
@@ -260,9 +438,9 @@ function validateObservationBindings(
       ],
       [
         "model.identity",
-        smokeCase === "rollback"
-          ? controlIdentity !== undefined &&
-            !sameIdentity(controlIdentity, snapshot.lifecycle.appliedIdentity)
+        smokeCase === "rollback" || control.lifecycle.modelSelectCount === 0
+          ? snapshot.lifecycle.appliedIdentity !== undefined &&
+            !sameIdentity(nativeIdentity, snapshot.lifecycle.appliedIdentity)
           : !sameIdentity(
               controlIdentity ?? nativeIdentity,
               snapshot.lifecycle.appliedIdentity,
@@ -517,23 +695,6 @@ export function validateObservedSources(input: {
         failure(
           "CaptureMalformed",
           `native observation is missing for ${snapshot.role}`,
-        ),
-      );
-    }
-    if (
-      (input.smokeCase === "rollback"
-        ? native.modelTransitions < snapshot.lifecycle.modelSelectCount
-        : native.modelTransitions !== snapshot.lifecycle.modelSelectCount) ||
-      native.modelTransitionTimesMs.length !== native.modelTransitions ||
-      native.modelTransitionIdentities.length !== native.modelTransitions ||
-      native.modelTransitionTimesMs.some(
-        (timestamp) => !boundedTimestamp(timestamp),
-      )
-    ) {
-      return err(
-        failure(
-          "UnexpectedEventCount",
-          `${snapshot.role} model transition evidence is inconsistent`,
         ),
       );
     }

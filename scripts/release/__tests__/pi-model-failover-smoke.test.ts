@@ -67,7 +67,11 @@ import {
   validateRollbackShimSource,
 } from "../pi-model-failover-smoke/fixture-sources.js";
 import { parseHealthFacts } from "../pi-model-failover-smoke/health-observation.js";
-import { validateObservedSources } from "../pi-model-failover-smoke/observation-validation.js";
+import {
+  MAX_NATIVE_INITIAL_MODEL_ENTRIES,
+  MAX_NATIVE_MODEL_TIMELINE_ENTRIES,
+  validateObservedSources,
+} from "../pi-model-failover-smoke/observation-validation.js";
 import {
   inspectPackedArtifact,
   inspectPiCliProvenance,
@@ -359,17 +363,55 @@ function nativeObservation(
   > = {},
 ): NativeSessionObservation {
   const sessionIdHash = snapshot.sessionIdHash ?? "c".repeat(64);
+  const originRequest = snapshot.requests[0];
+  const originIdentity =
+    originRequest === undefined
+      ? undefined
+      : { provider: originRequest.provider, id: originRequest.model };
   const appliedIdentity =
-    overrides.appliedIdentity ?? snapshot.lifecycle.appliedIdentity;
+    overrides.appliedIdentity ??
+    snapshot.lifecycle.appliedIdentity ??
+    (snapshot.role === "parent" ? originIdentity : undefined);
+  const identityChanged =
+    originIdentity !== undefined &&
+    appliedIdentity !== undefined &&
+    (originIdentity.provider !== appliedIdentity.provider ||
+      originIdentity.id !== appliedIdentity.id);
+  let defaultModelTransitions = snapshot.lifecycle.modelSelectCount;
+  if (appliedIdentity !== undefined) {
+    if (identityChanged) {
+      defaultModelTransitions = snapshot.role === "child" ? 3 : 2;
+    } else {
+      defaultModelTransitions = snapshot.role === "parent" ? 2 : 1;
+    }
+  }
   const modelTransitions =
-    overrides.modelTransitions ?? snapshot.lifecycle.modelSelectCount;
+    overrides.modelTransitions ?? defaultModelTransitions;
   const modelTransitionTimesMs =
-    overrides.modelTransitionTimesMs ?? snapshot.lifecycle.modelSelectTimesMs;
+    overrides.modelTransitionTimesMs ??
+    Array.from({ length: modelTransitions }, (_, index) =>
+      identityChanged && index === modelTransitions - 1
+        ? 1_199
+        : 1_000 + index * 100,
+    );
+  let defaultModelTransitionIdentities: readonly {
+    provider: string;
+    id: string;
+  }[] = [];
+  if (appliedIdentity !== undefined) {
+    defaultModelTransitionIdentities =
+      identityChanged && originIdentity !== undefined
+        ? [
+            ...Array.from(
+              { length: modelTransitions - 1 },
+              () => originIdentity,
+            ),
+            appliedIdentity,
+          ]
+        : Array.from({ length: modelTransitions }, () => appliedIdentity);
+  }
   const modelTransitionIdentities =
-    overrides.modelTransitionIdentities ??
-    (appliedIdentity === undefined
-      ? []
-      : Array.from({ length: modelTransitions }, () => appliedIdentity));
+    overrides.modelTransitionIdentities ?? defaultModelTransitionIdentities;
   return {
     role: snapshot.role,
     sessionIdHash,
@@ -615,11 +657,13 @@ function successfulFallbackInput() {
       messageEndCount: 2,
       contextCount: 0,
       contextRepairCount: 0,
-      modelSelectCount: 1,
+      modelSelectCount: 0,
+      modelSelectTimesMs: [],
       settlementCount: 1,
       recoveryMarkerCount: 0,
       markerMessageStartCount: 0,
       recoveryMarkerObserved: false,
+      appliedIdentity: undefined,
     }),
     parentToolCallIdHash: "1".repeat(64),
     parentToolEndCallIdHash: "1".repeat(64),
@@ -2334,6 +2378,185 @@ describe("Pi model-fallback release smoke", () => {
     const unstable = __testing.mergeNativeSessionObservations(before, after);
     expect(unstable.isErr()).toBe(true);
     if (unstable.isErr()) expect(unstable.error.type).toBe("CaptureMalformed");
+  });
+
+  it("binds the native fallback model timeline by identity and order", () => {
+    const input = successfulFallbackInput();
+    const first = { provider: "smoke", id: "first" } as const;
+    const second = { provider: "smoke", id: "second" } as const;
+    const third = { provider: "smoke", id: "third" } as const;
+    const childNative = input.observation.nativeSessions.find(
+      (session) => session.role === "child",
+    );
+    const parentNative = input.observation.nativeSessions.find(
+      (session) => session.role === "parent",
+    );
+    if (childNative === undefined || parentNative === undefined) {
+      throw new Error("test setup: native observations are missing");
+    }
+    expect(childNative.modelTransitionIdentities).toEqual([
+      first,
+      first,
+      second,
+    ]);
+    expect(childNative.modelTransitions).toBe(3);
+    expect(parentNative.modelTransitionIdentities).toEqual([first, first]);
+    expect(parentNative.modelTransitions).toBe(2);
+    expect(input.parent.lifecycle.modelSelectCount).toBe(0);
+
+    const observeChildTimeline = (
+      identities: readonly { provider: string; id: string }[],
+      times: readonly number[],
+      appliedIdentity:
+        | { provider: string; id: string }
+        | undefined = identities.at(-1),
+      lifecycleOverrides: Partial<FixtureLifecycleFacts> = {},
+    ) => {
+      const child = {
+        ...input.child,
+        lifecycle: { ...input.child.lifecycle, ...lifecycleOverrides },
+      };
+      const native = nativeObservation(child, {
+        modelTransitions: identities.length,
+        modelTransitionTimesMs: times,
+        modelTransitionIdentities: identities,
+      });
+      const observedNative =
+        appliedIdentity === undefined
+          ? (() => {
+              const { appliedIdentity: _appliedIdentity, ...withoutApplied } =
+                native;
+              return withoutApplied;
+            })()
+          : { ...native, appliedIdentity };
+      return validateObservedSources({
+        observation: {
+          ...input.observation,
+          nativeSessions: [observedNative, parentNative],
+          controls: [controlCapture(child), controlCapture(input.parent)],
+        },
+        snapshots: [child, input.parent],
+        smokeCase: "fallback",
+      });
+    };
+
+    expect(
+      observeChildTimeline(
+        [first, first, second],
+        [1_000, 1_100, 1_300],
+      ).isOk(),
+    ).toBe(true);
+    // Pi appends native model_change before the public model_select event.
+    expect(
+      observeChildTimeline(
+        [first, first, second],
+        [1_000, 1_100, 1_199],
+      ).isOk(),
+    ).toBe(true);
+    // Native and public records can share a millisecond timestamp.
+    expect(
+      observeChildTimeline(
+        [first, first, second],
+        [1_000, 1_100, 1_200],
+      ).isOk(),
+    ).toBe(true);
+    // The initial failed attempt settles before fallback selection; the
+    // applied control select must still precede recovery and final settlement.
+    expect(
+      observeChildTimeline(
+        [first, first, second],
+        [1_000, 1_100, 1_199],
+        second,
+        { settlementTimesMs: [1_100, 1_301] },
+      ).isOk(),
+    ).toBe(true);
+    const rejectedTimelines: readonly {
+      readonly name: string;
+      readonly identities: readonly { provider: string; id: string }[];
+      readonly times: readonly number[];
+      readonly appliedIdentity?: { provider: string; id: string };
+    }[] = [
+      {
+        name: "missing destination",
+        identities: [first, first],
+        times: [1_000, 1_100],
+      },
+      {
+        name: "duplicate destination",
+        identities: [first, second, second],
+        times: [1_000, 1_100, 1_300],
+      },
+      {
+        name: "wrong third identity",
+        identities: [first, third, second],
+        times: [1_000, 1_100, 1_300],
+      },
+      {
+        name: "origin after destination",
+        identities: [first, second, first],
+        times: [1_000, 1_100, 1_300],
+        appliedIdentity: first,
+      },
+      {
+        name: "nonmonotonic native timestamps",
+        identities: [first, first, second],
+        times: [1_000, 1_300, 1_200],
+      },
+      {
+        name: "empty timeline",
+        identities: [],
+        times: [],
+      },
+      {
+        name: "too many initial origin entries",
+        identities: [first, first, first, second],
+        times: [1_000, 1_050, 1_100, 1_300],
+      },
+      {
+        name: "timeline bound exceeded",
+        identities: [
+          ...Array.from(
+            { length: MAX_NATIVE_MODEL_TIMELINE_ENTRIES },
+            () => first,
+          ),
+          second,
+        ],
+        times: [1_000, 1_050, 1_100, 1_150, 1_300],
+      },
+      {
+        name: "control/native applied mismatch",
+        identities: [first, first, second],
+        times: [1_000, 1_100, 1_300],
+        appliedIdentity: first,
+      },
+    ];
+    for (const timeline of rejectedTimelines) {
+      expect(
+        observeChildTimeline(
+          timeline.identities,
+          timeline.times,
+          timeline.appliedIdentity,
+        ).isErr(),
+        timeline.name,
+      ).toBe(true);
+    }
+    expect(
+      observeChildTimeline(
+        [first, first, second],
+        [1_000, 1_100, 1_199],
+        second,
+        { modelSelectTimesMs: [1_500] },
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      observeChildTimeline([first, first], [1_000, 1_100], first, {
+        modelSelectCount: 0,
+        modelSelectTimesMs: [],
+        appliedIdentity: undefined,
+      }).isErr(),
+    ).toBe(true);
+    expect(MAX_NATIVE_INITIAL_MODEL_ENTRIES).toBe(2);
+    expect(MAX_NATIVE_MODEL_TIMELINE_ENTRIES).toBe(3);
   });
 
   it("accepts real ready health and legacy rollback facts only with both shim phases", () => {
