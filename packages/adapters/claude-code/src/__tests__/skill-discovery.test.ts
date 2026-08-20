@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { z } from "zod";
 import { discoverClaudeCodeSkills } from "../skill-discovery.js";
+
+const claudeCodeSkillMetadataSchema = z.object({
+  description: z.string().optional(),
+  scope: z.enum(["project", "global"]),
+  path: z.string(),
+});
 
 describe("discoverClaudeCodeSkills", () => {
   it("discovers project-level command files", async () => {
@@ -23,14 +30,14 @@ describe("discoverClaudeCodeSkills", () => {
     // Only .md files
     expect(skills).toHaveLength(2);
     expect(skills[0]?.name).toBe("deploy");
-    const meta0 = skills[0]?.metadata as {
-      description: string;
-      scope: string;
-      path: string;
-    };
-    expect(meta0.description).toBe("Deploy");
-    expect(meta0.scope).toBe("project");
-    expect(meta0.path).toContain("deploy.md");
+    const parsedMetadata = claudeCodeSkillMetadataSchema.safeParse(
+      skills[0]?.metadata,
+    );
+    expect(parsedMetadata.success).toBe(true);
+    if (!parsedMetadata.success) return;
+    expect(parsedMetadata.data.description).toBe("Deploy");
+    expect(parsedMetadata.data.scope).toBe("project");
+    expect(parsedMetadata.data.path).toContain("deploy.md");
   });
 
   it("discovers global command files", async () => {
@@ -51,9 +58,15 @@ describe("discoverClaudeCodeSkills", () => {
     const skills = result._unsafeUnwrap();
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("global-cmd");
-    const meta = skills[0]?.metadata as { description: string; scope: string };
-    expect(meta.description).toBe("A global command description");
-    expect(meta.scope).toBe("global");
+    const parsedMetadata = claudeCodeSkillMetadataSchema.safeParse(
+      skills[0]?.metadata,
+    );
+    expect(parsedMetadata.success).toBe(true);
+    if (!parsedMetadata.success) return;
+    expect(parsedMetadata.data.description).toBe(
+      "A global command description",
+    );
+    expect(parsedMetadata.data.scope).toBe("global");
   });
 
   it("returns empty array when no directories exist", async () => {
@@ -91,7 +104,11 @@ describe("discoverClaudeCodeSkills", () => {
     // Both project and global return "broken.md" → 2 skills
     expect(skills.length).toBe(2);
     expect(skills[0]?.name).toBe("broken");
-    const meta = skills[0]?.metadata as { description?: string };
-    expect(meta.description).toBeUndefined();
+    const parsedMetadata = claudeCodeSkillMetadataSchema.safeParse(
+      skills[0]?.metadata,
+    );
+    expect(parsedMetadata.success).toBe(true);
+    if (!parsedMetadata.success) return;
+    expect(parsedMetadata.data.description).toBeUndefined();
   });
 });

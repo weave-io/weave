@@ -11,20 +11,20 @@
 
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 
-const MODEL_ALIAS_MAP: Record<string, string> = {
-  "claude-sonnet-4-5": "sonnet",
-  "claude-sonnet-4-20250514": "sonnet",
-  "claude-sonnet-4-5-20250514": "sonnet",
-  "claude-opus-4": "opus",
-  "claude-opus-4-20250918": "opus",
-  "claude-opus-4-5": "opus",
-  "claude-haiku-3-5": "haiku",
-  "claude-haiku-3-5-20241022": "haiku",
-};
+const MODEL_ALIAS_MAP = new Map<string, string>([
+  ["claude-sonnet-4-5", "sonnet"],
+  ["claude-sonnet-4-20250514", "sonnet"],
+  ["claude-sonnet-4-5-20250514", "sonnet"],
+  ["claude-opus-4", "opus"],
+  ["claude-opus-4-20250918", "opus"],
+  ["claude-opus-4-5", "opus"],
+  ["claude-haiku-3-5", "haiku"],
+  ["claude-haiku-3-5-20241022", "haiku"],
+]);
 
 function toClaudeCodeModel(model: string | undefined): string | undefined {
   if (!model) return undefined;
-  return MODEL_ALIAS_MAP[model] ?? model;
+  return MODEL_ALIAS_MAP.get(model) ?? model;
 }
 
 export interface AgentTranslationInput {
