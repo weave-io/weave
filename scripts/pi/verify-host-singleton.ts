@@ -11,7 +11,7 @@
  * the detector must see the duplicate.
  */
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
@@ -38,12 +38,13 @@ const EXTENSION_RELATIVE_PATH = join(
   "dist",
   "extension.js",
 );
+// Run the repository build entry directly with the checkout root as cwd.
+// `bun run --filter` executes the package script with the package directory as
+// cwd, and the shared builder resolves its tsconfig paths from the checkout
+// root, so the filtered form fails in a freshly cloned worktree.
 const HOST_BUILD_COMMAND = [
   "bun",
-  "run",
-  "--filter",
-  "@weaveio/weave-adapter-pi",
-  "build",
+  join("scripts", "build-public-packages.ts"),
 ] as const;
 
 const CHILD_ENV_OMIT = [
@@ -591,6 +592,38 @@ export function evaluateSingletonProof(input: {
   return { verdict, reasons };
 }
 
+function isPackageBinDirectory(entry: string): boolean {
+  const normalized = entry.replaceAll("\\", "/").replace(/\/+$/u, "");
+  return normalized.endsWith("/node_modules/.bin");
+}
+
+/**
+ * Drop package-local `node_modules/.bin` directories from a PATH.
+ *
+ * `bun run` prepends the bin directory of the current package and of every
+ * ancestor directory before running a package script. A `pi` shim in any of
+ * them is a project-local copy with a Node shebang, not the installed host, so
+ * `bun run verify:pi-host-singleton` would resolve a different CLI than a
+ * direct `bun scripts/pi/verify-host-singleton.ts` run and the spawned host
+ * would exit before it could emit a proof line. The same shadowing applies to
+ * the `bun` command the host launcher script invokes by name. Filtering these
+ * entries makes both invocations resolve the same installed host, and keeps a
+ * checkout copy from ever being the process under proof.
+ *
+ * Returns `undefined` when no usable entry remains, so callers keep the
+ * original value instead of running with an empty PATH.
+ */
+export function hostCommandSearchPath(
+  pathValue: string | undefined,
+): string | undefined {
+  if (pathValue === undefined) return undefined;
+  const kept = pathValue
+    .split(delimiter)
+    .filter((entry) => entry.length > 0 && !isPackageBinDirectory(entry));
+  if (kept.length === 0) return undefined;
+  return kept.join(delimiter);
+}
+
 export function buildProofEnv(
   source: VerifyEnv,
   overrides: Readonly<Record<string, string>>,
@@ -606,6 +639,8 @@ export function buildProofEnv(
   for (const [key, value] of Object.entries(overrides)) {
     env[key] = value;
   }
+  const searchPath = hostCommandSearchPath(env.PATH);
+  if (searchPath !== undefined) env.PATH = searchPath;
   return env;
 }
 
@@ -656,17 +691,24 @@ export function hostPackageJsonCandidates(
   return unique(candidates.filter((path) => isAbsolute(path)));
 }
 
+function whichHostCommand(command: string, env: VerifyEnv): string | undefined {
+  const searchPath = hostCommandSearchPath(env.PATH);
+  if (searchPath === undefined) return Bun.which(command) ?? undefined;
+  return Bun.which(command, { PATH: searchPath }) ?? undefined;
+}
+
 function resolveDeclaredCliPath(
   raw: string | undefined,
   cwd: string,
+  env: VerifyEnv,
 ): string | undefined {
   if (raw !== undefined && raw.length > 0) {
     if (raw.includes("/") || raw.startsWith(".")) {
       return resolve(cwd, raw);
     }
-    return Bun.which(raw) ?? undefined;
+    return whichHostCommand(raw, env);
   }
-  return Bun.which("pi") ?? undefined;
+  return whichHostCommand("pi", env);
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -692,7 +734,7 @@ async function resolveHostPresence(
   env: VerifyEnv,
   cwd: string,
 ): Promise<HostPresence> {
-  const cliPath = resolveDeclaredCliPath(env[PI_HOST_CLI_ENV], cwd);
+  const cliPath = resolveDeclaredCliPath(env[PI_HOST_CLI_ENV], cwd, env);
   if (cliPath === undefined) {
     return {
       status: "missing",

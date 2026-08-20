@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { delimiter } from "node:path";
 import {
   MAX_HOST_MODULE_PROOF_LINE_LENGTH,
   WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV,
@@ -13,6 +14,7 @@ import {
   evaluateSingletonProof,
   extractProofLineFromOutput,
   formatSummary,
+  hostCommandSearchPath,
   hostModulePrefix,
   hostPackageJsonCandidates,
   isCheckoutEarendilPath,
@@ -327,6 +329,21 @@ describe("readUntilProof", () => {
     if (result.isOk()) return;
     expect(result.error.type).toBe("ProofMissing");
     expect(result.error.message).toContain("exited 7");
+  });
+
+  it("accepts a proof buffered before an early child exit", async () => {
+    const result = await readUntilProof(
+      proofProcess({
+        stdout: outputStream([proofLine]),
+        stderr: outputStream(["host failed after startup\n"]),
+        exited: Promise.resolve(1),
+        exitCode: 1,
+      }),
+      100,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value).toEqual(redirectedProof());
   });
 
   it("preserves malformed and oversized proof diagnostics", async () => {
@@ -655,7 +672,64 @@ describe("evaluateSingletonProof", () => {
   });
 });
 
+describe("hostCommandSearchPath", () => {
+  it("drops every package-local bin directory bun run prepends", () => {
+    const packageScriptPath = [
+      "/repo/node_modules/.bin",
+      "/repo/packages/adapters/pi/node_modules/.bin",
+      "/private/tmp/node_modules/.bin/",
+      "/node_modules/.bin",
+      "/opt/toolchain/bin",
+      "/usr/bin",
+    ].join(delimiter);
+    expect(hostCommandSearchPath(packageScriptPath)).toBe(
+      ["/opt/toolchain/bin", "/usr/bin"].join(delimiter),
+    );
+  });
+
+  it("keeps directories that only look like a package bin directory", () => {
+    const path = [
+      "/opt/node_modules/.binaries",
+      "/opt/.bin",
+      "/opt/node_modules/.bin/nested",
+    ].join(delimiter);
+    expect(hostCommandSearchPath(path)).toBe(path);
+  });
+
+  it("returns undefined for an absent or fully filtered PATH", () => {
+    expect(hostCommandSearchPath(undefined)).toBeUndefined();
+    expect(
+      hostCommandSearchPath(
+        ["/repo/node_modules/.bin", "", "/node_modules/.bin"].join(delimiter),
+      ),
+    ).toBeUndefined();
+  });
+});
+
 describe("buildProofEnv", () => {
+  it("gives the package-script run the same PATH as a direct run", () => {
+    const directPath = ["/opt/toolchain/bin", "/usr/bin"].join(delimiter);
+    const packageScriptPath = [
+      "/repo/node_modules/.bin",
+      "/private/tmp/node_modules/.bin",
+      ...directPath.split(delimiter),
+    ].join(delimiter);
+    const overrides = { WEAVE_PI_HOST_MODULE_PROOF: "1" } as const;
+
+    const direct = buildProofEnv({ PATH: directPath }, overrides);
+    const packageScript = buildProofEnv({ PATH: packageScriptPath }, overrides);
+    expect(packageScript.PATH).toBe(directPath);
+    expect(packageScript.PATH).toBe(direct.PATH);
+  });
+
+  it("keeps the original PATH when every entry is a package bin directory", () => {
+    const env = buildProofEnv(
+      { PATH: "/repo/node_modules/.bin" },
+      { PI_OFFLINE: "1" },
+    );
+    expect(env.PATH).toBe("/repo/node_modules/.bin");
+  });
+
   it("sets proof env, forces offline, and strips child variables", () => {
     const env = buildProofEnv(
       {
