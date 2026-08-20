@@ -3,6 +3,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { runBoundedCommand } from "./command-runner.js";
 import {
+  ADAPTER_READY_MARKER,
   ADAPTER_SOURCE_PROVEN_ENV,
   DEFAULT_COMMAND_TIMEOUT_MS,
   EXACT_PI_VERSION,
@@ -356,7 +357,7 @@ export const buildPiCommand = buildPiLaunchCommand;
 export function buildExpectDriver(input: {
   readonly command: readonly string[];
   readonly doneMarker: string;
-  /** Legacy startup synchronization. It has no synthetic default. */
+  /** Adapter startup synchronization. The Weave badge is the safe default. */
   readonly readyMarker?: string;
   /** A real TUI command to run before the smoke task. */
   readonly healthCommand?: string;
@@ -374,14 +375,13 @@ export function buildExpectDriver(input: {
     "log_user 1",
     `spawn /bin/sh -c "exec ${command}"`,
   ];
-  if (input.readyMarker !== undefined) {
-    lines.push(
-      "expect {",
-      `  -re "${quote(input.readyMarker)}" {}`,
-      `  timeout { send "\\003"; exit 124 }`,
-      "}",
-    );
-  }
+  const readyMarker = input.readyMarker ?? ADAPTER_READY_MARKER;
+  lines.push(
+    "expect {",
+    `  -re "${quote(readyMarker)}" {}`,
+    `  timeout { send "\\003"; exit 124 }`,
+    "}",
+  );
   if (input.healthCommand !== undefined) {
     lines.push(
       `send "${quote(input.healthCommand)}\\r"`,

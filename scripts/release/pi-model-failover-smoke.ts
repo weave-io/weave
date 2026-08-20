@@ -80,12 +80,16 @@ export type {
   SpawnOptionsLike,
 } from "./pi-model-failover-smoke/contract.js";
 export {
+  ADAPTER_READY_MARKER,
   artifactDigest,
   CHECKLIST_VERSION,
   CHILD_TASK,
   CLEANUP_DIAGNOSTIC_CODES,
   CLEANUP_FORCE_TIMEOUT_MS,
   CLEANUP_GRACE_TIMEOUT_MS,
+  CLEANUP_PROBE_TIMEOUT_MS,
+  CLEANUP_ROOT_MAX_ATTEMPTS,
+  CLEANUP_ROOT_TIMEOUT_MS,
   containsForbiddenContent,
   DEFAULT_COMMAND_TIMEOUT_MS,
   EXACT_PI_VERSION,
@@ -136,6 +140,10 @@ export {
   validateStrictProvenanceEnvironment,
 } from "./pi-model-failover-smoke/environment.js";
 export { validateFallbackFacts } from "./pi-model-failover-smoke/fallback-validation.js";
+export {
+  scenarioLauncherPath,
+  validateScenarioLauncher,
+} from "./pi-model-failover-smoke/fixture-files.js";
 export {
   validateControlObserverSource,
   validateFixtureSourceBoundary,

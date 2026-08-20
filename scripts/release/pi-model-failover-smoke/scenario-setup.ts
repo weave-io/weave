@@ -153,6 +153,7 @@ export async function setupScenario(
   const pathPolicy = validateIsolatedPathPolicy({
     root,
     paths: {
+      launcher: join(root, "bin/pi"),
       home: paths.home,
       piHome: paths.piHome,
       configHome: paths.configHome,
@@ -413,6 +414,7 @@ export async function setupScenario(
   const populatedPathPolicy = await validateCreatedIsolatedPathPolicy({
     root,
     paths: {
+      launcher: join(root, "bin/pi"),
       home: paths.home,
       piHome: paths.piHome,
       configHome: paths.configHome,

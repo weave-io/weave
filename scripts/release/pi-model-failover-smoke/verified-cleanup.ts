@@ -9,6 +9,9 @@ import {
 import {
   CLEANUP_FORCE_TIMEOUT_MS,
   CLEANUP_GRACE_TIMEOUT_MS,
+  CLEANUP_PROBE_TIMEOUT_MS,
+  CLEANUP_ROOT_MAX_ATTEMPTS,
+  CLEANUP_ROOT_TIMEOUT_MS,
   CLEANUP_VERIFICATION_KEYS,
   type CleanupDiagnosticCode,
   type CleanupResourceTracker,
@@ -71,7 +74,7 @@ async function defaultObserveLease(input: {
   const status = await runBoundedCommand(input.runtimeStatusCommand.args, {
     cwd: input.runtimeStatusCommand.cwd,
     env: input.env,
-    timeoutMs: Math.min(input.timeoutMs, 2_000),
+    timeoutMs: Math.min(input.timeoutMs, CLEANUP_PROBE_TIMEOUT_MS),
     resources: input.tracker,
     processKind: "helper",
   });
@@ -96,7 +99,7 @@ async function defaultRemoveRoot(input: {
   const removed = await runBoundedCommand(["rm", "-rf", "--", input.root], {
     cwd: input.cwd,
     env: input.env,
-    timeoutMs: Math.min(input.timeoutMs, 2_000),
+    timeoutMs: Math.min(input.timeoutMs, CLEANUP_ROOT_TIMEOUT_MS),
     resources: input.tracker,
     processKind: "helper",
   });
@@ -131,7 +134,7 @@ async function performCleanupRoot(
       const result = await runBoundedCommand(["test", "-e", path], {
         cwd,
         env,
-        timeoutMs: Math.min(timeoutMs, 2_000),
+        timeoutMs: Math.min(timeoutMs, CLEANUP_PROBE_TIMEOUT_MS),
         resources: tracker,
         processKind: "helper",
         allowExitCodes: [1],
@@ -218,13 +221,37 @@ async function performCleanupRoot(
   if (!resourceDisposed || tracker.activeResourceCount !== 0)
     return err(failure("CleanupFailed", "resource-still-open"));
 
-  const removed = await removeRoot({ root, cwd, env, timeoutMs, tracker });
-  if (removed.isErr()) return err(failure("CleanupFailed", removed.error));
-  const rootExists = await exists(root);
-  if (rootExists.isErr())
-    return err(failure("CleanupFailed", rootExists.error));
-  if (rootExists.value)
-    return err(failure("CleanupFailed", "root-still-present"));
+  // Root removal is the expensive operation. Give each attempt its own
+  // bounded budget and let the existence probe, not the command exit status,
+  // decide whether an idempotent attempt succeeded. A timed-out `rm` may have
+  // finished deleting the tree before its wrapper observed the timeout.
+  let rootRemoved = false;
+  for (let attempt = 0; attempt < CLEANUP_ROOT_MAX_ATTEMPTS; attempt += 1) {
+    const removed = await ResultAsync.fromThrowable(
+      () =>
+        removeRoot({
+          root,
+          cwd,
+          env,
+          timeoutMs: Math.min(timeoutMs, CLEANUP_ROOT_TIMEOUT_MS),
+          tracker,
+        }),
+      () => "root-remove-failed" as const,
+    )();
+    const rootExists = await exists(root);
+    if (rootExists.isErr())
+      return err(failure("CleanupFailed", rootExists.error));
+    if (!rootExists.value) {
+      // A remove error is acceptable only because the independent probe proves
+      // that the owned root is gone. Any helper survivor still fails closed.
+      if (removed.isErr()) tracker.pruneExited();
+      if (tracker.processHandles.length > 0)
+        return err(failure("CleanupFailed", "process-survivor"));
+      rootRemoved = true;
+      break;
+    }
+  }
+  if (!rootRemoved) return err(failure("CleanupFailed", "root-still-present"));
   for (const ownedPath of tracker.ownedPaths) {
     const present = await exists(ownedPath);
     if (present.isErr()) return err(failure("CleanupFailed", present.error));

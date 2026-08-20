@@ -6,7 +6,11 @@ import {
   runWithCleanup,
 } from "../pi-model-failover-smoke/command-runner.js";
 import {
+  ADAPTER_READY_MARKER,
   artifactDigest,
+  CLEANUP_PROBE_TIMEOUT_MS,
+  CLEANUP_ROOT_MAX_ATTEMPTS,
+  CLEANUP_ROOT_TIMEOUT_MS,
   type CleanupProcessObservation,
   containsForbiddenContent,
   EXPECTED_FALLBACK_VISIBLE_EVENT_COUNT,
@@ -37,6 +41,7 @@ import {
   ROLLBACK_DISABLED_SURFACE,
   ROLLBACK_SHIM_BOUNDARY,
   redactDiagnostic,
+  type ScenarioPaths,
   type SmokeReport,
   type SpawnedProcessLike,
 } from "../pi-model-failover-smoke/contract.js";
@@ -51,6 +56,11 @@ import {
   validateStrictProvenanceEnvironment,
 } from "../pi-model-failover-smoke/environment.js";
 import { validateFallbackFacts } from "../pi-model-failover-smoke/fallback-validation.js";
+import {
+  isolatedEnvironment,
+  scenarioLauncherPath,
+  validateScenarioLauncher,
+} from "../pi-model-failover-smoke/fixture-files.js";
 import {
   validateControlObserverSource,
   validateFixtureSourceBoundary,
@@ -785,6 +795,10 @@ function cleanupFixture(
     readonly alive?: () => boolean;
     readonly onRemove?: () => void;
     readonly removeError?: boolean;
+    readonly removeOutcomes?: readonly {
+      readonly error: boolean;
+      readonly gone: boolean;
+    }[];
   } = {},
 ) {
   const root = `/tmp/weave-cleanup-test-${crypto.randomUUID()}`;
@@ -792,6 +806,7 @@ function cleanupFixture(
   let rootPresent = true;
   let observeCount = 0;
   let removeCount = 0;
+  let probeCount = 0;
   const processAlive = options.alive ?? (() => false);
   const hooks = {
     clock: { wait: async () => undefined },
@@ -805,11 +820,17 @@ function cleanupFixture(
     removeRoot: async () => {
       removeCount += 1;
       options.onRemove?.();
-      if (options.removeError) return err("root-remove-failed" as const);
-      rootPresent = false;
+      const outcome = options.removeOutcomes?.[removeCount - 1];
+      const removeError = outcome?.error ?? options.removeError ?? false;
+      if (outcome?.gone === true || (outcome === undefined && !removeError))
+        rootPresent = false;
+      if (removeError) return err("root-remove-failed" as const);
       return ok(undefined);
     },
-    pathExists: async () => ok(rootPresent),
+    pathExists: async () => {
+      probeCount += 1;
+      return ok(rootPresent);
+    },
   };
   return {
     root,
@@ -820,6 +841,9 @@ function cleanupFixture(
     },
     get removeCount() {
       return removeCount;
+    },
+    get probeCount() {
+      return probeCount;
     },
   };
 }
@@ -875,6 +899,19 @@ describe("Pi model-fallback release smoke", () => {
     expect(driver).toContain("set timeout 3");
     expect(driver).toContain("DONE_MARKER");
     expect(driver).toContain('send "/quit\\r"');
+
+    const fallbackDriver = buildExpectDriver({
+      command: ["/tmp/pi/bin/pi", "--offline"],
+      doneMarker: "DONE_MARKER",
+      task: "FALLBACK_TASK",
+      timeoutSeconds: 3,
+    });
+    const fallbackReady = fallbackDriver.indexOf(
+      `-re "${ADAPTER_READY_MARKER}"`,
+    );
+    const fallbackTask = fallbackDriver.indexOf('send "FALLBACK_TASK\\r"');
+    expect(fallbackReady).toBeGreaterThanOrEqual(0);
+    expect(fallbackTask).toBeGreaterThan(fallbackReady);
   });
 
   it("keeps the optional-surface shim isolated from host mutation", () => {
@@ -904,16 +941,59 @@ describe("Pi model-fallback release smoke", () => {
     const driver = buildExpectDriver({
       command: ["/tmp/pi/bin/pi", "--offline"],
       doneMarker: "DONE_MARKER",
-      readyMarker: "◆ WEAVE",
+      readyMarker: ADAPTER_READY_MARKER,
       healthCommand: "/weave:health",
       healthMarker: "Weave adapter mode: (ready|health-only)",
       task: "TASK",
       timeoutSeconds: 3,
     });
-    const startup = driver.indexOf('-re "◆ WEAVE"');
+    const startup = driver.indexOf(`-re "${ADAPTER_READY_MARKER}"`);
     const health = driver.indexOf('send "/weave:health\\r"');
+    const task = driver.indexOf('send "TASK\\r"');
     expect(startup).toBeGreaterThanOrEqual(0);
     expect(health).toBeGreaterThan(startup);
+    expect(task).toBeGreaterThan(health);
+  });
+
+  it("pins child PATH to the owned launcher and rejects launcher aliases", () => {
+    const root = `/tmp/weave-launcher-path-${crypto.randomUUID()}`;
+    const paths: ScenarioPaths = {
+      root,
+      home: `${root}/home`,
+      piHome: `${root}/pi`,
+      configHome: `${root}/config`,
+      dataHome: `${root}/data`,
+      cacheHome: `${root}/cache`,
+      stateHome: `${root}/state`,
+      sessionDir: `${root}/sessions`,
+      project: `${root}/project`,
+      capture: `${root}/capture`,
+      packagePath: `${root}/pi/npm/node_modules/@weaveio/weave-adapter-pi`,
+      fixturePath: `${root}/pi/npm/node_modules/fixture`,
+      piCli: `${root}/pi/npm/node_modules/@earendil-works/pi-coding-agent/dist/cli.js`,
+      piCliPackageRoot: `${root}/pi/npm/node_modules/@earendil-works/pi-coding-agent`,
+      piCliPackageVersion: "0.84.2",
+      bunCli: "/usr/bin/bun",
+      expectCli: "/usr/bin/expect",
+    };
+    const environment = isolatedEnvironment(paths, {
+      path: "/tmp/adapter.tgz",
+      sha256: "b".repeat(64),
+      packageVersion: "0.0.1",
+      extensionSha256: "a".repeat(64),
+      entries: [],
+    });
+    expect(environment.isOk()).toBe(true);
+    if (environment.isOk()) {
+      const pathEntries = environment.value.PATH.split(":");
+      expect(pathEntries[0]).toBe(`${root}/bin`);
+      expect(pathEntries.at(-1)).toBe("/sbin");
+    }
+    expect(scenarioLauncherPath(root)).toBe(`${root}/bin/pi`);
+    expect(
+      validateScenarioLauncher(root, `${root}/bin/../bin/pi`).isErr(),
+    ).toBe(true);
+    expect(validateScenarioLauncher(root, "/usr/bin/pi").isErr()).toBe(true);
   });
 
   it("parses a wrapped real Pi health capability gap", () => {
@@ -1055,6 +1135,14 @@ describe("Pi model-fallback release smoke", () => {
     expect(cleanupCount).toBe(3);
   });
 
+  it("keeps cleanup budgets bounded and retries idempotently", () => {
+    expect(CLEANUP_ROOT_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
+    expect(CLEANUP_ROOT_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(CLEANUP_ROOT_MAX_ATTEMPTS).toBe(3);
+    expect(CLEANUP_PROBE_TIMEOUT_MS).toBeLessThanOrEqual(2_000);
+    expect(CLEANUP_PROBE_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+
   it("cleans a gracefully exiting Pi process with a fake clock", async () => {
     const fixture = cleanupFixture();
     const process = trackedFakeProcess({
@@ -1099,6 +1187,41 @@ describe("Pi model-fallback release smoke", () => {
     expect(fixture.removeCount).toBe(1);
   });
 
+  it("accepts a timed-out root removal when the independent probe sees it gone", async () => {
+    const fixture = cleanupFixture({
+      removeOutcomes: [{ error: true, gone: true }],
+    });
+    const result = await __testing.cleanupRoot(
+      fixture.root,
+      ".",
+      { PATH: "/usr/bin:/bin" },
+      100,
+      { tracker: fixture.tracker, hooks: fixture.hooks },
+    );
+    expect(result.isOk()).toBe(true);
+    expect(fixture.removeCount).toBe(1);
+    expect(fixture.probeCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("retries a partial root removal and succeeds on the next attempt", async () => {
+    const fixture = cleanupFixture({
+      removeOutcomes: [
+        { error: true, gone: false },
+        { error: false, gone: true },
+      ],
+    });
+    const result = await __testing.cleanupRoot(
+      fixture.root,
+      ".",
+      { PATH: "/usr/bin:/bin" },
+      100,
+      { tracker: fixture.tracker, hooks: fixture.hooks },
+    );
+    expect(result.isOk()).toBe(true);
+    expect(fixture.removeCount).toBe(2);
+    expect(fixture.probeCount).toBeGreaterThanOrEqual(2);
+  });
+
   it("fails closed when a process survives forced termination", async () => {
     const fixture = cleanupFixture({ alive: () => process.isAlive() });
     const process = trackedFakeProcess({
@@ -1116,6 +1239,23 @@ describe("Pi model-fallback release smoke", () => {
     if (result.isErr()) expect(result.error.detail).toBe("process-survivor");
     expect(process.signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(fixture.removeCount).toBe(0);
+  });
+
+  it("fails closed after three persistent root-removal attempts", async () => {
+    const fixture = cleanupFixture({ removeError: true });
+    const result = await __testing.cleanupRoot(
+      fixture.root,
+      ".",
+      { PATH: "/usr/bin:/bin" },
+      100,
+      { tracker: fixture.tracker, hooks: fixture.hooks },
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.detail).toBe("root-still-present");
+    expect(fixture.removeCount).toBe(CLEANUP_ROOT_MAX_ATTEMPTS);
+    expect(fixture.probeCount).toBeGreaterThanOrEqual(
+      CLEANUP_ROOT_MAX_ATTEMPTS,
+    );
   });
 
   it("cleans startup errors, scenario timeouts, assertion errors, and report validation errors", async () => {
@@ -1187,7 +1327,10 @@ describe("Pi model-fallback release smoke", () => {
     );
     expect(first.isErr()).toBe(true);
     expect(second).toEqual(first);
-    expect(fixture.removeCount).toBe(1);
+    expect(fixture.removeCount).toBe(CLEANUP_ROOT_MAX_ATTEMPTS);
+    expect(fixture.probeCount).toBeGreaterThanOrEqual(
+      CLEANUP_ROOT_MAX_ATTEMPTS,
+    );
   });
 
   it("redacts credential-shaped diagnostics and bounds serialized reports", () => {

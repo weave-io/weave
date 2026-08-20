@@ -25,7 +25,12 @@ import {
   XDG_DATA_ENV,
   XDG_STATE_ENV,
 } from "./contract.js";
-import { validateStrictProvenanceEnvironment } from "./environment.js";
+import {
+  isEphemeralPath,
+  pathWithin,
+  safeAbsolutePath,
+  validateStrictProvenanceEnvironment,
+} from "./environment.js";
 import {
   rollbackShimSource,
   validateRollbackShimSource,
@@ -151,12 +156,44 @@ export function runtimePackageJson(): string {
   )}\n`;
 }
 
+export function scenarioLauncherPath(root: string): string {
+  return join(resolve(root), "bin/pi");
+}
+
+/**
+ * The child process may resolve a bare `pi` from PATH, so the first entry must
+ * be the exact launcher owned by this disposable scenario. Reject aliases and
+ * outside-root launchers before constructing the environment.
+ */
+export function validateScenarioLauncher(
+  root: string,
+  launcher: string = scenarioLauncherPath(root),
+): Result<string, SmokeFailure> {
+  const expected = scenarioLauncherPath(root);
+  if (
+    !safeAbsolutePath(root) ||
+    !isEphemeralPath(root) ||
+    !safeAbsolutePath(launcher) ||
+    launcher !== expected ||
+    !pathWithin(launcher, root)
+  )
+    return err(
+      failure("PathIsolationViolation", "scenario Pi launcher is not owned"),
+    );
+  return ok(expected);
+}
+
 export function isolatedEnvironment(
   paths: ScenarioPaths,
   artifact: PackedArtifact,
 ): Result<Record<string, string>, SmokeFailure> {
+  const launcher = validateScenarioLauncher(
+    paths.root,
+    scenarioLauncherPath(paths.root),
+  );
+  if (launcher.isErr()) return err(launcher.error);
   const env = {
-    PATH: `${dirname(paths.expectCli)}:${dirname(paths.bunCli)}:${SAFE_SYSTEM_PATH}`,
+    PATH: `${dirname(launcher.value)}:${dirname(paths.expectCli)}:${dirname(paths.bunCli)}:${SAFE_SYSTEM_PATH}`,
     HOME: paths.home,
     [XDG_CONFIG_ENV]: paths.configHome,
     [XDG_DATA_ENV]: paths.dataHome,

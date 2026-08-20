@@ -21,6 +21,7 @@ export const MAX_DIAGNOSTIC_LENGTH = 256;
 export const MAX_DIAGNOSTIC_COUNT = 8;
 export const EXPECTED_FALLBACK_VISIBLE_EVENT_COUNT = 1;
 export const EXPECTED_NATIVE_LINE = "model fallback · smoke/second" as const;
+export const ADAPTER_READY_MARKER = "◆ WEAVE" as const;
 export const FIXTURE_CREDENTIAL = "pi-model-fallback-fixture-key";
 export const SAFE_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 export const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
@@ -80,6 +81,11 @@ export const FORBIDDEN_RUNTIME_ENV_KEYS = new Set([
 /** Graceful and forced cleanup windows are intentionally short and fixed. */
 export const CLEANUP_GRACE_TIMEOUT_MS = 1_000;
 export const CLEANUP_FORCE_TIMEOUT_MS = 1_000;
+/** Root removal has its own bounded budget because large fixture trees need more than a probe window. */
+export const CLEANUP_ROOT_TIMEOUT_MS = 30_000;
+export const CLEANUP_ROOT_MAX_ATTEMPTS = 3;
+/** Existence and other cheap cleanup probes must stay short. */
+export const CLEANUP_PROBE_TIMEOUT_MS = 2_000;
 
 /**
  * Cleanup failures are closed codes. Paths, process output, and host errors

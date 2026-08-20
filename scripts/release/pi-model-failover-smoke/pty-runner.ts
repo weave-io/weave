@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { err, type Result } from "neverthrow";
 import { runBoundedCommand } from "./command-runner.js";
 import {
+  ADAPTER_READY_MARKER,
   type CleanupResourceTracker,
   type CommandResult,
   PARENT_TASK,
@@ -11,7 +12,12 @@ import {
   type SmokeFailure,
 } from "./contract.js";
 import { buildExpectDriver, buildPiLaunchCommand } from "./environment.js";
-import { removeOwnedFile, writeText } from "./fixture-files.js";
+import {
+  removeOwnedFile,
+  scenarioLauncherPath,
+  validateScenarioLauncher,
+  writeText,
+} from "./fixture-files.js";
 export async function runPty(
   paths: ScenarioPaths,
   env: Record<string, string>,
@@ -19,14 +25,20 @@ export async function runPty(
   timeoutMs: number,
   resources?: CleanupResourceTracker,
 ): Promise<Result<CommandResult, SmokeFailure>> {
+  const launcher = validateScenarioLauncher(
+    paths.root,
+    scenarioLauncherPath(paths.root),
+  );
+  if (launcher.isErr()) return err(launcher.error);
   const command = buildPiLaunchCommand({
     bunCli: paths.bunCli,
     piCli: paths.piCli,
-    launcher: join(paths.root, "bin/pi"),
+    launcher: launcher.value,
   });
-  // The done marker is only a bounded TUI-driver synchronization point. The
-  // rollback health observation waits for Pi's real Weave badge, invokes the
-  // real `/weave:health` command, and parses that command's notification below.
+  // The done marker is only a bounded TUI-driver synchronization point. Both
+  // scenarios wait for the adapter-owned Weave badge before sending a task;
+  // rollback then invokes the real `/weave:health` command and parses that
+  // command's notification below.
   const doneMarker = "PI_MODEL_FAILOVER_SMOKE_DONE";
   const task = smokeCase === "rollback" ? ROLLBACK_TASK : PARENT_TASK;
   const rollbackHealth = smokeCase === "rollback";
@@ -37,7 +49,7 @@ export async function runPty(
     buildExpectDriver({
       command,
       doneMarker,
-      ...(rollbackHealth ? { readyMarker: "◆ WEAVE" } : {}),
+      readyMarker: ADAPTER_READY_MARKER,
       ...(rollbackHealth
         ? {
             healthCommand: "/weave:health",
