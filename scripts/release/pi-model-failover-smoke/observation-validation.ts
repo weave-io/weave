@@ -666,8 +666,7 @@ export function validateObservedSources(input: {
         snapshot.childIdHash !== snapshot.childIdAfterHash ||
         snapshot.threadIdHash !== snapshot.threadIdAfterHash ||
         snapshot.childIdHash === undefined ||
-        snapshot.threadIdHash === undefined ||
-        snapshot.childIdHash === snapshot.threadIdHash
+        snapshot.threadIdHash === undefined
       ) {
         return err(
           failure(

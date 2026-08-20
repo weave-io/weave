@@ -2299,21 +2299,167 @@ describe("Pi model-fallback release smoke", () => {
     if (result.isErr()) expect(result.error.type).toBe("CaptureMalformed");
   });
 
-  it("fails closed when the native thread identity aliases the child identity", () => {
+  it("accepts equal independently observed child and thread identities", () => {
     const input = successfulFallbackInput();
-    const aliased = rebuildFallbackInput(
-      input,
-      {
-        ...input.child,
-        threadIdHash: input.child.childIdHash,
-        threadIdBeforeHash: input.child.childIdHash,
-        threadIdAfterHash: input.child.childIdHash,
-      },
-      input.parent,
+    const childIdHash = input.child.childIdHash;
+    const childNative = input.observation.nativeSessions.find(
+      (session) => session.role === "child",
     );
-    const result = validateFallbackFacts(aliased);
+    const parentNative = input.observation.nativeSessions.find(
+      (session) => session.role === "parent",
+    );
+    if (
+      childIdHash === undefined ||
+      childNative === undefined ||
+      parentNative === undefined
+    )
+      throw new Error("test setup: child identity observations are missing");
+    const equalChild = {
+      ...input.child,
+      threadIdHash: childIdHash,
+      threadIdBeforeHash: childIdHash,
+      threadIdAfterHash: childIdHash,
+    };
+    const equal = {
+      child: equalChild,
+      parent: input.parent,
+      observation: {
+        ...input.observation,
+        captures: [equalChild, input.parent],
+        nativeSessions: [
+          {
+            ...childNative,
+            threadIdHash: childIdHash,
+            threadIdBeforeHash: childIdHash,
+            threadIdAfterHash: childIdHash,
+          },
+          parentNative,
+        ],
+      },
+    };
+    const result = validateFallbackFacts(equal);
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("accepts distinct independently observed child and thread identities", () => {
+    const input = successfulFallbackInput();
+    const childIdHash = input.child.childIdHash;
+    const threadIdHash = input.child.threadIdHash;
+    const childControl = input.observation.controls.find(
+      (capture) => capture.role === "child",
+    );
+    const childNative = input.observation.nativeSessions.find(
+      (session) => session.role === "child",
+    );
+    if (
+      childIdHash === undefined ||
+      threadIdHash === undefined ||
+      childControl === undefined ||
+      childNative === undefined
+    )
+      throw new Error("test setup: child identity observations are missing");
+    expect(childControl.childIdHash).toBe(childIdHash);
+    expect(childNative.threadIdHash).toBe(threadIdHash);
+    expect(childIdHash).not.toBe(threadIdHash);
+    const result = validateObservedSources({
+      observation: input.observation,
+      snapshots: [input.child, input.parent],
+      smokeCase: "fallback",
+    });
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("fails closed when child or native thread metadata is missing", () => {
+    const input = successfulFallbackInput();
+    const missing = [
+      {
+        name: "child",
+        snapshot: {
+          ...input.child,
+          childIdHash: undefined,
+          childIdBeforeHash: undefined,
+          childIdAfterHash: undefined,
+        },
+      },
+      {
+        name: "thread",
+        snapshot: {
+          ...input.child,
+          threadIdHash: undefined,
+          threadIdBeforeHash: undefined,
+          threadIdAfterHash: undefined,
+        },
+      },
+    ] as const;
+    for (const candidate of missing) {
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, candidate.snapshot, input.parent),
+      );
+      expect(result.isErr(), candidate.name).toBe(true);
+      if (result.isErr())
+        expect(result.error.type, candidate.name).toBe("CaptureMalformed");
+    }
+  });
+
+  it("rejects a native observer that derives thread identity from child identity", () => {
+    const input = successfulFallbackInput();
+    const childNative = input.observation.nativeSessions.find(
+      (session) => session.role === "child",
+    );
+    const parentNative = input.observation.nativeSessions.find(
+      (session) => session.role === "parent",
+    );
+    if (childNative === undefined || parentNative === undefined)
+      throw new Error("test setup: native observations are missing");
+    const derived = input.child.childIdHash;
+    if (derived === undefined)
+      throw new Error("test setup: child identity is missing");
+    const result = validateObservedSources({
+      observation: {
+        ...input.observation,
+        nativeSessions: [
+          {
+            ...childNative,
+            threadIdHash: derived,
+            threadIdBeforeHash: derived,
+            threadIdAfterHash: derived,
+          },
+          parentNative,
+        ],
+      },
+      snapshots: [input.child, input.parent],
+      smokeCase: "fallback",
+    });
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.type).toBe("CaptureMalformed");
+  });
+
+  it("fails closed when child or thread identity changes between observations", () => {
+    const input = successfulFallbackInput();
+    const changed = [
+      {
+        name: "child",
+        snapshot: {
+          ...input.child,
+          childIdBeforeHash: "9".repeat(64),
+        },
+      },
+      {
+        name: "thread",
+        snapshot: {
+          ...input.child,
+          threadIdBeforeHash: "9".repeat(64),
+        },
+      },
+    ] as const;
+    for (const candidate of changed) {
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, candidate.snapshot, input.parent),
+      );
+      expect(result.isErr(), candidate.name).toBe(true);
+      if (result.isErr())
+        expect(result.error.type, candidate.name).toBe("CaptureMalformed");
+    }
   });
 
   it("fails closed when an independently observed identity changes", () => {
@@ -2330,6 +2476,53 @@ describe("Pi model-fallback release smoke", () => {
     const result = validateFallbackFacts(conflicting);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.type).toBe("CaptureMalformed");
+  });
+
+  it("retains session, process, and tool identity alias rejection", () => {
+    const input = successfulFallbackInput();
+    const childIdHash = input.child.childIdHash;
+    const threadIdHash = input.child.threadIdHash;
+    if (childIdHash === undefined || threadIdHash === undefined)
+      throw new Error("test setup: child identities are missing");
+    const aliases = [
+      {
+        name: "session and thread",
+        child: {
+          ...input.child,
+          sessionIdHash: threadIdHash,
+          sessionIdBeforeHash: threadIdHash,
+          sessionIdAfterHash: threadIdHash,
+        },
+        parent: input.parent,
+      },
+      {
+        name: "process and child",
+        child: {
+          ...input.child,
+          processIdHash: childIdHash,
+          processIdBeforeHash: childIdHash,
+          processIdAfterHash: childIdHash,
+        },
+        parent: input.parent,
+      },
+      {
+        name: "tool and child",
+        child: input.child,
+        parent: {
+          ...input.parent,
+          parentToolCallIdHash: childIdHash,
+          parentToolEndCallIdHash: childIdHash,
+        },
+      },
+    ] as const;
+    for (const alias of aliases) {
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, alias.child, alias.parent),
+      );
+      expect(result.isErr(), alias.name).toBe(true);
+      if (result.isErr())
+        expect(result.error.type, alias.name).toBe("CaptureMalformed");
+    }
   });
 
   it("fails closed on duplicate marker event evidence", () => {
