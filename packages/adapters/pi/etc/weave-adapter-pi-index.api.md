@@ -1307,7 +1307,7 @@ export const defaultPiMaterializerPort: PiMaterializerPort;
 export function degradedPiChildCardComponent(reason: string): PiToolRenderComponent;
 
 // @public
-export const DELEGATION_CARD_DETAILS_VERSION = 1;
+export const DELEGATION_CARD_DETAILS_VERSION = 2;
 
 // @public
 export function describeChildSessionStorageUnavailable(failure: PiNativeSessionStorageUnavailable): string;
@@ -3638,9 +3638,9 @@ export const PiChildProviderErrorSchema: z.ZodObject<{
     class: z.ZodEnum<{
         unknown: "unknown";
         cancelled: "cancelled";
+        timeout: "timeout";
         "rate-limit": "rate-limit";
         auth: "auth";
-        timeout: "timeout";
         overload: "overload";
         connection: "connection";
         "malformed-response": "malformed-response";
@@ -3990,6 +3990,8 @@ export class PiChildRuntime {
     reportBootstrapAck(body: PiBootstrapAckBody): ResultAsync<void, PiChildRuntimeError>;
     // (undocumented)
     reportCancelled(): ResultAsync<void, PiChildRuntimeError>;
+    // Warning: (ae-forgotten-export) The symbol "PiModelTransitionBody" needs to be exported by the entry point index.d.ts
+    reportModelTransition(body: PiModelTransitionBody): ResultAsync<void, PiChildRuntimeError>;
     // (undocumented)
     reportSettled(outcome: "completed" | "failed", detail: {
         assistantOutput?: string;
@@ -4786,6 +4788,7 @@ export class PiDelegationCardStream {
     constructor(config: PiDelegationCardStreamConfig);
     // (undocumented)
     applyEvent(event: PiChildSessionEvent): void;
+    applyModelTransition(transition: PiModelTransitionBody): void;
     // (undocumented)
     applyProviderError(error: PiChildProviderError): void;
     // (undocumented)
@@ -4890,6 +4893,7 @@ export interface PiDelegationControllerDeps {
     // (undocumented)
     readonly now?: () => number;
     readonly onChildSessionEvent?: (childId: string, event: PiChildSessionEvent) => void;
+    readonly onModelTransition?: (childId: string, transition: PiModelTransitionBody) => void;
     // Warning: (ae-forgotten-export) The symbol "PiChildSessionObserverResult" needs to be exported by the entry point index.d.ts
     readonly onPrivateOutput?: (childId: string, capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult;
     readonly onTreeChanged?: () => void;
@@ -6658,6 +6662,7 @@ export interface PiRpcChildDeps {
     // Warning: (ae-forgotten-export) The symbol "PiDelegateRequestBody" needs to be exported by the entry point index.d.ts
     readonly onDelegationRequest?: (childId: string, correlationId: string, request: PiDelegateRequestBody) => void;
     readonly onInterventionCountChanged?: (count: number) => void;
+    readonly onModelTransition?: (childId: string, transition: PiModelTransitionBody) => void;
     readonly onPrivateOutput?: (capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult;
     // Warning: (ae-forgotten-export) The symbol "PiRestoreContextMetadata" needs to be exported by the entry point index.d.ts
     readonly onRestoreContextVerified?: (metadata: PiRestoreContextMetadata) => PiChildSessionObserverResult;
@@ -6914,6 +6919,7 @@ export interface PiSessionManagerInstance {
 
 // @public
 export interface PiSessionManagerPort {
+    getEntries?(): readonly unknown[];
     getHeader?(): PiSessionHeader | null | undefined;
     // (undocumented)
     getSessionFile(): string | undefined;
