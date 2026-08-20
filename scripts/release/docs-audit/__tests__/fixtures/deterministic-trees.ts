@@ -9,7 +9,29 @@ const ASTRO = `export default {
       sidebar: [
         {
           label: "Start",
-          items: ["docs", "docs/quickstart"],
+          items: [
+            "docs",
+            "docs/quickstart",
+          ],
+        },
+      ],
+    },
+  ],
+};
+`;
+
+const ASTRO_WITH_COMPATIBILITY = `// compatibility pages are intentionally left out of navigation.
+export default {
+  integrations: [
+    {
+      sidebar: [
+        {
+          label: "Start",
+          items: [
+            "docs",
+            "docs/quickstart",
+            "docs/reference/adapters",
+          ],
         },
       ],
     },
@@ -20,6 +42,13 @@ const ASTRO = `export default {
 const SEARCH = `export const docsSearchData = [
   { href: "docs/" },
   { href: "docs/quickstart/" },
+];
+`;
+
+const SEARCH_WITH_REFERENCE = `export const docsSearchData = [
+  { href: "docs/" },
+  { href: "docs/quickstart/" },
+  { href: "docs/reference/adapters/" },
 ];
 `;
 
@@ -37,7 +66,9 @@ export function passingDocsTree(
 ): Record<string, string> {
   const files: Record<string, string> = {
     "README.md": "# Weave\n\nPublic packages and adapters.\n",
-    "docs/README.md": "# Docs\n\nContributor documentation index.\n",
+    "RELEASING.md": "# Releasing\n\nRelease operator runbook.\n",
+    "docs/README.md":
+      "# Docs\n\nContributor documentation index. See the [release runbook](../RELEASING.md).\n",
     "packages/docs/README.md": "# Docs site\n\nPublic documentation.\n",
     "packages/docs/astro.config.mjs": ASTRO,
     "packages/docs/src/data/docs-search.ts": SEARCH,
@@ -66,6 +97,19 @@ export function sidebarDriftTree(): Record<string, string> {
   return passingDocsTree({
     "packages/docs/src/content/docs/docs/concepts.mdx":
       "# Concepts\n\nAgents and workflows.\n",
+  });
+}
+
+export function compatibilityDocsTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/astro.config.mjs": ASTRO_WITH_COMPATIBILITY,
+    "packages/docs/src/data/docs-search.ts": SEARCH_WITH_REFERENCE,
+    "packages/docs/src/content/docs/docs/explanation/legacy.mdx":
+      "---\ntitle: Legacy route\ndescription: Compatibility route for an older guide.\n---\n\nThis route remains available for existing links.\n",
+    "packages/docs/src/content/docs/docs/reference/adapters/index.mdx":
+      "# Adapters\n\nCurrent adapter support.\n",
+    "packages/docs/src/content/docs/docs/reference/adapters/legacy.mdx":
+      "---\ntitle: Legacy adapter\ndescription: Adapter details.\n---\n\nThis per-topic reference route remains available for existing links.\n",
   });
 }
 

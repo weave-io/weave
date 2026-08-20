@@ -1,7 +1,6 @@
 /**
  * Deterministic docs checker: local links, sidebar/search coverage, and
- * README/tarball docs inventory. Fixture-tested here; the real repository
- * is expected to pass only after Task 29 fixes the current drift.
+ * README/tarball docs inventory.
  */
 import { join } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
@@ -54,11 +53,28 @@ export type DeterministicDocsCheckError =
 
 const DOCUMENT_GLOBS = [
   "README.md",
+  "RELEASING.md",
   "docs/**/*.md",
   "packages/*/README.md",
   "packages/adapters/*/README.md",
   "packages/docs/README.md",
   `${DOCS_SITE_CONTENT_ROOT}/**/*.{md,mdx}`,
+] as const;
+
+/**
+ * The checked-in Astro config keeps these legacy route families out of the
+ * public sidebar and search index. All other content remains fail-closed:
+ * adding a page without navigation coverage is an audit failure.
+ */
+const COMPATIBILITY_ROUTE_PREFIXES = [
+  "docs/explanation/",
+  "docs/guides/",
+  "docs/how-to/",
+  "docs/tutorials/",
+] as const;
+const COMPATIBILITY_CONTRACT_MARKERS = [
+  "compatibility pages",
+  "intentionally left out of navigation",
 ] as const;
 
 export function runDeterministicDocsCheck(
@@ -183,11 +199,13 @@ function collectSidebarSearchIssues(
   files: Readonly<Record<string, string>>,
   issues: DeterministicDocsIssue[],
 ): void {
+  const astro = files[DOCS_SITE_ASTRO_CONFIG] ?? "";
   const pages = contentPageSlugs(files);
-  const sidebar = parseSidebarSlugs(files[DOCS_SITE_ASTRO_CONFIG] ?? "");
+  const sidebar = parseSidebarSlugs(astro);
   const search = parseSearchSlugs(files[DOCS_SITE_SEARCH_DATA] ?? "");
+  const compatibility = compatibilityPageSlugs(files, astro, sidebar);
   for (const slug of pages)
-    if (!sidebar.has(slug))
+    if (!compatibility.has(slug) && !sidebar.has(slug))
       issues.push({
         kind: "sidebar-missing-page",
         path: slugToContentPath(slug, files),
@@ -201,7 +219,7 @@ function collectSidebarSearchIssues(
         detail: slug,
       });
   for (const slug of pages)
-    if (!search.has(slug))
+    if (!compatibility.has(slug) && !search.has(slug))
       issues.push({
         kind: "search-missing-page",
         path: slugToContentPath(slug, files),
@@ -307,9 +325,10 @@ function contentPageSlugs(
 
 function parseSidebarSlugs(source: string): Set<string> {
   const slugs = new Set<string>();
-  const sidebar = source.split("sidebar:", 2)[1];
-  if (sidebar === undefined) return slugs;
-  for (const block of sidebar.matchAll(/items:\s*\[([^\]]*)\]/g)) {
+  const sidebarStart = source.search(/\bsidebar\s*:\s*/);
+  if (sidebarStart < 0) return slugs;
+  const sidebar = source.slice(sidebarStart);
+  for (const block of sidebar.matchAll(/items\s*:\s*\[([\s\S]*?)\]/g)) {
     const body = block[1] ?? "";
     for (const match of body.matchAll(/['"]([^'"]+)['"]/g)) {
       const slug = match[1];
@@ -321,13 +340,55 @@ function parseSidebarSlugs(source: string): Set<string> {
 
 function parseSearchSlugs(source: string): Set<string> {
   const slugs = new Set<string>();
-  for (const match of source.matchAll(/href:\s*["']([^"']+)["']/g)) {
+  for (const match of source.matchAll(/href\s*:\s*["']([^"']+)["']/g)) {
     const href = match[1];
     if (href === undefined) continue;
     const slug = href.replace(/\/+$/, "");
     if (slug.length > 0) slugs.add(slug);
   }
   return slugs;
+}
+
+function compatibilityPageSlugs(
+  files: Readonly<Record<string, string>>,
+  astro: string,
+  sidebar: ReadonlySet<string>,
+): Set<string> {
+  if (!declaresCompatibilityRoutes(astro)) return new Set<string>();
+  const compatibility = new Set<string>();
+  for (const slug of contentPageSlugs(files)) {
+    const path = slugToContentPath(slug, files);
+    const text = files[path] ?? "";
+    if (
+      hasCompatibilityFrontmatter(text) ||
+      COMPATIBILITY_ROUTE_PREFIXES.some((prefix) => slug.startsWith(prefix)) ||
+      isUnindexedReferencePage(slug, sidebar)
+    )
+      compatibility.add(slug);
+  }
+  return compatibility;
+}
+
+function declaresCompatibilityRoutes(source: string): boolean {
+  return COMPATIBILITY_CONTRACT_MARKERS.every((marker) =>
+    source.includes(marker),
+  );
+}
+
+function hasCompatibilityFrontmatter(source: string): boolean {
+  const frontmatter = source.match(/^---\s*\n([\s\S]*?)\n---(?:\s|$)/);
+  return frontmatter?.[1]?.includes("Compatibility route") ?? false;
+}
+
+function isUnindexedReferencePage(
+  slug: string,
+  sidebar: ReadonlySet<string>,
+): boolean {
+  if (!slug.startsWith("docs/reference/")) return false;
+  return [...sidebar].some(
+    (entry) =>
+      entry.startsWith("docs/reference/") && slug.startsWith(`${entry}/`),
+  );
 }
 
 function slugToContentPath(
