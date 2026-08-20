@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import fixture from "../__fixtures__/pi-0.84.2-child-ui-events.v1.json";
 import {
   isPiAuthoritativeToolEvent,
+  type PiChildSessionEvent,
   PiChildSessionEventSchema,
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
+  retainedChildSessionEvent,
 } from "../child-session-events.js";
 
 describe("Pi child session event protocol", () => {
@@ -215,12 +217,14 @@ describe("Pi child session event protocol", () => {
       value: "ok",
     });
     expect(parsed.success).toBe(true);
-    if (parsed.success)
+    if (parsed.success) {
       expect(parsed.data).toEqual({
         type: "unknown",
         originalType: "future_event",
         payload: { value: "ok" },
       });
+      expect(retainedChildSessionEvent(parsed.data)).toEqual(parsed.data);
+    }
   });
 
   it("keeps known-schema failures closed and bounds unknown payloads", () => {
@@ -238,6 +242,62 @@ describe("Pi child session event protocol", () => {
       expect(oversizedUnknown.data.originalType).toHaveLength(256);
       expect(Object.keys(oversizedUnknown.data.payload ?? {})).toHaveLength(64);
     }
+  });
+
+  it.each([
+    "turn_end",
+    "agent_end",
+  ] as const)("drops raw reasoning from terminal lifecycle events before retention (%s)", (type) => {
+    const sentinel = "LIVE-TERMINAL-REASONING";
+    const parsed = parsePiChildSessionEvent(
+      type === "turn_end"
+        ? {
+            type,
+            message: {
+              role: "assistant",
+              content: [{ type: "thinking", thinking: sentinel }],
+            },
+            toolResults: [],
+          }
+        : {
+            type,
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "thinking", thinking: sentinel }],
+              },
+            ],
+            willRetry: false,
+          },
+    );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    // The parser deliberately keeps the bounded host payload as an unknown
+    // event. The retention boundary, not a sentinel-specific observer,
+    // removes this real Pi terminal carrier.
+    expect(JSON.stringify(parsed.data).includes(sentinel)).toBe(true);
+    expect(retainedChildSessionEvent(parsed.data)).toBeUndefined();
+  });
+
+  it("fails closed without invoking an unknown-event originalType accessor", () => {
+    let reads = 0;
+    const event = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(event, "type", {
+      enumerable: true,
+      value: "unknown",
+    });
+    Object.defineProperty(event, "originalType", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return "turn_end";
+      },
+    });
+
+    expect(
+      retainedChildSessionEvent(event as unknown as PiChildSessionEvent),
+    ).toBeUndefined();
+    expect(reads).toBe(0);
   });
 
   it("rejects unbounded event strings and validates the UI response envelope", () => {

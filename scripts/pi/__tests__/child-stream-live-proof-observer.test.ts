@@ -20,6 +20,13 @@ async function fixtureEvents(): Promise<readonly FixtureEvent[]> {
   );
 }
 
+async function allFixtureEvents(): Promise<readonly FixtureEvent[]> {
+  const fixture = (await Bun.file(FIXTURE_PATH).json()) as {
+    readonly events: readonly FixtureEvent[];
+  };
+  return fixture.events;
+}
+
 function withReasoning(
   event: FixtureEvent,
   reasoning: (ordinal: number) => string,
@@ -109,6 +116,111 @@ describe("LiveProofObserver", () => {
     const isolation = observer.isolation();
     expect(isolation.prohibitedSinkDetected).toBe(true);
     expect(isolation.durableIsolated).toBe(false);
+  });
+
+  it.each([
+    "turn_end",
+    "agent_end",
+  ] as const)("does not retain raw reasoning carried by terminal lifecycle event (%s)", (type) => {
+    const sentinel = "LIVE-TERMINAL-REASONING";
+    const observer = createLiveProofObserver(sentinel);
+    observer.ingest(
+      type === "turn_end"
+        ? {
+            type,
+            message: {
+              role: "assistant",
+              content: [{ type: "thinking", thinking: sentinel }],
+            },
+          }
+        : {
+            type,
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "thinking", thinking: sentinel }],
+              },
+            ],
+            willRetry: false,
+          },
+    );
+
+    const isolation = observer.isolation();
+    expect(isolation.modelIsolated).toBe(true);
+    expect(isolation.durableIsolated).toBe(true);
+    expect(isolation.prohibitedSinkDetected).toBe(false);
+    observer.release();
+  });
+
+  it("closes the 97-event production-shaped trigger at the retention boundary", async () => {
+    const sentinel = "LIVE-TERMINAL-REASONING";
+    const source = (await allFixtureEvents()).map((event) => {
+      const payload = withReasoning(event, (id) => `${sentinel}-${id} `);
+      if (payload.type === "turn_end") {
+        return {
+          ...payload,
+          message: {
+            role: "assistant",
+            content: [{ type: "thinking", thinking: sentinel }],
+          },
+        };
+      }
+      if (payload.type === "agent_end") {
+        return {
+          ...payload,
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "thinking", thinking: sentinel }],
+            },
+          ],
+        };
+      }
+      return payload;
+    });
+    const settlement = source.at(-1);
+    expect(settlement?.type).toBe("agent_settled");
+    if (settlement === undefined) return;
+    const events = [
+      ...source.slice(0, -1),
+      ...Array.from({ length: 50 }, () => ({
+        type: "status",
+        status: "working",
+      })),
+      settlement,
+    ];
+    expect(events).toHaveLength(97);
+
+    const observer = createLiveProofObserver(sentinel);
+    expect(observer.selectInspector()).toBe(true);
+    for (const event of events) observer.ingest(event);
+
+    expect(observer.settled()).toBe(true);
+    expect(observer.parentReasoningLane().status).toBe("pass");
+    expect(observer.inspectorReasoningSignal().status).toBe("pass");
+    expect(observer.inspectorToolSignal().status).toBe("pass");
+    expect(observer.inspectorAssistantSignal().status).toBe("pass");
+    expect(observer.settlement(1)).toMatchObject({
+      status: "settled",
+      events: 97,
+      settlementCount: 1,
+    });
+    // The first closed predicate that failed in proof 53eea0a1 was the model
+    // retention check; durable retention and the aggregate sink predicate then
+    // failed from the same terminal unknown payload. Rendering stayed clean.
+    expect(observer.isolation()).toEqual({
+      parentIsolated: true,
+      cardIsolated: true,
+      modelIsolated: true,
+      durableIsolated: true,
+      prohibitedSinkDetected: false,
+    });
+    expect(observer.registrySnapshot()).toMatchObject({
+      registryEntries: 0,
+      registryBytes: 0,
+    });
+    expect(observer.diagnosticsSnapshot().status).toBe("clean");
+    observer.release();
   });
 
   it("refuses a second inspector selection and selection after settlement", async () => {

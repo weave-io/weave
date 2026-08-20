@@ -949,6 +949,18 @@ const KNOWN_CHILD_EVENT_TYPES = new Set([
   "extension_ui_response",
 ]);
 
+/**
+ * Pi lifecycle frames that can carry a complete assistant message.
+ *
+ * These host events are intentionally still parsed as bounded `unknown`
+ * values, because the adapter does not consume a lifecycle payload. They must
+ * not cross a retention boundary, though: on Pi 0.84 the terminal frame can
+ * repeat the assistant's thinking blocks, and retaining its unknown payload
+ * would bypass the shared raw-reasoning redaction rule. The lifecycle fact is
+ * already represented by the adapter's own settlement and message events.
+ */
+const NON_RETAINABLE_UNKNOWN_EVENT_TYPES = new Set(["turn_end", "agent_end"]);
+
 const MAX_CHILD_EVENT_DEPTH = 16;
 const NATIVE_TOOL_REDACTED = "[redacted]";
 const NATIVE_TOOL_SENSITIVE_KEY =
@@ -1640,7 +1652,9 @@ export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
  * nothing observed.
  *
  * Everything else is retained exactly as `redactRawReasoningFromEvent`
- * describes: an unambiguous answer and pure framing unchanged.
+ * describes: an unambiguous answer and pure framing unchanged. The two host
+ * terminal lifecycle wrappers named above are the explicit exception: they
+ * carry no adapter-owned fact and are dropped before retention.
  *
  * This is the durable Weave boundary. Standard session observers and every
  * checkpoint caller must use this projection; the live reasoning projector is
@@ -1649,7 +1663,38 @@ export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
 export function retainedChildSessionEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent | undefined {
-  if (event.type === "message_update") {
+  // Read the discriminant and the terminal kind through the same own-data
+  // descriptor boundary as the parser. This function is also called directly
+  // by replay and test seams; a forged accessor must not be invoked to decide
+  // whether an unknown payload is safe to retain. An unreadable unknown event
+  // is dropped rather than passed on to a later serializer.
+  const eventType = ownEnumerableDataValue(event as object, "type");
+  if (eventType.isErr() || typeof eventType.value !== "string")
+    return undefined;
+  if (eventType.value === "unknown") {
+    const originalType = ownEnumerableDataValue(
+      event as object,
+      "originalType",
+    );
+    if (
+      originalType.isErr() ||
+      typeof originalType.value !== "string" ||
+      originalType.value.length === 0 ||
+      originalType.value.length > 256
+    ) {
+      return undefined;
+    }
+    // Pi's terminal lifecycle wrappers are parser-approved unknown events, but
+    // their payload may repeat a complete AssistantMessage, including raw
+    // thinking blocks. The adapter has no lifecycle fact to retain; dropping
+    // it here keeps every retention entrance fail-closed without changing the
+    // live-only reasoning projectors or weakening sink detection.
+    if (NON_RETAINABLE_UNKNOWN_EVENT_TYPES.has(originalType.value)) {
+      return undefined;
+    }
+    return event;
+  }
+  if (eventType.value === "message_update") {
     const carrier = classifyPiMessageUpdate(event);
     if (carrier.kind === "rejected") return undefined;
     if (carrier.kind === "reasoning") return canonicalReasoningMessageUpdate();
