@@ -75,8 +75,11 @@ Create these repository environments in **Settings → Environments**:
 - `prerelease` — protects `next` and nightly proof work.
 
 Configure the required reviewers and wait for GitHub to save the protection
-rules. The doctor checks that both environments exist and that their metadata
-is readable. The doctor does not check or print secret values.
+rules. The doctor checks that both environments exist, that their metadata is
+readable, and that GitHub reports a `required_reviewers` protection rule that
+names at least one reviewer. An environment that exists with no protection
+rules — GitHub returns an empty object or an empty rule list — gates nothing
+and fails the doctor. The doctor does not check or print secret values.
 
 ### Ruleset and required checks
 
@@ -218,6 +221,56 @@ The doctor also reads Task 14's recomputed post-merge state and the
   or moves `latest`.
 - `CompleteWithIncident` is terminal and allows fix-forward preparation after
   the durable warning, refs, cleanup, and deprecation readback are authoritative.
+
+### Where post-merge authority comes from
+
+The doctor recomputes Task 14 state from immutable, source-bound observations.
+It never reads a pull-request comment, and it never treats a workflow artifact
+as authority.
+
+| Authority | Source |
+| --- | --- |
+| Package identity and version | `package.json` at the release merge commit |
+| Publication, bytes, deprecation | the npm registry version document and tarball |
+| Expected digest | npm's published provenance statement, accepted only when its in-toto subject is the served tarball and its build source commit is the released commit |
+| Tags and releases | Git tag refs and GitHub releases |
+| Changeset cleanup | the merged tree plus `main`'s tree, so a cleanup pull request merged *after* the release is observed |
+| Artifact cache and independent proof | Actions runs for `release-publish.yml` and `release-attest.yml` at the released commit |
+| Integrity-incident authorization | the protected `release-integrity-incident` check run on the released commit |
+| `CreationCleanupPending` | Weave's durable release-state database |
+
+When npm has published no provenance for a version, that is an observed
+`PendingRegistryVerification`. When npm has published provenance that does not
+describe the served bytes or names another commit, the doctor fails closed:
+only the protected incident-resolution operation records the attested digest of
+foreign bytes, and the doctor never invents one.
+
+### Durable release-state database
+
+`CreationCleanupPending` is operational state, so it is read from Weave's
+durable database rather than from a comment or an artifact. The doctor opens
+the database read-only and never creates, migrates, or writes it.
+
+- `WEAVE_RELEASE_STATE_DB` selects the database explicitly. A named database
+  that does not exist fails the doctor.
+- Without that variable the doctor reads
+  `$XDG_DATA_HOME/weave/release-state.sqlite`, defaulting to
+  `~/.local/share/weave/release-state.sqlite`. A missing default file is the
+  store's empty state.
+
+The record is bound to its generation and its pull request. A record that
+survives while a stable release pull request is associated with the live
+marker, or that names a pull request which is not an authoritative stable
+release PR, fails the doctor.
+
+### Outbound read boundaries
+
+Every outbound doctor read is bounded. HTTP reads have a wall-clock timeout and
+a byte bound counted while the body streams; `npm` subprocesses have a
+wall-clock timeout and stdout/stderr byte bounds counted while the streams
+drain. The GitHub credential is attached only after the API origin is proven to
+be `https://api.github.com`; a `GITHUB_API_URL` naming another host, scheme,
+port, userinfo, path, query, or fragment is refused rather than normalized.
 
 A green doctor report is evidence for the selected rung only. It is not a
 replacement for the reviewed freeze, activation commit, or protected GitHub
