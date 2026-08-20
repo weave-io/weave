@@ -1885,6 +1885,11 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-live-proof-command.ts`
+  - function liveProofReportPassed: (report) => boolean
+  - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
+  - interface LiveProofCommandOutcome
+  - interface LiveProofCommandInput
 - `scripts/pi/child-stream-live-proof-contract.ts`
   - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
   - function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
@@ -1893,6 +1898,12 @@
   - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
   - interface LiveProofArgumentFailure
   - _...56 more_
+- `scripts/pi/child-stream-live-proof-observer.ts` — function createLiveProofObserver: (sentinel) => LiveProofObserver, class LiveProofObserver
+- `scripts/pi/child-stream-live-proof-port.ts`
+  - function createLiveProofPort: (config) => LiveProofPort
+  - interface LiveProofGuardedResource
+  - interface LiveProofPortConfig
+- `scripts/pi/child-stream-live-proof-report-writer.ts` — function writeLiveProofReport: (input) => ResultAsync<number, LiveProofWriteFailure>, interface LiveProofWriteFailure
 - `scripts/pi/child-stream-live-proof-runner.ts`
   - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
   - interface LiveProofPortFailure
@@ -1901,6 +1912,14 @@
   - interface LiveProofFreshParentLaunch
   - interface LiveProofDeterministicChildRequest
   - _...14 more_
+- `scripts/pi/child-stream-live-proof-system.ts`
+  - function systemFailure: (code) => LiveProofSystemFailure
+  - function safeProofEnvironment: (source, string>>) => Record<string, string>
+  - function createLiveProofSystem: () => LiveProofSystem
+  - function workspacePath: (root, name) => string
+  - interface LiveProofSystemFailure
+  - interface LiveProofSpawnInput
+  - _...4 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void

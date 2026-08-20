@@ -21,6 +21,8 @@ import {
   runFixtureRedControls,
   verifyCaptureManifest,
 } from "./child-stream-capture.js";
+import { runLiveProofCommand } from "./child-stream-live-proof-command.js";
+import { LIVE_PROOF_COMMAND } from "./child-stream-live-proof-contract.js";
 
 const EXTENSION_RELATIVE_PATH =
   "packages/adapters/pi/dist/extension.js" as const;
@@ -752,8 +754,27 @@ function writeLine(line: string): Result<void, undefined> {
   )();
 }
 
-if (import.meta.main) {
-  const parsed = parseVerifyChildStreamingArgs(Bun.argv.slice(2));
+/** Run the live command. It is the only command that owns real resources. */
+async function runLiveCommandLine(argv: readonly string[]): Promise<void> {
+  const outcome = await runLiveProofCommand({
+    argv,
+    repoRoot: resolve(import.meta.dir, "../.."),
+  });
+  outcome.match(
+    (value) => {
+      writeLine(value.line);
+      if (value.exitCode !== 0) process.exitCode = value.exitCode;
+    },
+    () => undefined,
+  );
+}
+
+async function runCommandLine(argv: readonly string[]): Promise<void> {
+  if (argv[0] === LIVE_PROOF_COMMAND) {
+    await runLiveCommandLine(argv);
+    return;
+  }
+  const parsed = parseVerifyChildStreamingArgs(argv);
   if (parsed.isErr()) {
     writeLine(
       "child-streaming: blocked; evidence=blocked; reason=invalid-args",
@@ -833,4 +854,8 @@ if (import.meta.main) {
       );
     }
   }
+}
+
+if (import.meta.main) {
+  await runCommandLine(Bun.argv.slice(2));
 }

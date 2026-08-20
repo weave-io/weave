@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 353 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~39,300 tokens. Without it, AI exploration would cost ~111,100 tokens. **Saves ~71,800 tokens per conversation.**
-> **Last scanned:** 2026-08-20 17:01 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 358 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~39,700 tokens. Without it, AI exploration would cost ~112,400 tokens. **Saves ~72,700 tokens per conversation.**
+> **Last scanned:** 2026-08-20 17:24 — re-run after significant changes
 
 ---
 
@@ -1896,6 +1896,11 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-live-proof-command.ts`
+  - function liveProofReportPassed: (report) => boolean
+  - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
+  - interface LiveProofCommandOutcome
+  - interface LiveProofCommandInput
 - `scripts/pi/child-stream-live-proof-contract.ts`
   - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
   - function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
@@ -1904,6 +1909,12 @@
   - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
   - interface LiveProofArgumentFailure
   - _...56 more_
+- `scripts/pi/child-stream-live-proof-observer.ts` — function createLiveProofObserver: (sentinel) => LiveProofObserver, class LiveProofObserver
+- `scripts/pi/child-stream-live-proof-port.ts`
+  - function createLiveProofPort: (config) => LiveProofPort
+  - interface LiveProofGuardedResource
+  - interface LiveProofPortConfig
+- `scripts/pi/child-stream-live-proof-report-writer.ts` — function writeLiveProofReport: (input) => ResultAsync<number, LiveProofWriteFailure>, interface LiveProofWriteFailure
 - `scripts/pi/child-stream-live-proof-runner.ts`
   - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
   - interface LiveProofPortFailure
@@ -1912,6 +1923,14 @@
   - interface LiveProofFreshParentLaunch
   - interface LiveProofDeterministicChildRequest
   - _...14 more_
+- `scripts/pi/child-stream-live-proof-system.ts`
+  - function systemFailure: (code) => LiveProofSystemFailure
+  - function safeProofEnvironment: (source, string>>) => Record<string, string>
+  - function createLiveProofSystem: () => LiveProofSystem
+  - function workspacePath: (root, name) => string
+  - interface LiveProofSystemFailure
+  - interface LiveProofSpawnInput
+  - _...4 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
@@ -2247,7 +2266,7 @@
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **29** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/ui-paint.ts` — imported by **26** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **27** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **22** files
 - `packages/adapters/pi/src/errors.ts` — imported by **22** files
@@ -2270,7 +2289,7 @@
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +24 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +21 more
+- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +22 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +17 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
@@ -2298,7 +2317,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 377 test files found
+> 382 test files found
 
 ---
 
