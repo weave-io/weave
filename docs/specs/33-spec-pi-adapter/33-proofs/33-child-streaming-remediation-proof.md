@@ -522,3 +522,106 @@ remained the Pi persistence boundary.
 The earlier exact-identity RED remains under `695e15a2`, and the historical
 2026-08-18 RED remains unchanged. Task 11 remains unchecked in
 `.weave/plans/pi-child-streaming-remediation.md`. Weft and Warp were not run.
+
+## Task 11 verification B: final fresh exact-identity proof (2026-08-20)
+
+This append-only section is the authoritative fresh-parent proof for the clean
+subject below. The earlier RED sections and all prior proof history remain
+unchanged.
+
+### Exact clean subject and runtime-loaded identity
+
+| Fact | Bounded value |
+| --- | --- |
+| Clean Git subject | `4697989a7e00cfb06950ddf0799208985f1af42e` |
+| Git dirty | `false` |
+| Build input count | `149` |
+| Build output count | `10` |
+| Build completion | `2026-08-20T15:28:57.695Z` |
+| Build-manifest SHA-256 | `4ff4e9557630029b6be6f54a2d99daedf25993013b61c96d49e264466a034ae0` |
+| Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| Pi host | `0.84.2` |
+| Pi package SHA-256 | `820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0` |
+| pi-ai package SHA-256 | `9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9` |
+| pi-tui package SHA-256 | `2c19fb7e3d1e83a461b6f020b2ffc118b435dcd78a07af8c8def72864cd09e6e` |
+| Identity gate before delegation | **PASS** — `current`; child streaming permitted |
+| Fresh parent | **PASS** — started after build completion and the identity gate; no `/reload` |
+
+The complete built output set was content-free and bounded:
+
+| Output | SHA-256 |
+| --- | --- |
+| `cli` | `9d39ca336f49291f24964e5de2a3890d9c0410cc9ca48736de00fcecac1a418a` |
+| `cli-declarations` | `5984be53878a216ed0a054094be409679635219c00519c70e86b6c853369b9e8` |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| `extension-build-identity` | `8a7d95ec596de94b6f25a1228262829c85e415199952a38d884b9ac7046c869d` |
+| `extension-declarations` | `3373de113af5f106448d6adc21b21632a7995da0db9b2af6fb641cac942fe009` |
+| `extension-impl` | `879ba382cc089ed937a1d0c564691ef91a9bbc9f5761852bdf9791afaf13127a` |
+| `extension-impl-declarations` | `a2c71bac5b7b6604c6365b4ec47239e24e1687fbfc65398dadaacc0cc86d2b84` |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` |
+| `index` | `a2e161a52596dd83e2e1e34559abbe08fb77f009289bc09fa796217c709e1319` |
+| `index-declarations` | `e66c1ee54be87d7148428200f738b3454d15cee58b0c6e8a6857752a4b0f3fc8` |
+
+The runtime-loaded output proof matched the complete runtime set before
+delegation:
+
+| Runtime-loaded output | SHA-256 |
+| --- | --- |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| `extension-build-identity` | `8a7d95ec596de94b6f25a1228262829c85e415199952a38d884b9ac7046c869d` |
+| `extension-impl` | `879ba382cc089ed937a1d0c564691ef91a9bbc9f5761852bdf9791afaf13127a` |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` |
+
+The direct loaded-output proof and the independent identity verifier both
+reported the same four runtime digests. `extension-impl` was included; a thin
+entry-only identity was not accepted.
+
+### Fresh live lanes
+
+The fresh parent delegated exactly one deterministic `shuttle-mini` child.
+The child emitted generic thinking, one real controlled bash call and its
+result, and incremental assistant output. All observations below are
+content-free counts.
+
+| Lane | Status | Bounded observation |
+| --- | --- | --- |
+| Delegation cardinality | **PASS** | `shuttle-mini` children: `1`; no second delegation |
+| Parent raw reasoning live | **PASS** | Exact `↪ reasoning •` prefix observations: `1`; parent child activity remained reasoning-only |
+| Inspector raw reasoning live | **PASS** | The exact same prefix was observed live: `1`; one bounded reasoning entry |
+| Inspector tool details | **PASS** | Correlated bash rows: `1`; terminal result rows: `1`; duplicate running/done terminal rows: `0` |
+| Inspector assistant reply live | **PASS** | `shuttle · streaming reply` header observations: `1`; nonblank body samples before settlement: `2`; body growth: `1` |
+| Inspector settlement | **PASS** | Read-only after settlement; no live reasoning row remained |
+
+The settled parent card contained no child assistant, tool, or inspector
+payload. The authoritative settled tool result occurred exactly once and was
+not rendered as parent-card child activity.
+
+### Sink isolation, diagnostics, and cleanup
+
+| Check | Status | Bounded result |
+| --- | --- | --- |
+| Parent reasoning store after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Inspector reasoning store after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Durable Weave sinks | **PASS** | Parent input, message/model, card details/facts, Runtime Store, checkpoints, diagnostics, logs, fixtures, and proof objects contained no raw reasoning or prohibited child payload |
+| Content-free diagnostics | **PASS** | Serialized bytes stayed within `8192`; omitted buckets: `0`; failure buckets invalidating proof: `0` |
+| Content-free capture | **PASS** | `47` events; independent manifest |
+| Content-free replay and red controls | **PASS** | `5` red controls; `4` lanes |
+| Runtime Store | **PASS** | No active lease; `0` workflow instances; schema `6` |
+| Runtime content scan | **PASS** | No raw reasoning or prohibited child payload matches |
+| Processes and Herdr resource | **PASS** | No child, provider, or proof process; created proof pane closed; temporary proof workspace removed |
+
+### Restoration and validation
+
+| Gate | Result |
+| --- | --- |
+| Exact global config restoration | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644`; size `2857` |
+| Mode-0600 exact recovery backup | **PASS** — retained through proof and verified before removal |
+| Global and project config validation | **PASS** |
+| Adapter symlink restoration | **PASS** — main-worktree adapter restored |
+| Deterministic proof routing restoration | **PASS** — global routing and provider extension restored |
+| `bun run build` | **PASS** |
+| `bun run docs:check-links` | **PASS** |
+| Content scans after update | **PASS** |
+
+Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
+Weft and Warp were not run.
