@@ -420,7 +420,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
     - The worktree is free of generated operational/proof data.
     - The review range is exact and reproducible.
 
-- [ ] 14. Obtain Weft approval on the frozen implementation range
+- [x] 14. Obtain Weft approval on the frozen implementation range
   - **What**: Review the exact frozen range for architecture, public Pi API use, bounds, failure handling, child authentication, and test adequacy before live execution.
   - **Files**: No planned production edits. Review findings may require focused fixes and a new frozen range.
   - **Depends on**: Task 13.
