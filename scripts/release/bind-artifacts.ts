@@ -16,7 +16,6 @@ import {
   ArtifactBindingCliInputSchema,
 } from "./input-validation.js";
 import type { ArtifactManifest } from "./model.js";
-import { bindStableTrain } from "./stable-train.js";
 
 const log = logger.child({ module: "release-artifact-binding" });
 
@@ -186,19 +185,6 @@ export function bindArtifacts(
                           path: input.controlPath,
                         }))
                         .andThen((controlBytes) => {
-                          const stableTrain =
-                            manifest.stableTrain === undefined
-                              ? undefined
-                              : bindStableTrain(
-                                  manifest.stableTrain as never,
-                                  digest(text),
-                                  artifacts.map(({ actual }) => actual.id),
-                                );
-                          if (stableTrain?.isErr())
-                            return errAsync({
-                              type: "InvalidManifest" as const,
-                              issues: [stableTrain.error.type],
-                            });
                           const record = createBindingRecord({
                             repositoryId: input.repositoryId,
                             workflowSha: input.workflowSha,
@@ -219,9 +205,6 @@ export function bindArtifacts(
                             })),
                             manifest,
                             manifestDigest: digest(text),
-                            stableTrain: stableTrain?.isOk()
-                              ? stableTrain.value
-                              : undefined,
                             files: [
                               ...manifest.artifacts.map(
                                 ({ filename, sha256 }) => ({

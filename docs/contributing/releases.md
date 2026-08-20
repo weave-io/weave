@@ -85,11 +85,14 @@ not mutate Git source files or provide a Git mutation path for repair.
 
 ## The `nightly` channel
 
-Task 27 adds a maintainer-guarded manual `channel: nightly` route to the same
-trusted workflow. `release-publish.yml` remains scheduleless. The existing
-`publish.yml` schedule is still the sole scheduled publisher. Task 35 is the
-planned schedule-activation task; this route does not claim that nightly is
-scheduled or active.
+A maintainer-guarded `channel: nightly` route runs on the same trusted
+workflow. The cutover moved the `17 0 * * *` schedule onto
+`release-publish.yml`; it is the only schedule that workflow may declare, and
+the reachability checker rejects any other cron.
+
+The schedule stays inert until the rollout tuple reaches stage `ready` and mode
+`enabled`. Until then the route job fails closed before any attestation,
+proof, OIDC, or publish work.
 
 The controller finds the latest successful nightly source SHA, computes the
 affected-since-that-nightly package set, and closes it over shared changesets

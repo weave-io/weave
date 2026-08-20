@@ -36,7 +36,7 @@ const input: BindingRecordInput = {
   runId: 77,
   runAttempt: 1,
   event: "workflow_dispatch",
-  operation: "stable-cut",
+  operation: "stable-publish",
   headRef: "refs/heads/main",
   headSha: "c".repeat(40),
   originJobConclusion: "success",
@@ -192,7 +192,7 @@ describe("artifact binding", () => {
     {
       name: "operation",
       client: () => github(),
-      override: { expectedOperation: "nightly" },
+      override: { expectedOperation: "nightly" as const },
     },
     {
       name: "head ref",

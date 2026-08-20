@@ -33,7 +33,7 @@ describe("validateReleaseInvocation", () => {
       "stable dispatch",
       {
         ...base,
-        operation: "stable-cut",
+        operation: "stable-publish",
         channel: "stable",
         versions: { "@weaveio/weave-cli": "1.2.3" },
       },
@@ -65,7 +65,7 @@ describe("validateReleaseInvocation", () => {
       "claude stable",
       {
         ...base,
-        operation: "stable-cut",
+        operation: "stable-publish",
         channel: "stable",
         packages: ["@weaveio/weave-adapter-claude-code"],
         versions: { "@weaveio/weave-adapter-claude-code": "1.2.3" },

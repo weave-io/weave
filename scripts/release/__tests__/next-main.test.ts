@@ -580,7 +580,10 @@ describe("next workflow shape", () => {
         "{{ inputs.channel == 'next' && 'prerelease' || 'release' }}",
     );
     expect(workflow).not.toContain("workflow_call:");
-    expect(workflow).not.toMatch(/^\s+schedule:/m);
+    // Task 35's cutover schedule lands here. It does not add a next entry:
+    // the next channel is reachable only through maintainer dispatch.
+    expect(workflow).toMatch(/^\s+schedule:/m);
+    expect(workflow).toContain('- cron: "17 0 * * *"');
     expect((workflow.match(/id-token:\s*write/g) ?? []).length).toBe(1);
     const order = [
       "  route:",

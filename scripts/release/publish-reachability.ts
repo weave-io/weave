@@ -10,6 +10,7 @@
 import { dirname, join, relative, resolve } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import {
+  CUTOVER_NIGHTLY_CRON,
   RELEASE_ATTEST_WORKFLOW_PATH,
   RELEASE_PUBLISH_WORKFLOW_PATH,
   RELEASE_STABLE_PREPARE_WORKFLOW_PATH,
@@ -37,10 +38,9 @@ export const INCIDENT_INTEGRATION_TEST =
 export const INCIDENT_SEAM_PATH =
   "scripts/release/__tests__/fixtures/local-registry";
 
-/** Existing pre-cutover identities. They are named policy exceptions, not a
- * permission wildcard. Task 35 removes the old publisher exception. */
+/** Unrelated identities outside the release paths. A named policy exception,
+ * not a permission wildcard. The cutover removed the old publisher. */
 export const ALLOWED_UNRELATED_ID_TOKEN_WORKFLOWS = new Set([
-  ".github/workflows/publish.yml",
   ".github/workflows/deploy-docs.yml",
 ]);
 
@@ -270,9 +270,8 @@ type AppTokenJobContract = Readonly<{
 }>;
 
 /**
- * Every job that receives App authority is listed explicitly. The retained
- * legacy publisher is included because it remains scheduled during
- * pre-cutover. A job not in this map must not mint or receive an App token.
+ * Every job that receives App authority is listed explicitly. A job not in
+ * this map must not mint or receive an App token.
  */
 const APP_TOKEN_JOB_CONTRACTS: Readonly<
   Record<string, Readonly<Record<string, AppTokenJobContract>>>
@@ -901,12 +900,22 @@ export function assertStableWorkflowGraph(
         reason: `${step} needs must be ${expected.join(",") || "empty"}`,
       });
   }
-  if (workflow.scheduled)
-    return err({
-      type: "WorkflowPermissionViolation",
-      path: workflow.path,
-      reason: "Task 25 trusted workflow must not declare a schedule trigger",
-    });
+  // Task 35's cutover moves the nightly cron onto the trusted workflow. The
+  // schedule is allowed, but only as the exact single nightly cron: any other
+  // or additional cron would widen the automatic entry into the publish chain.
+  if (workflow.scheduled) {
+    const crons = [
+      ...withoutYamlComments(workflow.text).matchAll(
+        /^\s*-\s*cron:\s*["']?([^"'\n]+?)["']?\s*$/gm,
+      ),
+    ].map((match) => match[1]);
+    if (crons.length !== 1 || crons[0] !== CUTOVER_NIGHTLY_CRON)
+      return err({
+        type: "WorkflowPermissionViolation",
+        path: workflow.path,
+        reason: `trusted workflow schedule must be exactly "${CUTOVER_NIGHTLY_CRON}"`,
+      });
+  }
   if (!/pull_request\s*:/m.test(withoutYamlComments(workflow.text)))
     return err({
       type: "WorkflowPermissionViolation",

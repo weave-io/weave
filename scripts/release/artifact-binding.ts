@@ -15,7 +15,6 @@ import {
   type ArtifactBindingRecord,
   ArtifactBindingRecordSchema,
   type ArtifactManifest,
-  type StableTrainRecord,
 } from "./model.js";
 import {
   type ReleasePlan,
@@ -49,7 +48,6 @@ export interface BindingRecordInput {
   manifest: ArtifactManifest;
   manifestDigest: string;
   files: readonly { filename: string; sha256: string }[];
-  stableTrain?: StableTrainRecord;
 }
 
 export type BindingError =
@@ -184,9 +182,6 @@ export function createBindingRecord(
     versions: input.manifest.versions,
     releaseSubjectSha: input.manifest.releaseSubjectSha,
     manifestDigest: input.manifestDigest,
-    ...(input.stableTrain === undefined
-      ? {}
-      : { stableTrain: input.stableTrain }),
     files: input.files,
   };
   const record = { ...unsigned, recordDigest: digest(canonicalJson(unsigned)) };

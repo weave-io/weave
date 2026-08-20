@@ -90,12 +90,17 @@ prereleases are skipped; conflicts stop the run. Do not edit source files,
 consume changesets, or create a manual stable changelog entry to repair a
 `next` run.
 
-## `nightly` channel (manual path only)
+## `nightly` channel
 
-Task 27 adds a maintainer-guarded `channel: nightly` option to the trusted
-workflow. It has no schedule trigger. The old `publish.yml` schedule remains
-the only scheduled publisher. Planned schedule activation belongs to Task 35;
-do not treat this manual path as active scheduled nightly publication.
+Dispatch the trusted workflow with the maintainer-guarded `channel: nightly`
+option. The cutover moved the `17 0 * * *` schedule onto
+`release-publish.yml`, and it is the only schedule that workflow may declare.
+
+The schedule is inert until the rollout tuple reaches stage `ready` and mode
+`enabled`. While the rollout is gated, a scheduled or dispatched event exits in
+the route job before any attestation, proof, OIDC, or publish work. Nightly
+coverage is deliberately paused for the cutover freeze window; that pause is
+the only sanctioned coverage gap.
 
 Nightly reads the latest successful nightly source SHA from the registry and
 computes the affected package set since that SHA. It closes the set over shared

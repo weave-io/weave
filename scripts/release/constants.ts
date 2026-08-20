@@ -31,6 +31,14 @@ export const RELEASE_ATTEST_WORKFLOW_PATH =
   ".github/workflows/release-attest.yml" as const;
 
 /**
+ * The single nightly cron. Task 35's cutover moved it off the removed
+ * publish.yml onto the trusted publish workflow, where it stays inert until
+ * Task 38's two-phase activation. It is the only schedule that workflow may
+ * declare.
+ */
+export const CUTOVER_NIGHTLY_CRON = "17 0 * * *" as const;
+
+/**
  * The only release branch. Its atomic creation is the exclusivity lock for the
  * single open stable release PR, and it dies with that PR.
  */
@@ -297,65 +305,23 @@ export const PACKAGE_ARCHIVE_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Deprecated stable-train constants.
+// Retired-publisher identity.
 //
-// These exist only so the not-yet-removed stable-train and metadata-replay
-// modules keep compiling. They are deleted with their consumers in a single
-// commit. No new code may read them.
+// The old publication workflow was removed at the Task 35 cutover. These two
+// constants stay because the read-only pre-cutover proof and the documented
+// rollback still have to name the retired identity to verify it. Nothing here
+// grants publication authority, and no new code may treat them as a route.
 // ---------------------------------------------------------------------------
 
-/** @deprecated Old publish workflow. Use the per-workflow paths above. */
+/** Retired publish workflow. Rollback and pre-cutover proofs name it read-only. */
 export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
 
 /** Stable workflow-run identity for the read-only pre-cutover proof. */
 export const LEGACY_PREFLIGHT_RUN_NAME = "legacy-publisher-preflight" as const;
 
-/** @deprecated Stable-train operation names. The new pipeline routes by channel. */
-export const RELEASE_OPERATIONS = [
-  "nightly",
-  "stable-cut",
-  "stable-fix",
-  "stable-publish",
-  "stable-finalize",
-  "metadata-replay",
-] as const;
-
-/** @deprecated Stable-train record schema version. */
-export const TRAIN_SCHEMA_VERSION = 1 as const;
-
-/** @deprecated Stable-train record lifetime. */
-export const TRAIN_VALIDITY_DAYS = 7 as const;
-
-/** @deprecated Stable-train lifecycle states. */
-export const STABLE_TRAIN_STATES = [
-  "prepared",
-  "built",
-  "bound",
-  "published-next",
-  "awaiting-promotion",
-  "promoted",
-  "release-draft",
-  "finalized",
-  "metadata-pending",
-  "blocked",
-  "expired",
-  "abandoned",
-  "partial",
-] as const;
-
-/** @deprecated Stable-train lifecycle transitions. */
-export const STABLE_TRAIN_TRANSITIONS = {
-  prepared: ["built", "blocked", "abandoned", "expired"],
-  built: ["bound", "blocked", "abandoned", "expired"],
-  bound: ["published-next", "blocked", "abandoned", "expired"],
-  "published-next": ["awaiting-promotion", "partial", "blocked", "expired"],
-  "awaiting-promotion": ["promoted", "partial", "blocked", "expired"],
-  promoted: ["release-draft", "finalized", "metadata-pending", "blocked"],
-  "release-draft": ["finalized", "metadata-pending", "blocked", "abandoned"],
-  finalized: ["metadata-pending"],
-  "metadata-pending": ["finalized", "blocked"],
-  blocked: ["abandoned", "expired"],
-  expired: ["abandoned"],
-  abandoned: [],
-  partial: ["blocked", "abandoned"],
-} as const;
+/**
+ * Binding-record operation vocabulary retained by the adapted artifact
+ * identity checks. The new pipeline routes by channel; only the two channel
+ * operations that the retained binding checks still validate survive.
+ */
+export const RELEASE_OPERATIONS = ["nightly", "stable-publish"] as const;

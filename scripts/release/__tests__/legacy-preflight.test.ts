@@ -5,6 +5,7 @@ import {
   type LegacyPublisherPreflightEnvironment,
   runLegacyPublisherPreflight,
 } from "../legacy-preflight.js";
+import { LEGACY_DENYLIST_PATHS } from "./legacy-denylist.js";
 
 const SHA = "a".repeat(40);
 const ROOT = resolve(import.meta.dir, "../../..");
@@ -135,75 +136,44 @@ describe("legacy publisher read-only preflight", () => {
   });
 });
 
-describe("publish workflow preflight reachability", () => {
-  test("guards the preflight path before every side-effect job", async () => {
-    const text = await Bun.file(
-      resolve(ROOT, ".github/workflows/publish.yml"),
-    ).text();
-    expect(text).toContain(
-      "run-name: legacy-publisher-$" +
-        "{{ github.event_name == 'workflow_dispatch' && inputs.operation || 'scheduled' }}",
-    );
-    expect(text).toContain(
-      "options: [nightly, stable-cut, stable-fix, stable-publish, stable-finalize, metadata-replay, preflight]",
-    );
+describe("retired publisher after cutover", () => {
+  test("removes the old workflow and keeps the preflight as a rollback proof", async () => {
+    // Task 35 deleted the old publisher. The preflight module stays because
+    // the documented rollback restores the old trust identity and re-verifies
+    // it with `release:doctor --pre-cutover`; it reads the registry and
+    // GitHub, never the removed workflow file.
+    expect(
+      await Bun.file(resolve(ROOT, ".github/workflows/publish.yml")).exists(),
+    ).toBe(false);
+    expect(
+      await Bun.file(
+        resolve(ROOT, "scripts/release/legacy-preflight.ts"),
+      ).exists(),
+    ).toBe(true);
 
-    const legacyJob = jobBlock(text, "legacy-preflight");
-    expect(legacyJob).toContain(
-      "if: github.event_name == 'workflow_dispatch' && inputs.operation == 'preflight'",
+    const workflows = await Array.fromAsync(
+      new Bun.Glob("*.{yml,yaml}").scan({
+        cwd: resolve(ROOT, ".github/workflows"),
+        onlyFiles: true,
+      }),
     );
-    expect(legacyJob).toContain(
-      "permissions:\n      contents: read\n      checks: read",
-    );
-    expect(legacyJob).toContain("ref: refs/heads/main");
-    expect(legacyJob).toContain("persist-credentials: false");
-    expect(legacyJob).toContain(
-      "RELEASE_WORKFLOW_REF: $" + "{{ github.workflow_ref }}",
-    );
-    expect(legacyJob).toContain("run: bun scripts/release/legacy-preflight.ts");
-    expect(legacyJob).not.toMatch(
-      /\bnpm\b|id-token|create-github-app-token|npm publish/,
-    );
-    expect(legacyJob).not.toContain("bun install");
-
-    for (const job of [
-      "preflight",
-      "build",
-      "bind",
-      "publish",
-      "stable-plan",
-      "metadata-replay-plan",
-      "stable-finalize",
-      "release-refs",
-    ]) {
-      const block = jobBlock(text, job);
-      expect(block, job).toContain("inputs.operation != 'preflight'");
-    }
-
-    for (const job of [
-      "build",
-      "bind",
-      "publish",
-      "stable-plan",
-      "metadata-replay-plan",
-      "stable-finalize",
-      "release-refs",
-    ]) {
-      const block = jobBlock(text, job);
-      expect(block, job).toContain("needs:");
-      expect(block, job).not.toMatch(
-        /if:\s*[^\n]*inputs\.operation == 'preflight'/,
-      );
+    expect([...workflows].sort()).toEqual([
+      "agent-evals.yml",
+      "ci.yml",
+      "deploy-docs.yml",
+      "docs-audit-followup.yml",
+      "docs-audit.yml",
+      "release-attest.yml",
+      "release-publish.yml",
+      "release-stable-prepare.yml",
+      "release-stable-regenerate.yml",
+    ]);
+    for (const workflow of workflows) {
+      const text = await Bun.file(
+        resolve(ROOT, ".github/workflows", workflow),
+      ).text();
+      for (const path of LEGACY_DENYLIST_PATHS)
+        expect(text, `${workflow}:${path}`).not.toContain(path);
     }
   });
 });
-
-function jobBlock(text: string, id: string): string {
-  const lines = text.split("\n");
-  const start = lines.indexOf(`  ${id}:`);
-  if (start < 0) return "";
-  const end = lines.findIndex(
-    (line, index) => index > start && /^ {2}[A-Za-z0-9-]+:\s*$/.test(line),
-  );
-  return lines.slice(start, end < 0 ? lines.length : end).join("\n");
-}
