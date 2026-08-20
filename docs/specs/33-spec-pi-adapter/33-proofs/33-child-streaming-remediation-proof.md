@@ -625,3 +625,99 @@ not rendered as parent-card child activity.
 
 Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
 Weft and Warp were not run.
+
+## Task 11 final proof refresh: executable isolation RED (2026-08-20)
+
+This append-only section records the final refresh for the exact clean subject
+below. It is authoritative for this run. The executable live verifier blocked
+acceptance, so this section does not claim a green Task 11 proof.
+
+### Exact subject and identity gate
+
+| Fact | Bounded result |
+| --- | --- |
+| Clean Git subject | `3f6f1980d988dca11af2256e9db200d55a4f0644` |
+| Git dirty | `false` |
+| Build inputs / outputs | `149 / 10` |
+| Build completion | `2026-08-20T18:03:30.208Z` |
+| Build-manifest SHA-256 | `9c33e6505a7dae551969284a2f02d470ce9785208c1d86b7327d08514a902e93` |
+| Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| Pi host | `0.84.2` |
+| Identity before delegation | **PASS** — `current`; child streaming permitted |
+| Fresh parent | **PASS** — started after the build; no reload |
+
+### Executable live verifier
+
+The documented `live` invocation ran against the real installed Pi host with
+`--require-fresh-parent`, `--require-current-build`, the exact four-lane list,
+`--content-free-report`, and `--no-screen-capture`.
+
+| Gate | Bounded result |
+| --- | --- |
+| Command exit | **RED** — `1` |
+| Evidence | `content-free` |
+| Identity | `current / fresh` |
+| Requested lanes | `4`; all `pass` |
+| Isolation | **RED** — `violated` |
+| Settlement | `settled` |
+| Registry | `empty` |
+| Diagnostics | `clean` |
+| Cleanup | `complete` |
+| Failure codes | `1: isolation-failed` |
+| Report mode / bytes | `0600 / 717` |
+| Content-free report SHA-256 | `aa93db9773ee6265a2bcd133a1078ff8211fa1fb75a5acf9e9f04e92d5b2fe65` |
+| Events / dropped / repaints | `97 / 0 / 29` |
+| Diagnostics / cleanup attempts | `0 / 4` |
+
+The report remained within its declared bounds: depth `8`, keys `64`, array
+length `8`, string bytes `128`, and total bytes `16384`.
+
+### Fresh Herdr TUI proof
+
+A new real Herdr parent started after the final build. It loaded Pi `0.84.2`
+and ran without `/reload`.
+
+| Observation | Bounded result |
+| --- | --- |
+| Deterministic children | **PASS** — exactly `1` |
+| Inspector selection | **PASS** — selected while the child was `LIVE` |
+| Parent reasoning surface | **PASS** — control-only activity; no blank active reasoning row |
+| Inspector reasoning surface | **PASS** — reasoning status present |
+| Correlated tool detail / result | **PASS** — `1 / 1`; duplicate terminal rows `0` |
+| Assistant reply surface | **PASS** — live streaming state before settlement; nonblank settled reply |
+| Settlement | **PASS** — one authoritative settlement; inspector became read-only |
+| Parent card payload | **PASS** — no child assistant or tool payload |
+| Herdr and process cleanup | **PASS** — created pane closed; child/provider/proof processes `0` |
+
+The CLI report and terminal proof agreed on one child, one settlement, empty
+registry state, complete cleanup, and content-free evidence. The live command's
+four lane counts were `6 / 6 / 1 / 4` for parent reasoning, inspector
+reasoning, tool detail, and assistant reply observations.
+
+### Fixture, replay, tests, and gates
+
+| Check | Bounded result |
+| --- | --- |
+| Identity / capture / replay | **PASS** — `current`; `47` events; `5` red controls; `4` lanes |
+| Focused live/card tests | **PASS** — `167` tests; `0` failures; `9` files |
+| Script suite | **PASS** — `127` tests; `0` failures; `9` files |
+| Pi suite | **PASS** — `4,199` tests; `0` failures; `178` files |
+| Full hook | **PASS** — `11,193` passed; `11` skipped; `0` failed; `371` files |
+| Build / typecheck | **PASS** — build complete; typecheck `0` errors |
+| Lint | **PASS** — `0` errors; `350` warnings; `67` infos |
+| Documentation links | **PASS** |
+| Config validation | **PASS** |
+
+### Restoration and final cleanup
+
+| Gate | Result |
+| --- | --- |
+| Exact global config | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644`; size `2857` |
+| Exact Pi settings | **PASS** — SHA-256 `c887067f200cdd21e7a6a96c196021c5714deb2bf065ceb666d2d23be191722a`; mode `0644`; size `973` |
+| Adapter symlink | **PASS** — canonical main-worktree target restored |
+| Pi launcher | **PASS** — original SHA restored |
+| Runtime Store | **PASS** — no active lease; `0` workflow instances |
+| Proof workspace, report, and Herdr pane | **PASS** — removed or closed after verification |
+
+Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
+Weft and Warp were not run.
