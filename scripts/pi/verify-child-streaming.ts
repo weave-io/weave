@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   EXTENSION_BUILD_IDENTITY_PROOF_ENV,
@@ -34,7 +35,37 @@ const IDENTITY_OUTPUTS = piIdentityOutputFiles();
 const PROBE_TIMEOUT_MS = 20_000;
 const PROBE_KILL_WAIT_MS = 1_000;
 const MAX_PROBE_OUTPUT_CHARS = 32 * 1024;
+const MAX_IDENTITY_PROBE_ENV_VALUE_CHARS = 4_096;
+const IDENTITY_PROBE_CLEANUP_ATTEMPTS = 40;
+const IDENTITY_PROBE_CLEANUP_DELAY_MS = 100;
+const IDENTITY_PROBE_LOCALE = "C.UTF-8";
 
+/**
+ * Environment names that may reach the fresh Pi identity process.
+ *
+ * This is deliberately a positive list. The child receives no ambient
+ * environment, including no user configuration, credentials, loader hooks, or
+ * dynamic-library paths. HOME/XDG/Pi paths are replaced with the per-probe
+ * temporary paths below; PATH and BUN_INSTALL preserve the requested Pi/Bun
+ * executable resolution.
+ */
+export const IDENTITY_PROBE_ENV_ALLOWLIST = Object.freeze([
+  "PATH",
+  "BUN_INSTALL",
+  "VOLTA_HOME",
+  "HOME",
+  "USERPROFILE",
+  "PI_CODING_AGENT_DIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  EXTENSION_BUILD_IDENTITY_PROOF_ENV,
+] as const);
 export type VerifyChildStreamingArgs =
   | {
       readonly command: "identity";
@@ -133,6 +164,126 @@ function blocked(
     ...(state === undefined ? {} : { state }),
     evidence: "blocked",
   };
+}
+
+function boundedIdentityProbeEnvironmentValue(
+  value: unknown,
+): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_IDENTITY_PROBE_ENV_VALUE_CHARS
+  ) {
+    return undefined;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return undefined;
+  }
+  return value;
+}
+
+function readIdentityProbeEnvironmentValue(
+  source: Readonly<Record<string, unknown>>,
+  name: string,
+  required: boolean,
+): Result<string | undefined, VerifyChildStreamingFailure> {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(source, name),
+    () => blocked("probe-failed"),
+  )();
+  if (descriptor.isErr()) return err(descriptor.error);
+  if (descriptor.value === undefined) {
+    return required ? err(blocked("probe-failed")) : ok(undefined);
+  }
+  if (!("value" in descriptor.value)) return err(blocked("probe-failed"));
+  const value = boundedIdentityProbeEnvironmentValue(descriptor.value.value);
+  if (value === undefined) return err(blocked("probe-failed"));
+  return ok(value);
+}
+
+export interface IdentityProbeIsolationPaths {
+  readonly root: string;
+  readonly home: string;
+  readonly agent: string;
+  readonly config: string;
+  readonly data: string;
+  readonly cache: string;
+  readonly temporary: string;
+}
+
+function identityProbeIsolationPaths(
+  root: string,
+): Result<IdentityProbeIsolationPaths, VerifyChildStreamingFailure> {
+  const boundedRoot = boundedIdentityProbeEnvironmentValue(root);
+  if (boundedRoot === undefined || !isAbsolute(boundedRoot)) {
+    return err(blocked("probe-failed"));
+  }
+  const paths = {
+    root: boundedRoot,
+    home: join(boundedRoot, "home"),
+    agent: join(boundedRoot, "pi-agent"),
+    config: join(boundedRoot, "xdg-config"),
+    data: join(boundedRoot, "xdg-data"),
+    cache: join(boundedRoot, "xdg-cache"),
+    temporary: join(boundedRoot, "tmp"),
+  };
+  if (
+    Object.values(paths).some(
+      (path) => boundedIdentityProbeEnvironmentValue(path) === undefined,
+    )
+  ) {
+    return err(blocked("probe-failed"));
+  }
+  return ok(paths);
+}
+
+/**
+ * Build the identity child environment without enumerating or copying the
+ * caller's environment. The parent runtime values are read through own data
+ * descriptors, so accessors and hostile proxies fail closed without running.
+ */
+export function buildIdentityProbeEnvironment(
+  source: Readonly<Record<string, unknown>>,
+  isolationRoot: string,
+): Result<Record<string, string>, VerifyChildStreamingFailure> {
+  const path = readIdentityProbeEnvironmentValue(source, "PATH", true);
+  if (path.isErr()) return err(path.error);
+  if (path.value === undefined) return err(blocked("probe-failed"));
+  const bunInstall = readIdentityProbeEnvironmentValue(
+    source,
+    "BUN_INSTALL",
+    true,
+  );
+  if (bunInstall.isErr()) return err(bunInstall.error);
+  if (bunInstall.value === undefined) return err(blocked("probe-failed"));
+  const voltaHome = readIdentityProbeEnvironmentValue(
+    source,
+    "VOLTA_HOME",
+    false,
+  );
+  if (voltaHome.isErr()) return err(voltaHome.error);
+  const isolated = identityProbeIsolationPaths(isolationRoot);
+  if (isolated.isErr()) return err(isolated.error);
+
+  const env: Record<string, string> = {
+    PATH: path.value,
+    BUN_INSTALL: bunInstall.value,
+    HOME: isolated.value.home,
+    USERPROFILE: isolated.value.home,
+    PI_CODING_AGENT_DIR: isolated.value.agent,
+    XDG_CONFIG_HOME: isolated.value.config,
+    XDG_DATA_HOME: isolated.value.data,
+    XDG_CACHE_HOME: isolated.value.cache,
+    TMPDIR: isolated.value.temporary,
+    TMP: isolated.value.temporary,
+    TEMP: isolated.value.temporary,
+    LANG: IDENTITY_PROBE_LOCALE,
+    LC_ALL: IDENTITY_PROBE_LOCALE,
+    [EXTENSION_BUILD_IDENTITY_PROOF_ENV]: "1",
+  };
+  if (voltaHome.value !== undefined) env.VOLTA_HOME = voltaHome.value;
+  return ok(env);
 }
 
 function equalStrings(
@@ -534,53 +685,159 @@ async function readProofFromProcess(
   return err(blocked("probe-failed"));
 }
 
-function probePiIdentity(
+function createIdentityProbeIsolationPaths(): Result<
+  IdentityProbeIsolationPaths,
+  VerifyChildStreamingFailure
+> {
+  const root = join(tmpdir(), `weave-pi-identity-probe-${crypto.randomUUID()}`);
+  return identityProbeIsolationPaths(root);
+}
+
+function runIdentityProbeFilesystemCommand(
+  command: readonly string[],
+): Result<void, VerifyChildStreamingFailure> {
+  const spawned = Result.fromThrowable(
+    () =>
+      Bun.spawnSync({
+        cmd: [...command],
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    () => blocked("probe-failed"),
+  )();
+  if (spawned.isErr()) return err(spawned.error);
+  return spawned.value.exitCode === 0
+    ? ok(undefined)
+    : err(blocked("probe-failed"));
+}
+
+function prepareIdentityProbeIsolation(
+  paths: IdentityProbeIsolationPaths,
+): ResultAsync<void, VerifyChildStreamingFailure> {
+  const prepared = runIdentityProbeFilesystemCommand([
+    "mkdir",
+    "-p",
+    paths.home,
+    paths.agent,
+    paths.config,
+    paths.data,
+    paths.cache,
+    paths.temporary,
+  ]);
+  return prepared.isOk() ? okAsync(undefined) : errAsync(prepared.error);
+}
+
+async function removeIdentityProbeIsolation(
+  paths: IdentityProbeIsolationPaths,
+): Promise<Result<void, VerifyChildStreamingFailure>> {
+  let lastFailure = blocked("probe-failed");
+  for (
+    let attempt = 0;
+    attempt < IDENTITY_PROBE_CLEANUP_ATTEMPTS;
+    attempt += 1
+  ) {
+    const removed = runIdentityProbeFilesystemCommand([
+      "rm",
+      "-rf",
+      paths.root,
+    ]);
+    if (removed.isOk()) {
+      await new Promise<void>((resolveDelay) =>
+        setTimeout(resolveDelay, IDENTITY_PROBE_CLEANUP_DELAY_MS),
+      );
+      const stable = runIdentityProbeFilesystemCommand([
+        "rm",
+        "-rf",
+        paths.root,
+      ]);
+      if (stable.isOk()) return stable;
+      lastFailure = stable.error;
+    } else {
+      lastFailure = removed.error;
+    }
+    if (attempt + 1 < IDENTITY_PROBE_CLEANUP_ATTEMPTS) {
+      await new Promise<void>((resolveDelay) =>
+        setTimeout(resolveDelay, IDENTITY_PROBE_CLEANUP_DELAY_MS),
+      );
+    }
+  }
+  return err(lastFailure);
+}
+
+/** Run one fresh Pi identity load with no ambient user environment. */
+export function probePiIdentity(
   repoRoot: string,
   pi: string,
+  environmentSource: Readonly<Record<string, unknown>> = Bun.env,
 ): ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure> {
   return ResultAsync.fromThrowable(
     async () => {
-      const env: Record<string, string> = {};
-      for (const [key, value] of Object.entries(Bun.env)) {
-        if (value !== undefined) env[key] = value;
+      const createdIsolation = createIdentityProbeIsolationPaths();
+      if (createdIsolation.isErr()) return err(createdIsolation.error);
+      const isolation = createdIsolation.value;
+      const prepared = await prepareIdentityProbeIsolation(isolation);
+      if (prepared.isErr()) {
+        await removeIdentityProbeIsolation(isolation);
+        return err(prepared.error);
       }
-      env[EXTENSION_BUILD_IDENTITY_PROOF_ENV] = "1";
-      const child = Bun.spawn({
-        cmd: [
-          pi,
-          "--mode",
-          "rpc",
-          "--no-session",
-          "--no-extensions",
-          "-e",
-          resolve(repoRoot, EXTENSION_RELATIVE_PATH),
-        ],
-        cwd: repoRoot,
-        env,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+
+      let result: Result<
+        ExtensionBuildIdentityProof,
+        VerifyChildStreamingFailure
+      > = err(blocked("probe-failed"));
       try {
-        return await readProofFromProcess(child);
-      } finally {
-        Result.fromThrowable(
-          () => child.kill("SIGTERM"),
-          () => undefined,
-        )();
-        await Promise.race([
-          child.exited,
-          new Promise<void>((resolveDelay) =>
-            setTimeout(resolveDelay, PROBE_KILL_WAIT_MS),
-          ),
-        ]);
-        if (child.exitCode === null) {
-          Result.fromThrowable(
-            () => child.kill("SIGKILL"),
-            () => undefined,
-          )();
+        const environment = buildIdentityProbeEnvironment(
+          environmentSource,
+          isolation.root,
+        );
+        if (environment.isErr()) {
+          result = err(environment.error);
+        } else {
+          const child = Bun.spawn({
+            // Keep the caller's exact executable and Bun/PATH lookup. No shell
+            // or alternate Pi resolution is allowed at this boundary.
+            cmd: [
+              pi,
+              "--mode",
+              "rpc",
+              "--no-session",
+              "--no-extensions",
+              "-e",
+              resolve(repoRoot, EXTENSION_RELATIVE_PATH),
+            ],
+            cwd: repoRoot,
+            env: environment.value,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          try {
+            result = await readProofFromProcess(child);
+          } finally {
+            Result.fromThrowable(
+              () => child.kill("SIGTERM"),
+              () => undefined,
+            )();
+            await Promise.race([
+              child.exited,
+              new Promise<void>((resolveDelay) =>
+                setTimeout(resolveDelay, PROBE_KILL_WAIT_MS),
+              ),
+            ]);
+            if (child.exitCode === null) {
+              Result.fromThrowable(
+                () => child.kill("SIGKILL"),
+                () => undefined,
+              )();
+              await child.exited;
+            }
+          }
         }
+      } finally {
+        const removed = await removeIdentityProbeIsolation(isolation);
+        if (removed.isErr()) result = err(removed.error);
       }
+      return result;
     },
     () => blocked("probe-failed"),
   )().andThen((result) =>

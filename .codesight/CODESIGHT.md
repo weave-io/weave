@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 358 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~39,700 tokens. Without it, AI exploration would cost ~112,400 tokens. **Saves ~72,700 tokens per conversation.**
-> **Last scanned:** 2026-08-20 21:09 — re-run after significant changes
+> **Last scanned:** 2026-08-20 23:31 — re-run after significant changes
 
 ---
 
@@ -786,13 +786,13 @@
   - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
   - _...95 more_
 - `packages/adapters/pi/src/extension-build-identity.ts`
+  - function computeExtensionBuildBinding: (input) => Result<string, ExtensionBuildIdentityError>
   - function extensionProcessStartMs: () => number
   - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
   - function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
-  - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
-  - _...28 more_
+  - _...31 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
@@ -1932,15 +1932,15 @@
   - interface LiveProofSpawnInput
   - _...5 more_
 - `scripts/pi/verify-child-streaming.ts`
+  - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
   - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
   >;
   readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
+  - function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>
   - function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
-  - function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
-  - interface IdentityVerificationSuccess
-  - _...6 more_
+  - _...10 more_
 - `scripts/pi/verify-host-singleton.ts`
   - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
   - function decideSkip: (presence, allowSkip) => SkipDecision
@@ -2317,7 +2317,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 383 test files found
+> 384 test files found
 
 ---
 

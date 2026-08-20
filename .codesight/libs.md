@@ -775,13 +775,13 @@
   - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
   - _...95 more_
 - `packages/adapters/pi/src/extension-build-identity.ts`
+  - function computeExtensionBuildBinding: (input) => Result<string, ExtensionBuildIdentityError>
   - function extensionProcessStartMs: () => number
   - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
   - function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
-  - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
-  - _...28 more_
+  - _...31 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
@@ -1921,15 +1921,15 @@
   - interface LiveProofSpawnInput
   - _...5 more_
 - `scripts/pi/verify-child-streaming.ts`
+  - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
   - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
   >;
   readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
+  - function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>
   - function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
-  - function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
-  - interface IdentityVerificationSuccess
-  - _...6 more_
+  - _...10 more_
 - `scripts/pi/verify-host-singleton.ts`
   - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
   - function decideSkip: (presence, allowSkip) => SkipDecision

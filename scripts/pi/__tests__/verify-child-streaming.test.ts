@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import {
   createExtensionBuildManifest,
@@ -13,9 +15,12 @@ import {
   renderExtensionBuildManifest,
 } from "../../../packages/adapters/pi/src/extension-build-identity.js";
 import {
+  buildIdentityProbeEnvironment,
   classifyChildStreamingEvidence,
+  IDENTITY_PROBE_ENV_ALLOWLIST,
   type IdentityVerificationSuccess,
   parseVerifyChildStreamingArgs,
+  probePiIdentity,
   runAfterIdentity,
   verifyIdentityFacts,
 } from "../verify-child-streaming.js";
@@ -25,6 +30,44 @@ const B = "b".repeat(64);
 const C = "c".repeat(64);
 const SUBJECT = "1".repeat(40);
 const BUILD_COMPLETED_AT = "1970-01-01T00:00:00.100Z";
+const HOSTILE_ENVIRONMENT_NAMES = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "NODE_AUTH_TOKEN",
+  "PI_PROVIDER",
+  "PI_MODEL",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AZURE_OPENAI_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "PI_CODING_AGENT_SESSION_DIR",
+  "WEAVE_CHILD_SECRET",
+  "WEAVE_CHILD_ID",
+  "SSH_AUTH_SOCK",
+  "SSH_AGENT_PID",
+  "NPM_TOKEN",
+  "NPM_CONFIG_USERCONFIG",
+  "npm_config_userconfig",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "NODE_PATH",
+  "NODE_OPTIONS",
+  "BUN_OPTIONS",
+  "BUN_CONFIG",
+  "DEBUG",
+  "NODE_DEBUG",
+  "BUN_DEBUG",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "HOSTILE_ENV_SENTINEL",
+] as const;
 
 function runtimeOutputs(digest: string): { name: string; sha256: string }[] {
   return EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
@@ -434,5 +477,168 @@ describe("independent child-streaming verifier gate", () => {
         uiLanes: "green",
       }),
     ).toBe("identity-proven");
+  });
+});
+
+describe("identity probe environment", () => {
+  it("launches a controlled probe with exactly the explicit allowlist", async () => {
+    const source = Object.create(null) as Record<string, unknown>;
+    let accessorReads = 0;
+    Object.defineProperties(source, {
+      PATH: { value: "/usr/bin:/bin", enumerable: true },
+      BUN_INSTALL: { value: "/opt/bun", enumerable: true },
+      VOLTA_HOME: { value: "/opt/volta", enumerable: true },
+    });
+    for (const name of HOSTILE_ENVIRONMENT_NAMES) {
+      Object.defineProperty(source, name, {
+        value: "HOSTILE_ENV_SENTINEL_VALUE",
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    for (const name of ["OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY"] as const) {
+      Object.defineProperty(source, name, {
+        get: () => {
+          accessorReads += 1;
+          throw new Error(`${name} accessor executed`);
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    const hostile = new Proxy(source, {
+      ownKeys: () => {
+        throw new Error("environment enumeration is forbidden");
+      },
+      get: () => {
+        throw new Error("environment property access is forbidden");
+      },
+      getOwnPropertyDescriptor: (target, name) => {
+        if (
+          typeof name !== "string" ||
+          !["PATH", "BUN_INSTALL", "VOLTA_HOME"].includes(name)
+        ) {
+          throw new Error("unexpected environment descriptor");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, name);
+      },
+    });
+
+    const expectedNames = [...IDENTITY_PROBE_ENV_ALLOWLIST].sort();
+    const environment = buildIdentityProbeEnvironment(
+      hostile,
+      join(tmpdir(), `weave-pi-controlled-environment-${crypto.randomUUID()}`),
+    );
+    expect(environment.isOk()).toBe(true);
+    if (environment.isErr()) return;
+    expect(Object.keys(environment.value).sort()).toEqual(expectedNames);
+    expect(accessorReads).toBe(0);
+    const controlled = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        "process.stdout.write(JSON.stringify(Object.keys(Bun.env).sort()))",
+      ],
+      {
+        env: environment.value,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const receivedNames = JSON.parse(
+      await new Response(controlled.stdout).text(),
+    ) as unknown;
+    expect(await controlled.exited).toBe(0);
+    expect(receivedNames).toEqual(expectedNames);
+
+    const scriptPath = join(
+      tmpdir(),
+      `weave-pi-controlled-identity-probe-${crypto.randomUUID()}.mjs`,
+    );
+    const script = `#!${process.execPath}\nconst expected = ${JSON.stringify(expectedNames)};\nconst forbidden = ${JSON.stringify(HOSTILE_ENVIRONMENT_NAMES)};\nconst received = Object.keys(Bun.env).sort();\nif (JSON.stringify(received) !== JSON.stringify(expected)) process.exit(41);\nif (forbidden.some((name) => received.includes(name))) process.exit(42);\nif (Object.values(Bun.env).some((value) => value.includes("HOSTILE_ENV_SENTINEL"))) process.exit(43);\nprocess.stderr.write(JSON.stringify({ weaveExtensionBuildIdentity: { schemaVersion: 1 } }) + "\\n");\n`;
+    expect(await Bun.write(scriptPath, script)).toBeGreaterThan(0);
+    const chmod = Bun.spawn(["chmod", "+x", scriptPath], {
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect(await chmod.exited).toBe(0);
+
+    try {
+      const result = await probePiIdentity(
+        resolve(import.meta.dir, "../../.."),
+        scriptPath,
+        hostile,
+      );
+      expect(result.isOk()).toBe(true);
+      expect(accessorReads).toBe(0);
+    } finally {
+      await Bun.spawn(["rm", "-f", scriptPath], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }).exited;
+    }
+  });
+
+  it("fails closed for missing or accessor-backed required runtime values", () => {
+    const missingPath = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(missingPath, "BUN_INSTALL", {
+      value: "/opt/bun",
+      enumerable: true,
+    });
+    expect(
+      buildIdentityProbeEnvironment(
+        missingPath,
+        "/tmp/weave-identity-probe",
+      ).isErr(),
+    ).toBe(true);
+
+    let accessorReads = 0;
+    const accessorPath = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(accessorPath, "PATH", {
+      get: () => {
+        accessorReads += 1;
+        throw new Error("PATH accessor executed");
+      },
+      enumerable: true,
+    });
+    Object.defineProperty(accessorPath, "BUN_INSTALL", {
+      value: "/opt/bun",
+      enumerable: true,
+    });
+    expect(
+      buildIdentityProbeEnvironment(
+        accessorPath,
+        "/tmp/weave-identity-probe",
+      ).isErr(),
+    ).toBe(true);
+    expect(accessorReads).toBe(0);
+
+    const oversizedPath = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(oversizedPath, "PATH", {
+      value: "x".repeat(4_097),
+      enumerable: true,
+    });
+    Object.defineProperty(oversizedPath, "BUN_INSTALL", {
+      value: "/opt/bun",
+      enumerable: true,
+    });
+    expect(
+      buildIdentityProbeEnvironment(
+        oversizedPath,
+        "/tmp/weave-identity-probe",
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      buildIdentityProbeEnvironment(
+        { PATH: "/usr/bin\n/bin", BUN_INSTALL: "/opt/bun" },
+        "/tmp/weave-identity-probe",
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      buildIdentityProbeEnvironment(
+        { PATH: "/usr/bin:/bin", BUN_INSTALL: "/opt/bun" },
+        "relative-weave-identity-probe",
+      ).isErr(),
+    ).toBe(true);
   });
 });
