@@ -12,6 +12,8 @@ An earlier design also wrapped the OpenCode SDK and attempted to list, create, a
 
 The adapter must also keep abstract Weave policy separate from OpenCode names. OpenCode's permission schema has named rules for `read`, `glob`, `grep`, `list`, and `task`; the legacy boolean `tools` map cannot represent `ask`.
 
+The config-hook argument is a trusted harness boundary, not a general JavaScript object-sanitization API. OpenCode has already parsed user JSON/JSONC into ordinary configuration records before it calls the hook. The adapter relies on that contract and does not attempt to identify arbitrary proxies, reflection traps, or other values supplied outside the OpenCode contract.
+
 ## Decision
 
 ### 1. Config-hook-only materialization
@@ -27,15 +29,17 @@ The plugin has no event hook for agent materialization. It does not call an SDK 
 
 Install the plugin through the `./server` subpath or the package's documented plugin entry. The plugin subpath exports only callable values so OpenCode's legacy loader can load it.
 
-### 2. Fail-closed same-name handling
+### 2. Trusted-boundary same-name handling
 
-The config hook treats every existing own `cfg.agent[name]` entry as user-owned. It skips that name without reading, merging, tagging, or replacing the value. This preserves the entry's exact object identity and shape.
+The config hook treats every existing own `cfg.agent[name]` entry as user-owned. It skips that name without reading, merging, tagging, or replacing the value. This preserves the entry's exact object identity and shape. The same rule applies to `cfg.command[name]`.
 
-The hook does not inspect descriptions, `options`, or other metadata. A copied Weave-looking marker never grants overwrite authority. If the hook safely inserts `loom`, and only then, it sets `default_agent` to `loom`. A pre-existing `loom` entry is unchanged and does not cause `default_agent` to change.
+The hook does not inspect descriptions, `options`, or other metadata. A copied Weave-looking marker never grants overwrite authority. If this invocation inserts `loom`, it sets `default_agent` to `loom`; a pre-existing `loom` entry is unchanged and does not cause that selection.
 
-This limitation is declared as degraded agent materialization and degraded primary-agent selection. Users can rename a Weave agent or remove a conflicting OpenCode entry before startup.
+Agent materialization and primary-agent selection are degraded because the config hook does not establish durable ownership across processes. Users can rename a Weave agent or remove a conflicting OpenCode entry before startup. Delegated-specialist readiness has the same limitation.
 
-Command registration uses the same fail-closed ownership rule. The hook registers the prompt-based `start-work` and `weave:start` templates only when it inserts `tapestry` during that config-hook invocation and proves each resulting own enumerable data descriptor. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot authorize either command. Accessors, symbols, custom prototypes, oversize maps, throwing seams, absorbed assignments, mismatched values, and descriptor churn are not trusted. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while a free name receives the Weave-owned prompt command. A collision for one name does not prevent registration of the other free name. Loom's `default_agent` selection remains independent and changes only when this invocation inserts Loom and verifies the exact inserted object.
+Command registration uses the trusted parsed-record contract. The hook registers the prompt-based `start-work` and `weave:start` templates only when this invocation inserts `tapestry`. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot become a command target. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while an absent name receives the Weave-owned prompt command. A collision for one name does not prevent registration of the other absent name. The implementation makes no partial-write rollback or cross-process durable-ownership claim.
+
+The command templates are prompt-only. They require the user to provide a plan argument or ask the user to select one when it is absent. Tapestry must validate a named plan through the repository tools and files available in the session. `.weave/state.json`, if present, is ordinary repository data; it is not system-authorized state and does not prove plan selection, authentication, creation, or resumption. The plugin does not invent or wire a runtime handler.
 
 ### 3. Translation-only adapter boundary
 
@@ -62,8 +66,9 @@ Each read field preserves `allow`, `deny`, and `ask` exactly. The adapter never 
 - Existing same-name entries cannot be overwritten, even when their metadata looks like Weave metadata.
 - Loom becomes the default only when this hook inserted Loom itself.
 - SDK list/create/update calls, the no-op event path, and their facade types are gone.
-- Agent materialization and primary-agent selection report their collision limitation as degraded; exact permission mapping remains native.
+- Agent materialization, primary-agent selection, and delegated-specialist execution remain degraded because the trusted config hook does not prove durable ownership across processes; exact permission mapping remains native.
 - The plugin's only live slash commands are prompt-based `start-work` and `weave:start`; `/weave:run` is not registered.
+- The prompt commands require explicit plan input or user selection and repository-file validation. They do not treat `.weave/state.json` as system-authorized state or claim to create/resume work.
 - `RuntimeCommandProjection` remains an adapter-library surface for explicit callers, not a live OpenCode command handler. Passive events do not start workflow execution, and command-entrypoint readiness remains degraded until a live runtime delivery path exists.
 
 ## References

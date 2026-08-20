@@ -24,7 +24,10 @@ describe("OpenCode adapter capability contract", () => {
     expect(capability?.readiness).toBe("degraded");
     expect(capability?.notes).toContain("/weave:start");
     expect(capability?.notes).toContain("/start-work");
-    expect(capability?.notes).toContain("same-hook");
+    expect(capability?.notes).toContain("trusted config hook");
+    expect(capability?.notes).toContain(
+      "does not prove durable ownership across processes",
+    );
     expect(capability?.notes).toContain("does not register /weave:run");
     expect(capability?.notes).toContain("RuntimeCommandProjection");
   });
@@ -36,7 +39,10 @@ describe("OpenCode adapter capability contract", () => {
 
     expect(capability?.readiness).toBe("degraded");
     expect(capability?.notes).toContain("same-name resources");
-    expect(capability?.notes).toContain("config hook");
+    expect(capability?.notes).toContain("trusted config hook");
+    expect(capability?.notes).toContain(
+      "does not prove durable ownership across processes",
+    );
     expect(capability?.remediationHint).toContain("conflicting OpenCode entry");
   });
 

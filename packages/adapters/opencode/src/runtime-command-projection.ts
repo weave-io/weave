@@ -729,9 +729,10 @@ export class RuntimeCommandProjection {
  * using `buildAdapterHealthReport` from `@weaveio/weave-engine`.
  *
  * The report declares `command-entrypoints` as `degraded` by default. The
- * config hook exposes only prompt-based `/weave:start` and `/start-work` after
- * same-hook ownership proofs; it does not register `/weave:run` or deliver a
- * live `RuntimeCommandProjection` handler. Callers may pass an explicit
+ * trusted config hook exposes only prompt-based `/weave:start` and
+ * `/start-work` after this invocation inserts Tapestry; it does not prove
+ * durable ownership across processes, and it does not register `/weave:run` or
+ * deliver a live `RuntimeCommandProjection` handler. Callers may pass an explicit
  * readiness override only when they have a separate, current proof.
  *
  * @param overrides - Optional capability overrides for testing.
@@ -816,7 +817,7 @@ export function buildOpenCodeHealthReport(overrides?: {
           description: "Expose explicit user-authorized execution triggers",
           readiness: overrides?.commandEntrypointsReadiness ?? "degraded",
           notes:
-            "The config hook registers only prompt-based /weave:start and /start-work after same-hook Tapestry and command ownership proofs; /weave:run and RuntimeCommandProjection are not live plugin entrypoints.",
+            "The trusted config hook registers only prompt-based /weave:start and /start-work after this invocation inserts Tapestry; it does not prove durable ownership across processes, and /weave:run and RuntimeCommandProjection are not live plugin entrypoints.",
         },
         {
           id: "event-logging",

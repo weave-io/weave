@@ -5,8 +5,9 @@
 Materialize OpenCode agents through the config hook with fail-closed name collisions.
 
 - Existing same-name agent entries remain unchanged, and copied metadata never authorizes replacement.
-- Config-hook ownership follows bounded safe-map and exact post-mutation descriptor proofs; accessors, proxies with unproven mutations, symbols, oversize maps, absorbed assignments, mismatches, and descriptor churn fail closed.
-- The plugin registers only prompt-based `/weave:start` and `/start-work`; it does not claim `/weave:run` or live `RuntimeCommandProjection` delivery.
+- The config hook trusts OpenCode's parsed JSON/JSONC records, preserves every existing own same-name entry, and injects only absent entries; it does not attempt proxy detection, reflection-based ownership proofs, or rollback claims.
+- The plugin registers only prompt-based `/weave:start` and `/start-work`; prompts require explicit plan input or user selection plus repository-file validation, and they do not claim system-authorized state, plan authentication, work creation, or live `RuntimeCommandProjection` delivery.
+- Agent, primary-agent, delegated-specialist, and command-entrypoint readiness remain degraded because the config-hook contract does not prove durable ownership across processes.
 - Read, glob, grep, list, and task permissions preserve allow, deny, and ask exactly.
 - The obsolete SDK client facade and reconciliation exports are removed from the package root.
 

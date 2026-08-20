@@ -11,7 +11,7 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       description: "Expose explicit OpenCode plan-entry commands",
       readiness: "degraded",
       notes:
-        "The config hook registers only prompt-based /weave:start and /start-work after same-hook Tapestry and command ownership proofs; it does not register /weave:run or deliver RuntimeCommandProjection handlers.",
+        "The trusted config hook registers only prompt-based /weave:start and /start-work after this invocation inserts Tapestry; it does not prove durable ownership across processes, does not register /weave:run or deliver RuntimeCommandProjection handlers.",
       remediationHint:
         "Use the prompt commands for plan entry; use an adapter with a live runtime command handler for durable workflow operations.",
     },
@@ -20,7 +20,7 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       description: "Materialize Weave agents into OpenCode",
       readiness: "degraded",
       notes:
-        "The config hook injects translated agents in declaration order and skips existing same-name resources without changing them; the plugin does not persist agent configuration through an SDK.",
+        "The trusted config hook injects translated agents in declaration order and skips existing same-name resources without changing them; its ordinary parsed-record contract does not prove durable ownership across processes, and the plugin does not persist agent configuration through an SDK.",
       remediationHint:
         "Rename a Weave agent or remove the conflicting OpenCode entry before startup.",
     },
@@ -29,7 +29,7 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       description: "Delegate work to specialist OpenCode agents",
       readiness: "degraded",
       notes:
-        "Specialist agents are available when the config hook injects them, but same-name materialization is skipped when an OpenCode entry already exists.",
+        "Specialist agents are available when the trusted config hook injects them, but same-name materialization is skipped when an OpenCode entry already exists; the hook does not prove durable ownership across processes.",
       remediationHint:
         "Use unique agent names or remove a conflicting OpenCode entry before startup.",
     },
