@@ -721,3 +721,109 @@ reasoning, tool detail, and assistant reply observations.
 
 Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
 Weft and Warp were not run.
+
+## Task 11 proof step C2: authoritative green Herdr proof (2026-08-20)
+
+This append-only section is the authoritative C2 terminal proof for the clean
+subject below. It preserves every earlier RED section. It contains only bounded
+identity facts, counts, closed statuses, and restoration facts. It contains no
+reasoning prose, assistant text, tool payload, prompt, credential, capture,
+transcript, exception text, absolute path, or content-derived hash.
+
+### C1 executable verifier immediately before C2
+
+C1 ran at the exact clean subject with no source edits. Its owner-only report
+was removed after verification.
+
+| C1 gate | Result |
+| --- | --- |
+| Command exit | **PASS** — `0` |
+| Requested lanes | **PASS** — `4/4` |
+| Identity | **PASS** — current and fresh |
+| Isolation | **PASS** — isolated |
+| Settlement | **PASS** — one settlement |
+| Registry | **PASS** — empty |
+| Diagnostics | **PASS** — clean and content-free |
+| Cleanup | **PASS** — complete |
+| Report | **PASS** — content-free, mode `0600`, `699` bytes, removed |
+
+C1 is the executable verifier result. C2 below is the independently observed
+fresh Herdr TUI result; neither phase changed the source subject.
+
+### Exact identity and fresh-parent gate
+
+| Fact | Bounded value |
+| --- | --- |
+| Clean Git subject | `f6f06e04ab455b2af86ecee8dd3cf2b8e5673912` |
+| Git dirty | `false` |
+| Build input count | `149` |
+| Build output count | `10` |
+| Build completion | `2026-08-20T19:24:20.732Z` |
+| Build-manifest SHA-256 | `3e9d939b55c26fb412c9a0fbe83b1f91f48e538e8c8e132e68dab9643e1fa929` |
+| Extension artifact SHA-256 | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` |
+| Pi host | `0.84.2` |
+| Identity before delegation | **PASS** — `current`; loaded, disk, and manifest identity agreed |
+| Fresh parent | **PASS** — started after build completion and the identity gate; no `/reload` |
+
+The loaded runtime graph matched all four required runtime outputs. The health
+surface reported the same subject, `dirty=false`, current identity, and Pi
+`0.84.2` before delegation. The parent was not reused from a prior build.
+
+### C2 fresh Herdr live lanes
+
+The fresh parent used the deterministic proof provider and delegated exactly one
+`shuttle-mini` child. The active child picker was opened with `Alt+I` and the
+running child was selected with `Enter`. The bounded terminal observer retained
+only structural counts.
+
+| Lane | Status | Bounded observation |
+| --- | --- | --- |
+| Delegation cardinality | **PASS** | Exactly `1` child; no second delegation |
+| Active inspector selection | **PASS** | One picker selection while the child was live |
+| Parent raw reasoning live | **PASS** | Exact `↪ reasoning •` prefix observed live; parent activity remained reasoning-only |
+| Inspector raw reasoning live | **PASS** | Exact `↪ reasoning •` prefix observed live in the focused inspector |
+| Inspector tool details | **PASS** | One correlated bash row and one result; duplicate terminal rows: `0` |
+| Inspector assistant reply live | **PASS** | Streaming header observed; nonblank body appeared and grew before settlement |
+| Inspector settlement | **PASS** | Read-only after settlement; no live reasoning row remained |
+
+The content-free lane counts were parent prefix `1`, inspector prefix `1`,
+tool starts `1`, terminal results `1`, duplicate terminals `0`, streaming
+headers `1`, pre-settlement assistant body samples `2`, and body growth `1`.
+The settled parent card had no child assistant, tool, or inspector payload. The
+single authoritative tool API settlement occurred exactly once.
+
+### Sink isolation and lifecycle release
+
+| Check | Status | Bounded result |
+| --- | --- | --- |
+| Parent card registry after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Inspector reasoning registry after settlement and close | **PASS** | `registryEntries=0`, `retainedBytes=0` |
+| Parent card activity | **PASS** | Reasoning-only; no child assistant or tool activity |
+| Tool-result semantics | **PASS** | One authoritative settlement; no duplicate terminal |
+| Durable Weave sinks | **PASS** | No raw reasoning or child payload reached parent model/message or a Weave durable sink |
+| Diagnostics | **PASS** | Content-free; no raw content retained |
+| C1 isolation and registry result | **PASS** | Isolated with empty registries |
+
+The host-managed native child session remained the Pi persistence boundary. The
+adapter did not copy host content into the parent model, Weave Runtime Store,
+card details, checkpoints, transcript, replay, search state, logs, diagnostics,
+fixtures, or proof data.
+
+### Cleanup, restoration, and validation
+
+| Gate | Result |
+| --- | --- |
+| Child, provider, and proof processes | **PASS** — none remained |
+| Runtime Store | **PASS** — no active lease; `0` workflow instances |
+| Temporary provider, workspace, and report | **PASS** — removed |
+| Herdr proof pane | **PASS** — created pane closed |
+| Global config | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644`; size `2857` |
+| Mode-0600 exact config backup | **PASS** — same bytes verified through proof, then removed |
+| Pi settings | **PASS** — pre-proof bytes restored; mode `0644`; size `973` |
+| Pi launcher | **PASS** — pre-proof bytes restored; mode `0755`; size `416` |
+| Adapter symlink | **PASS** — pre-proof canonical target restored |
+| Documentation links | **PASS** |
+| Content scans | **PASS** — no raw reasoning, payload, capture, credential, exception, absolute path, or content-derived hash |
+
+Task 11 remains unchecked. Weft and Warp remain pending. No prior RED section
+was revised.
