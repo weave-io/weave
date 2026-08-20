@@ -21,6 +21,36 @@ import {
 import type { OpenCodeAgentConfig } from "../sdk-types.js";
 
 type TestPluginConfig = OpenCodePluginConfig & { default_agent?: string };
+type HostMapValue =
+  | OpenCodeAgentConfig
+  | {
+      template?: string;
+      description?: string;
+      agent?: string;
+      model?: string;
+      subtask?: boolean;
+      hostOwned?: boolean;
+    }
+  | boolean;
+type HostMapFixture = { [key: string]: HostMapValue };
+interface HostileAgentMaps {
+  readonly customPrototype: HostMapFixture;
+  readonly symbol: HostMapFixture;
+  readonly oversize: HostMapFixture;
+}
+
+function createHostMap(): HostMapFixture {
+  return Object.create(null);
+}
+
+function hostileConfig(fields: {
+  agent?: HostMapFixture;
+  command?: HostMapFixture;
+}): TestPluginConfig {
+  // SAFETY: These fixtures intentionally cross the typed OpenCode boundary to
+  // verify that hostile host maps never acquire Weave authorization.
+  return fields as TestPluginConfig;
+}
 
 function makeMockPluginInput(directory: string): PluginInput {
   return {
@@ -315,6 +345,170 @@ describe("WeavePlugin — config-hook agent materialization", () => {
     expect(cfg.agent?.loom).toBeDefined();
     expect(cfg.default_agent).toBe("loom");
   });
+
+  it("does not invoke an accessor on cfg.agent", async () => {
+    const root = await makeTempProject("agent-config-accessor");
+    const cfg: TestPluginConfig = {};
+    let getterCalls = 0;
+    Object.defineProperty(cfg, "agent", {
+      configurable: true,
+      get: () => {
+        getterCalls += 1;
+        return {};
+      },
+    });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(getterCalls).toBe(0);
+    expect(cfg.default_agent).toBeUndefined();
+  });
+
+  it("rejects an accessor-valued agent map without invoking its getter", async () => {
+    const root = await makeTempProject("agent-map-accessor");
+    const agentMap: HostMapFixture = {};
+    let getterCalls = 0;
+    Object.defineProperty(agentMap, "loom", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        return {};
+      },
+    });
+    const cfg = hostileConfig({ agent: agentMap });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(getterCalls).toBe(0);
+    expect(cfg.default_agent).toBeUndefined();
+    expect(cfg.command).toBeUndefined();
+  });
+
+  it("rejects custom-prototype, symbol-bearing, and oversize agent maps", async () => {
+    const cases: HostileAgentMaps = {
+      customPrototype: Object.create({ inherited: true }),
+      symbol: {},
+      oversize: {},
+    };
+    Object.defineProperty(cases.symbol, Symbol("host-state"), {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    for (let index = 0; index <= 256; index += 1) {
+      cases.oversize[`agent-${index}`] = true;
+    }
+
+    for (const [name, agentMap] of Object.entries(cases)) {
+      const root = await makeTempProject(`unsafe-agent-map-${name}`);
+      const cfg = hostileConfig({ agent: agentMap });
+      const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+      await applyConfigHook(hooks, cfg);
+
+      expect(cfg.default_agent).toBeUndefined();
+      expect(cfg.command).toBeUndefined();
+    }
+  });
+
+  it("does not authorize an agent map that absorbs or mismatches insertion", async () => {
+    const root = await makeTempProject("agent-proxy-absorption");
+    const target = createHostMap();
+    const absorbed = new Proxy(target, {
+      set: () => true,
+    });
+    const cfg = hostileConfig({ agent: absorbed });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.default_agent).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(target, "loom")).toBeUndefined();
+    expect(cfg.command).toBeUndefined();
+
+    const mismatchRoot = await makeTempProject("agent-proxy-mismatch");
+    const mismatchTarget = createHostMap();
+    const mismatched = new Proxy(mismatchTarget, {
+      set: (receiver, property) =>
+        Reflect.set(receiver, property, { hostOwned: true }, receiver),
+    });
+    const mismatchConfig = hostileConfig({ agent: mismatched });
+    const mismatchHooks = await pluginFor(mismatchRoot)(
+      makeMockPluginInput(mismatchRoot),
+    );
+
+    await applyConfigHook(mismatchHooks, mismatchConfig);
+
+    expect(mismatchConfig.default_agent).toBeUndefined();
+    expect(mismatchConfig.command).toBeUndefined();
+  });
+
+  it("does not authorize an agent map after descriptor churn", async () => {
+    const root = await makeTempProject("agent-proxy-churn");
+    const target = createHostMap();
+    Object.defineProperty(target, "sentinel", {
+      configurable: true,
+      enumerable: true,
+      value: { hostOwned: true },
+      writable: true,
+    });
+    const churned = new Proxy(target, {
+      set: (receiver, property, value, object) => {
+        Object.defineProperty(receiver, "sentinel", {
+          configurable: true,
+          enumerable: true,
+          value: { hostOwned: false },
+          writable: true,
+        });
+        return Reflect.set(receiver, property, value, object);
+      },
+    });
+    const cfg = hostileConfig({ agent: churned });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.default_agent).toBeUndefined();
+    expect(cfg.command).toBeUndefined();
+  });
+
+  it("rejects agent and command maps whose reflection traps throw", async () => {
+    const agentRoot = await makeTempProject("agent-proxy-throws");
+    const throwingAgent = new Proxy(createHostMap(), {
+      getPrototypeOf: () => {
+        throw new Error("host getPrototypeOf trap");
+      },
+    });
+    const agentConfig = hostileConfig({ agent: throwingAgent });
+    const agentHooks = await pluginFor(agentRoot)(
+      makeMockPluginInput(agentRoot),
+    );
+
+    await applyConfigHook(agentHooks, agentConfig);
+
+    expect(agentConfig.default_agent).toBeUndefined();
+    expect(agentConfig.command).toBeUndefined();
+
+    const commandRoot = await makeTempProject("command-proxy-throws");
+    const throwingCommand = new Proxy(createHostMap(), {
+      ownKeys: () => {
+        throw new Error("host ownKeys trap");
+      },
+    });
+    const commandConfig = hostileConfig({ command: throwingCommand });
+    const commandHooks = await pluginFor(commandRoot)(
+      makeMockPluginInput(commandRoot),
+    );
+
+    await applyConfigHook(commandHooks, commandConfig);
+
+    expect(commandConfig.agent?.tapestry).toBeDefined();
+    expect(Object.is(commandConfig.command, throwingCommand)).toBe(true);
+  });
 });
 
 describe("WeavePlugin — slash command registration", () => {
@@ -340,6 +534,115 @@ describe("WeavePlugin — slash command registration", () => {
     expect(cfg.command?.["weave:start"]?.template).toContain(
       "<weave-command-envelope>",
     );
+  });
+
+  it("does not invoke an accessor on cfg.command", async () => {
+    const root = await makeTempProject("command-config-accessor");
+    const cfg: TestPluginConfig = {};
+    let getterCalls = 0;
+    Object.defineProperty(cfg, "command", {
+      configurable: true,
+      get: () => {
+        getterCalls += 1;
+        return {};
+      },
+    });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(getterCalls).toBe(0);
+    expect(cfg.agent?.tapestry).toBeDefined();
+  });
+
+  it("rejects an accessor-valued command map without invoking its getter", async () => {
+    const root = await makeTempProject("command-map-accessor");
+    const commandMap: HostMapFixture = {};
+    let getterCalls = 0;
+    Object.defineProperty(commandMap, "start-work", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        return {};
+      },
+    });
+    const cfg = hostileConfig({ command: commandMap });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(getterCalls).toBe(0);
+    expect(cfg.agent?.tapestry).toBeDefined();
+    expect(Object.is(cfg.command, commandMap)).toBe(true);
+  });
+
+  it("does not report absorbed or mismatched command insertions", async () => {
+    const root = await makeTempProject("command-proxy-absorbed");
+    const absorbedTarget = createHostMap();
+    const absorbed = new Proxy(absorbedTarget, { set: () => true });
+    const cfg = hostileConfig({ command: absorbed });
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.agent?.tapestry).toBeDefined();
+    expect(
+      Object.getOwnPropertyDescriptor(absorbedTarget, "start-work"),
+    ).toBeUndefined();
+    expect(
+      Object.getOwnPropertyDescriptor(absorbedTarget, "weave:start"),
+    ).toBeUndefined();
+
+    const mismatchRoot = await makeTempProject("command-proxy-mismatch");
+    const mismatchTarget = createHostMap();
+    const mismatched = new Proxy(mismatchTarget, {
+      set: (receiver, property) =>
+        Reflect.set(receiver, property, { hostOwned: true }, receiver),
+    });
+    const mismatchConfig = hostileConfig({ command: mismatched });
+    const mismatchHooks = await pluginFor(mismatchRoot)(
+      makeMockPluginInput(mismatchRoot),
+    );
+
+    await applyConfigHook(mismatchHooks, mismatchConfig);
+
+    expect(mismatchConfig.command?.["start-work"]).not.toMatchObject({
+      agent: "tapestry",
+    });
+    expect(mismatchConfig.command?.["weave:start"]).not.toMatchObject({
+      agent: "tapestry",
+    });
+  });
+
+  it("rejects custom-prototype, symbol-bearing, and oversize command maps", async () => {
+    const customPrototypeMap: HostMapFixture = Object.create({
+      inherited: true,
+    });
+    const symbolMap: HostMapFixture = {};
+    Object.defineProperty(symbolMap, Symbol("host-state"), {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
+    const oversizeMap: HostMapFixture = {};
+    for (let index = 0; index <= 256; index += 1) {
+      oversizeMap[`command-${index}`] = true;
+    }
+
+    for (const commandMap of [customPrototypeMap, symbolMap, oversizeMap]) {
+      const root = await makeTempProject(
+        `unsafe-command-map-${Object.keys(commandMap).length}`,
+      );
+      const cfg = hostileConfig({ command: commandMap });
+      const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+      await applyConfigHook(hooks, cfg);
+
+      expect(cfg.agent?.tapestry).toBeDefined();
+      expect(Object.is(cfg.command, commandMap)).toBe(true);
+    }
   });
 
   it("preserves colliding Tapestry and both existing command objects", async () => {

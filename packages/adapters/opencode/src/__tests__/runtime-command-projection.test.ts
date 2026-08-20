@@ -860,6 +860,30 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     expect(result.message).toContain("opencode");
   });
 
+  it("reports only prompt plan-entry commands as degraded", async () => {
+    const healthReport = buildOpenCodeHealthReport();
+    const commandEntrypoints =
+      healthReport.capabilityContract.capabilities.find(
+        (entry) => entry.id === "command-entrypoints",
+      );
+
+    expect(commandEntrypoints?.readiness).toBe("degraded");
+    expect(commandEntrypoints?.notes).toContain("/weave:start");
+    expect(commandEntrypoints?.notes).toContain("/start-work");
+    expect(commandEntrypoints?.notes).not.toContain(
+      "OpenCode slash commands (/weave:start, /weave:run)",
+    );
+    expect(commandEntrypoints?.notes).toContain("not live plugin entrypoints");
+
+    const result = await new RuntimeCommandProjection().handleRuntimeHealth({
+      healthReport,
+    });
+    expect(result.outcome).toBe("degraded");
+    if (result.outcome === "degraded") {
+      expect(result.data?.commandEntrypointsSupported).toBe(false);
+    }
+  });
+
   it("reports ownership and delegation limits instead of false native readiness", () => {
     const healthReport = buildOpenCodeHealthReport();
     const capabilities = healthReport.capabilityContract.capabilities;

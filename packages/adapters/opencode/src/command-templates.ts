@@ -1,16 +1,19 @@
 /**
  * Command templates for OpenCode slash commands.
  *
- * These templates are injected into the conversation when the user types
- * `/start-work` or `/weave:start` in the OpenCode TUI. They instruct the
- * Tapestry agent to execute a Weave plan.
+ * These are the only command templates registered by the OpenCode plugin.
+ * They are injected into the conversation when the user types `/start-work`
+ * or `/weave:start` in the OpenCode TUI. They instruct the Tapestry agent to
+ * execute a Weave plan.
  *
  * ## How OpenCode commands work
  *
  * OpenCode commands are prompt-based — when a user types `/start-work my-plan`,
  * OpenCode replaces `$ARGUMENTS` with `my-plan` and sends the template as a
  * user message to the configured agent. This is NOT programmatic execution;
- * it's prompt injection that instructs the agent to act.
+ * it is prompt injection that instructs the agent to act. The plugin does not
+ * register `/weave:run` or wire the library-only `RuntimeCommandProjection`
+ * handlers.
  *
  * ## Placeholders
  *

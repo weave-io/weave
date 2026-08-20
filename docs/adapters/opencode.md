@@ -1,6 +1,6 @@
 # OpenCode Adapter
 
-`@weaveio/weave-adapter-opencode` is Weave's runtime OpenCode plugin. It loads normalized `.weave` configuration and translates it into OpenCode agents, commands, tools, and explicit runtime command projections.
+`@weaveio/weave-adapter-opencode` is Weave's runtime OpenCode plugin. It loads normalized `.weave` configuration and translates it into OpenCode agents, prompt-based commands, and tools. Its `RuntimeCommandProjection` remains a library surface for explicit callers, not a live plugin entrypoint.
 
 **Related:** [Adapter Boundary](../architecture/adapter-boundary.md) · [Adapter Capabilities](../reference/adapter-capabilities.md) · [Package README](../../packages/adapters/opencode/README.md)
 
@@ -8,7 +8,7 @@
 
 ## Ownership
 
-The adapter owns the OpenCode config hook, config shape, tool and command names, harness model and skill discovery, and the mapping from explicit runtime commands to engine lifecycle inputs.
+The adapter owns the OpenCode config hook, config shape, tool and prompt-command names, harness model and skill discovery, and the library mapping from explicit runtime commands to engine lifecycle inputs.
 
 The engine owns normalized descriptors, prompt composition, model and skill intent, policy decisions, workflow state, and lifecycle transitions.
 
@@ -39,7 +39,7 @@ The config hook:
 
 The hook never calls the OpenCode SDK or a persistence API. It leaves every existing same-name entry unchanged, including entries with copied Weave-looking metadata. It sets `default_agent` to `loom` only when it inserts Loom itself. Agent materialization and primary-agent selection are degraded when a same-name entry blocks projection.
 
-Command ownership is fail-closed. The hook registers Weave's commands only when the same invocation inserts the `tapestry` agent. A pre-existing or skipped `tapestry`, including a descriptor that failed materialization, cannot become a command target. When `tapestry` is inserted, `start-work` and `weave:start` are checked independently: an existing command entry is preserved as the exact object with all nested fields unchanged, while a free name receives the Weave command.
+Command ownership is fail-closed. The hook registers Weave's prompt-based commands only when the same invocation proves the `tapestry` insertion and each command insertion through safe own-data descriptors. A pre-existing or skipped `tapestry`, including a descriptor that failed materialization, cannot become a command target. When `tapestry` is inserted, `start-work` and `weave:start` are checked independently: an existing command entry is preserved as the exact object with all nested fields unchanged, while a free name receives the Weave prompt template. Accessors, symbols, custom prototypes, oversize maps, throwing seams, absorbed assignments, mismatched values, and descriptor churn fail closed.
 
 Category shuttles remain ordinary normalized descriptors, routed by their description and ordered trigger strings. Categories have no file patterns, so the adapter performs no deterministic file routing. The adapter never reparses DSL intent or builds prompts itself.
 
@@ -53,7 +53,7 @@ This is an optional-capability gap: it warns and never blocks descriptor materia
 
 ## Commands and execution
 
-OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. The plugin registers either command only after it inserts `tapestry` in the same config-hook invocation; it never overwrites a pre-existing command, and one colliding name does not block the other free name. If Tapestry is missing, skipped, collides, or fails materialization, neither Weave command is added. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. The plugin has no event-driven materialization hook; ordinary chat and passive events do not start work.
+OpenCode exposes `/weave:start` and `/start-work` as prompt-based foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. The plugin registers either command only after it inserts `tapestry` in the same config-hook invocation and proves the resulting command descriptor; it never overwrites a pre-existing command, and one colliding name does not block the other free name. If Tapestry is missing, skipped, collides, or fails materialization, neither Weave command is added. This plugin does not register `/weave:run` and does not wire the library-only `RuntimeCommandProjection` handlers. The `command-entrypoints` capability is therefore degraded, not a claim of live durable runtime-command delivery. The plugin has no event-driven materialization hook; ordinary chat and passive events do not start work.
 
 ## Logging
 

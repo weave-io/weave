@@ -34,12 +34,12 @@ OpenCode fetches the plugin package at startup. Restart OpenCode after changing 
 
 ## Commands
 
-The adapter registers:
+The adapter registers only prompt-based plan-entry commands through the config hook:
 
-- `/weave:start` to start work from the configured workflow surface.
+- `/weave:start` to submit a plan-entry prompt to the configured agent.
 - `/start-work` as a compatibility alias for `/weave:start`.
 
-The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
+It does not register `/weave:run` or deliver live `RuntimeCommandProjection` handlers. The `command-entrypoints` capability is therefore degraded. The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
 
 ## Provider acceleration is unsupported
 

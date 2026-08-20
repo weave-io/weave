@@ -35,7 +35,7 @@ The hook does not inspect descriptions, `options`, or other metadata. A copied W
 
 This limitation is declared as degraded agent materialization and degraded primary-agent selection. Users can rename a Weave agent or remove a conflicting OpenCode entry before startup.
 
-Command registration uses the same fail-closed ownership rule. The hook registers `start-work` and `weave:start` only when it inserts `tapestry` during that config-hook invocation. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot authorize either command. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while a free name receives the Weave-owned command. A collision for one name does not prevent registration of the other free name. Loom's `default_agent` selection remains independent and changes only when this invocation inserts Loom.
+Command registration uses the same fail-closed ownership rule. The hook registers the prompt-based `start-work` and `weave:start` templates only when it inserts `tapestry` during that config-hook invocation and proves each resulting own enumerable data descriptor. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot authorize either command. Accessors, symbols, custom prototypes, oversize maps, throwing seams, absorbed assignments, mismatched values, and descriptor churn are not trusted. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while a free name receives the Weave-owned prompt command. A collision for one name does not prevent registration of the other free name. Loom's `default_agent` selection remains independent and changes only when this invocation inserts Loom and verifies the exact inserted object.
 
 ### 3. Translation-only adapter boundary
 
@@ -63,7 +63,8 @@ Each read field preserves `allow`, `deny`, and `ask` exactly. The adapter never 
 - Loom becomes the default only when this hook inserted Loom itself.
 - SDK list/create/update calls, the no-op event path, and their facade types are gone.
 - Agent materialization and primary-agent selection report their collision limitation as degraded; exact permission mapping remains native.
-- Explicit slash commands and the adapter's runtime command projections remain available. Passive events do not start workflow execution.
+- The plugin's only live slash commands are prompt-based `start-work` and `weave:start`; `/weave:run` is not registered.
+- `RuntimeCommandProjection` remains an adapter-library surface for explicit callers, not a live OpenCode command handler. Passive events do not start workflow execution, and command-entrypoint readiness remains degraded until a live runtime delivery path exists.
 
 ## References
 

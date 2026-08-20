@@ -16,6 +16,19 @@ describe("OpenCode adapter capability contract", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("declares only prompt plan-entry commands as degraded", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "command-entrypoints",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("/weave:start");
+    expect(capability?.notes).toContain("/start-work");
+    expect(capability?.notes).toContain("same-hook");
+    expect(capability?.notes).toContain("does not register /weave:run");
+    expect(capability?.notes).toContain("RuntimeCommandProjection");
+  });
+
   it("declares agent materialization as degraded without proven update authority", () => {
     const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "agent-materialization",

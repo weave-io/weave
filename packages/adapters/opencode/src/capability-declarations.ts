@@ -7,6 +7,15 @@ import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
 export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [
     {
+      id: "command-entrypoints",
+      description: "Expose explicit OpenCode plan-entry commands",
+      readiness: "degraded",
+      notes:
+        "The config hook registers only prompt-based /weave:start and /start-work after same-hook Tapestry and command ownership proofs; it does not register /weave:run or deliver RuntimeCommandProjection handlers.",
+      remediationHint:
+        "Use the prompt commands for plan entry; use an adapter with a live runtime command handler for durable workflow operations.",
+    },
+    {
       id: "agent-materialization",
       description: "Materialize Weave agents into OpenCode",
       readiness: "degraded",

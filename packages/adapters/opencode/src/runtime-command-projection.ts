@@ -1,8 +1,12 @@
 /**
  * Runtime Command Projection — OpenCode adapter-owned command handlers and renderers.
  *
- * This module is the OpenCode adapter's projection layer for the six runtime
- * command operations defined in the shared engine:
+ * This module is the OpenCode adapter's library projection layer for the six
+ * runtime command operations defined in the shared engine. The plugin config
+ * hook does not wire these handlers into live OpenCode slash commands; it
+ * registers only the prompt-based `/weave:start` and `/start-work` templates.
+ *
+ * The six library operations are:
  *
  * | Command              | Engine operation      | OpenCode label            |
  * |----------------------|-----------------------|---------------------------|
@@ -22,6 +26,7 @@
  * - Native slash/TUI affordances that are not yet implemented in this slice
  *   are documented as degraded equivalents (see `DEGRADED_AFFORDANCES`).
  * - `/start-work` is out of scope for this module.
+ * - `RuntimeCommandProjection` is not a live command registration surface.
  *
  * ## Rendered result shapes
  *
@@ -723,9 +728,11 @@ export class RuntimeCommandProjection {
  * boilerplate. Production callers should build a full capability contract
  * using `buildAdapterHealthReport` from `@weaveio/weave-engine`.
  *
- * The report declares `command-entrypoints` as `emulated` (OpenCode exposes
- * slash commands as the explicit delivery path) and records the adapter's
- * fail-closed materialization and permission limitations truthfully.
+ * The report declares `command-entrypoints` as `degraded` by default. The
+ * config hook exposes only prompt-based `/weave:start` and `/start-work` after
+ * same-hook ownership proofs; it does not register `/weave:run` or deliver a
+ * live `RuntimeCommandProjection` handler. Callers may pass an explicit
+ * readiness override only when they have a separate, current proof.
  *
  * @param overrides - Optional capability overrides for testing.
  * @returns A normalized `AdapterHealthReport`.
@@ -807,9 +814,9 @@ export function buildOpenCodeHealthReport(overrides?: {
         {
           id: "command-entrypoints",
           description: "Expose explicit user-authorized execution triggers",
-          readiness: overrides?.commandEntrypointsReadiness ?? "emulated",
+          readiness: overrides?.commandEntrypointsReadiness ?? "degraded",
           notes:
-            "OpenCode slash commands (/weave:start, /weave:run) are the explicit delivery path",
+            "The config hook registers only prompt-based /weave:start and /start-work after same-hook Tapestry and command ownership proofs; /weave:run and RuntimeCommandProjection are not live plugin entrypoints.",
         },
         {
           id: "event-logging",
