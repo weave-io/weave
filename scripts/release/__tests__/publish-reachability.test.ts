@@ -196,7 +196,7 @@ describe("publish reachability boundary", () => {
     expect(lintPhaseCSecurity([...workflows, fixture]).isErr()).toBe(true);
   });
 
-  it("allows API-key authentication and keeps the legacy npm guard data-only", async () => {
+  it("allows API-key authentication and keeps shell guards data-only", async () => {
     const workflows = await phaseWorkflows();
     const fixture = parseWorkflowShape(
       "fixture.yml",

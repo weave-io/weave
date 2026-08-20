@@ -352,12 +352,6 @@ const APP_TOKEN_JOB_CONTRACTS: Readonly<
       permissions: { contents: "write", "pull-requests": "write" },
     },
   },
-  ".github/workflows/publish.yml": {
-    "release-refs": {
-      environment: "release-refs",
-      permissions: { contents: "write", "pull-requests": "write" },
-    },
-  },
 };
 
 export interface WorkflowJobShape {
@@ -1031,7 +1025,7 @@ export function scanWorkflowCommands(
  * Reject credential names which would bypass trusted publishing or provide a
  * subscription/OAuth session to an AI or harness job. Shell guards that only
  * inspect inherited state are intentionally not env assignments and remain
- * valid in the legacy publisher workflow.
+ * data-only checks.
  */
 function lintWorkflowCredentialBoundaries(
   workflows: readonly WorkflowShape[],

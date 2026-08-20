@@ -307,17 +307,14 @@ export const PACKAGE_ARCHIVE_LIMITS = {
 // ---------------------------------------------------------------------------
 // Retired-publisher identity.
 //
-// The old publication workflow was removed at the Task 35 cutover. These two
-// constants stay because the read-only pre-cutover proof and the documented
-// rollback still have to name the retired identity to verify it. Nothing here
-// grants publication authority, and no new code may treat them as a route.
+// The old publication workflow was removed at the Task 35 cutover. The
+// rollback and pre-cutover doctor mode name this path only when Git revert
+// restores the old publisher. Nothing here grants publication authority, and
+// no new code may treat it as a route.
 // ---------------------------------------------------------------------------
 
-/** Retired publish workflow. Rollback and pre-cutover proofs name it read-only. */
+/** Retired publish workflow, named only by rollback and pre-cutover checks. */
 export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
-
-/** Stable workflow-run identity for the read-only pre-cutover proof. */
-export const LEGACY_PREFLIGHT_RUN_NAME = "legacy-publisher-preflight" as const;
 
 /**
  * Binding-record operation vocabulary retained by the adapted artifact

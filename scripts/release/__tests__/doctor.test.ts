@@ -11,7 +11,6 @@ import {
 import {
   type DoctorMode,
   type DoctorSnapshot,
-  LEGACY_PREFLIGHT_RUN_NAME,
   type NpmPackageObservation,
   parseDoctorMode,
   parseTrustedPublisherResponse,
@@ -252,7 +251,6 @@ function snapshotFor(mode: DoctorMode = "final"): DoctorSnapshot {
       authoritative: true,
       publicationPathEnabled: true,
       recentSuccessfulRun: true,
-      readOnlyPreflight: false,
       runId: 42,
       evidence: "successful scheduled run 42 on protected main",
     },
@@ -659,7 +657,6 @@ describe("release doctor", () => {
             authoritative: true,
             publicationPathEnabled: true,
             recentSuccessfulRun: false,
-            readOnlyPreflight: false,
           },
         },
         "pre-cutover",
@@ -684,7 +681,7 @@ describe("release doctor", () => {
     ).toBe(true);
   });
 
-  it("accepts only a positively identified recent scheduled or read-only preflight run", () => {
+  it("accepts only a positively identified recent scheduled run", () => {
     const now = DOCTOR_RUN_NOW;
     const common = {
       ...realisticScheduledRun,
@@ -693,73 +690,24 @@ describe("release doctor", () => {
       workflow_ref:
         "weave-io/weave/.github/workflows/publish.yml@refs/heads/main",
     };
-    const scheduled = recentSuccessfulOldRun(
-      listRuns({ ...common, event: "schedule" }),
-      now,
-    );
-    expect(scheduled).toEqual({
+    expect(
+      recentSuccessfulOldRun(listRuns({ ...common, event: "schedule" }), now),
+    ).toEqual({
       kind: "scheduled",
       runId: 43,
       evidence: "successful scheduled run 43 on protected main",
     });
-
-    const preflight = recentSuccessfulOldRun(
-      {
-        workflow_runs: [
-          {
-            ...common,
-            id: 44,
-            event: "workflow_dispatch",
-            display_title: LEGACY_PREFLIGHT_RUN_NAME,
-          },
-        ],
-      },
-      now,
-    );
-    expect(preflight).toEqual({
-      kind: "read-only-preflight",
-      runId: 44,
-      evidence: "successful read-only preflight run 44 on protected main",
-    });
-
-    const snapshot = snapshotFor("pre-cutover");
-    const result = verifyDoctorSnapshot(
-      {
-        ...snapshot,
-        oldSystem: {
-          authoritative: true,
-          publicationPathEnabled: true,
-          recentSuccessfulRun: false,
-          readOnlyPreflight: true,
-          runId: 44,
-          evidence: "successful read-only preflight run 44 on protected main",
-        },
-      },
-      "pre-cutover",
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("rejects disabled, arbitrary, ambiguous, wrong-branch, and stale dispatch evidence", () => {
-    const now = DOCTOR_RUN_NOW;
-    const base = {
-      ...realisticScheduledRun,
-      id: 45,
-      event: "workflow_dispatch",
-      display_title: LEGACY_PREFLIGHT_RUN_NAME,
-      workflow_ref:
-        "weave-io/weave/.github/workflows/publish.yml@refs/heads/main",
-    };
     expect(
       recentSuccessfulOldRun(
-        {
-          workflow_runs: [
-            { ...base, display_title: "legacy-publisher-nightly" },
-          ],
-        },
+        listRuns({ ...common, event: "workflow_dispatch" }),
         now,
       ),
     ).toBeNull();
+  });
+
+  it("rejects missing, arbitrary, wrong-branch, and stale run evidence", () => {
+    const now = DOCTOR_RUN_NOW;
+    const base = { ...realisticScheduledRun, id: 45 };
     expect(
       recentSuccessfulOldRun(
         listRuns(withoutField(base, "display_title")),
@@ -768,43 +716,19 @@ describe("release doctor", () => {
     ).toBeNull();
     expect(
       recentSuccessfulOldRun(
-        {
-          workflow_runs: [
-            {
-              ...base,
-              display_title: LEGACY_PREFLIGHT_RUN_NAME,
-              run_name: "legacy-publisher-dispatch",
-            },
-          ],
-        },
+        listRuns({ ...base, event: "workflow_dispatch" }),
         now,
       ),
     ).toBeNull();
     expect(
       recentSuccessfulOldRun(
-        {
-          workflow_runs: [
-            {
-              ...base,
-              display_title: LEGACY_PREFLIGHT_RUN_NAME,
-              head_branch: "release/old",
-            },
-          ],
-        },
+        listRuns({ ...base, head_branch: "release/old" }),
         now,
       ),
     ).toBeNull();
     expect(
       recentSuccessfulOldRun(
-        {
-          workflow_runs: [
-            {
-              ...base,
-              display_title: LEGACY_PREFLIGHT_RUN_NAME,
-              updated_at: "2026-01-01T00:00:00.000Z",
-            },
-          ],
-        },
+        listRuns({ ...base, updated_at: "2026-01-01T00:00:00.000Z" }),
         now,
       ),
     ).toBeNull();
@@ -837,22 +761,6 @@ describe("release doctor", () => {
         ),
       ).toEqual(result);
     }
-
-    const preflight = recentSuccessfulOldRun(
-      listRuns({
-        ...realisticScheduledRun,
-        id: 123456790,
-        event: "workflow_dispatch",
-        display_title: LEGACY_PREFLIGHT_RUN_NAME,
-      }),
-      DOCTOR_RUN_NOW,
-    );
-    expect(preflight).toEqual({
-      kind: "read-only-preflight",
-      runId: 123456790,
-      evidence:
-        "successful read-only preflight run 123456790 on protected main",
-    });
   });
 
   it("rejects a run when any required list-runs field is missing", () => {
@@ -876,17 +784,9 @@ describe("release doctor", () => {
         recentSuccessfulOldRun(listRuns(run), DOCTOR_RUN_NOW),
         field,
       ).toBeNull();
-
-    const missingPreflightDisplay = withoutField(
-      { ...scheduled, event: "workflow_dispatch" },
-      "display_title",
-    );
-    expect(
-      recentSuccessfulOldRun(listRuns(missingPreflightDisplay), DOCTOR_RUN_NOW),
-    ).toBeNull();
   });
 
-  it("rejects a run when an identity or outcome field is wrong", () => {
+  it("rejects a scheduled run when an identity or outcome field is wrong", () => {
     const scheduled = realisticScheduledRun as Record<string, unknown>;
     const wrong: readonly [string, Record<string, unknown>][] = [
       ["id", { ...scheduled, id: 0 }],
@@ -917,16 +817,6 @@ describe("release doctor", () => {
       recentSuccessfulOldRun(
         listRuns({
           ...scheduled,
-          event: "workflow_dispatch",
-          display_title: "not-the-read-only-preflight",
-        }),
-        DOCTOR_RUN_NOW,
-      ),
-    ).toBeNull();
-    expect(
-      recentSuccessfulOldRun(
-        listRuns({
-          ...scheduled,
           workflow_ref:
             "weave-io/weave/.github/workflows/other.yml@refs/heads/main",
         }),
@@ -935,7 +825,7 @@ describe("release doctor", () => {
     ).toBeNull();
   });
 
-  it("keeps npm trust verification independent from preflight evidence", () => {
+  it("keeps npm trust verification independent from old-system evidence", () => {
     const base = snapshotFor("pre-cutover");
     const trustedPublishers = { ...base.trustedPublishers };
     trustedPublishers["@weaveio/weave-cli"] = trust(
@@ -949,9 +839,8 @@ describe("release doctor", () => {
             authoritative: true,
             publicationPathEnabled: true,
             recentSuccessfulRun: false,
-            readOnlyPreflight: true,
             runId: 44,
-            evidence: "successful read-only preflight run 44 on protected main",
+            evidence: "successful scheduled run 44 on protected main",
           },
           trustedPublishers,
         },

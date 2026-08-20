@@ -103,9 +103,8 @@ to the checked-in contract. `publish` invokes only
 `scripts/release/publish-main.ts`; the command is reached only after the
 artifact, attestation, consumer, harness, approval, and rollout gates.
 
-The `release-refs` environment survives the cutover because the documented
-rollback restores the old publisher and its App authority path. It must keep
-the same `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` metadata as
+The `release-refs` environment supports the refs and cleanup boundary. It
+must keep the same `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` metadata as
 `release-app` and `docs-audit-patch`. The checker and doctor both require this
 duplicate environment-secret contract; they do not weaken it to
 repository-wide secrets.
@@ -205,8 +204,8 @@ auth, credential helpers, keychains, and auth-bearing config files before
 publication. `validateProofCredentials` accepts only named `api-key`
 credentials. The workflow security lint rejects npm token/config names,
 OAuth/subscription/refresh/session names, and non-API-key AI or harness
-credentials. The old publisher's shell guard only checks inherited state; it
-does not provide a credential and is intentionally allowed. The App
+credentials. Data-only shell guards do not provide credentials and remain
+allowed. The App
 installation contract is Contents: write, Pull requests: write, Checks: write
 when a check mutation needs it, and Members: read for organization/team
 authorization. Each mint step requests only the permissions used by that job.
