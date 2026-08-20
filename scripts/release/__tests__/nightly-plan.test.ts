@@ -213,6 +213,36 @@ describe("release preflight operation routing", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("accepts a green required check beside an incomplete check", async () => {
+    const fetchStub = Object.assign(
+      async (input: URL | RequestInfo): Promise<Response> => {
+        if (String(input).endsWith("/git/ref/heads/main"))
+          return new Response(JSON.stringify({ object: { sha } }), {
+            headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" },
+          });
+        return new Response(
+          JSON.stringify({
+            check_runs: [
+              {
+                name: "Lint, Typecheck, Build & Test",
+                conclusion: "success",
+              },
+              { name: "unrelated", status: "in_progress", conclusion: null },
+            ],
+          }),
+          { headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" } },
+        );
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    globalThis.fetch = fetchStub;
+    try {
+      expect(await runPreflight(environment("stable-cut"))).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("rejects a GitHub response with an own __proto__ key", async () => {
     const fetchStub = Object.assign(
       async (): Promise<Response> =>
@@ -254,6 +284,41 @@ describe("release preflight operation routing", () => {
       if (previous === undefined)
         Reflect.deleteProperty(Object.prototype, "object");
       else Object.defineProperty(Object.prototype, "object", previous);
+    }
+  });
+
+  test("rejects inherited accessor check runs without reading the getter", async () => {
+    const previous = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "check_runs",
+    );
+    let reads = 0;
+    Object.defineProperty(Object.prototype, "check_runs", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return [];
+      },
+    });
+    const fetchStub = Object.assign(
+      async (input: URL | RequestInfo): Promise<Response> =>
+        new Response(
+          String(input).endsWith("/git/ref/heads/main")
+            ? JSON.stringify({ object: { sha } })
+            : "{}",
+          { headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" } },
+        ),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    globalThis.fetch = fetchStub;
+    try {
+      expect(await runPreflight(environment("stable-cut"))).toBe(1);
+      expect(reads).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === undefined)
+        Reflect.deleteProperty(Object.prototype, "check_runs");
+      else Object.defineProperty(Object.prototype, "check_runs", previous);
     }
   });
 });
