@@ -1,0 +1,1433 @@
+/**
+ * Raw chain-of-thought must not survive in ANY retained state.
+ *
+ * Pi 0.84 splits one reasoning block across three frames and does not put the
+ * prose in one field:
+ *
+ *   message_update(assistantMessageEvent: { type: "thinking_start" })
+ *   message_update(assistantMessageEvent: { type: "thinking_delta", delta })
+ *   message_update(assistantMessageEvent: { type: "thinking_end", content })
+ *
+ * The redaction boundary previously blanked `thinking_delta.delta` alone, so
+ * the COMPLETED thought - `thinking_end.content`, which may be a string or an
+ * array of content blocks - stayed in the transcript's bounded history, in the
+ * overlay's retained replay steps, and in everything serialized, searched, or
+ * rebuilt from them.
+ *
+ * Every case below drives one of the three real retention paths:
+ *
+ *   1. `reducePiChildTranscript` - the transcript reducer's history append;
+ *   2. `projectLiveEntry`        - the live overlay projection's replay step;
+ *   3. `pushReplayEvent`         - the rebuilt/historical replay-step builder.
+ *
+ * The assertion is always the same: the sentinel appears nowhere in the
+ * serialized retained state. The event's SHAPE survives, so a reader still
+ * learns that the child reasoned.
+ */
+import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
+import {
+  projectLiveEntry,
+  pushReplayEvent,
+  transcriptFromOverlayEntries,
+} from "../child-overlay-replay.js";
+import type {
+  ChildOverlayEntry,
+  ChildOverlayReplayStep,
+} from "../child-overlay-types.js";
+import {
+  canonicalReasoningMessageUpdate,
+  type PiChildSessionEvent,
+  parsePiChildSessionEvent,
+  redactRawReasoningFromEvent,
+  retainedChildSessionEvent,
+} from "../child-session-events.js";
+import {
+  createPiChildTranscriptState,
+  type PiChildTranscriptState,
+  reducePiChildTranscript,
+  renderPiChildTranscript,
+} from "../child-transcript.js";
+import {
+  EMPTY_USAGE_AGGREGATE,
+  PiChildInspectionRegistry,
+  ROOT_NODE_ID,
+} from "../child-tree.js";
+import { classifyPiMessageUpdate } from "../message-update-carrier.js";
+
+/**
+ * One sentinel per carrier, so a failure names the exact field that leaked
+ * rather than only proving that something did.
+ */
+const COT = {
+  start: "SENTINEL-THINKING-START-PROSE",
+  delta: "SENTINEL-THINKING-DELTA-PROSE",
+  end: "SENTINEL-THINKING-END-PROSE",
+  block: "SENTINEL-THINKING-BLOCK-PROSE",
+  partial: "SENTINEL-THINKING-PARTIAL-PROSE",
+  legacy: "SENTINEL-LEGACY-DELTA-PROSE",
+  message: "SENTINEL-MESSAGE-REASONING-PROSE",
+  frame: "SENTINEL-FRAME-PROSE",
+  hiddenKey: "SENTINEL-HIDDEN-KEY-PROSE",
+  hiddenBlock: "SENTINEL-HIDDEN-BLOCK-PROSE",
+  hiddenLegacy: "SENTINEL-HIDDEN-LEGACY-PROSE",
+  hiddenFrame: "SENTINEL-HIDDEN-FRAME-PROSE",
+} as const;
+
+const ALL_SENTINELS = Object.values(COT);
+
+/** The visible answer, which must NOT be redacted by any of this. */
+const ANSWER = "The reporter drops rows when the window trims.";
+
+/**
+ * The ONE event a reasoning `message_update` may leave behind.
+ *
+ * Written out literally rather than imported as a value, so a change to the
+ * canonical shape has to be restated here on purpose: this is the exact JSON a
+ * search, a rebuild, a snapshot and durable history are allowed to hold for a
+ * frame that carried chain-of-thought.
+ */
+const CANONICAL_REASONING_EVENT = {
+  type: "message_update",
+  assistantMessageEvent: { type: "thinking_delta" },
+} as const;
+
+function parsed(raw: unknown): PiChildSessionEvent {
+  const result = parsePiChildSessionEvent(raw);
+  expect(result.success).toBe(true);
+  if (!result.success) throw new Error("unparseable fixture");
+  return result.data;
+}
+
+/** Every carrier a real `thinking_*` lifecycle can put prose in, at once. */
+function hostileThinkingLifecycle(): readonly Record<string, unknown>[] {
+  return [
+    { type: "message_start", message: { role: "assistant", content: [] } },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: COT.start,
+      },
+    },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: COT.delta,
+        partial: COT.partial,
+      },
+    },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: [
+          { type: "thinking", text: COT.block },
+          { type: "reasoning", reasoning: COT.block },
+        ],
+        text: COT.end,
+      },
+      partial: COT.frame,
+    },
+    { type: "message_update", delta: { thinking: COT.legacy } },
+    {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: ANSWER,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        reasoning: COT.message,
+        content: [
+          { type: "thinking", text: COT.block },
+          { type: "text", text: ANSWER },
+        ],
+      },
+    },
+  ];
+}
+
+/**
+ * The same disclosure, hidden UNDER an answer-shaped carrier.
+ *
+ * Every frame here declares `text_delta` or `answer` - the two types a reader
+ * treats as "this is the child's visible reply" - while burying the thought in
+ * a `thinking` / `reasoning` member or in a nested thinking content block. A
+ * classifier that trusts the declared type published these as pure answers and
+ * retained the prose in full.
+ */
+function hiddenCarrierLifecycle(): readonly Record<string, unknown>[] {
+  return [
+    { type: "message_start", message: { role: "assistant", content: [] } },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        thinking: COT.hiddenKey,
+      },
+    },
+    {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "answer",
+        contentIndex: 0,
+        content: [
+          { type: "thinking", text: COT.hiddenBlock },
+          { type: "reasoning", reasoning: COT.hiddenBlock },
+        ],
+      },
+    },
+    {
+      type: "message_update",
+      delta: { text: ANSWER, reasoning: COT.hiddenLegacy },
+    },
+    {
+      type: "message_update",
+      thinking: COT.hiddenFrame,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", text: COT.hiddenBlock },
+          { type: "text", text: ANSWER },
+        ],
+      },
+    },
+  ];
+}
+
+function expectNoSentinel(serialized: string): void {
+  for (const sentinel of ALL_SENTINELS) {
+    expect({ sentinel, present: serialized.includes(sentinel) }).toEqual({
+      sentinel,
+      present: false,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 1. The redaction boundary itself
+// ---------------------------------------------------------------------------
+
+describe("redactRawReasoningFromEvent · every reasoning carrier", () => {
+  it("blanks thinking_start, thinking_delta and thinking_end prose", () => {
+    for (const raw of hostileThinkingLifecycle()) {
+      const redacted = redactRawReasoningFromEvent(parsed(raw));
+      expectNoSentinel(JSON.stringify(redacted));
+    }
+  });
+
+  it("keeps an explicit thinking_start content sentinel out of the event", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_start",
+          contentIndex: 0,
+          content: COT.start,
+        },
+      }),
+    );
+    expect(redacted).toEqual({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: "",
+      },
+    } as unknown as PiChildSessionEvent);
+  });
+
+  it("keeps an explicit thinking_end content sentinel out of the event", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: COT.end,
+        },
+      }),
+    );
+    expect(redacted).toEqual({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: "",
+      },
+    } as unknown as PiChildSessionEvent);
+  });
+
+  it("preserves the shape and the block kinds it redacts", () => {
+    // The reader must still learn THAT the child reasoned, and in what shape.
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 3,
+          content: [{ type: "thinking", text: COT.block }],
+        },
+      }),
+    );
+    expect(redacted).toEqual({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 3,
+        content: [{ type: "thinking", text: "" }],
+      },
+    } as unknown as PiChildSessionEvent);
+  });
+
+  it("blanks every carrier of a MIXED frame, answer text included", () => {
+    // No reader can tell which carrier held the chain-of-thought, so neither
+    // carrier may be published.
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        delta: { text: ANSWER, thinking: COT.legacy },
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          delta: COT.delta,
+          content: COT.end,
+        },
+      }),
+    );
+    const serialized = JSON.stringify(redacted);
+    expectNoSentinel(serialized);
+    expect(serialized).not.toContain(ANSWER);
+  });
+
+  it("blanks the legacy delta's other carriers beside `thinking`", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        delta: {
+          thinking: COT.legacy,
+          content: [{ type: "thinking", text: COT.block }],
+          partial: COT.partial,
+        },
+      }),
+    );
+    expectNoSentinel(JSON.stringify(redacted));
+  });
+
+  it("blanks a hidden reasoning carrier a text_delta declared as an answer", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: ANSWER,
+          thinking: COT.hiddenKey,
+        },
+      }),
+    );
+    const serialized = JSON.stringify(redacted);
+    expectNoSentinel(serialized);
+    // Mixed carriers: the answer beside the hidden thought is emptied too,
+    // because no reader can tell which carrier held the chain-of-thought.
+    expect(serialized).not.toContain(ANSWER);
+  });
+
+  it("blanks a nested thinking block an answer-typed carrier hid", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "answer",
+          contentIndex: 0,
+          content: [{ type: "thinking", text: COT.hiddenBlock }],
+        },
+      }),
+    );
+    expect(redacted).toEqual({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "answer",
+        contentIndex: 0,
+        content: [{ type: "thinking", text: "" }],
+      },
+    } as unknown as PiChildSessionEvent);
+  });
+
+  it("blanks reasoning prose the FRAME states beside an answer carrier", () => {
+    const redacted = redactRawReasoningFromEvent(
+      parsed({
+        type: "message_update",
+        thinking: COT.hiddenFrame,
+        assistantMessageEvent: { type: "text_delta", delta: ANSWER },
+      }),
+    );
+    expectNoSentinel(JSON.stringify(redacted));
+  });
+
+  it("leaves an unambiguous answer frame exactly as it was", () => {
+    const answerFrame = parsed({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: ANSWER,
+      },
+    });
+    expect(redactRawReasoningFromEvent(answerFrame)).toBe(answerFrame);
+  });
+
+  it("leaves the host's own reasoning SUMMARY untouched", () => {
+    // `reasoning_summary` is the one trusted reasoning surface: the host chose
+    // to produce it for the reader, and nothing derives it from raw prose.
+    const summary = parsed({
+      type: "reasoning_summary",
+      text: "Checked the reporter's window trimming.",
+    });
+    expect(redactRawReasoningFromEvent(summary)).toBe(summary);
+  });
+
+  it("leaves framing frames identical rather than rewriting them", () => {
+    for (const raw of [
+      { type: "message_update", assistantMessageEvent: { type: "text_start" } },
+      { type: "message_update", assistantMessageEvent: { type: "text_end" } },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_start" },
+      },
+      { type: "message_update" },
+    ]) {
+      const event = parsed(raw);
+      expect(redactRawReasoningFromEvent(event)).toBe(event);
+    }
+  });
+
+  it("never throws on a hostile carrier, and never invokes its accessors", () => {
+    let invoked = 0;
+    const hostile = {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        get delta() {
+          invoked += 1;
+          return COT.delta;
+        },
+      },
+    };
+    // The parser drops the accessor before redaction ever sees it, so the
+    // getter is not run and the retained event carries no prose either way.
+    const redacted = redactRawReasoningFromEvent(parsed(hostile));
+    expect(invoked).toBe(0);
+    expectNoSentinel(JSON.stringify(redacted));
+
+    const revocable = Proxy.revocable(
+      { type: "thinking_delta", delta: COT.delta },
+      {},
+    );
+    revocable.revoke();
+    const withRevoked = parsePiChildSessionEvent({
+      type: "message_update",
+      assistantMessageEvent: revocable.proxy,
+    });
+    if (withRevoked.success) {
+      expectNoSentinel(
+        JSON.stringify(redactRawReasoningFromEvent(withRevoked.data)),
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. The three retention paths
+// ---------------------------------------------------------------------------
+
+describe("retained history carries no raw chain-of-thought", () => {
+  it("keeps the transcript reducer's bounded history clean", () => {
+    let state = createPiChildTranscriptState();
+    hostileThinkingLifecycle().forEach((raw, index) => {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(raw),
+      });
+      expect({ index, ok: next.isOk() }).toEqual({ index, ok: true });
+      if (next.isOk()) state = next.value;
+    });
+
+    const serialized = JSON.stringify(state);
+    expectNoSentinel(serialized);
+    // The answer the child actually produced is still there.
+    expect(serialized).toContain("The reporter drops rows");
+    // And the transcript still records that the child reasoned.
+    expect(
+      state.entries.some(
+        (entry) => entry.kind === "assistant" && entry.reasoningObserved,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the live overlay projection's replay steps clean", () => {
+    const serialized = hostileThinkingLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined)
+      .map((entry) => JSON.stringify(entry))
+      .join("\n");
+    expectNoSentinel(serialized);
+  });
+
+  it("keeps the rebuilt replay-step builder clean, and its rebuild too", () => {
+    const steps: ChildOverlayReplayStep[] = [];
+    for (const raw of hostileThinkingLifecycle()) {
+      expect(pushReplayEvent(steps, raw).isOk()).toBe(true);
+    }
+    expectNoSentinel(JSON.stringify(steps));
+
+    // Everything a search, a page merge, or a snapshot would read back.
+    const entries = hostileThinkingLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined);
+    expectNoSentinel(JSON.stringify(transcriptFromOverlayEntries(entries)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. The same three paths, for carriers that call themselves answers
+// ---------------------------------------------------------------------------
+
+describe("retained history carries no HIDDEN chain-of-thought", () => {
+  it("keeps the transcript reducer's bounded history clean", () => {
+    let state = createPiChildTranscriptState();
+    hiddenCarrierLifecycle().forEach((raw, index) => {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(raw),
+      });
+      expect({ index, ok: next.isOk() }).toEqual({ index, ok: true });
+      if (next.isOk()) state = next.value;
+    });
+    expectNoSentinel(JSON.stringify(state));
+  });
+
+  it("keeps the live overlay projection's replay steps clean", () => {
+    const serialized = hiddenCarrierLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined)
+      .map((entry) => JSON.stringify(entry))
+      .join("\n");
+    expectNoSentinel(serialized);
+  });
+
+  it("keeps the rebuilt replay-step builder clean, and its rebuild too", () => {
+    const steps: ChildOverlayReplayStep[] = [];
+    for (const raw of hiddenCarrierLifecycle()) {
+      expect(pushReplayEvent(steps, raw).isOk()).toBe(true);
+    }
+    expectNoSentinel(JSON.stringify(steps));
+
+    const entries = hiddenCarrierLifecycle()
+      .map((raw, index) => projectLiveEntry(parsed(raw), index, false))
+      .filter((entry) => entry !== undefined);
+    expectNoSentinel(JSON.stringify(transcriptFromOverlayEntries(entries)));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. The registry's two retention paths receive the SAME redacted event
+// ---------------------------------------------------------------------------
+
+/** Captures exactly what the durable history port is handed. */
+function capturingRegistry(): {
+  readonly registry: PiChildInspectionRegistry;
+  readonly captured: unknown[];
+} {
+  const captured: unknown[] = [];
+  const registry = new PiChildInspectionRegistry({
+    checkpoint: (_id: string, event?: unknown) => {
+      captured.push(event);
+      return okAsync(undefined);
+    },
+  });
+  return { registry, captured };
+}
+
+async function registerChild(
+  registry: PiChildInspectionRegistry,
+): Promise<void> {
+  const registered = await registry.register({
+    id: "child",
+    parentId: ROOT_NODE_ID,
+    name: "child",
+    kind: "ordinary",
+    snapshot: () => ({
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      status: "running",
+      currentTurn: 0,
+      currentTool: undefined,
+      startedAtMs: 0,
+      elapsedMs: 0,
+      usage: EMPTY_USAGE_AGGREGATE,
+      latestOutput: "",
+      id: "child",
+    }),
+  });
+  expect(registered.isOk()).toBe(true);
+}
+
+describe("PiChildInspectionRegistry.checkpointEvent · one retained event", () => {
+  it("hands durable history the canonical reasoning fact, not the raw frame", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    await registry.checkpointEvent("child", {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: [{ type: "thinking", text: COT.end }],
+      },
+    });
+    await registry.drain();
+
+    // The history port previously received the OBSERVED event while only the
+    // transcript reducer saw the redacted one, so the completed thought was
+    // written to durable history in full. It now receives the fact the child
+    // reasoned, built here, carrying nothing the host sent.
+    expectNoSentinel(JSON.stringify(captured));
+    expect(captured).toEqual([CANONICAL_REASONING_EVENT]);
+    expectNoSentinel(JSON.stringify(registry.getTranscriptState("child")));
+  });
+
+  it("hands both paths the same redacted event for a hidden carrier", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    for (const raw of hiddenCarrierLifecycle()) {
+      await registry.checkpointEvent("child", raw);
+    }
+    await registry.drain();
+
+    expectNoSentinel(JSON.stringify(captured));
+    expectNoSentinel(JSON.stringify(registry.getTranscriptState("child")));
+  });
+
+  it("retains no payload at all for an event the parser refuses", async () => {
+    const { registry, captured } = capturingRegistry();
+    await registerChild(registry);
+
+    // A KNOWN event type whose shape fails validation is not parser-approved,
+    // so history learns that a checkpoint happened and nothing more.
+    await registry.checkpointEvent("child", {
+      type: "thinking",
+      text: { nested: COT.block },
+    });
+    await registry.drain();
+
+    expect(captured).toEqual([undefined]);
+    expectNoSentinel(JSON.stringify(captured));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. A REJECTED frame is retained NOWHERE
+// ---------------------------------------------------------------------------
+
+/**
+ * Redaction blanks the prose fields a carrier DECLARED, which is the right
+ * rule for a frame this boundary understands. A rejected frame is not one: the
+ * classifier refused it precisely because it could not say what it carries, so
+ * no field list describes what to blank. A thought parked under an undeclared
+ * member — `assistantMessageEvent.metadata.content[{ type: "thinking", text }]`
+ * — survived redaction untouched and was written into the transcript's bounded
+ * history and the registry's durable checkpoint in full.
+ *
+ * The rule below is the only one that cannot be walked around: a rejected
+ * `message_update` moves nothing and is retained nowhere. Each case drives
+ * EVERY retention entrance with one frame, because fixing a single entrance is
+ * what left the others holding the prose.
+ */
+const REFUSED = {
+  undeclared: "SENTINEL-UNDECLARED-MEMBER-PROSE",
+  frameMember: "SENTINEL-FRAME-UNDECLARED-MEMBER-PROSE",
+  frameKey: "SENTINEL-FRAME-UNDECLARED-KEY-PROSE",
+  depth: "SENTINEL-DEPTH-OVERFLOW-PROSE",
+  budget: "SENTINEL-NODE-BUDGET-PROSE",
+  conflicting: "SENTINEL-CONFLICTING-ANSWER-PROSE",
+  accessor: "SENTINEL-ACCESSOR-PROSE",
+  revoked: "SENTINEL-REVOKED-PROXY-PROSE",
+} as const;
+
+function expectAbsent(serialized: string, needles: readonly string[]): void {
+  for (const needle of needles) {
+    expect({ needle, present: serialized.includes(needle) }).toEqual({
+      needle,
+      present: false,
+    });
+  }
+}
+
+/** Buries a value under `depth` plain wrappers, past any scan bound. */
+function buried(depth: number, leaf: unknown): unknown {
+  let node: unknown = leaf;
+  for (let index = 0; index < depth; index += 1) node = { nested: node };
+  return node;
+}
+
+/** Enough nodes to exhaust one frame's whole hidden-carrier scan budget. */
+function scanPadding(): readonly unknown[] {
+  return Array.from({ length: 128 }, (_, outer) => ({
+    branch: Array.from({ length: 8 }, (_, inner) => ({
+      leaf: `${outer}:${inner}`,
+    })),
+  }));
+}
+
+/** Everything one observed frame left behind, at every retention entrance. */
+interface RetentionProbe {
+  readonly before: PiChildTranscriptState;
+  readonly after: PiChildTranscriptState;
+  readonly liveEntry: ChildOverlayEntry | undefined;
+  readonly steps: readonly ChildOverlayReplayStep[];
+  readonly captured: readonly unknown[];
+  readonly registryTranscript: PiChildTranscriptState;
+  /** Every surface above, plus the rebuild and the rendered rows. */
+  readonly serialized: string;
+}
+
+async function driveEveryRetentionEntrance(
+  raw: Record<string, unknown>,
+): Promise<RetentionProbe> {
+  const event = parsed(raw);
+
+  const before = createPiChildTranscriptState();
+  const reduced = reducePiChildTranscript(before, { kind: "event", event });
+  expect(reduced.isOk()).toBe(true);
+  const after = reduced.isOk() ? reduced.value : before;
+
+  const liveEntry = projectLiveEntry(event, 0, false);
+
+  const steps: ChildOverlayReplayStep[] = [];
+  expect(pushReplayEvent(steps, raw).isOk()).toBe(true);
+
+  const { registry, captured } = capturingRegistry();
+  await registerChild(registry);
+  await registry.checkpointEvent("child", raw);
+  await registry.drain();
+  const registryTranscript = registry.getTranscriptState("child");
+
+  return {
+    before,
+    after,
+    liveEntry,
+    steps,
+    captured,
+    registryTranscript,
+    serialized: JSON.stringify({
+      after,
+      liveEntry: liveEntry ?? null,
+      steps,
+      captured,
+      registryTranscript,
+      // What a search, a page merge or a snapshot would read back.
+      rebuilt: transcriptFromOverlayEntries(
+        liveEntry === undefined ? [] : [liveEntry],
+      ),
+      renderedTranscript: renderPiChildTranscript(after, 80).lines,
+      renderedRegistryTranscript: renderPiChildTranscript(
+        registryTranscript,
+        80,
+      ).lines,
+    }),
+  };
+}
+
+const REFUSED_FRAMES: readonly {
+  readonly name: string;
+  readonly reason: string;
+  readonly sentinel: string;
+  readonly raw: Record<string, unknown>;
+}[] = [
+  {
+    name: "a thinking block under an UNDECLARED carrier member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.undeclared,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: {
+          content: [{ type: "thinking", text: REFUSED.undeclared }],
+        },
+      },
+    },
+  },
+  {
+    // The same disclosure one level OUT: the member belongs to the FRAME, so
+    // scanning the two carriers plus a couple of known frame keys found
+    // nothing and published the answer with the thought still beside it.
+    name: "a thinking block under an undeclared TOP-LEVEL frame member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.frameMember,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+      metadata: {
+        trace: { content: [{ type: "thinking", text: REFUSED.frameMember }] },
+      },
+    },
+  },
+  {
+    name: "a prose key under an undeclared TOP-LEVEL frame member",
+    reason: "mixed-carriers",
+    sentinel: REFUSED.frameKey,
+    raw: {
+      type: "message_update",
+      delta: { text: ANSWER },
+      provenance: { trace: { reasoning: REFUSED.frameKey } },
+    },
+  },
+  {
+    name: "a thought buried past the hidden-carrier depth bound",
+    reason: "unreadable",
+    sentinel: REFUSED.depth,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: buried(12, { type: "thinking", text: REFUSED.depth }),
+      },
+    },
+  },
+  {
+    name: "a thought behind enough padding to exhaust the scan budget",
+    reason: "unreadable",
+    sentinel: REFUSED.budget,
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+        metadata: {
+          padding: scanPadding(),
+          content: [{ type: "thinking", text: REFUSED.budget }],
+        },
+      },
+    },
+  },
+  {
+    name: "two answer carriers that disagree about the text",
+    reason: "conflicting-answers",
+    sentinel: REFUSED.conflicting,
+    raw: {
+      type: "message_update",
+      delta: { text: `${REFUSED.conflicting}-legacy` },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: `${REFUSED.conflicting}-event`,
+      },
+    },
+  },
+];
+
+describe("a rejected message_update is retained nowhere", () => {
+  for (const refused of REFUSED_FRAMES) {
+    it(`moves nothing for ${refused.name}`, async () => {
+      const event = parsed(refused.raw);
+      expect(classifyPiMessageUpdate(event)).toEqual({
+        kind: "rejected",
+        reason: refused.reason,
+      } as ReturnType<typeof classifyPiMessageUpdate>);
+
+      const probe = await driveEveryRetentionEntrance(refused.raw);
+
+      // Asserted FIRST, because it is the disclosure itself: the hidden
+      // thought is gone from every retained surface — and so is the answer
+      // that sat beside it, because the frame states nothing this boundary can
+      // attribute to either carrier.
+      expectAbsent(probe.serialized, [refused.sentinel, ANSWER]);
+      expectAbsent(probe.serialized, ALL_SENTINELS);
+
+      // The transcript reducer keeps its OWN state object: no history event,
+      // no placeholder entry, not even a consumed sequence number.
+      expect(probe.after).toBe(probe.before);
+      expect(probe.after.historyEvents).toEqual([]);
+      expect(probe.after.entries).toEqual([]);
+      // The overlay projects no entry and the replay builder pushes no step,
+      // so nothing reaches the window, a rebuild, or a search.
+      expect(probe.liveEntry).toBeUndefined();
+      expect(probe.steps).toEqual([]);
+      // Durable history learns that a checkpoint happened, with no payload.
+      expect(probe.captured).toEqual([undefined]);
+      expect(probe.registryTranscript.historyEvents).toEqual([]);
+      expect(probe.registryTranscript.entries).toEqual([]);
+    });
+  }
+
+  it("never invokes an accessor a hostile carrier defined", async () => {
+    let invoked = 0;
+    const hostile = {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: ANSWER,
+        metadata: {
+          get content() {
+            invoked += 1;
+            return [{ type: "thinking", text: REFUSED.accessor }];
+          },
+        },
+      },
+    };
+    // The parser materializes own DATA descriptors only, so the accessor is
+    // dropped with the carrier that defined it before any retention boundary
+    // sees the frame: what arrives is pure framing.
+    expect(classifyPiMessageUpdate(parsed(hostile))).toEqual({
+      kind: "framing",
+    });
+
+    const probe = await driveEveryRetentionEntrance(hostile);
+    expect(invoked).toBe(0);
+    expectAbsent(probe.serialized, [REFUSED.accessor, ANSWER]);
+  });
+
+  it("retains nothing from a revoked proxy or a throwing reflection trap", async () => {
+    const revocable = Proxy.revocable(
+      { type: "thinking", text: REFUSED.revoked },
+      {},
+    );
+    revocable.revoke();
+    const hostile: Record<string, unknown>[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: ANSWER,
+          metadata: { content: [revocable.proxy] },
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: ANSWER,
+          metadata: new Proxy(
+            {},
+            {
+              ownKeys() {
+                throw new Error("hostile reflection");
+              },
+            },
+          ),
+        },
+      },
+    ];
+
+    for (const raw of hostile) {
+      // Reflection that throws is a rejection, never an exception.
+      const probe = await driveEveryRetentionEntrance(raw);
+      expectAbsent(probe.serialized, [REFUSED.revoked]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. What the refusal must NOT take with it
+// ---------------------------------------------------------------------------
+
+describe("the retention decision keeps every unambiguous frame", () => {
+  it("retains an ordinary answer at every entrance", async () => {
+    const probe = await driveEveryRetentionEntrance({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    });
+
+    expect(probe.after.historyEvents).toHaveLength(1);
+    expect(probe.liveEntry?.text).toBe(ANSWER);
+    expect(probe.steps).toHaveLength(1);
+    expect(probe.captured).toHaveLength(1);
+    expect(probe.serialized).toContain(ANSWER);
+  });
+
+  it("retains an answer whose metadata is only bookkeeping", async () => {
+    // The wider scan must not turn ordinary nested bookkeeping - a numeric
+    // `reasoning` token count included - into a reasoning frame: this is the
+    // false positive that would empty real answers.
+    const raw = {
+      type: "message_update",
+      usage: { input: 2, output: 22, reasoning: 11 },
+      metadata: {
+        trace: {
+          requestId: "req-7",
+          tokens: { reasoning: 11, cached: 0 },
+          content: [{ type: "text", text: ANSWER }],
+        },
+      },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: ANSWER,
+      },
+    };
+    expect(classifyPiMessageUpdate(parsed(raw))).toEqual({
+      kind: "answer",
+      text: ANSWER,
+    });
+
+    const probe = await driveEveryRetentionEntrance(raw);
+    expect(probe.after.historyEvents).toHaveLength(1);
+    expect(probe.after.historyEvents[0]?.event).toEqual(
+      raw as unknown as PiChildSessionEvent,
+    );
+    expect(probe.liveEntry?.text).toBe(ANSWER);
+    expect(probe.steps).toHaveLength(1);
+    expect(probe.captured).toEqual([raw]);
+    expect(probe.serialized).toContain(ANSWER);
+    expect(probe.serialized).toContain("req-7");
+  });
+
+  it("retains pure framing exactly as the child framed it", async () => {
+    for (const assistantMessageEvent of [
+      { type: "text_start", contentIndex: 0 },
+      { type: "text_end", contentIndex: 0 },
+      { type: "toolcall_start", contentIndex: 1 },
+    ]) {
+      const raw = { type: "message_update", assistantMessageEvent };
+      const probe = await driveEveryRetentionEntrance(raw);
+      expect(probe.after.historyEvents).toHaveLength(1);
+      expect(probe.after.historyEvents[0]?.event).toEqual(
+        raw as unknown as PiChildSessionEvent,
+      );
+      expect(probe.captured).toEqual([raw]);
+    }
+  });
+
+  it("retains a reasoning lifecycle as one canonical content-free fact", async () => {
+    let state = createPiChildTranscriptState();
+    const captured: unknown[] = [];
+    const registry = new PiChildInspectionRegistry({
+      checkpoint: (_id: string, event?: unknown) => {
+        captured.push(event);
+        return okAsync(undefined);
+      },
+    });
+    await registerChild(registry);
+
+    const lifecycle: Record<string, unknown>[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_start",
+          contentIndex: 0,
+          content: COT.start,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: COT.delta,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: [{ type: "thinking", text: COT.block }],
+        },
+      },
+    ];
+    for (const raw of lifecycle) {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(raw),
+      });
+      expect(next.isOk()).toBe(true);
+      if (next.isOk()) state = next.value;
+      await registry.checkpointEvent("child", raw);
+    }
+    await registry.drain();
+
+    // All three frames are retained - the reader still learns THAT the child
+    // reasoned - as the SAME adapter-built fact, so no phase, field or member
+    // of any of them survives anywhere.
+    expect(state.historyEvents).toHaveLength(3);
+    expect(state.historyEvents.map((entry) => entry.event)).toEqual([
+      CANONICAL_REASONING_EVENT,
+      CANONICAL_REASONING_EVENT,
+      CANONICAL_REASONING_EVENT,
+    ] as unknown as PiChildSessionEvent[]);
+    expect(captured).toEqual([
+      CANONICAL_REASONING_EVENT,
+      CANONICAL_REASONING_EVENT,
+      CANONICAL_REASONING_EVENT,
+    ]);
+    // Three frames, ONE fact: the whole lifecycle merges into a single
+    // assistant entry that says the child reasoned and prints nothing.
+    const reasoningEntries = state.entries.filter(
+      (entry) => entry.kind === "assistant" && entry.reasoningObserved,
+    );
+    expect(reasoningEntries).toHaveLength(1);
+    expect(reasoningEntries[0]).toMatchObject({
+      text: "",
+      reasoningSummary: "",
+    });
+    expectNoSentinel(JSON.stringify({ state, captured }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. A REASONING frame is retained as the ADAPTER's fact, not the host's object
+// ---------------------------------------------------------------------------
+
+/**
+ * Blanking the prose fields a carrier DECLARED still kept the host's own
+ * object. A reasoning frame may state prose in a member no field list names -
+ * `metadata`, `provenance`, a `usage` subobject, a block nested under either,
+ * or any key a future Pi adds - and every one of those survived into the
+ * transcript's bounded history, the overlay's replay steps, the rebuild a
+ * search reads, and the inspection registry's durable checkpoint.
+ *
+ * Retention now keeps ONE adapter-built event for such a frame: the fact that
+ * the child reasoned, and nothing observed. Each case below drives every
+ * retention entrance and asserts the same two things - the sentinel is
+ * nowhere, and what was kept is the canonical event down to its key names.
+ */
+const CANON = {
+  nested: "SENTINEL-NESTED-UNDECLARED-PROSE",
+  framingMetadata: "SENTINEL-FRAMING-FRAME-METADATA-PROSE",
+  usage: "SENTINEL-USAGE-SUBOBJECT-PROSE",
+  unknownField: "SENTINEL-UNKNOWN-FIELD-PROSE",
+  legacyMeta: "SENTINEL-LEGACY-METADATA-PROSE",
+  legacyBlock: "SENTINEL-LEGACY-HIDDEN-BLOCK-PROSE",
+  frameExtra: "SENTINEL-FRAME-UNKNOWN-PROSE",
+  declared: "SENTINEL-DECLARED-CARRIER-PROSE",
+  accessor: "SENTINEL-REASONING-ACCESSOR-PROSE",
+  proxy: "SENTINEL-REASONING-PROXY-PROSE",
+} as const;
+
+const CANON_SENTINELS = Object.values(CANON);
+
+/** The only keys a retained reasoning frame may still have, sorted. */
+const CANONICAL_KEYS = ["assistantMessageEvent", "type"] as const;
+
+/**
+ * The retained value is the canonical event, proven by KEY NAMES rather than
+ * by deep equality alone: an undeclared member is exactly what deep equality
+ * against a fixture with optional fields is weakest at catching.
+ */
+function expectCanonicalShape(value: unknown): void {
+  expect(value).toEqual(CANONICAL_REASONING_EVENT);
+  const record = value as Record<string, unknown>;
+  expect(Object.keys(record).sort()).toEqual([...CANONICAL_KEYS]);
+  const carrier = record.assistantMessageEvent as Record<string, unknown>;
+  expect(Object.keys(carrier)).toEqual(["type"]);
+  expect(carrier.type).toBe("thinking_delta");
+}
+
+/**
+ * Nothing the host stated survived: every key the retained event has is one
+ * the adapter itself writes, and a carrier it kept states only its own type.
+ *
+ * Weaker than {@link expectCanonicalShape} on purpose - it also holds for the
+ * bare framing frame a parser strips an unreadable member down to.
+ */
+function expectNoObservedMember(value: unknown): void {
+  const record = (value ?? {}) as Record<string, unknown>;
+  const unexpected = Object.keys(record).filter(
+    (key) => !(CANONICAL_KEYS as readonly string[]).includes(key),
+  );
+  expect(unexpected).toEqual([]);
+  const carrier = record.assistantMessageEvent;
+  if (carrier === undefined) return;
+  expect(Object.keys(carrier as Record<string, unknown>)).toEqual(["type"]);
+}
+
+/** Every event any retention entrance kept for one observed frame. */
+function retainedEvents(probe: RetentionProbe): readonly unknown[] {
+  return [
+    ...probe.after.historyEvents.map((entry) => entry.event),
+    ...probe.registryTranscript.historyEvents.map((entry) => entry.event),
+    ...probe.steps.map((step) =>
+      step.kind === "event" ? step.event : (step as unknown),
+    ),
+    ...probe.captured,
+  ];
+}
+
+const REASONING_FRAMES: readonly {
+  readonly name: string;
+  readonly raw: Record<string, unknown>;
+}[] = [
+  {
+    name: "a declared thinking_delta hiding a thought under nested metadata",
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: CANON.declared,
+        metadata: {
+          trace: {
+            detail: { content: [{ type: "thinking", text: CANON.nested }] },
+          },
+        },
+      },
+      usage: { reasoning: 12, note: CANON.usage },
+      observedAt: CANON.unknownField,
+    },
+  },
+  {
+    name: "a legacy thinking carrier beside hidden metadata",
+    raw: {
+      type: "message_update",
+      delta: {
+        thinking: CANON.declared,
+        metadata: { note: CANON.legacyMeta },
+        trace: { content: [{ type: "reasoning", text: CANON.legacyBlock }] },
+      },
+      provenance: { note: CANON.legacyMeta },
+    },
+  },
+  {
+    name: "a thinking_end whose completed block sits beside unknown members",
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: [{ type: "thinking", text: CANON.declared }],
+        provenance: { note: CANON.nested },
+      },
+      partial: CANON.declared,
+      debug: { scratchpad: CANON.unknownField },
+    },
+  },
+  {
+    name: "frame-level reasoning prose beside an unknown field",
+    raw: {
+      type: "message_update",
+      thinking: CANON.declared,
+      extra: { note: CANON.frameExtra },
+    },
+  },
+  {
+    // A FRAMING carrier declares no answer, so a thought parked in a
+    // top-level member states the reasoning fact alone. The frame used to be
+    // retained verbatim as framing, metadata and all.
+    name: "a framing carrier hiding a block under top-level metadata",
+    raw: {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+      metadata: {
+        trace: {
+          content: [{ type: "reasoning", text: CANON.framingMetadata }],
+        },
+      },
+      usage: { reasoning: 12 },
+    },
+  },
+];
+
+describe("a reasoning message_update is retained as one canonical fact", () => {
+  for (const frame of REASONING_FRAMES) {
+    it(`keeps only the adapter's fact for ${frame.name}`, async () => {
+      const event = parsed(frame.raw);
+      expect(classifyPiMessageUpdate(event)).toEqual({ kind: "reasoning" });
+
+      const probe = await driveEveryRetentionEntrance(frame.raw);
+
+      // The disclosure itself: nothing the host stated is anywhere, in any
+      // retained surface, in the rebuild, or in the rendered rows.
+      expectAbsent(probe.serialized, CANON_SENTINELS);
+      expectAbsent(probe.serialized, ALL_SENTINELS);
+
+      // What each entrance kept is the canonical event and only that: the
+      // transcript's bounded history, the registry's transcript, the replay
+      // step a rebuild replays, and the durable checkpoint.
+      const kept = retainedEvents(probe);
+      expect(kept).toHaveLength(4);
+      for (const retained of kept) expectCanonicalShape(retained);
+
+      // And the UI still records the one fact it renders: the child reasoned.
+      const reasoning = probe.after.entries.filter(
+        (entry) => entry.kind === "assistant" && entry.reasoningObserved,
+      );
+      expect(reasoning).toHaveLength(1);
+      expect(reasoning[0]).toMatchObject({ text: "", reasoningSummary: "" });
+      // A thought is never a row of its own: the window shows no entry, the
+      // assistant entry carries the state.
+      expect(probe.liveEntry).toBeUndefined();
+    });
+  }
+
+  it("is the same fact however many frames the lifecycle spends on it", async () => {
+    let state = createPiChildTranscriptState();
+    for (const frame of REASONING_FRAMES) {
+      const next = reducePiChildTranscript(state, {
+        kind: "event",
+        event: parsed(frame.raw),
+      });
+      expect(next.isOk()).toBe(true);
+      if (next.isOk()) state = next.value;
+    }
+
+    expect(state.historyEvents).toHaveLength(REASONING_FRAMES.length);
+    for (const entry of state.historyEvents) expectCanonicalShape(entry.event);
+    const reasoning = state.entries.filter(
+      (entry) => entry.kind === "assistant" && entry.reasoningObserved,
+    );
+    expect(reasoning).toHaveLength(1);
+    expectAbsent(JSON.stringify(state), CANON_SENTINELS);
+  });
+
+  it("builds a fresh event, so two retained frames never alias one object", () => {
+    const first = canonicalReasoningMessageUpdate();
+    const second = canonicalReasoningMessageUpdate();
+    expectCanonicalShape(first);
+    expectCanonicalShape(second);
+    expect(first).not.toBe(second);
+    expect(
+      (first as unknown as Record<string, unknown>).assistantMessageEvent,
+    ).not.toBe(
+      (second as unknown as Record<string, unknown>).assistantMessageEvent,
+    );
+  });
+
+  it("re-retains itself unchanged, so a rebuild cannot widen it", async () => {
+    // Replay steps are re-parsed and re-reduced on every rebuild, so the
+    // canonical event has to be a fixed point of the whole boundary.
+    const reparsed = parsePiChildSessionEvent(CANONICAL_REASONING_EVENT);
+    expect(reparsed.success).toBe(true);
+    if (!reparsed.success) throw new Error("canonical event must parse");
+    expect(classifyPiMessageUpdate(reparsed.data)).toEqual({
+      kind: "reasoning",
+    });
+    expectCanonicalShape(retainedChildSessionEvent(reparsed.data));
+
+    const probe = await driveEveryRetentionEntrance({
+      ...CANONICAL_REASONING_EVENT,
+    });
+    const kept = retainedEvents(probe);
+    expect(kept).toHaveLength(4);
+    for (const retained of kept) expectCanonicalShape(retained);
+  });
+
+  it("never invokes an accessor a reasoning carrier defined", async () => {
+    let invoked = 0;
+    const hostile = {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        get metadata() {
+          invoked += 1;
+          return { content: [{ type: "thinking", text: CANON.accessor }] };
+        },
+      },
+      get usage() {
+        invoked += 1;
+        return { note: CANON.accessor };
+      },
+    };
+
+    // Straight at the retention decision, with no parser in front of it: the
+    // classification reads own DATA descriptors only, and the value it hands
+    // back is built here, so a getter is neither run nor retained.
+    const direct = retainedChildSessionEvent(
+      hostile as unknown as PiChildSessionEvent,
+    );
+    expect(invoked).toBe(0);
+    expectCanonicalShape(direct);
+
+    // And through every real entrance, which parses first.
+    const probe = await driveEveryRetentionEntrance(hostile);
+    expect(invoked).toBe(0);
+    expectAbsent(probe.serialized, [CANON.accessor, "metadata"]);
+  });
+
+  it("retains nothing when reflection over a reasoning carrier throws", async () => {
+    const revocable = Proxy.revocable(
+      { type: "thinking", text: CANON.proxy },
+      {},
+    );
+    revocable.revoke();
+    const hostile: Record<string, unknown>[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          metadata: { content: [revocable.proxy] },
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          metadata: new Proxy(
+            {},
+            {
+              ownKeys() {
+                throw new Error("hostile reflection");
+              },
+            },
+          ),
+        },
+      },
+    ];
+
+    for (const raw of hostile) {
+      // A frame this boundary cannot read is rejected, not canonicalized: it
+      // states nothing, so nothing - not even the reasoning fact - is claimed.
+      expect(
+        classifyPiMessageUpdate(raw as unknown as PiChildSessionEvent),
+      ).toEqual({ kind: "rejected", reason: "unreadable" });
+      expect(
+        retainedChildSessionEvent(raw as unknown as PiChildSessionEvent),
+      ).toBeUndefined();
+
+      // Through the real entrances the parser strips the member reflection
+      // could not read before retention ever sees it, so what arrives is a
+      // bare framing frame. Either way nothing observed is kept.
+      const probe = await driveEveryRetentionEntrance(raw);
+      expectAbsent(probe.serialized, [CANON.proxy, "metadata"]);
+      expect(probe.liveEntry).toBeUndefined();
+      for (const retained of retainedEvents(probe))
+        expectNoObservedMember(retained);
+    }
+  });
+});

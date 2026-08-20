@@ -1,0 +1,1195 @@
+/**
+ * Child overlay controller (Spec 33 §7, plan Task 12 phase A/B).
+ *
+ * Owns per-child saved state and the LRU that bounds it, page/cursor
+ * adoption, the rendered view projection, search, live-tail projection,
+ * scroll anchoring, and run/branch navigation.
+ *
+ * Depends on `child-overlay-types.js` and `child-overlay-replay.js` only; it
+ * never imports the native component or the `child-overlay.js` facade. The
+ * live-event gate in front of it lives in `child-overlay-stream.js`.
+ */
+
+import { matchesKey } from "@earendil-works/pi-tui";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
+import {
+  type ChildCompactState,
+  createChildCompactState,
+  mapPiChildSessionEventToCompactInput,
+  reduceChildCompactSafe,
+} from "./child-compact-render.js";
+import {
+  boundText,
+  degradedCapacityEntry,
+  liveAssistantLifecyclePhase,
+  mergeReplaySteps,
+  messageText,
+  projectLiveEntry,
+  transcriptFromOverlayEntries,
+} from "./child-overlay-replay.js";
+import {
+  anchorFromScroll,
+  applyMeasuredExtent,
+  clearTailGrowth,
+  markTailGrowth,
+  maxScrollRows,
+  type OverlayLayoutSpan,
+  type OverlayScrollState,
+  restoreAfterOlderEntries,
+  restoreScrollAnchor,
+  scrollDelta,
+} from "./child-overlay-scroll.js";
+import {
+  type CommittedSearch,
+  createCommittedSearch,
+  matchingEntryIds,
+  matchingTerminalErrorEntryIds,
+  mergeMatchIds,
+  stripPathLike,
+} from "./child-overlay-search.js";
+import {
+  applyProviderErrorEvent,
+  type ChildOverlayPlanContextPort,
+  deriveChildOverlayIdentity,
+  deriveChildOverlayTelemetry,
+  latestUsageInWindow,
+  NO_TERMINAL_ERROR_EVIDENCE,
+  pageEvidence,
+  readChildOverlayPlanContext,
+  terminalErrorOf,
+} from "./child-overlay-telemetry.js";
+import {
+  boundOverlayText,
+  CHILD_OVERLAY_BOUNDS,
+  type ChildOverlayAnchor,
+  type ChildOverlayChild,
+  ChildOverlayChildSchema,
+  type ChildOverlayConfig,
+  type ChildOverlayEntry,
+  type ChildOverlayError,
+  type ChildOverlayFallbackReason,
+  type ChildOverlayFallbackRequired,
+  type ChildOverlayInputOutcome,
+  type ChildOverlayMutationPort,
+  type ChildOverlayPage,
+  type ChildOverlayReplayStep,
+  type ChildOverlaySourceError,
+  type ChildOverlaySourcePort,
+  type ChildOverlayView,
+  clampPageSize,
+  clampWindowCap,
+} from "./child-overlay-types.js";
+import {
+  appendLiveAssistantDelta,
+  appendOverlayPage,
+  childOverlayFallbackRequired,
+  dedupEntries,
+  emptySaved,
+  endLiveAssistantLifecycle,
+  isReadOnly,
+  prependOverlayPage,
+  reconcileLiveAssistantAnswer,
+  resolveLiveAssistantEntry,
+  type SavedChildState,
+  syncTranscriptFromEntries,
+} from "./child-overlay-window.js";
+import {
+  type PiChildUsageReport,
+  parsePiChildSessionEvent,
+  parsePiChildUsageReport,
+} from "./child-session-events.js";
+import { reducePiChildTranscript } from "./child-transcript.js";
+import { messageUpdateAnswerText } from "./message-update-carrier.js";
+
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
+export class ChildOverlayController {
+  private readonly source: ChildOverlaySourcePort;
+  private readonly mutations: ChildOverlayMutationPort | undefined;
+  private readonly pageSize: number;
+  private readonly windowCap: number;
+  private readonly maxLruChildren: number;
+  private readonly maxSearchPages: number;
+  private readonly saved = new Map<string, SavedChildState>();
+  private readonly planContext: ChildOverlayPlanContextPort | undefined;
+  private openChild: ChildOverlayChild | undefined;
+  private clock = 0;
+  /**
+   * The committed search, and the only thing allowed to page for one.
+   *
+   * It holds the monotonic revision of the search the reader is looking at, so
+   * a page fetched for an earlier one can never write here — not even when the
+   * same query is committed twice against the same child.
+   */
+  private readonly committedSearch: CommittedSearch;
+
+  constructor(
+    source: ChildOverlaySourcePort,
+    config: ChildOverlayConfig = {},
+    mutations?: ChildOverlayMutationPort,
+    planContext?: ChildOverlayPlanContextPort,
+  ) {
+    this.source = source;
+    this.mutations = mutations;
+    this.planContext = planContext;
+    this.pageSize = clampPageSize(
+      config.pageSize ?? CHILD_OVERLAY_BOUNDS.defaultPageSize,
+    );
+    this.windowCap = clampWindowCap(
+      config.windowCap ?? CHILD_OVERLAY_BOUNDS.defaultWindowCap,
+    );
+    this.maxLruChildren = Math.max(
+      1,
+      Math.min(
+        CHILD_OVERLAY_BOUNDS.maxLruChildren,
+        config.maxLruChildren ?? CHILD_OVERLAY_BOUNDS.maxLruChildren,
+      ),
+    );
+    this.maxSearchPages = Math.max(
+      1,
+      Math.min(
+        CHILD_OVERLAY_BOUNDS.maxSearchPages,
+        config.maxSearchPages ?? CHILD_OVERLAY_BOUNDS.maxSearchPages,
+      ),
+    );
+    this.committedSearch = createCommittedSearch({
+      maxPages: this.maxSearchPages,
+      pageSize: this.pageSize,
+      openChild: () => this.openChild,
+      savedState: (childId) => this.saved.get(childId),
+      loadOlder: (childId, cursor, pageSize) =>
+        this.source.loadOlder(childId, cursor, pageSize),
+      prependPage: (state, page) => this.applyPage(state, page, "prepend"),
+      view: (child, state) => this.toView(child, state),
+      sourceFailed: (childId, error) =>
+        this.fallbackFromError(childId, "source-failed", error),
+    });
+  }
+
+  isOpen(): boolean {
+    return this.openChild !== undefined;
+  }
+
+  currentChildId(): string | undefined {
+    return this.openChild?.childId;
+  }
+
+  /**
+   * The epoch of the reading and the search a late answer must still belong to.
+   *
+   * The smallest fact that can be published about the committed search: one
+   * monotonic number, read-only, moved by nothing but a new reading or an
+   * invalidation. The surface carries it inside its own run token so the jump
+   * and the fallback IT owns are bound to the same reading the controller
+   * binds its writes to — including the reopens the surface never sees, since
+   * walking to a child, closing the overlay and re-opening the SAME child all
+   * happen here and all move this on.
+   */
+  searchEpoch(): number {
+    return this.committedSearch.epoch();
+  }
+
+  /**
+   * Retires every committed search still in flight, and nothing else.
+   *
+   * The query the rail prints and the matches it counts are left exactly as
+   * they are: re-opening search to EDIT a committed query, and closing search
+   * to answer a cancel confirmation, both drop the reader's licence to the
+   * pages still on their way without pretending the reader retyped anything.
+   * Re-matching here would silently shrink the counter to the loaded window,
+   * dropping every match the committed search already paged in.
+   */
+  abandonCommittedSearch(): void {
+    this.committedSearch.invalidate();
+  }
+
+  view(): Result<ChildOverlayView, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return err({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return err({ type: "OverlayNotOpen" });
+    return ok(this.toView(child, state));
+  }
+
+  open(
+    childInput: ChildOverlayChild | string,
+  ): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const childId =
+      typeof childInput === "string" ? childInput : childInput.childId;
+    // Walking to another child — or re-opening this one after a close, which is
+    // the same child identity and a different reading — abandons every page
+    // still in flight for the search the reader left behind.
+    this.committedSearch.invalidate();
+    if (this.openChild !== undefined && this.openChild.childId !== childId) {
+      this.persistOpen();
+    }
+    return this.source
+      .describe(childId)
+      .mapErr(
+        (error): ChildOverlayError =>
+          error.type === "SourceUnavailable" ||
+          error.type === "SourceCorrupt" ||
+          error.type === "SourceStartupNotReady" ||
+          error.type === "ChildNotFound"
+            ? this.fallbackFromError(childId, "describe-failed", error)
+            : error,
+      )
+      .andThen((described) => {
+        const parsed = ChildOverlayChildSchema.safeParse(
+          typeof childInput === "string"
+            ? described
+            : { ...described, ...childInput, childId },
+        );
+        if (!parsed.success) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayInvalidChild",
+            issues: parsed.error.issues.map((issue) => issue.path.join(".")),
+          });
+        }
+        const child = parsed.data;
+        this.touch(child.childId);
+        const existing = this.saved.get(child.childId);
+        const state = existing ?? emptySaved(child.threadId, this.clock);
+        if (existing === undefined) this.saved.set(child.childId, state);
+        this.openChild = child;
+        this.evictLru();
+        if (state.entries.length > 0) {
+          return okAsync(this.toView(child, state));
+        }
+        return this.source
+          .loadNewest(child.childId, this.pageSize)
+          .orElse((error): ResultAsync<ChildOverlayPage, ChildOverlayError> => {
+            // A live child often has no persisted history yet: the run is
+            // still in flight, so its thread record, session ref, and native
+            // session file may all arrive after the overlay is asked to open.
+            // Demanding a historical page here made every real active child
+            // fall back to the custom-editor inspection, which borrows the
+            // primary editor from whoever owns it (for example `pi-vim`). A
+            // live child therefore opens on an empty live-tail window and
+            // fills from its live event stream instead.
+            //
+            // The recovery is deliberately narrow. Only the transient
+            // `SourceStartupNotReady` gap qualifies; permission errors, root
+            // violations, malformed headers, parent mismatch, and corruption
+            // stay fail-closed even for a live child, and every failure for a
+            // settled, orphaned, or unknown child stays fail-closed too.
+            if (
+              child.status !== "live" ||
+              error.type !== "SourceStartupNotReady"
+            ) {
+              return errAsync(
+                this.fallbackFromError(child.childId, "source-failed", error),
+              );
+            }
+            return okAsync<ChildOverlayPage, ChildOverlayError>({
+              entries: [],
+              olderCursor: undefined,
+              newerCursor: undefined,
+              hasOlder: false,
+              hasNewer: false,
+            });
+          })
+          .map((page) => {
+            this.applyPage(state, page, "replace");
+            state.liveTail = true;
+            state.scrollOffset = 0;
+            state.activeRun =
+              child.runs.length > 0
+                ? child.runs[child.runs.length - 1]?.run
+                : undefined;
+            state.activeBranchId = child.branchIds[0];
+            this.catchUpLiveAnswer(child, state);
+            return this.toView(child, state);
+          });
+      });
+  }
+
+  /**
+   * Re-reads the open child's identity and status facts from the source.
+   *
+   * The inspector captures a descriptor when it opens a child, and that
+   * descriptor is a snapshot: a child that was live when the reader opened it
+   * stays `status: "live"` in this controller forever, however the run
+   * actually ended. A final "settled" repaint drawn over that snapshot would
+   * still paint a caret, an editable prompt and a LIVE state word, because
+   * every fact the layout reads comes from the descriptor rather than from the
+   * publisher's settlement flag.
+   *
+   * This refresh replaces the identity and status facts only. Loaded entries,
+   * transcript, search, draft, scroll offset and anchor are per-child saved
+   * state and are never touched, so the reader keeps exactly the transcript
+   * they were reading.
+   *
+   * Focus is re-checked after the describe resolves: if the reader moved to
+   * another child while the source was answering, nothing is applied and
+   * `OverlayNotOpen` is returned, so a late answer can never rewrite the child
+   * now on screen.
+   */
+  refreshOpenChild(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const open = this.openChild;
+    if (open === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const childId = open.childId;
+    return this.source
+      .describe(childId)
+      .mapErr(
+        (error): ChildOverlayError =>
+          this.fallbackFromError(childId, "describe-failed", error),
+      )
+      .andThen((described) => {
+        const parsed = ChildOverlayChildSchema.safeParse({
+          ...described,
+          childId,
+        });
+        if (!parsed.success) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayInvalidChild",
+            issues: parsed.error.issues.map((issue) => issue.path.join(".")),
+          });
+        }
+        const current = this.openChild;
+        if (current === undefined || current.childId !== childId) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        const state = this.saved.get(childId);
+        if (state === undefined) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        this.openChild = parsed.data;
+        this.catchUpLiveAnswer(parsed.data, state);
+        return okAsync(this.toView(parsed.data, state));
+      });
+  }
+
+  /**
+   * Reconciles the window with the child's own live-answer lifecycle.
+   *
+   * A reader who opens the inspector while a child is answering missed every
+   * delta that already happened: this controller was not listening for them,
+   * and no bounded source can replay them. The child's own answer-only
+   * snapshot is the authoritative live state for exactly that gap, so the
+   * unfinished answer is adopted as a PROVISIONAL, unframed assistant row that
+   * a later genuine `message_start` takes over — and is dropped again when the
+   * child stops writing that message.
+   *
+   * The decision is made on the message's lifecycle identity, never on its
+   * prose.
+   */
+  private catchUpLiveAnswer(
+    child: ChildOverlayChild,
+    state: SavedChildState,
+  ): void {
+    const seeded = reconcileLiveAssistantAnswer(state, child);
+    if (seeded === undefined) {
+      // A dropped stale row still changes the window.
+      syncTranscriptFromEntries(state);
+      return;
+    }
+    this.mergeEntry(state, seeded);
+    // The row is replayed into the transcript through the same rebuild every
+    // page merge uses, so the pane reads it exactly like a live one.
+    syncTranscriptFromEntries(state);
+    if (state.liveTail) state.scrollOffset = 0;
+  }
+
+  /**
+   * Re-reads the open child's transcript from the authoritative session.
+   *
+   * A live window is assembled from whatever events reached this listener, and
+   * that is not the same thing as the run. A real 0.84.2 child wrote three
+   * calls and three separately correlated answers into its session file while
+   * the mounted window kept only the synthetic terminal events that happened
+   * to survive, so two finished calls still read `running` and a deliberate
+   * failure carried no error at all. The session file is the authority for
+   * what the child actually did, so at settlement the transcript is rebuilt
+   * from it through exactly the path a freshly opened settled child takes:
+   * one bounded newest page, mapped, deduped, bounded and replayed.
+   *
+   * Deliberately conservative in three ways:
+   *
+   * - A page with no entries reconciles NOTHING. An unwritten, empty, or
+   *   unreadable session may not erase a transcript the reader watched arrive.
+   * - A source failure is not an error here. The mounted transcript stays
+   *   exactly as it was and the caller still settles.
+   * - Focus is re-checked after the read, so a late answer can never rewrite
+   *   the child now on screen.
+   *
+   * Reading position is preserved: the reader keeps their scroll offset,
+   * anchor, expansion and search, because reconciliation replaces the facts
+   * under the window, not the window.
+   */
+  reconcileOpenChild(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const open = this.openChild;
+    if (open === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const childId = open.childId;
+    return this.source
+      .loadNewest(childId, this.pageSize)
+      .orElse(() =>
+        okAsync<ChildOverlayPage, ChildOverlaySourceError>({
+          entries: [],
+          olderCursor: undefined,
+          newerCursor: undefined,
+          hasOlder: false,
+          hasNewer: false,
+        }),
+      )
+      .mapErr((error): ChildOverlayError => error)
+      .andThen((page) => {
+        const child = this.openChild;
+        if (child === undefined || child.childId !== childId) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        const state = this.saved.get(childId);
+        if (state === undefined) {
+          return errAsync<ChildOverlayView, ChildOverlayError>({
+            type: "OverlayNotOpen",
+          });
+        }
+        if (page.entries.length === 0) {
+          return okAsync(this.toView(child, state));
+        }
+        const scrollOffset = state.scrollOffset;
+        const anchor = state.anchor;
+        this.applyPage(state, page, "replace");
+        state.scrollOffset = scrollOffset;
+        state.anchor = anchor;
+        return okAsync(this.toView(child, state));
+      });
+  }
+
+  /**
+   * Fails the open child closed to read-only history without claiming success.
+   *
+   * Used when the delegation tree says the child is gone but the source cannot
+   * confirm how it ended. `orphan` is the honest word for that: the run left
+   * the live set and the overlay lost track of it, which is exactly what an
+   * unanswerable refresh proves. Calling it `settled` would invent a completion
+   * the adapter never observed, and leaving it `live` would keep an editable
+   * prompt pointed at a child nothing can deliver to.
+   *
+   * A child that is already read-only is left untouched.
+   */
+  markOpenChildReadOnly(): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      if (isReadOnly(child)) return this.toView(child, state);
+      const orphaned: ChildOverlayChild = { ...child, status: "orphan" };
+      this.openChild = orphaned;
+      return this.toView(orphaned, state);
+    });
+  }
+
+  close(): Result<void, ChildOverlayError> {
+    if (this.openChild === undefined) return err({ type: "OverlayNotOpen" });
+    this.persistOpen();
+    this.openChild = undefined;
+    // Nothing may land in a window the reader has closed.
+    this.committedSearch.invalidate();
+    return ok(undefined);
+  }
+
+  loadOlder(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    return this.withOpen((child, state) => {
+      if (state.olderCursor === undefined) {
+        return okAsync(this.toView(child, state));
+      }
+      return this.source
+        .loadOlder(child.childId, state.olderCursor, this.pageSize)
+        .mapErr(
+          (error): ChildOverlayError =>
+            this.fallbackFromError(child.childId, "source-failed", error),
+        )
+        .map((page) => {
+          this.applyPage(state, page, "prepend");
+          return this.toView(child, state);
+        });
+    });
+  }
+
+  loadNewer(): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    return this.withOpen((child, state) => {
+      if (state.newerCursor === undefined) {
+        return okAsync(this.toView(child, state));
+      }
+      return this.source
+        .loadNewer(child.childId, state.newerCursor, this.pageSize)
+        .mapErr(
+          (error): ChildOverlayError =>
+            this.fallbackFromError(child.childId, "source-failed", error),
+        )
+        .map((page) => {
+          this.applyPage(state, page, "append");
+          if (state.liveTail) state.scrollOffset = 0;
+          return this.toView(child, state);
+        });
+    });
+  }
+
+  /**
+   * Searches the whole bounded historical range, not just the loaded window.
+   * Stopping at the first page with a match reported a fraction of the real
+   * matches and made `n` / `N` skip the rest, because fetching older pages
+   * trims the newest entries out of the window. Every page within the existing
+   * `maxSearchPages` budget is scanned and merged in transcript order.
+   *
+   * The query is adopted through `previewSearch`, so the committed query and
+   * the typed one can never be bounded or stored two different ways. Adopting
+   * it also moves the search revision on, which is what makes THIS commit the
+   * only one whose pages may still be written anywhere.
+   */
+  search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const adopted = this.previewSearch(query);
+    if (adopted.isErr()) return errAsync(adopted.error);
+    return this.withOpen((child, state) => {
+      const needle = state.searchQuery.toLowerCase();
+      if (needle.length === 0) return okAsync(this.toView(child, state));
+      return this.committedSearch.run(child, state, needle);
+    });
+  }
+
+  /**
+   * Adopts the query being TYPED, matched against the loaded window only.
+   *
+   * One query, one counter. The rail prints the query being typed, so this
+   * holds that same query. Holding the last COMMITTED one - empty until Enter
+   * - is what made a real 0.84.2 inspector report no match in a transcript
+   * whose rows the reader could read. Deliberately not the paged `search`:
+   * this runs per keystroke, so it reads no source and starts no timer, and
+   * Enter still only ADDS older matches to these.
+   */
+  previewSearch(query: string): Result<ChildOverlayView, ChildOverlayError> {
+    const text = boundOverlayText(query);
+    // A different query is a different search. Pages still in flight for the
+    // previous one describe text the reader is no longer asking about, so they
+    // lose their licence to write here, exactly as their ids lose their count.
+    this.committedSearch.invalidate();
+    return this.mutateOpen((child, state) => {
+      state.searchQuery = text;
+      // Ids from the previous query would be counted against this one.
+      state.searchMatchIds = [];
+      return this.toView(child, state);
+    });
+  }
+
+  /**
+   * Applies one parser-approved live child event through the Task 11 map /
+   * reduce pipeline and projects a window entry when meaningful.
+   */
+  applyLiveEvent(event: unknown): Result<ChildOverlayView, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return err({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return err({ type: "OverlayNotOpen" });
+    if (child.status !== "live") {
+      return ok(this.toView(child, state));
+    }
+
+    const parsed = parsePiChildSessionEvent(event);
+    if (!parsed.success) return ok(this.toView(child, state));
+    const applied = applyProviderErrorEvent(state.evidence, parsed.data);
+    const sessionEvent = applied.event;
+    state.evidence = applied.evidence;
+
+    const mapped = mapPiChildSessionEventToCompactInput(sessionEvent);
+    if (mapped.isOk() && mapped.value !== undefined) {
+      state.compact = reduceChildCompactSafe(state.compact, mapped.value);
+    }
+
+    // Latest-wins: a parsed report replaces the prior one outright, while an
+    // unparsable one carries no information and leaves it untouched.
+    const usage = parsePiChildUsageReport(sessionEvent);
+    if (usage.isOk()) state.usage = usage.value;
+
+    // Project first so the transcript reduce can be told which overlay entry
+    // this event belongs to. Reducing first would label rendered rows with
+    // reducer-local ids (`thinking-0`) while the overlay window uses overlay
+    // ids (`live-thinking-0`), and the viewport anchor would lose its entry.
+    // Projection is pure, so ordering it earlier changes nothing else.
+    // Real Pi 0.84 assistant lifecycle identity. `AssistantMessage` has no
+    // `id`, and `state.entries.length` changes between `message_start` and
+    // `message_end`, so one stable overlay id is allocated at start and reused
+    // for every update/end of that lifecycle even when thinking and tool
+    // entries interleave. A lifecycle that arrives without its start
+    // (historical, truncated, or unusual host sequence) allocates on first
+    // sight, so update/end still share one entry instead of fanning out.
+    const phase = liveAssistantLifecyclePhase(sessionEvent);
+    const assistantEntryId =
+      phase === undefined ? undefined : resolveLiveAssistantEntry(state, phase);
+
+    let projected = projectLiveEntry(
+      sessionEvent,
+      state.entries.length,
+      state.globalExpanded,
+      assistantEntryId,
+    );
+    // A streamed delta states one fragment; the window keeps the whole answer.
+    // Writing the accumulated text (and one canonical replay step) here is what
+    // lets a rebuilt window still hold an unfinished answer.
+    if (phase === "continue" && assistantEntryId !== undefined) {
+      const delta = messageUpdateAnswerText(sessionEvent);
+      if (delta !== undefined) {
+        projected = appendLiveAssistantDelta(
+          state,
+          assistantEntryId,
+          delta,
+          projected?.sequence ?? state.entries.length,
+        );
+      }
+    }
+    // Identity is owned by the lifecycle, not by the projection. A real Pi
+    // 0.84 update can legitimately project nothing (a `thinking_delta`, or a
+    // text delta that is empty once bounded), and an earlier version read the
+    // id off `projected` alone: the lifecycle id was allocated, the transcript
+    // action carried none, and the placeholder transcript entry stayed
+    // unlabelled forever - `message_end` can only stamp entries the action it
+    // accompanies created, so nothing repaired it later. Whenever the event
+    // belongs to an assistant lifecycle, the transcript is told which entry it
+    // belongs to. A merge into an existing window entry reuses that entry's
+    // id, and the transcript only stamps entries this action created, so an
+    // update never re-labels the entry it merges into.
+    const overlayEntryId = assistantEntryId ?? projected?.id;
+
+    const transcriptNext = reducePiChildTranscript(state.transcript, {
+      kind: "event",
+      event: sessionEvent,
+      ...(overlayEntryId === undefined ? {} : { overlayEntryId }),
+    });
+    if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
+
+    if (projected !== undefined) {
+      this.mergeEntry(state, projected);
+      // The new rows land below a manually scrolled viewport; hold position
+      // once the component reports how many rows they occupy.
+      markTailGrowth(state);
+    }
+    if (state.liveTail) state.scrollOffset = 0;
+    // Released only now: both the transcript reduce and the overlay projection
+    // above needed the lifecycle identity.
+    if (phase === "end") endLiveAssistantLifecycle(state);
+    return ok(this.toView(child, state));
+  }
+
+  /**
+   * Record the rendered-row layout measured by the component so scroll clamping
+   * uses visual rows. Only the component knows wrapped row counts, so the
+   * controller cannot derive this itself.
+   */
+  /**
+   * Adopt what the component just painted.
+   *
+   * `spans` describes how many rendered rows each loaded entry occupies in the
+   * layout that produced `extent`. It is what lets a logical viewport survive a
+   * layout change; callers that cannot measure it (tests of pure row
+   * bookkeeping) may omit it and keep the previous row-only behaviour.
+   */
+  /**
+   * Adopt the ANSI-free text of the rows the component just painted, so a
+   * query is matched against what the reader can actually read.
+   *
+   * This is the same handoff as {@link ChildOverlayController.setScrollExtent}
+   * and for the same reason: only the component knows what the current width
+   * and row budget left on screen. Search matches this index in addition to
+   * the window entry's own short text projection, so nothing that matched
+   * before stops matching.
+   */
+  setRenderedSearchText(
+    index: ReadonlyMap<string, string>,
+  ): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      state.renderedSearchText = index;
+      return this.toView(child, state);
+    });
+  }
+
+  setScrollExtent(
+    extent: number,
+    spans?: readonly OverlayLayoutSpan[],
+  ): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      applyMeasuredExtent(state, extent, spans);
+      return this.toView(child, state);
+    });
+  }
+
+  setScrollOffset(offset: number): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const max = maxScrollRows(state);
+      const next = Math.min(Math.max(0, Math.floor(offset)), max);
+      state.scrollOffset = next;
+      state.liveTail = next === 0;
+      state.anchor = anchorFromScroll(state);
+      return this.toView(child, state);
+    });
+  }
+
+  scrollBy(delta: number): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const max = maxScrollRows(state);
+      const next = Math.min(
+        Math.max(0, state.scrollOffset + Math.trunc(delta)),
+        max,
+      );
+      state.scrollOffset = next;
+      state.liveTail = next === 0;
+      state.anchor = anchorFromScroll(state);
+      return this.toView(child, state);
+    });
+  }
+
+  resize(
+    width: number,
+    height: number,
+  ): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const anchor = state.anchor ?? anchorFromScroll(state);
+      const nextWidth = Math.max(1, Math.floor(width));
+      const nextHeight = Math.max(1, Math.floor(height));
+      // The component calls resize on every render, so only a real geometry
+      // change may drop a pending tail adjustment. Re-wrapping changes row
+      // counts everywhere, and the next measured extent delta would no longer
+      // isolate tail growth.
+      if (nextWidth !== state.width || nextHeight !== state.height) {
+        clearTailGrowth(state);
+      }
+      state.width = nextWidth;
+      state.height = nextHeight;
+      state.anchor = anchor;
+      // Row counts change with width, so the next render re-measures the extent
+      // and clamps. Rewriting the offset from the anchor's entry index here
+      // would convert rows back into entries and pin the viewport to the tail.
+      return this.toView(child, state);
+    });
+  }
+
+  toggleGlobalExpansion(): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      state.globalExpanded = !state.globalExpanded;
+      state.entries = state.entries.map((entry) => ({
+        ...entry,
+        expanded: state.globalExpanded,
+      }));
+      // Keep the rendered transcript visibility in lockstep with the overlay
+      // window without rebuilding (live thinking/tool rows must stay).
+      state.transcript = {
+        ...state.transcript,
+        entries: state.transcript.entries.map((entry) => ({
+          ...entry,
+          expanded: state.globalExpanded,
+        })),
+      };
+      return this.toView(child, state);
+    });
+  }
+
+  navigateRun(delta: number): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const runs = child.runs;
+      if (runs.length === 0) return this.toView(child, state);
+      const currentIndex = Math.max(
+        0,
+        runs.findIndex((run) => run.run === state.activeRun),
+      );
+      const nextIndex = Math.min(
+        runs.length - 1,
+        Math.max(0, currentIndex + Math.trunc(delta)),
+      );
+      state.activeRun = runs[nextIndex]?.run;
+      return this.toView(child, state);
+    });
+  }
+
+  navigateBranch(delta: number): Result<ChildOverlayView, ChildOverlayError> {
+    return this.mutateOpen((child, state) => {
+      const branches = child.branchIds;
+      if (branches.length === 0) return this.toView(child, state);
+      const currentIndex = Math.max(
+        0,
+        branches.findIndex((id) => id === state.activeBranchId),
+      );
+      const nextIndex = Math.min(
+        branches.length - 1,
+        Math.max(0, currentIndex + Math.trunc(delta)),
+      );
+      state.activeBranchId = branches[nextIndex];
+      return this.toView(child, state);
+    });
+  }
+
+  updateDraft(draft: string): Result<ChildOverlayView, ChildOverlayError> {
+    const text = boundOverlayText(draft);
+    return this.mutateOpen((child, state) => {
+      if (isReadOnly(child)) return this.toView(child, state);
+      state.draft = text;
+      return this.toView(child, state);
+    });
+  }
+
+  submitSteer(
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    return this.submitDraftMutation("steer", submittedText);
+  }
+
+  submitFollowUp(
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    return this.submitDraftMutation("follow-up", submittedText);
+  }
+
+  /**
+   * Consumes every key while mounted. Never routes text or keys to a primary
+   * editor. Settled/orphan children are read-only for mutation actions.
+   */
+  handleInput(
+    data: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) {
+      return errAsync({ type: "OverlayNotOpen" });
+    }
+    const state = this.saved.get(child.childId);
+    if (state === undefined) {
+      return errAsync({ type: "OverlayNotOpen" });
+    }
+
+    const scroll = scrollDelta(data);
+    if (scroll !== undefined) {
+      if (scroll === "oldest") {
+        state.scrollOffset = maxScrollRows(state);
+        state.liveTail = state.scrollOffset === 0;
+      } else if (scroll === "follow") {
+        state.scrollOffset = 0;
+        state.liveTail = true;
+      } else {
+        state.scrollOffset = Math.min(
+          Math.max(0, state.scrollOffset + scroll),
+          maxScrollRows(state),
+        );
+        state.liveTail = state.scrollOffset === 0;
+      }
+      state.anchor = anchorFromScroll(state);
+      return okAsync({ kind: "scroll", scrollOffset: state.scrollOffset });
+    }
+
+    if (matchesKey(data, "enter")) {
+      return this.submitSteer(state.draft);
+    }
+
+    if (matchesKey(data, "alt+enter")) {
+      return this.submitFollowUp(state.draft);
+    }
+
+    if (matchesKey(data, "ctrl+e") || data === "\x05") {
+      const toggled = this.toggleGlobalExpansion();
+      if (toggled.isErr()) return errAsync(toggled.error);
+      return okAsync({
+        kind: "expanded",
+        globalExpanded: toggled.value.globalExpanded,
+      });
+    }
+
+    // `Ctrl+O` is deliberately absent: it is Pi's own tool-expand action, and
+    // the overlay has a single view, so Weave claims it nowhere.
+
+    if (data === "\x1b[1;3D" || matchesKey(data, "alt+left")) {
+      const nav = this.navigateRun(-1);
+      if (nav.isErr()) return errAsync(nav.error);
+      return okAsync({ kind: "navigate-run", activeRun: nav.value.activeRun });
+    }
+    if (data === "\x1b[1;3C" || matchesKey(data, "alt+right")) {
+      const nav = this.navigateRun(1);
+      if (nav.isErr()) return errAsync(nav.error);
+      return okAsync({ kind: "navigate-run", activeRun: nav.value.activeRun });
+    }
+    if (data === "\x1b[1;3A" || matchesKey(data, "alt+up")) {
+      const nav = this.navigateBranch(-1);
+      if (nav.isErr()) return errAsync(nav.error);
+      return okAsync({
+        kind: "navigate-branch",
+        activeBranchId: nav.value.activeBranchId,
+      });
+    }
+    if (data === "\x1b[1;3B" || matchesKey(data, "alt+down")) {
+      const nav = this.navigateBranch(1);
+      if (nav.isErr()) return errAsync(nav.error);
+      return okAsync({
+        kind: "navigate-branch",
+        activeBranchId: nav.value.activeBranchId,
+      });
+    }
+
+    // Everything else is consumed and changes nothing here. Draft text is
+    // owned by the overlay's editor component, which knows where the cursor
+    // is; it mirrors the resulting text back through `updateDraft`. Rebuilding
+    // the draft from raw bytes at this layer could only ever append at the end
+    // and delete from the end, which is not editing.
+    return okAsync({ kind: "consumed" });
+  }
+
+  /**
+   * Explicit render-boundary failure used by a later TUI layer. Returns only
+   * bounded metadata + transcript model — never exception text or paths.
+   */
+  requireFallback(
+    reason: ChildOverlayFallbackReason = "render-failed",
+  ): ChildOverlayFallbackRequired {
+    const child = this.openChild;
+    const state =
+      child !== undefined ? this.saved.get(child.childId) : undefined;
+    return childOverlayFallbackRequired(child, state, reason);
+  }
+
+  private submitDraftMutation(
+    kind: "steer" | "follow-up",
+    submittedText: string,
+  ): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return errAsync({ type: "OverlayNotOpen" });
+    if (isReadOnly(child) || !child.generationId) {
+      return okAsync({ kind: "consumed" });
+    }
+    const text = boundOverlayText(submittedText.trim());
+    if (text.length === 0) return okAsync({ kind: "consumed" });
+
+    const draftAtSubmit = state.draft;
+    const clearSubmittedDraft = (): void => {
+      if (state.draft === draftAtSubmit) state.draft = "";
+    };
+    const outcome = (): ChildOverlayInputOutcome => ({
+      kind,
+      childId: child.childId,
+      text,
+    });
+    const mutation = this.mutations;
+    if (mutation === undefined) {
+      clearSubmittedDraft();
+      return okAsync(outcome());
+    }
+    const request =
+      kind === "steer"
+        ? mutation.steer(child.childId, child.generationId, text)
+        : mutation.followUp(child.childId, child.generationId, text);
+    return request
+      .map(() => {
+        clearSubmittedDraft();
+        return outcome();
+      })
+      .mapErr(
+        (): ChildOverlayError =>
+          this.fallbackFromError(child.childId, "render-failed", {
+            type: "SourceUnavailable",
+            operation: kind,
+          }),
+      );
+  }
+
+  private withOpen(
+    fn: (
+      child: ChildOverlayChild,
+      state: SavedChildState,
+    ) => ResultAsync<ChildOverlayView, ChildOverlayError>,
+  ): ResultAsync<ChildOverlayView, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return errAsync({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return errAsync({ type: "OverlayNotOpen" });
+    this.touch(child.childId);
+    return fn(child, state);
+  }
+
+  private mutateOpen(
+    fn: (child: ChildOverlayChild, state: SavedChildState) => ChildOverlayView,
+  ): Result<ChildOverlayView, ChildOverlayError> {
+    const child = this.openChild;
+    if (child === undefined) return err({ type: "OverlayNotOpen" });
+    const state = this.saved.get(child.childId);
+    if (state === undefined) return err({ type: "OverlayNotOpen" });
+    this.touch(child.childId);
+    return ok(fn(child, state));
+  }
+
+  private persistOpen(): void {
+    const child = this.openChild;
+    if (child === undefined) return;
+    const state = this.saved.get(child.childId);
+    if (state !== undefined) state.lastTouched = ++this.clock;
+  }
+
+  private touch(childId: string): void {
+    const state = this.saved.get(childId);
+    if (state !== undefined) state.lastTouched = ++this.clock;
+  }
+
+  private evictLru(): void {
+    while (this.saved.size > this.maxLruChildren) {
+      let victim: string | undefined;
+      let oldest = Number.POSITIVE_INFINITY;
+      for (const [id, state] of this.saved) {
+        if (id === this.openChild?.childId) continue;
+        if (state.lastTouched < oldest) {
+          oldest = state.lastTouched;
+          victim = id;
+        }
+      }
+      if (victim === undefined) break;
+      this.saved.delete(victim);
+    }
+  }
+
+  private applyPage(
+    state: SavedChildState,
+    page: ChildOverlayPage,
+    mode: "replace" | "prepend" | "append",
+  ): void {
+    const incoming = page.entries.map((entry) => ({
+      ...entry,
+      expanded: state.globalExpanded,
+      text: stripPathLike(entry.text),
+    }));
+    const priorAnchor = state.anchor ?? anchorFromScroll(state);
+
+    if (mode === "replace") {
+      state.entries = dedupEntries(incoming).slice(-this.windowCap);
+      state.olderCursor = page.olderCursor;
+      state.newerCursor = page.newerCursor;
+      state.hasOlderFlag = page.hasOlder;
+      state.hasNewerFlag = page.hasNewer;
+      syncTranscriptFromEntries(state);
+      // Historical telemetry may come only from a usage event replayed in the
+      // loaded window; a window without one leaves a live report untouched.
+      state.usage = latestUsageInWindow(state.entries) ?? state.usage;
+      state.evidence = pageEvidence(state.evidence, state.entries, "newer");
+      return;
+    }
+
+    if (mode === "prepend") {
+      prependOverlayPage(state, page, incoming, priorAnchor, this.windowCap);
+      return;
+    }
+    appendOverlayPage(state, page, incoming, priorAnchor, this.windowCap);
+  }
+
+  private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
+    const index = state.entries.findIndex((item) => item.id === entry.id);
+    if (index >= 0) {
+      const existing = state.entries[index];
+      const next = [...state.entries];
+      const mergedReplay = mergeReplaySteps(existing?.replay, entry.replay);
+      if (mergedReplay.isErr()) {
+        next[index] = degradedCapacityEntry(
+          entry.id,
+          entry.sequence,
+          mergedReplay.error,
+        );
+        state.entries = next;
+        return;
+      }
+      next[index] = {
+        ...entry,
+        expanded: state.globalExpanded,
+        replay: mergedReplay.value,
+      };
+      state.entries = next;
+      return;
+    }
+    const merged = dedupEntries([
+      ...state.entries,
+      { ...entry, expanded: state.globalExpanded },
+    ]);
+    const retained = merged.slice(-this.windowCap);
+    const trimmed = retained.length < merged.length;
+    state.entries = retained;
+    // Live append keeps the incremental transcript reduce; only rebuild when
+    // the window trims so stale older transcript rows cannot outlive entries.
+    if (trimmed) syncTranscriptFromEntries(state);
+  }
+
+  private toView(
+    child: ChildOverlayChild,
+    state: SavedChildState,
+  ): ChildOverlayView {
+    const needle = state.searchQuery.trim().toLowerCase();
+    const terminalError = terminalErrorOf(state.evidence);
+    const terminalErrorMatches = matchingTerminalErrorEntryIds(
+      state.transcript.entries,
+      terminalError,
+      needle,
+    );
+    const searchMatches =
+      needle.length === 0
+        ? []
+        : mergeMatchIds(
+            mergeMatchIds(
+              state.searchMatchIds,
+              matchingEntryIds(state.entries, needle, state.renderedSearchText),
+            ),
+            terminalErrorMatches,
+          );
+    return {
+      child,
+      entries: state.entries,
+      draft: state.draft,
+      searchQuery: state.searchQuery,
+      searchMatches,
+      scrollOffset: state.scrollOffset,
+      scrollExtent: maxScrollRows(state),
+      liveTail: state.liveTail,
+      globalExpanded: state.globalExpanded,
+      activeRun: state.activeRun,
+      activeBranchId: state.activeBranchId,
+      olderCursor: state.olderCursor,
+      newerCursor: state.newerCursor,
+      hasOlder: state.hasOlderFlag,
+      hasNewer: state.hasNewerFlag,
+      readOnly: isReadOnly(child),
+      width: state.width,
+      height: state.height,
+      anchor: state.anchor,
+      compact: state.compact,
+      transcript: state.transcript,
+      telemetry: deriveChildOverlayTelemetry(state.usage, child),
+      identity: deriveChildOverlayIdentity(child),
+      planContext: readChildOverlayPlanContext(this.planContext),
+      ...(terminalError === undefined ? {} : { terminalError }),
+    };
+  }
+
+  private fallbackFromError(
+    childId: string,
+    reason: ChildOverlayFallbackReason,
+    error: ChildOverlaySourceError,
+  ): ChildOverlayFallbackRequired {
+    return childOverlayFallbackRequired(
+      this.openChild,
+      this.saved.get(childId),
+      reason,
+      // The discriminant only: no path-like string may leak through an error
+      // channel.
+      { childId, sourceErrorType: error.type },
+    );
+  }
+}
+
+export function createChildOverlayController(
+  source: ChildOverlaySourcePort,
+  config?: ChildOverlayConfig,
+  mutations?: ChildOverlayMutationPort,
+  planContext?: ChildOverlayPlanContextPort,
+): ChildOverlayController {
+  return new ChildOverlayController(source, config, mutations, planContext);
+}
