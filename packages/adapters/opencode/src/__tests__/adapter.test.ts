@@ -28,6 +28,7 @@ import type {
   OpenCodeClientFacade,
 } from "../index.js";
 import {
+  createWeaveAgentIdentity,
   OpenCodeAdapter,
   type OpenCodeAdapterError,
   WEAVE_OWNERSHIP_TAG,
@@ -144,12 +145,13 @@ function makeWeaveManagedAgent(name: string): OpenCodeAgentSummary {
   return {
     name,
     description: `A Weave-managed agent ${WEAVE_OWNERSHIP_TAG}`,
+    weaveIdentity: createWeaveAgentIdentity(name),
   };
 }
 
 /**
  * Builds a mock `OpenCodeAgent` that looks like a manually created (foreign)
- * agent — no ownership tag in the description.
+ * agent — no durable Weave identity.
  */
 function makeForeignAgent(name: string): OpenCodeAgentSummary {
   return {
@@ -412,8 +414,10 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     mockClient.setCreateAgentResult(
       errAsync({
         type: "CreateAgentError" as const,
+        operation: "create-agent" as const,
+        status: "sdk-error" as const,
         agentName: "test-agent",
-        message: "SDK write failed",
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -426,7 +430,10 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     const result = await adapter.spawnSubagent(makeDescriptor());
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error.message).toContain("SDK write failed");
+      expect(result.error.message).toContain(
+        "OpenCode create-agent failed (sdk-error)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 
@@ -436,8 +443,10 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     mockClient.setCreateAgentResult(
       errAsync({
         type: "CreateAgentError" as const,
+        operation: "create-agent" as const,
+        status: "sdk-error" as const,
         agentName: "test-agent",
-        message: "SDK write failed",
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -455,7 +464,7 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
         type: "ReconcileAgentError",
         agentName: "test-agent",
         message:
-          'Failed to materialize agent "test-agent" via OpenCode SDK: [CreateAgentError] SDK write failed',
+          'Failed to materialize agent "test-agent" via OpenCode SDK: [CreateAgentError] OpenCode create-agent failed (sdk-error)',
       } satisfies Partial<OpenCodeAdapterError>);
     }
   });
@@ -537,8 +546,10 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
     mockClient.setUpdateAgentResult(
       errAsync({
         type: "UpdateAgentError" as const,
+        operation: "update-agent" as const,
+        status: "sdk-error" as const,
         agentName: "test-agent",
-        message: "SDK update failed",
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -551,7 +562,10 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
     const result = await adapter.spawnSubagent(makeDescriptor());
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error.message).toContain("SDK update failed");
+      expect(result.error.message).toContain(
+        "OpenCode update-agent failed (sdk-error)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 });
@@ -563,7 +577,7 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
 describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
   it("returns err with CollisionError when a foreign agent blocks the write", async () => {
     const mockClient = new MockOpenCodeClient();
-    // listAgents returns a foreign agent (no ownership tag) with the same name
+    // listAgents returns a foreign agent (no durable identity) with the same name
     mockClient.setListAgentsResult(okAsync([makeForeignAgent("test-agent")]));
 
     const adapter = new OpenCodeAdapter({
@@ -607,7 +621,9 @@ describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
     mockClient.setListAgentsResult(
       errAsync({
         type: "ListAgentsError" as const,
-        message: "Connection refused",
+        operation: "list-agents" as const,
+        status: "request-failed" as const,
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -620,7 +636,10 @@ describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
     const result = await adapter.spawnSubagent(makeDescriptor());
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error.message).toContain("Connection refused");
+      expect(result.error.message).toContain(
+        "OpenCode list-agents failed (request-failed)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 });
@@ -882,15 +901,17 @@ describe("MockOpenCodeClient — facade contract", () => {
     const client = new MockOpenCodeClient();
     client.setListAgentsResult(
       errAsync({
-        type: "ListAgentsError",
-        message: "Connection refused",
+        type: "ListAgentsError" as const,
+        operation: "list-agents" as const,
+        status: "request-failed" as const,
+        message: "provider sentinel: do not expose",
       }),
     );
     const result = await client.listAgents();
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("ListAgentsError");
-      expect(result.error.message).toBe("Connection refused");
+      expect(result.error.message).toBe("provider sentinel: do not expose");
     }
   });
 });

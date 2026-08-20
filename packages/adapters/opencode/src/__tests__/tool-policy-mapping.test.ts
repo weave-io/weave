@@ -350,18 +350,20 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
 
   it("previewToolPolicy rejects an OpenCode tool name passed as toolCapability", async () => {
     // This proves the engine does NOT branch on OpenCode tool names.
-    // Passing "glob" as toolCapability (instead of "read") is rejected.
+    // The raw fixture enters the engine's runtime validation seam directly;
+    // it is never first represented as a trusted typed input.
     const policy = evaluateEffectiveToolPolicy({ read: "allow" });
-    const input = {
-      workflowInstanceId: wfId,
-      leaseId,
-      agentName: "shuttle",
-      toolCapability: "read" as const,
-      toolName: "glob",
-      effectiveToolPolicy: policy,
-    };
-    Object.defineProperty(input, "toolCapability", { value: "glob" });
-    const result = await previewToolPolicy(input);
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: wfId,
+        leaseId,
+        agentName: "shuttle",
+        toolCapability: "glob",
+        toolName: "glob",
+        effectiveToolPolicy: policy,
+      }),
+    );
+    const result = await previewToolPolicy(rawInput);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -372,16 +374,17 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
 
   it("previewToolPolicy rejects 'bash' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ execute: "allow" });
-    const input = {
-      workflowInstanceId: wfId,
-      leaseId,
-      agentName: "shuttle",
-      toolCapability: "execute" as const,
-      toolName: "bash",
-      effectiveToolPolicy: policy,
-    };
-    Object.defineProperty(input, "toolCapability", { value: "bash" });
-    const result = await previewToolPolicy(input);
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: wfId,
+        leaseId,
+        agentName: "shuttle",
+        toolCapability: "bash",
+        toolName: "bash",
+        effectiveToolPolicy: policy,
+      }),
+    );
+    const result = await previewToolPolicy(rawInput);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -389,16 +392,17 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
 
   it("previewToolPolicy rejects 'edit' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ write: "allow" });
-    const input = {
-      workflowInstanceId: wfId,
-      leaseId,
-      agentName: "shuttle",
-      toolCapability: "write" as const,
-      toolName: "edit",
-      effectiveToolPolicy: policy,
-    };
-    Object.defineProperty(input, "toolCapability", { value: "edit" });
-    const result = await previewToolPolicy(input);
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: wfId,
+        leaseId,
+        agentName: "shuttle",
+        toolCapability: "edit",
+        toolName: "edit",
+        effectiveToolPolicy: policy,
+      }),
+    );
+    const result = await previewToolPolicy(rawInput);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -406,16 +410,17 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
 
   it("previewToolPolicy rejects 'webfetch' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ network: "allow" });
-    const input = {
-      workflowInstanceId: wfId,
-      leaseId,
-      agentName: "shuttle",
-      toolCapability: "network" as const,
-      toolName: "webfetch",
-      effectiveToolPolicy: policy,
-    };
-    Object.defineProperty(input, "toolCapability", { value: "webfetch" });
-    const result = await previewToolPolicy(input);
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: wfId,
+        leaseId,
+        agentName: "shuttle",
+        toolCapability: "webfetch",
+        toolName: "webfetch",
+        effectiveToolPolicy: policy,
+      }),
+    );
+    const result = await previewToolPolicy(rawInput);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");

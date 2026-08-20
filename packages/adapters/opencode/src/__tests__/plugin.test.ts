@@ -187,6 +187,22 @@ async function makeTempInvalidProject(): Promise<string> {
   return root;
 }
 
+async function makeTempProjectWithoutLoom(): Promise<string> {
+  const root = join(
+    tmpdir(),
+    `weave-plugin-no-loom-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await Bun.write(
+    join(root, ".weave", "config.weave"),
+    [
+      "# Disable the builtin Loom so the default-agent path has no candidate.",
+      'disable agents ["loom"]',
+      "",
+    ].join("\n"),
+  );
+  return root;
+}
+
 /**
  * A FileReader that only reads files under `root`. Returns `exists: false` for
  * any path outside `root` (e.g. the global ~/.weave/config.weave). This
@@ -445,6 +461,36 @@ describe("WeavePlugin — config hook", () => {
     expect(cfg.agent?.["existing-agent"]).toBe(existingAgent);
     // Weave agent must also be present
     expect(cfg.agent?.["preserve-test-agent"]).toBeDefined();
+  });
+
+  it("sets default_agent through the typed adapter extension when Loom is present", async () => {
+    const root = await makeTempProject("default-agent-present");
+    const client = new MockOpenCodeClient();
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+    const cfg: TestPluginConfig = {};
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.default_agent).toBe("loom");
+  });
+
+  it("does not set default_agent when Loom is absent", async () => {
+    const root = await makeTempProjectWithoutLoom();
+    const client = new MockOpenCodeClient();
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+    const cfg: TestPluginConfig = {};
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.default_agent).toBeUndefined();
   });
 });
 
@@ -814,9 +860,15 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
     const injected = cfg.agent?.[agentName];
     expect(injected).toBeDefined();
     if (injected === undefined) return;
-    // The injected config must carry the ownership tag so that deferred
-    // reconciliation classifies it as "update" rather than "collision".
+    // The tag is display metadata; the durable identity is the authority.
     expect(injected.description).toContain(WEAVE_OWNERSHIP_TAG);
+    expect(injected.options).toEqual({
+      weave: {
+        kind: "weave-agent",
+        version: 1,
+        agentName,
+      },
+    });
   });
 
   // "session.created after config hook uses updateAgent" test removed —

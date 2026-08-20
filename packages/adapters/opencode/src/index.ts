@@ -67,11 +67,18 @@ export { resolveModelForAgent } from "./model-resolution.js";
 // ---------------------------------------------------------------------------
 
 export type {
+  OpenCodeAgentIdentity,
+  OpenCodeAgentProjectionError,
   OpenCodeAgentSummary,
   OpenCodeClientError,
   OpenCodeClientFacade,
+  OpenCodeClientOperation,
+  OpenCodeClientStatus,
 } from "./opencode-client.js";
-export { SdkOpenCodeClient } from "./opencode-client.js";
+export {
+  createWeaveAgentIdentity,
+  SdkOpenCodeClient,
+} from "./opencode-client.js";
 
 // ---------------------------------------------------------------------------
 // Reconciliation

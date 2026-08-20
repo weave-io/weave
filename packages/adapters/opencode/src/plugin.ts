@@ -87,7 +87,12 @@
  */
 
 import { join } from "node:path";
-import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
+import type {
+  Hooks,
+  Config as OpenCodePluginConfig,
+  Plugin,
+  PluginInput,
+} from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weaveio/weave-config";
 import {
   env,
@@ -107,6 +112,16 @@ import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/plugin" });
+
+/**
+ * OpenCode accepts `default_agent` at runtime, but the plugin package's
+ * Config type does not declare this runtime field yet. Keep the extension
+ * explicit and local to this adapter boundary rather than mutating through an
+ * untyped object helper.
+ */
+type OpenCodeConfigWithDefaultAgent = OpenCodePluginConfig & {
+  default_agent?: string;
+};
 
 /**
  * Default log file path relative to the project directory.
@@ -311,10 +326,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           }
 
           for (const [agentName, agentConfig] of translatedMap) {
-            // Tag with ownership before injecting so that deferred SDK
-            // reconciliation (session.created) sees the same ownership marker
-            // and classifies these agents as "update" rather than "collision".
-            cfg.agent[agentName] = tagWithOwnership(agentConfig);
+            // Add the display marker and durable identity before injecting.
+            // Reconciliation authorizes updates from the identity, not from
+            // editable description text.
+            cfg.agent[agentName] = tagWithOwnership(agentName, agentConfig);
             log.debug({ agent: agentName }, "Agent injected into config hook");
           }
 
@@ -330,7 +345,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         // OpenCode supports `default_agent`, but the
         // @opencode-ai/plugin type definitions may lag behind the runtime.
         if (translatedMap.has("loom")) {
-          Object.assign(cfg, { default_agent: "loom" });
+          // OpenCode's runtime config supports `default_agent`; the plugin
+          // package's Config declaration omits this adapter boundary field.
+          const openCodeConfig: OpenCodeConfigWithDefaultAgent = cfg;
+          openCodeConfig.default_agent = "loom";
           log.info("Set default_agent to 'loom'");
         }
 

@@ -4,11 +4,11 @@
  * Verifies the canonical-identity and ownership-check semantics of the
  * upsert-only reconciliation module:
  *
- * - `classifyExistingAgent` uses `descriptor.name` (Canonical Agent Name) as
- *   the sole identity key — display metadata (`displayName`, `description`)
- *   is not identity.
- * - `tagWithOwnership` appends `WEAVE_OWNERSHIP_TAG` to `description` and is
- *   idempotent.
+ * - `classifyExistingAgent` looks up the Canonical Agent Name and authorizes
+ *   updates only with the matching durable identity; display metadata
+ *   (`displayName`, `description`) is not authority.
+ * - `tagWithOwnership` appends `WEAVE_OWNERSHIP_TAG` to `description`, stores
+ *   the durable identity, and is idempotent.
  * - `reconcileAgent` creates a new agent when none exists.
  * - `reconcileAgent` updates an existing Weave-managed agent in place.
  * - `reconcileAgent` returns a `CollisionError` when a same-named foreign
@@ -26,6 +26,7 @@ import type {
   OpenCodeClientError,
   OpenCodeClientFacade,
 } from "../index.js";
+import { createWeaveAgentIdentity } from "../opencode-client.js";
 import {
   classifyExistingAgent,
   reconcileAgent,
@@ -112,7 +113,7 @@ function makeConfig(
   };
 }
 
-/** Builds a Weave-managed `OpenCodeAgent` (has ownership tag in description). */
+/** Builds a Weave-managed agent with display tag and durable identity. */
 function makeWeaveManagedAgent(
   name: string,
   extraDescription = "",
@@ -120,7 +121,11 @@ function makeWeaveManagedAgent(
   const desc = extraDescription
     ? `${extraDescription} ${WEAVE_OWNERSHIP_TAG}`
     : WEAVE_OWNERSHIP_TAG;
-  return { name, description: desc };
+  return {
+    name,
+    description: desc,
+    weaveIdentity: createWeaveAgentIdentity(name),
+  };
 }
 
 /** Builds a foreign `OpenCodeAgent` (no ownership tag in description). */
@@ -178,16 +183,33 @@ describe("classifyExistingAgent — canonical identity", () => {
     expect(result).toBe("collision");
   });
 
-  it("matches by name only — different description does not affect identity", () => {
-    // Two agents with the same name but different descriptions
+  it("does not trust a copied description tag without durable identity", () => {
+    const spoofed: OpenCodeAgentSummary = {
+      name: "my-agent",
+      description: `Foreign text ${WEAVE_OWNERSHIP_TAG}`,
+    };
+    expect(classifyExistingAgent("my-agent", [spoofed])).toBe("collision");
+  });
+
+  it("does not update when the durable identity names another agent", () => {
+    const mismatched: OpenCodeAgentSummary = {
+      name: "my-agent",
+      weaveIdentity: createWeaveAgentIdentity("other-agent"),
+    };
+    expect(classifyExistingAgent("my-agent", [mismatched])).toBe("collision");
+  });
+
+  it("matches the durable identity — different description does not affect authority", () => {
+    // Two agents with the same name and durable identity but different descriptions
     const weaveManagedWithDifferentDesc: OpenCodeAgentSummary = {
       name: "my-agent",
       description: `Completely different description ${WEAVE_OWNERSHIP_TAG}`,
+      weaveIdentity: createWeaveAgentIdentity("my-agent"),
     };
     const result = classifyExistingAgent("my-agent", [
       weaveManagedWithDifferentDesc,
     ]);
-    // Still 'update' because name matches and ownership tag is present
+    // Still 'update' because the canonical name and durable identity match
     expect(result).toBe("update");
   });
 
@@ -198,7 +220,7 @@ describe("classifyExistingAgent — canonical identity", () => {
     expect(result).toBe("create");
   });
 
-  it("returns 'collision' when agent has no description (no ownership tag)", () => {
+  it("returns 'collision' when agent has no durable identity", () => {
     const agents = [makeAgentWithoutDescription("my-agent")];
     const result = classifyExistingAgent("my-agent", agents);
     expect(result).toBe("collision");
@@ -227,14 +249,15 @@ describe("classifyExistingAgent — display metadata is not identity", () => {
       name: "my-agent",
       displayName: "Completely Different Display Name",
       description: WEAVE_OWNERSHIP_TAG,
+      weaveIdentity: createWeaveAgentIdentity("my-agent"),
     } satisfies OpenCodeAgentSummary & { displayName: string };
     const result = classifyExistingAgent("my-agent", [agent]);
     expect(result).toBe("update");
   });
 
-  it("description content (other than ownership tag) does not affect identity", () => {
-    // Description can say anything — only the ownership tag matters for
-    // the update/collision decision; name is the identity key
+  it("description content does not affect durable identity", () => {
+    // Description can say anything — the durable identity controls the
+    // update/collision decision; the tag is presentation metadata
     const agent = makeWeaveManagedAgent(
       "my-agent",
       "This description can be anything",
@@ -251,23 +274,33 @@ describe("classifyExistingAgent — display metadata is not identity", () => {
 describe("tagWithOwnership", () => {
   it("appends WEAVE_OWNERSHIP_TAG to an empty description", () => {
     const config = makeConfig({ description: "" });
-    const tagged = tagWithOwnership(config);
+    const tagged = tagWithOwnership("my-agent", config);
     expect(tagged.description).toBe(WEAVE_OWNERSHIP_TAG);
   });
 
   it("appends WEAVE_OWNERSHIP_TAG to a non-empty description", () => {
     const config = makeConfig({ description: "My agent description" });
-    const tagged = tagWithOwnership(config);
+    const tagged = tagWithOwnership("my-agent", config);
     expect(tagged.description).toContain("My agent description");
     expect(tagged.description).toContain(WEAVE_OWNERSHIP_TAG);
+  });
+
+  it("stores the canonical name in the durable identity", () => {
+    const tagged = tagWithOwnership("my-agent", makeConfig());
+    expect(tagged.options).toEqual({
+      weave: {
+        kind: "weave-agent",
+        version: 1,
+        agentName: "my-agent",
+      },
+    });
   });
 
   it("is idempotent — does not double-tag an already-tagged description", () => {
     const config = makeConfig({
       description: `My agent ${WEAVE_OWNERSHIP_TAG}`,
     });
-    const tagged = tagWithOwnership(config);
-    // Tag should appear exactly once
+    const tagged = tagWithOwnership("my-agent", config);
     const tagCount =
       (tagged.description ?? "").split(WEAVE_OWNERSHIP_TAG).length - 1;
     expect(tagCount).toBe(1);
@@ -275,14 +308,14 @@ describe("tagWithOwnership", () => {
 
   it("does not mutate the original config", () => {
     const config = makeConfig({ description: "Original" });
-    const tagged = tagWithOwnership(config);
+    const tagged = tagWithOwnership("my-agent", config);
     expect(config.description).toBe("Original");
     expect(tagged).not.toBe(config);
   });
 
   it("handles undefined description by treating it as empty", () => {
     const config = makeConfig({ description: undefined });
-    const tagged = tagWithOwnership(config);
+    const tagged = tagWithOwnership("my-agent", config);
     expect(tagged.description).toBe(WEAVE_OWNERSHIP_TAG);
   });
 
@@ -293,7 +326,7 @@ describe("tagWithOwnership", () => {
       model: "claude-sonnet-4-5",
       description: "My agent",
     });
-    const tagged = tagWithOwnership(config);
+    const tagged = tagWithOwnership("my-agent", config);
     expect(tagged.prompt).toBe("Custom prompt");
     expect(tagged.mode).toBe("primary");
     expect(tagged.model).toBe("claude-sonnet-4-5");
@@ -365,8 +398,10 @@ describe("reconcileAgent — create path", () => {
     client.setCreateAgentResult(
       errAsync({
         type: "CreateAgentError" as const,
+        operation: "create-agent" as const,
+        status: "sdk-error" as const,
         agentName: "my-agent",
-        message: "SDK write failed",
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -375,7 +410,10 @@ describe("reconcileAgent — create path", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("CreateAgentError");
-      expect(result.error.message).toBe("SDK write failed");
+      expect(result.error.message).toBe(
+        "OpenCode create-agent failed (sdk-error)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 });
@@ -454,8 +492,10 @@ describe("reconcileAgent — update path", () => {
     client.setUpdateAgentResult(
       errAsync({
         type: "UpdateAgentError" as const,
+        operation: "update-agent" as const,
+        status: "sdk-error" as const,
         agentName: "my-agent",
-        message: "SDK update failed",
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -464,7 +504,10 @@ describe("reconcileAgent — update path", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("UpdateAgentError");
-      expect(result.error.message).toBe("SDK update failed");
+      expect(result.error.message).toBe(
+        "OpenCode update-agent failed (sdk-error)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 
@@ -546,7 +589,7 @@ describe("reconcileAgent — collision path", () => {
     expect(client.updateAgentCalls).toHaveLength(0);
   });
 
-  it("returns CollisionError for agent with no description (no ownership tag)", async () => {
+  it("returns CollisionError for agent with no durable identity", async () => {
     const client = new MockOpenCodeClient();
     client.setListAgentsResult(
       okAsync([makeAgentWithoutDescription("my-agent")]),
@@ -592,7 +635,9 @@ describe("reconcileAgent — listAgents failure", () => {
     client.setListAgentsResult(
       errAsync({
         type: "ListAgentsError" as const,
-        message: "Connection refused",
+        operation: "list-agents" as const,
+        status: "request-failed" as const,
+        message: "provider sentinel: do not expose",
       }),
     );
 
@@ -601,7 +646,10 @@ describe("reconcileAgent — listAgents failure", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("ListAgentsError");
-      expect(result.error.message).toBe("Connection refused");
+      expect(result.error.message).toBe(
+        "OpenCode list-agents failed (request-failed)",
+      );
+      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
     }
   });
 
@@ -610,7 +658,9 @@ describe("reconcileAgent — listAgents failure", () => {
     client.setListAgentsResult(
       errAsync({
         type: "ListAgentsError" as const,
-        message: "Connection refused",
+        operation: "list-agents" as const,
+        status: "request-failed" as const,
+        message: "provider sentinel: do not expose",
       }),
     );
 

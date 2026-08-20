@@ -435,20 +435,22 @@ describe("RuntimeCommandProjection.handleStartPlan — delegates to engine start
     const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
-    // planStateProvider is required — engine returns command_validation
-    const input = {
-      planName: "my-plan",
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider: new MockPlanStateProvider(),
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    };
-    Object.defineProperty(input, "planStateProvider", { value: undefined });
-    const result = await projection.handleStartPlan(input);
+    // This raw fixture enters the adapter projection and then the engine's
+    // startPlan validation seam. It never mutates a trusted typed input.
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        planName: "my-plan",
+        workflowName: "simple-workflow",
+        goal: "Test goal",
+        slug: "test-goal",
+        ownerId: "test-owner",
+        store,
+        planStateProvider: undefined,
+        workflows: SIMPLE_WORKFLOWS,
+        adapter,
+      }),
+    );
+    const result = await projection.handleStartPlan(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
@@ -1435,17 +1437,17 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     const store = createInMemoryRuntimeStore();
 
     // Missing outcome → command_validation (not automatic detection).
-    // The projection layer requires an explicit outcome — there is no automatic
-    // signal detection from harness events or agent output.
-    const completionSignal = { outcome: "success" as const };
-    Object.defineProperty(completionSignal, "outcome", { value: "" });
-    const result = await projection.handleAdvanceStep({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      stepName: "execute",
-      completionSignal,
-      store,
-    });
+    // The raw JSON fixture crosses the engine validation seam directly.
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: "nonexistent-instance",
+        leaseId: "nonexistent-lease",
+        stepName: "execute",
+        completionSignal: { outcome: "" },
+        store,
+      }),
+    );
+    const result = await projection.handleAdvanceStep(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
@@ -1459,16 +1461,17 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     const projection = new RuntimeCommandProjection();
     const store = createInMemoryRuntimeStore();
 
-    // Missing outcome → command_validation (not automatic detection)
-    const completionSignal = { outcome: "success" as const };
-    Object.defineProperty(completionSignal, "outcome", { value: "" });
-    const result = await projection.handleAdvanceStep({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      stepName: "execute",
-      completionSignal,
-      store,
-    });
+    // Missing outcome → command_validation (not automatic detection).
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: "nonexistent-instance",
+        leaseId: "nonexistent-lease",
+        stepName: "execute",
+        completionSignal: { outcome: "" },
+        store,
+      }),
+    );
+    const result = await projection.handleAdvanceStep(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
