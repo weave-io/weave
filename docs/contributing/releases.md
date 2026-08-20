@@ -18,11 +18,12 @@ route → recompute → build-bind → await-attest → consumer-proof
       → registry-verification → refs-cleanup
 ```
 
-`route` accepts only a closed stable PR or a maintainer-authorized
-`stable-resume` or `incident-resolution` dispatch on `refs/heads/main`. It
-validates the checked-in rollout stage, `RELEASE_ROLLOUT_MODE`, and observed
-workflow topology before work starts. The Task 25 file has no schedule trigger
-and no `workflow_call` trigger.
+`route` accepts a closed stable PR, a maintainer-authorized
+`stable-resume` or `incident-resolution` dispatch, or the exact protected
+nightly schedule on `refs/heads/main`. It validates the checked-in rollout
+stage, `RELEASE_ROLLOUT_MODE`, and observed workflow topology before work
+starts. The trusted workflow declares only the fixed nightly cron and no
+`workflow_call` trigger.
 
 A closed stable PR deletes the `release-pr/stable` marker whether it merged or
 not. A deletion failure is recorded as `MarkerCleanupPending`; a merged release
@@ -85,10 +86,10 @@ not mutate Git source files or provide a Git mutation path for repair.
 
 ## The `nightly` channel
 
-A maintainer-guarded `channel: nightly` route runs on the same trusted
-workflow. The cutover moved the `17 0 * * *` schedule onto
-`release-publish.yml`; it is the only schedule that workflow may declare, and
-the reachability checker rejects any other cron.
+A maintainer-guarded `channel: nightly` route and the exact protected
+scheduled event run on the same trusted workflow. The cutover moved the
+`17 0 * * *` schedule onto `release-publish.yml`; it is the only schedule that
+workflow may declare, and the reachability checker rejects any other cron.
 
 The schedule stays inert until the rollout tuple reaches stage `ready` and mode
 `enabled`. Until then the route job fails closed before any attestation,
@@ -121,10 +122,11 @@ workflow topology form one tuple:
 - `ready` plus `enabled`, with the correct topology, is the only publication
   tuple.
 
-Task 25 starts in `pre-cutover`. The old scheduled publisher remains separate
-until the later cutover task. No schedule is added here. A frozen or
-pre-cutover stage can never publish, even if an external variable says
-`enabled`.
+Task 35 leaves the checked-in declaration at `pre-cutover` while the old
+publisher is removed and the exact nightly schedule is present. The current
+pre-cutover-plus-cron tuple fails closed. After the freeze, `frozen` plus
+`disabled` returns typed `RolloutDisabled`; a pre-cutover or frozen stage can
+never publish, even if an external variable says `enabled`.
 
 ## Resume and artifact expiry
 

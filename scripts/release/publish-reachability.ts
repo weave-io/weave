@@ -74,13 +74,13 @@ export type WorkflowPermissionContract = Readonly<{
 const workflowExpression = (body: string): string =>
   ["$", "{{ ", body, " }}"].join("");
 const NIGHTLY_OR_RELEASE_APP_ENVIRONMENT = workflowExpression(
-  "inputs.channel == 'nightly' && '' || 'release-app'",
+  "(inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release-app'",
 );
 const NIGHTLY_OR_HARNESS_PROOF_ENVIRONMENT = workflowExpression(
-  "inputs.channel == 'nightly' && '' || 'harness-proof'",
+  "(inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'harness-proof'",
 );
 const CHANNEL_APPROVAL_ENVIRONMENT = workflowExpression(
-  "inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release')",
+  "inputs.channel == 'next' && 'prerelease' || ((inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release')",
 );
 
 export const PHASE_C_PERMISSION_CONTRACTS = {
@@ -324,12 +324,14 @@ const APP_TOKEN_JOB_CONTRACTS: Readonly<
     route: {
       environment: NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
       permissions: { contents: "write" },
-      condition: "inputs.channel != 'nightly'",
+      condition:
+        "inputs.channel != 'nightly' && github.event_name != 'schedule'",
     },
     "refs-cleanup": {
       environment: NIGHTLY_OR_RELEASE_APP_ENVIRONMENT,
       permissions: { contents: "write", "pull-requests": "write" },
-      condition: "inputs.channel != 'nightly'",
+      condition:
+        "inputs.channel != 'nightly' && github.event_name != 'schedule'",
     },
   },
   [DOCS_AUDIT_FOLLOWUP_WORKFLOW_PATH]: {

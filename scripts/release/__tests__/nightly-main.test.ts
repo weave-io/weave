@@ -138,14 +138,22 @@ function nightlyInput(
 }
 
 describe("nightly route", () => {
-  it("accepts only an authorized manual dispatch on protected main", () => {
+  it("accepts only authorized dispatches and the exact protected schedule", () => {
     expect(validateNightlyRouteEvent(routeEvent()).isOk()).toBe(true);
     expect(
       validateNightlyRouteEvent({
         ...routeEvent(),
         eventName: "schedule",
+        action: "schedule",
+      }).isOk(),
+    ).toBe(true);
+    expect(
+      validateNightlyRouteEvent({
+        ...routeEvent(),
+        eventName: "schedule",
+        action: "workflow_dispatch",
       })._unsafeUnwrapErr().type,
-    ).toBe("UnsupportedNightlyEvent");
+    ).toBe("InvalidNightlyRoute");
     expect(
       validateNightlyRouteEvent({
         ...routeEvent(),
@@ -159,34 +167,59 @@ describe("nightly route", () => {
     ).toBe("UnauthorizedNightlyRoute");
     expect(parseNightlyInput({ cli: true }).isOk()).toBe(true);
     expect(parseNightlyInput({ extra: true }).isErr()).toBe(true);
+    const scheduled = parseNightlyRouteEnvironment({
+      GITHUB_EVENT_NAME: "schedule",
+      GITHUB_EVENT_ACTION: "schedule",
+      GITHUB_REPOSITORY: "weave-io/weave",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_ACTOR: "weave-io",
+      INPUT_CHANNEL: "stable",
+    });
+    expect(scheduled.isOk()).toBe(true);
+    if (scheduled.isOk()) expect(scheduled.value.channel).toBe("nightly");
     expect(
       parseNightlyRouteEnvironment({
         GITHUB_EVENT_NAME: "schedule",
-      })._unsafeUnwrapErr().type,
-    ).toBe("UnsupportedNightlyEvent");
+        GITHUB_REPOSITORY: "weave-io/weave",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_ACTOR: "weave-io",
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      parseNightlyRouteEnvironment({
+        GITHUB_EVENT_NAME: "schedule",
+        GITHUB_EVENT_ACTION: "schedule",
+        GITHUB_REPOSITORY: "attacker/weave",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_ACTOR: "weave-io",
+      }).isErr(),
+    ).toBe(true);
   });
 
-  it("fails a live dispatch closed while the cutover code outruns the stage record", async () => {
+  it("fails the current pre-cutover schedule closed before chain work", async () => {
     // The cutover removed publish.yml and added the new schedule, but the
-    // checked-in stage is still `pre-cutover`, so the observed tuple is
-    // invalid. The route must refuse rather than report a clean disabled
-    // exit. The typed RolloutDisabled contract itself is proven below
-    // against injected declarations and topologies.
+    // checked-in stage is still `pre-cutover`. The exact schedule therefore
+    // reaches the nightly route and fails on the invalid tuple before any
+    // plan, proof, OIDC, or publish job can run.
     const result = await runNightlyMain(
       { phase: "route" },
       {
-        GITHUB_EVENT_NAME: "workflow_dispatch",
-        GITHUB_EVENT_ACTION: "workflow_dispatch",
+        GITHUB_EVENT_NAME: "schedule",
+        GITHUB_EVENT_ACTION: "schedule",
         GITHUB_REPOSITORY: "weave-io/weave",
         GITHUB_REF: "refs/heads/main",
-        GITHUB_ACTOR: "maintainer",
-        INPUT_CHANNEL: "nightly",
-        RELEASE_MAINTAINER_AUTHORIZED: "true",
+        GITHUB_ACTOR: "weave-io",
         RELEASE_ROLLOUT_MODE: "disabled",
       },
     );
     expect(result.isErr()).toBe(true);
-    if (result.isErr()) expect(result.error.type).not.toBe("NothingToPublish");
+    if (result.isErr()) {
+      expect(result.error.type).toBe("RolloutInvalidState");
+      expect(result.error).toMatchObject({
+        type: "RolloutInvalidState",
+        reason: "pre-cutover requires the old scheduled workflow",
+      });
+    }
   });
 
   it("uses the shared maintainer authorization port", async () => {
@@ -208,21 +241,34 @@ describe("nightly route", () => {
 });
 
 describe("nightly rollout and planning", () => {
-  it("fails closed before work when disabled and runs a publish-free dry run", () => {
+  it("returns typed RolloutDisabled for final frozen state before chain work", () => {
     const disabled = evaluateNightlyRollout({
       declaration: {
         schemaVersion: 1,
-        stage: "pre-cutover",
-        freezeRecord: null,
+        stage: "frozen",
+        freezeRecord: {
+          schemaVersion: 1,
+          commitSha: "c".repeat(40),
+          committedAt: "2026-08-20T00:00:00.000Z",
+          quiescenceEvidence: "old publisher quiescent",
+        },
         activationRecord: null,
       },
       mode: "disabled",
-      topology: oldTopology,
+      topology: {
+        oldWorkflowPresent: false,
+        oldWorkflowScheduled: false,
+        newWorkflowPresent: true,
+        newWorkflowScheduled: true,
+        newWorkflowGateDisabled: true,
+      },
     });
+    expect(disabled.isErr()).toBe(true);
     expect(disabled._unsafeUnwrapErr()).toEqual({
       type: "RolloutDisabled",
       channel: "nightly",
     });
+
     const dryRun = evaluateNightlyRollout({
       declaration: {
         schemaVersion: 1,
@@ -363,7 +409,7 @@ describe("nightly proof gate", () => {
 });
 
 describe("nightly workflow shape", () => {
-  it("keeps manual nightly in the trusted chain with the cutover schedule inert", async () => {
+  it("routes the protected schedule to nightly before the gated chain", async () => {
     const workflow = await Bun.file(
       resolve(
         import.meta.dir,
@@ -375,13 +421,21 @@ describe("nightly workflow shape", () => {
       "bun scripts/release/nightly-main.ts --phase route",
     );
     expect(workflow).toContain(
+      'if [[ "$' + '{GITHUB_EVENT_NAME:-}" == "schedule" ]]',
+    );
+    expect(workflow).toContain(
+      "INPUT_CHANNEL: $" +
+        "{{ inputs.channel || (github.event_name == 'schedule' && 'nightly' || '') }}",
+    );
+    expect(workflow).toContain("needs.route.outputs.work == 'true'");
+    expect(workflow).toContain(
       "bun scripts/release/nightly-main.ts --phase plan",
     );
     expect(workflow).toContain(
       "bun scripts/release/nightly-main.ts --phase build",
     );
     // Task 35's cutover moves the nightly cron onto this workflow. The route
-    // job still admits nightly only through maintainer dispatch, so the
+    // job maps the protected schedule explicitly to nightly, but the
     // schedule cannot reach the nightly chain while the rollout stays gated.
     expect(workflow).toMatch(/^\s+schedule:/m);
     expect(workflow).toContain('- cron: "17 0 * * *"');
@@ -390,10 +444,10 @@ describe("nightly workflow shape", () => {
         GITHUB_REPOSITORY: "weave-io/weave",
         GITHUB_REF: "refs/heads/main",
         GITHUB_EVENT_NAME: "schedule",
+        GITHUB_EVENT_ACTION: "schedule",
         GITHUB_ACTOR: "weave-io",
-        INPUT_CHANNEL: "nightly",
-      })._unsafeUnwrapErr().type,
-    ).toBe("UnsupportedNightlyEvent");
+      }).isOk(),
+    ).toBe(true);
     expect(workflow).not.toContain("npm deprecate");
     expect(workflow).toContain("--tag nightly");
     expect(workflow).toContain("channel != 'nightly'");
