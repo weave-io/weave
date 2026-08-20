@@ -845,10 +845,13 @@ remain unchanged.
 
 ### D1 executable red and green results
 
-D1's silent-child negative control was a real executable verifier run. It
+D1's silent-parent negative control was a real executable verifier run. It
 closed on the bounded timeout, returned exit `1` within `31s`, completed
-cleanup, and removed its bounded mode-`0600` report. The closed timeout was the
-expected RED result; no terminal or UI result is inferred from it.
+cleanup, and removed its bounded mode-`0600` report. This measured the
+30-second parent deadline only; it provides no live child-silence evidence. The
+closed timeout was the expected RED result; no terminal or UI result is
+inferred from it. Child-silence behavior remains separate unit/integration test
+evidence, not part of this live D1 control.
 
 D1's positive executable verifier run returned exit `0`. It proved identity
 `current` and `fresh`, all `4/4` requested lanes, isolation, one authoritative
@@ -859,10 +862,10 @@ cleanup. Its bounded mode-`0600` report was removed after verification.
 | --- | --- | --- |
 | Command exit | **PASS** — `1` | **PASS** — `0` |
 | Timeout / identity | **PASS** — closed timeout; bounded `31s` | **PASS** — current and fresh |
-| Proof lanes | **NOT APPLICABLE** — silent negative control | **PASS** — `4/4` |
-| Isolation | **NOT APPLICABLE** — silent negative control | **PASS** — isolated |
-| Settlement | **NOT APPLICABLE** — silent negative control | **PASS** — one settlement |
-| Registry | **NOT APPLICABLE** — silent negative control | **PASS** — empty |
+| Proof lanes | **NOT APPLICABLE** — silent-parent negative control | **PASS** — `4/4` |
+| Isolation | **NOT APPLICABLE** — silent-parent negative control | **PASS** — isolated |
+| Settlement | **NOT APPLICABLE** — silent-parent negative control | **PASS** — one settlement |
+| Registry | **NOT APPLICABLE** — silent-parent negative control | **PASS** — empty |
 | Diagnostics | **PASS** — closed and content-free | **PASS** — clean and content-free |
 | Cleanup | **PASS** — complete | **PASS** — complete |
 | Bounded report | **PASS** — mode `0600`, removed | **PASS** — mode `0600`, removed |
