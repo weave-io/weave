@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import weaveGrammar from './src/shiki/weave.tmLanguage.js';
+import { withoutCompatibilityDocRoutes } from './src/data/compatibility-pages.ts';
 
 const site = process.env.SITE_URL ?? 'http://localhost:4321';
 const base = process.env.BASE_PATH ?? '/';
@@ -106,21 +107,21 @@ export default defineConfig({
       editLink: {
         baseUrl: 'https://github.com/weave-io/weave/edit/main/packages/docs/',
       },
-      // Public docs expose a compact guide-first structure. Legacy tutorial,
-      // how-to, explanation, and per-topic reference routes still exist as
-      // compatibility pages, but they are intentionally left out of navigation.
+      // Public docs expose a compact guide-first structure. The shared route
+      // inventory keeps compatibility pages out of navigation by exact route,
+      // while any new route remains visible to the deterministic audit.
       sidebar: [
         {
           label: 'Start',
-          items: [
+          items: withoutCompatibilityDocRoutes([
             'docs',
             'docs/getting-started',
             'docs/concepts',
-          ],
+          ]),
         },
         {
           label: 'Guides',
-          items: [
+          items: withoutCompatibilityDocRoutes([
             'docs/configuration',
             'docs/agents-and-categories',
             'docs/prompts-models-policy',
@@ -128,17 +129,17 @@ export default defineConfig({
             'docs/evals',
             'docs/opencode',
             'docs/runtime-operations',
-          ],
+          ]),
         },
         {
           label: 'Reference',
-          items: [
+          items: withoutCompatibilityDocRoutes([
             'docs/reference/cli',
             'docs/reference/dsl',
             'docs/reference/adapters',
             'docs/reference/packages',
             'docs/reference/releases',
-          ],
+          ]),
         },
       ],
     }),

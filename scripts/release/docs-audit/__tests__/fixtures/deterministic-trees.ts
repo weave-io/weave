@@ -20,8 +20,7 @@ const ASTRO = `export default {
 };
 `;
 
-const ASTRO_WITH_COMPATIBILITY = `// compatibility pages are intentionally left out of navigation.
-export default {
+const ASTRO_WITH_REFERENCE = `export default {
   integrations: [
     {
       sidebar: [
@@ -49,6 +48,32 @@ const SEARCH_WITH_REFERENCE = `export const docsSearchData = [
   { href: "docs/" },
   { href: "docs/quickstart/" },
   { href: "docs/reference/adapters/" },
+];
+`;
+
+const ASTRO_WITH_COMMENT_ONLY_FAKE = `const fake = "items: ['docs/concepts']";
+export default {
+  integrations: [
+    {
+      sidebar: [
+        {
+          items: [
+            "docs",
+            "docs/quickstart",
+            // "docs/concepts",
+          ],
+        },
+      ],
+    },
+  ],
+};
+`;
+
+const SEARCH_WITH_COMMENT_ONLY_FAKE = `const fake = "href: 'docs/concepts/'";
+export const docsSearchData = [
+  { href: "docs/" },
+  { href: "docs/quickstart/" },
+  // { href: "docs/concepts/" },
 ];
 `;
 
@@ -102,14 +127,62 @@ export function sidebarDriftTree(): Record<string, string> {
 
 export function compatibilityDocsTree(): Record<string, string> {
   return passingDocsTree({
-    "packages/docs/astro.config.mjs": ASTRO_WITH_COMPATIBILITY,
+    "packages/docs/astro.config.mjs": ASTRO_WITH_REFERENCE,
     "packages/docs/src/data/docs-search.ts": SEARCH_WITH_REFERENCE,
-    "packages/docs/src/content/docs/docs/explanation/legacy.mdx":
-      "---\ntitle: Legacy route\ndescription: Compatibility route for an older guide.\n---\n\nThis route remains available for existing links.\n",
+    "packages/docs/src/content/docs/docs/explanation/architecture.mdx":
+      "# Architecture\n\nThis exact inventory route remains available for existing links.\n",
     "packages/docs/src/content/docs/docs/reference/adapters/index.mdx":
       "# Adapters\n\nCurrent adapter support.\n",
-    "packages/docs/src/content/docs/docs/reference/adapters/legacy.mdx":
-      "---\ntitle: Legacy adapter\ndescription: Adapter details.\n---\n\nThis per-topic reference route remains available for existing links.\n",
+    "packages/docs/src/content/docs/docs/reference/adapters/claude-code.mdx":
+      "# Claude Code\n\nThis exact inventory route remains available for existing links.\n",
+  });
+}
+
+export function commentOnlyFakeEntriesTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/astro.config.mjs": ASTRO_WITH_COMMENT_ONLY_FAKE,
+    "packages/docs/src/data/docs-search.ts": SEARCH_WITH_COMMENT_ONLY_FAKE,
+    "packages/docs/src/content/docs/docs/concepts.mdx":
+      "# Concepts\n\nAgents and workflows.\n",
+  });
+}
+
+export function unmarkedHowToPageTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/src/content/docs/docs/how-to/new-page.mdx":
+      "# New How-To\n\nThis new page is not in the compatibility inventory.\n",
+  });
+}
+
+export function routePrefixBypassTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/src/content/docs/docs/how-to/not-in-inventory.mdx":
+      "---\ntitle: Not in inventory\ndescription: Compatibility route for a test.\n---\n\nThis route is not explicitly listed.\n",
+  });
+}
+
+export function malformedAstroTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/astro.config.mjs":
+      'export default { integrations: [{ sidebar: [{ items: ["docs" }]}] };\n',
+  });
+}
+
+export function repeatedAstroTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/astro.config.mjs":
+      "export default { sidebar: [], sidebar: [] };\n",
+  });
+}
+
+export function repeatedSearchEntriesTree(): Record<string, string> {
+  return passingDocsTree({
+    "packages/docs/src/data/docs-search.ts": `export const docsSearchData = [
+  { href: "docs/" },
+  { href: "docs/" },
+  { href: "docs/quickstart/" },
+];
+`,
   });
 }
 
