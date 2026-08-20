@@ -1,80 +1,77 @@
 import { PUBLIC_PACKAGES } from "../../../constants.js";
 import { publishablePackageNames } from "../../../package-policy.js";
+import { DOCS_SITE_NAVIGATION_DATA } from "../../policy.js";
 
 const FILES_FIELD = ["dist", "README.md", "CHANGELOG.md", "LICENSE"] as const;
 
-const ASTRO = `export default {
-  integrations: [
-    {
-      sidebar: [
-        {
-          label: "Start",
-          items: [
-            "docs",
-            "docs/quickstart",
-          ],
-        },
-      ],
-    },
-  ],
-};
-`;
+interface NavigationFixture {
+  readonly sidebar?: readonly string[];
+  readonly search?: readonly string[];
+  readonly compatibilityRoutes?: readonly string[];
+}
 
-const ASTRO_WITH_REFERENCE = `export default {
-  integrations: [
-    {
-      sidebar: [
-        {
-          label: "Start",
-          items: [
-            "docs",
-            "docs/quickstart",
-            "docs/reference/adapters",
-          ],
-        },
-      ],
-    },
-  ],
-};
-`;
+/** Build the declarative navigation contract the checker treats as authority. */
+export function navigationData(
+  fixture: NavigationFixture = {},
+): Record<string, unknown> {
+  const sidebar = fixture.sidebar ?? ["docs", "docs/quickstart"];
+  const search = fixture.search ?? sidebar;
+  return {
+    schemaVersion: 1,
+    sidebar: [{ label: "Start", routes: [...sidebar] }],
+    search: search.map((route) => ({
+      group: "Start",
+      route,
+      title: route,
+      subtitle: "fixture entry",
+      icon: "page",
+    })),
+    compatibilityRoutes: [...(fixture.compatibilityRoutes ?? [])],
+  };
+}
 
-const SEARCH = `export const docsSearchData = [
-  { href: "docs/" },
-  { href: "docs/quickstart/" },
-];
-`;
+function navigationJson(fixture: NavigationFixture = {}): string {
+  return `${JSON.stringify(navigationData(fixture), null, 2)}\n`;
+}
 
-const SEARCH_WITH_REFERENCE = `export const docsSearchData = [
-  { href: "docs/" },
-  { href: "docs/quickstart/" },
-  { href: "docs/reference/adapters/" },
-];
-`;
+/**
+ * A hostile Astro config: it declares a different route list, hides entries
+ * behind a runtime `.filter()`, and mentions routes only in comments and
+ * strings. None of it may reach the checker.
+ */
+const ASTRO_WITH_RUNTIME_TRANSFORM = `import { starlightSidebar } from './src/data/docs-navigation.ts';
 
-const ASTRO_WITH_COMMENT_ONLY_FAKE = `const fake = "items: ['docs/concepts']";
+// "docs/concepts" is mentioned only in this comment.
+const spoof = "items: ['docs/concepts']";
+
 export default {
   integrations: [
     {
       sidebar: [
         {
-          items: [
-            "docs",
-            "docs/quickstart",
-            // "docs/concepts",
-          ],
+          label: 'Start',
+          items: ['docs', 'docs/quickstart', 'docs/concepts'].filter(
+            (route) => route !== 'docs/concepts',
+          ),
         },
       ],
+      spoof,
+      real: starlightSidebar,
     },
   ],
 };
 `;
 
-const SEARCH_WITH_COMMENT_ONLY_FAKE = `const fake = "href: 'docs/concepts/'";
-export const docsSearchData = [
-  { href: "docs/" },
-  { href: "docs/quickstart/" },
-  // { href: "docs/concepts/" },
-];
+const SEARCH_MODULE = `import { docsNavigation } from './docs-navigation.js';
+
+// { href: "docs/concepts/" }
+export const docsSearchData = docsNavigation.search.map((entry) => ({
+  group: entry.group,
+  title: entry.title,
+  subtitle: entry.subtitle,
+  href: \`\${entry.route}/\`,
+  icon: entry.icon,
+}));
 `;
 
 function packageManifest(name: string): string {
@@ -95,8 +92,9 @@ export function passingDocsTree(
     "docs/README.md":
       "# Docs\n\nContributor documentation index. See the [release runbook](../RELEASING.md).\n",
     "packages/docs/README.md": "# Docs site\n\nPublic documentation.\n",
-    "packages/docs/astro.config.mjs": ASTRO,
-    "packages/docs/src/data/docs-search.ts": SEARCH,
+    "packages/docs/astro.config.mjs": ASTRO_WITH_RUNTIME_TRANSFORM,
+    "packages/docs/src/data/docs-search.ts": SEARCH_MODULE,
+    [DOCS_SITE_NAVIGATION_DATA]: navigationJson(),
     "packages/docs/src/content/docs/docs/index.mdx":
       "# Overview\n\nWeave configuration model.\n",
     "packages/docs/src/content/docs/docs/quickstart.mdx":
@@ -109,6 +107,17 @@ export function passingDocsTree(
     files[`${directory}/package.json`] = packageManifest(packageName);
   }
   return { ...files, ...overrides };
+}
+
+/** Replace only the navigation contract of a passing tree. */
+export function navigationTree(
+  fixture: NavigationFixture,
+  overrides: Record<string, string> = {},
+): Record<string, string> {
+  return passingDocsTree({
+    [DOCS_SITE_NAVIGATION_DATA]: navigationJson(fixture),
+    ...overrides,
+  });
 }
 
 export function brokenLinkTree(): Record<string, string> {
@@ -126,22 +135,32 @@ export function sidebarDriftTree(): Record<string, string> {
 }
 
 export function compatibilityDocsTree(): Record<string, string> {
-  return passingDocsTree({
-    "packages/docs/astro.config.mjs": ASTRO_WITH_REFERENCE,
-    "packages/docs/src/data/docs-search.ts": SEARCH_WITH_REFERENCE,
-    "packages/docs/src/content/docs/docs/explanation/architecture.mdx":
-      "# Architecture\n\nThis exact inventory route remains available for existing links.\n",
-    "packages/docs/src/content/docs/docs/reference/adapters/index.mdx":
-      "# Adapters\n\nCurrent adapter support.\n",
-    "packages/docs/src/content/docs/docs/reference/adapters/claude-code.mdx":
-      "# Claude Code\n\nThis exact inventory route remains available for existing links.\n",
-  });
+  return navigationTree(
+    {
+      sidebar: ["docs", "docs/quickstart", "docs/reference/adapters"],
+      compatibilityRoutes: [
+        "docs/explanation/architecture",
+        "docs/reference/adapters/claude-code",
+      ],
+    },
+    {
+      "packages/docs/src/content/docs/docs/explanation/architecture.mdx":
+        "# Architecture\n\nThis exact inventory route remains available for existing links.\n",
+      "packages/docs/src/content/docs/docs/reference/adapters/index.mdx":
+        "# Adapters\n\nCurrent adapter support.\n",
+      "packages/docs/src/content/docs/docs/reference/adapters/claude-code.mdx":
+        "# Claude Code\n\nThis exact inventory route remains available for existing links.\n",
+    },
+  );
 }
 
+/**
+ * The docs site source claims coverage for `docs/concepts` in a comment, a
+ * string literal, and a pre-filter array literal. The declarative contract does
+ * not, so the page must still fail coverage.
+ */
 export function commentOnlyFakeEntriesTree(): Record<string, string> {
   return passingDocsTree({
-    "packages/docs/astro.config.mjs": ASTRO_WITH_COMMENT_ONLY_FAKE,
-    "packages/docs/src/data/docs-search.ts": SEARCH_WITH_COMMENT_ONLY_FAKE,
     "packages/docs/src/content/docs/docs/concepts.mdx":
       "# Concepts\n\nAgents and workflows.\n",
   });
@@ -155,34 +174,35 @@ export function unmarkedHowToPageTree(): Record<string, string> {
 }
 
 export function routePrefixBypassTree(): Record<string, string> {
+  return navigationTree(
+    { compatibilityRoutes: ["docs/how-to/in-inventory"] },
+    {
+      "packages/docs/src/content/docs/docs/how-to/not-in-inventory.mdx":
+        "---\ntitle: Not in inventory\ndescription: Compatibility route for a test.\n---\n\nThis route is not explicitly listed.\n",
+    },
+  );
+}
+
+export function malformedNavigationTree(): Record<string, string> {
   return passingDocsTree({
-    "packages/docs/src/content/docs/docs/how-to/not-in-inventory.mdx":
-      "---\ntitle: Not in inventory\ndescription: Compatibility route for a test.\n---\n\nThis route is not explicitly listed.\n",
+    [DOCS_SITE_NAVIGATION_DATA]: `{\n  // "docs/concepts" is a comment, not data\n  "schemaVersion": 1\n}\n`,
   });
 }
 
-export function malformedAstroTree(): Record<string, string> {
+export function repeatedNavigationTree(): Record<string, string> {
   return passingDocsTree({
-    "packages/docs/astro.config.mjs":
-      'export default { integrations: [{ sidebar: [{ items: ["docs" }]}] };\n',
+    [DOCS_SITE_NAVIGATION_DATA]: navigationJson({
+      sidebar: ["docs", "docs/quickstart"],
+      search: ["docs", "docs", "docs/quickstart"],
+    }),
   });
 }
 
-export function repeatedAstroTree(): Record<string, string> {
+export function conflictingNavigationTree(): Record<string, string> {
   return passingDocsTree({
-    "packages/docs/astro.config.mjs":
-      "export default { sidebar: [], sidebar: [] };\n",
-  });
-}
-
-export function repeatedSearchEntriesTree(): Record<string, string> {
-  return passingDocsTree({
-    "packages/docs/src/data/docs-search.ts": `export const docsSearchData = [
-  { href: "docs/" },
-  { href: "docs/" },
-  { href: "docs/quickstart/" },
-];
-`,
+    [DOCS_SITE_NAVIGATION_DATA]: navigationJson({
+      compatibilityRoutes: ["docs/quickstart"],
+    }),
   });
 }
 

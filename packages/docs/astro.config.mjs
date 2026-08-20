@@ -1,7 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import weaveGrammar from './src/shiki/weave.tmLanguage.js';
-import { withoutCompatibilityDocRoutes } from './src/data/compatibility-pages.ts';
+import { starlightSidebar } from './src/data/docs-navigation.ts';
 
 const site = process.env.SITE_URL ?? 'http://localhost:4321';
 const base = process.env.BASE_PATH ?? '/';
@@ -117,54 +117,13 @@ export default defineConfig({
       editLink: {
         baseUrl: 'https://github.com/weave-io/weave/edit/main/packages/docs/',
       },
-      // Public docs expose a compact guide-first structure. The shared route
-      // inventory keeps compatibility pages out of navigation by exact route,
-      // while any new route remains visible to the deterministic audit.
-      sidebar: [
-        {
-          label: 'Start',
-          items: withoutCompatibilityDocRoutes([
-            'docs',
-            'docs/quickstart',
-            'docs/concepts',
-          ]),
-        },
-        {
-          label: 'Configure',
-          items: withoutCompatibilityDocRoutes([
-            'docs/configuration',
-            'docs/agents-and-categories',
-            'docs/prompts-models-policy',
-            'docs/workflows',
-          ]),
-        },
-        {
-          label: 'Adapters',
-          items: withoutCompatibilityDocRoutes([
-            'docs/reference/adapters',
-            'docs/reference/adapters/opencode',
-            'docs/reference/adapters/claude-code',
-            'docs/reference/adapters/pi',
-          ]),
-        },
-        {
-          label: 'Operate',
-          items: withoutCompatibilityDocRoutes([
-            'docs/runtime-inspection',
-            'docs/evals',
-            'docs/reference/releases',
-          ]),
-        },
-        {
-          label: 'Reference',
-          items: withoutCompatibilityDocRoutes([
-            'docs/reference/cli',
-            'docs/reference/dsl',
-            'docs/reference/packages',
-            'docs/reference/releases',
-          ]),
-        },
-      ],
+      // Public docs expose a compact guide-first structure. The declarative
+      // contract in `src/data/docs-navigation.json` is the single authority for
+      // navigated routes, palette search entries, and compatibility routes.
+      // This config declares no routes of its own, so the release-time
+      // deterministic checker reads that data structurally instead of reading
+      // anything here.
+      sidebar: starlightSidebar,
     }),
   ],
 });

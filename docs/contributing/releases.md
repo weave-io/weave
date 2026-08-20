@@ -210,6 +210,22 @@ a hard finding, a missing/skipped/cancelled AI result, a pending or failed
 follow-up, or a SHA mismatch fails the terminal check. Style findings remain
 warnings. Feeder jobs are conditional and are never required directly.
 
+### Docs navigation contract
+
+`packages/docs/src/data/docs-navigation.json` is the single declarative source
+for navigated routes, command-palette search entries, and the exact
+compatibility routes that stay reachable but stay out of navigation.
+`packages/docs/astro.config.mjs` and `packages/docs/src/data/docs-search.ts`
+consume it through `packages/docs/src/data/docs-navigation.ts`, and the
+deterministic checker validates the same file structurally.
+
+The checker reads no executable docs-site source, so comments, string literals,
+and runtime transformations such as `.filter()` cannot change coverage. Add a
+public page by declaring its route in that data file. A page that is neither
+declared in navigation and search nor listed as an exact compatibility route
+fails the deterministic job. Sharing a directory with a compatibility route
+grants no exemption.
+
 ### Fork follow-up
 
 A maintainer dispatches **Docs audit follow-up** from
