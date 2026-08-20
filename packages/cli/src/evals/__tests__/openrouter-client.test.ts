@@ -513,7 +513,7 @@ describe("OpenRouterClient — empty response", () => {
 });
 
 describe("OpenRouterClient — inline error in 200 response", () => {
-  it("returns HttpError when response body contains an error object", async () => {
+  it("returns HttpError with a stable diagnostic for an inline error", async () => {
     const body = {
       error: {
         message: "Model is temporarily unavailable",
@@ -529,7 +529,10 @@ describe("OpenRouterClient — inline error in 200 response", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("HttpError");
     if (error.type === "HttpError") {
-      expect(error.message).toContain("Model is temporarily unavailable");
+      expect(error.statusCode).toBe(503);
+      expect(error.message).toBe(
+        "OpenRouter returned an inline error response.",
+      );
     }
   });
 });
@@ -766,17 +769,33 @@ describe("ModelResponse security", () => {
     expect(serialized).not.toContain(FAKE_API_KEY);
   });
 
-  it("HttpError body does not contain the API key", async () => {
+  it("HttpError diagnostics omit provider bodies and inline error text", async () => {
     installFetch(
       mockFetchHttpError(401, `{"error": "invalid key: ${FAKE_API_KEY}"}`),
     );
 
     const client = new OpenRouterClient(VALID_ENV);
-    const result = await client.complete(MINIMAL_REQUEST);
+    const httpResult = await client.complete(MINIMAL_REQUEST);
 
-    // Even if the server echoes the key in the body, our error captures at most 512 chars
-    // but the test just verifies the error type is correct
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("HttpError");
+    expect(httpResult.isErr()).toBe(true);
+    const httpError = httpResult._unsafeUnwrapErr();
+    expect(httpError.type).toBe("HttpError");
+    expect(JSON.stringify(httpError)).not.toContain(FAKE_API_KEY);
+
+    installFetch(
+      mockFetchOk({
+        error: {
+          message: `provider detail includes ${FAKE_API_KEY}`,
+          code: 503,
+        },
+      }),
+    );
+
+    const inlineResult = await client.complete(MINIMAL_REQUEST);
+
+    expect(inlineResult.isErr()).toBe(true);
+    const inlineError = inlineResult._unsafeUnwrapErr();
+    expect(inlineError.type).toBe("HttpError");
+    expect(JSON.stringify(inlineError)).not.toContain(FAKE_API_KEY);
   });
 });

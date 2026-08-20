@@ -132,8 +132,6 @@ export type ModelClientError =
       statusCode: number;
       /** Human-readable description. */
       message: string;
-      /** Raw response body, if available. Never contains the API key. */
-      body?: string;
     }
   | {
       type: "ParseError";
@@ -294,23 +292,10 @@ export class OpenRouterClient implements ModelClient {
 
     return fetchResult.andThen((response) => {
       if (!response.ok) {
-        return ResultAsync.fromPromise(
-          response.text().catch((): string => "(unreadable)"),
-          (cause): ModelClientError => ({
-            type: "NetworkError",
-            message: `Failed to read error response body: ${cause instanceof Error ? cause.message : String(cause)}`,
-          }),
-        ).andThen((body): ResultAsync<ModelResponse, ModelClientError> => {
-          return new ResultAsync(
-            Promise.resolve(
-              err<ModelResponse, ModelClientError>({
-                type: "HttpError",
-                statusCode: response.status,
-                message: `OpenRouter returned HTTP ${response.status}: ${response.statusText}`,
-                body: body.slice(0, 512), // cap body to avoid leaking secrets in verbose bodies
-              }),
-            ),
-          );
+        return errAsync<ModelResponse, ModelClientError>({
+          type: "HttpError",
+          statusCode: response.status,
+          message: `OpenRouter returned HTTP ${response.status}.`,
         });
       }
 
@@ -346,19 +331,16 @@ export class OpenRouterClient implements ModelClient {
           },
         )
         .andThen((data): ResultAsync<ModelResponse, ModelClientError> => {
-          // OpenRouter may embed an error object inside a 200 response
+          // OpenRouter may embed an error object inside a 200 response. Do
+          // not copy provider-controlled text into the returned diagnostic.
           if (data.error !== undefined) {
-            return new ResultAsync(
-              Promise.resolve(
-                err<ModelResponse, ModelClientError>({
-                  type: "HttpError",
-                  statusCode: Number.isFinite(Number(data.error.code))
-                    ? Number(data.error.code)
-                    : 0,
-                  message: `OpenRouter error: ${data.error.message ?? "unknown error"}`,
-                }),
-              ),
-            );
+            return errAsync<ModelResponse, ModelClientError>({
+              type: "HttpError",
+              statusCode: Number.isFinite(Number(data.error.code))
+                ? Number(data.error.code)
+                : 0,
+              message: "OpenRouter returned an inline error response.",
+            });
           }
 
           const content = data.choices?.[0]?.message?.content;
