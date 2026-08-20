@@ -11,14 +11,17 @@
  * - `write`    → `permission.edit`
  * - `execute`  → `permission.bash`
  * - `network`  → `permission.webfetch`
- * - `delegate` → `permission.doom_loop`
+ * - `delegate` → `permission.task`
  *
  * The `read` capability has no dedicated `permission` field in OpenCode; it is
  * enforced by toggling the boolean presence of read-class tool names in the
  * `tools` map. When `read` is `"deny"`, all read-class tools are set to
  * `false`. When `"allow"` or `"ask"`, they are omitted (OpenCode default:
  * enabled). `"ask"` is treated as `"allow"` for read tools because OpenCode
- * has no per-read-tool approval mechanism.
+ * has no per-read-tool approval mechanism. OpenCode's `task` permission
+ * supports all three values, so delegation keeps the exact allow/deny/ask
+ * semantics. `doom_loop` is a separate loop-safety permission and is never
+ * used for delegation.
  */
 
 import type { EffectiveToolPolicy } from "@weaveio/weave-engine";
@@ -36,11 +39,17 @@ export type OpenCodePermissionValue = "allow" | "deny" | "ask";
 
 /**
  * The resolved OpenCode permission block produced by `mapToolPolicy`.
- * Matches the shape of `AgentConfig.permission`.
+ *
+ * The pinned SDK's generated type omits the public `task` permission even
+ * though OpenCode accepts it. This adapter-local shape records the actual
+ * permission contract without adding a cast at the projection boundary.
  */
-export type OpenCodeToolPermissions = NonNullable<
-  OpenCodeAgentConfig["permission"]
->;
+export interface OpenCodeToolPermissions {
+  readonly edit: OpenCodePermissionValue;
+  readonly bash: OpenCodePermissionValue;
+  readonly webfetch: OpenCodePermissionValue;
+  readonly task: OpenCodePermissionValue;
+}
 
 /** The complete adapter-owned permission projection for one agent. */
 export interface OpenCodeToolPolicyMapping {
@@ -77,7 +86,8 @@ export const READ_TOOL_NAMES: readonly string[] = [
  * permission string.
  *
  * The mapping is 1-to-1: Weave and OpenCode share the same three-value
- * vocabulary (`"allow"`, `"deny"`, `"ask"`).
+ * vocabulary (`"allow"`, `"deny"`, `"ask"`). This helper is used for the
+ * actual OpenCode `task` permission, not `doom_loop`.
  */
 export function toOpenCodePermission(
   permission: "allow" | "deny" | "ask",
@@ -129,7 +139,7 @@ export function mapToolPolicy(
     edit: toOpenCodePermission(policy.write),
     bash: toOpenCodePermission(policy.execute),
     webfetch: toOpenCodePermission(policy.network),
-    doom_loop: toOpenCodePermission(policy.delegate),
+    task: toOpenCodePermission(policy.delegate),
   };
 
   const tools = buildReadToolsEntry(policy.read);

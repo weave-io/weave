@@ -190,9 +190,10 @@ describe("mapToolPolicy — permission block from EffectiveToolPolicy", () => {
     expect(permission.webfetch).toBe("allow");
   });
 
-  it("maps delegate capability to permission.doom_loop", () => {
+  it("maps delegate capability to permission.task", () => {
     const { permission } = mapToolPolicy(allAllowPolicy);
-    expect(permission.doom_loop).toBe("allow");
+    expect(permission.task).toBe("allow");
+    expect(Object.hasOwn(permission, "doom_loop")).toBe(false);
   });
 
   it("produces all-deny permission block from all-deny policy", () => {
@@ -200,7 +201,7 @@ describe("mapToolPolicy — permission block from EffectiveToolPolicy", () => {
     expect(permission.edit).toBe("deny");
     expect(permission.bash).toBe("deny");
     expect(permission.webfetch).toBe("deny");
-    expect(permission.doom_loop).toBe("deny");
+    expect(permission.task).toBe("deny");
   });
 
   it("produces all-ask permission block from all-ask policy", () => {
@@ -208,7 +209,7 @@ describe("mapToolPolicy — permission block from EffectiveToolPolicy", () => {
     expect(permission.edit).toBe("ask");
     expect(permission.bash).toBe("ask");
     expect(permission.webfetch).toBe("ask");
-    expect(permission.doom_loop).toBe("ask");
+    expect(permission.task).toBe("ask");
   });
 
   it("maps mixed policy correctly to each permission field", () => {
@@ -219,8 +220,8 @@ describe("mapToolPolicy — permission block from EffectiveToolPolicy", () => {
     expect(permission.bash).toBe("ask");
     // network: ask → webfetch: ask
     expect(permission.webfetch).toBe("ask");
-    // delegate: deny → doom_loop: deny
-    expect(permission.doom_loop).toBe("deny");
+    // delegate: deny → task: deny
+    expect(permission.task).toBe("deny");
   });
 });
 
@@ -538,8 +539,8 @@ describe("mapToolPolicy — all five abstract capabilities are mapped", () => {
     expect(permission.bash).toBe("allow");
     // network → webfetch
     expect(permission.webfetch).toBe("allow");
-    // delegate → doom_loop
-    expect(permission.doom_loop).toBe("allow");
+    // delegate → task
+    expect(permission.task).toBe("allow");
     // read → tools (undefined when allow)
     expect(tools).toBeUndefined();
   });
@@ -549,7 +550,7 @@ describe("mapToolPolicy — all five abstract capabilities are mapped", () => {
     expect(permission.edit).toBe("deny");
     expect(permission.bash).toBe("deny");
     expect(permission.webfetch).toBe("deny");
-    expect(permission.doom_loop).toBe("deny");
+    expect(permission.task).toBe("deny");
     // read → tools (deny map when deny)
     expect(tools).toBeDefined();
   });
@@ -560,7 +561,8 @@ describe("mapToolPolicy — all five abstract capabilities are mapped", () => {
     expect(keys).toContain("edit");
     expect(keys).toContain("bash");
     expect(keys).toContain("webfetch");
-    expect(keys).toContain("doom_loop");
+    expect(keys).toContain("task");
+    expect(keys).not.toContain("doom_loop");
     // No OpenCode tool names should appear as permission keys
     expect(keys).not.toContain("read");
     expect(keys).not.toContain("glob");

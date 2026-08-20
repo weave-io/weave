@@ -860,6 +860,27 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     expect(result.message).toContain("opencode");
   });
 
+  it("reports ownership and delegation limits instead of false native readiness", () => {
+    const healthReport = buildOpenCodeHealthReport();
+    const capabilities = healthReport.capabilityContract.capabilities;
+    const materialization = capabilities.find(
+      (entry) => entry.id === "agent-materialization",
+    );
+    const delegation = capabilities.find(
+      (entry) => entry.id === "delegated-specialist-execution",
+    );
+    const policy = capabilities.find(
+      (entry) => entry.id === "tool-policy-mapping",
+    );
+
+    expect(materialization?.readiness).toBe("degraded");
+    expect(materialization?.notes).toContain("unforgeable authority");
+    expect(delegation?.readiness).toBe("degraded");
+    expect(policy?.readiness).toBe("native");
+    expect(policy?.notes).toContain("task permission");
+    expect(policy?.notes).not.toContain("permission.doom_loop");
+  });
+
   it("returns degraded result when commandEntrypoints is degraded", async () => {
     const projection = new RuntimeCommandProjection();
     const healthReport = buildOpenCodeHealthReport({

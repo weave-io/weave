@@ -16,6 +16,36 @@ describe("OpenCode adapter capability contract", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("declares agent materialization as degraded without proven update authority", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "agent-materialization",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("same-name resources");
+    expect(capability?.notes).toContain("cannot prove Weave ownership");
+    expect(capability?.remediationHint).toContain("database");
+  });
+
+  it("declares delegation as degraded when same-name ownership is unproven", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "delegated-specialist-execution",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("same-name materialization");
+  });
+
+  it("declares task permission mapping without the doom_loop false claim", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "tool-policy-mapping",
+    );
+
+    expect(capability?.readiness).toBe("native");
+    expect(capability?.notes).toContain("task permission");
+    expect(capability?.notes).toContain("doom_loop is not");
+  });
+
   it("declares model-thinking-activation as degraded with an explicit SDK gap", () => {
     const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
       (entry) => entry.id === "model-thinking-activation",

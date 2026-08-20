@@ -501,7 +501,8 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
       expect(validValues).toContain(String(permission.edit ?? ""));
       expect(validValues).toContain(String(permission.bash ?? ""));
       expect(validValues).toContain(String(permission.webfetch ?? ""));
-      expect(validValues).toContain(String(permission.doom_loop ?? ""));
+      expect(validValues).toContain(String(permission.task ?? ""));
+      expect(permission.doom_loop).toBeUndefined();
     }
   });
 

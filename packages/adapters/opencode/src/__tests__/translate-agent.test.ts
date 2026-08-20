@@ -207,6 +207,27 @@ describe("translateAgent — tool policy mapping", () => {
     }
   });
 
+  it("projects delegate deny to Task deny without enabling the Task tool", () => {
+    const result = translateAgent(
+      makeDescriptor({
+        effectiveToolPolicy: {
+          read: "allow",
+          write: "allow",
+          execute: "allow",
+          delegate: "deny",
+          network: "allow",
+        },
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.permission?.task).toBe("deny");
+      expect(result.value.permission?.doom_loop).toBeUndefined();
+      expect(result.value.tools?.task).not.toBe(true);
+    }
+  });
+
   it("omits tools field when read policy is allow", () => {
     const descriptor = makeDescriptor({
       effectiveToolPolicy: {
@@ -326,7 +347,8 @@ describe("translateAgent — fast intent is never encoded in the config", () => 
       expect(config.temperature).toBe(0.7);
       expect(config.description).toBe("Fast-declaring agent");
       expect(config.mode).toBe("subagent");
-      expect(config.permission?.doom_loop).toBe("deny");
+      expect(config.permission?.task).toBe("deny");
+      expect(config.permission?.doom_loop).toBeUndefined();
       expect(config.permission?.webfetch).toBe("ask");
     }
   });

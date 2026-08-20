@@ -1,9 +1,9 @@
 /**
  * Adapter-local reconciliation logic for Weave-managed OpenCode agents.
  *
- * Reconciliation uses the canonical agent name for lookup and the durable
- * identity stored in OpenCode's agent `options` object for update authority.
- * The human-readable description tag is presentation metadata only.
+ * Reconciliation uses the canonical agent name for lookup. OpenCode exposes
+ * only user-editable metadata at this seam, so same-name resources are never
+ * updated automatically until Weave has an unforgeable ownership authority.
  *
  * Boundary rule: this module imports SDK types only through `./sdk-types` and
  * the client facade only through `./opencode-client`. It must not import
@@ -14,13 +14,11 @@ import { errAsync, type ResultAsync } from "neverthrow";
 
 import {
   createWeaveAgentIdentity,
-  type OpenCodeAgentIdentity,
   type OpenCodeAgentSummary,
   type OpenCodeClientError,
   type OpenCodeClientFacade,
   openCodeClientDiagnosticMessage,
   WEAVE_AGENT_IDENTITY_KEY,
-  WEAVE_AGENT_IDENTITY_KIND,
 } from "./opencode-client.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 
@@ -30,17 +28,6 @@ import type { OpenCodeAgentConfig } from "./sdk-types.js";
 
 /** Human-readable marker shown in the OpenCode agent description. */
 export const WEAVE_OWNERSHIP_TAG = "[weave-managed]";
-
-function isManagedIdentityFor(
-  identity: OpenCodeAgentIdentity | undefined,
-  agentName: string,
-): boolean {
-  return (
-    identity?.kind === WEAVE_AGENT_IDENTITY_KIND &&
-    identity.version === 1 &&
-    identity.agentName === agentName
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -79,14 +66,16 @@ export type ReconcileAgentError =
 // ---------------------------------------------------------------------------
 
 /** The decision produced by `classifyExistingAgent`. */
-export type ReconcileDecision = "create" | "update" | "collision";
+export type ReconcileDecision = "create" | "collision";
 
 /**
  * Classifies an agent name against the current OpenCode agent list.
  *
- * A same-named resource is updateable only when its parsed durable identity
- * matches that name. A copied description tag, omitted identity, or identity
- * for a different name remains a collision.
+ * A same-named resource is always a collision. OpenCode exposes only
+ * user-editable configuration metadata at this seam; neither the description
+ * tag nor the deterministic `options.weave` identity proves Weave ownership.
+ * Automatic updates therefore fail closed until an unforgeable authority is
+ * available.
  */
 export function classifyExistingAgent(
   agentName: string,
@@ -94,10 +83,7 @@ export function classifyExistingAgent(
 ): ReconcileDecision {
   const existing = existingAgents.find((agent) => agent.name === agentName);
   if (existing === undefined) return "create";
-
-  return isManagedIdentityFor(existing.weaveIdentity, agentName)
-    ? "update"
-    : "collision";
+  return "collision";
 }
 
 // ---------------------------------------------------------------------------
@@ -105,12 +91,12 @@ export function classifyExistingAgent(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a copy of `config` with presentation metadata and a durable
- * adapter-owned identity.
+ * Returns a copy of `config` with presentation metadata and deterministic
+ * adapter metadata for newly injected agents.
  *
- * The identity is written below OpenCode's persisted `options` boundary. It
- * is independent of the editable description and is the only authority used
- * for subsequent updates.
+ * The metadata is not update authority. Existing options are retained when
+ * the metadata is added so provider/model-specific configuration survives
+ * materialization.
  */
 export function tagWithOwnership(
   agentName: string,
@@ -125,9 +111,14 @@ export function tagWithOwnership(
         : WEAVE_OWNERSHIP_TAG;
   }
 
-  const options = {
-    [WEAVE_AGENT_IDENTITY_KEY]: createWeaveAgentIdentity(agentName),
-  };
+  const existingOptions = config.options;
+  const options =
+    existingOptions === undefined
+      ? { [WEAVE_AGENT_IDENTITY_KEY]: createWeaveAgentIdentity(agentName) }
+      : {
+          ...existingOptions,
+          [WEAVE_AGENT_IDENTITY_KEY]: createWeaveAgentIdentity(agentName),
+        };
 
   return { ...config, description, options };
 }
@@ -138,7 +129,8 @@ export function tagWithOwnership(
 
 /**
  * Reconciles a translated OpenCode agent config against the current OpenCode
- * agent list, then creates or updates the agent via the injected client.
+ * agent list, creating only when the canonical name is unused. Same-name
+ * resources are refused because ownership cannot be proven.
  */
 export function reconcileAgent(
   agentName: string,
@@ -155,19 +147,13 @@ export function reconcileAgent(
         return errAsync<undefined, ReconcileAgentError>({
           type: "CollisionError",
           agentName,
-          message: `Agent "${agentName}" already exists in OpenCode but is not Weave-managed. Weave will not overwrite it. Remove the agent manually or rename your Weave agent to resolve the conflict.`,
+          message: `Agent "${agentName}" already exists in OpenCode, but Weave cannot prove ownership from user-editable metadata. Weave will not overwrite it. Remove the agent manually or rename your Weave agent to resolve the conflict.`,
         });
       }
 
       const taggedConfig = tagWithOwnership(agentName, config);
-      if (decision === "create") {
-        return client
-          .createAgent(agentName, taggedConfig)
-          .mapErr((error): ReconcileAgentError => mapClientError(error));
-      }
-
       return client
-        .updateAgent(agentName, taggedConfig)
+        .createAgent(agentName, taggedConfig)
         .mapErr((error): ReconcileAgentError => mapClientError(error));
     });
 }

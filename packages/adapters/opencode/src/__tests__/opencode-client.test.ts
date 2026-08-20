@@ -128,6 +128,23 @@ describe("projectOpenCodeAgentSummary", () => {
     expect(accessed).toBe(false);
   });
 
+  it("rejects nested accessors without invoking them", () => {
+    let accessed = false;
+    const options = {};
+    Object.defineProperty(options, "weave", {
+      get: () => {
+        accessed = true;
+        return { kind: "weave-agent", version: 1, agentName: "loom" };
+      },
+      enumerable: true,
+    });
+
+    const result = projectOpenCodeAgentSummary({ name: "loom", options });
+
+    expect(result.isErr()).toBe(true);
+    expect(accessed).toBe(false);
+  });
+
   it("rejects resources with a foreign prototype", () => {
     const raw = Object.assign(Object.create({ hostile: true }), {
       name: "loom",
@@ -138,6 +155,24 @@ describe("projectOpenCodeAgentSummary", () => {
     expect(result.isErr()).toBe(true);
   });
 
+  it("rejects an active proxy without invoking its get trap", () => {
+    let getCount = 0;
+    const raw = new Proxy(
+      { name: "loom" },
+      {
+        get() {
+          getCount += 1;
+          throw new Error(SDK_SENTINEL);
+        },
+      },
+    );
+
+    const result = projectOpenCodeAgentSummary(raw);
+
+    expect(result.isErr()).toBe(true);
+    expect(getCount).toBe(0);
+  });
+
   it("rejects a revoked proxy without throwing", () => {
     const revocable = Proxy.revocable({ name: "loom" }, {});
     revocable.revoke();
@@ -145,6 +180,56 @@ describe("projectOpenCodeAgentSummary", () => {
     const result = projectOpenCodeAgentSummary(revocable.proxy);
 
     expect(result.isErr()).toBe(true);
+  });
+
+  it("rejects own-key churn at the projection boundary", () => {
+    let ownKeysCalls = 0;
+    const raw = new Proxy(
+      { name: "loom" },
+      {
+        ownKeys(target) {
+          ownKeysCalls += 1;
+          return ownKeysCalls === 1
+            ? Reflect.ownKeys(target)
+            : [...Reflect.ownKeys(target), "description"];
+        },
+      },
+    );
+
+    const result = projectOpenCodeAgentSummary(raw);
+
+    expect(result.isErr()).toBe(true);
+    expect(ownKeysCalls).toBeGreaterThan(0);
+  });
+
+  it("rejects descriptor churn without invoking a descriptor getter", () => {
+    let descriptorCalls = 0;
+    let getterExecuted = false;
+    const raw = new Proxy(
+      { name: "loom" },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          descriptorCalls += 1;
+          if (key === "name") {
+            return {
+              get: () => {
+                getterExecuted = true;
+                return "loom";
+              },
+              enumerable: true,
+              configurable: true,
+            };
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+
+    const result = projectOpenCodeAgentSummary(raw);
+
+    expect(result.isErr()).toBe(true);
+    expect(descriptorCalls).toBeGreaterThan(0);
+    expect(getterExecuted).toBe(false);
   });
 
   it("rejects malformed, omitted-name, and mismatched durable identities", () => {

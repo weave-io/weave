@@ -14,17 +14,60 @@
  * adapter cannot encode a guessed control or read a false application proof.
  */
 
+import type {
+  Agent as SdkOpenCodeAgent,
+  AgentConfig as SdkOpenCodeAgentConfig,
+} from "@opencode-ai/sdk";
+
+/** The action values accepted by OpenCode permission rules. */
+export type OpenCodePermissionAction = "allow" | "deny" | "ask";
+
+/**
+ * Agent permission shape used by the adapter.
+ *
+ * OpenCode's public config supports the `task` permission, but the pinned SDK
+ * declaration omits that field. Keep the adapter boundary aligned with the
+ * harness contract without weakening the rest of the generated type.
+ */
+export type OpenCodeAgentPermission = NonNullable<
+  SdkOpenCodeAgentConfig["permission"]
+> & {
+  task?: OpenCodePermissionAction;
+};
+
+/** JSON-shaped values accepted in an OpenCode agent's options map. */
+export type OpenCodeAgentOptionValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly OpenCodeAgentOptionValue[]
+  | { readonly [key: string]: OpenCodeAgentOptionValue };
+
+/** Provider/model and adapter metadata stored in an agent's options map. */
+export type OpenCodeAgentOptions = Readonly<
+  Record<string, OpenCodeAgentOptionValue>
+>;
+
+/** OpenCode agent config with the public task permission restored. */
+export type OpenCodeAgentConfig = Pick<
+  SdkOpenCodeAgentConfig,
+  | "model"
+  | "temperature"
+  | "top_p"
+  | "prompt"
+  | "tools"
+  | "disable"
+  | "description"
+  | "mode"
+  | "color"
+  | "maxSteps"
+> & {
+  options?: OpenCodeAgentOptions;
+  permission?: OpenCodeAgentPermission;
+};
+
 export type {
-  /**
-   * OpenCode agent descriptor as returned by the API — used when reading the
-   * current agent list from a running OpenCode instance.
-   */
-  Agent as OpenCodeAgent,
-  /**
-   * OpenCode agent configuration shape — used when materialising a Weave
-   * `AgentDescriptor` into an OpenCode agent entry.
-   */
-  AgentConfig as OpenCodeAgentConfig,
   /**
    * Top-level OpenCode config — used when reading or patching the running
    * OpenCode configuration via the SDK client.
@@ -54,6 +97,9 @@ export type {
    */
   Session as OpenCodeSession,
 } from "@opencode-ai/sdk";
+
+/** OpenCode agent descriptor returned by the API. */
+export type OpenCodeAgent = SdkOpenCodeAgent;
 
 export {
   /**

@@ -724,9 +724,8 @@ export class RuntimeCommandProjection {
  * using `buildAdapterHealthReport` from `@weaveio/weave-engine`.
  *
  * The report declares `command-entrypoints` as `emulated` (OpenCode exposes
- * slash commands as the explicit delivery path) and all other required
- * capabilities as `native` or `emulated` based on the adapter's known
- * implementation state.
+ * slash commands as the explicit delivery path) and records the adapter's
+ * fail-closed materialization and permission limitations truthfully.
  *
  * @param overrides - Optional capability overrides for testing.
  * @returns A normalized `AdapterHealthReport`.
@@ -754,8 +753,9 @@ export function buildOpenCodeHealthReport(overrides?: {
         {
           id: "agent-materialization",
           description: "Materialize agents into OpenCode via SDK",
-          readiness: "native",
-          notes: "OpenCodeAdapter.spawnSubagent calls reconcileAgent via SDK",
+          readiness: "degraded",
+          notes:
+            "OpenCode can create agents through the SDK, but same-name resources are refused because user-editable metadata cannot prove Weave ownership; automatic updates fail closed until an unforgeable authority exists.",
         },
         {
           id: "primary-agent-selection",
@@ -766,8 +766,9 @@ export function buildOpenCodeHealthReport(overrides?: {
         {
           id: "delegated-specialist-execution",
           description: "Delegate to specialist agents (Shuttle, Weft, Warp)",
-          readiness: "native",
-          notes: "spawnSubagent materializes specialist agents on demand",
+          readiness: "degraded",
+          notes:
+            "spawnSubagent creates new specialist agents on demand; same-name resources fail closed because OpenCode exposes no unforgeable Weave ownership authority for automatic updates.",
         },
         {
           id: "prompt-composition",
@@ -779,7 +780,8 @@ export function buildOpenCodeHealthReport(overrides?: {
           id: "tool-policy-mapping",
           description: "Map Weave tool policies to OpenCode permissions",
           readiness: "native",
-          notes: "tool-policy-mapping.ts translates allow/deny/ask to OpenCode",
+          notes:
+            "tool-policy-mapping.ts maps delegation to OpenCode's task permission (not doom_loop); task supports allow/deny/ask, while read ask remains the documented default-enabled degradation because OpenCode has no per-read approval permission.",
         },
         {
           id: "workflow-persistence",

@@ -165,12 +165,13 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       //   write:allow   → permission.edit = "allow"
       //   execute:allow → permission.bash = "allow"
       //   network:ask   → permission.webfetch = "ask"
-      //   delegate:deny → permission.doom_loop = "deny"
+      //   delegate:deny → permission.task = "deny"
       expect(config.permission).toBeDefined();
       expect(config.permission?.edit).toBe("allow");
       expect(config.permission?.bash).toBe("allow");
       expect(config.permission?.webfetch).toBe("ask");
-      expect(config.permission?.doom_loop).toBe("deny");
+      expect(config.permission?.task).toBe("deny");
+      expect(config.permission?.doom_loop).toBeUndefined();
     });
 
     it("full translated config shape is a non-null object with required fields", () => {

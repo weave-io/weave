@@ -17,6 +17,7 @@ import { z } from "zod";
 import type {
   OpenCodeAgent,
   OpenCodeAgentConfig,
+  OpenCodeAgentOptionValue,
   OpencodeClient,
 } from "./sdk-types.js";
 
@@ -52,16 +53,17 @@ const MAX_AGENT_IDENTITY_PROPERTIES = 3;
  * Versioned, adapter-controlled identity persisted in OpenCode's agent
  * `options` object.
  *
- * The description tag remains human-readable presentation metadata. This
- * identity is the authority used for update authorization.
+ * The description tag and this identity are human-readable/configuration
+ * metadata only. Neither is an authority for automatic updates.
  */
 export interface OpenCodeAgentIdentity {
+  readonly [key: string]: OpenCodeAgentOptionValue;
   readonly kind: typeof WEAVE_AGENT_IDENTITY_KIND;
   readonly version: 1;
   readonly agentName: string;
 }
 
-/** Creates the durable identity written into a materialized OpenCode agent. */
+/** Creates the deterministic metadata written into a materialized OpenCode agent. */
 export function createWeaveAgentIdentity(
   agentName: string,
 ): OpenCodeAgentIdentity {
@@ -94,7 +96,8 @@ type ProjectionErrorReason =
   | "invalid-description"
   | "oversize-description"
   | "invalid-options"
-  | "invalid-identity";
+  | "invalid-identity"
+  | "untrusted-value";
 
 /** Typed failure returned by the strict SDK-resource projection seam. */
 export interface OpenCodeAgentProjectionError {
@@ -301,15 +304,91 @@ function parseIdentity(
   });
 }
 
+const MAX_EXTERNAL_GRAPH_DEPTH = 8;
+const EXTERNAL_PRIMITIVE_SCHEMA = z.union([
+  z.string(),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+  z.undefined(),
+]);
+
 /**
- * Projects one raw SDK agent resource into the adapter-owned summary.
+ * Performs a descriptor-only preflight over an SDK value.
  *
- * The parser never retains the SDK object. It reads own data descriptors only,
- * rejects accessors and custom prototypes, applies bounded string/property
- * limits, and constructs a fresh summary containing only controller-owned
- * data.
+ * JavaScript has no standard `isProxy` predicate. The OpenCode SDK returns
+ * objects, not raw JSON bytes, so this adapter uses Bun's structured-clone
+ * boundary as the proof seam: `structuredClone` rejects both active and
+ * revoked proxies. The preflight runs first and reads descriptors only, which
+ * rejects ordinary accessors without executing their getters. The clone is
+ * then the only value that reaches projection, so key/descriptor churn on a
+ * proxy cannot change a partially-read resource.
  */
-export function projectOpenCodeAgentSummary(
+function preflightExternalValue(
+  value: OpenCodeExternalValue,
+  depth: number,
+  ancestors: WeakSet<object>,
+): Result<void, OpenCodeAgentProjectionError> {
+  if (!isExternalObject(value)) {
+    return EXTERNAL_PRIMITIVE_SCHEMA.safeParse(value).success
+      ? ok()
+      : err(projectionError("untrusted-value"));
+  }
+  if (depth > MAX_EXTERNAL_GRAPH_DEPTH) {
+    return err(projectionError("untrusted-value"));
+  }
+  if (ancestors.has(value)) return err(projectionError("untrusted-value"));
+  ancestors.add(value);
+
+  const arrayResult = Result.fromThrowable(
+    () => Array.isArray(value),
+    () => projectionError("untrusted-value"),
+  )();
+  if (arrayResult.isErr()) return err(arrayResult.error);
+
+  const recordResult = inspectSafeDataRecord(
+    value,
+    arrayResult.value
+      ? MAX_OPEN_CODE_AGENT_SUMMARIES + 1
+      : MAX_AGENT_RESOURCE_PROPERTIES,
+    arrayResult.value,
+  );
+  if (recordResult.isErr()) return err(recordResult.error);
+
+  for (const descriptor of recordResult.value.descriptors.values()) {
+    const childResult = preflightExternalValue(
+      descriptor.value,
+      depth + 1,
+      ancestors,
+    );
+    if (childResult.isErr()) return err(childResult.error);
+  }
+
+  ancestors.delete(value);
+  return ok();
+}
+
+/**
+ * Copies an SDK value across the adapter's trusted-data boundary.
+ *
+ * `structuredClone` is intentionally used instead of JSON.stringify: unlike
+ * serialization, Bun rejects Proxy values before invoking their traps. The
+ * descriptor preflight above prevents structuredClone from invoking ordinary
+ * getters while still allowing valid JSON-shaped data.
+ */
+function cloneTrustedExternalValue(
+  value: OpenCodeExternalValue,
+): Result<OpenCodeExternalValue, OpenCodeAgentProjectionError> {
+  const preflightResult = preflightExternalValue(value, 0, new WeakSet());
+  if (preflightResult.isErr()) return err(preflightResult.error);
+
+  return Result.fromThrowable(
+    () => structuredClone(value),
+    () => projectionError("untrusted-value"),
+  )();
+}
+
+function projectOpenCodeAgentSummaryValue(
   resource: OpenCodeExternalValue,
 ): Result<OpenCodeAgentSummary, OpenCodeAgentProjectionError> {
   if (!isExternalObject(resource)) {
@@ -370,8 +449,16 @@ export function projectOpenCodeAgentSummary(
   return ok(summary);
 }
 
-/** Projects and bounds one raw SDK agent-list response. */
-export function projectOpenCodeAgentSummaries(
+/** Projects one SDK agent after crossing the trusted-data boundary. */
+export function projectOpenCodeAgentSummary(
+  resource: OpenCodeExternalValue,
+): Result<OpenCodeAgentSummary, OpenCodeAgentProjectionError> {
+  const trustedResult = cloneTrustedExternalValue(resource);
+  if (trustedResult.isErr()) return err(trustedResult.error);
+  return projectOpenCodeAgentSummaryValue(trustedResult.value);
+}
+
+function projectOpenCodeAgentSummariesValue(
   resources: OpenCodeExternalValue,
 ): Result<OpenCodeAgentSummary[], OpenCodeAgentProjectionError> {
   if (!isExternalObject(resources)) {
@@ -412,11 +499,20 @@ export function projectOpenCodeAgentSummaries(
     const element = readDataProperty(arrayRecordResult.value, String(index));
     if (!element.present) return err(projectionError("sparse-array"));
 
-    const summaryResult = projectOpenCodeAgentSummary(element.value);
+    const summaryResult = projectOpenCodeAgentSummaryValue(element.value);
     if (summaryResult.isErr()) return err(summaryResult.error);
     summaries.push(summaryResult.value);
   }
   return ok(summaries);
+}
+
+/** Projects and bounds one raw SDK agent-list response. */
+export function projectOpenCodeAgentSummaries(
+  resources: OpenCodeExternalValue,
+): Result<OpenCodeAgentSummary[], OpenCodeAgentProjectionError> {
+  const trustedResult = cloneTrustedExternalValue(resources);
+  if (trustedResult.isErr()) return err(trustedResult.error);
+  return projectOpenCodeAgentSummariesValue(trustedResult.value);
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +618,8 @@ class OpenCodeClientFailure extends Error {
  * The agent identity fields used by adapter-owned reconciliation.
  *
  * OpenCode returns a larger SDK resource, but reconciliation only needs the
- * canonical name, bounded display description, and parsed durable identity.
+ * canonical name, bounded display description, and parsed metadata identity.
+ * The identity is never used as update authority.
  */
 export interface OpenCodeAgentSummary {
   readonly name: string;

@@ -4,15 +4,14 @@
  * Verifies the canonical-identity and ownership-check semantics of the
  * upsert-only reconciliation module:
  *
- * - `classifyExistingAgent` looks up the Canonical Agent Name and authorizes
- *   updates only with the matching durable identity; display metadata
- *   (`displayName`, `description`) is not authority.
- * - `tagWithOwnership` appends `WEAVE_OWNERSHIP_TAG` to `description`, stores
- *   the durable identity, and is idempotent.
+ * - `classifyExistingAgent` looks up the Canonical Agent Name and refuses
+ *   every same-name update; display metadata and deterministic options are not
+ *   ownership authority.
+ * - `tagWithOwnership` appends `WEAVE_OWNERSHIP_TAG` to `description`, merges
+ *   deterministic metadata without dropping existing options, and is idempotent.
  * - `reconcileAgent` creates a new agent when none exists.
- * - `reconcileAgent` updates an existing Weave-managed agent in place.
- * - `reconcileAgent` returns a `CollisionError` when a same-named foreign
- *   agent is found — no forced takeover, no delete, no prune.
+ * - `reconcileAgent` returns a `CollisionError` for every same-name resource —
+ *   no forced takeover, no automatic update, no delete, no prune.
  * - `reconcileAgent` propagates `ListAgentsError`, `CreateAgentError`, and
  *   `UpdateAgentError` from the client facade.
  *
@@ -171,10 +170,10 @@ describe("classifyExistingAgent — canonical identity", () => {
     expect(result).toBe("create");
   });
 
-  it("returns 'update' when a Weave-managed agent with the same name exists", () => {
+  it("returns 'collision' even when deterministic metadata matches", () => {
     const agents = [makeWeaveManagedAgent("my-agent")];
     const result = classifyExistingAgent("my-agent", agents);
-    expect(result).toBe("update");
+    expect(result).toBe("collision");
   });
 
   it("returns 'collision' when a foreign agent with the same name exists", () => {
@@ -199,18 +198,15 @@ describe("classifyExistingAgent — canonical identity", () => {
     expect(classifyExistingAgent("my-agent", [mismatched])).toBe("collision");
   });
 
-  it("matches the durable identity — different description does not affect authority", () => {
-    // Two agents with the same name and durable identity but different descriptions
-    const weaveManagedWithDifferentDesc: OpenCodeAgentSummary = {
+  it("never treats copied deterministic identity as update authority", () => {
+    const copiedIdentity: OpenCodeAgentSummary = {
       name: "my-agent",
-      description: `Completely different description ${WEAVE_OWNERSHIP_TAG}`,
+      description: `Copied ${WEAVE_OWNERSHIP_TAG}`,
       weaveIdentity: createWeaveAgentIdentity("my-agent"),
     };
-    const result = classifyExistingAgent("my-agent", [
-      weaveManagedWithDifferentDesc,
-    ]);
-    // Still 'update' because the canonical name and durable identity match
-    expect(result).toBe("update");
+    expect(classifyExistingAgent("my-agent", [copiedIdentity])).toBe(
+      "collision",
+    );
   });
 
   it("name match is case-sensitive (exact match required)", () => {
@@ -230,11 +226,11 @@ describe("classifyExistingAgent — canonical identity", () => {
     // Degenerate case: two agents with the same name (should not happen in
     // practice, but the classifier should handle it gracefully)
     const agents = [
-      makeWeaveManagedAgent("my-agent"), // first match → update
-      makeForeignAgent("my-agent"), // second match (ignored)
+      makeWeaveManagedAgent("my-agent"),
+      makeForeignAgent("my-agent"),
     ];
     const result = classifyExistingAgent("my-agent", agents);
-    expect(result).toBe("update");
+    expect(result).toBe("collision");
   });
 });
 
@@ -252,18 +248,18 @@ describe("classifyExistingAgent — display metadata is not identity", () => {
       weaveIdentity: createWeaveAgentIdentity("my-agent"),
     } satisfies OpenCodeAgentSummary & { displayName: string };
     const result = classifyExistingAgent("my-agent", [agent]);
-    expect(result).toBe("update");
+    expect(result).toBe("collision");
   });
 
-  it("description content does not affect durable identity", () => {
-    // Description can say anything — the durable identity controls the
-    // update/collision decision; the tag is presentation metadata
+  it("description content does not affect collision protection", () => {
+    // Description can say anything — neither it nor the deterministic
+    // identity controls authorization; the tag is presentation metadata
     const agent = makeWeaveManagedAgent(
       "my-agent",
       "This description can be anything",
     );
     const result = classifyExistingAgent("my-agent", [agent]);
-    expect(result).toBe("update");
+    expect(result).toBe("collision");
   });
 });
 
@@ -293,6 +289,31 @@ describe("tagWithOwnership", () => {
         version: 1,
         agentName: "my-agent",
       },
+    });
+  });
+
+  it("preserves provider and model options when adding metadata", () => {
+    const config = makeConfig({
+      options: {
+        provider: "anthropic",
+        model: { temperature: 0.4, region: "test" },
+      },
+    });
+
+    const tagged = tagWithOwnership("my-agent", config);
+
+    expect(tagged.options).toEqual({
+      provider: "anthropic",
+      model: { temperature: 0.4, region: "test" },
+      weave: {
+        kind: "weave-agent",
+        version: 1,
+        agentName: "my-agent",
+      },
+    });
+    expect(config.options).toEqual({
+      provider: "anthropic",
+      model: { temperature: 0.4, region: "test" },
     });
   });
 
@@ -419,113 +440,56 @@ describe("reconcileAgent — create path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: reconcileAgent — update path
+// Tests: reconcileAgent — same-name fail-closed path
 // ---------------------------------------------------------------------------
 
-describe("reconcileAgent — update path", () => {
-  it("calls updateAgent() when an existing Weave-managed agent is found", async () => {
+describe("reconcileAgent — same-name fail-closed path", () => {
+  it("refuses an existing Weave-looking agent even when identity matches", async () => {
     const client = new MockOpenCodeClient();
     client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
-
-    const result = await reconcileAgent("my-agent", makeConfig(), client);
-
-    expect(result.isOk()).toBe(true);
-    expect(client.updateAgentCalls).toHaveLength(1);
-    expect(client.updateAgentCalls[0]?.name).toBe("my-agent");
-    expect(client.createAgentCalls).toHaveLength(0);
-  });
-
-  it("uses the Canonical Agent Name (descriptor.name) as the update key", async () => {
-    const client = new MockOpenCodeClient();
-    client.setListAgentsResult(
-      okAsync([makeWeaveManagedAgent("canonical-name")]),
-    );
-
-    await reconcileAgent("canonical-name", makeConfig(), client);
-
-    expect(client.updateAgentCalls[0]?.name).toBe("canonical-name");
-  });
-
-  it("preserves WEAVE_OWNERSHIP_TAG in description on update", async () => {
-    const client = new MockOpenCodeClient();
-    client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
-
-    await reconcileAgent(
-      "my-agent",
-      makeConfig({ description: "Updated description" }),
-      client,
-    );
-
-    const call = client.updateAgentCalls[0];
-    expect(call?.config.description).toContain(WEAVE_OWNERSHIP_TAG);
-  });
-
-  it("does not double-tag description on update", async () => {
-    const client = new MockOpenCodeClient();
-    client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
-
-    // Config already has the tag (simulating a re-materialization)
-    await reconcileAgent(
-      "my-agent",
-      makeConfig({ description: `My agent ${WEAVE_OWNERSHIP_TAG}` }),
-      client,
-    );
-
-    const call = client.updateAgentCalls[0];
-    const tagCount =
-      (call?.config.description ?? "").split(WEAVE_OWNERSHIP_TAG).length - 1;
-    expect(tagCount).toBe(1);
-  });
-
-  it("returns ok(void) on successful update", async () => {
-    const client = new MockOpenCodeClient();
-    client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
-
-    const result = await reconcileAgent("my-agent", makeConfig(), client);
-
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("returns UpdateAgentError when updateAgent() fails", async () => {
-    const client = new MockOpenCodeClient();
-    client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
-    client.setUpdateAgentResult(
-      errAsync({
-        type: "UpdateAgentError" as const,
-        operation: "update-agent" as const,
-        status: "sdk-error" as const,
-        agentName: "my-agent",
-        message: "provider sentinel: do not expose",
-      }),
-    );
 
     const result = await reconcileAgent("my-agent", makeConfig(), client);
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error.type).toBe("UpdateAgentError");
-      expect(result.error.message).toBe(
-        "OpenCode update-agent failed (sdk-error)",
-      );
-      expect(JSON.stringify(result.error)).not.toContain("provider sentinel");
+      expect(result.error.type).toBe("CollisionError");
     }
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
   });
 
-  it("updates presentation fields (prompt, mode) without changing identity", async () => {
+  it("does not let a copied deterministic identity authorize overwrite", async () => {
     const client = new MockOpenCodeClient();
-    client.setListAgentsResult(okAsync([makeWeaveManagedAgent("my-agent")]));
+    client.setListAgentsResult(
+      okAsync([
+        {
+          name: "my-agent",
+          options: {
+            weave: { kind: "weave-agent", version: 1, agentName: "my-agent" },
+          },
+        },
+      ]),
+    );
+
+    const result = await reconcileAgent("my-agent", makeConfig(), client);
+
+    expect(result.isErr()).toBe(true);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("does not call updateAgent for any existing same-name resource", async () => {
+    const client = new MockOpenCodeClient();
+    client.setListAgentsResult(okAsync([makeForeignAgent("my-agent")]));
 
     await reconcileAgent(
       "my-agent",
-      makeConfig({ prompt: "New prompt text", mode: "primary" }),
+      makeConfig({ prompt: "must not overwrite" }),
       client,
     );
 
-    const call = client.updateAgentCalls[0];
-    // Identity (name) is unchanged — only presentation fields are updated
-    expect(call?.name).toBe("my-agent");
-    expect(call?.config.prompt).toBe("New prompt text");
-    expect(call?.config.mode).toBe("primary");
+    expect(client.updateAgentCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
   });
 });
 
@@ -676,10 +640,10 @@ describe("reconcileAgent — listAgents failure", () => {
 // ---------------------------------------------------------------------------
 
 describe("reconcileAgent — first-slice upsert-only constraint", () => {
-  it("never deletes agents not in the current descriptor set", async () => {
+  it("never deletes or updates agents not in the current descriptor set", async () => {
     // The mock client has no delete method — this test documents the intent.
-    // reconcileAgent only creates or updates the single named agent; it never
-    // touches other agents in the list.
+    // reconcileAgent only creates a new agent when its name is unused; it
+    // never touches existing agents in the list.
     const client = new MockOpenCodeClient();
     client.setListAgentsResult(
       okAsync([
@@ -689,13 +653,11 @@ describe("reconcileAgent — first-slice upsert-only constraint", () => {
       ]),
     );
 
-    // Only reconcile 'agent-a'
     const result = await reconcileAgent("agent-a", makeConfig(), client);
 
-    expect(result.isOk()).toBe(true);
-    // Only one update call for 'agent-a'; 'agent-b' and 'agent-c' are untouched
-    expect(client.updateAgentCalls).toHaveLength(1);
-    expect(client.updateAgentCalls[0]?.name).toBe("agent-a");
+    expect(result.isErr()).toBe(true);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
   });
 
   it("does not prune stale Weave-managed agents", async () => {
