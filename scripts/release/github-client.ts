@@ -161,6 +161,8 @@ export interface GitHubPullRequestSummary {
   url: string;
   state: GitHubPullRequestState;
   merged: boolean;
+  /** GitHub's merge commit, when the pull request has merged. */
+  mergeCommitSha?: string | null;
   headRef: string;
   headSha: string;
   baseRef: string;
@@ -1344,11 +1346,21 @@ function parsePullRequest(
       )
     : [];
   if (labels.some((label) => label === undefined)) return undefined;
+  if (
+    value.merge_commit_sha !== undefined &&
+    value.merge_commit_sha !== null &&
+    !isString(value.merge_commit_sha)
+  )
+    return undefined;
+  let mergeCommitSha: string | null | undefined;
+  if (isString(value.merge_commit_sha)) mergeCommitSha = value.merge_commit_sha;
+  else if (value.merge_commit_sha === null) mergeCommitSha = null;
   return {
     number: value.number,
     url: value.html_url,
     state: value.state,
     merged: value.merged === true || isString(value.merged_at),
+    mergeCommitSha,
     headRef: value.head.ref,
     headSha: value.head.sha,
     baseRef: value.base.ref,
