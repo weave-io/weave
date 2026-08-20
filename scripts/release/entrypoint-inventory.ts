@@ -16,8 +16,10 @@
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
  * guarded manual `nightly` controller; Task 28 adds the CI policy controller;
  * Task 30 adds the immutable-main docs-audit workflow controllers; Task 32
- * adds the dependency-free retained-publisher preflight root. Later tasks add,
- * rename, or remove entries in the same change.
+ * adds the dependency-free retained-publisher preflight root; Task 35 removes
+ * every legacy executable entry deleted at cutover and positively retains
+ * every new-pipeline entry. Later tasks add, rename, or remove entries in the
+ * same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -222,27 +224,17 @@ export const PRODUCTION_ENTRYPOINTS = [
 ] as const satisfies readonly ProductionEntrypoint[];
 
 /**
- * Old-system executables still reachable from production scripts or
- * `publish.yml`. They are classified so they cannot be mistaken for an
- * unknown new-pipeline root. Task 35 removes them at cutover.
+ * Retained non-publishing executables that production scripts still reach.
+ * They are classified so they cannot be mistaken for an unknown new-pipeline
+ * root. Task 35 deleted every entry whose file, script, or workflow the
+ * cutover removed; what remains either supports the new pipeline or, in the
+ * case of the preflight, the documented pre-cutover rollback proof.
  */
 export const LEGACY_ENTRYPOINTS = [
-  // Task 32 removes this dependency-free root with the retained publisher at cutover.
-  "scripts/release/legacy-preflight.ts",
   "scripts/release/changeset-policy.ts",
-  "scripts/release/clean-room.ts",
-  "scripts/release/dry-run-nightly.ts",
-  "scripts/release/dry-run-stable.ts",
   "scripts/release/packager.ts",
-  "scripts/release/nightly-plan.ts",
   "scripts/release/write-artifact-manifest.ts",
   "scripts/release/bind-artifacts.ts",
-  "scripts/release/stable-plan-main.ts",
-  "scripts/release/metadata-replay-main.ts",
-  "scripts/release/stable-finalize.ts",
-  "scripts/release/release-refs-main.ts",
-  "scripts/release/control-main.ts",
-  "scripts/release/generate-acceptance-manifest.ts",
 ] as const;
 
 export const TEST_ONLY_ROOT_MARKERS = [

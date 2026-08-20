@@ -15,8 +15,7 @@ import {
   type ArtifactBindingCliInput,
   ArtifactBindingCliInputSchema,
 } from "./input-validation.js";
-import { type ArtifactManifest, StableTrainRecordSchema } from "./model.js";
-import { bindStableTrain } from "./stable-train.js";
+import type { ArtifactManifest } from "./model.js";
 
 const log = logger.child({ module: "release-artifact-binding" });
 
@@ -178,32 +177,6 @@ export function bindArtifacts(
                           path: input.controlPath,
                         }))
                         .andThen((controlBytes) => {
-                          const stableTrainRecord =
-                            manifest.stableTrain === undefined
-                              ? undefined
-                              : StableTrainRecordSchema.safeParse(
-                                  manifest.stableTrain,
-                                );
-                          let stableTrain:
-                            | ReturnType<typeof bindStableTrain>
-                            | undefined;
-                          if (stableTrainRecord !== undefined) {
-                            if (!stableTrainRecord.success)
-                              return errAsync({
-                                type: "InvalidManifest" as const,
-                                issues: ["stable train is invalid"],
-                              });
-                            stableTrain = bindStableTrain(
-                              stableTrainRecord.data,
-                              digest(text),
-                              verifiedArtifacts.map(({ actual }) => actual.id),
-                            );
-                          }
-                          if (stableTrain?.isErr() === true)
-                            return errAsync({
-                              type: "InvalidManifest" as const,
-                              issues: [stableTrain.error.type],
-                            });
                           const record = createBindingRecord({
                             repositoryId: input.repositoryId,
                             workflowSha: input.workflowSha,
@@ -226,9 +199,6 @@ export function bindArtifacts(
                             ),
                             manifest,
                             manifestDigest: digest(text),
-                            stableTrain: stableTrain?.isOk()
-                              ? stableTrain.value
-                              : undefined,
                             files: [
                               ...manifest.artifacts.map(
                                 ({ filename, sha256 }) => ({

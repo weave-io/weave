@@ -1,15 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { validateArtifactManifest } from "../artifact-manifest.js";
-import type { StableTrainContent } from "../stable-train.js";
-import { trainRecordDigest } from "../stable-train.js";
 
 const digest = `sha256:${"a".repeat(64)}`;
-
-function trainDigest(value: StableTrainContent): string {
-  const result = trainRecordDigest(value);
-  if (result.isErr()) throw new Error(JSON.stringify(result.error));
-  return result.value;
-}
 
 const manifest = {
   schemaVersion: 1,
@@ -25,19 +17,6 @@ const manifest = {
       sha256: digest,
     },
   ],
-  stableTrain: (() => {
-    const content = {
-      schemaVersion: 1 as const,
-      trainRef: "release/20260719-bbbbbbbbbbbb",
-      subjectSha: "b".repeat(40),
-      cutAt: "2026-07-19T00:00:00.000Z",
-      expiresAt: "2026-07-26T00:00:00.000Z",
-      state: "prepared" as const,
-      packages: ["@weaveio/weave-cli"],
-      versions: { "@weaveio/weave-cli": "1.2.3" },
-    };
-    return { ...content, recordDigest: trainDigest(content) };
-  })(),
 };
 
 describe("artifact manifest", () => {
@@ -103,33 +82,11 @@ describe("artifact manifest", () => {
       },
     ],
     ["unknown key", { ...manifest, arbitrary: true }],
+    // The retired train payload field is now an unknown key, so a manifest
+    // carrying it can no longer validate.
     [
-      "train subject drift",
-      {
-        ...manifest,
-        stableTrain: { ...manifest.stableTrain, subjectSha: "c".repeat(40) },
-      },
-    ],
-    [
-      "train package drift",
-      {
-        ...manifest,
-        stableTrain: {
-          ...manifest.stableTrain,
-          packages: ["@weaveio/weave-adapter-opencode"],
-          versions: { "@weaveio/weave-adapter-opencode": "1.2.3" },
-        },
-      },
-    ],
-    [
-      "train version drift",
-      {
-        ...manifest,
-        stableTrain: {
-          ...manifest.stableTrain,
-          versions: { "@weaveio/weave-cli": "1.2.4" },
-        },
-      },
+      "retired train payload",
+      { ...manifest, stableTrain: { schemaVersion: 1 } },
     ],
   ])("rejects %s", (_name, value) =>
     expect(validateArtifactManifest(value).isErr()).toBe(true));

@@ -1,7 +1,8 @@
 # Release security boundaries
 
-This document is the Task 31 static security sign-off for the six Phase C
-workflows and the retained legacy `publish.yml` release-refs path. It records
+This document is the static security sign-off for the Phase C release
+workflows. The cutover removed the old `publish.yml` publisher, so they are now
+the only release paths. It records
 the credential, permission, execution, artifact, fork, and authentication
 boundaries. The checked-in contract is enforced by
 `scripts/release/publish-reachability.ts` and the action-pin checker.
@@ -102,12 +103,12 @@ to the checked-in contract. `publish` invokes only
 `scripts/release/publish-main.ts`; the command is reached only after the
 artifact, attestation, consumer, harness, approval, and rollout gates.
 
-The retained `.github/workflows/publish.yml#release-refs` job is also an App
-authority path during pre-cutover. It uses the separate `release-refs`
-environment, which must contain the same `RELEASE_APP_ID` and
-`RELEASE_APP_PRIVATE_KEY` metadata as `release-app` and `docs-audit-patch`.
-The checker and doctor both require this duplicate environment-secret
-contract; they do not weaken it to repository-wide secrets.
+The `release-refs` environment survives the cutover because the documented
+rollback restores the old publisher and its App authority path. It must keep
+the same `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` metadata as
+`release-app` and `docs-audit-patch`. The checker and doctor both require this
+duplicate environment-secret contract; they do not weaken it to
+repository-wide secrets.
 
 ### `release-attest.yml` (Task 25)
 
@@ -191,13 +192,12 @@ The only permitted `id-token: write` identities are:
 
 1. `.github/workflows/release-publish.yml#publish`;
 2. `.github/workflows/release-attest.yml#attest`; and
-3. the explicitly named, unrelated legacy identities
-   `.github/workflows/publish.yml` and
+3. the explicitly named, unrelated identity
    `.github/workflows/deploy-docs.yml`.
 
-The third group is a narrow allowlist for the pre-cutover scheduled publisher
-and Pages deployment. It is not a wildcard and is scheduled for removal by the
-cutover work. `lintWorkflowPermissions` rejects every other root or job
+The third entry is a narrow allowlist for Pages deployment, not a release
+path. It is not a wildcard. The cutover removed the old publisher's identity
+from this inventory. `lintWorkflowPermissions` rejects every other root or job
 identity and checks the exact attestation permissions.
 
 `scanCredentialSources` rejects npm auth environment variables, npm config

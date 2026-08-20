@@ -196,25 +196,14 @@ export type ChangedPathImpact =
   | { kind: "none" };
 
 /**
- * Legacy frontmatter-only view, consumed by the stable-train and nightly
- * planners that the release-pipeline replacement removes.
+ * Frontmatter-only view. It carries bumps without the body contract, so it
+ * cannot answer policy questions.
  *
  * @deprecated Use {@link ValidatedChangeset}.
  */
 export interface ParsedChangeset {
   path: string;
   releases: ReadonlyMap<string, ChangesetBump>;
-}
-
-/**
- * Legacy stable/nightly file split. The trunk-based pipeline consumes a single
- * pending set, so nothing produces this shape any more.
- *
- * @deprecated Removed with the old stable-train modules.
- */
-export interface ChangesetPartition {
-  stableFiles: readonly string[];
-  remainOnMainFiles: readonly string[];
 }
 
 export interface ChangesetFileSystem {

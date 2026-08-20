@@ -1,5 +1,5 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, Result, ResultAsync } from "neverthrow";
+import { errAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
   PUBLIC_MANIFEST_FIELDS,
@@ -14,8 +14,6 @@ import {
   packageArtifactFilename,
   ReleaseOperationSchema,
   SemVerSchema,
-  type StableTrainRecord,
-  StableTrainRecordSchema,
 } from "./model.js";
 
 const log = logger.child({ module: "release-artifact-manifest" });
@@ -43,7 +41,6 @@ type ManifestDraft = {
   packages: string[];
   versions: Record<string, string>;
   artifacts: DiscoveredPackage["artifact"][];
-  stableTrain?: StableTrainRecord;
 };
 
 const STAGED_PACKAGE_COLLECTION_LIMIT = 128;
@@ -101,17 +98,12 @@ const StagedPackageSchema = z
 export function writeArtifactManifest(
   operation: string | undefined,
   subjectSha: string | undefined,
-  stableTrainText = Bun.env.RELEASE_STABLE_TRAIN,
 ): ResultAsync<void, ManifestWriteError> {
   const parsedOperation = ReleaseOperationSchema.safeParse(operation);
   const parsedSubject = FullShaSchema.safeParse(subjectSha);
   if (!parsedOperation.success || !parsedSubject.success)
     return errAsync({ type: "InvalidInput" });
   const channel = parsedOperation.data === "nightly" ? "nightly" : "stable";
-  let stableTrain: StableTrainRecord | undefined;
-  if (channel === "stable") stableTrain = parseStableTrain(stableTrainText);
-  if (channel === "stable" && stableTrain === undefined)
-    return errAsync({ type: "InvalidInput" });
   return ResultAsync.fromPromise(discoverPackages(channel), () => ({
     type: "ArtifactDiscovery" as const,
     message: "artifact discovery failed",
@@ -126,7 +118,6 @@ export function writeArtifactManifest(
       ),
       artifacts: packages.map((entry) => entry.artifact),
     };
-    if (stableTrain !== undefined) manifest.stableTrain = stableTrain;
     const validated = ArtifactManifestSchema.safeParse(manifest);
     if (!validated.success)
       return errAsync({
@@ -146,22 +137,7 @@ export function writeArtifactManifest(
   });
 }
 
-function parseStableTrain(
-  value: string | undefined,
-): StableTrainRecord | undefined {
-  if (value === undefined) return;
-  const candidate = Result.fromThrowable(
-    () => JSON.parse(value),
-    () => "invalid stable train JSON",
-  )();
-  if (candidate.isErr()) return;
-  const result = StableTrainRecordSchema.safeParse(candidate.value);
-  return result.success ? result.data : undefined;
-}
-
-async function discoverPackages(
-  channel: "nightly" | "stable",
-): Promise<readonly DiscoveredPackage[]> {
+async function discoverPackages(channel: "nightly" | "stable") {
   const stageGlob = new Bun.Glob(".release/validate-*/staging/*/package.json");
   const tarballGlob = new Bun.Glob(".release/validate-*/tarballs/*.tgz");
   // `.release` is intentionally hidden; opt into dot-directory traversal so

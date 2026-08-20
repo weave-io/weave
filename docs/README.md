@@ -56,7 +56,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | [TypeScript](contributing/typescript.md) | Bun runtime, `neverthrow`, control flow, and logging |
 | [Testing](contributing/testing.md) | Schema coverage and boundary mocks |
 | [Builtin Prompts](contributing/builtin-prompts.md) | Portable prompt behavior and regression rules |
-| [Releases](contributing/releases.md) | Artifact identity, channels, stable trains, and trust boundaries |
+| [Releases](contributing/releases.md) | Artifact identity, channels, publication, and trust boundaries |
 | [Documentation](contributing/documentation.md) | Audience split, page types, update rules, and pruning policy |
 
 ## Specifications

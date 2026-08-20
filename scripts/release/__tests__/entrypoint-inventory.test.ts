@@ -93,12 +93,14 @@ describe("entrypoint inventory", () => {
         (item) => item.path === "scripts/release/changeset-policy.ts",
       ),
     ).toBe(true);
+    // Cutover removed the legacy planner and its workflow. A reference to it
+    // is now an unknown production entrypoint, not a classified legacy root.
     expect(
       classifyDiscoveredReleaseEntrypoint({
         path: "scripts/release/nightly-plan.ts",
         source: ".github/workflows/publish.yml:run",
-      }).isOk(),
-    ).toBe(true);
+      })._unsafeUnwrapErr().type,
+    ).toBe("UnknownProductionEntrypoint");
     expect(
       classifyDiscoveredReleaseEntrypoint({
         path: "scripts/release/renamed-publish-main.ts",

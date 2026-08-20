@@ -16,7 +16,6 @@ import {
   type ArtifactBindingRecord,
   ArtifactBindingRecordSchema,
   type ArtifactManifest,
-  type StableTrainRecord,
 } from "./model.js";
 import {
   type ReleasePlan,
@@ -50,7 +49,6 @@ export interface BindingRecordInput {
   manifest: ArtifactManifest;
   manifestDigest: string;
   files: readonly { filename: string; sha256: string }[];
-  stableTrain?: StableTrainRecord;
 }
 
 type BindingCanonicalInput =
@@ -195,7 +193,6 @@ export function createBindingRecord(
     manifestDigest: input.manifestDigest,
     files: [...input.files],
   };
-  if (input.stableTrain !== undefined) unsigned.stableTrain = input.stableTrain;
   return canonicalJson(unsigned).andThen((canonical) => {
     const record = { ...unsigned, recordDigest: digest(canonical) };
     const parsed = ArtifactBindingRecordSchema.safeParse(record);
