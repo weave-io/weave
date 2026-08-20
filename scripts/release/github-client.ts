@@ -30,6 +30,30 @@ export interface ActionsArtifactMetadata {
   sizeInBytes: number;
 }
 
+/**
+ * A check run read back as durable evidence rather than as branch protection.
+ *
+ * `output` is the check run's own text. It is GitHub-owned evidence written by
+ * the protected operation that created the check run, and it is not a comment.
+ */
+export interface NamedCheckRunEvidence {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  headSha: string;
+  output: { title: string; summary: string; text: string };
+}
+
+/** A workflow run selected by its head SHA. */
+export interface WorkflowRunSummary {
+  id: number;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  headSha: string;
+}
+
 export interface GitHubClient {
   getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError>;
   listWorkflowRunJobs?(
@@ -767,6 +791,81 @@ export class GitHubRestClient
       `/actions/runs/${runId}/jobs`,
       WorkflowJobsResponseSchema,
     ).andThen((value) => okAsync(value.jobs.map(parseWorkflowJob)));
+  }
+
+  /**
+   * Reads every check run with an exact name at an exact commit.
+   *
+   * The name filter is applied by GitHub and again here, and the head SHA of
+   * every returned run must equal the requested commit, so a check run created
+   * against another commit can never stand in as evidence for this one.
+   */
+  listNamedCheckRuns(
+    sha: string,
+    checkName: string,
+  ): ResultAsync<readonly NamedCheckRunEvidence[], GitHubError> {
+    if (!GIT_OBJECT_SHA.test(sha))
+      return errAsync({
+        type: "GitHubError",
+        operation: `/commits/${sha}/check-runs`,
+        message: "invalid commit SHA",
+      });
+    if (checkName.length === 0 || checkName.length > this.stringLength)
+      return errAsync({
+        type: "GitHubError",
+        operation: `/commits/${sha}/check-runs`,
+        message: "invalid check run name",
+      });
+    const path = `/commits/${sha}/check-runs?check_name=${encodeURIComponent(checkName)}&per_page=${this.greenHeadBounds.pageSize}`;
+    return this.collectPages(
+      path,
+      z.unknown(),
+      (value, pagePath) =>
+        parseNamedCheckRunPage(value, pagePath, this.stringLength),
+      this.greenHeadBounds,
+    ).andThen((runs) => {
+      const mismatched = runs.find(
+        (run) => run.headSha !== sha || run.name !== checkName,
+      );
+      if (mismatched !== undefined)
+        return errAsync(
+          invalidResponse(`/commits/${sha}/check-runs?check_name=${checkName}`),
+        );
+      return okAsync(runs);
+    });
+  }
+
+  /** Reads bounded workflow runs for one workflow file at one head commit. */
+  listWorkflowRunsForHeadSha(
+    workflowPath: string,
+    sha: string,
+  ): ResultAsync<readonly WorkflowRunSummary[], GitHubError> {
+    if (!GIT_OBJECT_SHA.test(sha))
+      return errAsync({
+        type: "GitHubError",
+        operation: `/actions/workflows/${workflowPath}/runs`,
+        message: "invalid commit SHA",
+      });
+    if (!safeGitHubPath(workflowPath))
+      return errAsync({
+        type: "GitHubError",
+        operation: "/actions/workflows/runs",
+        message: "invalid workflow path",
+      });
+    const file = workflowPath.split("/").pop() ?? workflowPath;
+    const path = `/actions/workflows/${encodeURIComponent(file)}/runs?head_sha=${encodeURIComponent(sha)}&per_page=${this.greenHeadBounds.pageSize}`;
+    return this.collectPages(
+      path,
+      z.unknown(),
+      (value, pagePath) =>
+        parseWorkflowRunSummaryPage(value, pagePath, this.stringLength),
+      this.greenHeadBounds,
+    ).andThen((runs) => {
+      const mismatched = runs.find((run) => run.headSha !== sha);
+      if (mismatched !== undefined)
+        return errAsync(invalidResponse(`/actions/workflows/${file}/runs`));
+      return okAsync(runs);
+    });
   }
 
   listRunArtifacts(
@@ -1632,8 +1731,28 @@ function positiveLimit(value: number | undefined, fallback: number): number {
     : fallback;
 }
 
-function isFullSha(value: string): boolean {
-  return GIT_OBJECT_SHA.test(value) && value !== ZERO_GIT_OID;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isFullSha(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    GIT_OBJECT_SHA.test(value) &&
+    value !== ZERO_GIT_OID
+  );
 }
 
 function safeGitHubPath(value: string): boolean {
@@ -2130,6 +2249,143 @@ function parseCheckRunPage(
     items: value.check_runs.map(parseCheckRun),
     totalCount: value.total_count,
   });
+}
+
+function parseNamedCheckRunPage(
+  value: unknown,
+  operation: string,
+  stringLength: number,
+): Result<
+  { items: readonly NamedCheckRunEvidence[]; totalCount?: number },
+  GitHubError
+> {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.check_runs) ||
+    value.check_runs.length > GITHUB_REST_READ_LIMITS.pageItems
+  )
+    return err(invalidResponse(operation));
+  if (value.total_count !== undefined && !isNonNegativeInt(value.total_count))
+    return err(invalidResponse(operation));
+  const items = value.check_runs.map((item) =>
+    parseNamedCheckRun(item, stringLength),
+  );
+  if (items.some((item) => item === undefined))
+    return err(invalidResponse(operation));
+  return ok({
+    items: items as NamedCheckRunEvidence[],
+    totalCount: value.total_count,
+  });
+}
+
+function parseNamedCheckRun(
+  value: unknown,
+  stringLength: number,
+): NamedCheckRunEvidence | undefined {
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.name) ||
+    value.name.length > stringLength ||
+    !isString(value.status) ||
+    value.status.length > stringLength ||
+    !isFullSha(value.head_sha)
+  )
+    return undefined;
+  if (
+    value.conclusion !== null &&
+    value.conclusion !== undefined &&
+    (!isString(value.conclusion) || value.conclusion.length > stringLength)
+  )
+    return undefined;
+  const output = parseCheckRunOutput(value.output, stringLength);
+  if (output === undefined) return undefined;
+  return {
+    id: value.id,
+    name: value.name,
+    status: value.status,
+    conclusion: isString(value.conclusion) ? value.conclusion : null,
+    headSha: value.head_sha,
+    output,
+  };
+}
+
+function parseCheckRunOutput(
+  value: unknown,
+  stringLength: number,
+): NamedCheckRunEvidence["output"] | undefined {
+  if (value === undefined || value === null)
+    return { title: "", summary: "", text: "" };
+  if (!isRecord(value)) return undefined;
+  const field = (input: unknown, limit: number): string | undefined => {
+    if (input === undefined || input === null) return "";
+    if (!isString(input) || input.length > limit) return undefined;
+    return input;
+  };
+  const title = field(value.title, stringLength);
+  const summary = field(value.summary, stringLength);
+  // A check run's text carries the serialized authorization record; it needs a
+  // larger but still explicit bound than a title or summary.
+  const text = field(value.text, GITHUB_REST_READ_LIMITS.jsonResponseBytes);
+  if (title === undefined || summary === undefined || text === undefined)
+    return undefined;
+  return { title, summary, text };
+}
+
+function parseWorkflowRunSummaryPage(
+  value: unknown,
+  operation: string,
+  stringLength: number,
+): Result<
+  { items: readonly WorkflowRunSummary[]; totalCount?: number },
+  GitHubError
+> {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.workflow_runs) ||
+    value.workflow_runs.length > GITHUB_REST_READ_LIMITS.pageItems
+  )
+    return err(invalidResponse(operation));
+  if (value.total_count !== undefined && !isNonNegativeInt(value.total_count))
+    return err(invalidResponse(operation));
+  const items = value.workflow_runs.map((item) =>
+    parseWorkflowRunSummary(item, stringLength),
+  );
+  if (items.some((item) => item === undefined))
+    return err(invalidResponse(operation));
+  return ok({
+    items: items as WorkflowRunSummary[],
+    totalCount: value.total_count,
+  });
+}
+
+function parseWorkflowRunSummary(
+  value: unknown,
+  stringLength: number,
+): WorkflowRunSummary | undefined {
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.event) ||
+    value.event.length > stringLength ||
+    !isString(value.status) ||
+    value.status.length > stringLength ||
+    !isFullSha(value.head_sha)
+  )
+    return undefined;
+  if (
+    value.conclusion !== null &&
+    value.conclusion !== undefined &&
+    (!isString(value.conclusion) || value.conclusion.length > stringLength)
+  )
+    return undefined;
+  return {
+    id: value.id,
+    event: value.event,
+    status: value.status,
+    conclusion: isString(value.conclusion) ? value.conclusion : null,
+    headSha: value.head_sha,
+  };
 }
 
 function parseCheckRun(value: CheckRunResponse): CheckRunReading {

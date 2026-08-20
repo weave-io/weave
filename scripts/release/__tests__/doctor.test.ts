@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import {
   PUBLIC_PACKAGES,
   type PublicPackageName,
@@ -13,6 +13,7 @@ import {
   collectAuthoritativeReleaseLifecycle,
   type DoctorMode,
   type DoctorSnapshot,
+  hasRequiredReviewerProtection,
   LEGACY_PREFLIGHT_RUN_NAME,
   type NpmPackageObservation,
   parseDoctorMode,
@@ -122,16 +123,35 @@ function productionAuthorityWorld(published = false) {
     {
       body: { truncated: false, tree: [] },
     };
+  routes[
+    `GET /repos/${RELEASE_REPOSITORY}/commits/${MERGE_SHA}/check-runs?check_name=release-integrity-incident&per_page=100`
+  ] = { body: { total_count: 0, check_runs: [] } };
+  for (const workflow of [
+    RELEASE_PUBLISH_WORKFLOW_PATH,
+    RELEASE_ATTEST_WORKFLOW_PATH,
+  ]) {
+    const file = workflow.split("/").pop() ?? workflow;
+    routes[
+      `GET /repos/${RELEASE_REPOSITORY}/actions/workflows/${file}/runs?head_sha=${MERGE_SHA}&per_page=100`
+    ] = { body: { total_count: 0, workflow_runs: [] } };
+  }
   const world = lifecycleFetch(routes);
   const registryCalls: string[] = [];
   const registryFetch = async (input: string, init?: RequestInit) => {
     registryCalls.push(`${init?.method ?? "GET"} ${input}`);
+    const url = new URL(input);
+    // npm has published no provenance for these versions, which is an observed
+    // pending state rather than an unverifiable read.
+    if (url.pathname.startsWith("/-/npm/v1/attestations/"))
+      return new Response("not found", {
+        status: 404,
+        statusText: "Not Found",
+      });
     if (!published)
       return new Response("not found", {
         status: 404,
         statusText: "Not Found",
       });
-    const url = new URL(input);
     const packageName = decodeURIComponent(url.pathname.split("/")[1] ?? "");
     const tarball = `https://registry.npmjs.org/${packageName}/-/${packageName.split("/").pop()}-${url.pathname.split("/").pop()}.tgz`;
     if (url.pathname.endsWith(".tgz"))
@@ -774,6 +794,84 @@ describe("release doctor", () => {
       doctorFailure(verifyDoctorSnapshot(snapshot, "final"));
   });
 
+  it("requires a named required reviewer, not a readable environment", () => {
+    const base = snapshotFor("final");
+    for (const name of ["release", "prerelease"] as const) {
+      const unprotected = {
+        ...base,
+        github: {
+          ...base.github,
+          environments: {
+            ...base.github.environments,
+            [name]: {
+              name,
+              exists: true,
+              readable: true,
+              protectionConfigured: false,
+            },
+          },
+        },
+      };
+      const failure = doctorFailure(verifyDoctorSnapshot(unprotected, "final"));
+      expect(
+        failure.failures.some(
+          (item) =>
+            item.id === "github.environments" &&
+            item.detail.includes("names no required reviewer"),
+        ),
+        name,
+      ).toBe(true);
+    }
+  });
+
+  it("reads protection strictly from GitHub's protection rules", () => {
+    const reviewer = {
+      type: "User",
+      reviewer: { id: 42, login: "maintainer" },
+    };
+    expect(
+      hasRequiredReviewerProtection({
+        protection_rules: [
+          { id: 1, type: "required_reviewers", reviewers: [reviewer] },
+        ],
+      }),
+    ).toBe(true);
+    for (const value of [
+      {},
+      { protection_rules: [] },
+      { protection_rules: {} },
+      { protection_rules: [{ type: "wait_timer", wait_timer: 5 }] },
+      { protection_rules: [{ type: "required_reviewers" }] },
+      { protection_rules: [{ type: "required_reviewers", reviewers: [] }] },
+      {
+        protection_rules: [
+          { type: "required_reviewers", reviewers: [{ type: "User" }] },
+        ],
+      },
+      {
+        protection_rules: [
+          {
+            type: "required_reviewers",
+            reviewers: [{ type: "Robot", reviewer: { id: 42 } }],
+          },
+        ],
+      },
+      {
+        protection_rules: [
+          {
+            type: "required_reviewers",
+            reviewers: [{ type: "User", reviewer: { id: 0 } }],
+          },
+        ],
+      },
+      null,
+      "protected",
+    ])
+      expect(hasRequiredReviewerProtection(value), JSON.stringify(value)).toBe(
+        false,
+      );
+  });
+
   it("requires protected App credentials in every mutation environment", () => {
     const base = snapshotFor("final");
     const missing = {
@@ -1288,7 +1386,8 @@ describe("release doctor", () => {
     const recorded = await collectAuthoritativeReleaseLifecycle({
       token: "token",
       fetchImpl: recordedWorld.fetchImpl,
-      readCreationCleanupIdentity: () => okAsync(ownership()),
+      readCreationCleanupIdentity: () =>
+        okAsync({ ownership: ownership(), pullRequestNumber: null }),
     });
     expect(recorded.isOk()).toBe(true);
     if (recorded.isOk()) {
@@ -1307,7 +1406,11 @@ describe("release doctor", () => {
     const malformed = await collectAuthoritativeReleaseLifecycle({
       token: "token",
       fetchImpl: malformedWorld.fetchImpl,
-      readCreationCleanupIdentity: () => okAsync({} as ReleasePrOwnership),
+      readCreationCleanupIdentity: () =>
+        okAsync({
+          ownership: {} as ReleasePrOwnership,
+          pullRequestNumber: null,
+        }),
     });
     expect(malformed.isErr()).toBe(true);
     if (malformed.isErr())
@@ -1485,6 +1588,87 @@ describe("release doctor", () => {
     }
   });
 
+  it("never sends the token to an unofficial GitHub API origin", async () => {
+    for (const apiUrl of [
+      "https://api.github.com.evil.example",
+      "http://api.github.com",
+      "https://user:token@api.github.com",
+      "https://api.github.com:8443",
+      "https://api.github.com/api/v3",
+    ]) {
+      const calls: string[] = [];
+      const result = await collectAuthoritativeReleaseLifecycle({
+        token: "token",
+        apiUrl,
+        fetchImpl: async (input) => {
+          calls.push(input);
+          return new Response("{}", { status: 200 });
+        },
+      });
+      expect(result.isErr(), apiUrl).toBe(true);
+      if (result.isErr()) expect(result.error.operation).toBe("github.api-url");
+      expect(calls, apiUrl).toEqual([]);
+    }
+  });
+
+  it("refuses a durable creation-cleanup record contradicted by a live release PR", async () => {
+    const world = lifecycleFetch(
+      lifecycleRoutes(SHA, [], [], markerEnvelope()),
+    );
+    const settled = {
+      ...mergedPull(9),
+      head: { ref: RELEASE_PR_MARKER_REF, sha: SHA },
+    };
+    const contradicted = lifecycleFetch(
+      lifecycleRoutes(SHA, [], [settled], markerEnvelope()),
+    );
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: contradicted.fetchImpl,
+      readCreationCleanupIdentity: () =>
+        okAsync({ ownership: ownership(), pullRequestNumber: null }),
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr())
+      expect(result.error.message).toContain("is associated with the marker");
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("refuses a durable creation-cleanup record naming a foreign pull request", async () => {
+    const world = lifecycleFetch(
+      lifecycleRoutes(SHA, [], [], markerEnvelope()),
+    );
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+      readCreationCleanupIdentity: () =>
+        okAsync({ ownership: ownership(), pullRequestNumber: 4242 }),
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr())
+      expect(result.error.message).toContain(
+        "not an authoritative stable release PR",
+      );
+  });
+
+  it("fails closed when the durable creation-cleanup store cannot be read", async () => {
+    const world = lifecycleFetch(
+      lifecycleRoutes(SHA, [], [], markerEnvelope()),
+    );
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+      readCreationCleanupIdentity: () =>
+        errAsync({
+          type: "DoctorPortFailed" as const,
+          operation: "release.lifecycle.creation-cleanup",
+          message: "release-state database is unreadable",
+        }),
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.message).toContain("unreadable");
+  });
+
   it("fails closed when a merged release has no Task 14 authority", async () => {
     const world = lifecycleFetch(lifecycleRoutes(null, [], [mergedPull()]));
     const result = await collectAuthoritativeReleaseLifecycle({
@@ -1495,7 +1679,7 @@ describe("release doctor", () => {
     if (result.isErr()) {
       expect(result.error.type).toBe("DoctorPortFailed");
       expect(result.error.operation).toContain("release.lifecycle.state");
-      expect(result.error.message).toContain("packages/cli/package.json");
+      expect(result.error.message).toContain("incident check run read failed");
     }
     expect(world.calls.every((call) => call.method === "GET")).toBe(true);
   });
