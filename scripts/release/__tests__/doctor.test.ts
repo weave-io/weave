@@ -43,6 +43,7 @@ const SHA = "a".repeat(40);
 const OTHER_SHA = "b".repeat(40);
 const OWNER = "c".repeat(64);
 const MERGE_SHA = "d".repeat(40);
+const TREE_SHA = "f".repeat(40);
 const DIGEST = `sha256:${"e".repeat(64)}`;
 const BAD_DIGEST = `sha256:${"f".repeat(64)}`;
 const DOCTOR_RUN_NOW = Date.parse("2026-08-19T00:00:00.000Z");
@@ -78,7 +79,7 @@ function lifecycleRoutes(
   message?: string,
 ) {
   return {
-    [`GET /repos/${RELEASE_REPOSITORY}/git/ref/${RELEASE_PR_MARKER_REF}`]:
+    [`GET /repos/${RELEASE_REPOSITORY}/git/ref/heads/${RELEASE_PR_MARKER_REF}`]:
       marker === null ? { status: 404 } : { body: { object: { sha: marker } } },
     [`GET /repos/${RELEASE_REPOSITORY}/pulls?state=open&per_page=100&head=weave-io%3Arelease-pr%2Fstable`]:
       { body: open },
@@ -92,6 +93,52 @@ function lifecycleRoutes(
           },
         }),
   } satisfies Record<string, LifecycleRoute>;
+}
+
+function productionAuthorityWorld(published = false) {
+  const routes: Record<string, LifecycleRoute> = lifecycleRoutes(
+    null,
+    [],
+    [mergedPull()],
+  );
+  for (const [packageName, packageInfo] of Object.entries(PUBLIC_PACKAGES)) {
+    const version =
+      packageName === "@weaveio/weave-adapter-pi" ? "0.0.1" : "0.1.0";
+    const path = `${packageInfo.directory}/package.json`;
+    routes[
+      `GET /repos/${RELEASE_REPOSITORY}/contents/${path}?ref=${MERGE_SHA}`
+    ] = {
+      body: {
+        type: "file",
+        encoding: "base64",
+        content: btoa(JSON.stringify({ version })),
+      },
+    };
+  }
+  routes[`GET /repos/${RELEASE_REPOSITORY}/git/commits/${MERGE_SHA}`] = {
+    body: { tree: { sha: TREE_SHA } },
+  };
+  routes[`GET /repos/${RELEASE_REPOSITORY}/git/trees/${TREE_SHA}?recursive=1`] =
+    {
+      body: { truncated: false, tree: [] },
+    };
+  const world = lifecycleFetch(routes);
+  const registryCalls: string[] = [];
+  const registryFetch = async (input: string, init?: RequestInit) => {
+    registryCalls.push(`${init?.method ?? "GET"} ${input}`);
+    if (!published)
+      return new Response("not found", {
+        status: 404,
+        statusText: "Not Found",
+      });
+    const url = new URL(input);
+    const packageName = decodeURIComponent(url.pathname.split("/")[1] ?? "");
+    const tarball = `https://registry.npmjs.org/${packageName}/-/${packageName.split("/").pop()}-${url.pathname.split("/").pop()}.tgz`;
+    if (url.pathname.endsWith(".tgz"))
+      return new Response("published tarball", { status: 200 });
+    return new Response(JSON.stringify({ dist: { tarball } }), { status: 200 });
+  };
+  return { ...world, registryCalls, registryFetch };
 }
 
 function markerEnvelope(baseSha = OTHER_SHA) {
@@ -114,11 +161,14 @@ function mergedPull(number = 7) {
     state: "closed",
     merged: true,
     merged_at: "2026-08-19T00:00:00.000Z",
+    closed_at: "2026-08-19T00:00:00.000Z",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
     merge_commit_sha: MERGE_SHA,
     title: "release",
     body: "",
     head: { ref: "release-pr/stable", sha: SHA },
-    base: { ref: "main" },
+    base: { ref: "main", sha: OTHER_SHA },
     labels: [{ name: RELEASE_PR_LABEL }],
   };
 }
@@ -1125,7 +1175,60 @@ describe("release doctor", () => {
       expect(result.value.discovered).toEqual([]);
     }
     expect(world.calls.length).toBeGreaterThan(0);
+    expect(world.calls).toContainEqual({
+      method: "GET",
+      url: `https://api.github.com/repos/${RELEASE_REPOSITORY}/git/ref/heads/${RELEASE_PR_MARKER_REF}`,
+    });
     expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("uses the production Task 14 reader from merged source and only reads", async () => {
+    const world = productionAuthorityWorld();
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+      registryFetch: world.registryFetch,
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.authoritative).toBe(true);
+      expect(result.value.mergedRelease?.state).toBe("PendingArtifactsOrProof");
+      expect(result.value.discovered?.[0]).toMatchObject({
+        kind: "merged-release",
+        case: "no-packages-published",
+      });
+    }
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+    expect(world.registryCalls.every((call) => call.startsWith("GET "))).toBe(
+      true,
+    );
+    expect(world.calls.some((call) => call.method !== "GET")).toBe(false);
+    expect(world.registryCalls.some((call) => !call.startsWith("GET "))).toBe(
+      false,
+    );
+  });
+
+  it("does not turn a registry readback into Task 14 verification", async () => {
+    const world = productionAuthorityWorld(true);
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+      registryFetch: world.registryFetch,
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.mergedRelease?.state).toBe(
+        "PendingRegistryVerification",
+      );
+      expect(result.value.discovered?.[0]).toMatchObject({
+        kind: "merged-release",
+        case: "registry-verification-incomplete",
+      });
+    }
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+    expect(world.registryCalls.every((call) => call.startsWith("GET "))).toBe(
+      true,
+    );
   });
 
   it("keeps an open marker and release PR authoritative without mutation", async () => {
@@ -1137,8 +1240,13 @@ describe("release doctor", () => {
       state: "open",
       title: "release",
       body: envelope,
+      created_at: "2026-08-18T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      closed_at: null,
+      merged_at: null,
+      merge_commit_sha: null,
       head: { ref: "release-pr/stable", sha: marker },
-      base: { ref: "main" },
+      base: { ref: "main", sha: OTHER_SHA },
       labels: [{ name: RELEASE_PR_LABEL }],
     };
     const world = lifecycleFetch(lifecycleRoutes(marker, [open], [], envelope));
@@ -1155,6 +1263,200 @@ describe("release doctor", () => {
       expect(result.value.discovered).toEqual([]);
     }
     expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("separates a live orphan from a recorded CreationCleanupPending identity", async () => {
+    const marker = SHA;
+    const envelope = markerEnvelope();
+    const orphanWorld = lifecycleFetch(
+      lifecycleRoutes(marker, [], [], envelope),
+    );
+    const orphan = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: orphanWorld.fetchImpl,
+    });
+    expect(orphan.isOk()).toBe(true);
+    if (orphan.isOk()) {
+      expect(orphan.value.discovered).toEqual([]);
+      expect(orphan.value.marker.creationPollExhausted).toBe(true);
+      expect(orphan.value.marker.recordedCleanup).toBeUndefined();
+    }
+
+    const recordedWorld = lifecycleFetch(
+      lifecycleRoutes(marker, [], [], envelope),
+    );
+    const recorded = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: recordedWorld.fetchImpl,
+      readCreationCleanupIdentity: () => okAsync(ownership()),
+    });
+    expect(recorded.isOk()).toBe(true);
+    if (recorded.isOk()) {
+      expect(recorded.value.marker.recordedCleanup).toEqual(ownership());
+      expect(recorded.value.discovered).toEqual([
+        { kind: "creation-cleanup-pending", ownership: ownership() },
+      ]);
+    }
+    expect(recordedWorld.calls.every((call) => call.method === "GET")).toBe(
+      true,
+    );
+
+    const malformedWorld = lifecycleFetch(
+      lifecycleRoutes(marker, [], [], envelope),
+    );
+    const malformed = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: malformedWorld.fetchImpl,
+      readCreationCleanupIdentity: () => okAsync({} as ReleasePrOwnership),
+    });
+    expect(malformed.isErr()).toBe(true);
+    if (malformed.isErr())
+      expect(malformed.error.operation).toContain(
+        "release.lifecycle.read creation cleanup",
+      );
+  });
+
+  it("requires a unique exact stable PR association", async () => {
+    const marker = SHA;
+    const envelope = markerEnvelope();
+    const unlabeled = {
+      ...mergedPull(),
+      head: { ref: RELEASE_PR_MARKER_REF, sha: marker },
+      labels: [],
+    };
+    const orphanWorld = lifecycleFetch(
+      lifecycleRoutes(marker, [], [unlabeled], envelope),
+    );
+    const orphan = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: orphanWorld.fetchImpl,
+    });
+    expect(orphan.isOk()).toBe(true);
+    if (orphan.isOk()) {
+      expect(orphan.value.marker.associatedPullRequestSettled).toBe(false);
+      expect(orphan.value.marker.creationPollExhausted).toBe(true);
+      expect(orphan.value.discovered).toEqual([]);
+    }
+
+    const duplicateLabelWorld = lifecycleFetch(
+      lifecycleRoutes(
+        marker,
+        [],
+        [
+          {
+            ...mergedPull(),
+            head: { ref: RELEASE_PR_MARKER_REF, sha: marker },
+            labels: [{ name: RELEASE_PR_LABEL }, { name: RELEASE_PR_LABEL }],
+          },
+        ],
+        envelope,
+      ),
+    );
+    const duplicateLabel = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: duplicateLabelWorld.fetchImpl,
+    });
+    expect(duplicateLabel.isOk()).toBe(true);
+    if (duplicateLabel.isOk())
+      expect(duplicateLabel.value.marker.associatedPullRequestSettled).toBe(
+        false,
+      );
+
+    const duplicateOne = {
+      ...mergedPull(7),
+      head: { ref: RELEASE_PR_MARKER_REF, sha: marker },
+    };
+    const duplicateTwo = {
+      ...mergedPull(8),
+      head: { ref: RELEASE_PR_MARKER_REF, sha: marker },
+    };
+    const duplicateWorld = lifecycleFetch(
+      lifecycleRoutes(marker, [], [duplicateOne, duplicateTwo], envelope),
+    );
+    const duplicate = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: duplicateWorld.fetchImpl,
+    });
+    expect(duplicate.isErr()).toBe(true);
+    if (duplicate.isErr())
+      expect(duplicate.error.message).toContain("more than one exact stable");
+  });
+
+  it("binds every Task 14 result field to the requested PR identity", async () => {
+    const foreign = authorityFor("pending");
+    const variants: readonly [string, ReleaseAuthority][] = [
+      [
+        "number",
+        {
+          ...foreign,
+          pullRequest: {
+            ...foreign.pullRequest,
+            number: 8,
+            url: `https://github.com/${RELEASE_REPOSITORY}/pull/8`,
+          },
+        },
+      ],
+      [
+        "canonical URL/repo",
+        {
+          ...foreign,
+          pullRequest: {
+            ...foreign.pullRequest,
+            url: "https://github.com/other/repo/pull/7",
+          },
+        },
+      ],
+      [
+        "merge SHA",
+        {
+          ...foreign,
+          pullRequest: {
+            ...foreign.pullRequest,
+            mergeCommitSha: OTHER_SHA,
+          },
+        },
+      ],
+      ["released SHA", { ...foreign, releasedSha: OTHER_SHA }],
+      [
+        "stable head ref",
+        {
+          ...foreign,
+          pullRequest: { ...foreign.pullRequest, headRef: "other" },
+        },
+      ],
+      [
+        "merged state",
+        {
+          ...foreign,
+          pullRequest: { ...foreign.pullRequest, merged: false },
+        },
+      ],
+      [
+        "closed state",
+        {
+          ...foreign,
+          pullRequest: { ...foreign.pullRequest, closed: false },
+        },
+      ],
+    ];
+    for (const [field, authority] of variants) {
+      const world = lifecycleFetch(lifecycleRoutes(null, [], [mergedPull()]));
+      const result = await collectAuthoritativeReleaseLifecycle({
+        token: "token",
+        fetchImpl: world.fetchImpl,
+        readAuthority: () => okAsync(authority),
+      });
+      expect(result.isErr(), field).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.operation, field).toContain(
+          "release.lifecycle.state",
+        );
+      }
+      expect(
+        world.calls.every((call) => call.method === "GET"),
+        field,
+      ).toBe(true);
+    }
   });
 
   it("runs merged non-terminal and incident states through Task 14", async () => {
@@ -1193,16 +1495,17 @@ describe("release doctor", () => {
     if (result.isErr()) {
       expect(result.error.type).toBe("DoctorPortFailed");
       expect(result.error.operation).toContain("release.lifecycle.state");
-      expect(result.error.message).toContain("authority reader");
+      expect(result.error.message).toContain("packages/cli/package.json");
     }
     expect(world.calls.every((call) => call.method === "GET")).toBe(true);
   });
 
   it("fails closed with a typed result when GitHub lifecycle reads fail", async () => {
     const world = lifecycleFetch({
-      [`GET /repos/${RELEASE_REPOSITORY}/git/ref/${RELEASE_PR_MARKER_REF}`]: {
-        status: 500,
-      },
+      [`GET /repos/${RELEASE_REPOSITORY}/git/ref/heads/${RELEASE_PR_MARKER_REF}`]:
+        {
+          status: 500,
+        },
     });
     const result = await collectAuthoritativeReleaseLifecycle({
       token: "token",

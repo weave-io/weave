@@ -261,11 +261,21 @@ export type GreenMainHeadBounds = {
 export const PULL_REQUEST_BOUNDS = {
   pageSize: 100,
   maxPages: 3,
+  maxItems: 300,
 } as const;
 
 export type PullRequestBounds = {
   -readonly [Key in keyof typeof PULL_REQUEST_BOUNDS]: number;
 };
+
+export const GITHUB_REST_READ_LIMITS = {
+  requestTimeoutMs: 10_000,
+  jsonResponseBytes: 512 * 1024,
+  binaryResponseBytes: 8 * 1024 * 1024,
+  stringLength: 16 * 1024,
+  pageItems: 100,
+  collectionItems: 300,
+} as const;
 
 export interface GitHubRestClientOptions {
   /**
@@ -275,6 +285,11 @@ export interface GitHubRestClientOptions {
   requiredChecks?: readonly GitHubRequiredCheck[];
   greenHeadBounds?: Partial<GreenMainHeadBounds>;
   pullRequestBounds?: Partial<PullRequestBounds>;
+  /** Upper bounds for every response and JSON document read. */
+  requestTimeoutMs?: number;
+  jsonResponseBytes?: number;
+  binaryResponseBytes?: number;
+  stringLength?: number;
 }
 
 export interface GitHubPullRequestClient {
@@ -332,6 +347,10 @@ export class GitHubRestClient
   private cachedRepositoryId: string | undefined;
   private readonly greenHeadBounds: GreenMainHeadBounds;
   private readonly pullRequestBounds: PullRequestBounds;
+  private readonly requestTimeoutMs: number;
+  private readonly jsonResponseBytes: number;
+  private readonly binaryResponseBytes: number;
+  private readonly stringLength: number;
 
   constructor(
     private readonly repository: string,
@@ -340,14 +359,62 @@ export class GitHubRestClient
     private readonly apiUrl = "https://api.github.com",
     private readonly options: GitHubRestClientOptions = {},
   ) {
-    this.greenHeadBounds = {
+    const greenHeadBounds = {
       ...GREEN_MAIN_HEAD_BOUNDS,
       ...options.greenHeadBounds,
     };
-    this.pullRequestBounds = {
+    this.greenHeadBounds = {
+      pageSize: positiveLimit(
+        greenHeadBounds.pageSize,
+        GREEN_MAIN_HEAD_BOUNDS.pageSize,
+      ),
+      maxPages: positiveLimit(
+        greenHeadBounds.maxPages,
+        GREEN_MAIN_HEAD_BOUNDS.maxPages,
+      ),
+      requiredChecks: positiveLimit(
+        greenHeadBounds.requiredChecks,
+        GREEN_MAIN_HEAD_BOUNDS.requiredChecks,
+      ),
+      checkNameLength: positiveLimit(
+        greenHeadBounds.checkNameLength,
+        GREEN_MAIN_HEAD_BOUNDS.checkNameLength,
+      ),
+    };
+    const pullRequestBounds = {
       ...PULL_REQUEST_BOUNDS,
       ...options.pullRequestBounds,
     };
+    this.pullRequestBounds = {
+      pageSize: positiveLimit(
+        pullRequestBounds.pageSize,
+        PULL_REQUEST_BOUNDS.pageSize,
+      ),
+      maxPages: positiveLimit(
+        pullRequestBounds.maxPages,
+        PULL_REQUEST_BOUNDS.maxPages,
+      ),
+      maxItems: positiveLimit(
+        pullRequestBounds.maxItems,
+        PULL_REQUEST_BOUNDS.maxItems,
+      ),
+    };
+    this.requestTimeoutMs = positiveLimit(
+      options.requestTimeoutMs,
+      GITHUB_REST_READ_LIMITS.requestTimeoutMs,
+    );
+    this.jsonResponseBytes = positiveLimit(
+      options.jsonResponseBytes,
+      GITHUB_REST_READ_LIMITS.jsonResponseBytes,
+    );
+    this.binaryResponseBytes = positiveLimit(
+      options.binaryResponseBytes,
+      GITHUB_REST_READ_LIMITS.binaryResponseBytes,
+    );
+    this.stringLength = positiveLimit(
+      options.stringLength,
+      GITHUB_REST_READ_LIMITS.stringLength,
+    );
   }
 
   getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError> {
@@ -359,11 +426,100 @@ export class GitHubRestClient
     });
   }
 
+  /** Reads one pull request again so callers can bind authority to its identity. */
+  getPullRequest(
+    number: number,
+  ): ResultAsync<GitHubPullRequestSummary, GitHubError> {
+    const path = `/pulls/${number}`;
+    return this.requestJson(path).andThen((value) => {
+      const pull = parsePullRequest(value, this.repository, this.stringLength);
+      return pull === undefined
+        ? errAsync(invalidResponse(path))
+        : okAsync(pull);
+    });
+  }
+
+  /** Reads a bounded UTF-8 file from an exact commit ref. */
+  readFileAtRef(path: string, ref: string): ResultAsync<string, GitHubError> {
+    if (!safeGitHubPath(path) || !GIT_OBJECT_SHA.test(ref))
+      return errAsync({
+        type: "GitHubError",
+        operation: `contents/${path}`,
+        message: "invalid file path or commit SHA",
+      });
+    const operation = `/contents/${path}`;
+    const urlPath = `${operation}?ref=${encodeURIComponent(ref)}`;
+    return this.requestJson(urlPath).andThen((value) => {
+      if (
+        !isRecord(value) ||
+        value.type !== "file" ||
+        value.encoding !== "base64" ||
+        !isString(value.content) ||
+        value.content.length > this.jsonResponseBytes * 2
+      )
+        return errAsync(invalidResponse(urlPath));
+      const decoded = decodeBase64Utf8(value.content);
+      return decoded === undefined
+        ? errAsync(invalidResponse(urlPath))
+        : okAsync(decoded);
+    });
+  }
+
+  /** Reads bounded tree paths and refuses GitHub's truncated tree response. */
+  listTreePaths(sha: string): ResultAsync<readonly string[], GitHubError> {
+    if (!GIT_OBJECT_SHA.test(sha))
+      return errAsync({
+        type: "GitHubError",
+        operation: `/git/trees/${sha}`,
+        message: "invalid commit SHA",
+      });
+    const path = `/git/trees/${sha}?recursive=1`;
+    return this.requestJson(path).andThen((value) => {
+      if (
+        !isRecord(value) ||
+        value.truncated !== false ||
+        !Array.isArray(value.tree) ||
+        value.tree.length > GITHUB_REST_READ_LIMITS.collectionItems * 16
+      )
+        return errAsync(invalidResponse(path));
+      const paths: string[] = [];
+      for (const entry of value.tree) {
+        if (
+          !isRecord(entry) ||
+          !isString(entry.path) ||
+          entry.path.length > this.stringLength
+        )
+          return errAsync(invalidResponse(path));
+        paths.push(entry.path);
+      }
+      return okAsync(paths as readonly string[]);
+    });
+  }
+
+  /** Resolves a commit to its tree before reading the bounded tree listing. */
+  listCommitTreePaths(
+    sha: string,
+  ): ResultAsync<readonly string[], GitHubError> {
+    if (!GIT_OBJECT_SHA.test(sha))
+      return errAsync({
+        type: "GitHubError",
+        operation: `/git/commits/${sha}`,
+        message: "invalid commit SHA",
+      });
+    return this.readCommitTree(sha).andThen((treeSha) =>
+      this.listTreePaths(treeSha),
+    );
+  }
+
   listWorkflowRunJobs(
     runId: number,
   ): ResultAsync<readonly WorkflowJobMetadata[], GitHubError> {
     return this.requestJson(`/actions/runs/${runId}/jobs`).andThen((value) => {
-      if (!isRecord(value) || !Array.isArray(value.jobs))
+      if (
+        !isRecord(value) ||
+        !Array.isArray(value.jobs) ||
+        value.jobs.length > GITHUB_REST_READ_LIMITS.pageItems
+      )
         return errAsync(invalidResponse(`/actions/runs/${runId}/jobs`));
       const jobs = value.jobs.map(parseWorkflowJob);
       if (jobs.some((job) => job === undefined))
@@ -377,7 +533,11 @@ export class GitHubRestClient
   ): ResultAsync<readonly ActionsArtifactMetadata[], GitHubError> {
     const path = `/actions/runs/${runId}/artifacts`;
     return this.requestJson(path).andThen((value) => {
-      if (!isRecord(value) || !Array.isArray(value.artifacts))
+      if (
+        !isRecord(value) ||
+        !Array.isArray(value.artifacts) ||
+        value.artifacts.length > GITHUB_REST_READ_LIMITS.pageItems
+      )
         return errAsync(invalidResponse(path));
       const artifacts = value.artifacts.map(parseArtifact);
       if (artifacts.some((artifact) => artifact === undefined))
@@ -419,11 +579,12 @@ export class GitHubRestClient
 
   getRef(ref: string): ResultAsync<string, GitHubError> {
     const path = `/git/ref/${ref.replace(/^refs\//, "")}`;
+    if (!safeGitHubRef(ref)) return errAsync(invalidResponse(path));
     return this.requestJson(path).andThen((value) => {
       if (
         !isRecord(value) ||
         !isRecord(value.object) ||
-        !isString(value.object.sha)
+        !isFullSha(value.object.sha)
       )
         return errAsync(invalidResponse(path));
       return okAsync(value.object.sha);
@@ -639,7 +800,7 @@ export class GitHubRestClient
         }),
       )
       .andThen((value) => {
-        if (!isRecord(value) || !isString(value.sha))
+        if (!isRecord(value) || !isFullSha(value.sha))
           return errAsync(invalidResponse("/git/commits"));
         return okAsync(value.sha);
       });
@@ -647,8 +808,13 @@ export class GitHubRestClient
 
   readCommitMessage(sha: string): ResultAsync<string, GitHubError> {
     const path = `/git/commits/${sha}`;
+    if (!GIT_OBJECT_SHA.test(sha)) return errAsync(invalidResponse(path));
     return this.requestJson(path).andThen((value) => {
-      if (!isRecord(value) || !isString(value.message))
+      if (
+        !isRecord(value) ||
+        !isString(value.message) ||
+        value.message.length > GITHUB_REST_READ_LIMITS.stringLength * 8
+      )
         return errAsync(invalidResponse(path));
       return okAsync(value.message);
     });
@@ -689,7 +855,14 @@ export class GitHubRestClient
     const path = `/pulls?state=open&per_page=${this.pullRequestBounds.pageSize}`;
     return this.collectPages(
       path,
-      (value, pagePath) => parsePullRequestPage(value, pagePath),
+      (value, pagePath) =>
+        parsePullRequestPage(
+          value,
+          pagePath,
+          this.repository,
+          this.pullRequestBounds.pageSize,
+          this.stringLength,
+        ),
       this.pullRequestBounds,
     ).map((pulls) => pulls.filter((pull) => pull.labels.includes(label)));
   }
@@ -710,7 +883,14 @@ export class GitHubRestClient
     const path = `/pulls?state=${encodeURIComponent(state)}&per_page=${this.pullRequestBounds.pageSize}&head=${encodeURIComponent(`${owner}:${headRef}`)}`;
     return this.collectPages(
       path,
-      (value, pagePath) => parsePullRequestPage(value, pagePath),
+      (value, pagePath) =>
+        parsePullRequestPage(
+          value,
+          pagePath,
+          this.repository,
+          this.pullRequestBounds.pageSize,
+          this.stringLength,
+        ),
       this.pullRequestBounds,
     ).map((pulls) =>
       pulls.filter((pull) => pull.headRef === headRef && pull.state === state),
@@ -731,7 +911,11 @@ export class GitHubRestClient
     })
       .mapErr(toPullRequestWriteError("createPullRequest"))
       .andThen((value) => {
-        const pull = parsePullRequest(value);
+        const pull = parsePullRequest(
+          value,
+          this.repository,
+          this.stringLength,
+        );
         if (pull === undefined)
           return errAsync<
             GitHubPullRequestSummary,
@@ -760,7 +944,11 @@ export class GitHubRestClient
     })
       .mapErr(toPullRequestWriteError("updatePullRequest"))
       .andThen((value) => {
-        const pull = parsePullRequest(value);
+        const pull = parsePullRequest(
+          value,
+          this.repository,
+          this.stringLength,
+        );
         return pull === undefined
           ? errAsync<GitHubPullRequestSummary, GitHubPullRequestWriteError>(
               invalidResponse(path),
@@ -819,11 +1007,12 @@ export class GitHubRestClient
 
   private readCommitTree(sha: string): ResultAsync<string, GitHubError> {
     const path = `/git/commits/${sha}`;
+    if (!GIT_OBJECT_SHA.test(sha)) return errAsync(invalidResponse(path));
     return this.requestJson(path).andThen((value) => {
       if (
         !isRecord(value) ||
         !isRecord(value.tree) ||
-        !isString(value.tree.sha)
+        !isFullSha(value.tree.sha)
       )
         return errAsync(invalidResponse(path));
       return okAsync(value.tree.sha);
@@ -847,7 +1036,7 @@ export class GitHubRestClient
         })),
       }),
     }).andThen((value) => {
-      if (!isRecord(value) || !isString(value.sha))
+      if (!isRecord(value) || !isFullSha(value.sha))
         return errAsync(invalidResponse("/git/trees"));
       return okAsync(value.sha);
     });
@@ -929,7 +1118,11 @@ export class GitHubRestClient
   hasReleaseAttestation(releaseId: number): ResultAsync<boolean, GitHubError> {
     const path = `/releases/${releaseId}/attestations`;
     return this.requestJson(path).andThen((value) => {
-      if (!isRecord(value) || !Array.isArray(value.attestations))
+      if (
+        !isRecord(value) ||
+        !Array.isArray(value.attestations) ||
+        value.attestations.length > GITHUB_REST_READ_LIMITS.pageItems
+      )
         return errAsync(invalidResponse(path));
       return okAsync(value.attestations.length > 0);
     });
@@ -1029,7 +1222,11 @@ export class GitHubRestClient
       value: unknown,
       path: string,
     ) => Result<{ items: readonly T[]; totalCount?: number }, GitHubError>,
-    bounds: { maxPages: number } = this.greenHeadBounds,
+    bounds: {
+      maxPages: number;
+      pageSize?: number;
+      maxItems?: number;
+    } = this.greenHeadBounds,
   ): ResultAsync<readonly T[], GitHubError> {
     return fromAsync(async () => {
       const startUrl = this.repoUrl(startPath);
@@ -1046,6 +1243,19 @@ export class GitHubRestClient
         if (pageDocument.isErr()) return err(pageDocument.error);
         const parsed = parsePage(pageDocument.value.value, url);
         if (parsed.isErr()) return err(parsed.error);
+        const pageSize = bounds.pageSize ?? GITHUB_REST_READ_LIMITS.pageItems;
+        const maxItems =
+          bounds.maxItems ?? bounds.maxPages * Math.max(1, pageSize);
+        if (
+          parsed.value.items.length > pageSize ||
+          parsed.value.items.length + collected.length > maxItems
+        )
+          return err(
+            truncatedResponse(
+              url,
+              `response contains too many items (page limit ${pageSize}, collection limit ${maxItems})`,
+            ),
+          );
         collected.push(...parsed.value.items);
         if (
           parsed.value.totalCount !== undefined &&
@@ -1082,44 +1292,39 @@ export class GitHubRestClient
   private requestJsonDocument(
     url: string,
   ): ResultAsync<{ value: unknown; nextUrl: string | null }, GitHubError> {
-    const headers = new Headers();
-    headers.set("accept", "application/vnd.github+json");
-    if (this.token !== undefined)
-      headers.set("authorization", `Bearer ${this.token}`);
-    return ResultAsync.fromPromise(
-      this.requestFetch(url, { method: "GET", headers }),
-      (cause) => ({
-        type: "GitHubError" as const,
-        operation: url,
-        message: String(cause),
-      }),
-    ).andThen((response) => {
-      if (!response.ok)
-        return errAsync<
-          {
-            value: unknown;
-            nextUrl: string | null;
-          },
-          GitHubError
-        >({
-          type: "GitHubError",
-          operation: url,
-          status: response.status,
-          message: response.statusText,
-        });
-      return ResultAsync.fromThrowable(
-        () => response.json(),
-        () => invalidResponse(url),
-      )().andThen((value) => {
-        const next = nextLink(response.headers.get("link"), url);
-        if (next.isErr())
+    return this.requestAbsoluteResponse(url, { method: "GET" }).andThen(
+      (response) => {
+        if (!response.ok)
           return errAsync<
-            { value: unknown; nextUrl: string | null },
+            {
+              value: unknown;
+              nextUrl: string | null;
+            },
             GitHubError
-          >(next.error);
-        return okAsync({ value, nextUrl: next.value });
-      });
-    });
+          >({
+            type: "GitHubError",
+            operation: url,
+            status: response.status,
+            message: response.statusText,
+          });
+        return readResponseBytes(
+          response,
+          this.jsonResponseBytes,
+          this.requestTimeoutMs,
+          url,
+        )
+          .andThen((bytes) => parseJsonBytes(bytes, url))
+          .andThen((value) => {
+            const next = nextLink(response.headers.get("link"), url);
+            if (next.isErr())
+              return errAsync<
+                { value: unknown; nextUrl: string | null },
+                GitHubError
+              >(next.error);
+            return okAsync({ value, nextUrl: next.value });
+          });
+      },
+    );
   }
 
   private repoUrl(path: string): string {
@@ -1127,46 +1332,28 @@ export class GitHubRestClient
   }
 
   private requestJson(path: string): ResultAsync<unknown, GitHubError> {
-    return this.request(path).andThen((response) =>
-      ResultAsync.fromThrowable(
-        () => Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
-        () => invalidResponse(path),
-      )(),
-    );
+    return this.requestAbsoluteJson(this.repoUrl(path), { method: "GET" });
   }
 
   private requestJsonWithInit(
     path: string,
     init: RequestInit,
   ): ResultAsync<unknown, GitHubError> {
-    return this.request(path, init).andThen((response) =>
-      ResultAsync.fromThrowable(
-        () => Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
-        () => invalidResponse(path),
-      )(),
-    );
+    return this.requestAbsoluteJson(this.repoUrl(path), init);
   }
+
   private requestAbsoluteJson(
     url: string,
     init: RequestInit,
   ): ResultAsync<unknown, GitHubError> {
-    const headers = new Headers(init.headers);
-    headers.set("accept", "application/vnd.github+json");
-    if (this.token !== undefined)
-      headers.set("authorization", `Bearer ${this.token}`);
-    return ResultAsync.fromPromise(
-      this.requestFetch(url, { ...init, headers }),
-      (cause) => ({
-        type: "GitHubError" as const,
-        operation: url,
-        message: String(cause),
-      }),
-    ).andThen((response) =>
+    return this.requestAbsoluteResponse(url, init).andThen((response) =>
       response.ok
-        ? ResultAsync.fromThrowable(
-            () => response.json(),
-            () => invalidResponse(url),
-          )()
+        ? readResponseBytes(
+            response,
+            this.jsonResponseBytes,
+            this.requestTimeoutMs,
+            url,
+          ).andThen((bytes) => parseJsonBytes(bytes, url))
         : errAsync({
             type: "GitHubError" as const,
             operation: url,
@@ -1176,37 +1363,47 @@ export class GitHubRestClient
     );
   }
 
+  private requestAbsoluteResponse(
+    url: string,
+    init: RequestInit,
+  ): ResultAsync<Response, GitHubError> {
+    const headers = new Headers(init.headers);
+    headers.set("accept", "application/vnd.github+json");
+    if (this.token !== undefined)
+      headers.set("authorization", `Bearer ${this.token}`);
+    return ResultAsync.fromThrowable(
+      () =>
+        withTimeout(
+          () => this.requestFetch(url, { ...init, headers }),
+          this.requestTimeoutMs,
+        ),
+      (cause) => ({
+        type: "GitHubError" as const,
+        operation: url,
+        message: String(cause),
+      }),
+    )();
+  }
+
   private request(
     path: string,
     init?: RequestInit,
   ): ResultAsync<ArrayBuffer, GitHubError> {
-    const headers = new Headers(init?.headers);
-    headers.set("accept", "application/vnd.github+json");
-    if (this.token !== undefined)
-      headers.set("authorization", `Bearer ${this.token}`);
-    return ResultAsync.fromPromise(
-      this.requestFetch(`${this.apiUrl}/repos/${this.repository}${path}`, {
-        ...init,
-        headers,
-      }),
-      (cause) => ({
-        type: "GitHubError" as const,
-        operation: path,
-        message: String(cause),
-      }),
-    ).andThen((response) =>
-      response.ok
-        ? ResultAsync.fromPromise(response.arrayBuffer(), (cause) => ({
-            type: "GitHubError" as const,
-            operation: path,
-            message: String(cause),
-          }))
-        : errAsync({
-            type: "GitHubError" as const,
-            operation: path,
-            status: response.status,
-            message: response.statusText,
-          }),
+    return this.requestAbsoluteResponse(this.repoUrl(path), init ?? {}).andThen(
+      (response) =>
+        response.ok
+          ? readResponseBytes(
+              response,
+              this.binaryResponseBytes,
+              this.requestTimeoutMs,
+              path,
+            ).map((bytes) => bytes.buffer as ArrayBuffer)
+          : errAsync({
+              type: "GitHubError" as const,
+              operation: path,
+              status: response.status,
+              message: response.statusText,
+            }),
     );
   }
 }
@@ -1215,11 +1412,12 @@ function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
   if (
     !isRecord(value) ||
     !isRecord(value.repository) ||
-    typeof value.path !== "string"
+    !isString(value.path) ||
+    value.path.length > GITHUB_REST_READ_LIMITS.stringLength
   )
     return undefined;
   const separator = value.path.lastIndexOf("@");
-  if (separator <= 0) return undefined;
+  if (separator <= 0 || separator === value.path.length - 1) return undefined;
   if (
     !isPositiveInt(value.repository.id) ||
     !isPositiveInt(value.id) ||
@@ -1228,9 +1426,13 @@ function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
     return undefined;
   if (
     !isString(value.event) ||
+    value.event.length > GITHUB_REST_READ_LIMITS.stringLength ||
     !isString(value.head_branch) ||
-    !isString(value.head_sha) ||
-    (value.conclusion !== null && !isString(value.conclusion))
+    value.head_branch.length > GITHUB_REST_READ_LIMITS.stringLength ||
+    !isFullSha(value.head_sha) ||
+    (value.conclusion !== null &&
+      (!isString(value.conclusion) ||
+        value.conclusion.length > GITHUB_REST_READ_LIMITS.stringLength))
   )
     return undefined;
   return {
@@ -1247,9 +1449,18 @@ function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
 }
 
 function parseWorkflowJob(value: unknown): WorkflowJobMetadata | undefined {
-  if (!isRecord(value) || !isPositiveInt(value.id) || !isString(value.name))
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.name) ||
+    value.name.length > GITHUB_REST_READ_LIMITS.stringLength
+  )
     return undefined;
-  if (value.conclusion !== null && !isString(value.conclusion))
+  if (
+    value.conclusion !== null &&
+    (!isString(value.conclusion) ||
+      value.conclusion.length > GITHUB_REST_READ_LIMITS.stringLength)
+  )
     return undefined;
   return { id: value.id, name: value.name, conclusion: value.conclusion };
 }
@@ -1259,11 +1470,17 @@ function parseArtifact(value: unknown): ActionsArtifactMetadata | undefined {
     !isRecord(value) ||
     !isPositiveInt(value.id) ||
     !isString(value.name) ||
+    value.name.length > GITHUB_REST_READ_LIMITS.stringLength ||
     typeof value.expired !== "boolean" ||
     !isPositiveInt(value.size_in_bytes)
   )
     return undefined;
-  if (value.digest !== undefined && !isString(value.digest)) return undefined;
+  if (
+    value.digest !== undefined &&
+    (!isString(value.digest) ||
+      value.digest.length > GITHUB_REST_READ_LIMITS.stringLength)
+  )
+    return undefined;
   return {
     id: value.id,
     name: value.name,
@@ -1277,11 +1494,15 @@ function parseRelease(value: unknown): GitHubRelease | undefined {
     !isRecord(value) ||
     !isPositiveInt(value.id) ||
     !isString(value.tag_name) ||
+    value.tag_name.length > GITHUB_REST_READ_LIMITS.stringLength ||
     !isString(value.target_commitish) ||
+    value.target_commitish.length > GITHUB_REST_READ_LIMITS.stringLength ||
     !isString(value.body) ||
+    value.body.length > 64 * 1024 ||
     typeof value.draft !== "boolean" ||
     typeof value.immutable !== "boolean" ||
-    !Array.isArray(value.assets)
+    !Array.isArray(value.assets) ||
+    value.assets.length > GITHUB_REST_READ_LIMITS.pageItems
   )
     return undefined;
   const assets = value.assets.map(parseReleaseAsset);
@@ -1301,10 +1522,16 @@ function parseReleaseAsset(value: unknown): GitHubReleaseAsset | undefined {
     !isRecord(value) ||
     !isPositiveInt(value.id) ||
     !isString(value.name) ||
+    value.name.length > GITHUB_REST_READ_LIMITS.stringLength ||
     !isPositiveInt(value.size)
   )
     return undefined;
-  if (value.digest !== undefined && !isString(value.digest)) return undefined;
+  if (
+    value.digest !== undefined &&
+    (!isString(value.digest) ||
+      value.digest.length > GITHUB_REST_READ_LIMITS.stringLength)
+  )
+    return undefined;
   return {
     id: value.id,
     name: value.name,
@@ -1316,9 +1543,15 @@ function parseReleaseAsset(value: unknown): GitHubReleaseAsset | undefined {
 function parsePullRequestPage(
   value: unknown,
   operation: string,
+  repository: string,
+  pageSize: number,
+  stringLength: number,
 ): Result<{ items: readonly GitHubPullRequestSummary[] }, GitHubError> {
-  if (!Array.isArray(value)) return err(invalidResponse(operation));
-  const pulls = value.map(parsePullRequest);
+  if (!Array.isArray(value) || value.length > pageSize)
+    return err(invalidResponse(operation));
+  const pulls = value.map((entry) =>
+    parsePullRequest(entry, repository, stringLength),
+  );
   if (pulls.some((pull) => pull === undefined))
     return err(invalidResponse(operation));
   return ok({ items: pulls as readonly GitHubPullRequestSummary[] });
@@ -1326,46 +1559,81 @@ function parsePullRequestPage(
 
 function parsePullRequest(
   value: unknown,
+  repository?: string,
+  stringLength = GITHUB_REST_READ_LIMITS.stringLength,
 ): GitHubPullRequestSummary | undefined {
   if (
     !isRecord(value) ||
     !isPositiveInt(value.number) ||
     !isString(value.html_url) ||
+    value.html_url.length > stringLength ||
     !isString(value.title) ||
+    value.title.length > stringLength ||
+    !isString(value.body) ||
+    value.body.length > stringLength * 8 ||
     !isRecord(value.head) ||
     !isString(value.head.ref) ||
-    !isString(value.head.sha) ||
+    value.head.ref.length > stringLength ||
+    !isFullSha(value.head.sha) ||
     !isRecord(value.base) ||
-    !isString(value.base.ref)
+    !isString(value.base.ref) ||
+    value.base.ref.length > stringLength ||
+    !isFullSha(value.base.sha) ||
+    !hasOwn(value, "labels") ||
+    !Array.isArray(value.labels) ||
+    value.labels.length > 32 ||
+    !hasOwn(value, "merged_at") ||
+    !hasOwn(value, "closed_at") ||
+    !hasOwn(value, "created_at") ||
+    !hasOwn(value, "updated_at")
   )
     return undefined;
   if (value.state !== "open" && value.state !== "closed") return undefined;
-  const labels = Array.isArray(value.labels)
-    ? value.labels.map((label) =>
-        isRecord(label) && isString(label.name) ? label.name : undefined,
-      )
-    : [];
-  if (labels.some((label) => label === undefined)) return undefined;
   if (
-    value.merge_commit_sha !== undefined &&
-    value.merge_commit_sha !== null &&
-    !isString(value.merge_commit_sha)
+    !isTimestamp(value.created_at) ||
+    !isTimestamp(value.updated_at) ||
+    (value.closed_at !== null && !isTimestamp(value.closed_at)) ||
+    (value.merged_at !== null && !isTimestamp(value.merged_at))
   )
     return undefined;
-  let mergeCommitSha: string | null | undefined;
-  if (isString(value.merge_commit_sha)) mergeCommitSha = value.merge_commit_sha;
-  else if (value.merge_commit_sha === null) mergeCommitSha = null;
+  const labels = value.labels.map((label) =>
+    isRecord(label) && isString(label.name) && label.name.length <= stringLength
+      ? label.name
+      : undefined,
+  );
+  if (labels.some((label) => label === undefined)) return undefined;
+  if (
+    !hasOwn(value, "merge_commit_sha") ||
+    (value.merge_commit_sha !== undefined &&
+      value.merge_commit_sha !== null &&
+      !isFullSha(value.merge_commit_sha))
+  )
+    return undefined;
+  const merged = value.merged_at !== null;
+  if (value.state === "open" && value.closed_at !== null) return undefined;
+  if (value.state === "closed" && value.closed_at === null) return undefined;
+  if (merged && value.state !== "closed") return undefined;
+  if (merged && value.closed_at === null) return undefined;
+  if (hasOwn(value, "merged") && value.merged !== merged) return undefined;
+  if (hasOwn(value, "merged") && typeof value.merged !== "boolean")
+    return undefined;
+  if (merged && value.merge_commit_sha === null) return undefined;
+  if (!merged && value.merge_commit_sha !== null) return undefined;
+  if (repository !== undefined) {
+    const canonical = `https://github.com/${repository}/pull/${value.number}`;
+    if (value.html_url !== canonical) return undefined;
+  }
   return {
     number: value.number,
     url: value.html_url,
     state: value.state,
-    merged: value.merged === true || isString(value.merged_at),
-    mergeCommitSha,
+    merged,
+    mergeCommitSha: value.merge_commit_sha,
     headRef: value.head.ref,
     headSha: value.head.sha,
     baseRef: value.base.ref,
     title: value.title,
-    body: isString(value.body) ? value.body : "",
+    body: value.body,
     labels: labels as string[],
   };
 }
@@ -1500,8 +1768,171 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isString(value: unknown): value is string {
   return typeof value === "string";
 }
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(value, key);
+}
 function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+function isFullSha(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{40}$/.test(value) &&
+    value !== ZERO_GIT_OID
+  );
+}
+function isTimestamp(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length > GITHUB_REST_READ_LIMITS.stringLength ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  )
+    return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && value !== undefined && value > 0
+    ? value
+    : fallback;
+}
+function safeGitHubRef(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= GITHUB_REST_READ_LIMITS.stringLength &&
+    (value.startsWith("refs/heads/") || value.startsWith("refs/tags/")) &&
+    !value.includes("..") &&
+    !value.includes("//") &&
+    !value.includes("?") &&
+    !value.includes("#") &&
+    !hasUnsafePathCharacter(value)
+  );
+}
+function safeGitHubPath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= GITHUB_REST_READ_LIMITS.stringLength &&
+    !value.startsWith("/") &&
+    !value.includes("..") &&
+    !value.includes("//") &&
+    !value.includes("\\") &&
+    !value.includes("?") &&
+    !value.includes("#") &&
+    !hasUnsafePathCharacter(value)
+  );
+}
+function hasUnsafePathCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+function decodeBase64Utf8(value: string): string | undefined {
+  const normalized = value.replace(/\s/g, "");
+  if (normalized.length === 0 || normalized.length % 4 !== 0) return undefined;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return undefined;
+  const decoded = Result.fromThrowable(
+    () => atob(normalized),
+    () => undefined,
+  )();
+  if (decoded.isErr()) return undefined;
+  const bytes = Uint8Array.from(decoded.value, (character) =>
+    character.charCodeAt(0),
+  );
+  const text = Result.fromThrowable(
+    () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    () => undefined,
+  )();
+  return text.isOk() ? text.value : undefined;
+}
+async function withTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`GitHub request timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([operation(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+function readResponseBytes(
+  response: Response,
+  maxBytes: number,
+  timeoutMs: number,
+  operation: string,
+): ResultAsync<Uint8Array, GitHubError> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (!Number.isSafeInteger(length) || length < 0 || length > maxBytes)
+      return errAsync(
+        truncatedResponse(operation, `response exceeds ${maxBytes} bytes`),
+      );
+  }
+  return ResultAsync.fromThrowable(
+    () =>
+      withTimeout(async () => {
+        if (response.body === null) {
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength > maxBytes)
+            throw new Error(`response exceeds ${maxBytes} bytes`);
+          return bytes;
+        }
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          total += next.value.byteLength;
+          if (total > maxBytes) {
+            await reader.cancel();
+            throw new Error(`response exceeds ${maxBytes} bytes`);
+          }
+          chunks.push(next.value);
+        }
+        const bytes = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return bytes;
+      }, timeoutMs),
+    (cause) => {
+      const message = String(cause);
+      return message.includes("exceeds")
+        ? truncatedResponse(operation, message)
+        : {
+            type: "GitHubError" as const,
+            operation,
+            message,
+          };
+    },
+  )();
+}
+function parseJsonBytes(
+  bytes: Uint8Array,
+  operation: string,
+): Result<unknown, GitHubError> {
+  const decoded = Result.fromThrowable(
+    () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    () => invalidResponse(operation),
+  )();
+  if (decoded.isErr()) return err(decoded.error);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(decoded.value) as unknown,
+    () => invalidResponse(operation),
+  )();
+  return parsed.isOk() ? ok(parsed.value) : err(parsed.error);
 }
 function invalidResponse(operation: string): GitHubError {
   return {
@@ -1661,6 +2092,13 @@ function parseProtectionChecks(
   bounds: GreenMainHeadBounds,
 ): ResultAsync<readonly RequiredCheck[], GitHubError> {
   if (!isRecord(value)) return errAsync(invalidResponse(operation));
+  if (
+    (Array.isArray(value.checks) &&
+      value.checks.length > GITHUB_REST_READ_LIMITS.pageItems) ||
+    (Array.isArray(value.contexts) &&
+      value.contexts.length > GITHUB_REST_READ_LIMITS.pageItems)
+  )
+    return errAsync(invalidResponse(operation));
   const fromChecks = Array.isArray(value.checks)
     ? value.checks.map((entry) => parseNamedCheck(entry, "context"))
     : [];
@@ -1671,7 +2109,11 @@ function parseProtectionChecks(
   );
   const fromContexts = Array.isArray(value.contexts)
     ? value.contexts.flatMap((context) => {
-        if (!isString(context)) return [undefined];
+        if (
+          !isString(context) ||
+          context.length > GITHUB_REST_READ_LIMITS.stringLength
+        )
+          return [undefined];
         if (named.has(context)) return [];
         return [{ name: context, source: "either" as const }];
       })
@@ -1694,7 +2136,8 @@ function parseRuleChecks(
   operation: string,
   bounds: GreenMainHeadBounds,
 ): ResultAsync<readonly RequiredCheck[], GitHubError> {
-  if (!Array.isArray(value)) return errAsync(invalidResponse(operation));
+  if (!Array.isArray(value) || value.length > GITHUB_REST_READ_LIMITS.pageItems)
+    return errAsync(invalidResponse(operation));
   const checks: RequiredCheck[] = [];
   for (const rule of value) {
     if (!isRecord(rule) || !isString(rule.type)) {
@@ -1703,7 +2146,9 @@ function parseRuleChecks(
     if (rule.type !== "required_status_checks") continue;
     if (
       !isRecord(rule.parameters) ||
-      !Array.isArray(rule.parameters.required_status_checks)
+      !Array.isArray(rule.parameters.required_status_checks) ||
+      rule.parameters.required_status_checks.length >
+        GITHUB_REST_READ_LIMITS.pageItems
     )
       return errAsync(invalidResponse(operation));
     for (const entry of rule.parameters.required_status_checks) {
@@ -1723,7 +2168,12 @@ function parseNamedCheck(
   value: unknown,
   nameKey: "context",
 ): RequiredCheck | undefined {
-  if (!isRecord(value) || !isString(value[nameKey])) return undefined;
+  if (
+    !isRecord(value) ||
+    !isString(value[nameKey]) ||
+    value[nameKey].length > GITHUB_REST_READ_LIMITS.stringLength
+  )
+    return undefined;
   const appId = value.app_id ?? value.integration_id;
   if (appId !== undefined && appId !== null && !isPositiveInt(appId))
     return undefined;
@@ -1739,7 +2189,8 @@ function parseCommitStatusPage(
   value: unknown,
   operation: string,
 ): Result<{ items: readonly CommitStatusReading[] }, GitHubError> {
-  if (!Array.isArray(value)) return err(invalidResponse(operation));
+  if (!Array.isArray(value) || value.length > GITHUB_REST_READ_LIMITS.pageItems)
+    return err(invalidResponse(operation));
   const items = value.map(parseCommitStatus);
   if (items.some((item) => item === undefined))
     return err(invalidResponse(operation));
@@ -1747,11 +2198,25 @@ function parseCommitStatusPage(
 }
 
 function parseCommitStatus(value: unknown): CommitStatusReading | undefined {
-  if (!isRecord(value) || !isString(value.context) || !isString(value.state))
+  if (
+    !isRecord(value) ||
+    !isString(value.context) ||
+    value.context.length > GITHUB_REST_READ_LIMITS.stringLength ||
+    !isString(value.state) ||
+    value.state.length > GITHUB_REST_READ_LIMITS.stringLength
+  )
     return undefined;
   let updatedAt = "";
-  if (isString(value.updated_at)) updatedAt = value.updated_at;
-  else if (isString(value.created_at)) updatedAt = value.created_at;
+  if (
+    isString(value.updated_at) &&
+    value.updated_at.length <= GITHUB_REST_READ_LIMITS.stringLength
+  )
+    updatedAt = value.updated_at;
+  else if (
+    isString(value.created_at) &&
+    value.created_at.length <= GITHUB_REST_READ_LIMITS.stringLength
+  )
+    updatedAt = value.created_at;
   return { context: value.context, state: value.state, updatedAt };
 }
 
@@ -1762,7 +2227,11 @@ function parseCheckRunPage(
   { items: readonly CheckRunReading[]; totalCount?: number },
   GitHubError
 > {
-  if (!isRecord(value) || !Array.isArray(value.check_runs))
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.check_runs) ||
+    value.check_runs.length > GITHUB_REST_READ_LIMITS.pageItems
+  )
     return err(invalidResponse(operation));
   if (value.total_count !== undefined && !isNonNegativeInt(value.total_count))
     return err(invalidResponse(operation));
@@ -1776,9 +2245,19 @@ function parseCheckRunPage(
 }
 
 function parseCheckRun(value: unknown): CheckRunReading | undefined {
-  if (!isRecord(value) || !isString(value.name) || !isString(value.status))
+  if (
+    !isRecord(value) ||
+    !isString(value.name) ||
+    value.name.length > GITHUB_REST_READ_LIMITS.stringLength ||
+    !isString(value.status) ||
+    value.status.length > GITHUB_REST_READ_LIMITS.stringLength
+  )
     return undefined;
-  if (value.conclusion !== null && !isString(value.conclusion))
+  if (
+    value.conclusion !== null &&
+    (!isString(value.conclusion) ||
+      value.conclusion.length > GITHUB_REST_READ_LIMITS.stringLength)
+  )
     return undefined;
   if (value.id !== undefined && !isPositiveInt(value.id)) return undefined;
   let appId: number | undefined;
