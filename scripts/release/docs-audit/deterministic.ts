@@ -1,246 +1,204 @@
 /**
- * Deterministic docs checker: local links, sidebar/search coverage, and
- * README/tarball docs inventory. Fixture-tested here; the real repository
- * is expected to pass only after Task 29 fixes the current drift.
+ * Deterministic docs checker: local links, navigation/search coverage, and
+ * README/tarball docs inventory.
+ *
+ * The checker never reads PR-controlled executable source for authority.
+ * Navigation, palette search, and compatibility routes all come from the
+ * checked-in declarative contract in `packages/docs/src/data/docs-navigation.json`,
+ * which the docs site consumes directly. Loading and bounds live in `tree.ts`,
+ * navigation validation in `navigation.ts`, link work in `links.ts`, and the
+ * shared shapes in `contract.ts`. This module holds only orchestration and
+ * documentation policy.
  */
-import { join } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
-import { checkLinks } from "../../docs/check-links.js";
-import {
-  NPM_DIGEST_PREFIX,
-  PUBLIC_PACKAGES,
-  type PublicPackageName,
-} from "../constants.js";
+import { PUBLIC_PACKAGES, type PublicPackageName } from "../constants.js";
 import { publishablePackageNames } from "../package-policy.js";
 import {
-  DOCS_AUDIT_LIMITS,
-  DOCS_SITE_ASTRO_CONFIG,
-  DOCS_SITE_CONTENT_ROOT,
-  DOCS_SITE_SEARCH_DATA,
+  boundText,
+  buildResult,
+  consumeParserWork,
+  createParserBudget,
+  type DeterministicDocsCheckError,
+  type DeterministicDocsCheckResult,
+  type DeterministicDocsIssue,
+  failureResult,
+  type ParserBudget,
+} from "./contract.js";
+import { collectLinkIssues } from "./links.js";
+import { parseDocsNavigation } from "./navigation.js";
+import {
+  DOCS_SITE_NAVIGATION_DATA,
   REQUIRED_ROOT_README,
   REQUIRED_TARBALL_DOC_FILES,
 } from "./policy.js";
+import {
+  collectDocsTree,
+  contentPageSlugs,
+  type DocsTree,
+  slugToContentPath,
+  validateDocsTreeBounds,
+} from "./tree.js";
 
-export const DETERMINISTIC_DOCS_CHECK_VERSION = 1 as const;
-
-export type DeterministicDocsIssueKind =
-  | "broken-link"
-  | "broken-anchor"
-  | "sidebar-missing-page"
-  | "sidebar-unknown-entry"
-  | "search-missing-page"
-  | "search-unknown-entry"
-  | "missing-readme"
-  | "missing-tarball-doc"
-  | "empty-readme"
-  | "missing-files-entry";
-
-export interface DeterministicDocsIssue {
-  readonly kind: DeterministicDocsIssueKind;
-  readonly path: string;
-  readonly detail: string;
-}
-
-export interface DeterministicDocsCheckResult {
-  readonly schemaVersion: typeof DETERMINISTIC_DOCS_CHECK_VERSION;
-  readonly passed: boolean;
-  readonly issues: readonly DeterministicDocsIssue[];
-  readonly digest: string;
-}
-
-export type DeterministicDocsCheckError =
-  | { type: "DeterministicDocsRootInvalid"; path: string }
-  | { type: "DeterministicDocsIoFailed"; path: string; message: string };
-
-const DOCUMENT_GLOBS = [
-  "README.md",
-  "docs/**/*.md",
-  "packages/*/README.md",
-  "packages/adapters/*/README.md",
-  "packages/docs/README.md",
-  `${DOCS_SITE_CONTENT_ROOT}/**/*.{md,mdx}`,
-] as const;
+export {
+  canonicalJson,
+  DETERMINISTIC_DOCS_CHECK_VERSION,
+  DETERMINISTIC_DOCS_LIMITS,
+  type DeterministicDocsBound,
+  type DeterministicDocsCheckError,
+  type DeterministicDocsCheckResult,
+  type DeterministicDocsIssue,
+  type DeterministicDocsIssueKind,
+  type DeterministicDocsParseReason,
+  docsAuditBytesDigest,
+  docsAuditDigest,
+} from "./contract.js";
 
 export function runDeterministicDocsCheck(
   contentRoot: string,
 ): ResultAsync<DeterministicDocsCheckResult, DeterministicDocsCheckError> {
-  return ResultAsync.fromPromise<LoadedTree, DeterministicDocsCheckError>(
-    collectTree(contentRoot),
+  const loaded = ResultAsync.fromPromise(
+    collectDocsTree(contentRoot),
     (cause): DeterministicDocsCheckError => ({
       type: "DeterministicDocsIoFailed",
       path: contentRoot,
-      message: String(cause),
+      message: boundText(String(cause), 256),
     }),
-  ).andThen(
-    (
-      tree,
-    ): Result<DeterministicDocsCheckResult, DeterministicDocsCheckError> => {
+  );
+  return loaded.andThen((treeResult) =>
+    treeResult.andThen((tree) => {
       if (tree.rootMissing)
         return err<DeterministicDocsCheckResult, DeterministicDocsCheckError>({
           type: "DeterministicDocsRootInvalid",
           path: contentRoot,
         });
-      return ok<DeterministicDocsCheckResult, DeterministicDocsCheckError>(
-        evaluateTree(tree.files),
-      );
-    },
+      return evaluateTree(tree.files);
+    }),
   );
 }
 
-export function evaluateDeterministicDocsTree(
-  files: Readonly<Record<string, string>>,
-): DeterministicDocsCheckResult {
+/**
+ * Evaluate an already loaded tree while preserving typed input failures.
+ * Production callers should prefer `runDeterministicDocsCheck`, which applies
+ * the read bounds before loading files.
+ */
+export function evaluateDeterministicDocsTreeSafe(
+  files: DocsTree,
+): Result<DeterministicDocsCheckResult, DeterministicDocsCheckError> {
   return evaluateTree(files);
 }
 
-interface LoadedTree {
-  rootMissing: boolean;
-  files: Record<string, string>;
-}
-
-async function collectTree(contentRoot: string): Promise<LoadedTree> {
-  const rootFile = Bun.file(join(contentRoot, REQUIRED_ROOT_README));
-  const rootExists = await rootFile.exists();
-  const astro = Bun.file(join(contentRoot, DOCS_SITE_ASTRO_CONFIG));
-  const hasAstro = await astro.exists();
-  if (!rootExists && !hasAstro) {
-    const probe = Bun.file(contentRoot);
-    if (!(await probe.exists())) return { rootMissing: true, files: {} };
-  }
-  const files: Record<string, string> = {};
-  for (const pattern of DOCUMENT_GLOBS) {
-    for await (const path of new Bun.Glob(pattern).scan({
-      cwd: contentRoot,
-      onlyFiles: true,
-      dot: false,
-    })) {
-      files[normalizeRel(path)] = await Bun.file(
-        join(contentRoot, path),
-      ).text();
-    }
-  }
-  for (const extra of [DOCS_SITE_ASTRO_CONFIG, DOCS_SITE_SEARCH_DATA]) {
-    const file = Bun.file(join(contentRoot, extra));
-    if (await file.exists()) files[extra] = await file.text();
-  }
-  for (const packageName of publishablePackageNames()) {
-    const directory = PUBLIC_PACKAGES[packageName].directory;
-    const manifestPath = `${directory}/package.json`;
-    const manifest = Bun.file(join(contentRoot, manifestPath));
-    if (await manifest.exists()) files[manifestPath] = await manifest.text();
-    for (const doc of REQUIRED_TARBALL_DOC_FILES) {
-      const path = `${directory}/${doc}`;
-      if (files[path] !== undefined) continue;
-      const file = Bun.file(join(contentRoot, path));
-      if (await file.exists()) files[path] = await file.text();
-    }
-  }
-  return { rootMissing: false, files };
+/** Backwards-compatible value API for fixture and unit-test callers. */
+export function evaluateDeterministicDocsTree(
+  files: DocsTree,
+): DeterministicDocsCheckResult {
+  const result = evaluateDeterministicDocsTreeSafe(files);
+  if (result.isOk()) return result.value;
+  return failureResult(result.error);
 }
 
 function evaluateTree(
-  files: Readonly<Record<string, string>>,
-): DeterministicDocsCheckResult {
+  files: DocsTree,
+): Result<DeterministicDocsCheckResult, DeterministicDocsCheckError> {
+  const bounded = validateDocsTreeBounds(files);
+  if (bounded.isErr()) return err(bounded.error);
+
   const issues: DeterministicDocsIssue[] = [];
-  collectLinkIssues(files, issues);
-  collectSidebarSearchIssues(files, issues);
-  collectInventoryIssues(files, issues);
-  issues.sort(compareIssue);
-  const payload = {
-    schemaVersion: DETERMINISTIC_DOCS_CHECK_VERSION,
-    passed: issues.length === 0,
-    issues: issues.slice(0, DOCS_AUDIT_LIMITS.issues).map((issue) => ({
-      ...issue,
-      path: boundText(issue.path, DOCS_AUDIT_LIMITS.issuePathChars),
-      detail: boundText(issue.detail, DOCS_AUDIT_LIMITS.issuePathChars),
-    })),
-  };
-  return {
-    ...payload,
-    digest: docsAuditDigest(payload),
-  };
+  const parserBudget = createParserBudget();
+  const links = collectLinkIssues(files, issues);
+  if (links.isErr()) return err(links.error);
+  const navigation = collectNavigationIssues(files, issues, parserBudget);
+  if (navigation.isErr()) return err(navigation.error);
+  const inventory = collectInventoryIssues(files, issues, parserBudget);
+  if (inventory.isErr()) return err(inventory.error);
+  return ok(buildResult(issues));
 }
 
-function collectLinkIssues(
-  files: Readonly<Record<string, string>>,
+/**
+ * Every public content page must be navigated and searchable unless it is an
+ * exact declared compatibility route, and every declared route must exist.
+ */
+function collectNavigationIssues(
+  files: DocsTree,
   issues: DeterministicDocsIssue[],
-): void {
-  const documents: Record<string, string> = {};
-  for (const [path, text] of Object.entries(files))
-    if (path.endsWith(".md") || path.endsWith(".mdx")) documents[path] = text;
-  const result = checkLinks({ documents });
-  if (result.isOk()) return;
-  for (const error of result.error) {
-    issues.push({
-      kind: error.type === "BrokenAnchor" ? "broken-anchor" : "broken-link",
-      path: error.source,
-      detail: error.target,
-    });
-  }
-}
-
-function collectSidebarSearchIssues(
-  files: Readonly<Record<string, string>>,
-  issues: DeterministicDocsIssue[],
-): void {
+  parserBudget: ParserBudget,
+): Result<void, DeterministicDocsCheckError> {
+  const contract = parseDocsNavigation(
+    files[DOCS_SITE_NAVIGATION_DATA],
+    DOCS_SITE_NAVIGATION_DATA,
+    parserBudget,
+  );
+  if (contract.isErr()) return err(contract.error);
+  const { sidebarRoutes, searchRoutes, compatibilityRoutes } = contract.value;
   const pages = contentPageSlugs(files);
-  const sidebar = parseSidebarSlugs(files[DOCS_SITE_ASTRO_CONFIG] ?? "");
-  const search = parseSearchSlugs(files[DOCS_SITE_SEARCH_DATA] ?? "");
-  for (const slug of pages)
-    if (!sidebar.has(slug))
+
+  for (const slug of pages) {
+    if (compatibilityRoutes.has(slug)) continue;
+    if (!sidebarRoutes.has(slug))
       issues.push({
         kind: "sidebar-missing-page",
         path: slugToContentPath(slug, files),
         detail: slug,
       });
-  for (const slug of sidebar)
-    if (!pages.has(slug))
-      issues.push({
-        kind: "sidebar-unknown-entry",
-        path: DOCS_SITE_ASTRO_CONFIG,
-        detail: slug,
-      });
-  for (const slug of pages)
-    if (!search.has(slug))
+    if (!searchRoutes.has(slug))
       issues.push({
         kind: "search-missing-page",
         path: slugToContentPath(slug, files),
         detail: slug,
       });
-  for (const slug of search)
+  }
+  for (const slug of sidebarRoutes)
+    if (!pages.has(slug))
+      issues.push({
+        kind: "sidebar-unknown-entry",
+        path: DOCS_SITE_NAVIGATION_DATA,
+        detail: slug,
+      });
+  for (const slug of searchRoutes)
     if (!pages.has(slug))
       issues.push({
         kind: "search-unknown-entry",
-        path: DOCS_SITE_SEARCH_DATA,
+        path: DOCS_SITE_NAVIGATION_DATA,
         detail: slug,
       });
+  return ok(undefined);
 }
 
 function collectInventoryIssues(
-  files: Readonly<Record<string, string>>,
+  files: DocsTree,
   issues: DeterministicDocsIssue[],
-): void {
-  if (files[REQUIRED_ROOT_README] === undefined)
+  parserBudget: ParserBudget,
+): Result<void, DeterministicDocsCheckError> {
+  const rootReadme = files[REQUIRED_ROOT_README];
+  if (rootReadme === undefined)
     issues.push({
       kind: "missing-readme",
       path: REQUIRED_ROOT_README,
       detail: "root",
     });
-  else if (!isUsefulReadme(files[REQUIRED_ROOT_README] ?? ""))
+  else if (!isUsefulReadme(rootReadme))
     issues.push({
       kind: "empty-readme",
       path: REQUIRED_ROOT_README,
       detail: "root",
     });
-  for (const packageName of publishablePackageNames())
-    collectPackageInventory(packageName, files, issues);
+  for (const packageName of publishablePackageNames()) {
+    const inventory = collectPackageInventory(
+      packageName,
+      files,
+      issues,
+      parserBudget,
+    );
+    if (inventory.isErr()) return err(inventory.error);
+  }
+  return ok(undefined);
 }
 
 function collectPackageInventory(
   packageName: PublicPackageName,
-  files: Readonly<Record<string, string>>,
+  files: DocsTree,
   issues: DeterministicDocsIssue[],
-): void {
+  parserBudget: ParserBudget,
+): Result<void, DeterministicDocsCheckError> {
   const directory = PUBLIC_PACKAGES[packageName].directory;
   const readmePath = `${directory}/README.md`;
   const readme = files[readmePath];
@@ -256,133 +214,54 @@ function collectPackageInventory(
       path: readmePath,
       detail: packageName,
     });
-  const manifestText = files[`${directory}/package.json`];
-  const listed = listedTarballDocs(manifestText);
+
+  const manifestPath = `${directory}/package.json`;
+  const listed = listedTarballDocs(
+    files[manifestPath],
+    manifestPath,
+    parserBudget,
+  );
+  if (listed.isErr()) return err(listed.error);
   for (const doc of REQUIRED_TARBALL_DOC_FILES) {
-    if (!listed.includes(doc))
+    if (!listed.value.includes(doc))
       issues.push({
         kind: "missing-files-entry",
-        path: `${directory}/package.json`,
+        path: manifestPath,
         detail: doc,
       });
-    const path = `${directory}/${doc}`;
     if (doc === "LICENSE") continue;
+    const path = `${directory}/${doc}`;
     if (files[path] === undefined)
-      issues.push({
-        kind: "missing-tarball-doc",
-        path,
-        detail: packageName,
-      });
+      issues.push({ kind: "missing-tarball-doc", path, detail: packageName });
   }
+  return ok(undefined);
 }
 
 function listedTarballDocs(
   manifestText: string | undefined,
-): readonly string[] {
-  if (manifestText === undefined) return [];
+  manifestPath: string,
+  parserBudget: ParserBudget,
+): Result<readonly string[], DeterministicDocsCheckError> {
+  if (manifestText === undefined) return ok([]);
+  const work = consumeParserWork(
+    parserBudget,
+    manifestPath,
+    manifestText.length,
+  );
+  if (work.isErr()) return err(work.error);
   const parsed = Result.fromThrowable(
     () => JSON.parse(manifestText) as { files?: unknown },
     () => undefined,
   )();
-  if (parsed.isErr() || parsed.value === undefined) return [];
-  const files = parsed.value.files;
-  if (!Array.isArray(files)) return [];
-  return files.filter((entry): entry is string => typeof entry === "string");
-}
-
-function contentPageSlugs(
-  files: Readonly<Record<string, string>>,
-): Set<string> {
-  const slugs = new Set<string>();
-  const prefix = `${DOCS_SITE_CONTENT_ROOT}/`;
-  for (const path of Object.keys(files)) {
-    if (!path.startsWith(prefix)) continue;
-    if (!path.endsWith(".md") && !path.endsWith(".mdx")) continue;
-    const relative = path.slice(prefix.length).replace(/\.(md|mdx)$/, "");
-    const slug = relative.replace(/\/index$/, "");
-    if (slug.length > 0) slugs.add(slug);
-  }
-  return slugs;
-}
-
-function parseSidebarSlugs(source: string): Set<string> {
-  const slugs = new Set<string>();
-  const sidebar = source.split("sidebar:", 2)[1];
-  if (sidebar === undefined) return slugs;
-  for (const block of sidebar.matchAll(/items:\s*\[([^\]]*)\]/g)) {
-    const body = block[1] ?? "";
-    for (const match of body.matchAll(/['"]([^'"]+)['"]/g)) {
-      const slug = match[1];
-      if (slug !== undefined && slug.length > 0) slugs.add(slug);
-    }
-  }
-  return slugs;
-}
-
-function parseSearchSlugs(source: string): Set<string> {
-  const slugs = new Set<string>();
-  for (const match of source.matchAll(/href:\s*["']([^"']+)["']/g)) {
-    const href = match[1];
-    if (href === undefined) continue;
-    const slug = href.replace(/\/+$/, "");
-    if (slug.length > 0) slugs.add(slug);
-  }
-  return slugs;
-}
-
-function slugToContentPath(
-  slug: string,
-  files: Readonly<Record<string, string>>,
-): string {
-  const candidates = [
-    `${DOCS_SITE_CONTENT_ROOT}/${slug}.mdx`,
-    `${DOCS_SITE_CONTENT_ROOT}/${slug}.md`,
-    `${DOCS_SITE_CONTENT_ROOT}/${slug}/index.mdx`,
-    `${DOCS_SITE_CONTENT_ROOT}/${slug}/index.md`,
-  ];
-  const fallback = `${DOCS_SITE_CONTENT_ROOT}/${slug}.mdx`;
-  return candidates.find((path) => files[path] !== undefined) ?? fallback;
+  if (parsed.isErr() || parsed.value === undefined) return ok([]);
+  const listed = parsed.value.files;
+  if (!Array.isArray(listed)) return ok([]);
+  return ok(
+    listed.filter((entry): entry is string => typeof entry === "string"),
+  );
 }
 
 function isUsefulReadme(text: string): boolean {
   const trimmed = text.replace(/^\uFEFF/, "").trim();
   return trimmed.length > 0 && /^#\s+\S/m.test(trimmed);
-}
-
-function compareIssue(
-  left: DeterministicDocsIssue,
-  right: DeterministicDocsIssue,
-): number {
-  if (left.kind !== right.kind) return left.kind < right.kind ? -1 : 1;
-  if (left.path !== right.path) return left.path < right.path ? -1 : 1;
-  if (left.detail !== right.detail) return left.detail < right.detail ? -1 : 1;
-  return 0;
-}
-
-function normalizeRel(path: string): string {
-  return path.replaceAll("\\", "/");
-}
-
-function boundText(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit);
-}
-
-export function docsAuditDigest(value: unknown): string {
-  return docsAuditBytesDigest(canonicalJson(value));
-}
-
-export function docsAuditBytesDigest(value: string): string {
-  return `${NPM_DIGEST_PREFIX}${Bun.CryptoHasher.hash("sha256", value, "hex")}`;
-}
-
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object")
-    return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value))
-    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
 }

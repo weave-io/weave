@@ -6,9 +6,14 @@
  * prototype HTML files (`docs-home.html`, `docs-article.html`). Each entry now
  * targets an actual Astro docs route.
  *
+ * The entries are derived from `docs-navigation.json`, the one declarative
+ * navigation contract the docs site and the release-time deterministic checker
+ * share. This module holds no route list of its own; it only projects the
+ * declared routes into the palette shape.
+ *
  * `href` values are **root-relative, BASE_URL-less** route paths (e.g.
- * `docs/`, `docs/workflows/#overview`). They intentionally omit the deployment
- * base prefix; `PageFrame.astro` joins each `href` to `import.meta.env.BASE_URL`
+ * `docs/`, `docs/workflows/`). They intentionally omit the deployment base
+ * prefix; `PageFrame.astro` joins each `href` to `import.meta.env.BASE_URL`
  * before serializing the data into the palette so navigation resolves correctly
  * under any `base` (root `/` for the public docs per the prototype-replica
  * learning, or a sub-path on other deployments). Keeping the raw data
@@ -18,12 +23,13 @@
  * `<script id="paletteData" type="application/json">` element emitted by
  * PageFrame; this array is the source of that script's contents.
  */
+import {
+  type DocsSearchGroup,
+  type DocsSearchIcon,
+  docsNavigation,
+} from "./docs-navigation.js";
 
-/** Visual grouping shown as a `.grp` caption in the palette results list. */
-export type DocsSearchGroup = "Start" | "Guides" | "Reference";
-
-/** Icon key — maps to the inline SVG set in `docs.js` (`ICON.page` / `ICON.spec`). */
-export type DocsSearchIcon = "page" | "spec";
+export type { DocsSearchGroup, DocsSearchIcon };
 
 /** A single command-palette search entry. */
 export interface DocsSearchEntry {
@@ -35,7 +41,7 @@ export interface DocsSearchEntry {
   subtitle: string;
   /**
    * Root-relative route path WITHOUT the deployment base prefix
-   * (e.g. `docs/workflows/#overview`). PageFrame prepends `BASE_URL`.
+   * (e.g. `docs/workflows/`). PageFrame prepends `BASE_URL`.
    */
   href: string;
   /** Icon key resolved by `docs.js`. */
@@ -47,110 +53,12 @@ export interface DocsSearchEntry {
  * `src/content/docs/docs/`. Hrefs are base-less and are joined to BASE_URL by
  * PageFrame before the palette receives them.
  */
-export const docsSearchData: DocsSearchEntry[] = [
-  {
-    group: "Start",
-    title: "Weave Documentation",
-    subtitle: "route map and support boundaries",
-    href: "docs/",
-    icon: "page",
-  },
-  {
-    group: "Start",
-    title: "Getting Started",
-    subtitle: "install, create config, validate, connect OpenCode",
-    href: "docs/getting-started/",
-    icon: "page",
-  },
-  {
-    group: "Start",
-    title: "Concepts",
-    subtitle: "API layer, packages, config, execution boundaries",
-    href: "docs/concepts/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Configuration",
-    subtitle: "global/project config, merge, validation, prompts",
-    href: "docs/configuration/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Agents and Categories",
-    subtitle: "builtin overrides, custom agents, category shuttles",
-    href: "docs/agents-and-categories/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Prompts, Models, and Policy",
-    subtitle: "prompt composition, model intent, tool policy",
-    href: "docs/prompts-models-policy/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Workflows",
-    subtitle: "ordered explicit execution and gates",
-    href: "docs/workflows/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Evals",
-    subtitle: "text-only eval suites, filters, dry-run, reports",
-    href: "docs/evals/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "OpenCode",
-    subtitle: "implemented adapter setup and commands",
-    href: "docs/opencode/",
-    icon: "page",
-  },
-  {
-    group: "Guides",
-    title: "Runtime Operations",
-    subtitle: "CLI recipes, journal, builds, docs maintenance",
-    href: "docs/runtime-operations/",
-    icon: "page",
-  },
-  {
-    group: "Reference",
-    title: "CLI Reference",
-    subtitle: "init validate prompt runtime and run behavior",
-    href: "docs/reference/cli/",
-    icon: "spec",
-  },
-  {
-    group: "Reference",
-    title: "DSL Reference",
-    subtitle: "syntax, agents, categories, workflows, settings",
-    href: "docs/reference/dsl/",
-    icon: "spec",
-  },
-  {
-    group: "Reference",
-    title: "Adapters",
-    subtitle: "support matrix and OpenCode capabilities",
-    href: "docs/reference/adapters/",
-    icon: "spec",
-  },
-  {
-    group: "Reference",
-    title: "Packages",
-    subtitle: "workspace package responsibilities",
-    href: "docs/reference/packages/",
-    icon: "spec",
-  },
-  {
-    group: "Reference",
-    title: "Releases",
-    subtitle: "channels, integrity, provenance, and operator policy",
-    href: "docs/reference/releases/",
-    icon: "spec",
-  },
-];
+export const docsSearchData: DocsSearchEntry[] = docsNavigation.search.map(
+  (entry) => ({
+    group: entry.group,
+    title: entry.title,
+    subtitle: entry.subtitle,
+    href: `${entry.route}/`,
+    icon: entry.icon,
+  }),
+);

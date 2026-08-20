@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import weaveGrammar from './src/shiki/weave.tmLanguage.js';
+import { starlightSidebar } from './src/data/docs-navigation.ts';
 
 const site = process.env.SITE_URL ?? 'http://localhost:4321';
 const base = process.env.BASE_PATH ?? '/';
@@ -106,41 +107,13 @@ export default defineConfig({
       editLink: {
         baseUrl: 'https://github.com/weave-io/weave/edit/main/packages/docs/',
       },
-      // Public docs expose a compact guide-first structure. Legacy tutorial,
-      // how-to, explanation, and per-topic reference routes still exist as
-      // compatibility pages, but they are intentionally left out of navigation.
-      sidebar: [
-        {
-          label: 'Start',
-          items: [
-            'docs',
-            'docs/getting-started',
-            'docs/concepts',
-          ],
-        },
-        {
-          label: 'Guides',
-          items: [
-            'docs/configuration',
-            'docs/agents-and-categories',
-            'docs/prompts-models-policy',
-            'docs/workflows',
-            'docs/evals',
-            'docs/opencode',
-            'docs/runtime-operations',
-          ],
-        },
-        {
-          label: 'Reference',
-          items: [
-            'docs/reference/cli',
-            'docs/reference/dsl',
-            'docs/reference/adapters',
-            'docs/reference/packages',
-            'docs/reference/releases',
-          ],
-        },
-      ],
+      // Public docs expose a compact guide-first structure. The declarative
+      // contract in `src/data/docs-navigation.json` is the single authority for
+      // navigated routes, palette search entries, and compatibility routes.
+      // This config declares no routes of its own, so the release-time
+      // deterministic checker reads that data structurally instead of reading
+      // anything here.
+      sidebar: starlightSidebar,
     }),
   ],
 });

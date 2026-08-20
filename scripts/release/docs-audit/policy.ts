@@ -35,6 +35,15 @@ export const DOCS_SITE_SEARCH_DATA =
   "packages/docs/src/data/docs-search.ts" as const;
 export const DOCS_SITE_ASTRO_CONFIG = "packages/docs/astro.config.mjs" as const;
 
+/**
+ * Declarative navigation contract shared by the docs site and the release-time
+ * deterministic checker. This data file — never the Astro config or the search
+ * module — is the authority for navigated, searchable, and compatibility
+ * routes.
+ */
+export const DOCS_SITE_NAVIGATION_DATA =
+  "packages/docs/src/data/docs-navigation.json" as const;
+
 /** Required documentation files that ship with public packages or the repo. */
 export const REQUIRED_ROOT_README = "README.md" as const;
 export const REQUIRED_DOCS_INDEX = "docs/README.md" as const;
