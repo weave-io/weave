@@ -107,6 +107,18 @@ bun run --filter '@weaveio/weave-docs' typecheck
 
 If the site is deployed under a repository subpath, set the build base environment consistently with the hosting target. After deployment, navigate the landing page, docs home, a guide page, a reference page, and a compatibility route.
 
+## Navigation and Search Contract
+
+Navigation, command-palette search, and compatibility routes are declared in one
+data file inside the docs package: `src/data/docs-navigation.json`. The Astro
+config and the search module read that file; they hold no route list of their
+own.
+
+When adding a public page, declare its route there. A new page that is neither
+declared in navigation and search nor listed as an exact compatibility route
+fails the release-time documentation check. Sharing a directory with a
+compatibility route grants no exemption.
+
 ## Public Docs Maintenance Rules
 
 When changing public docs:

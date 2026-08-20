@@ -7,16 +7,17 @@ import {
   evaluateDeterministicDocsTreeSafe,
   runDeterministicDocsCheck,
 } from "../deterministic.js";
-import { DOCS_AUDIT_LIMITS } from "../policy.js";
+import { DOCS_AUDIT_LIMITS, DOCS_SITE_NAVIGATION_DATA } from "../policy.js";
 import {
   brokenLinkTree,
   commentOnlyFakeEntriesTree,
   compatibilityDocsTree,
+  conflictingNavigationTree,
   inventoryFailureTree,
-  malformedAstroTree,
+  malformedNavigationTree,
+  navigationTree,
   passingDocsTree,
-  repeatedAstroTree,
-  repeatedSearchEntriesTree,
+  repeatedNavigationTree,
   routePrefixBypassTree,
   sidebarDriftTree,
   unmarkedHowToPageTree,
@@ -38,7 +39,7 @@ describe("deterministic docs checker", () => {
     );
   });
 
-  test("allows compatibility pages excluded by the Astro navigation contract", () => {
+  test("allows compatibility pages declared by exact route", () => {
     const result = evaluateDeterministicDocsTree(compatibilityDocsTree());
     expect(result.passed).toBe(true);
     expect(result.issues).toEqual([]);
@@ -61,7 +62,30 @@ describe("deterministic docs checker", () => {
     );
   });
 
-  test("does not count comment-only sidebar or search entries", () => {
+  test("fails declared routes that have no content page", () => {
+    const result = evaluateDeterministicDocsTree(
+      navigationTree({ sidebar: ["docs", "docs/quickstart", "docs/ghost"] }),
+    );
+    expect(result.passed).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "sidebar-unknown-entry",
+          path: DOCS_SITE_NAVIGATION_DATA,
+          detail: "docs/ghost",
+        }),
+        expect.objectContaining({
+          kind: "search-unknown-entry",
+          path: DOCS_SITE_NAVIGATION_DATA,
+          detail: "docs/ghost",
+        }),
+      ]),
+    );
+  });
+
+  test("ignores comments, string literals, and runtime filters in docs-site source", () => {
+    // The fixture Astro config already lists `docs/concepts` in a pre-filter
+    // array literal, a comment, and a string literal.
     const result = evaluateDeterministicDocsTree(commentOnlyFakeEntriesTree());
     expect(result.passed).toBe(false);
     expect(result.issues).toEqual(
@@ -76,6 +100,20 @@ describe("deterministic docs checker", () => {
         }),
       ]),
     );
+  });
+
+  test("is unaffected by rewritten Astro config and search module source", () => {
+    const baseline = evaluateDeterministicDocsTree(passingDocsTree());
+    const rewritten = evaluateDeterministicDocsTree(
+      passingDocsTree({
+        "packages/docs/astro.config.mjs":
+          "export default { sidebar: [{ items: ['docs/ghost'] }] };\n",
+        "packages/docs/src/data/docs-search.ts":
+          'export const docsSearchData = [{ href: "docs/ghost/" }];\n',
+      }),
+    );
+    expect(rewritten.passed).toBe(true);
+    expect(rewritten.digest).toBe(baseline.digest);
   });
 
   test("requires new how-to pages to have navigation and search coverage", () => {
@@ -105,25 +143,42 @@ describe("deterministic docs checker", () => {
     ).toHaveLength(2);
   });
 
-  test("accepts repeated search entries without repeated parser work failures", () => {
-    const result = evaluateDeterministicDocsTree(repeatedSearchEntriesTree());
-    expect(result.passed).toBe(true);
-  });
-
-  test("returns typed failures for malformed and repeated structural input", () => {
-    const malformed = evaluateDeterministicDocsTreeSafe(malformedAstroTree());
+  test("returns typed failures for malformed, repeated, and conflicting data", () => {
+    const malformed = evaluateDeterministicDocsTreeSafe(
+      malformedNavigationTree(),
+    );
     expect(malformed.isErr()).toBe(true);
     if (malformed.isOk()) return;
     expect(malformed.error.type).toBe("DeterministicDocsParseFailed");
     if (malformed.error.type !== "DeterministicDocsParseFailed") return;
     expect(malformed.error.reason).toBe("malformed-input");
 
-    const repeated = evaluateDeterministicDocsTreeSafe(repeatedAstroTree());
+    const repeated = evaluateDeterministicDocsTreeSafe(
+      repeatedNavigationTree(),
+    );
     expect(repeated.isErr()).toBe(true);
     if (repeated.isOk()) return;
     expect(repeated.error.type).toBe("DeterministicDocsParseFailed");
     if (repeated.error.type !== "DeterministicDocsParseFailed") return;
     expect(repeated.error.reason).toBe("repeated-input");
+
+    const conflicting = evaluateDeterministicDocsTreeSafe(
+      conflictingNavigationTree(),
+    );
+    expect(conflicting.isErr()).toBe(true);
+    if (conflicting.isOk()) return;
+    expect(conflicting.error.type).toBe("DeterministicDocsParseFailed");
+    if (conflicting.error.type !== "DeterministicDocsParseFailed") return;
+    expect(conflicting.error.reason).toBe("conflicting-input");
+  });
+
+  test("rejects a missing navigation contract", () => {
+    const files = passingDocsTree();
+    delete files[DOCS_SITE_NAVIGATION_DATA];
+    const result = evaluateDeterministicDocsTreeSafe(files);
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("DeterministicDocsParseFailed");
   });
 
   test("fails README/tarball inventory gaps", () => {
@@ -202,10 +257,10 @@ describe("deterministic docs checker", () => {
     expect(aggregate.error.bound).toBe("aggregate-bytes");
   });
 
-  test("rejects parser-work overflow before scanning source", () => {
+  test("rejects parser-work overflow before reading the navigation contract", () => {
     const result = evaluateDeterministicDocsTreeSafe(
       passingDocsTree({
-        "packages/docs/astro.config.mjs": `export default { sidebar: [] };${" ".repeat(
+        [DOCS_SITE_NAVIGATION_DATA]: `{"schemaVersion":1}${" ".repeat(
           DETERMINISTIC_DOCS_LIMITS.parserWork,
         )}`,
       }),
@@ -215,6 +270,40 @@ describe("deterministic docs checker", () => {
     expect(result.error.type).toBe("DeterministicDocsBoundExceeded");
     if (result.error.type !== "DeterministicDocsBoundExceeded") return;
     expect(result.error.bound).toBe("parser-work");
+  });
+
+  test("rejects link-count overflow before resolving link targets", () => {
+    const links = Array.from(
+      { length: DETERMINISTIC_DOCS_LIMITS.links + 1 },
+      () => "[l](../README.md)",
+    ).join("\n");
+    const result = evaluateDeterministicDocsTreeSafe(
+      passingDocsTree({ "docs/README.md": `# Docs\n\n${links}\n` }),
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("DeterministicDocsBoundExceeded");
+    if (result.error.type !== "DeterministicDocsBoundExceeded") return;
+    expect(result.error.bound).toBe("link-count");
+    expect(result.error.limit).toBe(DETERMINISTIC_DOCS_LIMITS.links);
+  });
+
+  test("rejects anchor-count overflow before indexing destination anchors", () => {
+    const headings = Array.from(
+      { length: DETERMINISTIC_DOCS_LIMITS.anchors + 1 },
+      (_, index) => `# h${index}`,
+    ).join("\n\n");
+    const result = evaluateDeterministicDocsTreeSafe(
+      passingDocsTree({
+        "packages/docs/src/content/docs/docs/quickstart.mdx": headings,
+      }),
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("DeterministicDocsBoundExceeded");
+    if (result.error.type !== "DeterministicDocsBoundExceeded") return;
+    expect(result.error.bound).toBe("anchor-count");
+    expect(result.error.limit).toBe(DETERMINISTIC_DOCS_LIMITS.anchors);
   });
 
   test("enforces read bounds before loading a content-root file", async () => {
