@@ -827,3 +827,90 @@ fixtures, or proof data.
 
 Task 11 remains unchecked. Weft and Warp remain pending. No prior RED section
 was revised.
+
+## Task 11 proof D3: final verifier timeout evidence and runtime-artifact continuity (2026-08-20)
+
+This bounded final section records the D1 executable verifier at the exact
+subject below. Earlier RED evidence and the authoritative C2 Herdr evidence
+remain unchanged.
+
+### Exact final verifier subject
+
+| Fact | Bounded result |
+| --- | --- |
+| Final verifier subject | `c3282f905fd32680e2a13f1baf6031b15452eaca` |
+| Subject status | **PASS** — clean and exact |
+| D1 verifier | **PASS** — real executable run; no report content retained |
+| D2 terminal proof | **NOT CLAIMED** — no new D2 terminal run succeeded |
+
+### D1 executable red and green results
+
+D1's silent-child negative control was a real executable verifier run. It
+closed on the bounded timeout, returned exit `1` within `31s`, completed
+cleanup, and removed its bounded mode-`0600` report. The closed timeout was the
+expected RED result; no terminal or UI result is inferred from it.
+
+D1's positive executable verifier run returned exit `0`. It proved identity
+`current` and `fresh`, all `4/4` requested lanes, isolation, one authoritative
+settlement, an empty registry, clean content-free diagnostics, and complete
+cleanup. Its bounded mode-`0600` report was removed after verification.
+
+| D1 gate | Silent RED | Green |
+| --- | --- | --- |
+| Command exit | **PASS** — `1` | **PASS** — `0` |
+| Timeout / identity | **PASS** — closed timeout; bounded `31s` | **PASS** — current and fresh |
+| Proof lanes | **NOT APPLICABLE** — silent negative control | **PASS** — `4/4` |
+| Isolation | **NOT APPLICABLE** — silent negative control | **PASS** — isolated |
+| Settlement | **NOT APPLICABLE** — silent negative control | **PASS** — one settlement |
+| Registry | **NOT APPLICABLE** — silent negative control | **PASS** — empty |
+| Diagnostics | **PASS** — closed and content-free | **PASS** — clean and content-free |
+| Cleanup | **PASS** — complete | **PASS** — complete |
+| Bounded report | **PASS** — mode `0600`, removed | **PASS** — mode `0600`, removed |
+
+Repeated additional fresh Herdr driver attempts are retained only as cleanup
+facts: they produced no admissible UI evidence, are not green D2 results, and
+all owned processes, sessions, temporary resources, and reports were cleaned.
+No new D2 terminal run is claimed here.
+
+### Runtime-artifact continuity from C2 to D1
+
+Commit `c3282f90` changes only the live-proof verifier and its tests, plus
+hook-required generated metadata. It does not change production adapter or
+runtime source. Its changed live-proof modules are the port, system, runner,
+their focused tests, and the live-proof fakes. The generated metadata is not a
+runtime output.
+
+The built Pi adapter runtime output set is byte-identical between the
+authoritative C2 subject `f6f06e04ab455b2af86ecee8dd3cf2b8e5673912` and the D1
+subject `c3282f905fd32680e2a13f1baf6031b15452eaca`. The bounded rebuild
+comparison below covers every runtime-loaded output, not declarations or
+package-only entries.
+
+| Runtime-loaded output | C2 and D1 SHA-256 | Equality |
+| --- | --- | --- |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` | **PASS** — byte-identical |
+| `extension-build-identity` | `8a7d95ec596de94b6f25a1228262829c85e415199952a38d884b9ac7046c869d` | **PASS** — byte-identical |
+| `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` | **PASS** — byte-identical |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` | **PASS** — byte-identical |
+
+The four-output equality is backed by the C2 build identity and the D1
+rebuild output set: `4/4` runtime outputs match. Therefore C2 remains the
+terminal UI proof for this exact reviewed runtime artifact, while D1 is the
+proof for the final verifier subject. No production adapter/runtime source or
+runtime output changed between `f6f06e04` C2 and `c3282f90` D1.
+
+### Current cleanup and restoration
+
+| Gate | Result |
+| --- | --- |
+| Global config | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644`; size `2857` |
+| Exact mode-`0600` config backup | **PASS** — live bytes matched before removal; backup removed |
+| Adapter symlink | **PASS** — canonical target restored |
+| Runtime Store | **PASS** — no active lease; `0` workflow instances |
+| Owned processes, temporary proof resources, and reports | **PASS** — none remained |
+| Content/path scans | **PASS** — proof remains content-free and path-free |
+| Documentation links | **PASS** |
+
+Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
+The authoritative C2 Herdr evidence at the byte-identical runtime artifact
+remains intact and unchanged. Weft and Warp remain pending.
