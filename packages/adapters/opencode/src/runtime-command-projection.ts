@@ -752,23 +752,25 @@ export function buildOpenCodeHealthReport(overrides?: {
         },
         {
           id: "agent-materialization",
-          description: "Materialize agents into OpenCode via SDK",
+          description:
+            "Materialize agents into OpenCode through the config hook",
           readiness: "degraded",
           notes:
-            "OpenCode can create agents through the SDK, but same-name resources are refused because user-editable metadata cannot prove Weave ownership; automatic updates fail closed until an unforgeable authority exists.",
+            "The config hook injects translated agents in declaration order and skips every existing same-name cfg.agent entry without changing it; it does not persist agent configuration through an SDK.",
         },
         {
           id: "primary-agent-selection",
           description: "Select primary agent (Loom) for user-facing sessions",
-          readiness: "native",
-          notes: "Plugin registers Loom as the primary agent via OpenCode SDK",
+          readiness: "degraded",
+          notes:
+            "The config hook selects Loom as the default only when it safely injects Loom; an existing Loom entry remains unchanged and can keep another default.",
         },
         {
           id: "delegated-specialist-execution",
           description: "Delegate to specialist agents (Shuttle, Weft, Warp)",
           readiness: "degraded",
           notes:
-            "spawnSubagent creates new specialist agents on demand; same-name resources fail closed because OpenCode exposes no unforgeable Weave ownership authority for automatic updates.",
+            "Specialist agents are available when the config hook injects them, but a same-name OpenCode entry is preserved and can block the intended specialist projection.",
         },
         {
           id: "prompt-composition",
@@ -781,7 +783,7 @@ export function buildOpenCodeHealthReport(overrides?: {
           description: "Map Weave tool policies to OpenCode permissions",
           readiness: "native",
           notes:
-            "tool-policy-mapping.ts maps delegation to OpenCode's task permission (not doom_loop); task supports allow/deny/ask, while read ask remains the documented default-enabled degradation because OpenCode has no per-read approval permission.",
+            "Read, glob, grep, and list use explicit OpenCode permission rules for allow, deny, and ask; delegation uses task with the same values. Read ask is never omitted or represented by the boolean tools map.",
         },
         {
           id: "workflow-persistence",

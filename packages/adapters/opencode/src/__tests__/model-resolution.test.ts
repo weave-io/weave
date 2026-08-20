@@ -16,7 +16,10 @@
 
 import { describe, expect, it } from "bun:test";
 import { parseConfig, parseModelIntentEntry } from "@weaveio/weave-core";
-import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
 import { DEFAULT_FALLBACK_MODEL } from "@weaveio/weave-engine";
 import {
   type OpenCodeModelContext,
@@ -256,8 +259,7 @@ describe("resolveModelForAgent — agent preference", () => {
     ] as const;
 
     for (const testCase of cases) {
-      const sourceModel =
-        `provider/${"\\".repeat(testCase.sourceSlashCount)}#high`;
+      const sourceModel = `provider/${"\\".repeat(testCase.sourceSlashCount)}#high`;
       const parsedConfig = parseConfig(
         `agent parity { models ["${sourceModel}"] }`,
       );
@@ -283,8 +285,7 @@ describe("resolveModelForAgent — agent preference", () => {
       // final slash to escape the hash, so this is the source spelling that
       // attempts to produce `baseSlashCount` slashes before a literal hash.
       const sourceSlashCount = baseSlashCount * 2 + 1;
-      const sourceModel =
-        `provider/${"\\".repeat(sourceSlashCount)}#literal`;
+      const sourceModel = `provider/${"\\".repeat(sourceSlashCount)}#literal`;
       const parsedConfig = parseConfig(
         `agent parity { models ["${sourceModel}"] }`,
       );
@@ -318,8 +319,7 @@ describe("resolveModelForAgent — agent preference", () => {
       expect(parsedIntent.isOk()).toBe(true);
       if (parsedIntent.isErr()) continue;
 
-      const expectedBaseModel =
-        `provider/${"\\".repeat(baseSlashCount)}#literal`;
+      const expectedBaseModel = `provider/${"\\".repeat(baseSlashCount)}#literal`;
       expect(parsedIntent.value).toEqual({ baseModel: expectedBaseModel });
 
       const result = resolveModelForAgent(

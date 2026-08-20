@@ -17,10 +17,10 @@
  * ## Why this matters
  *
  * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports
- * `WEAVE_OWNERSHIP_TAG` (a string) and other non-function values. That caused
- * OpenCode to throw at startup. The `./plugin` subpath (`dist/plugin.js`) was
- * introduced to export only functions. This test is the regression guard that
- * keeps the plugin subpath safe.
+ * non-function library values. OpenCode would throw if it loaded that entry as
+ * a legacy plugin. The `./plugin` subpath (`dist/plugin.js`) exports only
+ * functions. This test is the regression guard that keeps the plugin subpath
+ * safe.
  *
  * See: docs/adr/0003-opencode-adapter-materialization-shape.md#decision
  * See: docs/reference/adapter-capabilities.md — Installation and runtime story

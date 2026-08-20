@@ -866,6 +866,9 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     const materialization = capabilities.find(
       (entry) => entry.id === "agent-materialization",
     );
+    const primary = capabilities.find(
+      (entry) => entry.id === "primary-agent-selection",
+    );
     const delegation = capabilities.find(
       (entry) => entry.id === "delegated-specialist-execution",
     );
@@ -874,11 +877,14 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     );
 
     expect(materialization?.readiness).toBe("degraded");
-    expect(materialization?.notes).toContain("unforgeable authority");
+    expect(materialization?.notes).toContain("config hook");
+    expect(primary?.readiness).toBe("degraded");
+    expect(primary?.notes).toContain("safely injects Loom");
     expect(delegation?.readiness).toBe("degraded");
     expect(policy?.readiness).toBe("native");
-    expect(policy?.notes).toContain("task permission");
-    expect(policy?.notes).not.toContain("permission.doom_loop");
+    expect(policy?.notes).toContain("task");
+    expect(policy?.notes).toContain("glob");
+    expect(policy?.notes).toContain("explicit");
   });
 
   it("returns degraded result when commandEntrypoints is degraded", async () => {

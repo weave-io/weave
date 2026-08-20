@@ -23,8 +23,8 @@ describe("OpenCode adapter capability contract", () => {
 
     expect(capability?.readiness).toBe("degraded");
     expect(capability?.notes).toContain("same-name resources");
-    expect(capability?.notes).toContain("cannot prove Weave ownership");
-    expect(capability?.remediationHint).toContain("database");
+    expect(capability?.notes).toContain("config hook");
+    expect(capability?.remediationHint).toContain("conflicting OpenCode entry");
   });
 
   it("declares delegation as degraded when same-name ownership is unproven", () => {
@@ -43,7 +43,8 @@ describe("OpenCode adapter capability contract", () => {
 
     expect(capability?.readiness).toBe("native");
     expect(capability?.notes).toContain("task permission");
-    expect(capability?.notes).toContain("doom_loop is not");
+    expect(capability?.notes).toContain("glob");
+    expect(capability?.notes).toContain("explicit OpenCode permission");
   });
 
   it("declares model-thinking-activation as degraded with an explicit SDK gap", () => {

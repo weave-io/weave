@@ -30,10 +30,9 @@
  *
  * 4. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
  *    not wired to any idle hook, session event, or continuation hook in the
- *    OpenCode adapter. The plugin's `event` hook fires only on
- *    `session.created` and performs agent materialization — it never calls
- *    `runWorkflow` or any other execution-start helper. The `config` hook is
- *    pure computation and never calls `runWorkflow`.
+ *    OpenCode adapter. The plugin exposes only its config hook and performs
+ *    agent projection there; it never calls `runWorkflow` or any other
+ *    execution-start helper.
  *
  * Uses:
  * - `InMemoryRuntimeStore` (no SQLite, no filesystem)
@@ -502,7 +501,10 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
       expect(validValues).toContain(String(permission.bash ?? ""));
       expect(validValues).toContain(String(permission.webfetch ?? ""));
       expect(validValues).toContain(String(permission.task ?? ""));
-      expect(permission.doom_loop).toBeUndefined();
+      expect(validValues).toContain(String(permission.read ?? ""));
+      expect(validValues).toContain(String(permission.glob ?? ""));
+      expect(validValues).toContain(String(permission.grep ?? ""));
+      expect(validValues).toContain(String(permission.list ?? ""));
     }
   });
 

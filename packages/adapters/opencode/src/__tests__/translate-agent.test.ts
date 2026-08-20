@@ -222,13 +222,16 @@ describe("translateAgent — tool policy mapping", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
+      expect(result.value.permission?.read).toBe("allow");
+      expect(result.value.permission?.glob).toBe("allow");
+      expect(result.value.permission?.grep).toBe("allow");
+      expect(result.value.permission?.list).toBe("allow");
       expect(result.value.permission?.task).toBe("deny");
-      expect(result.value.permission?.doom_loop).toBeUndefined();
-      expect(result.value.tools?.task).not.toBe(true);
+      expect(Object.hasOwn(result.value, "tools")).toBe(false);
     }
   });
 
-  it("omits tools field when read policy is allow", () => {
+  it("uses explicit permission fields when read policy is allow", () => {
     const descriptor = makeDescriptor({
       effectiveToolPolicy: {
         read: "allow",
@@ -241,8 +244,11 @@ describe("translateAgent — tool policy mapping", () => {
     const result = translateAgent(descriptor);
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // tools patch is only added when read is denied
-      expect(result.value.tools).toBeUndefined();
+      expect(result.value.permission?.read).toBe("allow");
+      expect(result.value.permission?.glob).toBe("allow");
+      expect(result.value.permission?.grep).toBe("allow");
+      expect(result.value.permission?.list).toBe("allow");
+      expect(Object.hasOwn(result.value, "tools")).toBe(false);
     }
   });
 });
@@ -347,8 +353,11 @@ describe("translateAgent — fast intent is never encoded in the config", () => 
       expect(config.temperature).toBe(0.7);
       expect(config.description).toBe("Fast-declaring agent");
       expect(config.mode).toBe("subagent");
+      expect(config.permission?.read).toBe("allow");
+      expect(config.permission?.glob).toBe("allow");
+      expect(config.permission?.grep).toBe("allow");
+      expect(config.permission?.list).toBe("allow");
       expect(config.permission?.task).toBe("deny");
-      expect(config.permission?.doom_loop).toBeUndefined();
       expect(config.permission?.webfetch).toBe("ask");
     }
   });

@@ -101,8 +101,7 @@ export function describeFastActivation(descriptor: {
 
 /**
  * Translates a normalized Weave `AgentDescriptor` into an OpenCode
- * `AgentConfig` object suitable for writing into an OpenCode configuration
- * file or passing to the SDK client.
+ * `AgentConfig` object suitable for writing into OpenCode configuration.
  *
  * Translation rules:
  * - `composedPrompt` → `prompt`
@@ -111,8 +110,8 @@ export function describeFastActivation(descriptor: {
  * - `temperature` → `temperature` (passed through when defined)
  * - `description` → `description` (passed through when defined)
  * - `mode` → `mode`
- * - `effectiveToolPolicy` → `permission` + optional `tools` patch via
- *   `mapToolPolicy`
+ * - `effectiveToolPolicy` → OpenCode's named `permission` rules via
+ *   `mapToolPolicy`; read `ask` remains an explicit permission value
  *
  * Neutral `fast true` intent is deliberately NOT translated. OpenCode has no
  * documented agent-config acceleration field, and a materialized config is not
@@ -129,9 +128,7 @@ export function translateAgent(
   descriptor: AgentDescriptor,
   resolvedModel?: string,
 ): Result<OpenCodeAgentConfig, TranslateAgentError> {
-  const { permission, tools: toolsPatch } = mapToolPolicy(
-    descriptor.effectiveToolPolicy,
-  );
+  const { permission } = mapToolPolicy(descriptor.effectiveToolPolicy);
 
   const config: OpenCodeAgentConfig = {
     prompt: descriptor.composedPrompt,
@@ -152,11 +149,6 @@ export function translateAgent(
   // description: pass through when declared
   if (descriptor.description !== undefined) {
     config.description = descriptor.description;
-  }
-
-  // tools: merge read-class tool overrides when the read capability is denied
-  if (toolsPatch !== undefined) {
-    config.tools = toolsPatch;
   }
 
   return ok(config);

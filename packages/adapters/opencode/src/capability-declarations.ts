@@ -1,8 +1,8 @@
 import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
 
 /**
- * OpenCode resolves valid thinking intent but does not yet confirm SDK
- * forwarding for per-request reasoning control.
+ * OpenCode accepts valid thinking intent but does not confirm SDK forwarding
+ * for per-request reasoning control.
  */
 export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [
@@ -11,25 +11,25 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       description: "Materialize Weave agents into OpenCode",
       readiness: "degraded",
       notes:
-        "New agents can be created through the SDK, but same-name resources are never updated automatically because user-editable description and options metadata cannot prove Weave ownership.",
+        "The config hook injects translated agents in declaration order and skips existing same-name resources without changing them; the plugin does not persist agent configuration through an SDK.",
       remediationHint:
-        "Remove a conflicting OpenCode agent manually, or add a durable Weave-owned database record and unforgeable host identity before enabling updates.",
+        "Rename a Weave agent or remove the conflicting OpenCode entry before startup.",
     },
     {
       id: "delegated-specialist-execution",
       description: "Delegate work to specialist OpenCode agents",
       readiness: "degraded",
       notes:
-        "Delegation creates new specialist agents, while same-name materialization fails closed when ownership cannot be proven.",
+        "Specialist agents are available when the config hook injects them, but same-name materialization is skipped when an OpenCode entry already exists.",
       remediationHint:
-        "Use unique agent names or provide an unforgeable Weave ownership authority before enabling automatic updates.",
+        "Use unique agent names or remove a conflicting OpenCode entry before startup.",
     },
     {
       id: "tool-policy-mapping",
       description: "Map Weave tool policies to OpenCode permissions",
       readiness: "native",
       notes:
-        "Delegation maps to OpenCode's task permission with allow, deny, and ask semantics; doom_loop is not a delegation control. Read ask remains default-enabled because OpenCode has no per-read approval permission.",
+        "Read, glob, grep, and list use explicit OpenCode permission rules for allow, deny, and ask; delegation uses the task permission with the same three values. No read policy is omitted or routed through the boolean tools map.",
     },
     {
       id: "model-thinking-activation",

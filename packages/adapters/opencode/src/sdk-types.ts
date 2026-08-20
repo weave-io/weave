@@ -1,55 +1,41 @@
 /**
- * Stable re-exports of `@opencode-ai/sdk` types used by the OpenCode adapter.
+ * Stable OpenCode configuration types used by the adapter.
  *
- * This is the ONLY file in the adapter allowed to import directly from
- * `@opencode-ai/sdk`. All other adapter modules must import from `./sdk-types`
- * to insulate the rest of the adapter from SDK version churn.
- *
- * Only types that the adapter actively uses are re-exported here. Unused SDK
- * types are intentionally omitted to keep the surface minimal.
- *
- * The SDK exposes no provider-acceleration field for agent configuration and
- * no official response-evidence field (`service_tier` or `usage.speed`) on a
- * successful call. Nothing acceleration-related is re-exported here, so the
- * adapter cannot encode a guessed control or read a false application proof.
+ * This is the only adapter module that imports OpenCode SDK types directly.
+ * The pinned SDK's v2 schema is the source of truth for agent permissions:
+ * `read`, `glob`, `grep`, `list`, and `task` are permission fields, not
+ * boolean entries in the agent `tools` map.
  */
 
 import type {
-  Agent as SdkOpenCodeAgent,
+  PermissionActionConfig,
+  PermissionRuleConfig,
   AgentConfig as SdkOpenCodeAgentConfig,
-} from "@opencode-ai/sdk";
+} from "@opencode-ai/sdk/v2";
 
-/** The action values accepted by OpenCode permission rules. */
-export type OpenCodePermissionAction = "allow" | "deny" | "ask";
+/** Permission actions accepted by OpenCode. */
+export type OpenCodePermissionAction = PermissionActionConfig;
 
 /**
- * Agent permission shape used by the adapter.
+ * Agent permission fields used by this adapter.
  *
- * OpenCode's public config supports the `task` permission, but the pinned SDK
- * declaration omits that field. Keep the adapter boundary aligned with the
- * harness contract without weakening the rest of the generated type.
+ * The v2 OpenCode schema uses named permission rules. The scalar fields that
+ * the plugin package still declares remain scalar here so the translated
+ * config is assignable to the plugin config-hook input. Path-specific rules
+ * remain available where OpenCode supports them.
  */
-export type OpenCodeAgentPermission = NonNullable<
-  SdkOpenCodeAgentConfig["permission"]
-> & {
-  task?: OpenCodePermissionAction;
-};
+export interface OpenCodeAgentPermission {
+  read?: PermissionRuleConfig;
+  edit?: PermissionActionConfig;
+  glob?: PermissionRuleConfig;
+  grep?: PermissionRuleConfig;
+  list?: PermissionRuleConfig;
+  bash?: PermissionRuleConfig;
+  task?: PermissionRuleConfig;
+  webfetch?: PermissionActionConfig;
+}
 
-/** JSON-shaped values accepted in an OpenCode agent's options map. */
-export type OpenCodeAgentOptionValue =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly OpenCodeAgentOptionValue[]
-  | { readonly [key: string]: OpenCodeAgentOptionValue };
-
-/** Provider/model and adapter metadata stored in an agent's options map. */
-export type OpenCodeAgentOptions = Readonly<
-  Record<string, OpenCodeAgentOptionValue>
->;
-
-/** OpenCode agent config with the public task permission restored. */
+/** OpenCode agent config fields translated by Weave. */
 export type OpenCodeAgentConfig = Pick<
   SdkOpenCodeAgentConfig,
   | "model"
@@ -62,49 +48,7 @@ export type OpenCodeAgentConfig = Pick<
   | "mode"
   | "color"
   | "maxSteps"
+  | "options"
 > & {
-  options?: OpenCodeAgentOptions;
   permission?: OpenCodeAgentPermission;
 };
-
-export type {
-  /**
-   * Top-level OpenCode config — used when reading or patching the running
-   * OpenCode configuration via the SDK client.
-   */
-  Config as OpenCodeConfig,
-  /**
-   * OpenCode model descriptor — used for available-model lookup and
-   * model-intent resolution.
-   */
-  Model as OpenCodeModel,
-  /**
-   * The generated SDK client class — used to communicate with a running
-   * OpenCode server instance.
-   */
-  OpencodeClient,
-  /**
-   * Client configuration options — used when constructing an `OpencodeClient`.
-   */
-  OpencodeClientConfig,
-  /**
-   * OpenCode provider descriptor — used when enumerating available providers
-   * and their models.
-   */
-  Provider as OpenCodeProvider,
-  /**
-   * OpenCode session descriptor — used when querying active sessions.
-   */
-  Session as OpenCodeSession,
-} from "@opencode-ai/sdk";
-
-/** OpenCode agent descriptor returned by the API. */
-export type OpenCodeAgent = SdkOpenCodeAgent;
-
-export {
-  /**
-   * Factory function that creates a pre-configured `OpencodeClient` pointed at
-   * the running OpenCode server. Accepts an optional `directory` override.
-   */
-  createOpencodeClient,
-} from "@opencode-ai/sdk";
