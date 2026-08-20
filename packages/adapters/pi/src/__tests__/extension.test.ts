@@ -13586,9 +13586,12 @@ describe("createPiExtension: primary model fallback C4a", () => {
 
   function modelFallbackOverrides(
     journalEntries: unknown[],
+    useDefaultHostSurfaceReader = false,
   ): Partial<PiExtensionDeps> {
     return {
-      hostSurfaceReader: hostSurfaceReader(),
+      ...(useDefaultHostSurfaceReader
+        ? { hostSurfaceReader: undefined }
+        : { hostSurfaceReader: hostSurfaceReader() }),
       runtimeStoreFactory: {
         open: () => okAsync(createInMemoryRuntimeStore()),
       },
@@ -13605,37 +13608,45 @@ describe("createPiExtension: primary model fallback C4a", () => {
   function installModelFallbackExtension(
     host: RecordingFakePiHost,
     journalEntries: unknown[],
+    options: { readonly useDefaultHostSurfaceReader?: boolean } = {},
   ): PiExtensionInstance {
-    return installExtension(host, "0.81.1", {
-      ...modelFallbackOverrides(journalEntries),
-      capabilityProber: allOkCapabilityProber(),
-      configActivator: fakeConfigActivator({
-        agents: [
-          {
-            agentName: "loom",
-            source: "explicit",
-            descriptor: loomDescriptor({
-              fast: true,
-              models: [
-                `${loomOrigin.provider}/${loomOrigin.id}`,
-                `${loomFallback.provider}/${loomFallback.id}`,
-              ],
-            }),
-          },
-          {
-            agentName: "tapestry",
-            source: "explicit",
-            descriptor: tapestryDescriptor({
-              models: [
-                `${tapestryOrigin.provider}/${tapestryOrigin.id}`,
-                `${tapestryFallback.provider}/${tapestryFallback.id}`,
-              ],
-            }),
-          },
-        ],
-        errors: [],
-      }),
-    });
+    return installExtension(
+      host,
+      options.useDefaultHostSurfaceReader === true ? "0.84.2" : "0.81.1",
+      {
+        ...modelFallbackOverrides(
+          journalEntries,
+          options.useDefaultHostSurfaceReader === true,
+        ),
+        capabilityProber: allOkCapabilityProber(),
+        configActivator: fakeConfigActivator({
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor({
+                fast: true,
+                models: [
+                  `${loomOrigin.provider}/${loomOrigin.id}`,
+                  `${loomFallback.provider}/${loomFallback.id}`,
+                ],
+              }),
+            },
+            {
+              agentName: "tapestry",
+              source: "explicit",
+              descriptor: tapestryDescriptor({
+                models: [
+                  `${tapestryOrigin.provider}/${tapestryOrigin.id}`,
+                  `${tapestryFallback.provider}/${tapestryFallback.id}`,
+                ],
+              }),
+            },
+          ],
+          errors: [],
+        }),
+      },
+    );
   }
 
   function failureEvent(id: string): {
@@ -13677,6 +13688,77 @@ describe("createPiExtension: primary model fallback C4a", () => {
         : [];
     });
   }
+
+  it("arms primary fallback through the default host reader when session helpers are present", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries, {
+      useDefaultHostSurfaceReader: true,
+    });
+
+    await host.triggerSessionStart();
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    const setModelCallsAtBoot = host.setModelCalls.length;
+
+    await host.triggerEvent(
+      "message_end",
+      failureEvent("default-reader-failure"),
+    );
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+
+    expect(host.setModelCalls.slice(setModelCallsAtBoot)).toEqual([
+      loomFallback,
+    ]);
+    expect(host.getCurrentModel()).toBe(loomFallback);
+  });
+
+  it("keeps primary fallback optional and stays ready when the pending helper is absent", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+    });
+    installModelFallbackExtension(host, journalEntries, {
+      useDefaultHostSurfaceReader: true,
+    });
+
+    const legacySession = { ...host.createSessionContext() };
+    delete legacySession.hasPendingMessages;
+    await host.triggerEvent(
+      "session_start",
+      { reason: "startup" },
+      legacySession,
+    );
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    const setModelCallsAtBoot = host.setModelCalls.length;
+
+    await host.triggerEvent(
+      "message_end",
+      failureEvent("default-reader-missing-pending"),
+      legacySession,
+    );
+    await host.triggerEvent(
+      "agent_settled",
+      { type: "agent_settled" },
+      legacySession,
+    );
+    await flushBackgroundWork();
+
+    expect(host.setModelCalls.slice(setModelCallsAtBoot)).toEqual([]);
+    expect(host.getCurrentModel()).toBe(loomOrigin);
+  });
 
   async function applyFallbackCandidate(
     host: RecordingFakePiHost,

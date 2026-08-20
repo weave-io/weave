@@ -252,7 +252,7 @@ describe("host surface inventory", () => {
         hasPendingMessages: () => false,
       },
       rootExports: {
-        VERSION: "0.81.1",
+        VERSION: "0.84.2",
         CustomEditor: () => undefined,
         SessionManager: sessionManagerStub(),
       },
@@ -271,6 +271,65 @@ describe("host surface inventory", () => {
     expect(completeReport.overlayFallbackGaps).toEqual([]);
     expect(completeReport.featureGaps).toEqual([]);
     expect(isRuntimeModelFallbackEnabled(completeReport)).toBe(true);
+
+    const incompleteSessions: readonly [
+      string,
+      Record<string, unknown>,
+      string,
+    ][] = [
+      [
+        "missing idle helper",
+        { hasPendingMessages: () => false },
+        "callable-idle-helper-unsupported",
+      ],
+      [
+        "missing pending-message helper",
+        { isIdle: () => true },
+        "callable-pending-message-helper-unsupported",
+      ],
+      [
+        "malformed idle helper",
+        { isIdle: "not-callable", hasPendingMessages: () => false },
+        "callable-idle-helper-unsupported",
+      ],
+      [
+        "malformed pending-message helper",
+        { isIdle: () => true, hasPendingMessages: "not-callable" },
+        "callable-pending-message-helper-unsupported",
+      ],
+    ];
+    for (const [label, session, details] of incompleteSessions) {
+      const incomplete = await reader.read({
+        api: {
+          appendEntry: () => undefined,
+          on: () => undefined,
+          setModel: async () => true,
+          sendMessage: () => undefined,
+        } as never,
+        ui: overlayCapableUi(),
+        session: session as never,
+        rootExports: {
+          VERSION: "0.84.2",
+          CustomEditor: () => undefined,
+          SessionManager: sessionManagerStub(),
+        },
+      });
+      const report = readHostSurfaceReport(incomplete._unsafeUnwrap());
+      expect(
+        report.probes.find(
+          (probe) => probe.surfaceId === "runtime-model-fallback",
+        ),
+        label,
+      ).toEqual({
+        surfaceId: "runtime-model-fallback",
+        status: "unavailable",
+        details,
+      });
+      expect(report.requiredGaps, label).toEqual([]);
+      expect(report.overlayFallbackGaps, label).toEqual([]);
+      expect(report.featureGaps, label).toEqual(["runtime-model-fallback"]);
+      expect(isRuntimeModelFallbackEnabled(report), label).toBe(false);
+    }
   });
 
   it("uses only public VERSION and matrix facts for required protocol surfaces", async () => {

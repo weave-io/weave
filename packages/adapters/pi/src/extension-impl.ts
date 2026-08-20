@@ -7060,6 +7060,7 @@ export function createPiExtension(
       const hostSurfaceInput = {
         api: pi,
         ui: ctx.ui,
+        session: ctx,
         rootExports: PiPublicExports as unknown as Readonly<
           Record<string, unknown>
         >,
