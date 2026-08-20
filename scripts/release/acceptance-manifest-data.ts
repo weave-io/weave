@@ -210,7 +210,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001", "P013"] },
       liveSmoke: { required: true, checklistIds: ["S007", "S009"] },
-      result: "pass",
+      result: "pending",
+      notes:
+        "S007 is pending until Task 15 runs the exact Weft-approved Pi 0.84.2 packed artifact and binds its sanitized smoke report plus artifact SHA-256 digest; run bun scripts/release/pi-model-failover-smoke.ts --artifact <exact-weft-approved-0.84.2-packed-tarball> --artifact-sha256 <artifact-sha256> --expected-pi-version 0.84.2 --case all --report <absolute-ephemeral-report-path>.",
     },
     {
       id: "PI-POL",

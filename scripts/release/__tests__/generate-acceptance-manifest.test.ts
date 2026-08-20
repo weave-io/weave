@@ -29,6 +29,7 @@ describe("generateAcceptanceManifest", () => {
         .filter((row) => row.result === "pending")
         .map((row) => row.id),
     ).toEqual([
+      "PI-MDL",
       "PI-POL",
       "PI-DEL",
       "PI-LIF",
@@ -50,7 +51,6 @@ describe("generateAcceptanceManifest", () => {
               "PI-MAT",
               "PI-PRM",
               "PI-SKL",
-              "PI-MDL",
               "PI-CMD",
               "PI-CMP",
               "PI-REC",

@@ -223,6 +223,24 @@ record and stay `Pending`.
 3. A disposable scratch project is available so trust/untrust behavior can
    be exercised without risking a real project's files.
 
+## Task 15 model-fallback proof gate
+
+`S007` remains **Pending** until Task 15 runs the exact Weft-approved packed
+`0.84.2` artifact in a real interactive Pi TUI session and binds both the
+sanitized smoke report and its artifact SHA-256 digest to the acceptance
+manifest. Unit tests and local rollback tests do not satisfy this gate. Do not
+commit proof output with this refactor.
+
+Completion command:
+
+```text
+bun scripts/release/pi-model-failover-smoke.ts --artifact <exact-weft-approved-0.84.2-packed-tarball> --artifact-sha256 <artifact-sha256> --expected-pi-version 0.84.2 --case all --report <absolute-ephemeral-report-path>
+```
+
+RF01-RF06 remain **Pending** until the same Task 15 live proof records their
+real-host evidence. The command above is a completion condition, not proof that
+Task 15 has run.
+
 ## Checklist
 
 | ID | Area | Check | Result |
@@ -233,7 +251,7 @@ record and stay `Pending`.
 | S004 | Health | Run `/weave:health`; confirm exactly 19 sanitized capability probes are reported, one per capability ID. | Pass |
 | S005 | Materialization | Confirm the Loom primary agent and configured shuttle/category agents materialize from `.weave/config.weave`. | Pass |
 | S006 | Skill/model/prompt/temperature | Confirm declared `skills` resolve and are reflected in the composed prompt. | Pass |
-| S007 | Model fallback release smoke | Run `scripts/release/pi-model-failover-smoke.ts --case all` against the exact packed adapter digest on Pi `0.84.2` with an ephemeral `--report` path. Confirm provider-only context repair, durable failed-attempt history, stable identities, one visible fallback event, the exact card identity and Native Line, one final settlement, bounded cleanup, and optional-surface-disabled rollback with ready health, `health-only: false`, legacy settlement, and no fallback artifacts. | Pass |
+| S007 | Model fallback release smoke | Run the exact Task 15 command below against the Weft-approved packed adapter digest on Pi `0.84.2`. Confirm provider-only context repair, durable failed-attempt history, stable identities, one visible fallback event, the exact card identity and Native Line, one final settlement, bounded cleanup, and optional-surface-disabled rollback with ready health, `health-only: false`, legacy settlement, and no fallback artifacts. | Pending |
 | S008 | Skill/model/prompt/temperature | Confirm `prompt_append`/`prompt_append_file` renders after the primary prompt source. | Pass |
 | S009 | Skill/model/prompt/temperature | Confirm `temperature` is applied when supported, or reported as a degraded capability when the host cannot honor it. | Pass |
 | S010 | Tool policy | Confirm an `allow`-policy registered tool executes without a dialog. | Pending |

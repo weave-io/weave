@@ -75,7 +75,7 @@ describe("parseSmokeChecklist", () => {
     const byId = new Map(
       result.value.items.map((item) => [item.id, item.result]),
     );
-    for (const id of ["S010", "S011", "S012", "S013", "S040", "S049"])
+    for (const id of ["S007", "S010", "S011", "S012", "S013", "S040", "S049"])
       expect(byId.get(id)).toBe("Pending");
     for (const id of [
       "S050",

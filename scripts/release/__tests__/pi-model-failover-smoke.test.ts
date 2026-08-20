@@ -1,13 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 import {
-  __testing,
+  createCleanupResourceTracker,
+  runBoundedCommand,
+  runWithCleanup,
+} from "../pi-model-failover-smoke/command-runner.js";
+import {
   artifactDigest,
-  buildExpectDriver,
-  buildPiLaunchCommand,
   type CleanupProcessObservation,
   containsForbiddenContent,
-  createCleanupResourceTracker,
   EXPECTED_FALLBACK_VISIBLE_EVENT_COUNT,
   EXPECTED_NATIVE_LINE,
   FALLBACK_SUCCESS,
@@ -26,45 +27,54 @@ import {
   fixtureHistoryDescriptorForFact,
   fixtureMarkerTokenHash,
   fixtureRoleHash,
-  inspectPackedArtifact,
-  inspectPiCliProvenance,
   MAX_REPORT_BYTES,
   MAX_REPORT_STRING_LENGTH,
   type NativeSessionObservation,
   PARENT_TASK,
   PROVIDER_FAILURE_MARKER,
-  parseHealthFacts,
-  parseSmokeArgs,
-  projectSanitizedSmokeReport,
   RECOVERY_MARKER,
   REPORT_DIAGNOSTIC_CODES,
   ROLLBACK_DISABLED_SURFACE,
   ROLLBACK_SHIM_BOUNDARY,
   redactDiagnostic,
-  runBoundedCommand,
-  runWithCleanup,
   type SmokeReport,
   type SpawnedProcessLike,
-  serializeSmokeReport,
-  validateControlObserverSource,
+} from "../pi-model-failover-smoke/contract.js";
+import {
+  buildExpectDriver,
+  buildPiLaunchCommand,
+  parseSmokeArgs,
   validateCreatedIsolatedPathPolicy,
   validateEphemeralReportPath,
   validateExpectedPiVersion,
-  validateFallbackFacts,
-  validateFixtureSourceBoundary,
   validateIsolatedPathPolicy,
-  validateLoadedAdapterProvenance,
-  validateObservedSources,
-  validatePiVersion,
-  validateReportSafety,
-  validateRollbackFacts,
-  validateRollbackShimSource,
   validateStrictProvenanceEnvironment,
+} from "../pi-model-failover-smoke/environment.js";
+import { validateFallbackFacts } from "../pi-model-failover-smoke/fallback-validation.js";
+import {
+  validateControlObserverSource,
+  validateFixtureSourceBoundary,
+  validateRollbackShimSource,
+} from "../pi-model-failover-smoke/fixture-sources.js";
+import { parseHealthFacts } from "../pi-model-failover-smoke/health-observation.js";
+import { validateObservedSources } from "../pi-model-failover-smoke/observation-validation.js";
+import {
+  inspectPackedArtifact,
+  inspectPiCliProvenance,
+  validateLoadedAdapterProvenance,
+  validatePiVersion,
   verifyArtifactDigest,
   verifyArtifactFileUnchanged,
   verifyInstalledAdapterPackage,
-  writeSmokeReportAtomically,
-} from "../pi-model-failover-smoke.js";
+} from "../pi-model-failover-smoke/provenance.js";
+import {
+  projectSanitizedSmokeReport,
+  serializeSmokeReport,
+  validateReportSafety,
+} from "../pi-model-failover-smoke/report-projection.js";
+import { writeSmokeReportAtomically } from "../pi-model-failover-smoke/report-writer.js";
+import { validateRollbackFacts } from "../pi-model-failover-smoke/rollback-validation.js";
+import { __testing } from "../pi-model-failover-smoke.js";
 
 function closedStream(): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
@@ -1840,7 +1850,8 @@ describe("Pi model-fallback release smoke", () => {
       },
     });
     expect(altered.isErr()).toBe(true);
-    if (altered.isErr()) expect(altered.error.type).toBe("UnexpectedEventCount");
+    if (altered.isErr())
+      expect(altered.error.type).toBe("UnexpectedEventCount");
   });
 
   it("fails closed for missing, reordered, duplicate, and wrong real context descriptors", () => {
