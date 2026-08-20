@@ -39,7 +39,8 @@ interface JsonObject {
 
 interface Route {
   status?: number;
-  body?: JsonValue;
+  body?: unknown;
+  rawBody?: string;
   reject?: string;
   headers?: Record<string, string>;
 }
@@ -53,6 +54,25 @@ interface Call {
 
 const REPO_NODE_ID = "R_weave";
 const ZERO_OID = "0".repeat(40);
+
+function validPull(overrides: Record<string, unknown> = {}) {
+  return {
+    number: 7,
+    html_url: "https://github.com/weave-io/weave/pull/7",
+    state: "open",
+    title: "release",
+    body: "body",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    closed_at: null,
+    merged_at: null,
+    merge_commit_sha: null,
+    head: { ref: "release-pr/stable", sha: MARKER },
+    base: { ref: "main", sha: BASE },
+    labels: [{ name: "release:stable" }],
+    ...overrides,
+  };
+}
 
 interface GitObject {
   type: "commit" | "tree";
@@ -258,7 +278,7 @@ function client(
     if (route === undefined)
       return new Response("{}", { status: 404, statusText: "Not Found" });
     if (route.reject !== undefined) throw new Error(route.reject);
-    return new Response(JSON.stringify(route.body ?? {}), {
+    return new Response(route.rawBody ?? JSON.stringify(route.body ?? {}), {
       status: route.status ?? 200,
       statusText: route.status === 422 ? "Unprocessable Entity" : "OK",
       headers: route.headers,
@@ -315,7 +335,7 @@ test("readRefOptional reports an absent ref as null", async () => {
 test("compare-and-swap ref writes send an exact updateRefs lease", async () => {
   const github = new FakeGitHub();
   const next = "d".repeat(40);
-  github.seedCommit(next, "t".repeat(40), "next");
+  github.seedCommit(next, "c".repeat(40), "next");
   github.refs.set(MARKER_REF, MARKER);
   const rest = new GitHubRestClient("weave-io/weave", "token", github.fetch);
 
@@ -344,7 +364,7 @@ test("compare-and-swap ref writes send an exact updateRefs lease", async () => {
 
 test("a REST-created commit is available for a leased ref update", async () => {
   const github = new FakeGitHub();
-  github.seedCommit(BASE, "t".repeat(40), "base");
+  github.seedCommit(BASE, "c".repeat(40), "base");
   github.refs.set(MARKER_REF, MARKER);
   const rest = new GitHubRestClient("weave-io/weave", "token", github.fetch);
 
@@ -381,7 +401,7 @@ test("a writer that lands first makes the server reject the stale lease", async 
   const winner = "c".repeat(40);
   const next = "d".repeat(40);
   const github = new FakeGitHub();
-  github.seedCommit(next, "t".repeat(40), "next");
+  github.seedCommit(next, "c".repeat(40), "next");
   github.refs.set(MARKER_REF, MARKER);
   const rest = new GitHubRestClient("weave-io/weave", "token", github.fetch);
   // The concurrent writer lands *inside* the mutation, after this client
@@ -493,7 +513,7 @@ test("a current-oid mismatch naming the expected SHA is a lost lease", async () 
 test("a mutation failure that is not a stale lease stays a GitHub error", async () => {
   const next = "d".repeat(40);
   const github = new FakeGitHub();
-  github.seedCommit(next, "t".repeat(40), "next");
+  github.seedCommit(next, "c".repeat(40), "next");
   github.refs.set(MARKER_REF, MARKER);
   github.denied = "Resource not accessible by integration";
   const rest = new GitHubRestClient("weave-io/weave", "token", github.fetch);
@@ -530,9 +550,9 @@ test("every lease input is validated before a mutation is attempted", async () =
 test("createCommitOnBase builds a tree from the base and commits onto it", async () => {
   const world = client({
     [`GET /repos/weave-io/weave/git/commits/${BASE}`]: {
-      body: { tree: { sha: "t".repeat(40) }, message: "base" },
+      body: { tree: { sha: "c".repeat(40) }, message: "base" },
     },
-    "POST /repos/weave-io/weave/git/trees": { body: { sha: "u".repeat(40) } },
+    "POST /repos/weave-io/weave/git/trees": { body: { sha: "e".repeat(40) } },
     "POST /repos/weave-io/weave/git/commits": { body: { sha: MARKER } },
   });
   const created = await world.client.createCommitOnBase({
@@ -541,7 +561,7 @@ test("createCommitOnBase builds a tree from the base and commits onto it", async
     files: [{ path: "packages/cli/package.json", contents: "{}" }],
   });
   expect(created._unsafeUnwrap()).toBe(MARKER);
-  expect(world.calls[1]?.body).toContain('"base_tree":"tttt');
+  expect(world.calls[1]?.body).toContain('"base_tree":"cccc');
   expect(world.calls[2]?.body).toContain('"parents":["aaa');
 });
 
@@ -551,7 +571,7 @@ test("compareCommits and readCommitMessage read git data by type", async () => {
       body: { status: "ahead" },
     },
     [`GET /repos/weave-io/weave/git/commits/${MARKER}`]: {
-      body: { message: "chore(release): claim", tree: { sha: "t".repeat(40) } },
+      body: { message: "chore(release): claim", tree: { sha: "c".repeat(40) } },
     },
   });
   expect(
@@ -884,8 +904,13 @@ test("release PRs are read by label and by owner-qualified head state", async ()
       state: "open",
       title: "release",
       body: "body",
+      created_at: "2026-08-18T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      closed_at: null,
+      merged_at: null,
+      merge_commit_sha: null,
       head: { ref: "release-pr/stable", sha: MARKER },
-      base: { ref: "main" },
+      base: { ref: "main", sha: BASE },
       labels: [{ name: "release:stable" }],
     },
     {
@@ -894,8 +919,13 @@ test("release PRs are read by label and by owner-qualified head state", async ()
       state: "open",
       title: "other",
       body: "",
+      created_at: "2026-08-18T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      closed_at: null,
+      merged_at: null,
+      merge_commit_sha: null,
       head: { ref: "feature", sha: BASE },
-      base: { ref: "main" },
+      base: { ref: "main", sha: BASE },
       labels: [],
     },
   ];
@@ -906,11 +936,14 @@ test("release PRs are read by label and by owner-qualified head state", async ()
       state: "closed",
       merged: true,
       merged_at: "2026-08-19T00:00:00.000Z",
+      closed_at: "2026-08-19T00:00:00.000Z",
+      created_at: "2026-08-18T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
       merge_commit_sha: MARKER,
       title: "stale",
       body: "",
       head: { ref: "release-pr/stable", sha: BASE },
-      base: { ref: "main" },
+      base: { ref: "main", sha: BASE },
       labels: [],
     },
   ];
@@ -947,6 +980,168 @@ test("release PRs are read by label and by owner-qualified head state", async ()
   );
 });
 
+test("release PR parsing fails closed for missing authority fields", async () => {
+  const missingFields = [
+    "labels",
+    "merged_at",
+    "closed_at",
+    "created_at",
+    "updated_at",
+    "merge_commit_sha",
+    "head",
+    "base",
+    "body",
+  ];
+  for (const field of missingFields) {
+    const pull: Record<string, unknown> = validPull();
+    delete pull[field];
+    const world = client({
+      "GET /repos/weave-io/weave/pulls/7": { body: pull },
+    });
+    const result = await world.client.getPullRequest(7);
+    expect(result.isErr(), field).toBe(true);
+  }
+});
+
+test("release PR parsing fails closed for malformed labels, merge state, dates, and SHAs", async () => {
+  const malformed = [
+    validPull({ labels: [{ name: 7 }] }),
+    validPull({ merged_at: "not-a-timestamp" }),
+    validPull({ merged_at: "2026-08-19" }),
+    validPull({ closed_at: "not-a-timestamp" }),
+    validPull({ closed_at: "2026-08-19T00:00:00.000Z" }),
+    validPull({ created_at: "2026-02-30T00:00:00.000Z" }),
+    validPull({ updated_at: "not-a-timestamp" }),
+    validPull({ head: { ref: "release-pr/stable", sha: "bad" } }),
+    validPull({ head: { ref: "release-pr/stable", sha: "0".repeat(40) } }),
+    validPull({ base: { ref: "main", sha: "bad" } }),
+    validPull({ base: { ref: "main", sha: "0".repeat(40) } }),
+    validPull({ merge_commit_sha: "bad" }),
+    validPull({
+      state: "closed",
+      closed_at: "2026-08-19T00:00:00.000Z",
+      merged_at: "2026-08-19T00:00:00.000Z",
+      merge_commit_sha: MARKER,
+      merged: false,
+    }),
+    validPull({
+      state: "closed",
+      closed_at: null,
+      merged_at: "2026-08-19T00:00:00.000Z",
+      merge_commit_sha: MARKER,
+    }),
+    validPull({
+      state: "open",
+      closed_at: "2026-08-19T00:00:00.000Z",
+    }),
+    validPull({
+      labels: Array.from({ length: 33 }, () => ({ name: "release:stable" })),
+    }),
+  ];
+  for (const pull of malformed) {
+    const world = client({
+      "GET /repos/weave-io/weave/pulls/7": { body: pull },
+    });
+    expect((await world.client.getPullRequest(7)).isErr()).toBe(true);
+  }
+});
+
+test("GitHub object responses fail closed on malformed or truncated trees", async () => {
+  const allZeroRef = client({
+    "GET /repos/weave-io/weave/git/ref/heads/release-pr/stable": {
+      body: { object: { sha: "0".repeat(40) } },
+    },
+  });
+  expect((await allZeroRef.client.readRefOptional(MARKER_REF)).isErr()).toBe(
+    true,
+  );
+
+  const missingTruncated = client({
+    [`GET /repos/weave-io/weave/git/commits/${BASE}`]: {
+      body: { tree: { sha: "c".repeat(40) } },
+    },
+    [`GET /repos/weave-io/weave/git/trees/${"c".repeat(40)}?recursive=1`]: {
+      body: { tree: [] },
+    },
+  });
+  expect(
+    (await missingTruncated.client.listCommitTreePaths(BASE)).isErr(),
+  ).toBe(true);
+
+  const truncated = client({
+    [`GET /repos/weave-io/weave/git/trees/${BASE}?recursive=1`]: {
+      body: { truncated: true, tree: [] },
+    },
+  });
+  expect((await truncated.client.listTreePaths(BASE)).isErr()).toBe(true);
+});
+
+test("GitHub JSON reads bound response bytes, page items, strings, and time", async () => {
+  const oversized = client(
+    {
+      "GET /repos/weave-io/weave/pulls/7": {
+        rawBody: JSON.stringify(validPull({ body: "x".repeat(1_024) })),
+      },
+    },
+    { jsonResponseBytes: 128 },
+  );
+  const oversizedResult = await oversized.client.getPullRequest(7);
+  expect(oversizedResult.isErr()).toBe(true);
+  if (oversizedResult.isErr())
+    expect(oversizedResult.error.message).toContain("truncated");
+
+  const declaredOversized = client(
+    {
+      "GET /repos/weave-io/weave/pulls/7": {
+        body: validPull(),
+        headers: { "content-length": "999999" },
+      },
+    },
+    { jsonResponseBytes: 128 },
+  );
+  const declaredResult = await declaredOversized.client.getPullRequest(7);
+  expect(declaredResult.isErr()).toBe(true);
+
+  const tooMany = client(
+    {
+      "GET /repos/weave-io/weave/pulls?state=open&per_page=1": {
+        body: [
+          validPull(),
+          validPull({
+            number: 8,
+            html_url: "https://github.com/weave-io/weave/pull/8",
+          }),
+        ],
+      },
+    },
+    { pullRequestBounds: { pageSize: 1, maxPages: 1, maxItems: 1 } },
+  );
+  expect(
+    (
+      await tooMany.client.listOpenPullRequestsByLabel("release:stable")
+    ).isErr(),
+  ).toBe(true);
+
+  const longString = client({
+    "GET /repos/weave-io/weave/pulls/7": {
+      body: validPull({ title: "x".repeat(20_000) }),
+    },
+  });
+  expect((await longString.client.getPullRequest(7)).isErr()).toBe(true);
+
+  const hanging = new GitHubRestClient(
+    "weave-io/weave",
+    "token",
+    async () => new Promise<Response>(() => undefined),
+    "https://api.github.com",
+    { requestTimeoutMs: 5 },
+  );
+  const started = Date.now();
+  const timedOut = await hanging.getPullRequest(7);
+  expect(Date.now() - started).toBeLessThan(500);
+  expect(timedOut.isErr()).toBe(true);
+});
+
 test("release PR collection follows Link pagination before filtering", async () => {
   const firstPage = {
     number: 6,
@@ -954,8 +1149,13 @@ test("release PR collection follows Link pagination before filtering", async () 
     state: "open",
     title: "other",
     body: "",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    closed_at: null,
+    merged_at: null,
+    merge_commit_sha: null,
     head: { ref: "feature", sha: BASE },
-    base: { ref: "main" },
+    base: { ref: "main", sha: BASE },
     labels: [],
   };
   const stablePage = {
@@ -964,8 +1164,13 @@ test("release PR collection follows Link pagination before filtering", async () 
     state: "open",
     title: "release",
     body: "body",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    closed_at: null,
+    merged_at: null,
+    merge_commit_sha: null,
     head: { ref: "release-pr/stable", sha: MARKER },
-    base: { ref: "main" },
+    base: { ref: "main", sha: BASE },
     labels: [{ name: "release:stable" }],
   };
   const world = client(
@@ -1181,8 +1386,13 @@ test("release PR collection fails closed when a next link exceeds its page bound
     state: "open",
     title: "other",
     body: "",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    closed_at: null,
+    merged_at: null,
+    merge_commit_sha: null,
     head: { ref: "feature", sha: BASE },
-    base: { ref: "main" },
+    base: { ref: "main", sha: BASE },
     labels: [],
   };
   const listPath = "/repos/weave-io/weave/pulls?state=open&per_page=1";
@@ -1247,8 +1457,13 @@ test("a label failure after create is an ambiguous write", async () => {
         state: "open",
         title: "release",
         body: "body",
+        created_at: "2026-08-18T00:00:00.000Z",
+        updated_at: "2026-08-19T00:00:00.000Z",
+        closed_at: null,
+        merged_at: null,
+        merge_commit_sha: null,
         head: { ref: "release-pr/stable", sha: MARKER },
-        base: { ref: "main" },
+        base: { ref: "main", sha: BASE },
         labels: [],
       },
     },

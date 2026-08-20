@@ -24,9 +24,12 @@ import {
 import { runDeterministicDocsCheck } from "./docs-audit/deterministic.js";
 import type { GitHubError } from "./errors.js";
 import { type GitHubFetch, GitHubRestClient } from "./github-client.js";
+import { SemVerSchema } from "./model.js";
+import { releaseTagName } from "./notes-wrapper.js";
 import type { ReleasePlan, ReleasePlanError } from "./release-plan.js";
 import {
   MAIN_BRANCH,
+  markerRefPath,
   parseReleasePrEnvelope,
   RELEASE_PR_LABEL,
   type ReleasePrEnvelope,
@@ -39,9 +42,11 @@ import {
   discoverIncompleteReleases,
   isTerminalPrimaryState,
   type MergedReleasePullRequestAuthority,
+  type PackageMemberAuthority,
   type ReleaseAuthority,
   type ReleaseStateError,
   type ReleaseStatePorts,
+  validateReleaseAuthority,
 } from "./release-state.js";
 import {
   NEW_PIPELINE_SCHEDULE,
@@ -318,23 +323,35 @@ export interface DoctorReleaseLifecycleObservation {
 }
 
 /**
- * Optional authority seam for a merged release.
+ * Authority seam for a merged release.
  *
- * The GitHub REST collector owns discovery of the marker and release PR. The
- * post-merge member/tag/release facts remain a separate Task 14 authority
- * port, so an absent or failing port cannot be mistaken for a complete
- * release. Tests inject this port to exercise every classifier state without
- * treating comments or workflow artifacts as authority.
+ * Production reads the merged commit, registry, tags, releases, and tree
+ * through the read-only Task 14 reader below. Tests may inject this seam to
+ * exercise classifier states without treating comments or workflow artifacts
+ * as authority.
  */
+export interface DoctorReleaseAuthorityRequest
+  extends MergedReleasePullRequestAuthority {
+  /** The exact labels read from the associated stable-release PR. */
+  readonly labels: readonly string[];
+}
+
 export type DoctorReleaseAuthorityReader = (
-  pullRequest: MergedReleasePullRequestAuthority,
+  pullRequest: DoctorReleaseAuthorityRequest,
 ) => ResultAsync<ReleaseAuthority, ReleaseStateError>;
+
+export type DoctorCreationCleanupReader = () => ResultAsync<
+  ReleasePrOwnership | null,
+  DoctorPortError
+>;
 
 export interface DoctorCollectionOptions {
   /** Injected only for bounded tests; production uses global fetch. */
   readonly githubFetch?: GitHubFetch;
   readonly githubApiUrl?: string;
+  readonly registryFetch?: GitHubFetch;
   readonly readReleaseAuthority?: DoctorReleaseAuthorityReader;
+  readonly readCreationCleanupIdentity?: DoctorCreationCleanupReader;
 }
 
 /** All data needed by the pure verifier. No field contains a secret value. */
@@ -1651,7 +1668,9 @@ function collectSnapshot(
         token: environment.GITHUB_TOKEN,
         fetchImpl: options.githubFetch,
         apiUrl: options.githubApiUrl ?? environment.GITHUB_API_URL,
+        registryFetch: options.registryFetch,
         readAuthority: options.readReleaseAuthority,
+        readCreationCleanupIdentity: options.readCreationCleanupIdentity,
       });
       const lifecycle = lifecycleResult.isOk()
         ? lifecycleResult.value
@@ -1709,7 +1728,10 @@ export interface DoctorLifecycleCollectorInput {
   readonly token?: string;
   readonly fetchImpl?: GitHubFetch;
   readonly apiUrl?: string;
+  readonly registryFetch?: GitHubFetch;
   readonly readAuthority?: DoctorReleaseAuthorityReader;
+  /** Reads a previously recorded Task 14 CreationCleanupPending record. */
+  readonly readCreationCleanupIdentity?: DoctorCreationCleanupReader;
 }
 
 /**
@@ -1734,7 +1756,11 @@ export function collectAuthoritativeReleaseLifecycle(
     input.apiUrl,
   );
   return ResultAsync.fromPromise(
-    readAuthoritativeReleaseLifecycle(client, input.readAuthority),
+    readAuthoritativeReleaseLifecycle(client, {
+      registryFetch: input.registryFetch,
+      readAuthority: input.readAuthority,
+      readCreationCleanupIdentity: input.readCreationCleanupIdentity,
+    }),
     (cause): DoctorPortError => ({
       type: "DoctorPortFailed",
       operation: "release.lifecycle",
@@ -1743,11 +1769,17 @@ export function collectAuthoritativeReleaseLifecycle(
   ).andThen((result) => result);
 }
 
+interface AuthoritativeLifecycleReaders {
+  readonly registryFetch?: GitHubFetch;
+  readonly readAuthority?: DoctorReleaseAuthorityReader;
+  readonly readCreationCleanupIdentity?: DoctorCreationCleanupReader;
+}
+
 async function readAuthoritativeReleaseLifecycle(
   client: GitHubRestClient,
-  readAuthority: DoctorReleaseAuthorityReader | undefined,
+  readers: AuthoritativeLifecycleReaders,
 ): Promise<Result<DoctorReleaseLifecycleObservation, DoctorPortError>> {
-  const markerResult = await client.readRefOptional(RELEASE_PR_MARKER_REF);
+  const markerResult = await client.readRefOptional(markerRefPath());
   if (markerResult.isErr())
     return err(githubLifecycleFailure("read marker ref", markerResult.error));
   const markerSha = markerResult.value;
@@ -1814,9 +1846,13 @@ async function readAuthoritativeReleaseLifecycle(
         ),
       );
     if (
+      openPull.state !== "open" ||
+      openPull.merged ||
       openPull.baseRef !== MAIN_BRANCH ||
-      !openPull.labels.includes(RELEASE_PR_LABEL) ||
-      openPull.headSha !== markerSha
+      !hasExactStableReleaseLabel(openPull.labels) ||
+      openPull.headRef !== RELEASE_PR_MARKER_REF ||
+      openPull.headSha !== markerSha ||
+      openPull.url !== canonicalPullRequestUrl(openPull.number)
     )
       return err(
         lifecycleFailure(
@@ -1842,12 +1878,30 @@ async function readAuthoritativeReleaseLifecycle(
 
   const mergedPulls = closedResult.value.filter(
     (pull) =>
+      pull.state === "closed" &&
       pull.merged &&
+      pull.headRef === RELEASE_PR_MARKER_REF &&
       pull.baseRef === MAIN_BRANCH &&
-      pull.labels.includes(RELEASE_PR_LABEL),
+      hasExactStableReleaseLabel(pull.labels),
   );
   const mergedAuthorities: MergedReleasePullRequestAuthority[] = [];
+  const mergedByIdentity = new Map<number, (typeof mergedPulls)[number]>();
   for (const pull of mergedPulls) {
+    if (pull.url !== canonicalPullRequestUrl(pull.number))
+      return err(
+        lifecycleFailure(
+          "read merged release PR",
+          `pull request #${pull.number} has a non-canonical repository URL`,
+        ),
+      );
+    if (mergedByIdentity.has(pull.number))
+      return err(
+        lifecycleFailure(
+          "read merged release PR",
+          `GitHub returned duplicate stable release PR #${pull.number}`,
+        ),
+      );
+    mergedByIdentity.set(pull.number, pull);
     if (
       pull.mergeCommitSha === undefined ||
       pull.mergeCommitSha === null ||
@@ -1869,23 +1923,76 @@ async function readAuthoritativeReleaseLifecycle(
     });
   }
 
-  const associatedPullRequestSettled =
-    markerSha !== null &&
-    closedResult.value.some(
-      (pull) =>
-        pull.headRef === RELEASE_PR_MARKER_REF &&
-        pull.headSha === markerSha &&
-        pull.baseRef === MAIN_BRANCH,
+  const settledMarkerPulls =
+    markerSha === null
+      ? []
+      : closedResult.value.filter(
+          (pull) =>
+            pull.state === "closed" &&
+            pull.headRef === RELEASE_PR_MARKER_REF &&
+            pull.headSha === markerSha &&
+            pull.baseRef === MAIN_BRANCH &&
+            hasExactStableReleaseLabel(pull.labels),
+        );
+  if (settledMarkerPulls.length > 1)
+    return err(
+      lifecycleFailure(
+        "associate settled release PR",
+        "more than one exact stable release PR is associated with the live marker",
+      ),
     );
-  const ownership =
-    markerSha !== null && markerEnvelope !== undefined
-      ? {
-          ref: markerEnvelope.ref,
-          ownerGeneration: markerEnvelope.ownerGeneration,
-          expectedMarkerSha: markerSha,
-          plannedBaseSha: markerEnvelope.plannedBaseSha,
-        }
-      : null;
+  if (openPull !== undefined && settledMarkerPulls.length > 0)
+    return err(
+      lifecycleFailure(
+        "associate settled release PR",
+        "the live marker is associated with both open and closed stable release PRs",
+      ),
+    );
+  const associatedPullRequestSettled = settledMarkerPulls.length === 1;
+
+  const cleanupReader = readers.readCreationCleanupIdentity;
+  let cleanupRecordResult: Result<ReleasePrOwnership | null, DoctorPortError>;
+  if (cleanupReader === undefined) cleanupRecordResult = ok(null);
+  else {
+    const attempted = Result.fromThrowable(
+      () => cleanupReader(),
+      (cause): DoctorPortError => ({
+        type: "DoctorPortFailed",
+        operation: "release.lifecycle.creation-cleanup",
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+    )();
+    if (attempted.isErr()) cleanupRecordResult = err(attempted.error);
+    else
+      cleanupRecordResult = await ResultAsync.fromPromise(
+        Promise.resolve(attempted.value),
+        (cause): DoctorPortError => ({
+          type: "DoctorPortFailed",
+          operation: "release.lifecycle.creation-cleanup",
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+      )
+        .andThen((result) => result)
+        .then((result) => result);
+  }
+  if (cleanupRecordResult.isErr()) return err(cleanupRecordResult.error);
+  const recordedCleanup = cleanupRecordResult.value;
+  if (recordedCleanup !== null && !isReleasePrOwnership(recordedCleanup))
+    return err(
+      lifecycleFailure(
+        "read creation cleanup",
+        "Task 14 returned a malformed CreationCleanupPending identity",
+      ),
+    );
+
+  const productionAuthority = createProductionReleaseAuthorityReader({
+    client,
+    registryFetch: readers.registryFetch,
+    markerPresent: markerSha !== null,
+    markerSha,
+    associatedPullRequestSettled,
+  });
+  const authorityReader = readers.readAuthority ?? productionAuthority;
 
   let authority: ReleaseAuthority | undefined;
   const ports: ReleaseStatePorts = {
@@ -1898,19 +2005,56 @@ async function readAuthoritativeReleaseLifecycle(
           ? null
           : { number: openPull.number, url: openPull.url },
       ),
-    readCreationCleanupIdentity: () => okAsync(ownership),
+    readCreationCleanupIdentity: () => okAsync(recordedCleanup),
     readAuthority: (pullRequest) => {
-      if (readAuthority === undefined)
+      const candidate = mergedByIdentity.get(pullRequest.number);
+      if (
+        candidate === undefined ||
+        candidate.url !== pullRequest.url ||
+        candidate.mergeCommitSha !== pullRequest.mergeCommitSha ||
+        candidate.headRef !== pullRequest.headRef
+      )
         return errAsync<ReleaseAuthority, ReleaseStateError>({
           type: "InvalidReleaseAuthority",
           issues: [
-            "the merged-release authority reader is unavailable; no cached PR comment or workflow artifact may substitute for it",
+            "the requested stable release PR is not an exact member of the authoritative closed PR set",
           ],
         });
-      return readAuthority(pullRequest).map((value) => {
-        authority = value;
-        return value;
-      });
+      const request: DoctorReleaseAuthorityRequest = {
+        ...pullRequest,
+        labels: [...candidate.labels],
+      };
+      const attempted = Result.fromThrowable(
+        () => authorityReader(request),
+        (cause): ReleaseStateError => ({
+          type: "InvalidReleaseAuthority",
+          issues: [
+            cause instanceof Error
+              ? cause.message
+              : "Task 14 authority reader failed",
+          ],
+        }),
+      )();
+      if (attempted.isErr()) return errAsync(attempted.error);
+      return ResultAsync.fromPromise(
+        Promise.resolve(attempted.value),
+        (cause): ReleaseStateError => ({
+          type: "InvalidReleaseAuthority",
+          issues: [
+            cause instanceof Error
+              ? cause.message
+              : "Task 14 authority reader failed",
+          ],
+        }),
+      )
+        .andThen((result) => result)
+        .andThen((value) => {
+          const bound = validateAuthorityIdentity(value, request);
+          if (bound.isErr())
+            return errAsync<ReleaseAuthority, ReleaseStateError>(bound.error);
+          authority = bound.value;
+          return okAsync<ReleaseAuthority, ReleaseStateError>(bound.value);
+        });
     },
     recomputePlan: (planInput) =>
       errAsync<ReleasePlan, ReleasePlanError>({
@@ -1948,6 +2092,7 @@ async function readAuthoritativeReleaseLifecycle(
             plannedBaseSha: markerEnvelope.plannedBaseSha,
           }),
       openReleasePr: openPull !== undefined,
+      ...(recordedCleanup === null ? {} : { recordedCleanup }),
       associatedPullRequestSettled,
       creationPollExhausted:
         markerSha !== null &&
@@ -1958,6 +2103,378 @@ async function readAuthoritativeReleaseLifecycle(
     mergedRelease,
     discovered: discoveredResult.value,
   });
+}
+
+function canonicalPullRequestUrl(number: number): string {
+  return `https://github.com/${RELEASE_REPOSITORY}/pull/${number}`;
+}
+
+function hasExactStableReleaseLabel(labels: readonly string[]): boolean {
+  return (
+    labels.filter((label) => label === RELEASE_PR_LABEL).length === 1 &&
+    labels.every((label) => label.length <= 256)
+  );
+}
+
+function isReleasePrOwnership(value: unknown): value is ReleasePrOwnership {
+  const record = asRecord(value);
+  return (
+    record !== undefined &&
+    record.ref === RELEASE_PR_MARKER_REF &&
+    typeof record.ownerGeneration === "string" &&
+    isOwnerGeneration(record.ownerGeneration) &&
+    isFullSha(record.expectedMarkerSha) &&
+    isFullSha(record.plannedBaseSha)
+  );
+}
+
+function validateAuthorityIdentity(
+  input: unknown,
+  request: DoctorReleaseAuthorityRequest,
+): Result<ReleaseAuthority, ReleaseStateError> {
+  const validated = validateReleaseAuthority(input);
+  if (validated.isErr()) return err(validated.error);
+  const authority = validated.value;
+  const expectedUrl = canonicalPullRequestUrl(request.number);
+  const actual = authority.pullRequest;
+  const issues: string[] = [];
+  if (actual.number !== request.number)
+    issues.push("pull request number mismatch");
+  if (actual.url !== expectedUrl || request.url !== expectedUrl)
+    issues.push("pull request URL/repository mismatch");
+  if (!actual.merged || !actual.closed || !request.merged || !request.closed)
+    issues.push("stable release pull request is not merged and closed");
+  if (actual.mergeCommitSha !== request.mergeCommitSha)
+    issues.push("merge commit SHA mismatch");
+  if (authority.releasedSha !== request.mergeCommitSha)
+    issues.push("released SHA does not match the requested merge commit");
+  if (
+    actual.headRef !== RELEASE_PR_MARKER_REF ||
+    request.headRef !== RELEASE_PR_MARKER_REF
+  )
+    issues.push("stable release head ref mismatch");
+  if (!hasExactStableReleaseLabel(request.labels))
+    issues.push("stable release label is missing or ambiguous");
+  if (issues.length > 0)
+    return err({ type: "InvalidReleaseAuthority", issues });
+  return ok(authority);
+}
+
+interface ProductionAuthorityReaderInput {
+  readonly client: GitHubRestClient;
+  readonly registryFetch?: GitHubFetch;
+  readonly markerPresent: boolean;
+  readonly markerSha: string | null;
+  readonly associatedPullRequestSettled: boolean;
+}
+
+function createProductionReleaseAuthorityReader(
+  input: ProductionAuthorityReaderInput,
+): DoctorReleaseAuthorityReader {
+  return (request) =>
+    ResultAsync.fromPromise(
+      readProductionReleaseAuthority(input, request),
+      (cause): ReleaseStateError => ({
+        type: "InvalidReleaseAuthority",
+        issues: [
+          cause instanceof Error
+            ? cause.message
+            : "production Task 14 authority read failed",
+        ],
+      }),
+    ).andThen((authority) => validateAuthorityIdentity(authority, request));
+}
+
+async function readProductionReleaseAuthority(
+  input: ProductionAuthorityReaderInput,
+  request: DoctorReleaseAuthorityRequest,
+): Promise<ReleaseAuthority> {
+  const members: PackageMemberAuthority[] = [];
+  for (const packageName of Object.keys(
+    PUBLIC_PACKAGES,
+  ) as PublicPackageName[]) {
+    const packagePath = `${PUBLIC_PACKAGES[packageName].directory}/package.json`;
+    const manifest = await requireGitHubJsonFile(
+      input.client,
+      packagePath,
+      request.mergeCommitSha,
+    );
+    const version = readManifestVersion(manifest, packagePath);
+    const registry = await readRegistryPackage(
+      packageName,
+      version,
+      input.registryFetch ?? fetch,
+    );
+    members.push({
+      packageName,
+      version,
+      published: registry.published,
+      registryDigest: registry.digest,
+      provenanceSubjectDigest: null,
+      recordedDigest: null,
+      deprecated: registry.deprecated,
+      cacheDigest: null,
+      cacheValid: false,
+      rebuiltDigest: null,
+      proofChainComplete: false,
+      // A live registry read is not the Task 14 verification proof: that
+      // proof must compare the immutable source-bound expected digest with the
+      // registry bytes. Do not manufacture that record from the readback.
+      registryVerified: false,
+    });
+  }
+
+  const tags: Record<string, { commitSha: string }> = {};
+  const releases: Record<string, { targetSha: string; notes: string }> = {};
+  for (const member of members) {
+    const tag = releaseTagNameForAuthority(member.packageName, member.version);
+    const tagResult = await input.client.getRef(`refs/tags/${tag}`);
+    if (tagResult.isOk()) {
+      if (!isFullSha(tagResult.value))
+        throw new Error(`tag ${tag} returned a malformed SHA`);
+      tags[tag] = { commitSha: tagResult.value };
+    } else if (tagResult.error.status !== 404) {
+      throw new Error(`tag ${tag} read failed: ${tagResult.error.message}`);
+    }
+    const releaseResult = await input.client.getRelease(tag);
+    if (releaseResult.isOk()) {
+      if (!isFullSha(releaseResult.value.targetSha))
+        throw new Error(`release ${tag} returned a malformed target SHA`);
+      releases[tag] = {
+        targetSha: releaseResult.value.targetSha,
+        notes: releaseResult.value.notes,
+      };
+    } else if (releaseResult.error.status !== 404) {
+      throw new Error(
+        `release ${tag} read failed: ${releaseResult.error.message}`,
+      );
+    }
+  }
+
+  const tree = await input.client.listCommitTreePaths(request.mergeCommitSha);
+  const cleanupRequired = tree.isOk()
+    ? tree.value.some(
+        (path) =>
+          path.startsWith(".changeset/") &&
+          path.endsWith(".md") &&
+          path !== ".changeset/README.md",
+      )
+    : (() => {
+        throw new Error(`release tree read failed: ${tree.error.message}`);
+      })();
+
+  return {
+    pullRequest: {
+      number: request.number,
+      url: request.url,
+      merged: request.merged,
+      closed: request.closed,
+      mergeCommitSha: request.mergeCommitSha,
+      headRef: request.headRef,
+    },
+    releasedSha: request.mergeCommitSha,
+    channel: "stable",
+    members,
+    tags,
+    releases,
+    cleanupMerged: !cleanupRequired,
+    cleanupRequired,
+    markerPresent: input.markerPresent,
+    markerSha: input.markerSha,
+    associatedPullRequestSettled: input.associatedPullRequestSettled,
+    incident: null,
+    comments: [],
+  };
+}
+
+function releaseTagNameForAuthority(
+  packageName: PublicPackageName,
+  version: string,
+): string {
+  return releaseTagName(packageName, version);
+}
+
+async function requireGitHubJsonFile(
+  client: GitHubRestClient,
+  path: string,
+  ref: string,
+): Promise<unknown> {
+  const result = await client.readFileAtRef(path, ref);
+  if (result.isErr())
+    throw new Error(`GitHub file ${path} read failed: ${result.error.message}`);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(result.value) as unknown,
+    () => new Error(`GitHub file ${path} is not valid JSON`),
+  )();
+  if (parsed.isErr()) throw parsed.error;
+  return parsed.value;
+}
+
+function readManifestVersion(value: unknown, path: string): string {
+  const record = asRecord(value);
+  const version = record?.version;
+  if (typeof version !== "string" || !SemVerSchema.safeParse(version).success)
+    throw new Error(`GitHub file ${path} has no valid package version`);
+  return version;
+}
+
+interface RegistryPackageObservation {
+  readonly published: boolean;
+  readonly digest: string | null;
+  readonly deprecated: string | null;
+}
+
+async function readRegistryPackage(
+  packageName: PublicPackageName,
+  version: string,
+  fetchImpl: GitHubFetch,
+): Promise<RegistryPackageObservation> {
+  const encodedPackage = encodeURIComponent(packageName);
+  const metadataUrl = `https://registry.npmjs.org/${encodedPackage}/${encodeURIComponent(version)}`;
+  const metadata = await boundedJsonFetch(metadataUrl, fetchImpl, 512 * 1024);
+  if (metadata.status === 404)
+    return { published: false, digest: null, deprecated: null };
+  if (!metadata.ok)
+    throw new Error(`npm metadata read failed for ${packageName}`);
+  const metadataValue = metadata.value;
+  const record = asRecord(metadataValue);
+  if (record === undefined)
+    throw new Error(`npm metadata is malformed for ${packageName}`);
+  const dist = asRecord(record.dist);
+  const tarball = dist?.tarball;
+  if (typeof tarball !== "string" || tarball.length > 2_048)
+    throw new Error(`npm tarball URL is missing for ${packageName}`);
+  const unscoped = packageName.split("/").pop() ?? packageName;
+  const expectedTarball = `https://registry.npmjs.org/${packageName}/-/${unscoped}-${encodeURIComponent(version)}.tgz`;
+  const encodedTarball = `https://registry.npmjs.org/${encodedPackage}/-/${unscoped}-${encodeURIComponent(version)}.tgz`;
+  if (tarball !== expectedTarball && tarball !== encodedTarball)
+    throw new Error(`npm tarball URL is not canonical for ${packageName}`);
+  const response = await boundedBytesFetch(
+    expectedTarball,
+    fetchImpl,
+    5 * 1024 * 1024,
+  );
+  if (!response.ok)
+    throw new Error(`npm tarball read failed for ${packageName}`);
+  const digest = `sha256:${new Bun.CryptoHasher("sha256").update(response.bytes).digest("hex")}`;
+  let deprecated: string | null;
+  if (record.deprecated === undefined) {
+    deprecated = null;
+  } else if (
+    typeof record.deprecated === "string" &&
+    record.deprecated.length <= 512
+  ) {
+    deprecated = record.deprecated;
+  } else {
+    throw new Error(`npm deprecation field is malformed for ${packageName}`);
+  }
+  return { published: true, digest, deprecated };
+}
+
+interface BoundedJsonFetchResult {
+  readonly status: number;
+  readonly ok: boolean;
+  readonly value: unknown | undefined;
+}
+
+async function boundedJsonFetch(
+  url: string,
+  fetchImpl: GitHubFetch,
+  maxBytes: number,
+): Promise<BoundedJsonFetchResult> {
+  const response = await doctorWithTimeout(
+    () =>
+      fetchImpl(url, {
+        method: "GET",
+        headers: { accept: "application/json" },
+      }),
+    10_000,
+  );
+  const bytes = await boundedResponseBytes(response, maxBytes, 10_000);
+  if (!response.ok)
+    return { status: response.status, ok: false, value: undefined };
+  const value = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+  );
+  return { status: response.status, ok: true, value };
+}
+
+interface BoundedBytesFetchResult {
+  readonly status: number;
+  readonly ok: boolean;
+  readonly bytes: Uint8Array;
+}
+
+async function boundedBytesFetch(
+  url: string,
+  fetchImpl: GitHubFetch,
+  maxBytes: number,
+): Promise<BoundedBytesFetchResult> {
+  const response = await doctorWithTimeout(
+    () => fetchImpl(url, { method: "GET" }),
+    10_000,
+  );
+  const bytes = await boundedResponseBytes(response, maxBytes, 10_000);
+  return { status: response.status, ok: response.ok, bytes };
+}
+
+async function boundedResponseBytes(
+  response: Response,
+  maxBytes: number,
+  timeoutMs: number,
+): Promise<Uint8Array> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (!Number.isSafeInteger(length) || length < 0 || length > maxBytes)
+      throw new Error(`response exceeds ${maxBytes} bytes`);
+  }
+  return doctorWithTimeout(async () => {
+    if (response.body === null) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > maxBytes)
+        throw new Error(`response exceeds ${maxBytes} bytes`);
+      return bytes;
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(`response exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(next.value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  }, timeoutMs);
+}
+
+async function doctorWithTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`read timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([operation(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function unavailableReleaseLifecycle(): DoctorReleaseLifecycleObservation {
@@ -2781,30 +3298,41 @@ class GitHubReadClient {
   }
 
   private readAbsolute(url: string): ResultAsync<unknown, DoctorPortError> {
-    return ResultAsync.fromPromise<Response, DoctorPortError>(
-      this.fetchImpl(url, {
-        method: "GET",
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${this.token}`,
-        },
-      }),
+    return ResultAsync.fromThrowable(
+      () =>
+        doctorWithTimeout(
+          () =>
+            this.fetchImpl(url, {
+              method: "GET",
+              headers: {
+                accept: "application/vnd.github+json",
+                authorization: `Bearer ${this.token}`,
+              },
+            }),
+          10_000,
+        ),
       (cause): DoctorPortError => ({
         type: "DoctorPortFailed",
         operation: url,
         message: String(cause),
       }),
-    ).andThen(
+    )().andThen(
       (response): ResultAsync<unknown, DoctorPortError> =>
         response.ok
-          ? ResultAsync.fromPromise<unknown, DoctorPortError>(
-              response.json() as Promise<unknown>,
+          ? ResultAsync.fromThrowable(
+              () =>
+                boundedResponseBytes(response, 512 * 1024, 10_000).then(
+                  (bytes) =>
+                    JSON.parse(
+                      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+                    ) as unknown,
+                ),
               (cause): DoctorPortError => ({
                 type: "DoctorPortFailed",
                 operation: url,
                 message: String(cause),
               }),
-            )
+            )()
           : errAsync<unknown, DoctorPortError>({
               type: "DoctorPortFailed",
               operation: url,
@@ -2820,8 +3348,12 @@ function isTerminalStateName(state: string): boolean {
   );
 }
 
-function isFullSha(value: string): boolean {
-  return /^[0-9a-f]{40}$/.test(value);
+function isFullSha(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{40}$/.test(value) &&
+    value !== "0".repeat(40)
+  );
 }
 
 function isOwnerGeneration(value: string): boolean {

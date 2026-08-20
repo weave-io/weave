@@ -262,14 +262,24 @@ export type GreenMainHeadBounds = {
 export const PULL_REQUEST_BOUNDS = {
   pageSize: 100,
   maxPages: 3,
+  maxItems: 300,
 } as const;
 
 export type PullRequestBounds = {
   -readonly [Key in keyof typeof PULL_REQUEST_BOUNDS]: number;
 };
 
+export const GITHUB_REST_READ_LIMITS = {
+  requestTimeoutMs: 10_000,
+  jsonResponseBytes: 512 * 1024,
+  binaryResponseBytes: 8 * 1024 * 1024,
+  stringLength: 16 * 1024,
+  pageItems: 100,
+  collectionItems: 300,
+} as const;
+
 const GITHUB_RESPONSE_BOUNDS = {
-  responseBytes: 8 * 1024 * 1024,
+  responseBytes: GITHUB_REST_READ_LIMITS.binaryResponseBytes,
   textLength: 512 * 1024,
   arrayItems: 1_024,
 } as const;
@@ -290,6 +300,17 @@ const NonNegativeIntSchema = z
   .nonnegative()
   .max(Number.MAX_SAFE_INTEGER);
 const ShaSchema = z.string().min(1).max(256);
+const FullShaSchema = z
+  .string()
+  .regex(/^[0-9a-f]{40}$/)
+  .refine((value) => value !== "0".repeat(40));
+const TimestampSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  .refine((value) => {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+  });
 
 const WorkflowRunResponseSchema = z
   .object({
@@ -334,7 +355,7 @@ const ArtifactsResponseSchema = z
   })
   .strip();
 const RefResponseSchema = z
-  .object({ object: z.object({ sha: ShaSchema }).strip() })
+  .object({ object: z.object({ sha: FullShaSchema }).strip() })
   .strip();
 const NodeResponseSchema = z
   .object({ node_id: GitHubIdentifierSchema })
@@ -342,17 +363,29 @@ const NodeResponseSchema = z
 const MembershipResponseSchema = z
   .object({ state: GitHubIdentifierSchema })
   .strip();
-const ShaResponseSchema = z.object({ sha: ShaSchema }).strip();
+const ShaResponseSchema = z.object({ sha: FullShaSchema }).strip();
 const CommitMessageResponseSchema = z
   .object({ message: GitHubTextSchema })
   .strip();
-const CommitResponseSchema = z
+const CommitTreeResponseSchema = z
+  .object({ tree: z.object({ sha: FullShaSchema }).strip() })
+  .strip();
+const TreeResponseSchema = z.object({ sha: FullShaSchema }).strip();
+const ContentsResponseSchema = z
   .object({
-    message: GitHubTextSchema,
-    tree: z.object({ sha: ShaSchema }).strip(),
+    type: z.literal("file"),
+    encoding: z.literal("base64"),
+    content: z.string().max(GITHUB_RESPONSE_BOUNDS.textLength),
   })
   .strip();
-const TreeResponseSchema = z.object({ sha: ShaSchema }).strip();
+const TreeListingResponseSchema = z
+  .object({
+    truncated: z.literal(false),
+    tree: z
+      .array(z.object({ path: GitHubIdentifierSchema }).strip())
+      .max(GITHUB_REST_READ_LIMITS.collectionItems * 16),
+  })
+  .strip();
 const ComparisonResponseSchema = z
   .object({
     status: z.enum(["identical", "ahead", "behind", "diverged"]),
@@ -386,18 +419,35 @@ const PullRequestResponseSchema = z
     html_url: GitHubIdentifierSchema,
     state: z.enum(["open", "closed"]),
     merged: z.boolean().optional(),
-    merged_at: GitHubTextSchema.nullable().optional(),
-    merge_commit_sha: ShaSchema.nullable().optional(),
-    head: z.object({ ref: GitHubIdentifierSchema, sha: ShaSchema }).strip(),
-    base: z.object({ ref: GitHubIdentifierSchema }).strip(),
+    merged_at: TimestampSchema.nullable(),
+    closed_at: TimestampSchema.nullable(),
+    created_at: TimestampSchema,
+    updated_at: TimestampSchema,
+    merge_commit_sha: FullShaSchema.nullable(),
+    head: z
+      .object({ ref: GitHubIdentifierSchema, sha: FullShaSchema })
+      .strip(),
+    base: z
+      .object({ ref: GitHubIdentifierSchema, sha: FullShaSchema })
+      .strip(),
     title: GitHubTextSchema,
-    body: GitHubTextSchema.nullable().optional(),
-    labels: z
-      .array(LabelResponseSchema)
-      .max(GITHUB_RESPONSE_BOUNDS.arrayItems)
-      .optional(),
+    body: GitHubTextSchema,
+    labels: z.array(LabelResponseSchema).max(32),
   })
-  .strip();
+  .strip()
+  .superRefine((value, context) => {
+    const isMerged = value.merged_at !== null;
+    if (value.state === "open" && value.closed_at !== null)
+      context.addIssue({ code: "custom", message: "open pull request is closed" });
+    if (value.state === "closed" && value.closed_at === null)
+      context.addIssue({ code: "custom", message: "closed pull request has no closed_at" });
+    if (isMerged && value.state !== "closed")
+      context.addIssue({ code: "custom", message: "merged pull request is open" });
+    if (value.merged !== undefined && value.merged !== isMerged)
+      context.addIssue({ code: "custom", message: "merged flag conflicts with merged_at" });
+    if (isMerged !== (value.merge_commit_sha !== null))
+      context.addIssue({ code: "custom", message: "merge SHA conflicts with merged_at" });
+  });
 const PullRequestPageSchema = z
   .array(PullRequestResponseSchema)
   .max(GITHUB_RESPONSE_BOUNDS.arrayItems);
@@ -547,6 +597,10 @@ export interface GitHubRestClientOptions {
   requiredChecks?: readonly GitHubRequiredCheck[];
   greenHeadBounds?: Partial<GreenMainHeadBounds>;
   pullRequestBounds?: Partial<PullRequestBounds>;
+  requestTimeoutMs?: number;
+  jsonResponseBytes?: number;
+  binaryResponseBytes?: number;
+  stringLength?: number;
 }
 
 export interface GitHubPullRequestClient {
@@ -604,6 +658,10 @@ export class GitHubRestClient
   private cachedRepositoryId: string | undefined;
   private readonly greenHeadBounds: GreenMainHeadBounds;
   private readonly pullRequestBounds: PullRequestBounds;
+  private readonly requestTimeoutMs: number;
+  private readonly jsonResponseBytes: number;
+  private readonly binaryResponseBytes: number;
+  private readonly stringLength: number;
 
   constructor(
     private readonly repository: string,
@@ -620,6 +678,22 @@ export class GitHubRestClient
       ...PULL_REQUEST_BOUNDS,
       ...options.pullRequestBounds,
     };
+    this.requestTimeoutMs = positiveLimit(
+      options.requestTimeoutMs,
+      GITHUB_REST_READ_LIMITS.requestTimeoutMs,
+    );
+    this.jsonResponseBytes = positiveLimit(
+      options.jsonResponseBytes,
+      GITHUB_REST_READ_LIMITS.jsonResponseBytes,
+    );
+    this.binaryResponseBytes = positiveLimit(
+      options.binaryResponseBytes,
+      GITHUB_REST_READ_LIMITS.binaryResponseBytes,
+    );
+    this.stringLength = positiveLimit(
+      options.stringLength,
+      GITHUB_REST_READ_LIMITS.stringLength,
+    );
   }
 
   getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError> {
@@ -632,6 +706,58 @@ export class GitHubRestClient
         return errAsync(invalidResponse(`/actions/runs/${runId}`));
       return okAsync(run);
     });
+  }
+
+  getPullRequest(
+    number: number,
+  ): ResultAsync<GitHubPullRequestSummary, GitHubError> {
+    const path = `/pulls/${number}`;
+    return this.requestJson(path, PullRequestResponseSchema).andThen((value) => {
+      const pull = parsePullRequest(value);
+      const expectedUrl = `https://github.com/${this.repository}/pull/${number}`;
+      if (
+        pull.url !== expectedUrl ||
+        pull.title.length > this.stringLength ||
+        pull.body.length > this.stringLength * 8 ||
+        pull.headRef.length > this.stringLength ||
+        pull.baseRef.length > this.stringLength
+      )
+        return errAsync(invalidResponse(path));
+      return okAsync(pull);
+    });
+  }
+
+  readFileAtRef(path: string, ref: string): ResultAsync<string, GitHubError> {
+    const operation = `/contents/${path}`;
+    if (!safeGitHubPath(path) || !isFullSha(ref))
+      return errAsync(invalidResponse(operation));
+    const requestPath = `${operation}?ref=${encodeURIComponent(ref)}`;
+    return this.requestJson(requestPath, ContentsResponseSchema).andThen(
+      (value) => {
+        const decoded = decodeBase64Utf8(value.content);
+        return decoded === undefined
+          ? errAsync(invalidResponse(requestPath))
+          : okAsync(decoded);
+      },
+    );
+  }
+
+  listTreePaths(sha: string): ResultAsync<readonly string[], GitHubError> {
+    const path = `/git/trees/${sha}?recursive=1`;
+    if (!isFullSha(sha)) return errAsync(invalidResponse(path));
+    return this.requestJson(path, TreeListingResponseSchema).andThen((value) =>
+      okAsync(value.tree.map((entry) => entry.path)),
+    );
+  }
+
+  listCommitTreePaths(
+    sha: string,
+  ): ResultAsync<readonly string[], GitHubError> {
+    if (!isFullSha(sha))
+      return errAsync(invalidResponse(`/git/commits/${sha}`));
+    return this.readCommitTree(sha).andThen((treeSha) =>
+      this.listTreePaths(treeSha),
+    );
   }
 
   listWorkflowRunJobs(
@@ -1083,7 +1209,7 @@ export class GitHubRestClient
 
   private readCommitTree(sha: string): ResultAsync<string, GitHubError> {
     const path = `/git/commits/${sha}`;
-    return this.requestJson(path, CommitResponseSchema).andThen((value) =>
+    return this.requestJson(path, CommitTreeResponseSchema).andThen((value) =>
       okAsync(value.tree.sha),
     );
   }
@@ -1306,7 +1432,11 @@ export class GitHubRestClient
       value: P,
       path: string,
     ) => Result<{ items: readonly T[]; totalCount?: number }, GitHubError>,
-    bounds: { maxPages: number } = this.greenHeadBounds,
+    bounds: {
+      maxPages: number;
+      pageSize?: number;
+      maxItems?: number;
+    } = this.greenHeadBounds,
   ): ResultAsync<readonly T[], GitHubError> {
     return fromAsync(async () => {
       const startUrl = this.repoUrl(startPath);
@@ -1322,6 +1452,18 @@ export class GitHubRestClient
         if (pageDocument.isErr()) return err(pageDocument.error);
         const parsed = parsePage(pageDocument.value.value, url);
         if (parsed.isErr()) return err(parsed.error);
+        const pageSize = bounds.pageSize ?? GITHUB_REST_READ_LIMITS.pageItems;
+        const maxItems = bounds.maxItems ?? bounds.maxPages * pageSize;
+        if (
+          parsed.value.items.length > pageSize ||
+          collected.length + parsed.value.items.length > maxItems
+        )
+          return err(
+            truncatedResponse(
+              url,
+              `response contains too many items (page limit ${pageSize}, collection limit ${maxItems})`,
+            ),
+          );
         collected.push(...parsed.value.items);
         if (
           parsed.value.totalCount !== undefined &&
@@ -1363,10 +1505,14 @@ export class GitHubRestClient
     headers.set("accept", "application/vnd.github+json");
     if (this.token !== undefined)
       headers.set("authorization", `Bearer ${this.token}`);
-    return ResultAsync.fromPromise(
-      this.requestFetch(url, { method: "GET", headers }),
+    return ResultAsync.fromThrowable(
+      () =>
+        withTimeout(
+          () => this.requestFetch(url, { method: "GET", headers }),
+          this.requestTimeoutMs,
+        ),
       () => transportFailure(url),
-    )
+    )()
       .andThen((response) => {
         if (!response.ok)
           return errAsync({
@@ -1377,10 +1523,13 @@ export class GitHubRestClient
           });
         return ResultAsync.fromPromise(response.arrayBuffer(), () =>
           invalidResponse(url),
-        ).map((bytes) => ({
-          bytes,
-          link: response.headers.get("link"),
-        }));
+        ).andThen((bytes) =>
+          bytes.byteLength > this.jsonResponseBytes
+            ? errAsync<{ bytes: ArrayBuffer; link: string | null }, GitHubError>(
+                truncatedResponse(url, "JSON response is too large"),
+              )
+            : okAsync({ bytes, link: response.headers.get("link") }),
+        );
       })
       .andThen(({ bytes, link }) =>
         parseJsonBytes(bytes, schema, url).andThen((value) =>
@@ -1397,8 +1546,8 @@ export class GitHubRestClient
     path: string,
     schema: z.ZodType<T>,
   ): ResultAsync<T, GitHubError> {
-    return this.request(path).andThen((response) =>
-      parseJsonBytes(response, schema, path),
+    return this.request(path, undefined, this.jsonResponseBytes).andThen(
+      (response) => parseJsonBytes(response, schema, path),
     );
   }
 
@@ -1407,7 +1556,7 @@ export class GitHubRestClient
     init: RequestInit,
     schema: z.ZodType<T>,
   ): ResultAsync<T, GitHubError> {
-    return this.request(path, init).andThen((response) =>
+    return this.request(path, init, this.jsonResponseBytes).andThen((response) =>
       parseJsonBytes(response, schema, path),
     );
   }
@@ -1416,24 +1565,32 @@ export class GitHubRestClient
     init: RequestInit,
     schema: z.ZodType<T>,
   ): ResultAsync<T, GitHubError> {
-    return this.requestAbsolute(url, init).andThen((response) =>
-      parseJsonBytes(response, schema, url),
-    );
+    return this.requestAbsolute(
+      url,
+      init,
+      url,
+      this.jsonResponseBytes,
+    ).andThen((response) => parseJsonBytes(response, schema, url));
   }
 
   private requestAbsolute(
     url: string,
     init: RequestInit = {},
     operation = url,
+    maxBytes = this.binaryResponseBytes,
   ): ResultAsync<ArrayBuffer, GitHubError> {
     const headers = new Headers(init.headers);
     headers.set("accept", "application/vnd.github+json");
     if (this.token !== undefined)
       headers.set("authorization", `Bearer ${this.token}`);
-    return ResultAsync.fromPromise(
-      this.requestFetch(url, { ...init, headers }),
+    return ResultAsync.fromThrowable(
+      () =>
+        withTimeout(
+          () => this.requestFetch(url, { ...init, headers }),
+          this.requestTimeoutMs,
+        ),
       () => transportFailure(operation),
-    ).andThen((response) => {
+    )().andThen((response) => {
       if (!response.ok)
         return errAsync({
           type: "GitHubError" as const,
@@ -1444,11 +1601,11 @@ export class GitHubRestClient
       return ResultAsync.fromPromise(response.arrayBuffer(), () =>
         invalidResponse(operation),
       ).andThen((bytes) => {
-        if (bytes.byteLength > GITHUB_RESPONSE_BOUNDS.responseBytes)
+        if (bytes.byteLength > maxBytes)
           return errAsync<ArrayBuffer, GitHubError>({
             type: "GitHubError",
             operation,
-            message: "GitHub response is too large",
+            message: "GitHub response is too large or truncated",
           });
         return okAsync<ArrayBuffer, GitHubError>(bytes);
       });
@@ -1458,13 +1615,73 @@ export class GitHubRestClient
   private request(
     path: string,
     init?: RequestInit,
+    maxBytes = this.binaryResponseBytes,
   ): ResultAsync<ArrayBuffer, GitHubError> {
     return this.requestAbsolute(
       `${this.apiUrl}/repos/${this.repository}${path}`,
       init,
       path,
+      maxBytes,
     );
   }
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function isFullSha(value: string): boolean {
+  return GIT_OBJECT_SHA.test(value) && value !== ZERO_GIT_OID;
+}
+
+function safeGitHubPath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= GITHUB_REST_READ_LIMITS.stringLength &&
+    !value.startsWith("/") &&
+    !value.includes("..") &&
+    !value.includes("//") &&
+    !value.includes("\\") &&
+    !value.includes("?") &&
+    !value.includes("#")
+  );
+}
+
+function decodeBase64Utf8(value: string): string | undefined {
+  const normalized = value.replace(/\s/g, "");
+  if (normalized.length === 0 || normalized.length % 4 !== 0) return undefined;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return undefined;
+  const decoded = Result.fromThrowable(
+    () => atob(normalized),
+    () => undefined,
+  )();
+  if (decoded.isErr()) return undefined;
+  const bytes = Uint8Array.from(decoded.value, (character) =>
+    character.charCodeAt(0),
+  );
+  const text = Result.fromThrowable(
+    () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    () => undefined,
+  )();
+  return text.isOk() ? text.value : undefined;
+}
+
+async function withTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`GitHub request timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([operation(), timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 function parseJsonBytes<T>(
@@ -1572,16 +1789,14 @@ function parsePullRequest(
     number: value.number,
     url: value.html_url,
     state: value.state,
-    merged:
-      value.merged === true ||
-      (value.merged_at !== undefined && value.merged_at !== null),
+    merged: value.merged_at !== null,
     mergeCommitSha: value.merge_commit_sha,
     headRef: value.head.ref,
     headSha: value.head.sha,
     baseRef: value.base.ref,
     title: value.title,
-    body: value.body ?? "",
-    labels: value.labels?.map((label) => label.name) ?? [],
+    body: value.body,
+    labels: value.labels.map((label) => label.name),
   };
 }
 
