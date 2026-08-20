@@ -162,6 +162,8 @@ export interface GitHubPullRequestSummary {
   url: string;
   state: GitHubPullRequestState;
   merged: boolean;
+  /** GitHub's merge commit, when the pull request has merged. */
+  mergeCommitSha?: string | null;
   headRef: string;
   headSha: string;
   baseRef: string;
@@ -341,6 +343,9 @@ const MembershipResponseSchema = z
   .object({ state: GitHubIdentifierSchema })
   .strip();
 const ShaResponseSchema = z.object({ sha: ShaSchema }).strip();
+const CommitMessageResponseSchema = z
+  .object({ message: GitHubTextSchema })
+  .strip();
 const CommitResponseSchema = z
   .object({
     message: GitHubTextSchema,
@@ -382,6 +387,7 @@ const PullRequestResponseSchema = z
     state: z.enum(["open", "closed"]),
     merged: z.boolean().optional(),
     merged_at: GitHubTextSchema.nullable().optional(),
+    merge_commit_sha: ShaSchema.nullable().optional(),
     head: z.object({ ref: GitHubIdentifierSchema, sha: ShaSchema }).strip(),
     base: z.object({ ref: GitHubIdentifierSchema }).strip(),
     title: GitHubTextSchema,
@@ -899,8 +905,8 @@ export class GitHubRestClient
 
   readCommitMessage(sha: string): ResultAsync<string, GitHubError> {
     const path = `/git/commits/${sha}`;
-    return this.requestJson(path, CommitResponseSchema).andThen((value) =>
-      okAsync(value.message),
+    return this.requestJson(path, CommitMessageResponseSchema).andThen(
+      (value) => okAsync(value.message),
     );
   }
 
@@ -1569,6 +1575,7 @@ function parsePullRequest(
     merged:
       value.merged === true ||
       (value.merged_at !== undefined && value.merged_at !== null),
+    mergeCommitSha: value.merge_commit_sha,
     headRef: value.head.ref,
     headSha: value.head.sha,
     baseRef: value.base.ref,

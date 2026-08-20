@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import {
   PUBLIC_PACKAGES,
   type PublicPackageName,
@@ -9,6 +10,7 @@ import {
   RELEASE_WORKFLOW_PATH,
 } from "../constants.js";
 import {
+  collectAuthoritativeReleaseLifecycle,
   type DoctorMode,
   type DoctorSnapshot,
   LEGACY_PREFLIGHT_RUN_NAME,
@@ -22,8 +24,13 @@ import {
   verifyDoctorSnapshot,
 } from "../doctor.js";
 import { PRODUCTION_ENTRYPOINTS } from "../entrypoint-inventory.js";
-import type { ReleasePrOwnership } from "../release-pr-contract.js";
-import type { DiscoveredRelease } from "../release-state.js";
+import {
+  RELEASE_PR_ENVELOPE_SCHEMA_VERSION,
+  RELEASE_PR_LABEL,
+  type ReleasePrOwnership,
+  renderReleasePrEnvelope,
+} from "../release-pr-contract.js";
+import type { DiscoveredRelease, ReleaseAuthority } from "../release-state.js";
 import {
   createRolloutActivationRecord,
   createRolloutFreezeRecord,
@@ -35,7 +42,141 @@ import {
 const SHA = "a".repeat(40);
 const OTHER_SHA = "b".repeat(40);
 const OWNER = "c".repeat(64);
+const MERGE_SHA = "d".repeat(40);
+const DIGEST = `sha256:${"e".repeat(64)}`;
+const BAD_DIGEST = `sha256:${"f".repeat(64)}`;
 const DOCTOR_RUN_NOW = Date.parse("2026-08-19T00:00:00.000Z");
+
+interface LifecycleRoute {
+  readonly status?: number;
+  readonly body?: unknown;
+  readonly reject?: string;
+}
+
+function lifecycleFetch(routes: Record<string, LifecycleRoute>) {
+  const calls: { method: string; url: string }[] = [];
+  const fetchImpl = async (input: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    calls.push({ method, url: input });
+    const path = input.replace("https://api.github.com", "");
+    const route = routes[`${method} ${path}`];
+    if (route?.reject !== undefined) throw new Error(route.reject);
+    if (route === undefined)
+      return new Response("{}", { status: 404, statusText: "Not Found" });
+    return new Response(JSON.stringify(route.body ?? {}), {
+      status: route.status ?? 200,
+      statusText: route.status === 500 ? "Internal Server Error" : "OK",
+    });
+  };
+  return { calls, fetchImpl };
+}
+
+function lifecycleRoutes(
+  marker: string | null,
+  open: readonly Record<string, unknown>[],
+  closed: readonly Record<string, unknown>[],
+  message?: string,
+) {
+  return {
+    [`GET /repos/${RELEASE_REPOSITORY}/git/ref/${RELEASE_PR_MARKER_REF}`]:
+      marker === null ? { status: 404 } : { body: { object: { sha: marker } } },
+    [`GET /repos/${RELEASE_REPOSITORY}/pulls?state=open&per_page=100&head=weave-io%3Arelease-pr%2Fstable`]:
+      { body: open },
+    [`GET /repos/${RELEASE_REPOSITORY}/pulls?state=closed&per_page=100&head=weave-io%3Arelease-pr%2Fstable`]:
+      { body: closed },
+    ...(marker === null
+      ? {}
+      : {
+          [`GET /repos/${RELEASE_REPOSITORY}/git/commits/${marker}`]: {
+            body: { message: message ?? "" },
+          },
+        }),
+  } satisfies Record<string, LifecycleRoute>;
+}
+
+function markerEnvelope(baseSha = OTHER_SHA) {
+  return renderReleasePrEnvelope({
+    schemaVersion: RELEASE_PR_ENVELOPE_SCHEMA_VERSION,
+    ref: RELEASE_PR_MARKER_REF,
+    ownerGeneration: OWNER,
+    plannedBaseSha: baseSha,
+    baseSha,
+    regeneratedFrom: [],
+    entryProse: [],
+    evidenceDigest: DIGEST,
+  })._unsafeUnwrap();
+}
+
+function mergedPull(number = 7) {
+  return {
+    number,
+    html_url: `https://github.com/${RELEASE_REPOSITORY}/pull/${number}`,
+    state: "closed",
+    merged: true,
+    merged_at: "2026-08-19T00:00:00.000Z",
+    merge_commit_sha: MERGE_SHA,
+    title: "release",
+    body: "",
+    head: { ref: "release-pr/stable", sha: SHA },
+    base: { ref: "main" },
+    labels: [{ name: RELEASE_PR_LABEL }],
+  };
+}
+
+function authorityFor(primary: "pending" | "incident"): ReleaseAuthority {
+  return {
+    pullRequest: {
+      number: 7,
+      url: `https://github.com/${RELEASE_REPOSITORY}/pull/7`,
+      merged: true,
+      closed: true,
+      mergeCommitSha: MERGE_SHA,
+      headRef: "release-pr/stable",
+    },
+    releasedSha: MERGE_SHA,
+    channel: "stable",
+    members: [
+      {
+        packageName: "@weaveio/weave-cli",
+        version: "0.1.0",
+        published: primary === "incident",
+        registryDigest: primary === "incident" ? DIGEST : null,
+        provenanceSubjectDigest: primary === "incident" ? DIGEST : null,
+        recordedDigest: null,
+        deprecated: null,
+        cacheDigest: primary === "pending" ? DIGEST : null,
+        cacheValid: primary === "pending",
+        rebuiltDigest: primary === "incident" ? BAD_DIGEST : null,
+        proofChainComplete: primary === "pending",
+        registryVerified: primary === "incident",
+      },
+    ],
+    tags: {},
+    releases: {},
+    cleanupMerged: false,
+    cleanupRequired: false,
+    markerPresent: false,
+    markerSha: null,
+    associatedPullRequestSettled: false,
+    incident:
+      primary === "incident"
+        ? {
+            requiredMessage: "incident",
+            affected: [
+              {
+                packageName: "@weaveio/weave-cli",
+                version: "0.1.0",
+                digest: DIGEST,
+              },
+            ],
+            checkRunAtReleasedSha: false,
+            releasesCarryNotice: false,
+            deprecationsMatch: false,
+          }
+        : null,
+    comments: ["synthetic completion comment"],
+  };
+}
 
 // Shape follows GitHub's documented Workflow Run list response.
 const realisticScheduledRun = {
@@ -963,6 +1104,117 @@ describe("release doctor", () => {
         item.id.startsWith("npm.trusted-publisher."),
       ),
     ).toBe(true);
+  });
+
+  it("collects authoritative no-release state without writes", async () => {
+    const world = lifecycleFetch(lifecycleRoutes(null, [], []));
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.authoritative).toBe(true);
+      expect(result.value.marker).toEqual({
+        present: false,
+        openReleasePr: false,
+        associatedPullRequestSettled: false,
+        creationPollExhausted: false,
+        markerCleanupPending: false,
+      });
+      expect(result.value.discovered).toEqual([]);
+    }
+    expect(world.calls.length).toBeGreaterThan(0);
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("keeps an open marker and release PR authoritative without mutation", async () => {
+    const marker = SHA;
+    const envelope = markerEnvelope();
+    const open = {
+      number: 12,
+      html_url: `https://github.com/${RELEASE_REPOSITORY}/pull/12`,
+      state: "open",
+      title: "release",
+      body: envelope,
+      head: { ref: "release-pr/stable", sha: marker },
+      base: { ref: "main" },
+      labels: [{ name: RELEASE_PR_LABEL }],
+    };
+    const world = lifecycleFetch(lifecycleRoutes(marker, [open], [], envelope));
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.authoritative).toBe(true);
+      expect(result.value.marker.present).toBe(true);
+      expect(result.value.marker.openReleasePr).toBe(true);
+      expect(result.value.marker.ownerGeneration).toBe(OWNER);
+      expect(result.value.discovered).toEqual([]);
+    }
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("runs merged non-terminal and incident states through Task 14", async () => {
+    for (const [kind, authority] of [
+      ["pending", authorityFor("pending")],
+      ["incident", authorityFor("incident")],
+    ] as const) {
+      const world = lifecycleFetch(lifecycleRoutes(null, [], [mergedPull()]));
+      const result = await collectAuthoritativeReleaseLifecycle({
+        token: "token",
+        fetchImpl: world.fetchImpl,
+        readAuthority: () => okAsync(authority),
+      });
+      expect(result.isOk(), kind).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.authoritative, kind).toBe(true);
+        expect(result.value.mergedRelease?.state, kind).toBe(
+          kind === "pending" ? "PendingNpm" : "IntegrityIncident",
+        );
+        expect(result.value.discovered?.[0]?.kind, kind).toBe("merged-release");
+      }
+      expect(
+        world.calls.every((call) => call.method === "GET"),
+        kind,
+      ).toBe(true);
+    }
+  });
+
+  it("fails closed when a merged release has no Task 14 authority", async () => {
+    const world = lifecycleFetch(lifecycleRoutes(null, [], [mergedPull()]));
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("DoctorPortFailed");
+      expect(result.error.operation).toContain("release.lifecycle.state");
+      expect(result.error.message).toContain("authority reader");
+    }
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("fails closed with a typed result when GitHub lifecycle reads fail", async () => {
+    const world = lifecycleFetch({
+      [`GET /repos/${RELEASE_REPOSITORY}/git/ref/${RELEASE_PR_MARKER_REF}`]: {
+        status: 500,
+      },
+    });
+    const result = await collectAuthoritativeReleaseLifecycle({
+      token: "token",
+      fetchImpl: world.fetchImpl,
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("DoctorPortFailed");
+      expect(result.error.operation).toContain("release.lifecycle");
+      expect(result.error.message).toContain("500");
+    }
+    expect(world.calls.every((call) => call.method === "GET")).toBe(true);
   });
 
   it("reports orphan, creation-cleanup, marker-cleanup, incomplete, and incident states", () => {

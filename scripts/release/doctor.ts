@@ -22,13 +22,26 @@ import {
   RELEASE_WORKFLOW_PATH,
 } from "./constants.js";
 import { runDeterministicDocsCheck } from "./docs-audit/deterministic.js";
+import type { GitHubError } from "./errors.js";
+import { type GitHubFetch, GitHubRestClient } from "./github-client.js";
+import type { ReleasePlan, ReleasePlanError } from "./release-plan.js";
 import {
+  MAIN_BRANCH,
+  parseReleasePrEnvelope,
+  RELEASE_PR_LABEL,
+  type ReleasePrEnvelope,
   type ReleasePrOwnership,
   TERMINAL_RELEASE_COMPLETION_STATES,
 } from "./release-pr-contract.js";
 import {
+  classifyPostMergeState,
   type DiscoveredRelease,
+  discoverIncompleteReleases,
   isTerminalPrimaryState,
+  type MergedReleasePullRequestAuthority,
+  type ReleaseAuthority,
+  type ReleaseStateError,
+  type ReleaseStatePorts,
 } from "./release-state.js";
 import {
   NEW_PIPELINE_SCHEDULE,
@@ -302,6 +315,26 @@ export interface DoctorReleaseLifecycleObservation {
   readonly mergedRelease?: DoctorMergedReleaseObservation | null;
   /** Task 14's recomputed discovery is preferred over cached comments/artifacts. */
   readonly discovered?: readonly DiscoveredRelease[];
+}
+
+/**
+ * Optional authority seam for a merged release.
+ *
+ * The GitHub REST collector owns discovery of the marker and release PR. The
+ * post-merge member/tag/release facts remain a separate Task 14 authority
+ * port, so an absent or failing port cannot be mistaken for a complete
+ * release. Tests inject this port to exercise every classifier state without
+ * treating comments or workflow artifacts as authority.
+ */
+export type DoctorReleaseAuthorityReader = (
+  pullRequest: MergedReleasePullRequestAuthority,
+) => ResultAsync<ReleaseAuthority, ReleaseStateError>;
+
+export interface DoctorCollectionOptions {
+  /** Injected only for bounded tests; production uses global fetch. */
+  readonly githubFetch?: GitHubFetch;
+  readonly githubApiUrl?: string;
+  readonly readReleaseAuthority?: DoctorReleaseAuthorityReader;
 }
 
 /** All data needed by the pure verifier. No field contains a secret value. */
@@ -1337,6 +1370,8 @@ function manualFixForCollectionError(id: string): string {
     return "authenticate as an npm maintainer and rerun the exact npm trust list query; manual inspection cannot satisfy trusted-publisher verification";
   if (id.startsWith("github"))
     return "read the setting through the GitHub API or inspect the exact GitHub Settings console path documented in docs/contributing/release-setup.md";
+  if (id === "release.lifecycle")
+    return `reread GitHub release and marker state, then run ${RESUME_RECOVERY_COMMAND} only after the Task 14 authority reader is available; doctor never trusts comments or artifacts`;
   return "rerun the bounded read-only doctor input and resolve the reported source error";
 }
 
@@ -1544,10 +1579,11 @@ function stringField(
 export function createDefaultDoctorPort(
   root: string,
   environment: Readonly<Record<string, string | undefined>> = Bun.env,
+  options: DoctorCollectionOptions = {},
 ): DoctorSnapshotPort {
   return {
     readSnapshot(mode) {
-      return collectSnapshot(root, mode, environment);
+      return collectSnapshot(root, mode, environment, options);
     },
   };
 }
@@ -1565,6 +1601,7 @@ function collectSnapshot(
   root: string,
   mode: DoctorMode,
   environment: Readonly<Record<string, string | undefined>>,
+  options: DoctorCollectionOptions = {},
 ): ResultAsync<DoctorSnapshot, DoctorPortError> {
   const collectionErrors: Record<string, string> = {};
   return ResultAsync.fromPromise(
@@ -1605,7 +1642,24 @@ function collectSnapshot(
           collectionErrors[`npm.trusted-publisher.${packageName}`] =
             trustResult.error.message;
       }
-      const github = await collectGitHub(environment, collectionErrors);
+      const github = await collectGitHub(
+        environment,
+        collectionErrors,
+        options,
+      );
+      const lifecycleResult = await collectAuthoritativeReleaseLifecycle({
+        token: environment.GITHUB_TOKEN,
+        fetchImpl: options.githubFetch,
+        apiUrl: options.githubApiUrl ?? environment.GITHUB_API_URL,
+        readAuthority: options.readReleaseAuthority,
+      });
+      const lifecycle = lifecycleResult.isOk()
+        ? lifecycleResult.value
+        : (() => {
+            collectionErrors["release.lifecycle"] =
+              lifecycleResult.error.message;
+            return unavailableReleaseLifecycle();
+          })();
       const policy = await collectPolicy(root);
       const attest = await readAttestationWorkflow(root);
       const oldSystem = await collectOldSystem(
@@ -1639,10 +1693,7 @@ function collectSnapshot(
         harness,
         model,
         policy,
-        lifecycle: {
-          authoritative: false,
-          marker: { present: false, openReleasePr: false },
-        },
+        lifecycle,
         collectionErrors,
       } satisfies DoctorSnapshot;
     })(),
@@ -1651,6 +1702,305 @@ function collectSnapshot(
       operation: "collectSnapshot",
       message: String(cause),
     }),
+  );
+}
+
+export interface DoctorLifecycleCollectorInput {
+  readonly token?: string;
+  readonly fetchImpl?: GitHubFetch;
+  readonly apiUrl?: string;
+  readonly readAuthority?: DoctorReleaseAuthorityReader;
+}
+
+/**
+ * Recomputes the release lock and merged-release state from bounded GitHub
+ * reads. It performs no mutation. A merged release is not considered
+ * authoritative unless the Task 14 authority reader also returns a validated
+ * snapshot; comments and workflow artifacts are never consulted.
+ */
+export function collectAuthoritativeReleaseLifecycle(
+  input: DoctorLifecycleCollectorInput,
+): ResultAsync<DoctorReleaseLifecycleObservation, DoctorPortError> {
+  if (input.token === undefined || input.token.length === 0)
+    return errAsync({
+      type: "DoctorPortFailed",
+      operation: "release.lifecycle.credentials",
+      message: "GITHUB_TOKEN is missing",
+    });
+  const client = new GitHubRestClient(
+    RELEASE_REPOSITORY,
+    input.token,
+    input.fetchImpl,
+    input.apiUrl,
+  );
+  return ResultAsync.fromPromise(
+    readAuthoritativeReleaseLifecycle(client, input.readAuthority),
+    (cause): DoctorPortError => ({
+      type: "DoctorPortFailed",
+      operation: "release.lifecycle",
+      message: cause instanceof Error ? cause.message : String(cause),
+    }),
+  ).andThen((result) => result);
+}
+
+async function readAuthoritativeReleaseLifecycle(
+  client: GitHubRestClient,
+  readAuthority: DoctorReleaseAuthorityReader | undefined,
+): Promise<Result<DoctorReleaseLifecycleObservation, DoctorPortError>> {
+  const markerResult = await client.readRefOptional(RELEASE_PR_MARKER_REF);
+  if (markerResult.isErr())
+    return err(githubLifecycleFailure("read marker ref", markerResult.error));
+  const markerSha = markerResult.value;
+  if (markerSha !== null && !isFullSha(markerSha))
+    return err(
+      lifecycleFailure(
+        "read marker ref",
+        "GitHub returned a malformed marker SHA",
+      ),
+    );
+
+  const [openResult, closedResult] = await Promise.all([
+    client.listPullRequestsForHead(RELEASE_PR_MARKER_REF, "open"),
+    client.listPullRequestsForHead(RELEASE_PR_MARKER_REF, "closed"),
+  ]);
+  if (openResult.isErr())
+    return err(
+      githubLifecycleFailure("list open release PRs", openResult.error),
+    );
+  if (closedResult.isErr())
+    return err(
+      githubLifecycleFailure("list closed release PRs", closedResult.error),
+    );
+  if (openResult.value.length > 1)
+    return err(
+      lifecycleFailure(
+        "list open release PRs",
+        "GitHub returned more than one open stable release PR",
+      ),
+    );
+  const openPull = openResult.value[0];
+
+  let markerEnvelope: ReleasePrEnvelope | undefined;
+  if (markerSha !== null) {
+    const messageResult = await client.readCommitMessage(markerSha);
+    if (messageResult.isErr())
+      return err(
+        githubLifecycleFailure("read marker commit", messageResult.error),
+      );
+    const parsed = parseReleasePrEnvelope(messageResult.value);
+    if (parsed.isErr())
+      return err(
+        lifecycleFailure(
+          "read marker commit",
+          `marker ownership envelope is invalid (${parsed.error.type})`,
+        ),
+      );
+    if (parsed.value.ref !== RELEASE_PR_MARKER_REF)
+      return err(
+        lifecycleFailure(
+          "read marker commit",
+          "marker ownership envelope names an unexpected ref",
+        ),
+      );
+    markerEnvelope = parsed.value;
+  }
+
+  if (openPull !== undefined) {
+    if (markerSha === null)
+      return err(
+        lifecycleFailure(
+          "validate open release PR",
+          "an open stable release PR was found without the marker ref",
+        ),
+      );
+    if (
+      openPull.baseRef !== MAIN_BRANCH ||
+      !openPull.labels.includes(RELEASE_PR_LABEL) ||
+      openPull.headSha !== markerSha
+    )
+      return err(
+        lifecycleFailure(
+          "validate open release PR",
+          "open release PR identity does not match the marker ref",
+        ),
+      );
+    const pullEnvelope = parseReleasePrEnvelope(openPull.body);
+    if (
+      pullEnvelope.isErr() ||
+      markerEnvelope === undefined ||
+      pullEnvelope.value.ownerGeneration !== markerEnvelope.ownerGeneration ||
+      pullEnvelope.value.plannedBaseSha !== markerEnvelope.plannedBaseSha ||
+      pullEnvelope.value.ref !== markerEnvelope.ref
+    )
+      return err(
+        lifecycleFailure(
+          "validate open release PR",
+          "open release PR ownership metadata does not match the marker",
+        ),
+      );
+  }
+
+  const mergedPulls = closedResult.value.filter(
+    (pull) =>
+      pull.merged &&
+      pull.baseRef === MAIN_BRANCH &&
+      pull.labels.includes(RELEASE_PR_LABEL),
+  );
+  const mergedAuthorities: MergedReleasePullRequestAuthority[] = [];
+  for (const pull of mergedPulls) {
+    if (
+      pull.mergeCommitSha === undefined ||
+      pull.mergeCommitSha === null ||
+      !isFullSha(pull.mergeCommitSha)
+    )
+      return err(
+        lifecycleFailure(
+          "read merged release PR",
+          `merged pull request #${pull.number} has no valid merge commit SHA`,
+        ),
+      );
+    mergedAuthorities.push({
+      number: pull.number,
+      url: pull.url,
+      merged: pull.merged,
+      closed: pull.state === "closed",
+      mergeCommitSha: pull.mergeCommitSha,
+      headRef: pull.headRef,
+    });
+  }
+
+  const associatedPullRequestSettled =
+    markerSha !== null &&
+    closedResult.value.some(
+      (pull) =>
+        pull.headRef === RELEASE_PR_MARKER_REF &&
+        pull.headSha === markerSha &&
+        pull.baseRef === MAIN_BRANCH,
+    );
+  const ownership =
+    markerSha !== null && markerEnvelope !== undefined
+      ? {
+          ref: markerEnvelope.ref,
+          ownerGeneration: markerEnvelope.ownerGeneration,
+          expectedMarkerSha: markerSha,
+          plannedBaseSha: markerEnvelope.plannedBaseSha,
+        }
+      : null;
+
+  let authority: ReleaseAuthority | undefined;
+  const ports: ReleaseStatePorts = {
+    listMergedStableReleasePullRequests: () => okAsync(mergedAuthorities),
+    readMarkerRef: () =>
+      okAsync(markerSha === null ? null : { sha: markerSha }),
+    readOpenStableReleasePullRequest: () =>
+      okAsync(
+        openPull === undefined
+          ? null
+          : { number: openPull.number, url: openPull.url },
+      ),
+    readCreationCleanupIdentity: () => okAsync(ownership),
+    readAuthority: (pullRequest) => {
+      if (readAuthority === undefined)
+        return errAsync<ReleaseAuthority, ReleaseStateError>({
+          type: "InvalidReleaseAuthority",
+          issues: [
+            "the merged-release authority reader is unavailable; no cached PR comment or workflow artifact may substitute for it",
+          ],
+        });
+      return readAuthority(pullRequest).map((value) => {
+        authority = value;
+        return value;
+      });
+    },
+    recomputePlan: (planInput) =>
+      errAsync<ReleasePlan, ReleasePlanError>({
+        type: "InvalidRecomputeRef",
+        ref: planInput.releasedSha,
+      }),
+  };
+  const discoveredResult = await discoverIncompleteReleases(ports);
+  if (discoveredResult.isErr())
+    return err(lifecycleStateFailure(discoveredResult.error));
+
+  let mergedRelease: DoctorMergedReleaseObservation | null = null;
+  if (authority !== undefined) {
+    const classified = classifyPostMergeState(authority);
+    if (classified.isErr()) return err(lifecycleStateFailure(classified.error));
+    mergedRelease = {
+      state: classified.value.primary,
+      url: authority.pullRequest.url,
+      markerCleanupPending: classified.value.markerCleanupPending,
+      incidentAuthorizationRecordPresent: authority.incident !== null,
+      incidentDeprecatedVerified:
+        authority.incident?.deprecationsMatch ?? undefined,
+    };
+  }
+
+  return ok({
+    authoritative: true,
+    marker: {
+      present: markerSha !== null,
+      ...(markerSha === null ? {} : { markerSha }),
+      ...(markerEnvelope === undefined
+        ? {}
+        : {
+            ownerGeneration: markerEnvelope.ownerGeneration,
+            plannedBaseSha: markerEnvelope.plannedBaseSha,
+          }),
+      openReleasePr: openPull !== undefined,
+      associatedPullRequestSettled,
+      creationPollExhausted:
+        markerSha !== null &&
+        openPull === undefined &&
+        !associatedPullRequestSettled,
+      markerCleanupPending: markerSha !== null && associatedPullRequestSettled,
+    },
+    mergedRelease,
+    discovered: discoveredResult.value,
+  });
+}
+
+function unavailableReleaseLifecycle(): DoctorReleaseLifecycleObservation {
+  return {
+    authoritative: false,
+    marker: { present: false, openReleasePr: false },
+    discovered: [],
+  };
+}
+
+function lifecycleFailure(operation: string, message: string): DoctorPortError {
+  return {
+    type: "DoctorPortFailed",
+    operation: `release.lifecycle.${operation}`,
+    message,
+  };
+}
+
+function githubLifecycleFailure(
+  operation: string,
+  error: GitHubError,
+): DoctorPortError {
+  return lifecycleFailure(
+    operation,
+    error.status === undefined
+      ? error.message
+      : `${error.status}: ${error.message}`,
+  );
+}
+
+function lifecycleStateFailure(error: ReleaseStateError): DoctorPortError {
+  if (error.type === "GitHubError")
+    return githubLifecycleFailure("state", error);
+  if (error.type === "InvalidReleaseAuthority")
+    return lifecycleFailure("state", error.issues.join("; "));
+  if (error.type === "PlanRecomputeFailed")
+    return lifecycleFailure(
+      "state",
+      `plan recomputation failed (${error.error.type})`,
+    );
+  return lifecycleFailure(
+    "state",
+    `Task 14 state is unverifiable (${error.type})`,
   );
 }
 
@@ -1986,6 +2336,7 @@ async function collectPolicy(root: string): Promise<DoctorPolicyObservation> {
 async function collectGitHub(
   environment: Readonly<Record<string, string | undefined>>,
   errors: Record<string, string>,
+  options: DoctorCollectionOptions = {},
 ): Promise<DoctorGitHubObservation> {
   const token = environment.GITHUB_TOKEN;
   if (token === undefined || token.length === 0) {
@@ -1995,7 +2346,12 @@ async function collectGitHub(
   // The API is intentionally read-only. A malformed response is represented as
   // unavailable rather than guessed healthy. Detailed console paths are in the
   // verifier fixes above.
-  const api = new GitHubReadClient(RELEASE_REPOSITORY, token);
+  const api = new GitHubReadClient(
+    RELEASE_REPOSITORY,
+    token,
+    options.githubFetch,
+    options.githubApiUrl ?? environment.GITHUB_API_URL,
+  );
   const [
     release,
     prerelease,
@@ -2382,7 +2738,8 @@ class GitHubReadClient {
   constructor(
     private readonly repository: string,
     private readonly token: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: GitHubFetch = fetch,
+    private readonly apiUrl = "https://api.github.com",
   ) {}
 
   readEnvironment(name: string): ResultAsync<unknown, DoctorPortError> {
@@ -2395,7 +2752,7 @@ class GitHubReadClient {
 
   readTeam(): ResultAsync<unknown, DoctorPortError> {
     return this.readAbsolute(
-      "https://api.github.com/orgs/weave-io/teams/release-maintainers",
+      `${this.apiUrl}/orgs/weave-io/teams/release-maintainers`,
     );
   }
 
@@ -2420,9 +2777,7 @@ class GitHubReadClient {
   }
 
   private read(path: string): ResultAsync<unknown, DoctorPortError> {
-    return this.readAbsolute(
-      `https://api.github.com/repos/${this.repository}${path}`,
-    );
+    return this.readAbsolute(`${this.apiUrl}/repos/${this.repository}${path}`);
   }
 
   private readAbsolute(url: string): ResultAsync<unknown, DoctorPortError> {

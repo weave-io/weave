@@ -904,6 +904,9 @@ test("release PRs are read by label and by owner-qualified head state", async ()
       number: 9,
       html_url: "https://github.com/weave-io/weave/pull/9",
       state: "closed",
+      merged: true,
+      merged_at: "2026-08-19T00:00:00.000Z",
+      merge_commit_sha: MARKER,
       title: "stale",
       body: "",
       head: { ref: "release-pr/stable", sha: BASE },
@@ -935,6 +938,7 @@ test("release PRs are read by label and by owner-qualified head state", async ()
     "closed",
   );
   expect(closedByHead._unsafeUnwrap().map((pull) => pull.number)).toEqual([9]);
+  expect(closedByHead._unsafeUnwrap()[0]?.mergeCommitSha).toBe(MARKER);
   expect(world.calls[1]?.url).toBe(
     "https://api.github.com/repos/weave-io/weave/pulls?state=open&per_page=100&head=weave-io%3Arelease-pr%2Fstable",
   );
