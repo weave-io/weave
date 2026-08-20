@@ -102,5 +102,5 @@ export function validateDeclaredSkills(
   if (missing.length > 0) {
     return err({ type: "MissingSkillsError", missingSkills: missing });
   }
-  return ok(undefined);
+  return ok(void 0);
 }

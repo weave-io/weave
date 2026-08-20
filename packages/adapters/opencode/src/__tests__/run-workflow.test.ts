@@ -488,7 +488,7 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
     }
 
     // Validate required fields are present and correctly typed
-    expect(typeof shuttleConfig.prompt).toBe("string");
+    expect(shuttleConfig.prompt).toEqual(expect.any(String));
     expect(shuttleConfig.mode).toBe("subagent");
     expect(shuttleConfig.permission).toBeDefined();
 
@@ -608,7 +608,6 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
     }
   });

@@ -42,6 +42,12 @@ export type OpenCodeToolPermissions = NonNullable<
   OpenCodeAgentConfig["permission"]
 >;
 
+/** The complete adapter-owned permission projection for one agent. */
+export interface OpenCodeToolPolicyMapping {
+  readonly permission: OpenCodeToolPermissions;
+  readonly tools: OpenCodeAgentConfig["tools"];
+}
+
 // ---------------------------------------------------------------------------
 // Read-class tool names
 // ---------------------------------------------------------------------------
@@ -116,10 +122,9 @@ export function buildReadToolsEntry(
  *   - `tools` — optional `AgentConfig.tools` patch for read-class tools.
  *     `undefined` when no tool overrides are needed.
  */
-export function mapToolPolicy(policy: EffectiveToolPolicy): {
-  permission: OpenCodeToolPermissions;
-  tools: Record<string, boolean> | undefined;
-} {
+export function mapToolPolicy(
+  policy: EffectiveToolPolicy,
+): OpenCodeToolPolicyMapping {
   const permission: OpenCodeToolPermissions = {
     edit: toOpenCodePermission(policy.write),
     bash: toOpenCodePermission(policy.execute),

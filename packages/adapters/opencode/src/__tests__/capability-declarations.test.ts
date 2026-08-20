@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   AdapterCapabilityContractSchema,
   OPTIONAL_CAPABILITIES,
-  type ProviderFastActivationStatus,
+  ProviderFastActivationStatusSchema,
   REQUIRED_CAPABILITIES,
   readinessForProviderFastStatus,
 } from "@weaveio/weave-engine";
@@ -64,10 +64,13 @@ describe("OpenCode adapter capability contract", () => {
 
     expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
     expect(REQUIRED_CAPABILITIES).not.toContain("provider-fast-activation");
-    expect(
-      readinessForProviderFastStatus(
-        capability?.runtimeStatus as ProviderFastActivationStatus,
-      ),
-    ).toBe("unsupported");
+    const runtimeStatus = ProviderFastActivationStatusSchema.safeParse(
+      capability?.runtimeStatus,
+    );
+    expect(runtimeStatus.success).toBe(true);
+    if (!runtimeStatus.success) return;
+    expect(readinessForProviderFastStatus(runtimeStatus.data)).toBe(
+      "unsupported",
+    );
   });
 });

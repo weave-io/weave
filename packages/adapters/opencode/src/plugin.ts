@@ -327,10 +327,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         // --- Default agent configuration ---
         // Set Loom as the default agent so new sessions start with the
         // orchestrator rather than OpenCode's built-in 'build' agent.
-        // Type assertion needed: OpenCode supports `default_agent` but the
+        // OpenCode supports `default_agent`, but the
         // @opencode-ai/plugin type definitions may lag behind the runtime.
         if (translatedMap.has("loom")) {
-          (cfg as Record<string, unknown>).default_agent = "loom";
+          Object.assign(cfg, { default_agent: "loom" });
           log.info("Set default_agent to 'loom'");
         }
 

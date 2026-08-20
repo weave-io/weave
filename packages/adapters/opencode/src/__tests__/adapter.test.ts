@@ -21,14 +21,18 @@ import type {
   AgentDescriptor,
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import type {
+  OpenCodeAgentSummary,
+  OpenCodeClientError,
+  OpenCodeClientFacade,
+} from "../index.js";
 import {
   OpenCodeAdapter,
   type OpenCodeAdapterError,
   WEAVE_OWNERSHIP_TAG,
 } from "../index.js";
-import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
+import type { OpenCodeAgentConfig } from "../sdk-types.js";
 
 // ---------------------------------------------------------------------------
 // MockOpenCodeClient
@@ -51,18 +55,20 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     config: OpenCodeAgentConfig;
   }> = [];
 
-  private _listAgentsResult: ResultAsync<OpenCodeAgent[], OpenCodeClientError> =
-    okAsync([]);
+  private _listAgentsResult: ResultAsync<
+    OpenCodeAgentSummary[],
+    OpenCodeClientError
+  > = okAsync([]);
 
   private _createAgentResult: ResultAsync<void, OpenCodeClientError> =
-    okAsync(undefined);
+    ResultAsync.fromSafePromise(Promise.resolve());
 
   private _updateAgentResult: ResultAsync<void, OpenCodeClientError> =
-    okAsync(undefined);
+    ResultAsync.fromSafePromise(Promise.resolve());
 
   /** Override the result returned by `listAgents()` for a specific test. */
   setListAgentsResult(
-    result: ResultAsync<OpenCodeAgent[], OpenCodeClientError>,
+    result: ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError>,
   ): void {
     this._listAgentsResult = result;
   }
@@ -77,7 +83,7 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     this._updateAgentResult = result;
   }
 
-  listAgents(): ResultAsync<OpenCodeAgent[], OpenCodeClientError> {
+  listAgents(): ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError> {
     this.listAgentsCalls.push(Date.now());
     return this._listAgentsResult;
   }
@@ -134,22 +140,22 @@ function makeDescriptor(
  * The description includes `WEAVE_OWNERSHIP_TAG` so the reconciler treats it
  * as an existing Weave-managed agent (update path).
  */
-function makeWeaveManagedAgent(name: string): OpenCodeAgent {
+function makeWeaveManagedAgent(name: string): OpenCodeAgentSummary {
   return {
     name,
     description: `A Weave-managed agent ${WEAVE_OWNERSHIP_TAG}`,
-  } as OpenCodeAgent;
+  };
 }
 
 /**
  * Builds a mock `OpenCodeAgent` that looks like a manually created (foreign)
  * agent — no ownership tag in the description.
  */
-function makeForeignAgent(name: string): OpenCodeAgent {
+function makeForeignAgent(name: string): OpenCodeAgentSummary {
   return {
     name,
     description: "A manually created agent",
-  } as OpenCodeAgent;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -663,7 +669,7 @@ describe("OpenCodeAdapter — loadAvailableSkills()", () => {
     await adapter.init();
     const skills = await adapter.loadAvailableSkills();
     expect(skills[0]?.name).toBe("tdd");
-    expect((skills[0]?.metadata as { source: string })?.source).toBe("harness");
+    expect(skills[0]?.metadata).toMatchObject({ source: "harness" });
   });
 
   it("returns the same list on repeated calls (no filesystem side effects)", async () => {
@@ -951,12 +957,11 @@ describe("OpenCodeAdapter — fast intent is unsupported but never blocking", ()
 
     await adapter.spawnSubagent(makeDescriptor({ name: "fast", fast: true }));
 
-    const sent = client.createAgentCalls[0]?.config as
-      | Record<string, unknown>
-      | undefined;
+    const sent = client.createAgentCalls[0]?.config;
     expect(sent).toBeDefined();
+    if (sent === undefined) return;
     for (const field of ["fast", "speed", "service_tier", "priority"]) {
-      expect(Object.hasOwn(sent ?? {}, field)).toBe(false);
+      expect(Object.hasOwn(sent, field)).toBe(false);
     }
   });
 

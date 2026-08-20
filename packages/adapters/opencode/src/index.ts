@@ -67,6 +67,7 @@ export { resolveModelForAgent } from "./model-resolution.js";
 // ---------------------------------------------------------------------------
 
 export type {
+  OpenCodeAgentSummary,
   OpenCodeClientError,
   OpenCodeClientFacade,
 } from "./opencode-client.js";

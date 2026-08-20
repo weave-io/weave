@@ -38,7 +38,6 @@
  */
 
 import type {
-  AbortExecutionInput,
   AdapterHealthReport,
   AdvanceStepInput,
   CommandOperationError,
@@ -56,6 +55,8 @@ import {
   abortExecution,
   advanceStep,
   buildAdapterHealthReport,
+  createExecutionLeaseId,
+  createWorkflowInstanceId,
   inspectStatus,
   logger,
   runNamedWorkflow,
@@ -504,9 +505,7 @@ export class RuntimeCommandProjection {
     );
 
     const result = await inspectStatus({
-      workflowInstanceId: input.workflowInstanceId as Parameters<
-        typeof inspectStatus
-      >[0]["workflowInstanceId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
       store: input.store,
     });
 
@@ -559,9 +558,8 @@ export class RuntimeCommandProjection {
     );
 
     const result = await abortExecution({
-      workflowInstanceId:
-        input.workflowInstanceId as AbortExecutionInput["workflowInstanceId"],
-      leaseId: input.leaseId as AbortExecutionInput["leaseId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
+      leaseId: createExecutionLeaseId(input.leaseId),
       signal: input.signal,
       store: input.store,
     });
@@ -616,9 +614,8 @@ export class RuntimeCommandProjection {
     );
 
     const result = await advanceStep({
-      workflowInstanceId:
-        input.workflowInstanceId as AdvanceStepInput["workflowInstanceId"],
-      leaseId: input.leaseId as AdvanceStepInput["leaseId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
+      leaseId: createExecutionLeaseId(input.leaseId),
       stepName: input.stepName,
       completionSignal: input.completionSignal,
       store: input.store,

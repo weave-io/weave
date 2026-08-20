@@ -17,7 +17,7 @@ import type {
   SkillInfo,
 } from "@weaveio/weave-engine";
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, ResultAsync } from "neverthrow";
 import {
   type OpenCodeModelContext,
   resolveModelForAgent,
@@ -380,7 +380,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
         { agent: descriptor.name },
         "No OpenCode client injected — skipping SDK materialization (translation-only mode)",
       );
-      return okAsync(undefined);
+      return ResultAsync.fromSafePromise(Promise.resolve());
     }
 
     // SDK-backed materialization: list existing → reconcile → create/update
@@ -401,12 +401,11 @@ export class OpenCodeAdapter implements HarnessAdapter {
           cause: error,
         });
       })
-      .map(() => {
+      .map(() =>
         log.info(
           { agent: descriptor.name },
           "Agent materialized successfully via OpenCode SDK",
-        );
-        return undefined;
-      });
+        ),
+      );
   }
 }

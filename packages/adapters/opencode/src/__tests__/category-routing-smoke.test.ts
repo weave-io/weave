@@ -178,9 +178,8 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
-      expect(typeof config).toBe("object");
-      expect(config).not.toBeNull();
-      expect(typeof config.prompt).toBe("string");
+      expect(config).toBeDefined();
+      expect(config.prompt).toBeDefined();
       expect((config.prompt ?? "").length).toBeGreaterThan(0);
       expect(config.mode).toBeDefined();
       expect(config.permission).toBeDefined();
@@ -214,7 +213,7 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
   });
 
   it("translateAgent is importable and is a function", () => {
-    expect(typeof translateAgent).toBe("function");
+    expect(translateAgent).toBeInstanceOf(Function);
   });
 
   it("category descriptor keeps string triggers and no patterns", () => {

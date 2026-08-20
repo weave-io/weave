@@ -42,9 +42,18 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  Hooks,
+  Config as OpenCodePluginConfig,
+  PluginInput,
+} from "@opencode-ai/plugin";
 import { logDestination } from "@weaveio/weave-engine";
 import { okAsync, ResultAsync } from "neverthrow";
-import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
+import type {
+  OpenCodeAgentSummary,
+  OpenCodeClientError,
+  OpenCodeClientFacade,
+} from "../index.js";
 import {
   createWeavePlugin,
   DEFAULT_PLUGIN_LOG_SUBPATH,
@@ -53,7 +62,13 @@ import {
   WeavePlugin,
   WeavePluginServer,
 } from "../index.js";
-import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
+import {
+  createOpencodeClient,
+  type OpenCodeAgentConfig,
+  type OpenCodeSession,
+} from "../sdk-types.js";
+
+type TestPluginConfig = OpenCodePluginConfig & { default_agent?: string };
 
 // ---------------------------------------------------------------------------
 // Mock OpenCode client
@@ -70,26 +85,36 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
   }> = [];
   readonly listAgentsCalls: number[] = [];
 
-  private _listResult: ResultAsync<OpenCodeAgent[], OpenCodeClientError> =
-    okAsync([]);
+  private _listResult: ResultAsync<
+    OpenCodeAgentSummary[],
+    OpenCodeClientError
+  > = okAsync([]);
 
-  setListResult(r: ResultAsync<OpenCodeAgent[], OpenCodeClientError>): void {
+  setListResult(
+    r: ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError>,
+  ): void {
     this._listResult = r;
   }
 
-  listAgents() {
+  listAgents(): ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError> {
     this.listAgentsCalls.push(Date.now());
     return this._listResult;
   }
 
-  createAgent(name: string, config: OpenCodeAgentConfig) {
+  createAgent(
+    name: string,
+    config: OpenCodeAgentConfig,
+  ): ResultAsync<void, OpenCodeClientError> {
     this.createAgentCalls.push({ name, config });
-    return okAsync<void, OpenCodeClientError>(undefined);
+    return ResultAsync.fromSafePromise(Promise.resolve());
   }
 
-  updateAgent(name: string, config: OpenCodeAgentConfig) {
+  updateAgent(
+    name: string,
+    config: OpenCodeAgentConfig,
+  ): ResultAsync<void, OpenCodeClientError> {
     this.updateAgentCalls.push({ name, config });
-    return okAsync<void, OpenCodeClientError>(undefined);
+    return ResultAsync.fromSafePromise(Promise.resolve());
   }
 }
 
@@ -99,16 +124,23 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
 
 function makeMockPluginInput(
   directory: string,
-  client: OpenCodeClientFacade,
-): Parameters<typeof WeavePlugin>[0] {
+  _client: OpenCodeClientFacade,
+): PluginInput {
   return {
-    client: client as unknown as Parameters<typeof WeavePlugin>[0]["client"],
+    client: createOpencodeClient({
+      baseUrl: "http://localhost:1234",
+      directory,
+    }),
     directory,
-    project: {} as never,
+    project: {
+      id: "test-project",
+      worktree: directory,
+      time: { created: 0 },
+    },
     worktree: directory,
     experimental_workspace: { register: () => {} },
     serverUrl: new URL("http://localhost:1234"),
-    $: {} as never,
+    $: Bun.$,
   };
 }
 
@@ -180,7 +212,11 @@ function projectOnlyReader(root: string) {
     read: (path: string) => {
       return ResultAsync.fromPromise(
         Bun.file(path).text(),
-        (cause: unknown) => ({ type: "FileReadError" as const, path, cause }),
+        (cause: unknown) => ({
+          type: "FileReadError" as const,
+          path,
+          cause,
+        }),
       );
     },
   };
@@ -192,26 +228,29 @@ function projectOnlyReader(root: string) {
 async function triggerSessionCreated(
   hooks: Awaited<ReturnType<typeof WeavePlugin>>,
 ): Promise<void> {
-  if (typeof hooks.event !== "function") return;
+  if (hooks.event === undefined) return;
+  const session = {
+    id: "session-test",
+    projectID: "test-project",
+    directory: "/tmp/weave-plugin-test",
+    title: "Test session",
+    version: "1",
+    time: { created: 0, updated: 0 },
+  } satisfies OpenCodeSession;
   await hooks.event({
     event: {
       type: "session.created",
-      properties: { info: {} as never },
+      properties: { info: session },
     },
   });
 }
 
-/**
- * Helper: simulate a non-`session.created` event via the `event` hook.
- */
-async function _triggerOtherEvent(
-  hooks: Awaited<ReturnType<typeof WeavePlugin>>,
-  type: string,
+async function applyConfigHook(
+  hooks: Hooks,
+  config: TestPluginConfig,
 ): Promise<void> {
-  if (typeof hooks.event !== "function") return;
-  await hooks.event({
-    event: { type, properties: {} } as never,
-  });
+  if (hooks.config === undefined) return;
+  await hooks.config(config);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +259,7 @@ async function _triggerOtherEvent(
 
 describe("WeavePlugin — module shape", () => {
   it("WeavePlugin is a function", () => {
-    expect(typeof WeavePlugin).toBe("function");
+    expect(WeavePlugin).toBeInstanceOf(Function);
   });
 
   it("server export (WeavePluginServer) is the same function as WeavePlugin", () => {
@@ -237,12 +276,12 @@ describe("WeavePlugin — module shape", () => {
   });
 
   it("createWeavePlugin is a function", () => {
-    expect(typeof createWeavePlugin).toBe("function");
+    expect(createWeavePlugin).toBeInstanceOf(Function);
   });
 
   it("createWeavePlugin() returns a Plugin function", () => {
     const plugin = createWeavePlugin();
-    expect(typeof plugin).toBe("function");
+    expect(plugin).toBeInstanceOf(Function);
   });
 });
 
@@ -254,12 +293,12 @@ describe("WeavePlugin — PluginModule compatibility", () => {
   it("can be used as PluginModule.server", () => {
     // PluginModule shape: { id?: string; server: Plugin; tui?: never }
     const pluginModule = { server: WeavePlugin };
-    expect(typeof pluginModule.server).toBe("function");
+    expect(pluginModule.server).toBeInstanceOf(Function);
   });
 
   it("WeavePluginServer satisfies PluginModule.server shape", () => {
     const pluginModule = { server: WeavePluginServer };
-    expect(typeof pluginModule.server).toBe("function");
+    expect(pluginModule.server).toBeInstanceOf(Function);
     expect(pluginModule.server).toBe(WeavePlugin);
   });
 });
@@ -319,9 +358,9 @@ describe("WeavePlugin — config hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks).toBe("object");
+    expect(hooks).toBeDefined();
     // config hook must be present and be a function
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
   });
 
   it("config hook injects translated agent into cfg.agent", async () => {
@@ -337,19 +376,22 @@ describe("WeavePlugin — config hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
     // Simulate OpenCode calling the config hook with an empty config
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     // The agent should now be present in cfg.agent
     expect(cfg.agent).toBeDefined();
     expect(cfg.agent?.[agentName]).toBeDefined();
 
-    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    const injected = cfg.agent?.[agentName];
+    expect(injected).toBeDefined();
+    if (injected === undefined) return;
     // The injected config should have at minimum a prompt and mode
-    expect(typeof injected.prompt).toBe("string");
+    expect(injected.prompt).toBeDefined();
+    expect(injected.prompt?.length ?? 0).toBeGreaterThan(0);
     expect(injected.mode).toBe("subagent");
   });
 
@@ -365,14 +407,14 @@ describe("WeavePlugin — config hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
     // cfg.agent is explicitly undefined
-    const cfg: { agent?: Record<string, unknown> } = { agent: undefined };
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = { agent: undefined };
+    await applyConfigHook(hooks, cfg);
 
     expect(cfg.agent).toBeDefined();
-    expect(typeof cfg.agent).toBe("object");
+    expect(cfg.agent).toBeDefined();
   });
 
   it("config hook preserves existing cfg.agent entries", async () => {
@@ -387,17 +429,17 @@ describe("WeavePlugin — config hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
     // Pre-populate cfg.agent with an existing entry
     const existingAgent = {
       prompt: "I am an existing agent.",
       mode: "primary",
-    };
-    const cfg: { agent?: Record<string, unknown> } = {
+    } satisfies OpenCodeAgentConfig;
+    const cfg: TestPluginConfig = {
       agent: { "existing-agent": existingAgent },
     };
-    await hooks.config?.(cfg as never);
+    await applyConfigHook(hooks, cfg);
 
     // Existing entry must be preserved
     expect(cfg.agent?.["existing-agent"]).toBe(existingAgent);
@@ -423,16 +465,14 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: {
-      agent?: Record<string, unknown>;
-      command?: Record<string, unknown>;
-    } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     expect(cfg.command).toBeDefined();
-    expect(cfg.command?.["start-work"]).toBeDefined();
-    const cmd = cfg.command?.["start-work"] as Record<string, unknown>;
-    expect(typeof cmd.template).toBe("string");
+    const cmd = cfg.command?.["start-work"];
+    expect(cmd).toBeDefined();
+    if (cmd === undefined) return;
+    expect(cmd.template.length).toBeGreaterThan(0);
     expect(cmd.description).toBe(
       "Start executing a Weave plan created by Pattern",
     );
@@ -451,16 +491,14 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: {
-      agent?: Record<string, unknown>;
-      command?: Record<string, unknown>;
-    } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     expect(cfg.command).toBeDefined();
-    expect(cfg.command?.["weave:start"]).toBeDefined();
-    const cmd = cfg.command?.["weave:start"] as Record<string, unknown>;
-    expect(typeof cmd.template).toBe("string");
+    const cmd = cfg.command?.["weave:start"];
+    expect(cmd).toBeDefined();
+    if (cmd === undefined) return;
+    expect(cmd.template.length).toBeGreaterThan(0);
     expect(cmd.description).toBe(
       "Start executing a Weave plan (preferred command)",
     );
@@ -479,17 +517,12 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: {
-      agent?: Record<string, unknown>;
-      command?: Record<string, unknown>;
-    } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     expect(cfg.command?.["weave:goal"]).toBeUndefined();
-    const templates = Object.values(cfg.command ?? {}).map((entry) =>
-      typeof entry === "object" && entry !== null
-        ? ((entry as { template?: unknown }).template ?? "")
-        : "",
+    const templates = Object.values(cfg.command ?? {}).map(
+      (entry) => entry.template,
     );
     for (const template of templates) {
       expect(String(template)).not.toContain("weave:goal");
@@ -508,14 +541,14 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: {
-      agent?: Record<string, unknown>;
-      command?: Record<string, unknown>;
-    } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
-    const startWork = cfg.command?.["start-work"] as { template: string };
-    const weaveStart = cfg.command?.["weave:start"] as { template: string };
+    const startWork = cfg.command?.["start-work"];
+    const weaveStart = cfg.command?.["weave:start"];
+    expect(startWork).toBeDefined();
+    expect(weaveStart).toBeDefined();
+    if (startWork === undefined || weaveStart === undefined) return;
 
     // Both templates contain execution instructions
     expect(startWork.template).toContain("<command-instruction>");
@@ -599,8 +632,8 @@ describe("WeavePlugin — no eager SDK calls (debug config path)", () => {
     const hooks = await plugin(input);
 
     // Simulate `opencode debug config`: call config hook only, no event hook
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     // Agent must be injected via config hook
     expect(cfg.agent?.[agentName]).toBeDefined();
@@ -625,10 +658,10 @@ describe("WeavePlugin — no eager SDK calls (debug config path)", () => {
     // The plugin must resolve to a Hooks object without blocking on SDK
     const hooks = await plugin(input);
 
-    expect(typeof hooks).toBe("object");
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks).toBeDefined();
+    expect(hooks.config).toBeInstanceOf(Function);
     // event hook must be present for deferred reconciliation
-    expect(typeof hooks.event).toBe("function");
+    expect(hooks.event).toBeInstanceOf(Function);
   });
 });
 
@@ -691,11 +724,11 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
 
     // Plugin must return a config hook — if builtins fail to compose, the
     // translatedMap is empty and no config hook is returned.
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
     // Invoke the config hook and collect injected agents.
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     const injectedNames = Object.keys(cfg.agent ?? {}).sort();
 
@@ -734,20 +767,20 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     // Every injected builtin agent must have a non-empty prompt string.
-    for (const [name, agentConfig] of Object.entries(cfg.agent ?? {})) {
-      const config = agentConfig as Record<string, unknown>;
+    for (const [name, config] of Object.entries(cfg.agent ?? {})) {
+      if (config === undefined) continue;
       expect(
-        typeof config.prompt,
-        `builtin agent "${name}" must have a string prompt`,
-      ).toBe("string");
+        config.prompt,
+        `builtin agent "${name}" must have a prompt`,
+      ).toBeDefined();
       expect(
-        (config.prompt as string).length,
+        config.prompt?.length ?? 0,
         `builtin agent "${name}" must have a non-empty prompt`,
       ).toBeGreaterThan(10);
     }
@@ -775,14 +808,15 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
-    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    const injected = cfg.agent?.[agentName];
+    expect(injected).toBeDefined();
+    if (injected === undefined) return;
     // The injected config must carry the ownership tag so that deferred
     // reconciliation classifies it as "update" rather than "collision".
-    expect(typeof injected.description).toBe("string");
-    expect(injected.description as string).toContain(WEAVE_OWNERSHIP_TAG);
+    expect(injected.description).toContain(WEAVE_OWNERSHIP_TAG);
   });
 
   // "session.created after config hook uses updateAgent" test removed —
@@ -803,8 +837,8 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
     const hooks = await plugin(input);
 
     // Run only the config hook — no event hook
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
     // No SDK calls must have been made
     expect(client.listAgentsCalls).toHaveLength(0);
@@ -825,11 +859,13 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
-    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
-    const description = injected.description as string;
+    const injected = cfg.agent?.[agentName];
+    expect(injected).toBeDefined();
+    if (injected === undefined || injected.description === undefined) return;
+    const description = injected.description;
     // Tag must appear exactly once
     const tagCount = description.split(WEAVE_OWNERSHIP_TAG).length - 1;
     expect(tagCount).toBe(1);
@@ -864,14 +900,12 @@ describe("WeavePlugin — builtin shuttle is subagent-only", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(typeof hooks.config).toBe("function");
+    expect(hooks.config).toBeInstanceOf(Function);
 
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
-    const shuttleConfig = cfg.agent?.shuttle as
-      | Record<string, unknown>
-      | undefined;
+    const shuttleConfig = cfg.agent?.shuttle;
     expect(shuttleConfig).toBeDefined();
     expect(shuttleConfig?.mode).toBe("subagent");
   });
@@ -940,7 +974,7 @@ describe("WeavePlugin — @opencode-ai/plugin dependency", () => {
 
     const hooks = await result;
     // Hooks is an object — all fields are optional
-    expect(typeof hooks).toBe("object");
+    expect(hooks).toBeDefined();
     expect(hooks).not.toBeNull();
   });
 });
@@ -1134,7 +1168,7 @@ describe("WeavePlugin — fast intent registers no provider hook", () => {
       clientFacade: client,
     });
     const hooks = await plugin(makeMockPluginInput(root, client));
-    const hookNames = Object.keys(hooks as Record<string, unknown>);
+    const hookNames = Object.keys(hooks);
 
     expect(hookNames).not.toContain("chat.params");
     expect(hookNames).not.toContain("chat.headers");
@@ -1153,12 +1187,14 @@ describe("WeavePlugin — fast intent registers no provider hook", () => {
     });
     const hooks = await plugin(makeMockPluginInput(root, client));
 
-    const cfg: { agent?: Record<string, unknown> } = {};
-    await hooks.config?.(cfg as never);
+    const cfg: TestPluginConfig = {};
+    await applyConfigHook(hooks, cfg);
 
-    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    const injected = cfg.agent?.[agentName];
     expect(injected).toBeDefined();
-    expect(typeof injected.prompt).toBe("string");
+    if (injected === undefined) return;
+    expect(injected.prompt).toBeDefined();
+    expect(injected.prompt?.length ?? 0).toBeGreaterThan(0);
     expect(injected.mode).toBe("subagent");
     for (const field of ["fast", "speed", "service_tier", "priority"]) {
       expect(Object.hasOwn(injected, field)).toBe(false);
@@ -1185,7 +1221,7 @@ describe("WeavePlugin — fast intent registers no provider hook", () => {
     const sentConfigs = [
       ...client.createAgentCalls,
       ...client.updateAgentCalls,
-    ].map((call) => call.config as Record<string, unknown>);
+    ].map((call) => call.config);
     for (const sent of sentConfigs) {
       for (const field of ["fast", "speed", "service_tier", "priority"]) {
         expect(Object.hasOwn(sent, field)).toBe(false);

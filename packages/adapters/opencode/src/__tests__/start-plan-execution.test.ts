@@ -34,7 +34,7 @@ import type {
   PlanStateProvider,
 } from "@weaveio/weave-engine";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter, type OpenCodeAdapterError } from "../adapter.js";
 import {
@@ -66,7 +66,7 @@ class MockOpenCodeAdapter extends OpenCodeAdapter {
     descriptor: AgentDescriptor,
   ): ResultAsync<void, OpenCodeAdapterError> {
     this.spawnSubagentCalls.push(descriptor);
-    return okAsync(undefined);
+    return ResultAsync.fromSafePromise(Promise.resolve());
   }
 }
 
@@ -815,12 +815,10 @@ describe("startPlanExecution — adapter boundary", () => {
   it("WEAVE_START_COMMAND does not reference a core package constant", () => {
     // The command name is a string literal defined in the adapter module.
     // This test proves it is adapter-owned by asserting the value directly.
-    expect(typeof WEAVE_START_COMMAND).toBe("string");
     expect(WEAVE_START_COMMAND.startsWith("/")).toBe(true);
   });
 
   it("WEAVE_START_LEGACY_COMMAND does not reference a core package constant", () => {
-    expect(typeof WEAVE_START_LEGACY_COMMAND).toBe("string");
     expect(WEAVE_START_LEGACY_COMMAND.startsWith("/")).toBe(true);
   });
 

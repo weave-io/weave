@@ -23,11 +23,7 @@
 
 import { ResultAsync } from "neverthrow";
 
-import type {
-  OpenCodeAgent,
-  OpenCodeAgentConfig,
-  OpencodeClient,
-} from "./sdk-types.js";
+import type { OpenCodeAgentConfig, OpencodeClient } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -55,6 +51,19 @@ export type OpenCodeClientError =
       cause?: unknown;
     };
 
+/**
+ * The agent identity fields used by adapter-owned reconciliation.
+ *
+ * OpenCode returns a larger SDK resource, but reconciliation only needs the
+ * canonical name and ownership description. Keeping that smaller contract in
+ * the facade prevents tests and engine-facing code from depending on unrelated
+ * OpenCode resource fields.
+ */
+export interface OpenCodeAgentSummary {
+  readonly name: string;
+  readonly description?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Facade interface
 // ---------------------------------------------------------------------------
@@ -68,11 +77,12 @@ export type OpenCodeClientError =
  */
 export interface OpenCodeClientFacade {
   /**
-   * Returns the current list of agents known to the running OpenCode instance.
+   * Returns the current list of agent identity summaries known to the running
+   * OpenCode instance.
    *
    * Corresponds to `client.app.agents()`.
    */
-  listAgents(): ResultAsync<OpenCodeAgent[], OpenCodeClientError>;
+  listAgents(): ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError>;
 
   /**
    * Creates a new agent in the running OpenCode instance by patching the
@@ -119,7 +129,7 @@ export interface OpenCodeClientFacade {
 export class SdkOpenCodeClient implements OpenCodeClientFacade {
   constructor(private readonly client: OpencodeClient) {}
 
-  listAgents(): ResultAsync<OpenCodeAgent[], OpenCodeClientError> {
+  listAgents(): ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError> {
     return ResultAsync.fromPromise(
       this.client.app.agents().then((res) => {
         if (res.error !== undefined) {
@@ -127,7 +137,11 @@ export class SdkOpenCodeClient implements OpenCodeClientFacade {
             `app.agents() returned error: ${JSON.stringify(res.error)}`,
           );
         }
-        return res.data ?? [];
+        const agents = res.data ?? [];
+        return agents.map((agent): OpenCodeAgentSummary => {
+          if (agent.description === undefined) return { name: agent.name };
+          return { name: agent.name, description: agent.description };
+        });
       }),
       (cause) => ({
         type: "ListAgentsError" as const,

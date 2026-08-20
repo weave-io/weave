@@ -18,6 +18,7 @@ import type {
   AgentDescriptor,
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
+import { z } from "zod";
 import { describeFastActivation, translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ describe("translateAgent — resolvedModel parameter", () => {
 
   it("omits model field when resolvedModel is undefined", () => {
     const descriptor = makeDescriptor({ models: ["claude-sonnet-4-5"] });
-    const result = translateAgent(descriptor, undefined);
+    const result = translateAgent(descriptor);
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       expect(result.value.model).toBeUndefined();
@@ -302,9 +303,8 @@ describe("translateAgent — fast intent is never encoded in the config", () => 
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      const config = result.value as Record<string, unknown>;
       for (const field of FORBIDDEN_ACCELERATION_FIELDS) {
-        expect(Object.hasOwn(config, field)).toBe(false);
+        expect(Object.hasOwn(result.value, field)).toBe(false);
       }
     }
   });
@@ -351,8 +351,11 @@ describe("describeFastActivation", () => {
   });
 
   it("returns undefined for a non-literal-true value", () => {
-    const hostile = { fast: "true" } as unknown as { fast?: true };
-    expect(describeFastActivation(hostile)).toBeUndefined();
+    const fastIntentSchema = z.object({ fast: z.literal(true).optional() });
+    const parsed = fastIntentSchema.safeParse({ fast: "true" });
+    expect(parsed.success).toBe(false);
+    const normalized = parsed.success ? parsed.data : {};
+    expect(describeFastActivation(normalized)).toBeUndefined();
   });
 
   it("reports unsupported with a bounded reason for declared intent", () => {

@@ -20,15 +20,19 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import type {
+  OpenCodeAgentSummary,
+  OpenCodeClientError,
+  OpenCodeClientFacade,
+} from "../index.js";
 import {
   classifyExistingAgent,
   reconcileAgent,
   tagWithOwnership,
   WEAVE_OWNERSHIP_TAG,
 } from "../reconcile-agent.js";
-import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
+import type { OpenCodeAgentConfig } from "../sdk-types.js";
 
 // ---------------------------------------------------------------------------
 // MockOpenCodeClient
@@ -49,15 +53,17 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     name: string;
     config: OpenCodeAgentConfig;
   }> = [];
-  private _listAgentsResult: ResultAsync<OpenCodeAgent[], OpenCodeClientError> =
-    okAsync([]);
+  private _listAgentsResult: ResultAsync<
+    OpenCodeAgentSummary[],
+    OpenCodeClientError
+  > = okAsync([]);
   private _createAgentResult: ResultAsync<void, OpenCodeClientError> =
-    okAsync(undefined);
+    ResultAsync.fromSafePromise(Promise.resolve());
   private _updateAgentResult: ResultAsync<void, OpenCodeClientError> =
-    okAsync(undefined);
+    ResultAsync.fromSafePromise(Promise.resolve());
 
   setListAgentsResult(
-    result: ResultAsync<OpenCodeAgent[], OpenCodeClientError>,
+    result: ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError>,
   ): void {
     this._listAgentsResult = result;
   }
@@ -70,7 +76,7 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     this._updateAgentResult = result;
   }
 
-  listAgents(): ResultAsync<OpenCodeAgent[], OpenCodeClientError> {
+  listAgents(): ResultAsync<OpenCodeAgentSummary[], OpenCodeClientError> {
     return this._listAgentsResult;
   }
 
@@ -110,21 +116,21 @@ function makeConfig(
 function makeWeaveManagedAgent(
   name: string,
   extraDescription = "",
-): OpenCodeAgent {
+): OpenCodeAgentSummary {
   const desc = extraDescription
     ? `${extraDescription} ${WEAVE_OWNERSHIP_TAG}`
     : WEAVE_OWNERSHIP_TAG;
-  return { name, description: desc } as OpenCodeAgent;
+  return { name, description: desc };
 }
 
 /** Builds a foreign `OpenCodeAgent` (no ownership tag in description). */
-function makeForeignAgent(name: string): OpenCodeAgent {
-  return { name, description: "A manually created agent" } as OpenCodeAgent;
+function makeForeignAgent(name: string): OpenCodeAgentSummary {
+  return { name, description: "A manually created agent" };
 }
 
 /** Builds an `OpenCodeAgent` with no description field. */
-function makeAgentWithoutDescription(name: string): OpenCodeAgent {
-  return { name } as OpenCodeAgent;
+function makeAgentWithoutDescription(name: string): OpenCodeAgentSummary {
+  return { name };
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +139,6 @@ function makeAgentWithoutDescription(name: string): OpenCodeAgent {
 
 describe("WEAVE_OWNERSHIP_TAG", () => {
   it("is a non-empty string", () => {
-    expect(typeof WEAVE_OWNERSHIP_TAG).toBe("string");
     expect(WEAVE_OWNERSHIP_TAG.length).toBeGreaterThan(0);
   });
 
@@ -175,10 +180,10 @@ describe("classifyExistingAgent — canonical identity", () => {
 
   it("matches by name only — different description does not affect identity", () => {
     // Two agents with the same name but different descriptions
-    const weaveManagedWithDifferentDesc = {
+    const weaveManagedWithDifferentDesc: OpenCodeAgentSummary = {
       name: "my-agent",
       description: `Completely different description ${WEAVE_OWNERSHIP_TAG}`,
-    } as OpenCodeAgent;
+    };
     const result = classifyExistingAgent("my-agent", [
       weaveManagedWithDifferentDesc,
     ]);
@@ -222,7 +227,7 @@ describe("classifyExistingAgent — display metadata is not identity", () => {
       name: "my-agent",
       displayName: "Completely Different Display Name",
       description: WEAVE_OWNERSHIP_TAG,
-    } as unknown as OpenCodeAgent;
+    } satisfies OpenCodeAgentSummary & { displayName: string };
     const result = classifyExistingAgent("my-agent", [agent]);
     expect(result).toBe("update");
   });

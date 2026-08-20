@@ -41,13 +41,14 @@
  * directly from `@opencode-ai/sdk`.
  */
 
-import { err, type ResultAsync } from "neverthrow";
+import { errAsync, type ResultAsync } from "neverthrow";
 
 import type {
+  OpenCodeAgentSummary,
   OpenCodeClientError,
   OpenCodeClientFacade,
 } from "./opencode-client.js";
-import type { OpenCodeAgent, OpenCodeAgentConfig } from "./sdk-types.js";
+import type { OpenCodeAgentConfig } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
 // Ownership marker
@@ -124,7 +125,7 @@ export type ReconcileDecision = "create" | "update" | "collision";
  */
 export function classifyExistingAgent(
   agentName: string,
-  existingAgents: OpenCodeAgent[],
+  existingAgents: readonly OpenCodeAgentSummary[],
 ): ReconcileDecision {
   const existing = existingAgents.find((a) => a.name === agentName);
 
@@ -197,14 +198,14 @@ export function reconcileAgent(
       (e): ReconcileAgentError => ({
         type: "ListAgentsError",
         message: e.message,
-        cause: (e as { cause?: unknown }).cause,
+        cause: e.cause,
       }),
     )
     .andThen((existingAgents) => {
       const decision = classifyExistingAgent(agentName, existingAgents);
 
       if (decision === "collision") {
-        return err<void, ReconcileAgentError>({
+        return errAsync<undefined, ReconcileAgentError>({
           type: "CollisionError",
           agentName,
           message: `Agent "${agentName}" already exists in OpenCode but is not Weave-managed. Weave will not overwrite it. Remove the agent manually or rename your Weave agent to resolve the conflict.`,
@@ -253,10 +254,10 @@ function mapClientError(e: OpenCodeClientError): ReconcileAgentError {
       cause: e.cause,
     };
   }
-  // ListAgentsError should not reach here (handled above), but satisfy TS
+  // ListAgentsError should not reach here (handled above), but satisfy TS.
   return {
     type: "ListAgentsError",
     message: e.message,
-    cause: (e as { cause?: unknown }).cause,
+    cause: e.cause,
   };
 }

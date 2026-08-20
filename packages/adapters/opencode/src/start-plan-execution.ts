@@ -223,11 +223,14 @@ function mapCommandError(
   }
 
   // command_validation (other fields), command_unsupported, command_degraded,
-  // command_lifecycle — extract a human-readable message safely.
+  // command_lifecycle — extract a human-readable message from the discriminant.
   let message = "Unknown command operation error";
-  if ("message" in error && typeof error.message === "string") {
+  if (error.type === "command_validation") {
     message = error.message;
-  } else if ("reason" in error && typeof error.reason === "string") {
+  } else if (
+    error.type === "command_unsupported" ||
+    error.type === "command_degraded"
+  ) {
     message = error.reason;
   }
 
