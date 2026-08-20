@@ -1919,7 +1919,7 @@
   - function workspacePath: (root, name) => string
   - interface LiveProofSystemFailure
   - interface LiveProofSpawnInput
-  - _...4 more_
+  - _...5 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void

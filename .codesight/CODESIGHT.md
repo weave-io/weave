@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 358 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~39,700 tokens. Without it, AI exploration would cost ~112,400 tokens. **Saves ~72,700 tokens per conversation.**
-> **Last scanned:** 2026-08-20 19:52 — re-run after significant changes
+> **Last scanned:** 2026-08-20 20:28 — re-run after significant changes
 
 ---
 
@@ -1930,7 +1930,7 @@
   - function workspacePath: (root, name) => string
   - interface LiveProofSystemFailure
   - interface LiveProofSpawnInput
-  - _...4 more_
+  - _...5 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
@@ -2317,7 +2317,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 382 test files found
+> 383 test files found
 
 ---
 

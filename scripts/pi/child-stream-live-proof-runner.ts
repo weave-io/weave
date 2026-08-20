@@ -642,6 +642,9 @@ async function runParentStage(
   );
   if (result.isErr() || !isOpaqueHandle(result.value)) {
     setAllLanesBlocked(state, "fresh-parent-failed");
+    if (result.isErr()) {
+      addFailure(state, portFailureCode(result.error, "fresh-parent-failed"));
+    }
     addFailure(state, "fresh-parent-failed");
     return false;
   }
@@ -767,7 +770,13 @@ async function runSettlementStage(
     "settlement-failed",
   );
   if (result.isErr() || !isOpaqueHandle(result.value)) {
-    state.settlement = "unverified";
+    state.settlement =
+      result.isErr() && result.error.code === "timeout"
+        ? "unsettled"
+        : "unverified";
+    if (result.isErr()) {
+      addFailure(state, portFailureCode(result.error, "settlement-failed"));
+    }
     addFailure(state, "settlement-failed");
     return;
   }

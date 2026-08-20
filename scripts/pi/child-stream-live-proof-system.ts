@@ -39,6 +39,11 @@ export interface LiveProofProcess {
   readonly running: () => boolean;
 }
 
+/** A cancellable timer owned by the injectable live-proof system. */
+export interface LiveProofTimer {
+  readonly cancel: () => void;
+}
+
 export interface LiveProofCommandOutput {
   readonly exitCode: number;
   readonly stdout: string;
@@ -46,6 +51,8 @@ export interface LiveProofCommandOutput {
 
 export interface LiveProofSystem {
   readonly now: () => number;
+  /** Schedule a real deadline without coupling it to stream output. */
+  readonly setTimer: (callback: () => void, delayMs: number) => LiveProofTimer;
   readonly environment: () => Readonly<Record<string, string>>;
   readonly temporaryRoot: () => string;
   readonly uniqueToken: () => string;
@@ -114,24 +121,48 @@ function currentEnvironment(): Record<string, string> {
 
 type ProcessByteStream = ReadableStream<Uint8Array<ArrayBuffer>>;
 
-async function* readProcessLines(
+/**
+ * Read stdout and stderr as text lines. The returned iterator closes on
+ * demand: `return()` cancels the readers and wakes a parked consumer instead
+ * of waiting for output that a silent process may never produce.
+ */
+function readProcessLines(
   process: ReturnType<typeof Bun.spawn>,
 ): AsyncIterable<string> {
   const streams = [process.stdout, process.stderr].filter(
     (stream): stream is ProcessByteStream =>
       stream !== undefined && typeof stream !== "number",
   );
-  if (streams.length === 0) return;
-  const decoder = new TextDecoder();
   const queue: string[] = [];
-  let buffer = "";
+  const readers: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>[] = [];
+  let closed = false;
   let open = streams.length;
   let wake: (() => void) | undefined;
 
+  const notify = (): void => {
+    const pending = wake;
+    wake = undefined;
+    pending?.();
+  };
+
   const pump = async (stream: ProcessByteStream): Promise<void> => {
-    const reader = stream.getReader();
+    const acquired = Result.fromThrowable(
+      () => stream.getReader(),
+      () => undefined,
+    )();
+    if (acquired.isErr()) {
+      open -= 1;
+      notify();
+      return;
+    }
+    const reader = acquired.value;
+    readers.push(reader);
+    // Each stream decodes into its own buffer so concurrent stdout and stderr
+    // chunks cannot interleave inside one partial line.
+    const decoder = new TextDecoder();
+    let buffer = "";
     try {
-      while (true) {
+      while (!closed) {
         const chunk = await reader.read();
         if (chunk.done) break;
         buffer += decoder.decode(chunk.value, { stream: true });
@@ -140,30 +171,90 @@ async function* readProcessLines(
         for (const part of parts) {
           queue.push(part.endsWith("\r") ? part.slice(0, -1) : part);
         }
-        wake?.();
+        notify();
       }
     } finally {
-      reader.releaseLock();
+      Result.fromThrowable(
+        () => reader.releaseLock(),
+        () => undefined,
+      )();
       open -= 1;
-      wake?.();
+      notify();
     }
   };
-  for (const stream of streams) void pump(stream);
-
-  while (true) {
-    const next = queue.shift();
-    if (next !== undefined) {
-      yield next;
-      continue;
-    }
-    if (open <= 0) return;
-    await new Promise<void>((resolveWake) => {
-      wake = () => {
-        wake = undefined;
-        resolveWake();
-      };
-    });
+  for (const stream of streams) {
+    // A reader can reject after the caller has timed out and returned. Keep
+    // that late host failure inside this closed stream boundary.
+    void pump(stream).catch(() => undefined);
   }
+
+  async function* iterate(): AsyncGenerator<string, void, undefined> {
+    while (!closed) {
+      const next = queue.shift();
+      if (next !== undefined) {
+        yield next;
+        continue;
+      }
+      if (open <= 0) return;
+      await new Promise<void>((resolveWake) => {
+        wake = resolveWake;
+      });
+    }
+  }
+
+  const close = (
+    inner: AsyncGenerator<string, void, undefined>,
+  ): Promise<IteratorResult<string, void>> => {
+    closed = true;
+    for (const reader of readers) {
+      const cancelled = Result.fromThrowable(
+        () => reader.cancel(),
+        () => undefined,
+      )();
+      if (cancelled.isOk()) void cancelled.value.catch(() => undefined);
+    }
+    notify();
+    return inner.return(undefined);
+  };
+
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<string, void, undefined> {
+      const inner = iterate();
+      return {
+        next: () => inner.next(),
+        return: () => close(inner),
+      };
+    },
+  };
+}
+
+async function waitForProcessExit(
+  process: ReturnType<typeof Bun.spawn>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (process.exitCode !== null || process.signalCode !== null) return true;
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(false);
+    }, timeoutMs);
+    process.exited.then(
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
 }
 
 function bunSpawn(
@@ -205,23 +296,13 @@ function bunSpawn(
               () => child.kill("SIGTERM"),
               () => undefined,
             )();
-            await Promise.race([
-              child.exited,
-              new Promise<void>((resolveDelay) =>
-                setTimeout(resolveDelay, 1_000),
-              ),
-            ]);
-            if (child.exitCode === null) {
+            const exitedAfterTerm = await waitForProcessExit(child, 1_000);
+            if (!exitedAfterTerm && child.exitCode === null) {
               Result.fromThrowable(
                 () => child.kill("SIGKILL"),
                 () => undefined,
               )();
-              await Promise.race([
-                child.exited,
-                new Promise<void>((resolveDelay) =>
-                  setTimeout(resolveDelay, 1_000),
-                ),
-              ]);
+              await waitForProcessExit(child, 1_000);
             }
           })(),
           (): LiveProofSystemFailure => systemFailure("cleanup-failed"),
@@ -245,6 +326,17 @@ function shell(
 export function createLiveProofSystem(): LiveProofSystem {
   return {
     now: () => Date.now(),
+    setTimer: (callback, delayMs) => {
+      const handle = setTimeout(callback, delayMs);
+      let cancelled = false;
+      return {
+        cancel: () => {
+          if (cancelled) return;
+          cancelled = true;
+          clearTimeout(handle);
+        },
+      };
+    },
     environment: () => currentEnvironment(),
     temporaryRoot: () => tmpdir(),
     uniqueToken: () => crypto.randomUUID(),

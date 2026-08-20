@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   EXTENSION_BUILD_IDENTITY_PROOF_ENV,
   type ExtensionBuildIdentityProof,
@@ -32,6 +32,7 @@ import {
   createLiveProofSystem,
   type LiveProofProcess,
   type LiveProofSystem,
+  type LiveProofTimer,
   safeProofEnvironment,
 } from "./child-stream-live-proof-system.js";
 import {
@@ -46,6 +47,8 @@ const PARENT_PROOF_TIMEOUT_MS = 30_000;
 const CHILD_RUN_TIMEOUT_MS = 60_000;
 const LEASE_WAIT_TIMEOUT_MS = 15_000;
 const LEASE_POLL_INTERVAL_MS = 500;
+const STREAM_CLEANUP_TIMEOUT_MS = 1_000;
+const PROCESS_TERMINATION_TIMEOUT_MS = 2_500;
 const NO_ACTIVE_LEASE_MARKER = "No active lease.";
 const CHILD_PROMPT_TEXT = "go";
 
@@ -186,6 +189,21 @@ export default function (pi: ExtensionAPI) {
 `;
 }
 
+type StreamStep =
+  | { readonly kind: "value"; readonly value: string }
+  | { readonly kind: "done" }
+  | { readonly kind: "timeout" }
+  | { readonly kind: "closed" }
+  | { readonly kind: "error" };
+
+interface StreamSession {
+  readonly iterator: AsyncIterator<string>;
+  closed: boolean;
+  timer?: LiveProofTimer;
+  cancelActiveStep?: () => void;
+  closePromise?: Promise<boolean>;
+}
+
 interface RunState {
   pi?: string;
   identityVerifiedAtMs?: number;
@@ -195,9 +213,13 @@ interface RunState {
   workspaceDir?: string;
   parentProcess?: LiveProofProcess;
   childProcess?: LiveProofProcess;
+  parentStream?: StreamSession;
+  childStream?: StreamSession;
+  streamCleanupFailed: boolean;
+  processTerminationFailed: boolean;
   childCount: number;
   observer?: LiveProofObserver;
-  childRun?: Promise<void>;
+  childRun?: Promise<Result<void, LiveProofPortFailure>>;
   guarded: GuardedSnapshot[];
   parentHandle?: LiveProofParentHandle;
   childHandle?: LiveProofChildHandle;
@@ -245,7 +267,12 @@ export function createLiveProofPort(
   const leaseWaitTimeoutMs = config.leaseWaitTimeoutMs ?? LEASE_WAIT_TIMEOUT_MS;
   const sentinel = `WEAVE-LIVE-PROOF-${system.uniqueToken()}`;
 
-  const state: RunState = { childCount: 0, guarded: [] };
+  const state: RunState = {
+    childCount: 0,
+    guarded: [],
+    streamCleanupFailed: false,
+    processTerminationFailed: false,
+  };
 
   const snapshotGuarded = (): ResultAsync<void, LiveProofPortFailure> => {
     const resources = config.guardedResources ?? [];
@@ -309,41 +336,344 @@ export function createLiveProofPort(
       .mapErr(() => portFailure("spawn-failed"));
   };
 
+  const safeCancelTimer = (timer: LiveProofTimer): void => {
+    Result.fromThrowable(
+      () => timer.cancel(),
+      () => undefined,
+    )();
+  };
+
+  type BoundedPromiseOutcome<T> =
+    | { readonly kind: "resolved"; readonly value: T }
+    | { readonly kind: "rejected" }
+    | { readonly kind: "timeout" };
+
+  /**
+   * Observe both sides of a deadline race. The losing promise always gets a
+   * rejection handler, so a late process or iterator failure cannot become an
+   * unhandled rejection after the proof has already closed.
+   */
+  const waitBounded = <T>(
+    promiseLike: PromiseLike<T>,
+    timeoutMs: number,
+  ): Promise<BoundedPromiseOutcome<T>> =>
+    new Promise((resolve) => {
+      let settled = false;
+      let timer: LiveProofTimer | undefined;
+      const finish = (outcome: BoundedPromiseOutcome<T>): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) {
+          safeCancelTimer(timer);
+          timer = undefined;
+        }
+        resolve(outcome);
+      };
+
+      const observed = Result.fromThrowable(
+        () => Promise.resolve(promiseLike),
+        () => undefined,
+      )();
+      if (observed.isErr()) {
+        finish({ kind: "rejected" });
+        return;
+      }
+      observed.value.then(
+        (value) => finish({ kind: "resolved", value }),
+        () => finish({ kind: "rejected" }),
+      );
+
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        finish({ kind: "timeout" });
+        return;
+      }
+      const scheduled = Result.fromThrowable(
+        () => system.setTimer(() => finish({ kind: "timeout" }), timeoutMs),
+        () => undefined,
+      )();
+      if (scheduled.isErr()) {
+        finish({ kind: "timeout" });
+        return;
+      }
+      timer = scheduled.value;
+      // A deterministic test timer may invoke its callback synchronously.
+      if (settled) safeCancelTimer(timer);
+    });
+
+  const openStream = (
+    process: LiveProofProcess,
+  ): Result<StreamSession, LiveProofPortFailure> => {
+    const iterable = Result.fromThrowable(
+      () => process.lines(),
+      () => portFailure("spawn-failed"),
+    )();
+    if (iterable.isErr()) return err(iterable.error);
+    const iterator = Result.fromThrowable(
+      () => iterable.value[Symbol.asyncIterator](),
+      () => portFailure("spawn-failed"),
+    )();
+    if (iterator.isErr()) return err(iterator.error);
+    return ok({
+      iterator: iterator.value,
+      closed: false,
+    });
+  };
+
+  const closeStream = (session: StreamSession): Promise<boolean> => {
+    if (session.closePromise !== undefined) return session.closePromise;
+    session.closed = true;
+    const cancelActiveStep = session.cancelActiveStep;
+    session.cancelActiveStep = undefined;
+    if (cancelActiveStep !== undefined) {
+      Result.fromThrowable(cancelActiveStep, () => undefined)();
+    }
+    if (session.timer !== undefined) {
+      safeCancelTimer(session.timer);
+      session.timer = undefined;
+    }
+
+    const returned = Result.fromThrowable(
+      () => session.iterator.return?.(),
+      () => undefined,
+    )();
+    if (returned.isErr() || returned.value === undefined) {
+      session.closePromise = Promise.resolve(returned.isOk());
+      return session.closePromise;
+    }
+    session.closePromise = waitBounded(
+      returned.value,
+      STREAM_CLEANUP_TIMEOUT_MS,
+    ).then((outcome) => outcome.kind === "resolved");
+    return session.closePromise;
+  };
+
+  const nextStreamStep = (
+    session: StreamSession,
+    deadlineMs: number,
+  ): Promise<StreamStep> => {
+    if (session.closed) return Promise.resolve({ kind: "closed" });
+    const now = Result.fromThrowable(
+      () => system.now(),
+      () => undefined,
+    )();
+    if (now.isErr()) return Promise.resolve({ kind: "error" });
+    const remainingMs = deadlineMs - now.value;
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+      return Promise.resolve({ kind: "timeout" });
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: LiveProofTimer | undefined;
+      const finish = (step: StreamStep): void => {
+        if (settled) return;
+        settled = true;
+        session.cancelActiveStep = undefined;
+        if (session.timer === timer) session.timer = undefined;
+        if (timer !== undefined) {
+          safeCancelTimer(timer);
+          timer = undefined;
+        }
+        resolve(step);
+      };
+      session.cancelActiveStep = () => finish({ kind: "closed" });
+
+      const scheduled = Result.fromThrowable(
+        () => system.setTimer(() => finish({ kind: "timeout" }), remainingMs),
+        () => undefined,
+      )();
+      if (scheduled.isErr()) {
+        finish({ kind: "error" });
+        return;
+      }
+      timer = scheduled.value;
+      session.timer = timer;
+      // Keep the timer-first order so a line arriving at the deadline loses
+      // the race deterministically.
+      if (settled) {
+        safeCancelTimer(timer);
+        return;
+      }
+
+      const next = Result.fromThrowable(
+        () => session.iterator.next(),
+        () => undefined,
+      )();
+      if (next.isErr()) {
+        finish({ kind: "error" });
+        return;
+      }
+      const observed = Result.fromThrowable(
+        () => Promise.resolve(next.value),
+        () => undefined,
+      )();
+      if (observed.isErr()) {
+        finish({ kind: "error" });
+        return;
+      }
+      observed.value.then(
+        (result) => {
+          if (settled) return;
+          const normalized = Result.fromThrowable(
+            (): StreamStep => {
+              if (typeof result !== "object" || result === null) {
+                return { kind: "error" };
+              }
+              if (result.done === true) return { kind: "done" };
+              return typeof result.value === "string"
+                ? { kind: "value", value: result.value }
+                : { kind: "error" };
+            },
+            (): undefined => undefined,
+          )();
+          finish(normalized.isOk() ? normalized.value : { kind: "error" });
+        },
+        () => finish({ kind: "error" }),
+      );
+    });
+  };
+
+  const terminatedProcesses = new WeakSet<LiveProofProcess>();
+  const terminate = (
+    process: LiveProofProcess | undefined,
+  ): ResultAsync<void, LiveProofPortFailure> => {
+    if (process === undefined || terminatedProcesses.has(process)) {
+      return okAsync<void, LiveProofPortFailure>(undefined);
+    }
+    // Mark before invoking the boundary. A throwing or hanging terminate
+    // implementation must not be retried by later cleanup stages.
+    terminatedProcesses.add(process);
+    const failedTermination = (): ResultAsync<void, LiveProofPortFailure> => {
+      state.processTerminationFailed = true;
+      return errAsync(portFailure("cleanup-failed"));
+    };
+    const invoked = Result.fromThrowable(
+      () => process.terminate(),
+      (): LiveProofPortFailure => portFailure("cleanup-failed"),
+    )();
+    if (invoked.isErr()) {
+      state.processTerminationFailed = true;
+      return errAsync(invoked.error);
+    }
+    return ResultAsync.fromPromise(
+      waitBounded(invoked.value, PROCESS_TERMINATION_TIMEOUT_MS),
+      (): LiveProofPortFailure => portFailure("cleanup-failed"),
+    ).andThen((outcome) =>
+      outcome.kind === "resolved" && outcome.value.isOk()
+        ? okAsync<void, LiveProofPortFailure>(undefined)
+        : failedTermination(),
+    );
+  };
+
+  const timeoutOwnedStream = async (
+    process: LiveProofProcess,
+    session: StreamSession,
+  ): Promise<void> => {
+    // Start both owned cleanup operations before awaiting either one. The
+    // stream may only be allowed to resolve after its process is being closed.
+    const termination = terminate(process).match(
+      () => undefined,
+      () => undefined,
+    );
+    const streamClosed = closeStream(session);
+    await termination;
+    await streamClosed;
+  };
+
+  const readParentProofValue = async (
+    parent: LiveProofProcess,
+  ): Promise<
+    Result<ExtensionBuildIdentityProof | undefined, LiveProofPortFailure>
+  > => {
+    const opened = openStream(parent);
+    if (opened.isErr()) return err(portFailure("fresh-parent-failed"));
+    const session = opened.value;
+    state.parentStream = session;
+    try {
+      const started = Result.fromThrowable(
+        () => system.now(),
+        () => undefined,
+      )();
+      if (started.isErr()) return err(portFailure("fresh-parent-failed"));
+      const deadline = started.value + parentProofTimeoutMs;
+      while (true) {
+        const step = await nextStreamStep(session, deadline);
+        if (step.kind === "timeout") {
+          await timeoutOwnedStream(parent, session);
+          return err(portFailure("timeout"));
+        }
+        if (step.kind === "closed" || step.kind === "error") {
+          return err(portFailure("fresh-parent-failed"));
+        }
+        if (step.kind === "done") return ok(undefined);
+        if (!step.value.includes("weaveExtensionBuildIdentity")) continue;
+        const record = parseJsonRecord(step.value);
+        if (record === undefined) continue;
+        const proof = parseExtensionBuildIdentityProof(record);
+        if (proof.isOk()) return ok(proof.value);
+      }
+    } finally {
+      const closed = await closeStream(session);
+      if (!closed) state.streamCleanupFailed = true;
+      if (state.parentStream === session) state.parentStream = undefined;
+    }
+  };
+
   const readParentProof = (
     parent: LiveProofProcess,
   ): ResultAsync<ExtensionBuildIdentityProof, LiveProofPortFailure> =>
     ResultAsync.fromPromise(
-      (async () => {
-        const deadline = system.now() + parentProofTimeoutMs;
-        for await (const line of parent.lines()) {
-          if (system.now() > deadline) return undefined;
-          if (!line.includes("weaveExtensionBuildIdentity")) continue;
-          const record = parseJsonRecord(line);
-          if (record === undefined) continue;
-          const proof = parseExtensionBuildIdentityProof(record);
-          if (proof.isOk()) return proof.value;
-        }
-        return undefined;
-      })(),
+      readParentProofValue(parent),
       (): LiveProofPortFailure => portFailure("fresh-parent-failed"),
-    ).andThen((proof) =>
-      proof === undefined
-        ? errAsync(portFailure("fresh-parent-failed"))
-        : okAsync(proof),
-    );
+    )
+      .andThen((result) => result)
+      .andThen((proof) =>
+        proof === undefined
+          ? errAsync(portFailure("fresh-parent-failed"))
+          : okAsync(proof),
+      );
 
   const runChild = async (
     child: LiveProofProcess,
     observer: LiveProofObserver,
-  ): Promise<void> => {
-    const deadline = system.now() + childRunTimeoutMs;
-    for await (const line of child.lines()) {
-      if (system.now() > deadline) return;
-      if (line.length === 0) continue;
-      const record = parseJsonRecord(line);
-      if (record === undefined) continue;
-      observer.ingest(record);
-      if (observer.settled()) return;
+  ): Promise<Result<void, LiveProofPortFailure>> => {
+    const opened = openStream(child);
+    if (opened.isErr()) return err(portFailure("spawn-failed"));
+    const session = opened.value;
+    state.childStream = session;
+    try {
+      const started = Result.fromThrowable(
+        () => system.now(),
+        () => undefined,
+      )();
+      if (started.isErr()) return err(portFailure("lane-failed"));
+      const deadline = started.value + childRunTimeoutMs;
+      while (true) {
+        const step = await nextStreamStep(session, deadline);
+        if (step.kind === "timeout") {
+          await timeoutOwnedStream(child, session);
+          return err(portFailure("timeout"));
+        }
+        // A broken or cancelled stream is not a deadline: it must not claim
+        // the child failed to settle within its budget.
+        if (step.kind === "closed" || step.kind === "error") {
+          return err(portFailure("lane-failed"));
+        }
+        if (step.kind === "done") return ok(undefined);
+        if (step.value.length === 0) continue;
+        const record = parseJsonRecord(step.value);
+        if (record === undefined) continue;
+        const ingested = Result.fromThrowable(
+          () => observer.ingest(record),
+          () => undefined,
+        )();
+        if (ingested.isErr()) return err(portFailure("lane-failed"));
+        if (observer.settled()) return ok(undefined);
+      }
+    } finally {
+      const closed = await closeStream(session);
+      if (!closed) state.streamCleanupFailed = true;
+      if (state.childStream === session) state.childStream = undefined;
     }
   };
 
@@ -373,7 +703,9 @@ export function createLiveProofPort(
     return ResultAsync.fromPromise(
       run,
       (): LiveProofPortFailure => portFailure("timeout"),
-    ).map(() => observer);
+    )
+      .andThen((result) => result)
+      .map(() => observer);
   };
 
   const laneFrom = (
@@ -408,13 +740,6 @@ export function createLiveProofPort(
       );
     return attempt(leaseWaitTimeoutMs);
   };
-
-  const terminate = (
-    process: LiveProofProcess | undefined,
-  ): ResultAsync<void, LiveProofPortFailure> =>
-    process === undefined
-      ? okAsync<void, LiveProofPortFailure>(undefined)
-      : process.terminate().mapErr(() => portFailure("cleanup-failed"));
 
   return {
     readCurrentIdentity: (
@@ -601,9 +926,32 @@ export function createLiveProofPort(
 
     cleanupRuntime: (): LiveProofPortResult<void> => {
       state.observer?.release();
-      return terminate(state.childProcess).andThen(() =>
-        terminate(state.parentProcess),
-      );
+      const closeStreams = Promise.all(
+        [state.parentStream, state.childStream]
+          .filter((session): session is StreamSession => session !== undefined)
+          .map((session) => closeStream(session)),
+      ).then((results) => results.every(Boolean));
+      const cleanup = (async (): Promise<
+        Result<void, LiveProofPortFailure>
+      > => {
+        const streamsClosed = await closeStreams;
+        const child = await terminate(state.childProcess);
+        const parent = await terminate(state.parentProcess);
+        if (
+          streamsClosed &&
+          child.isOk() &&
+          parent.isOk() &&
+          !state.streamCleanupFailed &&
+          !state.processTerminationFailed
+        ) {
+          return ok(undefined);
+        }
+        return err(portFailure("cleanup-failed"));
+      })();
+      return ResultAsync.fromPromise(
+        cleanup,
+        (): LiveProofPortFailure => portFailure("cleanup-failed"),
+      ).andThen((result) => result);
     },
     cleanupProcess: (): LiveProofPortResult<void> => {
       const stillRunning =

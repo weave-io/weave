@@ -23,6 +23,19 @@ export interface FakeProcessScript {
   readonly spawnFails?: boolean;
   /** When true, the line iterator never completes within the test deadline. */
   readonly hang?: boolean;
+  /** Never resolve the next iterator step. */
+  readonly neverYields?: boolean;
+  /** Resolve one late line after the deadline, after which silence remains. */
+  readonly lateLine?: string;
+  readonly lateDelayMs?: number;
+  /** Reject one late iterator step after the deadline. */
+  readonly lateReject?: boolean;
+  /** Make iterator return fail or remain pending. */
+  readonly iteratorReturnFails?: boolean;
+  readonly iteratorReturnHangs?: boolean;
+  /** Make process termination fail or remain pending. */
+  readonly terminateFails?: boolean;
+  readonly terminateHangs?: boolean;
   /** When true, `running()` still reports true after `terminate()`. */
   readonly survivesTermination?: boolean;
 }
@@ -31,6 +44,7 @@ export interface FakeProcessRecord {
   readonly input: LiveProofSpawnInput;
   readonly written: string[];
   terminations: number;
+  iteratorReturns: number;
   alive: boolean;
 }
 
@@ -54,6 +68,9 @@ export interface FakeSystem {
   readonly renames: { from: string; to: string }[];
   readonly spawns: FakeProcessRecord[];
   readonly runs: (readonly string[])[];
+  readonly timersCreated: number;
+  readonly timersDisposed: number;
+  readonly activeTimers: number;
 }
 
 const encoder = new TextEncoder();
@@ -77,6 +94,9 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
   const scripts = [...(options.processes ?? [])];
   let clock = 1_000;
   let token = 0;
+  let timersCreated = 0;
+  let timersDisposed = 0;
+  const activeTimers = new Set<ReturnType<typeof setTimeout>>();
 
   const pathKindOf = (path: string): LiveProofPathKind => {
     const declared = kinds.get(path);
@@ -88,6 +108,24 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
     now: () => {
       clock += 1;
       return clock;
+    },
+    setTimer: (callback, delayMs) => {
+      timersCreated += 1;
+      let cancelled = false;
+      const handle = setTimeout(() => {
+        if (!cancelled) timersDisposed += 1;
+        activeTimers.delete(handle);
+        callback();
+      }, delayMs);
+      activeTimers.add(handle);
+      return {
+        cancel: () => {
+          if (cancelled) return;
+          cancelled = true;
+          clearTimeout(handle);
+          if (activeTimers.delete(handle)) timersDisposed += 1;
+        },
+      };
     },
     environment: () => ({ PATH: "/usr/bin", OPENAI_API_KEY: "secret" }),
     temporaryRoot: () => "/tmp",
@@ -104,6 +142,7 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
         input,
         written: [],
         terminations: 0,
+        iteratorReturns: 0,
         alive: true,
       };
       spawns.push(record);
@@ -112,18 +151,81 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
           record.written.push(line);
           return ok(undefined);
         },
-        lines: () =>
-          (async function* iterate(): AsyncIterable<string> {
-            for (const line of script.lines) yield line;
-            if (script.hang === true) {
-              await new Promise<void>((resolveHang) =>
-                setTimeout(resolveHang, 50),
-              );
-              yield "";
+        lines: () => {
+          let index = 0;
+          let silenceStarted = false;
+          const next = (): Promise<IteratorResult<string>> => {
+            const line = script.lines[index];
+            if (line !== undefined) {
+              index += 1;
+              return Promise.resolve({ done: false, value: line });
             }
-          })(),
+            if (script.hang === true && !silenceStarted) {
+              silenceStarted = true;
+              return new Promise((resolveHang) =>
+                setTimeout(() => resolveHang({ done: false, value: "" }), 50),
+              );
+            }
+            if (
+              (script.neverYields === true ||
+                script.lateLine !== undefined ||
+                script.lateReject === true) &&
+              !silenceStarted
+            ) {
+              silenceStarted = true;
+              if (script.lateLine !== undefined) {
+                return new Promise((resolveLate) =>
+                  setTimeout(
+                    () =>
+                      resolveLate({
+                        done: false,
+                        value: script.lateLine ?? "",
+                      }),
+                    script.lateDelayMs ?? 25,
+                  ),
+                );
+              }
+              if (script.lateReject === true) {
+                return new Promise<IteratorResult<string>>((_, rejectLate) =>
+                  setTimeout(
+                    () => rejectLate(new Error("late iterator failure")),
+                    script.lateDelayMs ?? 25,
+                  ),
+                );
+              }
+              return new Promise(() => undefined);
+            }
+            return Promise.resolve({ done: true, value: undefined });
+          };
+          const iterator: AsyncIterableIterator<string> = {
+            next,
+            return: () => {
+              record.iteratorReturns += 1;
+              if (script.iteratorReturnHangs === true) {
+                return new Promise(() => undefined);
+              }
+              if (script.iteratorReturnFails === true) {
+                return Promise.reject(new Error("iterator close failure"));
+              }
+              return Promise.resolve({ done: true, value: undefined });
+            },
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          };
+          return iterator;
+        },
         terminate: () => {
           record.terminations += 1;
+          if (script.terminateHangs === true) {
+            return ResultAsync.fromPromise(
+              new Promise<void>(() => undefined),
+              () => systemFailure("cleanup-failed"),
+            );
+          }
+          if (script.terminateFails === true) {
+            return errAsync(systemFailure("cleanup-failed"));
+          }
           if (script.survivesTermination !== true) record.alive = false;
           return okAsync(undefined);
         },
@@ -195,5 +297,22 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
     delay: () => ResultAsync.fromSafePromise(Promise.resolve(undefined)),
   };
 
-  return { system, files, privateFiles, removed, renames, spawns, runs };
+  return {
+    system,
+    files,
+    privateFiles,
+    removed,
+    renames,
+    spawns,
+    runs,
+    get timersCreated() {
+      return timersCreated;
+    },
+    get timersDisposed() {
+      return timersDisposed;
+    },
+    get activeTimers() {
+      return activeTimers.size;
+    },
+  };
 }

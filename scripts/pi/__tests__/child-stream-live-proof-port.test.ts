@@ -127,6 +127,7 @@ function port(input: {
   >;
   readonly systemOptions?: FakeSystemOptions;
   readonly guarded?: readonly { readonly path: string }[];
+  readonly parentProofTimeoutMs?: number;
   readonly childRunTimeoutMs?: number;
 }) {
   const fake = createFakeSystem({
@@ -137,6 +138,9 @@ function port(input: {
     repoRoot: REPO_ROOT,
     system: fake.system,
     ...(input.guarded === undefined ? {} : { guardedResources: input.guarded }),
+    ...(input.parentProofTimeoutMs === undefined
+      ? {}
+      : { parentProofTimeoutMs: input.parentProofTimeoutMs }),
     ...(input.childRunTimeoutMs === undefined
       ? {}
       : { childRunTimeoutMs: input.childRunTimeoutMs }),
@@ -176,6 +180,10 @@ describe("createLiveProofPort", () => {
     expect(report.cleanup).toBe("complete");
     expect(report.failures).toEqual([]);
     expect(report.counters.events).toBeGreaterThan(0);
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.spawns[1]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    expect(created.fake.timersCreated).toBe(created.fake.timersDisposed);
   });
 
   it("launches one fresh parent and exactly one deterministic child", async () => {
@@ -289,6 +297,302 @@ describe("createLiveProofPort", () => {
     expect(report.identity.freshParent).toBe("unverifiable");
     expect(report.failures).toContain("fresh-parent-failed");
   });
+
+  it("bounds a parent iterator that never yields and terminates it once", async () => {
+    const created = port({
+      scripts: [{ lines: [], neverYields: true }],
+      parentProofTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+
+    const started = Date.now();
+    const result = await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    await created.port.cleanupRuntime({});
+  });
+
+  it("bounds parent output that yields once and then goes silent", async () => {
+    const created = port({
+      scripts: [{ lines: ["starting up"], neverYields: true }],
+      parentProofTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+
+    const result = await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("lets the injected deadline win a line race and ignores the late line", async () => {
+    const created = port({
+      scripts: [
+        {
+          lines: [],
+          lateLine: "late proof line",
+          lateDelayMs: 20,
+        },
+      ],
+      parentProofTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+
+    const result = await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("observes a late iterator rejection after the timeout closes the parent", async () => {
+    const created = port({
+      scripts: [{ lines: [], lateReject: true, lateDelayMs: 20 }],
+      parentProofTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+
+    const result = await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("closes a parent iterator after a parse failure", async () => {
+    const created = port({
+      scripts: [{ lines: ["{not-json"] }],
+      parentProofTimeoutMs: 8,
+    });
+    const report = (
+      await runLiveProof({ args, port: created.port })
+    )._unsafeUnwrap();
+
+    expect(report.failures).toContain("fresh-parent-failed");
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("fails a child with a closed timeout after one line and silence", async () => {
+    const created = port({
+      scripts: [
+        { lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })] },
+        { lines: ["not-json"], neverYields: true },
+      ],
+      childRunTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    const parent = (
+      await created.port.launchFreshParent({
+        pi: args.pi,
+        requireFreshParent: true,
+        requireCurrentBuild: true,
+        noScreenCapture: true,
+      })
+    )._unsafeUnwrap();
+    const child = (
+      await created.port.delegateDeterministicChild(
+        parent.parent,
+        LIVE_PROOF_DETERMINISTIC_CHILD_REQUEST,
+      )
+    )._unsafeUnwrap();
+    await created.port.selectLiveInspector(parent.parent, child);
+
+    const result = await created.port.readSettlement(parent.parent, child);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(created.fake.spawns[1]?.terminations).toBe(1);
+    expect(created.fake.spawns[1]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    await created.port.cleanupRuntime({ parent: parent.parent, child });
+  });
+
+  it("terminates a timed-out child once even when termination fails", async () => {
+    const created = port({
+      scripts: [
+        { lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })] },
+        { lines: [], neverYields: true, terminateFails: true },
+      ],
+      childRunTimeoutMs: 8,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    const parent = (
+      await created.port.launchFreshParent({
+        pi: args.pi,
+        requireFreshParent: true,
+        requireCurrentBuild: true,
+        noScreenCapture: true,
+      })
+    )._unsafeUnwrap();
+    const child = (
+      await created.port.delegateDeterministicChild(
+        parent.parent,
+        LIVE_PROOF_DETERMINISTIC_CHILD_REQUEST,
+      )
+    )._unsafeUnwrap();
+    await created.port.selectLiveInspector(parent.parent, child);
+    const result = await created.port.readSettlement(parent.parent, child);
+    const cleanup = await created.port.cleanupRuntime({
+      parent: parent.parent,
+      child,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(cleanup.isErr()).toBe(true);
+    expect(created.fake.spawns[1]?.terminations).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("reports a broken child stream as a lane failure, not a deadline", async () => {
+    const created = port({
+      scripts: [
+        { lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })] },
+        { lines: [], lateReject: true, lateDelayMs: 1 },
+      ],
+      childRunTimeoutMs: 5_000,
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    const parent = (
+      await created.port.launchFreshParent({
+        pi: args.pi,
+        requireFreshParent: true,
+        requireCurrentBuild: true,
+        noScreenCapture: true,
+      })
+    )._unsafeUnwrap();
+    const child = (
+      await created.port.delegateDeterministicChild(
+        parent.parent,
+        LIVE_PROOF_DETERMINISTIC_CHILD_REQUEST,
+      )
+    )._unsafeUnwrap();
+    await created.port.selectLiveInspector(parent.parent, child);
+
+    const result = await created.port.readSettlement(parent.parent, child);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("lane-failed");
+    expect(created.fake.spawns[1]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    await created.port.cleanupRuntime({ parent: parent.parent, child });
+  });
+
+  it("reports cleanup failure when a stream iterator refuses to close", async () => {
+    const created = port({
+      scripts: [
+        {
+          lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })],
+          iteratorReturnFails: true,
+        },
+      ],
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    const parent = await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+
+    const cleanup = await created.port.cleanupRuntime({});
+
+    expect(parent.isOk()).toBe(true);
+    expect(cleanup.isErr()).toBe(true);
+    expect(cleanup._unsafeUnwrapErr().code).toBe("cleanup-failed");
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  });
+
+  it("bounds cleanup when the stream close and termination both hang", async () => {
+    const created = port({
+      scripts: [
+        {
+          lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })],
+          iteratorReturnHangs: true,
+          terminateHangs: true,
+        },
+      ],
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    await created.port.launchFreshParent({
+      pi: args.pi,
+      requireFreshParent: true,
+      requireCurrentBuild: true,
+      noScreenCapture: true,
+    });
+
+    const started = Date.now();
+    const cleanup = await created.port.cleanupRuntime({});
+    const elapsed = Date.now() - started;
+
+    expect(cleanup.isErr()).toBe(true);
+    expect(cleanup._unsafeUnwrapErr().code).toBe("cleanup-failed");
+    expect(elapsed).toBeLessThan(10_000);
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+  }, 20_000);
 
   it("fails closed when the child process cannot be spawned", async () => {
     const created = port({
