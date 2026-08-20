@@ -3,8 +3,11 @@ import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
 import {
+  computeExtensionBuildBinding,
   createExtensionBuildManifest,
+  EXTENSION_BUILD_BINDING_PLACEHOLDER,
   EXTENSION_BUILD_MANIFEST_FILENAME,
+  EXTENSION_RUNTIME_OUTPUT_NAMES,
   renderExtensionBuildManifest,
   sha256Hex,
 } from "../packages/adapters/pi/src/extension-build-identity.js";
@@ -121,6 +124,7 @@ export function writePiExtensionBuildIdentityManifest(input: {
   readonly subject: string;
   readonly dirty: boolean;
   readonly inputDigests: readonly string[];
+  readonly buildBinding: string;
   readonly outputs: readonly {
     readonly name: string;
     readonly sha256: string;
@@ -130,6 +134,7 @@ export function writePiExtensionBuildIdentityManifest(input: {
   const manifest = createExtensionBuildManifest({
     subject: input.subject,
     dirty: input.dirty,
+    buildBinding: input.buildBinding,
     buildInputs: input.inputDigests,
     outputs: input.outputs,
     buildCompletedAt: input.buildCompletedAt,
@@ -740,15 +745,73 @@ export class PublicPackageBuilder {
           outputs,
         })),
       )
-      .andThen(({ git, inputDigests, outputs }) =>
-        writePiExtensionBuildIdentityManifest({
-          fileSystem: this.fileSystem,
+      .andThen(({ git, inputDigests, outputs }) => {
+        const buildCompletedAt = new Date().toISOString();
+        const runtimeOutputs = outputs.filter((output) =>
+          EXTENSION_RUNTIME_OUTPUT_NAMES.includes(
+            output.name as (typeof EXTENSION_RUNTIME_OUTPUT_NAMES)[number],
+          ),
+        );
+        const binding = computeExtensionBuildBinding({
           subject: git.subject,
           dirty: git.dirty,
+          buildInputs: inputDigests,
+          runtimeOutputs,
+          buildCompletedAt,
+        });
+        if (binding.isErr()) {
+          return errAsync({
+            type: "BuildIdentity" as const,
+            reason: "manifest-invalid" as const,
+          });
+        }
+        return this.bindPiExtensionEntry(binding.value).map(() => ({
+          git,
           inputDigests,
-          outputs,
-        }),
+          buildBinding: binding.value,
+          buildCompletedAt,
+        }));
+      })
+      .andThen(({ git, inputDigests, buildBinding, buildCompletedAt }) =>
+        this.hashPiBuildOutputs().andThen((outputs) =>
+          writePiExtensionBuildIdentityManifest({
+            fileSystem: this.fileSystem,
+            subject: git.subject,
+            dirty: git.dirty,
+            buildBinding,
+            inputDigests,
+            outputs,
+            buildCompletedAt,
+          }),
+        ),
       );
+  }
+
+  private bindPiExtensionEntry(
+    buildBinding: string,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    const marker = new RegExp(
+      `const\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*"${EXTENSION_BUILD_BINDING_PLACEHOLDER}"\\s*;`,
+      "gu",
+    );
+    return this.fileSystem
+      .readText("packages/adapters/pi/dist/extension.js")
+      .andThen((contents) => {
+        const matches = [...contents.matchAll(marker)];
+        if (matches.length !== 1) {
+          return errAsync({
+            type: "BuildIdentity" as const,
+            reason: "output-unavailable" as const,
+          });
+        }
+        return this.fileSystem.writeText(
+          "packages/adapters/pi/dist/extension.js",
+          contents.replace(
+            marker,
+            `const WEAVE_PI_EMBEDDED_BUILD_BINDING = "${buildBinding}";`,
+          ),
+        );
+      });
   }
 
   private readGitBuildIdentity(): ResultAsync<

@@ -60,6 +60,7 @@ function proofLine(input: {
     weaveExtensionBuildIdentity: {
       schemaVersion: 1,
       artifactSha256: input.artifactSha256 ?? ARTIFACT,
+      buildBinding: "b".repeat(64),
       loadedOutputs: [
         { name: "extension", sha256: ARTIFACT },
         { name: "extension-build-identity", sha256: "c".repeat(64) },

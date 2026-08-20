@@ -159,6 +159,7 @@ describe("Pi extension build identity sidecar", () => {
       fileSystem,
       subject,
       dirty: true,
+      buildBinding: digestA,
       inputDigests: [digestB, digestA],
       outputs: [
         { name: "index", sha256: digestB },
@@ -196,6 +197,7 @@ describe("Pi extension build identity sidecar", () => {
       fileSystem,
       subject,
       dirty: false,
+      buildBinding: digestA,
       inputDigests: [],
       outputs: [],
     });

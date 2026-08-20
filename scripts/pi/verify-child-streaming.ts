@@ -145,6 +145,30 @@ function equalStrings(
   );
 }
 
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function hasExactLogicalOutputs(
+  outputs: readonly { readonly name: string; readonly sha256: string }[],
+  expectedNames: readonly string[],
+): boolean {
+  if (outputs.length !== expectedNames.length) return false;
+  const expected = new Set(expectedNames);
+  const seen = new Set<string>();
+  for (const output of outputs) {
+    if (
+      !expected.has(output.name) ||
+      seen.has(output.name) ||
+      !isSha256(output.sha256)
+    ) {
+      return false;
+    }
+    seen.add(output.name);
+  }
+  return seen.size === expected.size;
+}
+
 function outputDigest(
   manifest: ExtensionBuildIdentityManifest,
   name: string,
@@ -165,8 +189,25 @@ export function verifyIdentityFacts(
   ) {
     return err(blocked("git-mismatch", "manifest-mismatch"));
   }
-  if (!equalStrings(input.currentBuildInputs, input.manifest.buildInputs)) {
+  if (
+    input.manifest.buildBinding === undefined ||
+    !/^[0-9a-f]{64}$/u.test(input.manifest.buildBinding)
+  ) {
+    return err(blocked("unverifiable", "unverifiable"));
+  }
+  if (
+    !equalStrings(input.currentBuildInputs, input.manifest.buildInputs) ||
+    input.currentBuildInputs.some((digest) => !isSha256(digest))
+  ) {
     return err(blocked("source-mismatch", "manifest-mismatch"));
+  }
+  if (
+    !hasExactLogicalOutputs(
+      input.currentOutputs,
+      input.manifest.outputs.map((output) => output.name),
+    )
+  ) {
+    return err(blocked("unverifiable", "unverifiable"));
   }
 
   const extensionOutput = input.currentOutputs.find(
@@ -198,9 +239,17 @@ export function verifyIdentityFacts(
   if (
     loaded === undefined ||
     loaded.artifactSha256 === undefined ||
+    !isSha256(loaded.artifactSha256) ||
     loaded.loadedOutputs === undefined ||
+    loaded.buildBinding === undefined ||
     loaded.loadTimeMs === undefined ||
     loaded.processStartMs === undefined
+  ) {
+    return err(blocked("unverifiable", "unverifiable"));
+  }
+  if (
+    !/^[0-9a-f]{64}$/u.test(loaded.buildBinding) ||
+    loaded.buildBinding !== input.manifest.buildBinding
   ) {
     return err(blocked("unverifiable", "unverifiable"));
   }
@@ -237,6 +286,8 @@ export function verifyIdentityFacts(
   const nowMs = input.nowMs ?? Date.now();
   if (
     !Number.isFinite(completedAtMs) ||
+    !Number.isSafeInteger(nowMs) ||
+    nowMs < 0 ||
     !Number.isSafeInteger(loaded.loadTimeMs) ||
     !Number.isSafeInteger(loaded.processStartMs) ||
     loaded.processStartMs > loaded.loadTimeMs ||
@@ -355,7 +406,7 @@ function readManifest(
       return errAsync(blocked("unverifiable", "unverifiable"));
     }
     const text = Result.fromThrowable(
-      () => new TextDecoder().decode(bytes),
+      () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       () => blocked("unverifiable", "unverifiable"),
     )();
     if (text.isErr()) return errAsync(text.error);

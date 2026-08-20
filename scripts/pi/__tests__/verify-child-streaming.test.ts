@@ -7,6 +7,7 @@ import {
   type ExtensionLoadedIdentity,
   evaluateExtensionBuildIdentity,
   parseExtensionBuildIdentityProof,
+  parseExtensionBuildManifest,
   renderExtensionBuildIdentityHealthLine,
   renderExtensionBuildIdentityProofLine,
   renderExtensionBuildManifest,
@@ -41,6 +42,7 @@ function manifest(
   const created = createExtensionBuildManifest({
     subject: SUBJECT,
     dirty: false,
+    buildBinding: C,
     buildInputs: [B, A],
     outputs: [
       { name: "index", sha256: B },
@@ -66,6 +68,7 @@ function loaded(
     ...(outputDigest === undefined
       ? {}
       : { loadedOutputs: runtimeOutputs(outputDigest) }),
+    buildBinding: C,
     loadTimeMs,
     processStartMs: 1,
   };
@@ -90,6 +93,7 @@ function facts(
       schemaVersion: 1 as const,
       artifactSha256: A,
       loadedOutputs: runtimeOutputs(A),
+      buildBinding: C,
       loadTimeMs: 200,
       processStartMs: 1,
     },
@@ -139,6 +143,12 @@ describe("extension runtime identity states", () => {
     expect(line).toContain("extension identity: current");
     expect(line).toContain(`loaded=${A}`);
     expect(line).not.toContain("/artifact/");
+    const boundedLine = renderExtensionBuildIdentityHealthLine({
+      ...health,
+      gitSubject: "/tmp/identity",
+      buildCompletedAt: "/tmp/secret",
+    });
+    expect(boundedLine).not.toContain("/tmp/");
   });
 
   it("is RED when build A was loaded and disk now contains build B", () => {
@@ -174,6 +184,33 @@ describe("extension runtime identity states", () => {
       manifest: manifest(A, B, A, A),
     });
     expect(health.state).toBe("stale-on-disk");
+  });
+
+  it("fails closed when the embedded build binding is stale or missing", () => {
+    expect(
+      evaluateExtensionBuildIdentity({
+        loaded: { ...loaded(A), buildBinding: A },
+        diskArtifactSha256: A,
+        diskOutputs: runtimeOutputs(A),
+        manifest: { ...manifest(), buildBinding: B },
+      }).state,
+    ).toBe("unverifiable");
+    expect(
+      parseExtensionBuildManifest({
+        ...manifest(),
+        buildBinding: undefined,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      parseExtensionBuildManifest({
+        ...manifest(),
+        git: { subject: "/tmp/identity", dirty: false },
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      verifyIdentityFacts(facts({ loadedProof: undefined }))._unsafeUnwrapErr()
+        .type,
+    ).toBe("unverifiable");
   });
 
   it("is RED and unverifiable when the sidecar or output cannot be read", () => {
@@ -258,6 +295,7 @@ describe("independent child-streaming verifier gate", () => {
             schemaVersion: 1,
             artifactSha256: B,
             loadedOutputs: runtimeOutputs(B),
+            buildBinding: C,
             loadTimeMs: 200,
             processStartMs: 1,
           },
@@ -354,6 +392,7 @@ describe("independent child-streaming verifier gate", () => {
         schemaVersion: 1,
         artifactSha256: C,
         loadedOutputs: [{ name: "/tmp/extension-impl.js", sha256: C }],
+        buildBinding: C,
         loadTimeMs: 200,
         processStartMs: 1,
       },
@@ -370,6 +409,7 @@ describe("independent child-streaming verifier gate", () => {
               schemaVersion: 1,
               artifactSha256: B,
               loadedOutputs: runtimeOutputs(B),
+              buildBinding: C,
               loadTimeMs: 200,
               processStartMs: 1,
             },

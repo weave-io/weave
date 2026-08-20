@@ -3,6 +3,8 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
 /** The sidecar schema is deliberately small and versioned independently. */
 export const EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION = 1 as const;
+export const EXTENSION_BUILD_BINDING_PLACEHOLDER =
+  "0000000000000000000000000000000000000000000000000000000000000000" as const;
 export const EXTENSION_BUILD_MANIFEST_FILENAME =
   "extension-build-identity.json" as const;
 export const EXTENSION_BUILD_IDENTITY_PROOF_ENV =
@@ -10,12 +12,14 @@ export const EXTENSION_BUILD_IDENTITY_PROOF_ENV =
 
 /** Keep every identity surface bounded before it reaches a UI or proof line. */
 export const MAX_EXTENSION_BUILD_MANIFEST_BYTES = 32 * 1024;
+export const MAX_EXTENSION_BUILD_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_EXTENSION_BUILD_IDENTITY_LINE_LENGTH = 1_024;
 export const MAX_EXTENSION_BUILD_INPUTS = 4_096;
 export const MAX_EXTENSION_BUILD_OUTPUTS = 64;
 export const MAX_EXTENSION_BUILD_SUBJECT_LENGTH = 128;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const GIT_SUBJECT_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_OUTPUT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
@@ -58,6 +62,8 @@ export type ExtensionBuildIdentityReason =
   | "artifact-read-failed"
   | "manifest-read-failed"
   | "manifest-malformed"
+  | "build-binding-missing"
+  | "build-binding-mismatch"
   | "loaded-artifact-missing"
   | "loaded-time-missing"
   | "process-start-missing"
@@ -84,6 +90,8 @@ export interface ExtensionBuildManifestGit {
  */
 export interface ExtensionBuildIdentityManifest {
   readonly schemaVersion: typeof EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION;
+  /** Digest of the normalized runtime graph and build metadata. */
+  readonly buildBinding: string;
   readonly git: ExtensionBuildManifestGit;
   readonly buildInputs: readonly string[];
   readonly outputs: readonly {
@@ -103,6 +111,8 @@ export interface ExtensionLoadedIdentity {
   readonly artifactSha256?: string;
   /** Digests captured before the loader evaluates the runtime graph. */
   readonly loadedOutputs?: readonly ExtensionBuildOutputDigest[];
+  /** The entry's embedded binding, captured by the trusted preloader. */
+  readonly buildBinding?: string;
   readonly loadTimeMs?: number;
   readonly processStartMs: number;
   readonly loadReason?: ExtensionBuildIdentityReason;
@@ -128,6 +138,7 @@ export interface ExtensionBuildIdentityProof {
   readonly schemaVersion: typeof EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION;
   readonly artifactSha256?: string;
   readonly loadedOutputs?: readonly ExtensionBuildOutputDigest[];
+  readonly buildBinding?: string;
   readonly loadTimeMs?: number;
   readonly processStartMs?: number;
 }
@@ -248,6 +259,64 @@ function outputDigest(
   return manifest.outputs.find((output) => output.name === name)?.sha256;
 }
 
+function canonicalBuildBindingInput(input: {
+  readonly buildCompletedAt: string;
+  readonly buildInputs: readonly string[];
+  readonly dirty: boolean;
+  readonly runtimeOutputs: readonly ExtensionBuildOutputDigest[];
+  readonly subject: string;
+}): string {
+  return JSON.stringify({
+    schemaVersion: EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION,
+    git: { subject: input.subject, dirty: input.dirty },
+    buildInputs: [...input.buildInputs],
+    buildCompletedAt: input.buildCompletedAt,
+    runtimeOutputs: RUNTIME_OUTPUT_FILES.map((output) => ({
+      name: output.name,
+      sha256: input.runtimeOutputs.find(
+        (candidate) => candidate.name === output.name,
+      )?.sha256,
+    })),
+  });
+}
+
+/**
+ * Compute the build binding over the placeholder-normalized runtime graph.
+ * The entry is normalized by the trusted preloader before it calls this same
+ * canonicalization rule; the build pipeline calls it before replacing the
+ * placeholder with the resulting digest.
+ */
+export function computeExtensionBuildBinding(input: {
+  readonly buildCompletedAt: string;
+  readonly buildInputs: readonly string[];
+  readonly dirty: boolean;
+  readonly runtimeOutputs: readonly ExtensionBuildOutputDigest[];
+  readonly subject: string;
+}): Result<string, ExtensionBuildIdentityError> {
+  if (
+    !isSafeTimestamp(input.buildCompletedAt) ||
+    !GIT_SUBJECT_PATTERN.test(input.subject) ||
+    input.buildInputs.length === 0 ||
+    input.buildInputs.length > MAX_EXTENSION_BUILD_INPUTS ||
+    input.buildInputs.some((digest) => !SHA256_PATTERN.test(digest)) ||
+    !isSortedUnique(input.buildInputs) ||
+    input.runtimeOutputs.length !== RUNTIME_OUTPUT_FILES.length ||
+    input.runtimeOutputs.some(
+      (candidate, index) =>
+        candidate.name !== RUNTIME_OUTPUT_FILES[index]?.name ||
+        !SHA256_PATTERN.test(candidate.sha256),
+    )
+  ) {
+    return err({ type: "ManifestMalformed" });
+  }
+  const canonical = canonicalBuildBindingInput(input);
+  const encoded = Result.fromThrowable(
+    () => new TextEncoder().encode(canonical),
+    (): ExtensionBuildIdentityError => ({ type: "DigestFailed" }),
+  )();
+  return encoded.andThen(sha256Hex);
+}
+
 function hasEveryRuntimeOutput(
   outputs: readonly ExtensionBuildOutputDigest[] | undefined,
 ): outputs is readonly ExtensionBuildOutputDigest[] {
@@ -310,7 +379,10 @@ export function parseExtensionBuildManifest(
 
   const git = value.git;
   if (!isRecord(git)) return err({ type: "ManifestMalformed" });
-  if (!isBoundedString(git.subject, MAX_EXTENSION_BUILD_SUBJECT_LENGTH)) {
+  if (
+    !isBoundedString(git.subject, MAX_EXTENSION_BUILD_SUBJECT_LENGTH) ||
+    !GIT_SUBJECT_PATTERN.test(git.subject)
+  ) {
     return err({ type: "ManifestMalformed" });
   }
   if (typeof git.dirty !== "boolean") {
@@ -366,8 +438,16 @@ export function parseExtensionBuildManifest(
     return err({ type: "ManifestMalformed" });
   }
 
+  if (
+    typeof value.buildBinding !== "string" ||
+    !SHA256_PATTERN.test(value.buildBinding)
+  ) {
+    return err({ type: "ManifestMalformed" });
+  }
+
   return ok({
     schemaVersion: EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION,
+    buildBinding: value.buildBinding,
     git: { subject: git.subject, dirty: git.dirty },
     buildInputs: [...rawInputs],
     outputs,
@@ -402,6 +482,7 @@ export function renderExtensionBuildManifest(
 export function createExtensionBuildManifest(input: {
   readonly subject: string;
   readonly dirty: boolean;
+  readonly buildBinding: string;
   readonly buildInputs: readonly string[];
   readonly outputs: readonly {
     readonly name: string;
@@ -415,6 +496,7 @@ export function createExtensionBuildManifest(input: {
   );
   const manifest = {
     schemaVersion: EXTENSION_BUILD_IDENTITY_SCHEMA_VERSION,
+    buildBinding: input.buildBinding,
     git: { subject: input.subject, dirty: input.dirty },
     buildInputs: [...input.buildInputs].sort(),
     outputs,
@@ -430,6 +512,9 @@ export function readArtifactSha256(
   return ResultAsync.fromPromise(Bun.file(path).arrayBuffer(), () => ({
     type: "ArtifactReadFailed" as const,
   })).andThen((bytes) => {
+    if (bytes.byteLength > MAX_EXTENSION_BUILD_OUTPUT_BYTES) {
+      return errAsync({ type: "ArtifactReadFailed" as const });
+    }
     const digest = sha256Hex(bytes);
     return digest.isOk() ? okAsync(digest.value) : errAsync(digest.error);
   });
@@ -579,6 +664,24 @@ export function evaluateExtensionBuildIdentity(input: {
     });
   }
 
+  if (
+    loaded.buildBinding === undefined ||
+    !SHA256_PATTERN.test(loaded.buildBinding)
+  ) {
+    return healthFromLoaded(loaded, "unverifiable", {
+      diskArtifactSha256,
+      diskOutputs: diskOutputDigests,
+      reason: "build-binding-missing",
+    });
+  }
+  if (manifest.buildBinding !== loaded.buildBinding) {
+    return healthFromLoaded(loaded, "unverifiable", {
+      diskArtifactSha256,
+      diskOutputs: diskOutputDigests,
+      reason: "build-binding-mismatch",
+    });
+  }
+
   const loadedEntrySha256 = outputDigestFromList(loadedOutputs, "extension");
   const diskEntrySha256 = outputDigestFromList(diskOutputDigests, "extension");
   const manifestArtifactSha256 = outputDigest(manifest, "extension");
@@ -672,11 +775,22 @@ export function readExtensionBuildIdentityHealth(
       }>({}),
     );
   const manifest = ResultAsync.fromPromise(
-    Bun.file(manifestPath).text(),
+    Bun.file(manifestPath).arrayBuffer(),
     (): ExtensionBuildIdentityError => ({ type: "ManifestReadFailed" }),
   )
-    .andThen((text) => {
-      const parsed = parseExtensionBuildManifestText(text);
+    .andThen((bytes) => {
+      if (bytes.byteLength > MAX_EXTENSION_BUILD_MANIFEST_BYTES) {
+        return errAsync<
+          { readonly manifest: ExtensionBuildIdentityManifest },
+          ExtensionBuildIdentityError
+        >({ type: "ManifestMalformed" });
+      }
+      const decoded = Result.fromThrowable(
+        () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        (): ExtensionBuildIdentityError => ({ type: "ManifestMalformed" }),
+      )();
+      if (decoded.isErr()) return errAsync(decoded.error);
+      const parsed = parseExtensionBuildManifestText(decoded.value);
       return parsed.isOk()
         ? okAsync({ manifest: parsed.value })
         : errAsync(parsed.error);
@@ -715,8 +829,27 @@ function boundedMilliseconds(value: number | undefined): string {
 }
 
 function boundedSubject(value: string | undefined): string {
-  if (value === undefined || value.length === 0) return "unknown";
-  return value.slice(0, MAX_EXTENSION_BUILD_SUBJECT_LENGTH);
+  return value !== undefined && GIT_SUBJECT_PATTERN.test(value)
+    ? value
+    : "unknown";
+}
+
+function boundedTimestamp(value: string | undefined): string {
+  return value !== undefined && isSafeTimestamp(value) ? value : "unknown";
+}
+
+function boundedReason(
+  value: ExtensionBuildIdentityReason | undefined,
+): string {
+  return value !== undefined && /^[a-z0-9-]{1,64}$/u.test(value)
+    ? value
+    : "unknown";
+}
+
+function boundedDirty(value: boolean | undefined): string {
+  if (value === true) return "true";
+  if (value === false) return "false";
+  return "unknown";
 }
 
 function boundedOutputDigests(
@@ -734,20 +867,35 @@ function boundedOutputDigests(
 export function renderExtensionBuildIdentityHealthLine(
   health: ExtensionBuildIdentityHealth,
 ): string {
+  const inputCount =
+    health.sourceInputCount !== undefined &&
+    Number.isSafeInteger(health.sourceInputCount) &&
+    health.sourceInputCount >= 0
+      ? Math.min(health.sourceInputCount, MAX_EXTENSION_BUILD_INPUTS)
+      : "unknown";
+  const state =
+    health.state === "current" ||
+    health.state === "stale-on-disk" ||
+    health.state === "manifest-mismatch" ||
+    health.state === "unverifiable"
+      ? health.state
+      : "unverifiable";
   const line = [
-    `extension identity: ${health.state}`,
+    `extension identity: ${state}`,
     `loaded=${boundedHash(health.loadedArtifactSha256)}`,
     `disk=${boundedHash(health.diskArtifactSha256)}`,
     `manifest=${boundedHash(health.manifestArtifactSha256)}`,
     `load-ms=${boundedMilliseconds(health.loadTimeMs)}`,
     `process-start-ms=${boundedMilliseconds(health.processStartMs)}`,
-    `build-complete=${health.buildCompletedAt ?? "unknown"}`,
-    `inputs=${health.sourceInputCount === undefined ? "unknown" : Math.min(health.sourceInputCount, MAX_EXTENSION_BUILD_INPUTS)}`,
+    `build-complete=${boundedTimestamp(health.buildCompletedAt)}`,
+    `inputs=${inputCount}`,
     `subject=${boundedSubject(health.gitSubject)}`,
-    `dirty=${health.gitDirty === undefined ? "unknown" : String(health.gitDirty)}`,
+    `dirty=${boundedDirty(health.gitDirty)}`,
     `loaded-outputs=${boundedOutputDigests(health.loadedOutputs)}`,
     `disk-outputs=${boundedOutputDigests(health.diskOutputs)}`,
-    ...(health.reason === undefined ? [] : [`reason=${health.reason}`]),
+    ...(health.reason === undefined
+      ? []
+      : [`reason=${boundedReason(health.reason)}`]),
   ].join("; ");
   return line.length <= MAX_EXTENSION_BUILD_IDENTITY_LINE_LENGTH
     ? line
@@ -766,6 +914,9 @@ export function renderExtensionBuildIdentityProofLine(
         ? {}
         : { artifactSha256: boundedHash(identity.artifactSha256) }),
       ...(loadedOutputs === undefined ? {} : { loadedOutputs }),
+      ...(identity.buildBinding === undefined
+        ? {}
+        : { buildBinding: boundedHash(identity.buildBinding) }),
       ...(identity.loadTimeMs === undefined
         ? {}
         : {
@@ -806,6 +957,13 @@ export function parseExtensionBuildIdentityProof(
   ) {
     return err({ type: "ManifestMalformed" });
   }
+  if (
+    raw.buildBinding !== undefined &&
+    (typeof raw.buildBinding !== "string" ||
+      !SHA256_PATTERN.test(raw.buildBinding))
+  ) {
+    return err({ type: "ManifestMalformed" });
+  }
   if (raw.loadTimeMs !== undefined && !isSafeMilliseconds(raw.loadTimeMs)) {
     return err({ type: "ManifestMalformed" });
   }
@@ -828,6 +986,9 @@ export function parseExtensionBuildIdentityProof(
       ? {}
       : { artifactSha256: raw.artifactSha256 }),
     ...(loadedOutputs === undefined ? {} : { loadedOutputs }),
+    ...(raw.buildBinding === undefined
+      ? {}
+      : { buildBinding: raw.buildBinding }),
     ...(raw.loadTimeMs === undefined ? {} : { loadTimeMs: raw.loadTimeMs }),
     ...(raw.processStartMs === undefined
       ? {}

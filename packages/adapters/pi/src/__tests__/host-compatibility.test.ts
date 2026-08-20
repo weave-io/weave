@@ -373,6 +373,7 @@ describe("renderExtensionIdentityHealthLine", () => {
   const manifest = createExtensionBuildManifest({
     subject,
     dirty: false,
+    buildBinding: digestA,
     buildInputs: [digestA],
     outputs: [
       { name: "extension", sha256: digestA },
@@ -391,6 +392,7 @@ describe("renderExtensionIdentityHealthLine", () => {
           artifactPath: "/tmp/extension.js",
           artifactSha256: digestA,
           loadedOutputs: runtimeOutputs(digestA),
+          buildBinding: digestA,
           loadTimeMs: 200,
           processStartMs: 1,
         },
@@ -416,6 +418,7 @@ describe("renderExtensionIdentityHealthLine", () => {
           loaded: {
             artifactSha256: digestA,
             loadedOutputs: runtimeOutputs(digestA),
+            buildBinding: digestA,
             loadTimeMs: 200,
             processStartMs: 1,
           },
@@ -431,6 +434,7 @@ describe("renderExtensionIdentityHealthLine", () => {
           loaded: {
             artifactSha256: digestA,
             loadedOutputs: runtimeOutputs(digestA),
+            buildBinding: digestA,
             loadTimeMs: 200,
             processStartMs: 1,
           },
