@@ -85,6 +85,35 @@ async function makeTempProjectWithoutLoom(): Promise<string> {
   return root;
 }
 
+async function makeTempProjectWithoutTapestry(): Promise<string> {
+  const root = join(
+    tmpdir(),
+    `weave-plugin-no-tapestry-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await Bun.write(
+    join(root, ".weave", "config.weave"),
+    ['disable agents ["tapestry"]', ""].join("\n"),
+  );
+  return root;
+}
+
+async function makeTempProjectWithFailedTapestry(): Promise<string> {
+  const root = join(
+    tmpdir(),
+    `weave-plugin-failed-tapestry-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await Bun.write(
+    join(root, ".weave", "config.weave"),
+    [
+      "agent tapestry {",
+      '  prompt_append_file "missing-tapestry.md"',
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return root;
+}
+
 async function makeTempFastProject(agentName: string): Promise<string> {
   const root = join(
     tmpdir(),
@@ -289,13 +318,14 @@ describe("WeavePlugin — config-hook agent materialization", () => {
 });
 
 describe("WeavePlugin — slash command registration", () => {
-  it("registers both real plan-entry commands", async () => {
+  it("registers both commands only after safely injecting Tapestry", async () => {
     const root = await makeTempProject("command-agent");
     const cfg: TestPluginConfig = {};
     const hooks = await pluginFor(root)(makeMockPluginInput(root));
 
     await applyConfigHook(hooks, cfg);
 
+    expect(cfg.agent?.tapestry).toBeDefined();
     expect(cfg.command?.["start-work"]).toMatchObject({
       description: "Start executing a Weave plan created by Pattern",
       agent: "tapestry",
@@ -307,6 +337,109 @@ describe("WeavePlugin — slash command registration", () => {
     expect(cfg.command?.["start-work"]?.template).toContain(
       "<weave-command-envelope>",
     );
+    expect(cfg.command?.["weave:start"]?.template).toContain(
+      "<weave-command-envelope>",
+    );
+  });
+
+  it("preserves colliding Tapestry and both existing command objects", async () => {
+    const root = await makeTempProject("command-tapestry-collision");
+    const existingTapestry = agentConfig("user-owned Tapestry", {
+      nested: { owner: "user", values: ["unchanged"] },
+    });
+    const existingStartWork = {
+      template: "user start-work",
+      description: "User start-work",
+      agent: "user-agent",
+      metadata: { nested: { keep: true } },
+    };
+    const existingWeaveStart = {
+      template: "user weave:start",
+      description: "User weave:start",
+      agent: "another-user-agent",
+      metadata: { nested: { keep: ["all", "fields"] } },
+    };
+    const existingCommands = {
+      "start-work": existingStartWork,
+      "weave:start": existingWeaveStart,
+    };
+    const cfg: TestPluginConfig = {
+      agent: { tapestry: existingTapestry },
+      command: existingCommands,
+    };
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.agent?.tapestry).toBe(existingTapestry);
+    expect(cfg.command).toBe(existingCommands);
+    expect(cfg.command?.["start-work"]).toBe(existingStartWork);
+    expect(cfg.command?.["weave:start"]).toBe(existingWeaveStart);
+    expect(cfg.command?.["start-work"]).toEqual(existingStartWork);
+    expect(cfg.command?.["weave:start"]).toEqual(existingWeaveStart);
+    expect(cfg.default_agent).toBe("loom");
+  });
+
+  it("does not create commands when Tapestry collides and commands are absent", async () => {
+    const root = await makeTempProject("command-tapestry-no-commands");
+    const existingTapestry = agentConfig("user-owned Tapestry");
+    const cfg: TestPluginConfig = {
+      agent: { tapestry: existingTapestry },
+    };
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.agent?.tapestry).toBe(existingTapestry);
+    expect(cfg.command).toBeUndefined();
+    expect(cfg.default_agent).toBe("loom");
+  });
+
+  it("does not create commands when Tapestry is missing or skipped", async () => {
+    const root = await makeTempProjectWithoutTapestry();
+    const cfg: TestPluginConfig = {};
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.agent?.tapestry).toBeUndefined();
+    expect(cfg.command).toBeUndefined();
+    expect(cfg.default_agent).toBe("loom");
+  });
+
+  it("does not create commands when Tapestry materialization fails", async () => {
+    const root = await makeTempProjectWithFailedTapestry();
+    const cfg: TestPluginConfig = {};
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.agent?.tapestry).toBeUndefined();
+    expect(cfg.command).toBeUndefined();
+    expect(cfg.default_agent).toBe("loom");
+  });
+
+  it("fails closed per command when one command name collides", async () => {
+    const root = await makeTempProject("command-one-collision");
+    const existingStartWork = {
+      template: "user start-work",
+      description: "User-owned start-work",
+      agent: "user-agent",
+      metadata: { nested: { keep: true } },
+    };
+    const existingCommands = { "start-work": existingStartWork };
+    const cfg: TestPluginConfig = { command: existingCommands };
+    const hooks = await pluginFor(root)(makeMockPluginInput(root));
+
+    await applyConfigHook(hooks, cfg);
+
+    expect(cfg.command).toBe(existingCommands);
+    expect(cfg.command?.["start-work"]).toBe(existingStartWork);
+    expect(cfg.command?.["start-work"]).toEqual(existingStartWork);
+    expect(cfg.command?.["weave:start"]).toMatchObject({
+      description: "Start executing a Weave plan (preferred command)",
+      agent: "tapestry",
+    });
     expect(cfg.command?.["weave:start"]?.template).toContain(
       "<weave-command-envelope>",
     );

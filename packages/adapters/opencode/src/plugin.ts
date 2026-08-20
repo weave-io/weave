@@ -162,6 +162,7 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
     return {
       config: async (cfg) => {
         let loomInjected = false;
+        let tapestryInjected = false;
         let injectedCount = 0;
 
         if (translatedMap.size > 0) {
@@ -185,6 +186,9 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
             if (agentName === "loom") {
               loomInjected = true;
             }
+            if (agentName === "tapestry") {
+              tapestryInjected = true;
+            }
             log.debug({ agent: agentName }, "Agent injected into config hook");
           }
 
@@ -205,24 +209,50 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           log.info("Set default_agent to 'loom'");
         }
 
-        if (cfg.command === undefined) {
-          cfg.command = {};
+        // Commands are owned by this hook only when this invocation inserted
+        // Tapestry. A collision or failed/skipped Tapestry must never become a
+        // command target.
+        if (!tapestryInjected) {
+          log.warn(
+            "Skipping Weave slash command registration because Tapestry was not injected by this config hook",
+          );
+          return;
         }
 
-        cfg.command["start-work"] = {
-          template: START_WORK_COMMAND_TEMPLATE,
-          description: "Start executing a Weave plan created by Pattern",
-          agent: "tapestry",
+        const commands = cfg.command ?? {};
+        cfg.command = commands;
+        const commandDefinitions = {
+          "start-work": {
+            template: START_WORK_COMMAND_TEMPLATE,
+            description: "Start executing a Weave plan created by Pattern",
+            agent: "tapestry",
+          },
+          "weave:start": {
+            template: WEAVE_START_COMMAND_TEMPLATE,
+            description: "Start executing a Weave plan (preferred command)",
+            agent: "tapestry",
+          },
         };
+        const registeredCommands: string[] = [];
 
-        cfg.command["weave:start"] = {
-          template: WEAVE_START_COMMAND_TEMPLATE,
-          description: "Start executing a Weave plan (preferred command)",
-          agent: "tapestry",
-        };
+        for (const [commandName, command] of Object.entries(
+          commandDefinitions,
+        )) {
+          // Preserve every existing command object, including nested fields.
+          if (Object.hasOwn(commands, commandName)) {
+            log.warn(
+              { command: commandName },
+              "Skipping existing OpenCode command in config hook",
+            );
+            continue;
+          }
+
+          commands[commandName] = command;
+          registeredCommands.push(commandName);
+        }
 
         log.info(
-          { commands: ["start-work", "weave:start"] },
+          { commands: registeredCommands },
           "Weave slash commands registered",
         );
       },

@@ -39,6 +39,8 @@ The config hook:
 
 The hook never calls the OpenCode SDK or a persistence API. It leaves every existing same-name entry unchanged, including entries with copied Weave-looking metadata. It sets `default_agent` to `loom` only when it inserts Loom itself. Agent materialization and primary-agent selection are degraded when a same-name entry blocks projection.
 
+Command ownership is fail-closed. The hook registers Weave's commands only when the same invocation inserts the `tapestry` agent. A pre-existing or skipped `tapestry`, including a descriptor that failed materialization, cannot become a command target. When `tapestry` is inserted, `start-work` and `weave:start` are checked independently: an existing command entry is preserved as the exact object with all nested fields unchanged, while a free name receives the Weave command.
+
 Category shuttles remain ordinary normalized descriptors, routed by their description and ordered trigger strings. Categories have no file patterns, so the adapter performs no deterministic file routing. The adapter never reparses DSL intent or builds prompts itself.
 
 ## Provider acceleration is unsupported
@@ -51,7 +53,7 @@ This is an optional-capability gap: it warns and never blocks descriptor materia
 
 ## Commands and execution
 
-OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. The plugin has no event-driven materialization hook; ordinary chat and passive events do not start work.
+OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. The plugin registers either command only after it inserts `tapestry` in the same config-hook invocation; it never overwrites a pre-existing command, and one colliding name does not block the other free name. If Tapestry is missing, skipped, collides, or fails materialization, neither Weave command is added. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. The plugin has no event-driven materialization hook; ordinary chat and passive events do not start work.
 
 ## Logging
 

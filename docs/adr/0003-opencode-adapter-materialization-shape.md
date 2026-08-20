@@ -35,6 +35,8 @@ The hook does not inspect descriptions, `options`, or other metadata. A copied W
 
 This limitation is declared as degraded agent materialization and degraded primary-agent selection. Users can rename a Weave agent or remove a conflicting OpenCode entry before startup.
 
+Command registration uses the same fail-closed ownership rule. The hook registers `start-work` and `weave:start` only when it inserts `tapestry` during that config-hook invocation. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot authorize either command. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while a free name receives the Weave-owned command. A collision for one name does not prevent registration of the other free name. Loom's `default_agent` selection remains independent and changes only when this invocation inserts Loom.
+
 ### 3. Translation-only adapter boundary
 
 `OpenCodeAdapter` translates descriptors for explicit runtime command projections and keeps an in-memory `translatedAgents` snapshot for those callers. `spawnSubagent()` does not register or update a live OpenCode resource. `OpenCodeAdapterOptions` contains project, model-context, and harness-skill inputs only; it has no client option.
