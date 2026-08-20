@@ -15,11 +15,10 @@
  * registers every stable publish and independent-attestation workflow root;
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
  * guarded manual `nightly` controller; Task 28 adds the CI policy controller;
- * Task 30 adds the immutable-main docs-audit workflow controllers; Task 32
- * adds the dependency-free retained-publisher preflight root; Task 35 removes
- * every legacy executable entry deleted at cutover and positively retains
- * every new-pipeline entry. Later tasks add, rename, or remove entries in the
- * same change.
+ * Task 30 adds the immutable-main docs-audit workflow controllers; Task 35
+ * removes every legacy executable entry deleted at cutover and positively
+ * retains every new-pipeline entry. Later tasks add, rename, or remove
+ * entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -95,12 +94,6 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
-  },
-  {
-    path: "scripts/release/legacy-preflight.ts",
-    role: "legacy",
-    rationale:
-      "Task 32 dependency-free read-only pre-cutover publisher preflight. It runs before dependency installation, proves protected-main enablement, and performs no publication mutation.",
   },
   {
     path: "scripts/release/release-policy-check.ts",
@@ -227,8 +220,8 @@ export const PRODUCTION_ENTRYPOINTS = [
  * Retained non-publishing executables that production scripts still reach.
  * They are classified so they cannot be mistaken for an unknown new-pipeline
  * root. Task 35 deleted every entry whose file, script, or workflow the
- * cutover removed; what remains either supports the new pipeline or, in the
- * case of the preflight, the documented pre-cutover rollback proof.
+ * cutover removed; what remains supports the new pipeline or a retained
+ * non-publishing release helper.
  */
 export const LEGACY_ENTRYPOINTS = [
   "scripts/release/changeset-policy.ts",

@@ -30,6 +30,8 @@ export const LEGACY_DENYLIST_PATHS = [
   "scripts/release/nightly-plan.ts",
   "scripts/release/promotion-commands.ts",
   "scripts/release/release-orchestrator.ts",
+  "scripts/release/legacy-preflight.ts",
+  "scripts/release/__tests__/legacy-preflight.test.ts",
   "scripts/release/release-refs-main.ts",
   "scripts/release/stable-finalize.ts",
   "scripts/release/stable-lineage.ts",
@@ -47,6 +49,10 @@ export const LEGACY_DENYLIST_IDENTIFIERS = [
   "dist-tag add",
   "promotion-commands",
   "release-refs-main",
+  "legacy-preflight",
+  "legacy-publisher-preflight",
+  "LEGACY_PREFLIGHT_RUN_NAME",
+  "LegacyPublisherPreflight",
   "STABLE_TRAIN_STATES",
   "STABLE_TRAIN_TRANSITIONS",
 ] as const;
@@ -94,7 +100,7 @@ export const LEGACY_SCAN_ALLOWLIST: readonly {
   {
     path: "scripts/release/doctor.ts",
     reason:
-      "The documented rollback restores the old workflow and trust identity, and --pre-cutover has to recognize the retired publication path to verify it.",
+      "The documented Git revert rollback restores the old workflow and trust identity, and --pre-cutover verifies the restored scheduled publisher.",
   },
 ];
 

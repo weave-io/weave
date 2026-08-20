@@ -13,28 +13,10 @@ bun run release:doctor --pre-cutover
 The command prints grouped pass, warning, and failure checks. A failure
 includes the manual fix. An unknown or unreadable value fails closed.
 
-Before the first pre-cutover doctor run, prove the retained publisher with the
-explicit read-only operation from protected `main`. This step applies only
-while the old publisher exists: before the cutover, and again after a rollback
-restores it. After the cutover, `--pre-cutover` is a rollback-verification
-mode, not a routine check.
-
-```sh
-gh workflow run publish.yml --repo weave-io/weave --ref main -f operation=preflight
-run_id="$(gh run list --repo weave-io/weave --workflow publish.yml --branch main --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq '.[] | select(.displayTitle == "legacy-publisher-preflight") | .databaseId' | head -n 1)"
-test -n "$run_id"
-gh run watch "$run_id" --repo weave-io/weave --exit-status
-gh run view "$run_id" --repo weave-io/weave --json databaseId,displayTitle,status,conclusion,event,headBranch,headSha,workflowName,workflowRef
-```
-
-Capture the final `gh run view` JSON with the doctor evidence. It must show
-`displayTitle` `legacy-publisher-preflight`, `conclusion` `success`, event
-`workflow_dispatch`, `headBranch` `main`, the protected-main `headSha`, and
-workflow ref `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
-The run summary must state publication enablement `true`, read-only `true`, and
-side effects `none`. Do not use a normal `workflow_dispatch` operation as a
-substitute. The preflight does not install dependencies, query npm, mint OIDC
-or App credentials, publish packages, or mutate refs.
+Before the cutover, the pre-cutover doctor requires a recent successful
+scheduled run of the old publisher on protected `main`. After the cutover,
+`--pre-cutover` is a rollback-verification mode: use it only after a Git revert
+restores the old workflow and its trust identity.
 
 ### Workflow-run identity contract
 
@@ -60,10 +42,8 @@ match `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
 
 A scheduled success is accepted only with the exact workflow name, repository
 and head-repository identity, protected `main`, successful conclusion, valid
-ID and timestamps, and `event: schedule`. A dispatch is accepted only when
-those fields also identify `event: workflow_dispatch` and
-`display_title: legacy-publisher-preflight`. Missing or malformed identity
-fields fail closed.
+ID and timestamps, and `event: schedule`. Dispatch runs are not operational
+proof. Missing or malformed identity fields fail closed.
 
 ## Manual setup
 
@@ -129,8 +109,8 @@ at repository scope:
 
 - `release-app`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
 - `docs-audit-patch`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
-- `release-refs`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` for retained
-  legacy `publish.yml`
+- `release-refs`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` for the
+  release-refs cleanup job
 - `release-ai`: `WEAVE_RELEASE_AI_API_KEY`
 
 The App ID and private key are protected credentials. Every App-authority job
@@ -182,7 +162,7 @@ accept a neighboring rung.
 
 | Order | Command | Required tuple | Typed result | Operational step |
 | --- | --- | --- | --- | --- |
-| 1 | `bun run release:doctor --pre-cutover` | stage `pre-cutover`; mode `disabled` or `dry-run`; old `publish.yml` scheduled and the new workflow scheduleless | `ReadyForCutover` | Task 32 preflight. CLI/OpenCode still trust old `publish.yml`; Claude/Pi remain unpublished. |
+| 1 | `bun run release:doctor --pre-cutover` | stage `pre-cutover`; mode `disabled` or `dry-run`; old `publish.yml` scheduled and the new workflow scheduleless | `ReadyForCutover` | Task 32 pre-cutover readiness. CLI/OpenCode still trust old `publish.yml`; Claude/Pi remain unpublished. |
 | 2 | `bun run release:doctor --cutover` | stage `frozen`; mode `disabled`; old workflow absent; new `release-publish.yml` has the `17 0 * * *` schedule; valid freeze record | `CutoverVerified` | Task 35 freeze and cutover. CLI/OpenCode trust switches during the freeze. |
 | 3 | `bun run release:doctor --post-bootstrap-frozen` | stage `frozen`; mode `disabled`; valid freeze record; all four packages trust the new workflow | `ReadyForActivation` | Task 38 post-bootstrap readiness. Claude/Pi trust is added by the approved bootstrap step. This is not final health. |
 | 4 | `bun run release:doctor --activation-ready` | stage `ready`; mode `disabled`; valid freeze and activation records; all four trust the new workflow | `ActivationReadyVerified` | Task 38 reviewed activation commit. Publication is still disabled. |
@@ -254,8 +234,9 @@ mode stays `disabled`, verified by `--activation-ready`, then the single
 
 On any failure the repository stays frozen. Do not unfreeze to recover.
 
-1. Revert the cutover change, restoring `publish.yml`, the removed modules,
-   and the `pre-cutover` stage declaration.
+1. Use `git revert <cutover-commit>` to revert the cutover change. This
+   restores `publish.yml`, the retired modules, and the `pre-cutover` stage
+   declaration. Do not keep or recreate a dormant copy of the old runtime.
 2. Interactively restore the old npm trusted-publisher identity for
    `@weaveio/weave-cli` and `@weaveio/weave-adapter-opencode` to
    `.github/workflows/publish.yml`.
