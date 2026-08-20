@@ -122,10 +122,12 @@ Fallback uses a bounded ordered candidate snapshot. A manual model change latche
 fallback off until explicit Weave agent activation. Catalog or authentication
 misses skip a candidate; an overflow failure requires a strictly larger declared
 context window; and an applied model remains the reported model even if later
-recovery proof fails. Pi `0.84.2` is the exact-tested host for this optional
-behavior. The supported floor remains `0.81.1`; missing or unproven surfaces
-keep health ready and preserve legacy settlement rather than enabling health-only
-mode. The engine and DSL do not add a fallback field.
+recovery proof fails. The implementation targets Pi's public `0.84.2` surfaces,
+and Task 15 is the exact real-host proof target. Until Task 15 passes, no live-host
+proof claim is made for the fallback. The supported floor remains `0.81.1`;
+missing or unproven surfaces keep health ready and preserve legacy settlement
+rather than enabling health-only mode. The engine and DSL do not add a fallback
+field.
 
 ### Authenticated child propagation
 

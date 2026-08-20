@@ -795,10 +795,12 @@ log file.
 
 ## 16. Capability probes and compatibility
 
-- Host version floor stays `0.81.1`, with no maximum. Pi `0.84.2` is the
-  exact-tested host for the optional runtime model fallback. Historical
-  native-session proof material may name Pi `0.84.1`; it does not define the
-  current fallback contract.
+- Host version floor stays `0.81.1`, with no maximum. The implementation
+  targets Pi `0.84.2`'s public surfaces, and Task 15 is the exact real-host proof
+  target for the optional runtime model fallback. Until that proof passes, Pi
+  `0.84.2` is not a proven fallback host. Historical native-session proof
+  material may name Pi `0.84.1`; it does not define the current fallback
+  contract.
 - Required probes: persistent RPC session and restore, `appendEntry`,
   `get_entries`/`get_tree`, and custom session directory support.
 - Pi addresses native sessions by filesystem path. Containment is proven by the
@@ -831,11 +833,14 @@ log file.
 ### 16.1 Optional runtime model fallback
 
 `runtime-model-fallback` is an optional, feature-only Pi host surface. It is not
-an engine capability or a new `.weave` setting. The adapter probes these public
-surfaces: payloadless `agent_settled` registration, terminal `message_end`, a
-replacement-returning `context` handler, `message_start`, `model_select`,
-callable `setModel`, fire-and-forget `sendMessage`, and callable idle and
-pending-message helpers. Static presence is not proof of lifecycle ordering.
+an engine capability or a new `.weave` setting. The implementation targets Pi
+`0.84.2`'s public surfaces, and Task 15 is the exact real-host proof target;
+surface presence and automated tests do not substitute for that live proof. The
+adapter probes these public surfaces: payloadless `agent_settled` registration,
+terminal `message_end`, a replacement-returning `context` handler,
+`message_start`, `model_select`, callable `setModel`, fire-and-forget
+`sendMessage`, and callable idle and pending-message helpers. Static presence is
+not proof of lifecycle ordering.
 
 Pi owns its native retry, overflow-compaction, and queued-message recovery. It
 emits payloadless `agent_settled` after those paths finish. This creates an
@@ -884,9 +889,9 @@ the [Weave UI design record](33-weave-ui-design.md).
 
 When any optional fallback surface is missing or unproven, the adapter keeps
 health ready and uses legacy visible and child settlement. It does not enter
-health-only mode and does not select the overlay fallback. The adapter claims
-exact fallback behavior only for the tested Pi `0.84.2` host; the `0.81.1` floor
-remains supported through the legacy path.
+health-only mode and does not select the overlay fallback. The `0.81.1` floor
+remains supported through the legacy path. The adapter makes no proven fallback
+host claim for Pi `0.84.2` until Task 15's exact real-host proof passes.
 
 ## 17. Superseded rules
 

@@ -130,13 +130,14 @@ catalog or authentication miss skips the current candidate. A context-overflow
 failure can use only a candidate with a strictly larger context window. Pi
 reports a model as applied even when later recovery proof fails.
 
-Pi `0.84.2` is the exact-tested host for this optional behavior. The supported
-floor remains `0.81.1`. If a public fallback surface is missing or unproven,
-Pi stays ready and uses legacy settlement; it does not enter health-only mode.
-A recovery-confirmed switch shows one read-only Model Fallback event. An
-applied-only switch or exhausted candidate list shows no event. The event and
-the delegation-card geometry are defined in the
-[Weave UI design record](https://github.com/weave-io/weave/blob/main/docs/specs/33-spec-pi-adapter/33-weave-ui-design.md).
+The implementation targets Pi `0.84.2`'s public surfaces. Task 15 is the exact
+real-host proof target; until it passes, this documentation makes no live-host
+proof claim for the fallback. The supported floor remains `0.81.1`. If a public
+fallback surface is missing or unproven, Pi stays ready and uses legacy
+settlement; it does not enter health-only mode. A recovery-confirmed switch
+shows one read-only Model Fallback event. An applied-only switch or exhausted
+candidate list shows no event. The event and the delegation-card geometry are
+defined in the [Weave UI design record](https://github.com/weave-io/weave/blob/main/docs/specs/33-spec-pi-adapter/33-weave-ui-design.md).
 
 ## Private children
 

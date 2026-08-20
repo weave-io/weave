@@ -28,11 +28,12 @@ not; the proof record names exactly which part.
 ## Optional runtime model fallback (Pi 0.84.2)
 
 This section is the current live target for the optional
-`runtime-model-fallback` host surface. Pi `0.84.2` is the exact-tested host;
-the support floor remains `0.81.1`. A missing or unproven optional surface must
-leave health ready and use legacy visible and child settlement. The release
-harness records bounded facts in its ephemeral report; this checklist does not
-create a standalone proof file.
+`runtime-model-fallback` host surface. The implementation targets Pi `0.84.2`'s
+public surfaces, and Task 15 is the exact real-host proof target. Until Task 15
+passes, Pi `0.84.2` is not a proven fallback host. The support floor remains
+`0.81.1`. A missing or unproven optional surface must leave health ready and use
+legacy visible and child settlement. The release harness records bounded facts
+in its ephemeral report; this checklist does not create a standalone proof file.
 
 Run the exact packed adapter in a fresh Pi `0.84.2` TUI with isolated config,
 data, session, and project roots. Use a deterministic provider fixture that

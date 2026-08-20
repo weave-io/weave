@@ -40,8 +40,10 @@ On Pi, the adapter may try the next usable model after Pi finishes its own
 retry, overflow-compaction, and queued-message recovery. This optional behavior
 uses the same process and native session, but it is a second low-level run. The
 visible child or tool stays pending while Weave starts that run with a hidden
-custom message. Pi `0.84.2` is the exact-tested host; the `0.81.1` floor keeps
-legacy settlement when the public fallback surfaces are missing or unproven.
+custom message. The implementation targets Pi `0.84.2`'s public surfaces, and
+Task 15 is the exact real-host proof target. Until Task 15 passes, no live-host
+proof claim is made for the fallback. The `0.81.1` floor keeps legacy settlement
+when the public fallback surfaces are missing or unproven.
 
 A manual model change disables automatic fallback until you explicitly activate
 a Weave agent again. Candidates stay in declared order, and a context-overflow
