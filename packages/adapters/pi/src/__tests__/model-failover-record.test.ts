@@ -19,13 +19,25 @@ const RECORD = {
   to: { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude" },
 } as const;
 
-function nativeEntry(data: unknown = RECORD): Record<string, unknown> {
+const NATIVE_TIMESTAMP = "2026-08-19T15:40:42.300Z";
+
+function nativeEntry(
+  data: unknown = RECORD,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     type: "custom",
     id: "entry-fallback-1",
+    parentId: "entry-before-fallback",
+    timestamp: NATIVE_TIMESTAMP,
     customType: PI_MODEL_FAILOVER_ENTRY_TYPE,
     data,
+    ...overrides,
   };
+}
+
+function recordWithTransitionId(transitionId: string) {
+  return { ...RECORD, transitionId };
 }
 
 function transition(phase: "applied" | "recovery-confirmed") {
@@ -121,12 +133,54 @@ describe("durable model-failover record", () => {
     delete nativeMissingId.id;
     expect(parsePiModelFailoverNativeEntry(nativeMissingId).isErr()).toBe(true);
 
+    const nativeMissingParent = nativeEntry();
+    delete nativeMissingParent.parentId;
+    expect(parsePiModelFailoverNativeEntry(nativeMissingParent).isErr()).toBe(
+      true,
+    );
+
+    const nativeMissingTimestamp = nativeEntry();
+    delete nativeMissingTimestamp.timestamp;
+    expect(
+      parsePiModelFailoverNativeEntry(nativeMissingTimestamp).isErr(),
+    ).toBe(true);
+
+    const nativeInvalidTimestamp = nativeEntry(undefined, {
+      timestamp: "not-a-finite-date",
+    });
+    expect(
+      parsePiModelFailoverNativeEntry(nativeInvalidTimestamp).isErr(),
+    ).toBe(true);
+
     const nativeAccessor = nativeEntry();
     Object.defineProperty(nativeAccessor, "type", {
       enumerable: true,
       get: () => "custom",
     });
     expect(parsePiModelFailoverNativeEntry(nativeAccessor).isErr()).toBe(true);
+
+    const nativeDataAccessor = nativeEntry();
+    Object.defineProperty(nativeDataAccessor, "data", {
+      enumerable: true,
+      get: () => RECORD,
+    });
+    expect(parsePiModelFailoverNativeEntry(nativeDataAccessor).isErr()).toBe(
+      true,
+    );
+
+    const nativeOversizedId = nativeEntry(undefined, {
+      id: "x".repeat(257),
+    });
+    expect(parsePiModelFailoverNativeEntry(nativeOversizedId).isErr()).toBe(
+      true,
+    );
+
+    const nativeOversizedTimestamp = nativeEntry(undefined, {
+      timestamp: "2".repeat(129),
+    });
+    expect(
+      parsePiModelFailoverNativeEntry(nativeOversizedTimestamp).isErr(),
+    ).toBe(true);
 
     const unrelated = parsePiModelFailoverNativeEntry({
       type: "custom",
@@ -138,15 +192,24 @@ describe("durable model-failover record", () => {
 
   it("appends only after context repair and deduplicates by transition id", () => {
     const entries: unknown[] = [];
-    const makePort = () => ({
-      getEntries: () => entries,
+    const makePort = (history = entries) => ({
+      getEntries: () => history,
       appendEntry: (type: string, data: unknown) => {
-        entries.push({
-          type: "custom",
-          id: `entry-${entries.length + 1}`,
-          customType: type,
-          data,
-        });
+        const previous = history.at(-1);
+        const parentId =
+          typeof previous === "object" &&
+          previous !== null &&
+          "id" in previous &&
+          typeof previous.id === "string"
+            ? previous.id
+            : null;
+        history.push(
+          nativeEntry(data, {
+            id: `entry-${history.length + 1}`,
+            parentId,
+            customType: type,
+          }),
+        );
       },
     });
 
@@ -172,5 +235,85 @@ describe("durable model-failover record", () => {
     expect(afterReload.isOk()).toBe(true);
     expect(afterReload._unsafeUnwrap().status).toBe("duplicate");
     expect(entries).toHaveLength(1);
+  });
+
+  it("keeps distinct transitions in order across a serialized restart", () => {
+    const entries: unknown[] = [];
+    const makePort = (history: unknown[]) => ({
+      getEntries: () => history,
+      appendEntry: (type: string, data: unknown) => {
+        const previous = history.at(-1);
+        const parentId =
+          typeof previous === "object" &&
+          previous !== null &&
+          "id" in previous &&
+          typeof previous.id === "string"
+            ? previous.id
+            : null;
+        history.push(
+          nativeEntry(data, {
+            id: `entry-${history.length + 1}`,
+            parentId,
+            customType: type,
+          }),
+        );
+      },
+    });
+    const transitionIds = (history: readonly unknown[]) =>
+      history.flatMap((entry) => {
+        const parsed = parsePiModelFailoverNativeEntry(entry);
+        return parsed.isOk() && parsed.value !== undefined
+          ? [parsed.value.transitionId]
+          : [];
+      });
+
+    const first = makePort(entries);
+    expect(
+      appendPiModelFailoverRecord(
+        first,
+        recordWithTransitionId(TRANSITION_ID),
+        true,
+      )._unsafeUnwrap().status,
+    ).toBe("appended");
+    expect(
+      appendPiModelFailoverRecord(
+        first,
+        recordWithTransitionId("223e4567-e89b-42d3-a456-426614174000"),
+        true,
+      )._unsafeUnwrap().status,
+    ).toBe("appended");
+    expect(transitionIds(entries)).toEqual([
+      TRANSITION_ID,
+      "223e4567-e89b-42d3-a456-426614174000",
+    ]);
+
+    const restoredEntries = JSON.parse(JSON.stringify(entries)) as unknown[];
+    const restored = makePort(restoredEntries);
+    expect(
+      appendPiModelFailoverRecord(
+        restored,
+        recordWithTransitionId(TRANSITION_ID),
+        true,
+      )._unsafeUnwrap().status,
+    ).toBe("duplicate");
+    expect(
+      appendPiModelFailoverRecord(
+        restored,
+        recordWithTransitionId("223e4567-e89b-42d3-a456-426614174000"),
+        true,
+      )._unsafeUnwrap().status,
+    ).toBe("duplicate");
+    expect(
+      appendPiModelFailoverRecord(
+        restored,
+        recordWithTransitionId("323e4567-e89b-42d3-a456-426614174000"),
+        true,
+      )._unsafeUnwrap().status,
+    ).toBe("appended");
+    expect(transitionIds(restoredEntries)).toEqual([
+      TRANSITION_ID,
+      "223e4567-e89b-42d3-a456-426614174000",
+      "323e4567-e89b-42d3-a456-426614174000",
+    ]);
   });
 });

@@ -29,8 +29,24 @@ const RECORD = {
 const NATIVE_ENTRY = {
   type: "custom",
   id: "native-fallback-1",
+  parentId: "native-parent-1",
+  timestamp: "2026-08-19T15:40:42.300Z",
   customType: PI_MODEL_FAILOVER_ENTRY_TYPE,
   data: RECORD,
+};
+
+const SECOND_RECORD = {
+  ...RECORD,
+  transitionId: "223e4567-e89b-42d3-a456-426614174000",
+  to: { provider: "google", id: "gemini-2.5-pro" },
+};
+
+const SECOND_NATIVE_ENTRY = {
+  ...NATIVE_ENTRY,
+  id: "native-fallback-2",
+  parentId: NATIVE_ENTRY.id,
+  timestamp: "2026-08-19T15:40:43.300Z",
+  data: SECOND_RECORD,
 };
 
 function nativeInput(
@@ -54,6 +70,23 @@ describe("model fallback live/replay/search parity", () => {
     const replayEntry = historical._unsafeUnwrap();
     expect(replayEntry).toBeDefined();
 
+    const restarted = mapNativeSessionEntryToOverlay(
+      JSON.parse(JSON.stringify(NATIVE_ENTRY)) as unknown,
+      3,
+    );
+    expect(restarted.isOk()).toBe(true);
+    const restartedEntry = restarted._unsafeUnwrap();
+    expect(restartedEntry).toBeDefined();
+    if (replayEntry === undefined || restartedEntry === undefined) {
+      throw new Error("fallback fixture was not admitted after restart");
+    }
+    expect(restartedEntry).toMatchObject({
+      id: replayEntry.id,
+      kind: replayEntry.kind,
+      text: replayEntry.text,
+      sequence: 3,
+    });
+
     const liveEvent = parsePiChildSessionEvent({
       type: "unknown",
       originalType: PI_MODEL_FAILOVER_ENTRY_TYPE,
@@ -75,6 +108,12 @@ describe("model fallback live/replay/search parity", () => {
       replayNative.input,
       100,
     );
+    const restartNative = nativeInput([restartedEntry]);
+    const restartPane = renderOverlayPiNative(
+      plainPaint(),
+      restartNative.input,
+      100,
+    );
     const liveInput = nativeInput([liveEntry]);
     expect(liveInput.transcript.entries).toHaveLength(1);
     const liveTranscriptEntry = liveInput.transcript.entries[0];
@@ -91,6 +130,7 @@ describe("model fallback live/replay/search parity", () => {
     expect(livePane.plain[0]).toBe("▌ MODEL FALLBACK");
     expect(livePane.plain[1]).toContain("openai/gpt-5.6-sol");
     expect(replayPane.plain).toEqual(livePane.plain);
+    expect(restartPane.plain).toEqual(livePane.plain);
     expect(replayPane.plain.join("\n")).toContain("MODEL FALLBACK");
     expect(replayPane.plain.join("\n")).toContain("native recovery exhausted");
 
@@ -102,6 +142,62 @@ describe("model fallback live/replay/search parity", () => {
         searchIndex,
       ),
     ).toEqual([liveEntry.id]);
+  });
+
+  it("keeps multiple transitions ordered and searchable after restart", () => {
+    const mapEntries = (entries: readonly unknown[]) =>
+      entries.flatMap((entry, index) => {
+        const mapped = mapNativeSessionEntryToOverlay(entry, index);
+        expect(mapped.isOk()).toBe(true);
+        return mapped.isOk() && mapped.value !== undefined
+          ? [mapped.value]
+          : [];
+      });
+
+    const liveEntries = mapEntries([NATIVE_ENTRY, SECOND_NATIVE_ENTRY]);
+    const restartedEntries = mapEntries(
+      JSON.parse(
+        JSON.stringify([NATIVE_ENTRY, SECOND_NATIVE_ENTRY]),
+      ) as unknown[],
+    );
+    expect(liveEntries.map((entry) => entry.text)).toEqual([
+      "model fallback · anthropic/claude-sonnet-4-5",
+      "model fallback · google/gemini-2.5-pro",
+    ]);
+    expect(restartedEntries.map((entry) => entry.text)).toEqual(
+      liveEntries.map((entry) => entry.text),
+    );
+
+    const transcript = transcriptFromOverlayEntries(restartedEntries);
+    const pane = renderOverlayPiNative(
+      plainPaint(),
+      {
+        entries: transcript.entries,
+        childName: "Shuttle",
+        settled: false,
+      },
+      100,
+    );
+    expect(
+      pane.plain.filter((line) => line === "▌ MODEL FALLBACK"),
+    ).toHaveLength(2);
+    expect(
+      matchingEntryIds(
+        restartedEntries.map((entry) => ({ id: entry.id, text: entry.text })),
+        "model fallback",
+      ),
+    ).toEqual(restartedEntries.map((entry) => entry.id));
+
+    const appliedOnly = mapNativeSessionEntryToOverlay(
+      {
+        ...NATIVE_ENTRY,
+        id: "native-applied-only",
+        data: { ...RECORD, phase: "applied" },
+      },
+      2,
+    );
+    expect(appliedOnly.isOk()).toBe(true);
+    expect(appliedOnly._unsafeUnwrap()).toBeUndefined();
   });
 
   it("keeps the hidden marker out of live, replay, search, and restart paths", () => {

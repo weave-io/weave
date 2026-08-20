@@ -18,6 +18,8 @@ export const MODEL_FAILOVER_RECORD_SCHEMA_VERSION = 1 as const;
 export const MAX_MODEL_FAILOVER_RECORD_BYTES = 4 * 1_024;
 /** Maximum code points and UTF-8 bytes of one identity field. */
 export const MAX_MODEL_FAILOVER_FIELD_LENGTH = 256;
+/** Maximum UTF-8 bytes of a native session timestamp. */
+const MAX_NATIVE_SESSION_TIMESTAMP_LENGTH = 128;
 
 export interface PiModelFailoverIdentity {
   readonly provider: string;
@@ -135,17 +137,25 @@ function plainRecord(
   });
 }
 
-function boundedString(value: unknown): string | undefined {
+function boundedString(
+  value: unknown,
+  maxLength = MAX_MODEL_FAILOVER_FIELD_LENGTH,
+): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
   if (value.trim().length === 0) return undefined;
-  if (Array.from(value).length > MAX_MODEL_FAILOVER_FIELD_LENGTH)
-    return undefined;
-  if (
-    new TextEncoder().encode(value).byteLength > MAX_MODEL_FAILOVER_FIELD_LENGTH
-  ) {
-    return undefined;
-  }
+  if (Array.from(value).length > maxLength) return undefined;
+  if (new TextEncoder().encode(value).byteLength > maxLength) return undefined;
   return value;
+}
+
+/**
+ * Pi's public CustomEntry timestamp is an ISO string. Date.parse gives us a
+ * finite-date check without retaining a Date object or trusting host fields.
+ */
+function boundedNativeTimestamp(value: unknown): string | undefined {
+  const timestamp = boundedString(value, MAX_NATIVE_SESSION_TIMESTAMP_LENGTH);
+  if (timestamp === undefined) return undefined;
+  return Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
 }
 
 function parseIdentity(
@@ -264,21 +274,44 @@ export function parsePiModelFailoverNativeEntry(
   }
   if (customType.state !== "data") return ok(undefined);
   if (customType.value !== PI_MODEL_FAILOVER_ENTRY_TYPE) return ok(undefined);
-  return plainRecord(value, ["type", "id", "customType", "data"]).andThen(
-    (entry) => {
-      if (
-        entry.type !== "custom" ||
-        entry.customType !== PI_MODEL_FAILOVER_ENTRY_TYPE
-      ) {
-        return invalid("invalid-field");
-      }
-      if (entry.id === undefined) return invalid("missing-field");
-      if (boundedString(entry.id) === undefined)
-        return invalid("invalid-field");
-      if (entry.data === undefined) return invalid("missing-field");
-      return parsePiModelFailoverRecord(entry.data);
-    },
-  );
+  // Pi 0.84.2's public CustomEntry extends SessionEntryBase. Its serialized
+  // JSONL shape is exactly type, id, parentId, timestamp, customType, data.
+  // `data` is optional for Pi's general API, but mandatory for this entry's
+  // strict fallback payload.
+  return plainRecord(value, [
+    "type",
+    "id",
+    "parentId",
+    "timestamp",
+    "customType",
+    "data",
+  ]).andThen((entry) => {
+    if (
+      entry.type !== "custom" ||
+      entry.customType !== PI_MODEL_FAILOVER_ENTRY_TYPE
+    ) {
+      return invalid("invalid-field");
+    }
+    if (
+      !Object.hasOwn(entry, "id") ||
+      !Object.hasOwn(entry, "parentId") ||
+      !Object.hasOwn(entry, "timestamp") ||
+      !Object.hasOwn(entry, "data")
+    ) {
+      return invalid("missing-field");
+    }
+    if (boundedString(entry.id) === undefined) return invalid("invalid-field");
+    if (
+      entry.parentId !== null &&
+      boundedString(entry.parentId) === undefined
+    ) {
+      return invalid("invalid-field");
+    }
+    if (boundedNativeTimestamp(entry.timestamp) === undefined) {
+      return invalid("invalid-field");
+    }
+    return parsePiModelFailoverRecord(entry.data);
+  });
 }
 
 /** Compatibility spelling for native history readers. */
@@ -355,7 +388,11 @@ export function appendPiModelFailoverRecord(
   if (parsed.isErr()) return err(parsed.error);
   const record = parsed.value;
   const seen = transitionIdSet(port);
-  if (seen.has(record.transitionId)) return ok({ status: "duplicate", record });
+  // A readable native history is authoritative. The WeakMap is only needed
+  // for observer ports that cannot read the host session.
+  if (port.getEntries === undefined && seen.has(record.transitionId)) {
+    return ok({ status: "duplicate", record });
+  }
 
   if (port.getEntries !== undefined) {
     const entries = Result.fromThrowable(
