@@ -83,7 +83,7 @@ The automatic path is restricted to the checked-in `main` topology. The
 manual path must pass the protected authorization job before it can detect or
 update an open release PR.
 
-### `release-publish.yml` (Tasks 25–27)
+### `release-publish.yml` (Tasks 25–27, 35)
 
 | Job | Credential | Environment / gate | Exact `GITHUB_TOKEN` permissions |
 | --- | --- | --- | --- |
@@ -155,7 +155,7 @@ application accepts only the validated docs allowlist and opens a normal PR.
 | Stable resume (`workflow_dispatch`, `channel=stable-resume`) | `route` requires maintainer authorization and the bounded `released_sha`; `recompute` rereads protected `main` authority | Same complete proof chain from the recomputed source; no stale artifact is authority | `release` approval, OIDC publish only when the rollout is enabled, then registry/ref recovery |
 | Incident resolution (`workflow_dispatch`, `channel=incident-resolution`) | `route` requires maintainer authorization; `release-approval` is the exact protected incident boundary | Recompute and proof jobs run before approval; the incident carrier is read only after `release` approval | `publish` is skipped; no OIDC publication; incident completion may proceed through its explicit controller, while normal cleanup remains closed |
 | Next (`workflow_dispatch`, `channel=next`) | `route` requires maintainer authorization and bounded package booleans | Full build, independent attestation, clean consumers, and changed-adapter harness proof | `prerelease` approval, OIDC publish with the `next` tag, registry verification, and create-once prerelease refs |
-| Nightly (`workflow_dispatch`, `channel=nightly`) | `route` is maintainer-authorized and has no approval environment; the workflow remains scheduleless | A `NothingToPublish` plan stops before build and every proof. A non-empty plan uses the complete proof chain | No `release`/`prerelease` environment and no refs cleanup; enabled runs publish with the nightly tag and verify the registry |
+| Nightly (`workflow_dispatch`, `channel=nightly`, or protected `schedule`) | `route` validates the exact nightly event on protected `main` and has no approval environment | A `NothingToPublish` plan stops before build and every proof. A non-empty plan uses the complete proof chain | No `release`/`prerelease` environment and no refs cleanup; enabled runs publish with the nightly tag and verify the registry |
 
 The `publish` job is skipped for disabled or dry-run rollout modes and for
 incident resolution. A nightly empty plan is a typed, successful no-op, not an

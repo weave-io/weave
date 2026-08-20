@@ -45,7 +45,7 @@ All four public packages ship on `stable` (`latest`), `next`, and `nightly`:
 | --- | --- | --- |
 | stable | merged release PR, or `channel: stable-resume` dispatch | `latest` |
 | next | `channel: next` dispatch | `next` |
-| nightly | `channel: nightly` dispatch; scheduled at `17 0 * * *` once activated | `nightly` |
+| nightly | `channel: nightly` dispatch or the exact protected `17 0 * * *` schedule once activated | `nightly` |
 
 The publish job's npm CLI is the sole sanctioned exception to Weave's Bun-only
 runtime rule, because npm >=11.5.1 is required for OIDC trusted publishing.
@@ -60,8 +60,9 @@ OIDC, or publish work. The stage declaration is
 runtime gate is
 [`scripts/release/rollout-gate.ts`](../scripts/release/rollout-gate.ts).
 
-The nightly `17 0 * * *` schedule lives on `release-publish.yml` but stays
-inert until the stage is `ready` and the mode is `enabled`. The freeze and
+The nightly `17 0 * * *` schedule lives on `release-publish.yml` and is
+routed explicitly to the nightly controller. It stays inert until the stage is
+`ready` and the mode is `enabled`. The freeze and
 activation procedure is documented in
 [Release setup and rollout](contributing/release-setup.md).
 

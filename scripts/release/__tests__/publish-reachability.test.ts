@@ -235,15 +235,23 @@ describe("publish reachability boundary", () => {
     expect(assertAttestationWorkflowContract(attestShape).isOk()).toBe(true);
   });
 
-  it("rejects schedule and reusable workflow changes", () => {
+  it("accepts only the exact nightly schedule and rejects reusable workflows", () => {
     const scheduled = parseWorkflowShape(
       TRUSTED_PUBLISH_WORKFLOW,
       trusted.replace(
         "workflow_dispatch:",
-        "workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * *'",
+        "workflow_dispatch:\nschedule:\n  - cron: '17 0 * * *'",
       ),
     )._unsafeUnwrap();
-    expect(assertStableWorkflowGraph(scheduled).isErr()).toBe(true);
+    expect(assertStableWorkflowGraph(scheduled).isOk()).toBe(true);
+    const wrongSchedule = parseWorkflowShape(
+      TRUSTED_PUBLISH_WORKFLOW,
+      trusted.replace(
+        "workflow_dispatch:",
+        "workflow_dispatch:\nschedule:\n  - cron: '0 0 * * *'",
+      ),
+    )._unsafeUnwrap();
+    expect(assertStableWorkflowGraph(wrongSchedule).isErr()).toBe(true);
     const reusable = parseWorkflowShape(
       TRUSTED_PUBLISH_WORKFLOW,
       trusted.replace(
