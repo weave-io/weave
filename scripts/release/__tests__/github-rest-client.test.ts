@@ -1505,3 +1505,170 @@ test("team membership is read-only and fails closed on an unknown member", async
     )._unsafeUnwrap(),
   ).toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// Bounded evidence surfaces the release doctor's Task 14 authority reads on.
+// ---------------------------------------------------------------------------
+
+const RELEASED = "d".repeat(40);
+const CHECK_PATH = `GET /repos/weave-io/weave/commits/${RELEASED}/check-runs?check_name=release-integrity-incident&per_page=100`;
+const PUBLISH_RUNS_PATH = `GET /repos/weave-io/weave/actions/workflows/release-publish.yml/runs?head_sha=${RELEASED}&per_page=100`;
+
+function checkRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 31,
+    name: "release-integrity-incident",
+    status: "completed",
+    conclusion: "success",
+    head_sha: RELEASED,
+    output: { title: "t", summary: "s", text: "{}" },
+    ...overrides,
+  };
+}
+
+test("reads named check runs bound to the requested commit", async () => {
+  const world = client({
+    [CHECK_PATH]: { body: { total_count: 1, check_runs: [checkRun()] } },
+  });
+  const result = await world.client.listNamedCheckRuns(
+    RELEASED,
+    "release-integrity-incident",
+  );
+  expect(result.isOk()).toBe(true);
+  if (result.isOk()) {
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]?.output.text).toBe("{}");
+    expect(result.value[0]?.headSha).toBe(RELEASED);
+  }
+  expect(world.calls.every((call) => call.method === "GET")).toBe(true);
+});
+
+test("refuses a named check run attached to another commit", async () => {
+  const world = client({
+    [CHECK_PATH]: {
+      body: {
+        total_count: 1,
+        check_runs: [checkRun({ head_sha: "e".repeat(40) })],
+      },
+    },
+  });
+  const result = await world.client.listNamedCheckRuns(
+    RELEASED,
+    "release-integrity-incident",
+  );
+  expect(result.isErr()).toBe(true);
+});
+
+test("refuses a malformed named check run and an invalid commit", async () => {
+  const malformed = client({
+    [CHECK_PATH]: {
+      body: { total_count: 1, check_runs: [checkRun({ status: 5 })] },
+    },
+  });
+  expect(
+    (
+      await malformed.client.listNamedCheckRuns(
+        RELEASED,
+        "release-integrity-incident",
+      )
+    ).isErr(),
+  ).toBe(true);
+
+  const oversizedText = client({
+    [CHECK_PATH]: {
+      body: {
+        total_count: 1,
+        check_runs: [
+          checkRun({
+            output: { title: "t", summary: "s", text: "x".repeat(600_000) },
+          }),
+        ],
+      },
+    },
+  });
+  expect(
+    (
+      await oversizedText.client.listNamedCheckRuns(
+        RELEASED,
+        "release-integrity-incident",
+      )
+    ).isErr(),
+  ).toBe(true);
+
+  const bad = client({});
+  expect(
+    (
+      await bad.client.listNamedCheckRuns("nope", "release-integrity-incident")
+    ).isErr(),
+  ).toBe(true);
+  expect((await bad.client.listNamedCheckRuns(RELEASED, "")).isErr()).toBe(
+    true,
+  );
+});
+
+test("reads bounded workflow runs for one head commit", async () => {
+  const world = client({
+    [PUBLISH_RUNS_PATH]: {
+      body: {
+        total_count: 1,
+        workflow_runs: [
+          {
+            id: 11,
+            event: "workflow_dispatch",
+            status: "completed",
+            conclusion: "success",
+            head_sha: RELEASED,
+          },
+        ],
+      },
+    },
+  });
+  const result = await world.client.listWorkflowRunsForHeadSha(
+    ".github/workflows/release-publish.yml",
+    RELEASED,
+  );
+  expect(result.isOk()).toBe(true);
+  if (result.isOk()) expect(result.value[0]?.id).toBe(11);
+});
+
+test("refuses workflow runs from another commit and invalid identities", async () => {
+  const mismatched = client({
+    [PUBLISH_RUNS_PATH]: {
+      body: {
+        total_count: 1,
+        workflow_runs: [
+          {
+            id: 11,
+            event: "schedule",
+            status: "completed",
+            conclusion: "success",
+            head_sha: "e".repeat(40),
+          },
+        ],
+      },
+    },
+  });
+  expect(
+    (
+      await mismatched.client.listWorkflowRunsForHeadSha(
+        ".github/workflows/release-publish.yml",
+        RELEASED,
+      )
+    ).isErr(),
+  ).toBe(true);
+
+  const bad = client({});
+  expect(
+    (
+      await bad.client.listWorkflowRunsForHeadSha(
+        ".github/workflows/release-publish.yml",
+        "nope",
+      )
+    ).isErr(),
+  ).toBe(true);
+  expect(
+    (
+      await bad.client.listWorkflowRunsForHeadSha("../../etc/passwd", RELEASED)
+    ).isErr(),
+  ).toBe(true);
+});
