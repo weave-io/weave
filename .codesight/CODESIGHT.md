@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 358 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
 > **Token savings:** this file is ~39,700 tokens. Without it, AI exploration would cost ~112,400 tokens. **Saves ~72,700 tokens per conversation.**
-> **Last scanned:** 2026-08-20 23:31 — re-run after significant changes
+> **Last scanned:** 2026-08-20 23:45 — re-run after significant changes
 
 ---
 
@@ -1925,12 +1925,12 @@
   - _...14 more_
 - `scripts/pi/child-stream-live-proof-system.ts`
   - function systemFailure: (code) => LiveProofSystemFailure
+  - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
   - function safeProofEnvironment: (source, string>>) => Record<string, string>
   - function createLiveProofSystem: () => LiveProofSystem
   - function workspacePath: (root, name) => string
   - interface LiveProofSystemFailure
-  - interface LiveProofSpawnInput
-  - _...5 more_
+  - _...13 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>

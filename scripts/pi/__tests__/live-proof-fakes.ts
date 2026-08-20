@@ -6,15 +6,16 @@ import {
   type Result,
   ResultAsync,
 } from "neverthrow";
-import type {
-  LiveProofCommandOutput,
-  LiveProofPathKind,
-  LiveProofProcess,
-  LiveProofSpawnInput,
-  LiveProofSystem,
-  LiveProofSystemFailure,
+import {
+  LIVE_PROOF_STREAM_OVERFLOW,
+  type LiveProofCommandOutput,
+  type LiveProofPathKind,
+  type LiveProofProcess,
+  type LiveProofSpawnInput,
+  type LiveProofSystem,
+  type LiveProofSystemFailure,
+  systemFailure,
 } from "../child-stream-live-proof-system.js";
-import { systemFailure } from "../child-stream-live-proof-system.js";
 
 export interface FakeProcessScript {
   /** Lines the process emits on stdout, in order. */
@@ -30,6 +31,9 @@ export interface FakeProcessScript {
   readonly lateDelayMs?: number;
   /** Reject one late iterator step after the deadline. */
   readonly lateReject?: boolean;
+  /** Reject the next iterator step with the closed stream-overflow signal. */
+  readonly overflow?: boolean;
+  readonly overflowDelayMs?: number;
   /** Make iterator return fail or remain pending. */
   readonly iteratorReturnFails?: boolean;
   readonly iteratorReturnHangs?: boolean;
@@ -165,6 +169,19 @@ export function createFakeSystem(options: FakeSystemOptions = {}): FakeSystem {
               return new Promise((resolveHang) =>
                 setTimeout(() => resolveHang({ done: false, value: "" }), 50),
               );
+            }
+            if (script.overflow === true && !silenceStarted) {
+              silenceStarted = true;
+              const rejectOverflow = (): Promise<IteratorResult<string>> =>
+                Promise.reject(LIVE_PROOF_STREAM_OVERFLOW);
+              return script.overflowDelayMs === undefined
+                ? rejectOverflow()
+                : new Promise<IteratorResult<string>>((_, rejectLate) =>
+                    setTimeout(
+                      () => rejectLate(LIVE_PROOF_STREAM_OVERFLOW),
+                      script.overflowDelayMs,
+                    ),
+                  );
             }
             if (
               (script.neverYields === true ||

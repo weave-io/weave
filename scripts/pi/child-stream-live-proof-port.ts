@@ -30,6 +30,7 @@ import type {
 } from "./child-stream-live-proof-runner.js";
 import {
   createLiveProofSystem,
+  isLiveProofStreamOverflow,
   type LiveProofProcess,
   type LiveProofSystem,
   type LiveProofTimer,
@@ -194,6 +195,7 @@ type StreamStep =
   | { readonly kind: "done" }
   | { readonly kind: "timeout" }
   | { readonly kind: "closed" }
+  | { readonly kind: "overflow" }
   | { readonly kind: "error" };
 
 interface StreamSession {
@@ -497,18 +499,26 @@ export function createLiveProofPort(
 
       const next = Result.fromThrowable(
         () => session.iterator.next(),
-        () => undefined,
+        (cause: unknown) => cause,
       )();
       if (next.isErr()) {
-        finish({ kind: "error" });
+        finish(
+          isLiveProofStreamOverflow(next.error)
+            ? { kind: "overflow" }
+            : { kind: "error" },
+        );
         return;
       }
       const observed = Result.fromThrowable(
         () => Promise.resolve(next.value),
-        () => undefined,
+        (cause: unknown) => cause,
       )();
       if (observed.isErr()) {
-        finish({ kind: "error" });
+        finish(
+          isLiveProofStreamOverflow(observed.error)
+            ? { kind: "overflow" }
+            : { kind: "error" },
+        );
         return;
       }
       observed.value.then(
@@ -528,7 +538,12 @@ export function createLiveProofPort(
           )();
           finish(normalized.isOk() ? normalized.value : { kind: "error" });
         },
-        () => finish({ kind: "error" }),
+        (reason: unknown) =>
+          finish(
+            isLiveProofStreamOverflow(reason)
+              ? { kind: "overflow" }
+              : { kind: "error" },
+          ),
       );
     });
   };
@@ -602,6 +617,10 @@ export function createLiveProofPort(
           await timeoutOwnedStream(parent, session);
           return err(portFailure("timeout"));
         }
+        if (step.kind === "overflow") {
+          await timeoutOwnedStream(parent, session);
+          return err(portFailure("overflow"));
+        }
         if (step.kind === "closed" || step.kind === "error") {
           return err(portFailure("fresh-parent-failed"));
         }
@@ -653,6 +672,10 @@ export function createLiveProofPort(
         if (step.kind === "timeout") {
           await timeoutOwnedStream(child, session);
           return err(portFailure("timeout"));
+        }
+        if (step.kind === "overflow") {
+          await timeoutOwnedStream(child, session);
+          return err(portFailure("overflow"));
         }
         // A broken or cancelled stream is not a deadline: it must not claim
         // the child failed to settle within its budget.

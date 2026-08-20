@@ -96,6 +96,24 @@ export interface LiveProofSystem {
 
 const MAX_GUARDED_BYTES = 1024 * 1024;
 
+/** Hard bounds for process output retained by the live-proof reader. */
+export const MAX_LIVE_PROOF_LINE_BYTES = 64 * 1024;
+export const MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES = 64 * 1024;
+export const MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM = 256;
+export const MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM = 512 * 1024;
+export const MAX_LIVE_PROOF_TOTAL_QUEUED_LINES =
+  MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM * 2;
+export const MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES = 1024 * 1024;
+
+/** The only stream failure that is allowed to cross the process boundary. */
+export const LIVE_PROOF_STREAM_OVERFLOW = Symbol("live-proof-stream-overflow");
+
+export function isLiveProofStreamOverflow(
+  value: unknown,
+): value is typeof LIVE_PROOF_STREAM_OVERFLOW {
+  return value === LIVE_PROOF_STREAM_OVERFLOW;
+}
+
 /** Drop credential-shaped variables before any spawned proof process. */
 export function safeProofEnvironment(
   source: Readonly<Record<string, string>>,
@@ -133,10 +151,39 @@ function readProcessLines(
     (stream): stream is ProcessByteStream =>
       stream !== undefined && typeof stream !== "number",
   );
-  const queue: string[] = [];
-  const readers: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>[] = [];
+  type Reader = ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
+  interface OutputStreamState {
+    readonly stream: ProcessByteStream;
+    readonly lineBuffer: Uint8Array;
+    reader?: Reader;
+    cancelRequested: boolean;
+    lineBytes: number;
+    queuedLines: number;
+    queuedBytes: number;
+  }
+  interface PendingLine {
+    readonly value: string;
+    readonly bytes: number;
+    readonly stream: OutputStreamState;
+  }
+
+  const states: OutputStreamState[] = streams.map((stream) => ({
+    stream,
+    // Keep raw bytes until a complete line arrives. This makes a split UTF-8
+    // sequence bounded by the same byte budget as every other line.
+    lineBuffer: new Uint8Array(MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES),
+    cancelRequested: false,
+    lineBytes: 0,
+    queuedLines: 0,
+    queuedBytes: 0,
+  }));
+  const queue: PendingLine[] = [];
+  const encoder = new TextEncoder();
+  let totalQueuedLines = 0;
+  let totalQueuedBytes = 0;
   let closed = false;
-  let open = streams.length;
+  let overflowed = false;
+  let open = states.length;
   let wake: (() => void) | undefined;
 
   const notify = (): void => {
@@ -145,9 +192,104 @@ function readProcessLines(
     pending?.();
   };
 
-  const pump = async (stream: ProcessByteStream): Promise<void> => {
+  const clearQueue = (): void => {
+    queue.length = 0;
+    totalQueuedLines = 0;
+    totalQueuedBytes = 0;
+    for (const state of states) {
+      state.queuedLines = 0;
+      state.queuedBytes = 0;
+    }
+  };
+
+  const cancelReader = (state: OutputStreamState): void => {
+    const reader = state.reader;
+    if (reader === undefined || state.cancelRequested) return;
+    state.cancelRequested = true;
+    const cancelled = Result.fromThrowable(
+      () => reader.cancel(),
+      () => undefined,
+    )();
+    if (cancelled.isOk()) {
+      // Cancellation is best effort, but its rejection must always be
+      // observed after an overflow or an explicit iterator close.
+      void Promise.resolve(cancelled.value).catch(() => undefined);
+    }
+  };
+
+  const signalOverflow = (): void => {
+    if (overflowed) return;
+    overflowed = true;
+    closed = true;
+    clearQueue();
+    for (const state of states) cancelReader(state);
+    notify();
+  };
+
+  const enqueue = (state: OutputStreamState, value: string): boolean => {
+    const bytes = encoder.encode(value).byteLength;
+    if (
+      bytes > MAX_LIVE_PROOF_LINE_BYTES ||
+      state.queuedLines >= MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM ||
+      state.queuedBytes > MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM - bytes ||
+      totalQueuedLines >= MAX_LIVE_PROOF_TOTAL_QUEUED_LINES ||
+      totalQueuedBytes > MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES - bytes
+    ) {
+      signalOverflow();
+      return false;
+    }
+    queue.push({ value, bytes, stream: state });
+    state.queuedLines += 1;
+    state.queuedBytes += bytes;
+    totalQueuedLines += 1;
+    totalQueuedBytes += bytes;
+    return true;
+  };
+
+  const finishLine = (state: OutputStreamState): boolean => {
+    let contentBytes = state.lineBytes;
+    if (contentBytes > 0 && state.lineBuffer[contentBytes - 1] === 0x0d) {
+      contentBytes -= 1;
+    }
+    const decoded = Result.fromThrowable(
+      () =>
+        new TextDecoder().decode(state.lineBuffer.subarray(0, contentBytes)),
+      () => undefined,
+    )();
+    state.lineBytes = 0;
+    if (decoded.isErr()) {
+      signalOverflow();
+      return false;
+    }
+    return enqueue(state, decoded.value);
+  };
+
+  const consumeChunk = (
+    state: OutputStreamState,
+    chunk: Uint8Array<ArrayBuffer>,
+  ): void => {
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      if (closed) return;
+      const byte = chunk[index];
+      if (byte === 0x0a) {
+        if (!finishLine(state)) return;
+        continue;
+      }
+      if (
+        state.lineBytes >= MAX_LIVE_PROOF_LINE_BYTES ||
+        state.lineBytes >= MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
+      ) {
+        signalOverflow();
+        return;
+      }
+      state.lineBuffer[state.lineBytes] = byte ?? 0;
+      state.lineBytes += 1;
+    }
+  };
+
+  const pump = async (state: OutputStreamState): Promise<void> => {
     const acquired = Result.fromThrowable(
-      () => stream.getReader(),
+      () => state.stream.getReader(),
       () => undefined,
     )();
     if (acquired.isErr()) {
@@ -156,21 +298,13 @@ function readProcessLines(
       return;
     }
     const reader = acquired.value;
-    readers.push(reader);
-    // Each stream decodes into its own buffer so concurrent stdout and stderr
-    // chunks cannot interleave inside one partial line.
-    const decoder = new TextDecoder();
-    let buffer = "";
+    state.reader = reader;
+    if (closed) cancelReader(state);
     try {
       while (!closed) {
         const chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
-        const parts = buffer.split("\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          queue.push(part.endsWith("\r") ? part.slice(0, -1) : part);
-        }
+        if (chunk.done || closed) break;
+        consumeChunk(state, chunk.value);
         notify();
       }
     } finally {
@@ -178,26 +312,41 @@ function readProcessLines(
         () => reader.releaseLock(),
         () => undefined,
       )();
+      state.reader = undefined;
       open -= 1;
       notify();
     }
   };
-  for (const stream of streams) {
-    // A reader can reject after the caller has timed out and returned. Keep
+
+  for (const state of states) {
+    // A reader can reject after the caller has timed out or overflowed. Keep
     // that late host failure inside this closed stream boundary.
-    void pump(stream).catch(() => undefined);
+    void pump(state).catch(() => undefined);
   }
 
+  const removeQueuedLine = (line: PendingLine): void => {
+    line.stream.queuedLines -= 1;
+    line.stream.queuedBytes -= line.bytes;
+    totalQueuedLines -= 1;
+    totalQueuedBytes -= line.bytes;
+  };
+
   async function* iterate(): AsyncGenerator<string, void, undefined> {
-    while (!closed) {
+    while (true) {
       const next = queue.shift();
       if (next !== undefined) {
-        yield next;
+        removeQueuedLine(next);
+        yield next.value;
         continue;
       }
-      if (open <= 0) return;
+      if (overflowed) throw LIVE_PROOF_STREAM_OVERFLOW;
+      if (closed || open <= 0) return;
       await new Promise<void>((resolveWake) => {
         wake = resolveWake;
+        if (closed || overflowed || queue.length > 0 || open <= 0) {
+          wake = undefined;
+          resolveWake();
+        }
       });
     }
   }
@@ -206,13 +355,8 @@ function readProcessLines(
     inner: AsyncGenerator<string, void, undefined>,
   ): Promise<IteratorResult<string, void>> => {
     closed = true;
-    for (const reader of readers) {
-      const cancelled = Result.fromThrowable(
-        () => reader.cancel(),
-        () => undefined,
-      )();
-      if (cancelled.isOk()) void cancelled.value.catch(() => undefined);
-    }
+    clearQueue();
+    for (const state of states) cancelReader(state);
     notify();
     return inner.return(undefined);
   };

@@ -299,6 +299,27 @@ describe("createLiveProofPort", () => {
     expect(report.failures).toContain("fresh-parent-failed");
   });
 
+  it("fails closed on parent output overflow without exposing output", async () => {
+    const forbidden = "LIVE-PROOF-FLOOD-content-derived-secret";
+    const created = port({
+      scripts: [{ lines: [forbidden], overflow: true }],
+    });
+
+    const report = (
+      await runLiveProof({ args, port: created.port })
+    )._unsafeUnwrap();
+    const serialized = JSON.stringify(report);
+
+    expect(report.failures).toContain("overflow");
+    expect(report.failures).toContain("fresh-parent-failed");
+    expect(serialized).not.toContain(forbidden);
+    expect(serialized).not.toContain("Error");
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    expect(created.fake.timersCreated).toBe(created.fake.timersDisposed);
+  });
+
   it("bounds a parent iterator that never yields and terminates it once", async () => {
     const created = port({
       scripts: [{ lines: [], neverYields: true }],
@@ -417,6 +438,98 @@ describe("createLiveProofPort", () => {
     expect(created.fake.spawns[0]?.iteratorReturns).toBe(1);
     expect(created.fake.activeTimers).toBe(0);
   });
+
+  it("overflows a child stream, cancels it, and continues bounded cleanup", async () => {
+    const created = port({
+      scripts: [
+        { lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })] },
+        { lines: [], overflow: true },
+      ],
+    });
+    await created.port.readCurrentIdentity({
+      pi: args.pi,
+      requireCurrentBuild: true,
+    });
+    const parent = (
+      await created.port.launchFreshParent({
+        pi: args.pi,
+        requireFreshParent: true,
+        requireCurrentBuild: true,
+        noScreenCapture: true,
+      })
+    )._unsafeUnwrap();
+    const child = (
+      await created.port.delegateDeterministicChild(
+        parent.parent,
+        LIVE_PROOF_DETERMINISTIC_CHILD_REQUEST,
+      )
+    )._unsafeUnwrap();
+    await created.port.selectLiveInspector(parent.parent, child);
+
+    const result = await created.port.readSettlement(parent.parent, child);
+    const cleanup = await created.port.cleanupRuntime({
+      parent: parent.parent,
+      child,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("overflow");
+    expect(cleanup.isOk()).toBe(true);
+    expect(created.fake.spawns[0]?.terminations).toBe(1);
+    expect(created.fake.spawns[1]?.terminations).toBe(1);
+    expect(created.fake.spawns[1]?.iteratorReturns).toBe(1);
+    expect(created.fake.activeTimers).toBe(0);
+    expect(created.fake.timersCreated).toBe(created.fake.timersDisposed);
+  });
+
+  it("continues cleanup when overflow termination fails or hangs", async () => {
+    for (const script of [
+      { lines: [], overflow: true, terminateFails: true },
+      { lines: [], overflow: true, terminateHangs: true },
+    ]) {
+      const created = port({
+        scripts: [
+          {
+            lines: [proofLine({ processStartMs: 5_000, loadTimeMs: 5_100 })],
+          },
+          script,
+        ],
+      });
+      await created.port.readCurrentIdentity({
+        pi: args.pi,
+        requireCurrentBuild: true,
+      });
+      const parent = (
+        await created.port.launchFreshParent({
+          pi: args.pi,
+          requireFreshParent: true,
+          requireCurrentBuild: true,
+          noScreenCapture: true,
+        })
+      )._unsafeUnwrap();
+      const child = (
+        await created.port.delegateDeterministicChild(
+          parent.parent,
+          LIVE_PROOF_DETERMINISTIC_CHILD_REQUEST,
+        )
+      )._unsafeUnwrap();
+      await created.port.selectLiveInspector(parent.parent, child);
+
+      const result = await created.port.readSettlement(parent.parent, child);
+      const cleanup = await created.port.cleanupRuntime({
+        parent: parent.parent,
+        child,
+      });
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().code).toBe("overflow");
+      expect(cleanup.isErr()).toBe(true);
+      expect(created.fake.spawns[1]?.terminations).toBe(1);
+      expect(created.fake.spawns[1]?.iteratorReturns).toBe(1);
+      expect(created.fake.activeTimers).toBe(0);
+      expect(created.fake.timersCreated).toBe(created.fake.timersDisposed);
+    }
+  }, 10_000);
 
   it("fails a child with a closed timeout after one line and silence", async () => {
     const created = port({

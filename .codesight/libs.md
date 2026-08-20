@@ -1914,12 +1914,12 @@
   - _...14 more_
 - `scripts/pi/child-stream-live-proof-system.ts`
   - function systemFailure: (code) => LiveProofSystemFailure
+  - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
   - function safeProofEnvironment: (source, string>>) => Record<string, string>
   - function createLiveProofSystem: () => LiveProofSystem
   - function workspacePath: (root, name) => string
   - interface LiveProofSystemFailure
-  - interface LiveProofSpawnInput
-  - _...5 more_
+  - _...13 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
