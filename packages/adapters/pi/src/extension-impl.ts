@@ -1978,6 +1978,31 @@ async function activateChildModeIfApplicable(
     return true;
   }
   state.childId = outcome.value.childId;
+
+  // Runtime model fallback is optional. Prove the complete public-surface
+  // contract locally in this child before any bootstrap/model intent can arm a
+  // coordinator. This deliberately does not participate in required startup
+  // readiness: an absent or unproven feature keeps the child on its existing
+  // legacy settlement path.
+  const childHostSurface = (
+    await safeReadHostSurfaceReport(
+      deps.hostSurfaceReader ?? new DefaultPiHostSurfaceReader(),
+      {
+        api: pi,
+        ui: ctx.ui,
+        session: ctx,
+        rootExports: PiPublicExports as unknown as Readonly<
+          Record<string, unknown>
+        >,
+      },
+    )
+  ).match(
+    (report) => report,
+    () => emptyHostSurfaceReport(),
+  );
+  const childRuntimeModelFallbackEnabled =
+    isRuntimeModelFallbackEnabled(childHostSurface);
+
   const promptChunks = new PromptChunkAssembler();
   const reportedPromptTransfers = new Set<string>();
   const reportSettlement = (
@@ -2219,7 +2244,11 @@ async function activateChildModeIfApplicable(
   const ensureChildFailoverCoordinator = ():
     | PiModelFailoverCoordinator
     | undefined => {
-    if (!state.bootstrapApplied || state.modelIntent.length === 0) {
+    if (
+      !childRuntimeModelFallbackEnabled ||
+      !state.bootstrapApplied ||
+      state.modelIntent.length === 0
+    ) {
       return undefined;
     }
     const generation = state.bootstrapGeneration;
@@ -2372,10 +2401,14 @@ async function activateChildModeIfApplicable(
     ) {
       return false;
     }
-    // An unclassified error with no provider evidence is left to the genuine
-    // structural compaction gate. Known provider classes enter Weave fallback
-    // immediately; this preserves the old local-abort compaction contract.
-    return childPendingFailure.failureClass !== "unknown_provider_failure";
+    // Keep the child in parity with primary: one bounded unknown-provider
+    // advance is valid in each prompt epoch. The coordinator consumes that
+    // allowance and fail-closes any later unknown without revisiting a
+    // candidate.
+    return isPiFailureAdvanceEligible(
+      childPendingFailure.failureClass,
+      snapshot.unknownAdvancesUsed,
+    );
   };
 
   const routeChildFailoverSettlement = (): boolean => {

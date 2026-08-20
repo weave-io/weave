@@ -24,6 +24,10 @@ import {
   createPiExtension,
   type PiExtensionDeps,
 } from "../extension-impl.js";
+import {
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceReader,
+} from "../host-inventory.js";
 import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
 import {
   serializeCompletionCandidate,
@@ -324,6 +328,24 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
       getAvailable: () => [],
     },
     ...overrides,
+  };
+}
+
+function runtimeModelFallbackSurfaceReader(
+  enabled: boolean,
+): PiHostSurfaceReader {
+  return {
+    read: () =>
+      okAsync(
+        PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+          surfaceId,
+          status:
+            surfaceId === "runtime-model-fallback" && !enabled
+              ? ("unavailable" as const)
+              : ("native" as const),
+          details: "test-controlled",
+        })),
+      ),
   };
 }
 
@@ -906,6 +928,246 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
     expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
       1,
+    );
+  });
+
+  it.each([
+    {
+      label: "delegated",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: false,
+    },
+    {
+      label: "nested",
+      context: { parentAgentName: "shuttle", parentDepth: 1 },
+      directStep: false,
+    },
+    {
+      label: "direct-step",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: true,
+    },
+  ] as const)("allows one unknown fallback advance in %s, then fails closed on the second", async ({
+    label,
+    context,
+    directStep,
+  }) => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const lastFallback: PiModelInfo = {
+      provider: "fallback",
+      id: "third",
+      name: "Third",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: {
+        getAvailable: () => [origin, fallback, lastFallback],
+      },
+    });
+    const { host, output, secretBytes } = await buildChildExtension(
+      recoveryCtx,
+      { hostSurfaceReader: runtimeModelFallbackSurfaceReader(true) },
+    );
+    const modeFields = directStep
+      ? {
+          mode: "direct-step" as const,
+          workflowInstanceId: "workflow-1",
+          leaseId: "lease-1",
+          stepName: "review",
+          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        }
+      : { mode: "ordinary" as const };
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        ...modeFields,
+        models: ["origin/first", "fallback/second", "fallback/third"],
+        context: { ...context, cwd: "/project" },
+      }),
+      recoveryCtx,
+    );
+
+    const failedMessage = (id: string) =>
+      ({
+        role: "assistant",
+        id,
+        stopReason: "error",
+        error: { message: `${label}-opaque-provider-failure` },
+        content: [{ type: "text", text: `${label}-private-failed-output` }],
+      }) as const;
+    const firstFailedMessage = failedMessage(`${label}-unknown-first`);
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: firstFailedMessage },
+      recoveryCtx,
+    );
+    const firstSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    await waitFor(() => host.setModelCalls.length === 2);
+    expect(host.setModelCalls).toEqual([origin, fallback]);
+    await host.fire(
+      "model_select",
+      { type: "model_select", model: fallback },
+      recoveryCtx,
+    );
+    await firstSettlement;
+    await waitFor(() => host.sentMessages.length === 1);
+    const marker = host.sentMessages[0];
+    expect(marker?.customType).toBe("weave.model-fallback.recovery-marker");
+    if (marker === undefined) throw new Error("fallback marker is missing");
+
+    await host.fire(
+      "message_start",
+      { type: "message_start", message: marker },
+      recoveryCtx,
+    );
+    const repaired = await host.fire(
+      "context",
+      [firstFailedMessage, marker, { role: "user", content: "queued" }],
+      recoveryCtx,
+    );
+    expect(repaired).toEqual([{ role: "user", content: "queued" }]);
+    await host.fire("turn_start", { type: "turn_start" }, recoveryCtx);
+
+    const secondFailedMessage = failedMessage(`${label}-unknown-second`);
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: secondFailedMessage },
+      recoveryCtx,
+    );
+    const settledLine = waitForOutputLine(
+      output,
+      (line) => line.kind === "settled",
+    );
+    const secondSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    const settled = await settledLine;
+    await secondSettlement;
+
+    // The first unknown consumed exactly one candidate. The second unknown
+    // is terminal; it cannot wrap to the origin or advance to the third model.
+    expect(host.setModelCalls).toEqual([origin, fallback]);
+    expect(host.sentMessages).toHaveLength(1);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+    expect((settled.body as Record<string, unknown>).outcome).toBe("failed");
+    const outputText = JSON.stringify(output.lines);
+    expect(outputText).not.toContain(`${label}-opaque-provider-failure`);
+    expect(outputText).not.toContain(`${label}-private-failed-output`);
+  });
+
+  it.each([
+    {
+      label: "delegated",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: false,
+    },
+    {
+      label: "nested",
+      context: { parentAgentName: "shuttle", parentDepth: 1 },
+      directStep: false,
+    },
+    {
+      label: "direct-step",
+      context: { parentAgentName: "loom", parentDepth: 0 },
+      directStep: true,
+    },
+  ] as const)("keeps %s child startup ready and uses legacy settlement when fallback is unproven", async ({
+    label,
+    context,
+    directStep,
+  }) => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+    });
+    const { host, output, secretBytes, timers } = await buildChildExtension(
+      recoveryCtx,
+      { hostSurfaceReader: runtimeModelFallbackSurfaceReader(false) },
+    );
+    const modeFields = directStep
+      ? {
+          mode: "direct-step" as const,
+          workflowInstanceId: "workflow-1",
+          leaseId: "lease-1",
+          stepName: "review",
+          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        }
+      : { mode: "ordinary" as const };
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        ...modeFields,
+        models: ["origin/first", "fallback/second"],
+        context: { ...context, cwd: "/project" },
+      }),
+      recoveryCtx,
+    );
+    await waitForMicrotasks(() =>
+      output.lines.some((line) => line.kind === "bootstrap-ack"),
+    );
+
+    const failedMessage = {
+      role: "assistant",
+      id: `unproven-${label}`,
+      stopReason: "error",
+      error: { message: "unrecognized provider failure" },
+      content: [{ type: "text", text: "unproven-fallback-output" }],
+    } as const;
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: failedMessage },
+      recoveryCtx,
+    );
+    await host.fire("agent_settled", {}, recoveryCtx);
+    timers.fireAll();
+    const settledLine = waitForOutputLine(
+      output,
+      (line) => line.kind === "settled",
+    );
+    const settled = await settledLine;
+    const settledLines = output.lines.filter((line) => line.kind === "settled");
+
+    // Bootstrap model activation is the only setModel call. No optional
+    // fallback artifact may cross the legacy path.
+    expect(host.setModelCalls).toEqual([origin]);
+    expect(host.sentMessages).toHaveLength(0);
+    expect(
+      output.lines.filter((line) => line.kind === "model-transition"),
+    ).toHaveLength(0);
+    expect(settledLines).toHaveLength(1);
+    expect((settled.body as Record<string, unknown>).outcome).toBe("failed");
+    expect(JSON.stringify(output.lines)).not.toContain(
+      "unrecognized provider failure",
+    );
+    expect(JSON.stringify(output.lines)).not.toContain(
+      "unproven-fallback-output",
     );
   });
 
