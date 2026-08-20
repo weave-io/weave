@@ -8,13 +8,14 @@ import {
 import { DOCS_AUDIT_LIMITS } from "../policy.js";
 import {
   brokenLinkTree,
+  compatibilityDocsTree,
   inventoryFailureTree,
   passingDocsTree,
   sidebarDriftTree,
 } from "./fixtures/deterministic-trees.js";
 
 describe("deterministic docs checker", () => {
-  test("passes a complete docs tree fixture", () => {
+  test("passes a complete docs tree fixture, including the root runbook link", () => {
     const result = evaluateDeterministicDocsTree(passingDocsTree());
     expect(result.passed).toBe(true);
     expect(result.issues).toEqual([]);
@@ -29,12 +30,27 @@ describe("deterministic docs checker", () => {
     );
   });
 
-  test("fails sidebar and search drift", () => {
+  test("allows compatibility pages excluded by the Astro navigation contract", () => {
+    const result = evaluateDeterministicDocsTree(compatibilityDocsTree());
+    expect(result.passed).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  test("fails a public page missing sidebar and search coverage", () => {
     const result = evaluateDeterministicDocsTree(sidebarDriftTree());
     expect(result.passed).toBe(false);
-    const kinds = new Set(result.issues.map((issue) => issue.kind));
-    expect(kinds.has("sidebar-missing-page")).toBe(true);
-    expect(kinds.has("search-missing-page")).toBe(true);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "sidebar-missing-page",
+          detail: "docs/concepts",
+        }),
+        expect.objectContaining({
+          kind: "search-missing-page",
+          detail: "docs/concepts",
+        }),
+      ]),
+    );
   });
 
   test("fails README/tarball inventory gaps", () => {
