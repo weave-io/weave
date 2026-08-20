@@ -1264,12 +1264,7 @@ function liveReasoningLineForCard(
 
   return () => {
     const snapshot = projector.snapshot();
-    // The parent card has no honest glyph for control-only input. Task 5
-    // omits that activity row; the projector itself retains the explicit
-    // unprintable marker for the focused inspector contract.
-    return snapshot.active && !snapshot.unprintable
-      ? snapshot.parentCardLine
-      : "";
+    return snapshot.active ? snapshot.parentCardLine : "";
   };
 }
 

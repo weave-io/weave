@@ -4,6 +4,8 @@ import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { PiDelegationCardFacts } from "../child-card-model.js";
 import {
   createPiLiveReasoningRegistry,
+  PI_LIVE_REASONING_PARENT_PREFIX,
+  PI_LIVE_REASONING_UNPRINTABLE_MARKER,
   PiLiveReasoningProjector,
 } from "../child-live-reasoning.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
@@ -634,6 +636,139 @@ describe("buildDelegationToolRegistration", () => {
     );
     expect(registry.size()).toBe(0);
     expect(registry.retainedBytes()).toBe(0);
+  });
+
+  it("execute: renders control-only reasoning only on the active parent card", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const diagnostics = createChildUiEventDiagnostics();
+    const updates: PiToolResult[] = [];
+    const controlOnly = "\u001b[31m\u0000\u001b[0m";
+    const serializedControlOnly = JSON.stringify(controlOnly);
+    const liveLine = `${PI_LIVE_REASONING_PARENT_PREFIX}${PI_LIVE_REASONING_UNPRINTABLE_MARKER}`;
+    const { settlement, resolveCancelled } = pendingSettlement();
+    let capturedRequest: PiDelegationRequest | undefined;
+    let sourceProjector: PiLiveReasoningProjector | undefined;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        generationId: "generation-control-only-card",
+        diagnostics,
+        liveReasoningRegistry: registry,
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            sourceProjector = new PiLiveReasoningProjector({
+              childId: "child-1",
+              generationId: "generation-control-only-card",
+              parentCardObserver: (update) => {
+                request.onParentCardReasoning?.(update);
+              },
+            });
+            expect(
+              sourceProjector
+                .accept({
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_start",
+                    contentIndex: 0,
+                  },
+                })
+                .isOk(),
+            ).toBe(true);
+            expect(
+              sourceProjector
+                .accept({
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_delta",
+                    contentIndex: 0,
+                    delta: controlOnly,
+                  },
+                })
+                .isOk(),
+            ).toBe(true);
+            return settlement;
+          }),
+      }),
+    );
+
+    const executePromise = registration.execute(
+      "tool-call-control-only",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      (update) => updates.push(update),
+      ctx(),
+    );
+    expect(capturedRequest?.onParentCardReasoning).toBeDefined();
+    const live = updates.at(-1);
+    if (live === undefined)
+      throw new Error("live card update was not published");
+
+    const state: Record<string, unknown> = {};
+    const liveContext = renderContext({
+      toolCallId: "tool-call-control-only",
+      state,
+    });
+    const liveComponent = registration.renderResult?.(
+      live,
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      liveContext,
+    );
+    if (liveComponent === undefined)
+      throw new Error("live card renderer was not registered");
+    const liveOutput = liveComponent.render(120).join("\n");
+    const reasoningRows = liveOutput
+      .split("\n")
+      .filter((line) => line.includes("↪ reasoning"));
+    expect(reasoningRows).toHaveLength(1);
+    expect(reasoningRows[0]).toContain(liveLine);
+
+    // The marker and its control-only source stay out of every parent-facing
+    // and durable surface. Only the renderer reads the process-memory row.
+    const parentContext = updates
+      .flatMap((update) => update.content.map((part) => part.text))
+      .join("\n");
+    const durableState = JSON.stringify(
+      updates.map((update) => update.details ?? null),
+    );
+    expect(parentContext).not.toContain(liveLine);
+    expect(parentContext).not.toContain(controlOnly);
+    expect(durableState).not.toContain(liveLine);
+    expect(durableState).not.toContain(serializedControlOnly);
+    expect(JSON.stringify(capturedRequest?.bootstrap)).not.toContain(liveLine);
+    expect(JSON.stringify(capturedRequest?.bootstrap)).not.toContain(
+      serializedControlOnly,
+    );
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(liveLine);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(
+      serializedControlOnly,
+    );
+
+    sourceProjector?.dispose();
+    resolveCancelled();
+    const settled = await executePromise;
+    const settledOutput = JSON.stringify(settled);
+    expect(settledOutput).not.toContain(liveLine);
+    expect(settledOutput).not.toContain(serializedControlOnly);
+    expect(JSON.stringify(updates)).not.toContain(liveLine);
+    expect(JSON.stringify(updates)).not.toContain(serializedControlOnly);
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+
+    // The same component and a fresh final render both lose the live row; the
+    // released projector cannot replay its last marker.
+    expect(liveComponent.render(120).join("\n")).not.toContain(liveLine);
+    const finalComponent = registration.renderResult?.(
+      settled,
+      { expanded: false, isPartial: false },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({
+        toolCallId: "tool-call-control-only",
+        state,
+        lastComponent: liveComponent,
+      }),
+    );
+    expect(finalComponent?.render(120).join("\n")).not.toContain(liveLine);
   });
 
   it("renderResult: rejects a stale toolCallId instead of reading another row", () => {
