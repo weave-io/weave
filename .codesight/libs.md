@@ -1885,6 +1885,22 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-live-proof-contract.ts`
+  - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
+  - function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
+  - function saturatingIncrement: (value, amount) => number
+  - function serializeLiveProofReport: (input) => Result<string, LiveProofSerializationFailure>
+  - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
+  - interface LiveProofArgumentFailure
+  - _...56 more_
+- `scripts/pi/child-stream-live-proof-runner.ts`
+  - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
+  - interface LiveProofPortFailure
+  - interface LiveProofResourceContext
+  - interface LiveProofCurrentIdentityObservation
+  - interface LiveProofFreshParentLaunch
+  - interface LiveProofDeterministicChildRequest
+  - _...14 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void

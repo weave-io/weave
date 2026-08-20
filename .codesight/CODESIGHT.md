@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 351 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~39,100 tokens. Without it, AI exploration would cost ~110,600 tokens. **Saves ~71,500 tokens per conversation.**
-> **Last scanned:** 2026-08-20 16:10 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 353 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~39,300 tokens. Without it, AI exploration would cost ~111,100 tokens. **Saves ~71,800 tokens per conversation.**
+> **Last scanned:** 2026-08-20 17:01 — re-run after significant changes
 
 ---
 
@@ -1896,6 +1896,22 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-live-proof-contract.ts`
+  - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
+  - function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
+  - function saturatingIncrement: (value, amount) => number
+  - function serializeLiveProofReport: (input) => Result<string, LiveProofSerializationFailure>
+  - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
+  - interface LiveProofArgumentFailure
+  - _...56 more_
+- `scripts/pi/child-stream-live-proof-runner.ts`
+  - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
+  - interface LiveProofPortFailure
+  - interface LiveProofResourceContext
+  - interface LiveProofCurrentIdentityObservation
+  - interface LiveProofFreshParentLaunch
+  - interface LiveProofDeterministicChildRequest
+  - _...14 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
   - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
@@ -2282,7 +2298,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 375 test files found
+> 377 test files found
 
 ---
 
