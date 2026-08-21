@@ -82,12 +82,18 @@ export function unverifiableExtensionLoadIdentity(
   };
 }
 
-function readRuntimeOutputDigests(
+interface ExtensionBuildDiskSnapshot {
+  readonly diskArtifactSha256?: string;
+  readonly diskOutputs: readonly ExtensionBuildOutputDigest[];
+}
+
+/**
+ * Read mutable disk outputs for comparison with the pinned preloader record.
+ * This snapshot is not a loader fact and cannot establish a loaded identity.
+ */
+function readExtensionBuildDiskSnapshot(
   artifactPath: string,
-): ResultAsync<
-  readonly ExtensionBuildOutputDigest[],
-  ExtensionBuildIdentityError
-> {
+): ResultAsync<ExtensionBuildDiskSnapshot, ExtensionBuildIdentityError> {
   let result = okAsync<
     ExtensionBuildOutputDigest[],
     ExtensionBuildIdentityError
@@ -105,41 +111,10 @@ function readRuntimeOutputDigests(
       ]),
     );
   }
-  return result;
-}
-
-/**
- * Capture the exact bytes the extension loader is about to evaluate. The
- * entry and implementation are both recorded, so an unchanged thin loader
- * cannot hide a stale in-memory implementation.
- */
-export function loadExtensionBuildIdentity(
-  artifactPath: unknown,
-): ResultAsync<ExtensionLoadedIdentity, never> {
-  const loadTimeMs = Date.now();
-  if (
-    typeof artifactPath !== "string" ||
-    artifactPath.length === 0 ||
-    !artifactPath.startsWith("/")
-  ) {
-    return okAsync(unverifiableExtensionLoadIdentity("artifact-path-missing"));
-  }
-  return readRuntimeOutputDigests(artifactPath)
-    .map((loadedOutputs) => ({
-      artifactPath,
-      artifactSha256: outputDigestFromList(loadedOutputs, "extension"),
-      loadedOutputs,
-      loadTimeMs,
-      processStartMs: PROCESS_START_MS,
-    }))
-    .orElse(() =>
-      okAsync({
-        artifactPath,
-        loadTimeMs,
-        processStartMs: PROCESS_START_MS,
-        loadReason: "artifact-read-failed" as const,
-      }),
-    );
+  return result.map((diskOutputs) => ({
+    diskOutputs,
+    diskArtifactSha256: outputDigestFromList(diskOutputs, "extension"),
+  }));
 }
 
 function healthFromLoaded(
@@ -304,17 +279,12 @@ export function readExtensionBuildIdentityHealth(
     dirname(loaded.artifactPath),
     EXTENSION_BUILD_MANIFEST_FILENAME,
   );
-  const disk = readRuntimeOutputDigests(loaded.artifactPath)
-    .map((diskOutputs) => ({
-      diskOutputs,
-      diskArtifactSha256: outputDigestFromList(diskOutputs, "extension"),
-    }))
-    .orElse(() =>
-      okAsync<{
-        readonly diskArtifactSha256?: string;
-        readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
-      }>({}),
-    );
+  const disk = readExtensionBuildDiskSnapshot(loaded.artifactPath).orElse(() =>
+    okAsync<{
+      readonly diskArtifactSha256?: string;
+      readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
+    }>({}),
+  );
   const manifest = readBoundedIdentityBytes(
     manifestPath,
     MAX_EXTENSION_BUILD_MANIFEST_BYTES,

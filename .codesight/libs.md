@@ -818,7 +818,6 @@
 - `packages/adapters/pi/src/extension-build-identity-runtime.ts`
   - function extensionProcessStartMs: () => number
   - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
-  - function loadExtensionBuildIdentity: (artifactPath) => ResultAsync<ExtensionLoadedIdentity, never>
   - function evaluateExtensionBuildIdentity: (input) => ExtensionBuildIdentityHealth
   - function readExtensionBuildIdentityHealth: (loaded) => ResultAsync<ExtensionBuildIdentityHealth, never>
 - `packages/adapters/pi/src/extension-build-identity-validation.ts`

@@ -28,7 +28,6 @@ export {
 export {
   evaluateExtensionBuildIdentity,
   extensionProcessStartMs,
-  loadExtensionBuildIdentity,
   readExtensionBuildIdentityHealth,
   unverifiableExtensionLoadIdentity,
 } from "./extension-build-identity-runtime.js";
