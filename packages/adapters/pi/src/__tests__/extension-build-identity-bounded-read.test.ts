@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { $ } from "bun";
+import { err } from "neverthrow";
 import {
   type BoundedFile,
   type BoundedFileStat,
@@ -8,6 +9,7 @@ import {
 } from "../bounded-file-read.js";
 import { readArtifactSha256 } from "../extension-build-identity-manifest.js";
 import { MAX_EXTENSION_BUILD_OUTPUT_BYTES } from "../extension-build-identity-types.js";
+import { readAbsoluteFileBounded } from "../path-containment.js";
 import {
   makeRealTempRoot,
   removeRealTempRoot,
@@ -177,6 +179,120 @@ describe("descriptor-like identity bounded reads", () => {
 });
 
 describe("no-follow production identity reads", () => {
+  test("allows a parent symlink only with an explicit contained root", async () => {
+    const root = await makeRealTempRoot("weave-identity-parent-link");
+    roots.push(root);
+    const realDirectory = join(root, "checkout/packages/adapters/pi/dist");
+    const linkedDirectory = join(root, "pi/extensions/weave-adapter-pi/dist");
+    await $`mkdir -p ${realDirectory} ${join(root, "pi/extensions")}`.quiet();
+    const realFile = join(realDirectory, "extension.js");
+    const linkedFile = join(linkedDirectory, "extension.js");
+    await Bun.write(realFile, "export default 1;\n");
+    await $`ln -s ${join(root, "checkout/packages/adapters/pi")} ${join(root, "pi/extensions/weave-adapter-pi")}`.quiet();
+
+    const strict = await readAbsoluteFileBounded(linkedFile, 128);
+    const captured = await readArtifactSha256(linkedFile, root);
+    const direct = await readArtifactSha256(realFile, root);
+
+    expect(strict).toEqual(err("symlink-component-rejected"));
+    expect(captured.isOk()).toBe(true);
+    expect(captured).toEqual(direct);
+  });
+
+  test("rejects a parent symlink that escapes the expected root", async () => {
+    const root = await makeRealTempRoot("weave-identity-parent-escape");
+    const outside = await makeRealTempRoot("weave-identity-parent-outside");
+    roots.push(root, outside);
+    const linkedDirectory = join(root, "pi/extensions/weave-adapter-pi");
+    await $`mkdir -p ${join(root, "pi/extensions")}`.quiet();
+    await Bun.write(join(outside, "extension.js"), "outside\n");
+    await $`ln -s ${outside} ${linkedDirectory}`.quiet();
+
+    const result = await readAbsoluteFileBounded(
+      join(linkedDirectory, "extension.js"),
+      128,
+      root,
+    );
+
+    expect(result).toEqual(err("resolved-target-outside-root"));
+  });
+
+  test("rejects a parent retargeted outside the expected root", async () => {
+    const root = await makeRealTempRoot("weave-identity-parent-retarget");
+    const outside = await makeRealTempRoot("weave-identity-retarget-outside");
+    roots.push(root, outside);
+    const inside = join(root, "inside");
+    const linkedDirectory = join(root, "pi/extensions/weave-adapter-pi");
+    await $`mkdir -p ${inside} ${join(root, "pi/extensions")}`.quiet();
+    await Bun.write(join(outside, "extension.js"), "outside\n");
+    await $`ln -s ${inside} ${linkedDirectory}`.quiet();
+    await $`rm ${linkedDirectory}`.quiet();
+    await $`ln -s ${outside} ${linkedDirectory}`.quiet();
+
+    const result = await readAbsoluteFileBounded(
+      join(linkedDirectory, "extension.js"),
+      128,
+      root,
+    );
+
+    expect(result).toEqual(err("resolved-target-outside-root"));
+  });
+
+  test("rejects a final-file symlink even inside the expected root", async () => {
+    const root = await makeRealTempRoot("weave-identity-final-link");
+    roots.push(root);
+    const realFile = join(root, "real.js");
+    const linkedFile = join(root, "link.js");
+    await Bun.write(realFile, "identity\n");
+    await $`ln -s ${realFile} ${linkedFile}`.quiet();
+
+    const result = await readAbsoluteFileBounded(linkedFile, 128, root);
+
+    expect(result).toEqual(err("symlink-component-rejected"));
+  });
+
+  test("rejects a broken parent symlink", async () => {
+    const root = await makeRealTempRoot("weave-identity-broken-parent");
+    roots.push(root);
+    const linkedDirectory = join(root, "pi/extensions/weave-adapter-pi");
+    await $`mkdir -p ${join(root, "pi/extensions")}`.quiet();
+    await $`ln -s ${join(root, "missing-adapter")} ${linkedDirectory}`.quiet();
+
+    const result = await readAbsoluteFileBounded(
+      join(linkedDirectory, "extension.js"),
+      128,
+      root,
+    );
+
+    expect(result).toEqual(err("target-unresolvable"));
+  });
+
+  test("rejects special files without blocking", async () => {
+    const root = await makeRealTempRoot("weave-identity-special");
+    roots.push(root);
+    const fifo = join(root, "pipe");
+    await $`mkfifo ${fifo}`.quiet();
+
+    const result = await readAbsoluteFileBounded(fifo, 128, root);
+
+    expect(result).toEqual(err("not-regular"));
+  });
+
+  test("rejects an oversized file before reading", async () => {
+    const root = await makeRealTempRoot("weave-identity-oversize");
+    roots.push(root);
+    const file = join(root, "oversized.js");
+    await $`truncate -s ${MAX_EXTENSION_BUILD_OUTPUT_BYTES + 1} ${file}`.quiet();
+
+    const result = await readAbsoluteFileBounded(
+      file,
+      MAX_EXTENSION_BUILD_OUTPUT_BYTES,
+      root,
+    );
+
+    expect(result).toEqual(err("file-too-large"));
+  });
+
   test("rejects symlink and directory identity inputs", async () => {
     const root = await makeRealTempRoot("weave-identity-bounded-read");
     roots.push(root);

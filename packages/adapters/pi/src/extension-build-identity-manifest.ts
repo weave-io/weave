@@ -136,8 +136,9 @@ export function readBoundedIdentityBytes(
   path: string,
   maxBytes: number,
   failure: "ArtifactReadFailed" | "ManifestReadFailed" = "ArtifactReadFailed",
+  expectedCanonicalRoot?: string,
 ): ResultAsync<Uint8Array, ExtensionBuildIdentityError> {
-  return readAbsoluteFileBounded(path, maxBytes).mapErr(
+  return readAbsoluteFileBounded(path, maxBytes, expectedCanonicalRoot).mapErr(
     (): ExtensionBuildIdentityError => ({ type: failure }),
   );
 }
@@ -145,10 +146,13 @@ export function readBoundedIdentityBytes(
 /** Read one artifact digest without allowing an exception to escape. */
 export function readArtifactSha256(
   path: string,
+  expectedCanonicalRoot?: string,
 ): ResultAsync<string, ExtensionBuildIdentityError> {
   return readBoundedIdentityBytes(
     path,
     MAX_EXTENSION_BUILD_OUTPUT_BYTES,
+    "ArtifactReadFailed",
+    expectedCanonicalRoot,
   ).andThen((bytes) => {
     const digest = sha256Hex(bytes);
     return digest.isOk() ? okAsync(digest.value) : errAsync(digest.error);

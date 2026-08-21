@@ -51,7 +51,7 @@
 
 import { dlopen, ptr, read } from "bun:ffi";
 import { platform } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   type BoundedFileReadError,
@@ -167,10 +167,14 @@ function cstr(value: string): Uint8Array {
   return new TextEncoder().encode(`${value}\0`);
 }
 
+const PATH_MAX = 4_096;
+const textDecoder = new TextDecoder();
+
 interface LoadedNoFollowLibc {
   readonly flags: NoFollowOpenFlags;
   readonly open: (path: Uint8Array, flags: number) => number;
   readonly openat: (dirFd: number, path: Uint8Array, flags: number) => number;
+  readonly realpath: (path: Uint8Array, resolved: Uint8Array) => boolean;
   readonly close: (fd: number) => number;
   readonly errno: () => number;
   readonly dispose: () => void;
@@ -193,6 +197,7 @@ function loadNoFollowLibc(): Result<LoadedNoFollowLibc, PathContainmentError> {
       dlopen(libraryPath, {
         open: { args: ["ptr", "i32", "i32"], returns: "i32" },
         openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
+        realpath: { args: ["ptr", "ptr"], returns: "ptr" },
         close: { args: ["i32"], returns: "i32" },
         [errnoSymbol]: { args: [], returns: "ptr" },
       }),
@@ -207,6 +212,10 @@ function loadNoFollowLibc(): Result<LoadedNoFollowLibc, PathContainmentError> {
         symbols.open(ptr(path), openFlags, 0) as number,
       openat: (dirFd: number, path: Uint8Array, openFlags: number) =>
         symbols.openat(dirFd, ptr(path), openFlags, 0) as number,
+      realpath: (path: Uint8Array, resolved: Uint8Array) => {
+        const value = symbols.realpath(ptr(path), ptr(resolved));
+        return value !== null && value !== undefined && value !== 0;
+      },
       close: (fd: number) => symbols.close(fd) as number,
       errno: () => read.i32(symbols[errnoSymbol](), 0) as number,
       dispose: () => library.close(),
@@ -217,6 +226,195 @@ function loadNoFollowLibc(): Result<LoadedNoFollowLibc, PathContainmentError> {
 /** Only ENOENT ("no such file or directory") is a genuinely missing component; every other open failure (ELOOP for a symlink, ENOTDIR for a non-directory where one was required, EACCES, ...) is treated as an unsafe/rejected component rather than guessed at further - no-follow containment fails closed on anything it cannot positively prove safe. */
 function isMissingComponentErrno(errnoValue: number): boolean {
   return errnoValue === 2;
+}
+
+/** Decode one libc `realpath(3)` result without accepting an unterminated or relative value. */
+function decodeResolvedPath(buffer: Uint8Array): string | undefined {
+  const end = buffer.indexOf(0);
+  if (end <= 0) return undefined;
+  const resolved = textDecoder.decode(buffer.subarray(0, end));
+  return isAbsolute(resolved) ? resolved : undefined;
+}
+
+function canonicalizeExistingPath(
+  libc: LoadedNoFollowLibc,
+  path: string,
+  failure: PathContainmentError,
+): Result<string, PathContainmentError> {
+  if (!isAbsolute(path)) return err(failure);
+  const segments = path.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return err(failure);
+  }
+  const resolved = new Uint8Array(PATH_MAX);
+  const realpath = Result.fromThrowable(
+    () => libc.realpath(cstr(path), resolved),
+    () => false,
+  )();
+  if (realpath.isErr() || !realpath.value) return err(failure);
+  const canonical = decodeResolvedPath(resolved);
+  return canonical === undefined ? err(failure) : ok(canonical);
+}
+
+function isCanonicalWithinRoot(root: string, target: string): boolean {
+  if (root === "/") return target.startsWith("/");
+  return target === root || target.startsWith(`${root}/`);
+}
+
+function canonicalRelativeSegments(
+  root: string,
+  target: string,
+): Result<readonly string[], PathContainmentError> {
+  if (!isCanonicalWithinRoot(root, target)) {
+    return err("resolved-target-outside-root");
+  }
+  if (target === root) return ok([]);
+  const suffix = root === "/" ? target.slice(1) : target.slice(root.length + 1);
+  const segments = suffix.split("/");
+  if (
+    segments.length === 0 ||
+    segments.some(
+      (segment) => segment.length === 0 || segment === "." || segment === "..",
+    )
+  ) {
+    return err("resolved-target-outside-root");
+  }
+  return ok(segments);
+}
+
+interface TrustedParentBinding {
+  readonly canonicalRoot: string;
+  readonly originalParent: string;
+  readonly canonicalParent: string;
+  readonly parentSegments: readonly string[];
+}
+
+/**
+ * Resolves a parent symlink only when the caller supplies an expected
+ * canonical root. The canonical target is converted back to root-relative
+ * segments and reopened below that root, so realpath never becomes an
+ * unbounded trust decision.
+ */
+function resolveTrustedParentBinding(
+  libc: LoadedNoFollowLibc,
+  path: string,
+  expectedCanonicalRoot: string,
+): Result<TrustedParentBinding, PathContainmentError> {
+  const canonicalRoot = canonicalizeExistingPath(
+    libc,
+    expectedCanonicalRoot,
+    "project-root-unresolvable",
+  );
+  if (canonicalRoot.isErr() || canonicalRoot.value !== expectedCanonicalRoot) {
+    return err("project-root-unresolvable");
+  }
+  const originalParent = dirname(path);
+  const canonicalParent = canonicalizeExistingPath(
+    libc,
+    originalParent,
+    "target-unresolvable",
+  );
+  if (canonicalParent.isErr()) return err(canonicalParent.error);
+  const parentSegments = canonicalRelativeSegments(
+    canonicalRoot.value,
+    canonicalParent.value,
+  );
+  if (parentSegments.isErr()) return err(parentSegments.error);
+  return ok({
+    canonicalRoot: canonicalRoot.value,
+    originalParent,
+    canonicalParent: canonicalParent.value,
+    parentSegments: parentSegments.value,
+  });
+}
+
+interface DirectoryIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
+function readDirectoryIdentity(
+  fd: number,
+): ResultAsync<DirectoryIdentity, BoundedAbsoluteFileReadError> {
+  return ResultAsync.fromThrowable(
+    () => Bun.file(fd).stat(),
+    (): BoundedAbsoluteFileReadError => "read-failed",
+  )().andThen((stat) => {
+    if (
+      !stat.isDirectory() ||
+      !Number.isSafeInteger(stat.dev) ||
+      stat.dev < 0 ||
+      !Number.isSafeInteger(stat.ino) ||
+      stat.ino < 0
+    ) {
+      return errAsync<DirectoryIdentity, BoundedAbsoluteFileReadError>(
+        "target-unresolvable",
+      );
+    }
+    return okAsync<DirectoryIdentity, BoundedAbsoluteFileReadError>({
+      dev: stat.dev,
+      ino: stat.ino,
+    });
+  });
+}
+
+function sameDirectoryIdentity(
+  left: DirectoryIdentity,
+  right: DirectoryIdentity,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+/**
+ * Re-resolves and reopens the original parent after reading. This rejects a
+ * parent symlink retarget, or a replacement of the target directory, before
+ * bytes from the held descriptor are accepted.
+ */
+function verifyTrustedParentBinding(
+  libc: LoadedNoFollowLibc,
+  binding: TrustedParentBinding,
+  openedIdentity: DirectoryIdentity,
+): ResultAsync<void, BoundedAbsoluteFileReadError> {
+  const currentParent = canonicalizeExistingPath(
+    libc,
+    binding.originalParent,
+    "target-unresolvable",
+  );
+  if (currentParent.isErr()) {
+    return errAsync<void, BoundedAbsoluteFileReadError>(currentParent.error);
+  }
+  if (currentParent.value !== binding.canonicalParent) {
+    return errAsync<void, BoundedAbsoluteFileReadError>(
+      "target-identity-changed",
+    );
+  }
+  const reopened = openNoFollowDirectoryChain(
+    libc,
+    binding.canonicalRoot,
+    binding.parentSegments,
+  );
+  if (reopened.isErr()) {
+    return errAsync<void, BoundedAbsoluteFileReadError>(reopened.error);
+  }
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    libc.close(reopened.value);
+  };
+  return readDirectoryIdentity(reopened.value)
+    .andThen((currentIdentity) => {
+      close();
+      return sameDirectoryIdentity(openedIdentity, currentIdentity)
+        ? okAsync<void, BoundedAbsoluteFileReadError>(undefined)
+        : errAsync<void, BoundedAbsoluteFileReadError>(
+            "target-identity-changed",
+          );
+    })
+    .mapErr((error) => {
+      close();
+      return error;
+    });
 }
 
 /**
@@ -444,10 +642,16 @@ export type BoundedAbsoluteFileReadError =
  * checked before and after the read, and the named leaf is reopened against
  * the held parent descriptor before success so a replacement or symlink swap
  * cannot make the digest describe bytes that are no longer at `path`.
+ *
+ * Parent symlinks are rejected by default. A caller that has an explicit
+ * canonical trust boundary may pass `expectedCanonicalRoot`; the parent is
+ * then realpath-resolved, required to remain inside that root, reopened by
+ * root-relative no-follow descriptors, and revalidated after the read.
  */
 export function readAbsoluteFileBounded(
   path: string,
   maxBytes: number,
+  expectedCanonicalRoot?: string,
 ): ResultAsync<Uint8Array, BoundedAbsoluteFileReadError> {
   const segments = absoluteNoFollowSegments(path);
   if (segments.isErr()) {
@@ -459,11 +663,31 @@ export function readAbsoluteFileBounded(
   const libcResult = loadNoFollowLibc();
   if (libcResult.isErr()) return errAsync(libcResult.error);
   const libc = libcResult.value;
-  const openedParent = openNoFollowDirectoryChain(
-    libc,
-    "/",
-    segments.value.slice(0, -1),
-  );
+  let binding: TrustedParentBinding | undefined;
+  let openedParent: Result<number, PathContainmentError>;
+  if (expectedCanonicalRoot === undefined) {
+    openedParent = openNoFollowDirectoryChain(
+      libc,
+      "/",
+      segments.value.slice(0, -1),
+    );
+  } else {
+    const resolved = resolveTrustedParentBinding(
+      libc,
+      path,
+      expectedCanonicalRoot,
+    );
+    if (resolved.isErr()) {
+      libc.dispose();
+      return errAsync(resolved.error);
+    }
+    binding = resolved.value;
+    openedParent = openNoFollowDirectoryChain(
+      libc,
+      binding.canonicalRoot,
+      binding.parentSegments,
+    );
+  }
   if (openedParent.isErr()) {
     libc.dispose();
     return errAsync(openedParent.error);
@@ -474,6 +698,13 @@ export function readAbsoluteFileBounded(
       const parentFd = openedParent.value;
       let fileFd: number | undefined;
       try {
+        let openedParentIdentity: DirectoryIdentity | undefined;
+        if (binding !== undefined) {
+          const identity = await readDirectoryIdentity(parentFd);
+          if (identity.isErr()) return err(identity.error);
+          openedParentIdentity = identity.value;
+        }
+
         fileFd = libc.openat(
           parentFd,
           cstr(fileName),
@@ -532,6 +763,15 @@ export function readAbsoluteFileBounded(
           }
         } finally {
           libc.close(currentFd);
+        }
+
+        if (binding !== undefined && openedParentIdentity !== undefined) {
+          const parentStillBound = await verifyTrustedParentBinding(
+            libc,
+            binding,
+            openedParentIdentity,
+          );
+          if (parentStillBound.isErr()) return err(parentStillBound.error);
         }
         return ok(bounded.value);
       } finally {

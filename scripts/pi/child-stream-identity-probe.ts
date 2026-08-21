@@ -78,6 +78,7 @@ function readManifest(
     join(repoRoot, MANIFEST_RELATIVE_PATH),
     MAX_EXTENSION_BUILD_MANIFEST_BYTES,
     "ManifestReadFailed",
+    repoRoot,
   )
     .mapErr(() => blocked("unverifiable", "unverifiable"))
     .andThen((bytes) => {
@@ -122,7 +123,7 @@ function collectBuildInputs(
     let result = okAsync<string[], VerifyChildStreamingFailure>([]);
     for (const path of paths) {
       result = result.andThen((digests) =>
-        readArtifactSha256(join(repoRoot, path))
+        readArtifactSha256(join(repoRoot, path), repoRoot)
           .mapErr(() => blocked("unverifiable", "unverifiable"))
           .map((digest) => [...digests, digest]),
       );
@@ -143,7 +144,7 @@ function collectOutputs(
   >([]);
   for (const output of IDENTITY_OUTPUTS) {
     result = result.andThen((outputs) =>
-      readArtifactSha256(join(repoRoot, output.relativePath))
+      readArtifactSha256(join(repoRoot, output.relativePath), repoRoot)
         .mapErr(() => blocked("unverifiable", "unverifiable"))
         .map((sha256) => [...outputs, { name: output.name, sha256 }]),
     );

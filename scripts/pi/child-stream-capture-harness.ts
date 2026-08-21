@@ -346,6 +346,11 @@ function packagePathCandidates(packageName: string): readonly string[] {
   ];
 }
 
+function trustedPiRoot(pi: string): string | undefined {
+  const root = homedir();
+  return pi === root || pi.startsWith(`${root}/`) ? root : undefined;
+}
+
 function readPackageIdentity(
   packageName: string,
 ): ResultAsync<PackageIdentity, CaptureFailure> {
@@ -537,7 +542,7 @@ export function captureChildEvents(input: {
       }),
     )
     .andThen(({ piVersion, piAi, piPackage, events }) =>
-      readArtifactSha256(input.pi)
+      readArtifactSha256(input.pi, trustedPiRoot(input.pi))
         .mapErr(() => blocked("spawn-failed"))
         .andThen((piExecutableSha256) => {
           const fixtureText = serializeFixture(events);
