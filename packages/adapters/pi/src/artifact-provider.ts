@@ -163,42 +163,128 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return decoder.decode(bytes.subarray(0, low));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const sanitizedChildIndexInputSchema = z.object({
+  id: z.string(),
+  parentId: z.string().optional(),
+  name: z.string(),
+  kind: kindSchema,
+  status: statusSchema,
+  workflow: z
+    .object({
+      workflow: z.string().optional(),
+      step: z.string().optional(),
+    })
+    .optional(),
+  currentTurn: z.number(),
+  startedAtMs: z.number(),
+  elapsedMs: z.number(),
+  usage: z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadTokens: z.number(),
+    cacheWriteTokens: z.number(),
+    cost: z.number(),
+  }),
+  finalOutput: z.string().optional(),
+  interventionCount: z.number(),
+});
+
+interface PiSanitizedChildIndexWorkflowProjection {
+  workflow?: string;
+  step?: string;
 }
 
-/** Explicitly projects allowlisted fields before Zod validation. */
-function projectEntry(value: unknown): unknown {
-  if (!isRecord(value)) return value;
-  const usage = isRecord(value.usage)
-    ? {
-        inputTokens: value.usage.inputTokens,
-        outputTokens: value.usage.outputTokens,
-        cacheReadTokens: value.usage.cacheReadTokens,
-        cacheWriteTokens: value.usage.cacheWriteTokens,
-        cost: value.usage.cost,
-      }
-    : value.usage;
-  const workflow = isRecord(value.workflow)
-    ? { workflow: value.workflow.workflow, step: value.workflow.step }
-    : value.workflow;
-  return {
+interface PiSanitizedChildIndexEntryProjection {
+  id: string;
+  parentId?: string;
+  name: string;
+  kind: "ordinary" | "nested" | "workflow-step";
+  status: PiChildStatus;
+  workflow?: PiSanitizedChildIndexWorkflowProjection;
+  currentTurn: number;
+  startedAtMs: number;
+  elapsedMs: number;
+  usage: PiChildUsageAggregate;
+  finalOutput?: string;
+  interventionCount: number;
+}
+
+/** Explicitly projects allowlisted fields before bounded Zod validation. */
+function projectEntry(
+  value: PiSanitizedChildIndexInput,
+): PiSanitizedChildIndexEntryProjection {
+  const projection: PiSanitizedChildIndexEntryProjection = {
     id: value.id,
-    parentId: value.parentId,
     name: value.name,
     kind: value.kind,
     status: value.status,
-    workflow,
     currentTurn: value.currentTurn,
     startedAtMs: value.startedAtMs,
     elapsedMs: value.elapsedMs,
-    usage,
-    finalOutput:
-      typeof value.finalOutput === "string"
-        ? truncateUtf8(value.finalOutput, MAX_FINAL_OUTPUT_BYTES)
-        : value.finalOutput,
+    usage: {
+      inputTokens: value.usage.inputTokens,
+      outputTokens: value.usage.outputTokens,
+      cacheReadTokens: value.usage.cacheReadTokens,
+      cacheWriteTokens: value.usage.cacheWriteTokens,
+      cost: value.usage.cost,
+    },
     interventionCount: value.interventionCount,
   };
+  if (value.parentId !== undefined) projection.parentId = value.parentId;
+  if (value.workflow !== undefined) {
+    const workflow: PiSanitizedChildIndexWorkflowProjection = {};
+    if (value.workflow.workflow !== undefined) {
+      workflow.workflow = value.workflow.workflow;
+    }
+    if (value.workflow.step !== undefined) {
+      workflow.step = value.workflow.step;
+    }
+    projection.workflow = workflow;
+  }
+  if (value.finalOutput !== undefined) {
+    projection.finalOutput = truncateUtf8(
+      value.finalOutput,
+      MAX_FINAL_OUTPUT_BYTES,
+    );
+  }
+  return projection;
+}
+
+const NUMERIC_SANITIZED_FIELDS = new Set([
+  "currentTurn",
+  "startedAtMs",
+  "elapsedMs",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "cost",
+  "interventionCount",
+]);
+
+type PiSanitizedChildIndexInvalidReason =
+  | "invalid-number"
+  | "invalid-string"
+  | "invalid-entry";
+
+function invalidChildIndexReason(
+  error: z.ZodError,
+): PiSanitizedChildIndexInvalidReason {
+  const issue = error.issues[0];
+  const field = issue?.path.at(-1);
+  const numericField = NUMERIC_SANITIZED_FIELDS.has(String(field));
+  const numberIssue =
+    numericField ||
+    (issue?.code === "invalid_type" && issue.expected === "number");
+  const stringIssue =
+    !numericField &&
+    issue?.code === "invalid_type" &&
+    issue.expected === "string";
+  if (numberIssue) return "invalid-number";
+  if (stringIssue || issue?.code === "too_big" || issue?.code === "custom") {
+    return "invalid-string";
+  }
+  return "invalid-entry";
 }
 
 /** Builds a bounded, versioned child export without reading or accepting raw history. */
@@ -208,55 +294,30 @@ export function createPiSanitizedChildIndex(
   if (entries.length > MAX_SANITIZED_CHILD_INDEX_ENTRIES)
     return err({ type: "child-index-too-large" });
 
-  const parsedEntries = entries.map((entry) =>
-    PiSanitizedChildIndexEntrySchema.safeParse(projectEntry(entry)),
-  );
-  const invalid = parsedEntries.find((parsed) => !parsed.success);
-  if (invalid !== undefined) {
-    const issue = invalid.success ? undefined : invalid.error.issues[0];
-    const field = issue?.path.at(-1);
-    const numericField =
-      typeof field === "string" &&
-      [
-        "currentTurn",
-        "startedAtMs",
-        "elapsedMs",
-        "inputTokens",
-        "outputTokens",
-        "cacheReadTokens",
-        "cacheWriteTokens",
-        "cost",
-        "interventionCount",
-      ].includes(field);
-    const numberIssue =
-      numericField ||
-      (issue?.code === "invalid_type" && issue.expected === "number");
-    const stringIssue =
-      !numericField &&
-      issue?.code === "invalid_type" &&
-      issue.expected === "string";
-    let reason: "invalid-number" | "invalid-string" | "invalid-entry";
-    if (numberIssue) reason = "invalid-number";
-    else if (
-      stringIssue ||
-      issue?.code === "too_big" ||
-      issue?.code === "custom"
-    )
-      reason = "invalid-string";
-    else reason = "invalid-entry";
-    return err({ type: "invalid-child-index", reason });
+  const children: PiSanitizedChildIndexEntry[] = [];
+  for (const entry of entries) {
+    const parsedInput = sanitizedChildIndexInputSchema.safeParse(entry);
+    if (!parsedInput.success) {
+      return err({
+        type: "invalid-child-index",
+        reason: invalidChildIndexReason(parsedInput.error),
+      });
+    }
+    const parsedEntry = PiSanitizedChildIndexEntrySchema.safeParse(
+      projectEntry(parsedInput.data),
+    );
+    if (!parsedEntry.success) {
+      return err({
+        type: "invalid-child-index",
+        reason: invalidChildIndexReason(parsedEntry.error),
+      });
+    }
+    children.push(parsedEntry.data);
   }
 
   const result: PiSanitizedChildIndex = {
     schemaVersion: 1,
-    children: parsedEntries.map((parsed) => {
-      const data = (
-        parsed as { success: true; data: PiSanitizedChildIndexEntry }
-      ).data;
-      return Object.fromEntries(
-        Object.entries(data).filter(([, value]) => value !== undefined),
-      ) as PiSanitizedChildIndexEntry;
-    }),
+    children,
   };
   const serializedBytes = new TextEncoder().encode(
     JSON.stringify(result),

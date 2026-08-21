@@ -30,6 +30,7 @@ import {
   type PlanTaskSnapshot,
   selectActivePlanTask,
 } from "@weaveio/weave-engine";
+import { Result } from "neverthrow";
 
 /**
  * The key that opens the plan-task list. Lives beside the component rather
@@ -76,10 +77,12 @@ export type PlanTaskListBinding =
  * `getKeys()`. A provided `getKeys()` that returns no keys leaves the action
  * unbound rather than restoring these defaults.
  */
-const DEFAULT_BINDING_KEYS: Record<PlanTaskListBinding, readonly KeyId[]> = {
+const DEFAULT_BINDING_KEYS = {
   "tui.select.up": ["up"],
   "tui.select.down": ["down"],
   "tui.select.cancel": ["escape", "ctrl+c"],
+} satisfies {
+  readonly [binding in PlanTaskListBinding]: readonly KeyId[];
 };
 
 /**
@@ -94,11 +97,11 @@ export interface PlanTaskListKeybindingsPort {
 
 /** Narrow projection of the theme helpers this surface uses. */
 export interface PlanTaskListThemePort {
-  fg(
+  fg?(
     color: "accent" | "muted" | "text" | "success" | "dim",
     text: string,
   ): string;
-  bold(text: string): string;
+  bold?(text: string): string;
 }
 
 export interface PlanTaskListViewport {
@@ -137,6 +140,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function noActivePlanTask(): undefined {}
+
 /**
  * Number of task rows that fit in a viewport of `rows` total height.
  *
@@ -169,7 +174,7 @@ export function planTaskListRowBudget(
   terminalRows: number | undefined,
 ): number {
   const usable =
-    typeof terminalRows === "number" &&
+    terminalRows !== undefined &&
     Number.isFinite(terminalRows) &&
     terminalRows > 0
       ? Math.trunc(terminalRows)
@@ -224,9 +229,10 @@ export function renderPlanTaskListLines(
   const theme = input.theme;
   // Hosts may hand over a partial theme object; a missing helper degrades to
   // unstyled text rather than crashing the overlay mid-render.
-  const fg = typeof theme?.fg === "function" ? theme.fg.bind(theme) : undefined;
-  const bold =
-    typeof theme?.bold === "function" ? theme.bold.bind(theme) : undefined;
+  // Optional-call `bind` so a malformed host theme degrades to plain text
+  // instead of throwing while the overlay is rendering.
+  const fg = theme?.fg?.bind?.(theme);
+  const bold = theme?.bold?.bind?.(theme);
   const cap =
     input.width === undefined
       ? undefined
@@ -272,7 +278,7 @@ export function renderPlanTaskListLines(
 
   const activeIndex = selectActivePlanTask(input.snapshot).match(
     (activeTask) => activeTask.parentIndex,
-    () => undefined,
+    noActivePlanTask,
   );
 
   const maxScroll = planTaskListMaxScroll(parents.length, input.viewport.rows);
@@ -341,10 +347,19 @@ function resolveKeys(
   keybindings: PlanTaskListKeybindingsPort | undefined,
   binding: PlanTaskListBinding,
 ): readonly KeyId[] {
-  if (typeof keybindings?.getKeys !== "function") {
-    return DEFAULT_BINDING_KEYS[binding];
-  }
-  return keybindings.getKeys(binding) ?? [];
+  const getKeys = keybindings?.getKeys;
+  if (getKeys === undefined) return DEFAULT_BINDING_KEYS[binding];
+  // Keep this fixed UI boundary total if a host supplies a malformed method.
+  // A real method still keeps the documented omission semantics: `undefined`
+  // means no keys, not the defaults.
+  const resolved = Result.fromThrowable(
+    () => getKeys(binding),
+    (): "keybinding-read-failed" => "keybinding-read-failed",
+  )();
+  return resolved.match(
+    (keys) => keys ?? [],
+    () => DEFAULT_BINDING_KEYS[binding],
+  );
 }
 
 function matchesAny(data: string, keys: readonly KeyId[]): boolean {
@@ -384,7 +399,7 @@ export function createPlanTaskListComponent(
   let scrollOffset = planTaskListOffsetForIndex(
     selectActivePlanTask(input.snapshot).match(
       (task) => task.parentIndex,
-      () => undefined,
+      noActivePlanTask,
     ),
     taskCount,
     rowsNow(),
