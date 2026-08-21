@@ -25,6 +25,10 @@ const MAX_EXTENSION_BUILD_OUTPUTS = 64;
 const MAX_EXTENSION_BUILD_INPUTS = 4_096;
 const MAX_EXTENSION_BUILD_SUBJECT_LENGTH = 128;
 const MAX_EXTENSION_ENTRY_PATH_LENGTH = 4_096;
+/** Keep one complete graph in memory, and reject the next attempt closed. */
+const MAX_IN_FLIGHT_PRELOADS = 1;
+const MAX_IN_FLIGHT_PINNED_BYTES = 16 * 1024 * 1024;
+const PINNED_PRELOADER_PLUGIN_NAME = "weave-pi-trusted-runtime-preloader-v2";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const GIT_SUBJECT_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_OUTPUT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
@@ -41,10 +45,12 @@ const RUNTIME_OUTPUTS = [
 ] as const;
 
 type RuntimeOutputName = (typeof RUNTIME_OUTPUTS)[number]["name"];
-type RuntimeDigest = {
+export interface ExtensionPreloaderDigest {
   readonly name: RuntimeOutputName;
   readonly sha256: string;
-};
+}
+
+type RuntimeDigest = ExtensionPreloaderDigest;
 
 type PreloadManifest = {
   readonly buildBinding: string;
@@ -61,15 +67,62 @@ type PinnedRuntime = {
   readonly buildBinding: string;
   readonly loadedOutputs: readonly RuntimeDigest[];
   readonly modulePaths: ReadonlyMap<RuntimeOutputName, string>;
-  readonly bytesByPath: ReadonlyMap<string, Uint8Array>;
   readonly token: string;
 };
 
-type LoaderState = {
-  readonly pins: Map<string, Uint8Array>;
-  preloadTail: Promise<void>;
-  sequence: number;
+type PreloaderFailureReason =
+  | PreloadFailure["reason"]
+  | "load-cap-exceeded"
+  | "module-path-missing"
+  | "module-evaluation-failed"
+  | "extension-start-failed";
+type PreloaderHealthStatus =
+  | "idle"
+  | "loading"
+  | "loaded"
+  | "failed"
+  | "rejected";
+type PreloaderHealth = {
+  readonly status: PreloaderHealthStatus;
+  readonly lastAttemptAtMs?: number;
+  readonly lastSettledAtMs?: number;
+  readonly buildBinding?: string;
+  readonly loadedOutputs?: readonly RuntimeDigest[];
+  readonly reason?: PreloaderFailureReason;
 };
+type LoadSlot = {
+  bytes: number;
+};
+type LoaderRegistration = {
+  readonly pinnedPaths: Set<string>;
+};
+
+export interface ExtensionPreloaderRetentionSnapshot {
+  readonly retainedPinnedBytes: number;
+  readonly retainedPinnedEntries: number;
+  readonly inFlightLoadCount: number;
+  readonly inFlightPinnedBytes: number;
+  readonly activeLoaderRegistrations: number;
+  readonly pluginInstalled: boolean;
+  readonly status: PreloaderHealthStatus;
+  readonly lastAttemptAtMs?: number;
+  readonly lastSettledAtMs?: number;
+  readonly buildBinding?: string;
+  readonly loadedOutputs?: readonly ExtensionPreloaderDigest[];
+  readonly reason?: PreloaderFailureReason;
+}
+
+interface GlobalLoaderState {
+  readonly pins: Map<string, Uint8Array>;
+  readonly registrations: Map<string, LoaderRegistration>;
+  readonly inFlightLoads: Set<LoadSlot>;
+  pluginInstalled: boolean;
+  inFlightPinnedBytes: number;
+  sequence: number;
+  health: PreloaderHealth;
+}
+
+type LoaderState = GlobalLoaderState;
 
 type TrustedModuleLoader = {
   readonly extensionProcessStartMs: () => number;
@@ -107,17 +160,11 @@ type PreloadFailure = {
 
 type PreloadResult = PinnedRuntime | PreloadFailure;
 
-interface GlobalLoaderState {
-  readonly pins: Map<string, Uint8Array>;
-  preloadTail: Promise<void>;
-  sequence: number;
-}
-
 const GLOBAL_LOADER_STATE_KEY = Symbol.for(
-  "weave.pi.trusted-extension-preloader.v1",
+  "weave.pi.trusted-extension-preloader.v2",
 );
 
-function loaderState(): LoaderState {
+function loaderState(): GlobalLoaderState {
   const global = globalThis as typeof globalThis & {
     [GLOBAL_LOADER_STATE_KEY]?: GlobalLoaderState;
   };
@@ -125,11 +172,124 @@ function loaderState(): LoaderState {
   if (existing !== undefined) return existing;
   const created: GlobalLoaderState = {
     pins: new Map(),
-    preloadTail: Promise.resolve(),
+    registrations: new Map(),
+    inFlightLoads: new Set(),
+    pluginInstalled: false,
+    inFlightPinnedBytes: 0,
     sequence: 0,
+    health: { status: "idle" },
   };
   global[GLOBAL_LOADER_STATE_KEY] = created;
   return created;
+}
+
+function retainedPinnedBytes(state: GlobalLoaderState): number {
+  let bytes = 0;
+  for (const value of state.pins.values()) bytes += value.byteLength;
+  return bytes;
+}
+
+/**
+ * Test-only, content-free retention seam. It reports bounded facts only; it
+ * never exposes a pinned path, source string, or byte array.
+ */
+export function readExtensionPreloaderRetentionForTesting(): ExtensionPreloaderRetentionSnapshot {
+  const state = loaderState();
+  return {
+    retainedPinnedBytes: retainedPinnedBytes(state),
+    retainedPinnedEntries: state.pins.size,
+    inFlightLoadCount: state.inFlightLoads.size,
+    inFlightPinnedBytes: state.inFlightPinnedBytes,
+    activeLoaderRegistrations: state.registrations.size,
+    pluginInstalled: state.pluginInstalled,
+    ...state.health,
+  };
+}
+
+function recordPreloaderHealth(
+  state: GlobalLoaderState,
+  health: PreloaderHealth,
+): void {
+  state.health = health;
+}
+
+function beginLoad(state: GlobalLoaderState): LoadSlot | undefined {
+  if (state.inFlightLoads.size >= MAX_IN_FLIGHT_PRELOADS) {
+    const now = Date.now();
+    recordPreloaderHealth(state, {
+      status: "rejected",
+      lastAttemptAtMs: now,
+      lastSettledAtMs: now,
+      reason: "load-cap-exceeded",
+    });
+    return undefined;
+  }
+  const slot: LoadSlot = { bytes: 0 };
+  state.inFlightLoads.add(slot);
+  recordPreloaderHealth(state, {
+    status: "loading",
+    lastAttemptAtMs: Date.now(),
+  });
+  return slot;
+}
+
+function reservePinnedBytes(
+  state: GlobalLoaderState,
+  slot: LoadSlot,
+  bytes: number,
+): boolean {
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    state.inFlightPinnedBytes > MAX_IN_FLIGHT_PINNED_BYTES - bytes
+  ) {
+    return false;
+  }
+  slot.bytes += bytes;
+  state.inFlightPinnedBytes += bytes;
+  return true;
+}
+
+function releaseSlotBytes(state: GlobalLoaderState, slot: LoadSlot): void {
+  state.inFlightPinnedBytes = Math.max(
+    0,
+    state.inFlightPinnedBytes - slot.bytes,
+  );
+  slot.bytes = 0;
+}
+
+function finishLoad(state: GlobalLoaderState, slot: LoadSlot): void {
+  releaseSlotBytes(state, slot);
+  state.inFlightLoads.delete(slot);
+}
+
+function recordPreloaderFailure(
+  state: GlobalLoaderState,
+  reason: PreloaderFailureReason,
+): void {
+  const now = Date.now();
+  recordPreloaderHealth(state, {
+    status: "failed",
+    lastAttemptAtMs: state.health.lastAttemptAtMs ?? now,
+    lastSettledAtMs: now,
+    reason,
+  });
+}
+
+function recordPreloaderLoaded(
+  state: GlobalLoaderState,
+  pinned: PinnedRuntime,
+): void {
+  const now = Date.now();
+  recordPreloaderHealth(state, {
+    status: "loaded",
+    lastAttemptAtMs: state.health.lastAttemptAtMs ?? now,
+    lastSettledAtMs: now,
+    buildBinding: pinned.buildBinding,
+    loadedOutputs: Object.freeze(
+      pinned.loadedOutputs.map((output) => ({ ...output })),
+    ),
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -394,20 +554,30 @@ function computeBuildBinding(input: {
   return encoded === undefined ? undefined : digestBytes(encoded);
 }
 
-async function readBytes(path: string): Promise<Uint8Array | undefined> {
+async function readBytes(
+  path: string,
+  maxBytes: number,
+): Promise<Uint8Array | undefined> {
   try {
-    const contents = await Bun.file(path).arrayBuffer();
-    if (contents.byteLength > MAX_EXTENSION_BUILD_OUTPUT_BYTES) {
+    const file = Bun.file(path);
+    const expectedBytes = file.size;
+    if (
+      !Number.isSafeInteger(expectedBytes) ||
+      expectedBytes < 0 ||
+      expectedBytes > maxBytes
+    ) {
       return undefined;
     }
-    return new Uint8Array(contents).slice();
+    // Limit the Blob read as well as the preflight size check. A file can be
+    // replaced between those operations; never allocate an unbounded result.
+    const contents = await file.slice(0, maxBytes).arrayBuffer();
+    if (contents.byteLength !== expectedBytes || file.size !== expectedBytes) {
+      return undefined;
+    }
+    return new Uint8Array(contents);
   } catch {
     return undefined;
   }
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function isLocalModuleSpecifier(value: string): boolean {
@@ -425,7 +595,7 @@ function pinnedPathForLocalImport(
   importer: string,
   specifier: string,
   token: string,
-  state: LoaderState,
+  registration: LoaderRegistration,
 ): string | undefined {
   let target: string | undefined;
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
@@ -445,30 +615,38 @@ function pinnedPathForLocalImport(
   }
   if (target === undefined) return undefined;
   const pinnedPath = `${target}${PIN_QUERY_PREFIX}${token}`;
-  return state.pins.has(pinnedPath) ? pinnedPath : undefined;
+  return registration.pinnedPaths.has(pinnedPath) ? pinnedPath : undefined;
 }
 
-function installPinnedModulePlugin(
-  state: LoaderState,
-  token: string,
-  pinnedPaths: readonly string[],
-): boolean {
+/**
+ * Install one process-wide, content-free plugin. Bun has no unregister API;
+ * the plugin therefore owns only the global registry and looks up a live
+ * registration for each callback. Per-load registrations and byte maps are
+ * removed by disposePinnedRuntime.
+ */
+function installPinnedModulePlugin(state: LoaderState): boolean {
+  if (state.pluginInstalled) return true;
   try {
-    const exactFilter = new RegExp(
-      `^(?:${pinnedPaths.map((path) => escapeRegex(path)).join("|")})$`,
-      "u",
-    );
     Bun.plugin({
-      name: `weave-pi-trusted-runtime-preloader-${token}`,
+      name: PINNED_PRELOADER_PLUGIN_NAME,
       setup(build) {
         build.onResolve({ filter: /.*/u }, (args) => {
-          if (queryToken(args.importer) !== token) return undefined;
-          if (!isLocalModuleSpecifier(args.path)) return undefined;
+          const token = queryToken(args.importer);
+          if (token === undefined || !isLocalModuleSpecifier(args.path)) {
+            return undefined;
+          }
+          const registration = state.registrations.get(token);
+          if (registration === undefined) {
+            return {
+              path: args.path,
+              errors: [{ message: "disposed pinned module graph" }],
+            };
+          }
           const pinnedPath = pinnedPathForLocalImport(
             args.importer,
             args.path,
             token,
-            state,
+            registration,
           );
           return pinnedPath === undefined
             ? {
@@ -477,7 +655,20 @@ function installPinnedModulePlugin(
               }
             : { path: pinnedPath };
         });
-        build.onLoad({ filter: exactFilter }, (args) => {
+        build.onLoad({ filter: /\\?weave=/u }, (args) => {
+          const token = queryToken(args.path);
+          if (token === undefined) return undefined;
+          const registration = state.registrations.get(token);
+          if (
+            registration === undefined ||
+            !registration.pinnedPaths.has(args.path)
+          ) {
+            return {
+              contents: "",
+              loader: "js",
+              errors: [{ message: "disposed pinned module bytes" }],
+            };
+          }
           const contents = state.pins.get(args.path);
           return contents === undefined
             ? {
@@ -489,73 +680,63 @@ function installPinnedModulePlugin(
         });
       },
     });
+    state.pluginInstalled = true;
     return true;
   } catch {
     return false;
   }
 }
 
-async function pinRuntime(
-  artifactPath: unknown,
+async function readPinnedRuntimeBytes(
+  path: string,
   state: LoaderState,
-): Promise<PreloadResult> {
-  if (!isSafeAbsolutePath(artifactPath)) {
-    return { ok: false, reason: "entry-path-missing" };
+  slot: LoadSlot,
+): Promise<Uint8Array | undefined> {
+  try {
+    const expectedBytes = Bun.file(path).size;
+    if (
+      !Number.isSafeInteger(expectedBytes) ||
+      expectedBytes < 0 ||
+      expectedBytes > MAX_EXTENSION_BUILD_OUTPUT_BYTES ||
+      !reservePinnedBytes(state, slot, expectedBytes)
+    ) {
+      return undefined;
+    }
+    const value = await readBytes(path, expectedBytes);
+    if (value === undefined || value.byteLength !== expectedBytes) {
+      state.inFlightPinnedBytes = Math.max(
+        0,
+        state.inFlightPinnedBytes - expectedBytes,
+      );
+      slot.bytes = Math.max(0, slot.bytes - expectedBytes);
+      return undefined;
+    }
+    return value;
+  } catch {
+    return undefined;
   }
-  const entryPath = artifactPath;
-  const modulePaths = new Map<RuntimeOutputName, string>();
-  const paths = RUNTIME_OUTPUTS.map((output) => {
-    const path =
-      output.name === "extension"
-        ? entryPath
-        : modulePathFor(entryPath, output.fileName);
-    modulePaths.set(output.name, path);
-    return { ...output, path };
-  });
-  const bytes = await Promise.all(
-    paths.map((output) => readBytes(output.path)),
-  );
-  if (bytes.some((value) => value === undefined)) {
-    return { ok: false, reason: "runtime-read-failed" };
-  }
+}
 
-  const loadedOutputs: RuntimeDigest[] = [];
-  const bytesByPath = new Map<string, Uint8Array>();
-  for (const [index, output] of paths.entries()) {
-    const value = bytes[index];
-    if (value === undefined)
-      return { ok: false, reason: "runtime-read-failed" };
-    const sha256 = digestBytes(value);
-    if (sha256 === undefined)
-      return { ok: false, reason: "runtime-read-failed" };
-    loadedOutputs.push({ name: output.name, sha256 });
-    bytesByPath.set(output.path, value);
-  }
+async function readPreloadManifest(
+  path: string,
+): Promise<PreloadManifest | undefined> {
+  const bytes = await readBytes(path, MAX_EXTENSION_BUILD_MANIFEST_BYTES);
+  return bytes === undefined ? undefined : parseManifest(bytes);
+}
 
-  const manifestPath = modulePathFor(
-    entryPath,
-    EXTENSION_BUILD_MANIFEST_FILENAME,
-  );
-  const manifestBytes = await readBytes(manifestPath);
-  if (manifestBytes === undefined) {
-    return { ok: false, reason: "manifest-invalid" };
-  }
-  const manifest = parseManifest(manifestBytes);
-  if (manifest === undefined) return { ok: false, reason: "manifest-invalid" };
-
-  const entryBytes = bytesByPath.get(entryPath);
-  if (entryBytes === undefined)
-    return { ok: false, reason: "runtime-read-failed" };
+function normalizedEntryDigest(
+  entryBytes: Uint8Array | undefined,
+  manifest: PreloadManifest,
+): string | undefined {
+  if (entryBytes === undefined) return undefined;
   const entrySource = decodeUtf8(entryBytes);
-  if (entrySource === undefined) {
-    return { ok: false, reason: "runtime-digest-mismatch" };
-  }
+  if (entrySource === undefined) return undefined;
   if (
     !isSha256(WEAVE_PI_EMBEDDED_BUILD_BINDING) ||
     WEAVE_PI_EMBEDDED_BUILD_BINDING === WEAVE_PI_BUILD_BINDING_PLACEHOLDER ||
     WEAVE_PI_EMBEDDED_BUILD_BINDING !== manifest.buildBinding
   ) {
-    return { ok: false, reason: "binding-mismatch" };
+    return undefined;
   }
   const embedded = embeddedBindingFromSource(entrySource);
   if (
@@ -563,77 +744,179 @@ async function pinRuntime(
     embedded.binding !== manifest.buildBinding ||
     embedded.binding !== WEAVE_PI_EMBEDDED_BUILD_BINDING
   ) {
-    return { ok: false, reason: "binding-mismatch" };
+    return undefined;
   }
   const normalizedEntryBytes = encodeUtf8(embedded.normalized);
-  if (normalizedEntryBytes === undefined) {
-    return { ok: false, reason: "runtime-digest-mismatch" };
+  return normalizedEntryBytes === undefined
+    ? undefined
+    : digestBytes(normalizedEntryBytes);
+}
+
+function registerPinnedRuntime(
+  state: LoaderState,
+  token: string,
+  pinnedKeys: readonly string[],
+): boolean {
+  try {
+    if (state.registrations.has(token)) return false;
+    state.registrations.set(token, {
+      pinnedPaths: new Set(pinnedKeys),
+    });
+    return true;
+  } catch {
+    return false;
   }
-  const normalizedEntryDigest = digestBytes(normalizedEntryBytes);
-  if (normalizedEntryDigest === undefined) {
-    return { ok: false, reason: "runtime-digest-mismatch" };
+}
+
+function disposePinnedRuntime(
+  state: LoaderState,
+  token: string,
+  slot: LoadSlot,
+  extraPinnedKeys: readonly string[] = [],
+): void {
+  const registration = state.registrations.get(token);
+  state.registrations.delete(token);
+  const paths = new Set([
+    ...extraPinnedKeys,
+    ...(registration?.pinnedPaths ?? []),
+  ]);
+  for (const path of paths) {
+    const bytes = state.pins.get(path);
+    // Clear the content before dropping the map entry. This also protects
+    // against a late host/plugin reference that outlives our registry entry.
+    bytes?.fill(0);
+    state.pins.delete(path);
   }
-  const bindingOutputs = loadedOutputs.map((output) =>
-    output.name === "extension"
-      ? { ...output, sha256: normalizedEntryDigest }
-      : output,
-  );
-  const recomputedBinding = computeBuildBinding({
-    buildCompletedAt: manifest.buildCompletedAt,
-    buildInputs: manifest.buildInputs,
-    dirty: manifest.dirty,
-    runtimeOutputs: bindingOutputs,
-    subject: manifest.subject,
-  });
-  if (
-    recomputedBinding === undefined ||
-    recomputedBinding !== manifest.buildBinding
-  ) {
-    return { ok: false, reason: "binding-mismatch" };
-  }
-  for (const output of loadedOutputs) {
-    if (manifest.outputs.get(output.name) !== output.sha256) {
-      return { ok: false, reason: "runtime-digest-mismatch" };
+  registration?.pinnedPaths.clear();
+  releaseSlotBytes(state, slot);
+}
+
+async function pinRuntime(
+  artifactPath: unknown,
+  state: LoaderState,
+  slot: LoadSlot,
+): Promise<PreloadResult> {
+  const bytesByPath = new Map<string, Uint8Array>();
+  let committed = false;
+  let token: string | undefined;
+  const pinnedKeys: string[] = [];
+  try {
+    if (!isSafeAbsolutePath(artifactPath)) {
+      return { ok: false, reason: "entry-path-missing" };
+    }
+    const entryPath = artifactPath;
+    const modulePaths = new Map<RuntimeOutputName, string>();
+    const paths = RUNTIME_OUTPUTS.map((output) => {
+      const path =
+        output.name === "extension"
+          ? entryPath
+          : modulePathFor(entryPath, output.fileName);
+      modulePaths.set(output.name, path);
+      return { ...output, path };
+    });
+
+    const loadedOutputs: RuntimeDigest[] = [];
+    for (const output of paths) {
+      const value = await readPinnedRuntimeBytes(output.path, state, slot);
+      if (value === undefined) {
+        return { ok: false, reason: "runtime-read-failed" };
+      }
+      const sha256 = digestBytes(value);
+      if (sha256 === undefined) {
+        return { ok: false, reason: "runtime-read-failed" };
+      }
+      loadedOutputs.push({ name: output.name, sha256 });
+      bytesByPath.set(output.path, value);
+    }
+
+    const manifest = await readPreloadManifest(
+      modulePathFor(entryPath, EXTENSION_BUILD_MANIFEST_FILENAME),
+    );
+    if (manifest === undefined) {
+      return { ok: false, reason: "manifest-invalid" };
+    }
+
+    const normalizedDigest = normalizedEntryDigest(
+      bytesByPath.get(entryPath),
+      manifest,
+    );
+    if (normalizedDigest === undefined) {
+      return { ok: false, reason: "binding-mismatch" };
+    }
+    const bindingOutputs = loadedOutputs.map((output) =>
+      output.name === "extension"
+        ? { ...output, sha256: normalizedDigest }
+        : output,
+    );
+    const recomputedBinding = computeBuildBinding({
+      buildCompletedAt: manifest.buildCompletedAt,
+      buildInputs: manifest.buildInputs,
+      dirty: manifest.dirty,
+      runtimeOutputs: bindingOutputs,
+      subject: manifest.subject,
+    });
+    if (
+      recomputedBinding === undefined ||
+      recomputedBinding !== manifest.buildBinding
+    ) {
+      return { ok: false, reason: "binding-mismatch" };
+    }
+    for (const output of loadedOutputs) {
+      if (manifest.outputs.get(output.name) !== output.sha256) {
+        return { ok: false, reason: "runtime-digest-mismatch" };
+      }
+    }
+    if (!installPinnedModulePlugin(state)) {
+      return { ok: false, reason: "pinned-loader-unavailable" };
+    }
+
+    state.sequence += 1;
+    token = `${state.sequence.toString(36)}-${manifest.buildBinding}`;
+    for (const [path, value] of bytesByPath) {
+      const pinnedPath = `${path}${PIN_QUERY_PREFIX}${token}`;
+      state.pins.set(pinnedPath, value);
+      pinnedKeys.push(pinnedPath);
+    }
+    if (!registerPinnedRuntime(state, token, pinnedKeys)) {
+      return { ok: false, reason: "pinned-loader-unavailable" };
+    }
+    committed = true;
+    return {
+      ok: true,
+      artifactPath: entryPath,
+      buildBinding: manifest.buildBinding,
+      loadedOutputs,
+      modulePaths,
+      token,
+    };
+  } finally {
+    // The map is only the hand-off between verification and the loader. Once
+    // the registry owns the values, no local container may keep another strong
+    // reference. On every failed path release the in-flight byte reservation.
+    bytesByPath.clear();
+    if (!committed) {
+      if (token === undefined) {
+        releaseSlotBytes(state, slot);
+      } else {
+        disposePinnedRuntime(state, token, slot, pinnedKeys);
+      }
     }
   }
-
-  state.sequence += 1;
-  const token = `${state.sequence.toString(36)}-${manifest.buildBinding}`;
-  const pinnedKeys: string[] = [];
-  for (const [path, value] of bytesByPath) {
-    const pinnedPath = `${path}${PIN_QUERY_PREFIX}${token}`;
-    state.pins.set(pinnedPath, value);
-    pinnedKeys.push(pinnedPath);
-  }
-  if (!installPinnedModulePlugin(state, token, pinnedKeys)) {
-    for (const path of pinnedKeys) state.pins.delete(path);
-    return { ok: false, reason: "pinned-loader-unavailable" };
-  }
-  return {
-    ok: true,
-    artifactPath: entryPath,
-    buildBinding: manifest.buildBinding,
-    loadedOutputs,
-    modulePaths,
-    bytesByPath,
-    token,
-  };
 }
 
-function schedulePreload(
+async function runExtensionLoad(
+  pi: unknown,
   state: LoaderState,
-  work: () => Promise<void>,
+  slot: LoadSlot,
 ): Promise<void> {
-  const next = state.preloadTail.catch(() => undefined).then(work);
-  state.preloadTail = next.catch(() => undefined);
-  return next;
-}
-
-async function runExtensionLoad(pi: unknown): Promise<void> {
+  let pinned: PinnedRuntime | undefined;
   try {
-    const state = loaderState();
-    const pinned = await pinRuntime(import.meta.path as unknown, state);
-    if (!pinned.ok) return;
+    const preload = await pinRuntime(import.meta.path as unknown, state, slot);
+    if (!preload.ok) {
+      recordPreloaderFailure(state, preload.reason);
+      return;
+    }
+    pinned = preload;
 
     const identityPath = pinned.modulePaths.get("extension-build-identity");
     const hostLoaderPath = pinned.modulePaths.get("host-module-loader");
@@ -643,6 +926,9 @@ async function runExtensionLoad(pi: unknown): Promise<void> {
       hostLoaderPath === undefined ||
       implementationPath === undefined
     ) {
+      disposePinnedRuntime(state, pinned.token, slot);
+      pinned = undefined;
+      recordPreloaderFailure(state, "module-path-missing");
       return;
     }
 
@@ -654,18 +940,26 @@ async function runExtensionLoad(pi: unknown): Promise<void> {
     )) as unknown as TrustedModuleLoader;
 
     const processStartMs = identityModule.extensionProcessStartMs();
-    if (!Number.isSafeInteger(processStartMs) || processStartMs < 0) return;
+    if (!Number.isSafeInteger(processStartMs) || processStartMs < 0) {
+      disposePinnedRuntime(state, pinned.token, slot);
+      pinned = undefined;
+      recordPreloaderFailure(state, "extension-start-failed");
+      return;
+    }
     const loadedIdentity = {
-      artifactPath: pinned.artifactPath,
-      artifactSha256: runtimeOutputDigest(pinned.loadedOutputs, "extension"),
-      loadedOutputs: pinned.loadedOutputs,
-      buildBinding: pinned.buildBinding,
+      artifactPath: preload.artifactPath,
+      artifactSha256: runtimeOutputDigest(preload.loadedOutputs, "extension"),
+      loadedOutputs: preload.loadedOutputs,
+      buildBinding: preload.buildBinding,
       loadTimeMs: Date.now(),
       processStartMs,
     };
     identityModule.maybeWriteExtensionBuildIdentityProofLine(loadedIdentity);
     hostModule.recordPiExtensionEntryPath(import.meta.path as unknown);
 
+    // Host resolution imports the host's own absolute modules. Keep the
+    // verified registry live until that host graph and the attested graph have
+    // both settled; disposal still happens before extension activation.
     const hostOutcome = await hostModule.resolveHostModules(
       new hostModule.BunPiHostModuleEnvironment(),
     );
@@ -679,17 +973,46 @@ async function runExtensionLoad(pi: unknown): Promise<void> {
       hostModule.recordHostModuleOutcome(outcome.value);
     }
 
-    const implementation = (await import(
-      `${implementationPath}${PIN_QUERY_PREFIX}${pinned.token}`
-    )) as unknown as TrustedImplementationModule;
-    if (typeof implementation.default !== "function") return;
+    let implementation: TrustedImplementationModule;
+    try {
+      implementation = (await import(
+        `${implementationPath}${PIN_QUERY_PREFIX}${pinned.token}`
+      )) as unknown as TrustedImplementationModule;
+    } catch {
+      disposePinnedRuntime(state, pinned.token, slot);
+      pinned = undefined;
+      recordPreloaderFailure(state, "module-evaluation-failed");
+      return;
+    }
+
+    // All static module evaluation has settled. The module objects are now
+    // sufficient for activation; release every pinned byte and registry entry
+    // before calling any exported function.
+    disposePinnedRuntime(state, pinned.token, slot);
+    recordPreloaderLoaded(state, pinned);
+    pinned = undefined;
+
+    if (typeof implementation.default !== "function") {
+      recordPreloaderFailure(state, "module-evaluation-failed");
+      return;
+    }
     implementation.setLoadedPiExtensionIdentity?.(loadedIdentity);
     await implementation.default(pi);
   } catch {
+    if (pinned !== undefined) {
+      disposePinnedRuntime(state, pinned.token, slot);
+      pinned = undefined;
+    }
+    recordPreloaderFailure(state, "module-evaluation-failed");
     return;
   }
 }
 
 export default function weaveAdapterExtension(pi: unknown): Promise<void> {
-  return schedulePreload(loaderState(), () => runExtensionLoad(pi));
+  const state = loaderState();
+  const slot = beginLoad(state);
+  if (slot === undefined) return Promise.resolve();
+  return runExtensionLoad(pi, state, slot).finally(() => {
+    finishLoad(state, slot);
+  });
 }

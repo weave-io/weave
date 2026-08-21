@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 358 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~39,700 tokens. Without it, AI exploration would cost ~112,400 tokens. **Saves ~72,700 tokens per conversation.**
-> **Last scanned:** 2026-08-20 23:45 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 359 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~39,800 tokens. Without it, AI exploration would cost ~112,600 tokens. **Saves ~72,900 tokens per conversation.**
+> **Last scanned:** 2026-08-21 01:27 — re-run after significant changes
 
 ---
 
@@ -801,6 +801,10 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - _...16 more_
+- `packages/adapters/pi/src/extension.ts`
+  - function readExtensionPreloaderRetentionForTesting: () => ExtensionPreloaderRetentionSnapshot
+  - interface ExtensionPreloaderDigest
+  - interface ExtensionPreloaderRetentionSnapshot
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string

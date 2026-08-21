@@ -790,6 +790,10 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - _...16 more_
+- `packages/adapters/pi/src/extension.ts`
+  - function readExtensionPreloaderRetentionForTesting: () => ExtensionPreloaderRetentionSnapshot
+  - interface ExtensionPreloaderDigest
+  - interface ExtensionPreloaderRetentionSnapshot
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
