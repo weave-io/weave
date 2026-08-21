@@ -230,18 +230,6 @@ export const LEGACY_ENTRYPOINTS = [
   "scripts/release/bind-artifacts.ts",
 ] as const;
 
-export const TEST_ONLY_ROOT_MARKERS = [
-  "scripts/release/__tests__/incident-recovery.integration.test.ts",
-  "scripts/release/__tests__/fixture-seam-isolation.test.ts",
-  "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts",
-] as const;
-
-export const LOCAL_REGISTRY_FIXTURE_DIR =
-  "scripts/release/__tests__/fixtures/local-registry" as const;
-
-export const SEAM_LEAK_FIXTURE_DIR =
-  "scripts/release/__tests__/fixtures/seam-leaks" as const;
-
 export type EntrypointInventoryError =
   | {
       type: "UnknownProductionEntrypoint";
@@ -305,19 +293,11 @@ export function registeredProductionPaths(
 export function isTestOnlyRoot(path: string): boolean {
   const normalized = posixPath(path);
   if (
-    TEST_ONLY_ROOT_MARKERS.some(
-      (marker) => normalized === marker || normalized.endsWith(`/${marker}`),
-    )
-  )
-    return true;
-  if (
     normalized.includes("/__tests__/") ||
     normalized.includes("/__fixtures__/")
   )
     return true;
   if (/\.(test|spec)\.ts$/.test(normalized)) return true;
-  if (normalized.includes("/fixtures/local-registry/")) return true;
-  if (normalized.includes("/fixtures/seam-leaks/")) return true;
   return false;
 }
 
