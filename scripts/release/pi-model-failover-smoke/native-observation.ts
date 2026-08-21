@@ -33,6 +33,8 @@ import {
   ORIGINAL_USER_ID,
   PARENT_TASK,
   PARENT_TOOL_CALL_ID,
+  PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
+  PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
   PI_NATIVE_THREAD_ENTRY_TYPE,
   QUEUED_USER,
   QUEUED_USER_ID,
@@ -194,8 +196,13 @@ function describeNativeEntry(
   if (
     recordType === "custom" &&
     (record.customType === NATIVE_RECOVERY_ENTRY_TYPE ||
-      record.customType === PI_NATIVE_THREAD_ENTRY_TYPE)
+      record.customType === PI_NATIVE_THREAD_ENTRY_TYPE ||
+      record.customType === PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE ||
+      record.customType === PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE)
   ) {
+    // These entries persist recovery, thread identity, or child result
+    // bookkeeping. They are not transcript context and must not shift the
+    // identity-aware descriptor sequence.
     return undefined;
   }
   const entry = nativeEntryValue(record);

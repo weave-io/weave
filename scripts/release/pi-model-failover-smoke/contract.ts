@@ -195,6 +195,9 @@ export const UNSAFE_PROVENANCE_ENV =
   "WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE";
 export const SAFE_PATH_PREFIXES = ["/tmp/", "/private/tmp/"] as const;
 export const PI_NATIVE_THREAD_ENTRY_TYPE = "weave.child.thread";
+/** Durable child output bookkeeping, not transcript context. */
+export const PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE = "weave.child.result-chunk";
+export const PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE = "weave.child.result-commit";
 export const NATIVE_RECOVERY_MARKER_TYPE =
   "weave.model-fallback.recovery-marker";
 export const NATIVE_RECOVERY_ENTRY_TYPE = "weave.model-failover";
@@ -820,28 +823,23 @@ export function fixtureMarkerTokenHash(token: string): string {
   return hashDescriptorPart("marker-token", token);
 }
 
+/**
+ * The fallback fixture on Pi 0.84.2 sends only the task, tool call, and tool
+ * result to the provider. Steering, follow-up, and queued input are not part
+ * of this fixture run.
+ */
 export const EXPECTED_PROVIDER_FACTS: readonly FixtureContextFact[] = [
   "original-task-user",
-  "original-user",
   "tool-call",
   "tool-result",
-  "steering-user",
-  "follow-up-user",
-  "unrelated-custom",
-  "queued-user",
 ];
 export const EXPECTED_HISTORY_FACTS: readonly FixtureContextFact[] = [
   "original-task-user",
-  "original-user",
   "tool-call",
   "tool-result",
-  "steering-user",
-  "follow-up-user",
-  "unrelated-custom",
   "failed-assistant",
   "recovery-marker",
   "successful-assistant",
-  "queued-user",
 ];
 
 export const FACT_ROLES: Readonly<

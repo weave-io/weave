@@ -14,6 +14,7 @@ import {
   type CleanupProcessObservation,
   containsForbiddenContent,
   EXPECTED_FALLBACK_VISIBLE_EVENT_COUNT,
+  EXPECTED_HISTORY_FACTS,
   EXPECTED_NATIVE_LINE,
   FALLBACK_SUCCESS,
   FIXTURE_CONTEXT_FACTS,
@@ -168,13 +169,8 @@ function derivedFacts(descriptors: readonly FixtureMessageDescriptor[]) {
 
 const providerFacts: readonly FixtureContextFact[] = [
   "original-task-user",
-  "original-user",
   "tool-call",
   "tool-result",
-  "steering-user",
-  "follow-up-user",
-  "unrelated-custom",
-  "queued-user",
 ];
 const markerToken = "550e8400-e29b-41d4-a716-446655440000";
 const markerTokenHash = fixtureMarkerTokenHash(markerToken);
@@ -560,30 +556,34 @@ function rollbackInput() {
 
 function successfulFallbackInput() {
   const providerDescriptors = factDescriptors(providerFacts);
+  const failedAssistantOrdinal = providerFacts.length;
   const failedAssistant = fixtureHistoryDescriptorForFact(
     "failed-assistant",
-    7,
+    failedAssistantOrdinal,
     8,
   );
-  const marker = fixtureHistoryDescriptorForFact("recovery-marker", 8, 9, {
-    correlationHash: markerTokenHash,
-  });
+  const markerOrdinal = failedAssistantOrdinal + 1;
+  const marker = fixtureHistoryDescriptorForFact(
+    "recovery-marker",
+    markerOrdinal,
+    10,
+    {
+      correlationHash: markerTokenHash,
+    },
+  );
+  const successfulAssistantOrdinal = markerOrdinal + 1;
   const successfulAssistant = fixtureHistoryDescriptorForFact(
     "successful-assistant",
-    9,
-    10,
+    successfulAssistantOrdinal,
+    11,
   );
-  const queuedUser = fixtureHistoryDescriptorForFact("queued-user", 10, 11);
   const durableDescriptors: readonly FixtureHistoryDescriptor[] = [
-    ...providerFacts
-      .slice(0, 7)
-      .map((fact, ordinal) =>
-        fixtureHistoryDescriptorForFact(fact, ordinal, ordinal + 1),
-      ),
+    ...providerFacts.map((fact, ordinal) =>
+      fixtureHistoryDescriptorForFact(fact, ordinal, 5 + ordinal),
+    ),
     failedAssistant,
     marker,
     successfulAssistant,
-    queuedUser,
   ];
   const durableCounts = descriptorCounts(durableDescriptors);
   const child: FixtureSnapshot = {
@@ -606,21 +606,12 @@ function successfulFallbackInput() {
     failedAssistantShapeHash: failedAssistant.contentShapeHash,
     requestCount: 3,
     requests: [
-      request(1, "first", { descriptors: providerDescriptors.slice(0, 3) }),
-      request(2, "first", {
-        descriptors: [
-          ...providerDescriptors,
-          fixtureDescriptorForFact(
-            "failed-assistant",
-            providerDescriptors.length,
-          ),
-        ],
-        failedAssistantPresent: true,
-      }),
+      request(1, "first", { descriptors: providerDescriptors.slice(0, 1) }),
+      request(2, "first", { descriptors: providerDescriptors }),
       request(3, "second", { descriptors: providerDescriptors }),
     ],
     history: {
-      entryCount: 11,
+      entryCount: 14,
       historyHash: "e".repeat(64),
       descriptors: durableDescriptors,
       ...durableCounts,
@@ -635,12 +626,17 @@ function successfulFallbackInput() {
         markerOrdinal: marker.ordinal,
         failedAssistantEntryIndex: failedAssistant.entryIndex,
         markerEntryIndex: marker.entryIndex,
-        interveningNativeEntryCount: 0,
+        interveningNativeEntryCount: 1,
         failedAssistantFingerprintHash: failedAssistant.contentFingerprintHash,
         markerTokenHash,
       },
     },
-    lifecycle: lifecycle(),
+    lifecycle: lifecycle({
+      messageStartCount: 6,
+      messageEndCount: 6,
+      contextCount: 3,
+      contextRepairCount: 1,
+    }),
   };
   const parent: FixtureSnapshot = {
     schemaVersion: 1,
@@ -652,10 +648,14 @@ function successfulFallbackInput() {
     sessionIdBeforeHash: "0".repeat(64),
     sessionIdAfterHash: "0".repeat(64),
     requestCount: 2,
-    requests: [request(1, "first"), request(2, "second")],
+    requests: [
+      request(1, "first"),
+      request(2, "second", { descriptors: providerDescriptors }),
+    ],
     lifecycle: lifecycle({
-      messageEndCount: 2,
-      contextCount: 0,
+      messageStartCount: 4,
+      messageEndCount: 4,
+      contextCount: 2,
       contextRepairCount: 0,
       modelSelectCount: 0,
       modelSelectTimesMs: [],
@@ -2015,7 +2015,14 @@ describe("Pi model-fallback release smoke", () => {
   });
 
   it("accepts the bounded fallback facts only when provider and native history differ correctly", () => {
-    const result = validateFallbackFacts(successfulFallbackInput());
+    const input = successfulFallbackInput();
+    expect(
+      input.child.requests.map((request) => request.descriptors.length),
+    ).toEqual([1, 3, 3]);
+    expect(
+      input.parent.requests.map((request) => request.descriptors.length),
+    ).toEqual([1, 3]);
+    const result = validateFallbackFacts(input);
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       expect(result.value.visibleEventCount).toBe(
@@ -2052,6 +2059,7 @@ describe("Pi model-fallback release smoke", () => {
       throw new Error("test setup: marker correlation is missing");
     }
     const markerCorrelation = history.markerCorrelation;
+    const markerIndex = EXPECTED_HISTORY_FACTS.indexOf("recovery-marker");
     const rebuildChild = (
       descriptors: readonly FixtureMessageDescriptor[],
     ): FixtureSnapshot => ({
@@ -2094,17 +2102,39 @@ describe("Pi model-fallback release smoke", () => {
         ]),
       },
       {
+        name: "duplicate provider identity",
+        child: rebuildChild([
+          fallback.descriptors[0] as FixtureMessageDescriptor,
+          fallback.descriptors[1] as FixtureMessageDescriptor,
+          {
+            ...(fallback.descriptors[1] as FixtureMessageDescriptor),
+            ordinal: 2,
+          },
+        ]),
+      },
+      {
+        name: "ambiguous provider identity",
+        child: rebuildChild([
+          fallback.descriptors[0] as FixtureMessageDescriptor,
+          fallback.descriptors[1] as FixtureMessageDescriptor,
+          {
+            ...(fallback.descriptors[2] as FixtureMessageDescriptor),
+            correlationHash: undefined,
+          },
+        ]),
+      },
+      {
         name: "duplicate marker",
         child: rebuildHistory([
           ...history.descriptors,
-          history.descriptors[8] as FixtureHistoryDescriptor,
+          history.descriptors[markerIndex] as FixtureHistoryDescriptor,
         ]),
       },
       {
         name: "wrong marker token",
         child: rebuildHistory(
           history.descriptors.map((descriptor, index) =>
-            index === 8
+            index === markerIndex
               ? { ...descriptor, correlationHash: "0".repeat(64) }
               : descriptor,
           ),
@@ -2122,7 +2152,7 @@ describe("Pi model-fallback release smoke", () => {
               markerTokenHash: "0".repeat(64),
             },
             descriptors: history.descriptors.map((descriptor, index) =>
-              index === 8
+              index === markerIndex
                 ? { ...descriptor, correlationHash: "0".repeat(64) }
                 : descriptor,
             ),
@@ -2134,7 +2164,7 @@ describe("Pi model-fallback release smoke", () => {
         name: "wrong marker custom type",
         child: rebuildHistory(
           history.descriptors.map((descriptor, index) =>
-            index === 8
+            index === markerIndex
               ? { ...descriptor, customTypeHash: "0".repeat(64) }
               : descriptor,
           ),
@@ -2213,8 +2243,9 @@ describe("Pi model-fallback release smoke", () => {
     const input = successfulFallbackInput();
     if (input.child.history === undefined)
       throw new Error("test setup: history is missing");
+    const failedIndex = EXPECTED_HISTORY_FACTS.indexOf("failed-assistant");
     const descriptors = input.child.history.descriptors.filter(
-      (_, index) => index !== 7,
+      (_, index) => index !== failedIndex,
     );
     const child: FixtureSnapshot = {
       ...input.child,

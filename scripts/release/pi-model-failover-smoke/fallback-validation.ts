@@ -240,10 +240,10 @@ function validateExactProviderContext(
 function validateFailedProviderContext(
   request: FixtureMessageFacts,
 ): Result<void, SmokeFailure> {
-  const expectedFacts: readonly FixtureContextFact[] = [
-    ...EXPECTED_PROVIDER_FACTS,
-    "failed-assistant",
-  ];
+  // The provider fails before Pi can append the failed assistant to native
+  // history. The failing request therefore has the same three-message
+  // provider prefix as the recovery request.
+  const expectedFacts = EXPECTED_PROVIDER_FACTS;
   const sequence = validateDescriptorSequence(
     request.descriptors,
     expectedFacts,
@@ -251,13 +251,22 @@ function validateFailedProviderContext(
   );
   if (sequence.isErr()) return err(sequence.error);
   const derived = descriptorFactsFromDescriptors(request.descriptors);
+  const counts = descriptorCounts(request.descriptors);
   if (
     request.messageCount !== request.descriptors.length ||
-    request.descriptorCount !== request.descriptors.length ||
-    request.failedAssistantPresent !== true ||
+    request.descriptorCount !== counts.descriptorCount ||
+    request.userCount !== counts.userCount ||
+    request.assistantCount !== counts.assistantCount ||
+    request.toolResultCount !== counts.toolResultCount ||
+    request.customCount !== counts.customCount ||
+    request.originalUserPresent !== derived.originalUserPresent ||
+    request.taskPresent !== derived.taskPresent ||
+    request.toolCallPresent !== derived.toolCallPresent ||
+    request.toolResultPresent !== derived.toolResultPresent ||
+    request.failedAssistantPresent !== false ||
     request.recoveryMarkerPresent !== false ||
     request.syntheticProviderUserMessagePresent !== false ||
-    derived.failedAssistantPresent !== true ||
+    derived.failedAssistantPresent !== false ||
     derived.recoveryMarkerPresent !== false
   ) {
     return err(
@@ -296,7 +305,7 @@ function validateProviderContextContinuity(
   fallbackRequest: FixtureMessageFacts,
 ): Result<void, SmokeFailure> {
   if (
-    failedRequest.descriptors.length !== EXPECTED_PROVIDER_FACTS.length + 1 ||
+    failedRequest.descriptors.length !== EXPECTED_PROVIDER_FACTS.length ||
     fallbackRequest.descriptors.length !== EXPECTED_PROVIDER_FACTS.length
   ) {
     return err(
@@ -352,9 +361,14 @@ function validateExactDurableHistory(
     true,
   );
   if (sequence.isErr()) return err(sequence.error);
-  const failed = history.descriptors[7];
-  const marker = history.descriptors[8];
-  const successful = history.descriptors[9];
+  const failedIndex = EXPECTED_HISTORY_FACTS.indexOf("failed-assistant");
+  const markerIndex = EXPECTED_HISTORY_FACTS.indexOf("recovery-marker");
+  const successfulIndex = EXPECTED_HISTORY_FACTS.indexOf(
+    "successful-assistant",
+  );
+  const failed = history.descriptors[failedIndex];
+  const marker = history.descriptors[markerIndex];
+  const successful = history.descriptors[successfulIndex];
   if (
     failed === undefined ||
     marker === undefined ||
@@ -574,7 +588,8 @@ export function validateFallbackFacts(input: {
     history,
   );
   if (commonFacts.isErr()) return err(commonFacts.error);
-  const failedAssistant = history.descriptors[7];
+  const failedAssistant =
+    history.descriptors[EXPECTED_HISTORY_FACTS.indexOf("failed-assistant")];
   if (
     failedAssistant === undefined ||
     fallbackRequest.descriptors.some(
@@ -595,8 +610,9 @@ export function validateFallbackFacts(input: {
     );
   }
   if (
-    child.lifecycle.messageEndCount !== 3 ||
-    child.lifecycle.contextCount !== 1 ||
+    child.lifecycle.messageStartCount !== 6 ||
+    child.lifecycle.messageEndCount !== 6 ||
+    child.lifecycle.contextCount !== 3 ||
     child.lifecycle.contextRepairCount !== 1 ||
     child.lifecycle.markerMessageStartCount !== 1 ||
     child.lifecycle.modelSelectCount !== 1 ||
