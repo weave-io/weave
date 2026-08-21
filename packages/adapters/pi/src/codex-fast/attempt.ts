@@ -38,12 +38,17 @@
  *   sibling routing module models its verdicts: as a discriminated union.
  */
 
+import { Result } from "neverthrow";
+import { z } from "zod";
 import type {
   CodexFastAllowlistRuleId,
   CodexFastEligibility,
   CodexIneligibleReason,
 } from "./routing.js";
-import { CODEX_INELIGIBLE_REASONS } from "./routing.js";
+import {
+  CODEX_FAST_MODEL_ALLOWLIST,
+  CODEX_INELIGIBLE_REASONS,
+} from "./routing.js";
 
 /**
  * The reportable states, restricted to the subset of the engine's
@@ -219,8 +224,8 @@ export type CodexFastAttempt = {
   /** Record a preexisting routing hint this attempt did not write. */
   readonly recordHeaderCollision: () => CodexFastTransition;
   /** Record the bounded sniffer's outcome for one correlated attempt. */
-  readonly recordEvidence: (
-    attempt: unknown,
+  readonly recordEvidence: <TAttempt>(
+    attempt: TAttempt,
     outcome: CodexFastEvidenceOutcome,
   ) => CodexFastTransition;
   /** End the call as aborted. */
@@ -261,34 +266,70 @@ const IGNORED: Readonly<
   invalid: Object.freeze({ kind: "ignored", cause: "invalid" } as const),
 });
 
-function isPayloadDecision(value: unknown): value is CodexFastPayloadDecision {
-  return (
-    typeof value === "string" &&
-    (CODEX_FAST_PAYLOAD_DECISIONS as readonly string[]).includes(value)
-  );
+function isPayloadDecision<TValue>(
+  value: TValue,
+): value is TValue & CodexFastPayloadDecision {
+  return CODEX_FAST_PAYLOAD_DECISIONS.some((candidate) => candidate === value);
 }
 
-function isEvidenceOutcome(value: unknown): value is CodexFastEvidenceOutcome {
-  return (
-    typeof value === "string" &&
-    (CODEX_FAST_EVIDENCE_OUTCOMES as readonly string[]).includes(value)
-  );
+function isEvidenceOutcome<TValue>(
+  value: TValue,
+): value is TValue & CodexFastEvidenceOutcome {
+  return CODEX_FAST_EVIDENCE_OUTCOMES.some((candidate) => candidate === value);
 }
 
-function isIneligibleReason(value: unknown): value is CodexIneligibleReason {
-  return (
-    typeof value === "string" &&
-    (CODEX_INELIGIBLE_REASONS as readonly string[]).includes(value)
-  );
+function isIneligibleReason<TValue>(
+  value: TValue,
+): value is TValue & CodexIneligibleReason {
+  return CODEX_INELIGIBLE_REASONS.some((candidate) => candidate === value);
 }
 
 /**
  * Accept an allowlist rule id only in its exact frozen shape. A caller that
  * invents one gets no mapping rather than an unbounded token in a snapshot.
  */
-function isAllowlistRuleId(value: unknown): value is CodexFastAllowlistRuleId {
-  return typeof value === "string" && /^codex-sub-0[1-7]$/.test(value);
+function isAllowlistRuleId<TValue>(
+  value: TValue,
+): value is TValue & CodexFastAllowlistRuleId {
+  return CODEX_FAST_MODEL_ALLOWLIST.some((entry) => entry.ruleId === value);
 }
+
+type CodexFastAttemptEligibility =
+  | CodexFastEligibility
+  | { readonly kind: "wrapper-degraded" };
+
+const ALLOWLIST_RULE_ID_SCHEMA = z.custom<CodexFastAllowlistRuleId>(
+  (value): boolean => isAllowlistRuleId(value),
+);
+
+const ELIGIBILITY_SCHEMA = z.union([
+  z.object({ kind: z.literal("no-intent") }).strict(),
+  z
+    .object({
+      kind: z.literal("eligible"),
+      ruleId: ALLOWLIST_RULE_ID_SCHEMA,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("ineligible"),
+      reason: z.union([
+        z.literal("provider-not-codex"),
+        z.literal("model-id-unsafe"),
+        z.literal("model-not-allowed"),
+        z.literal("model-owner-mismatch"),
+        z.literal("transport-not-first-party"),
+        z.literal("auth-not-subscription"),
+        z.literal("request-collision"),
+      ]),
+    })
+    .strict(),
+  z.object({ kind: z.literal("wrapper-degraded") }).strict(),
+]);
+
+const HEADER_PARTS_SCHEMA = z
+  .object({ originator: z.literal(true), routingHint: z.literal(true) })
+  .strict();
 
 /** One outgoing attempt's private record. */
 type OutgoingAttempt = {
@@ -315,15 +356,15 @@ type OutgoingAttempt = {
  * fail-closed answer rule 12 demands from every other doubt.
  */
 export function createCodexFastAttempt(
-  eligibility: CodexFastEligibility,
+  eligibility: CodexFastAttemptEligibility,
 ): CodexFastAttempt {
-  const verdict: unknown = eligibility;
-  const kind =
-    typeof verdict === "object" && verdict !== null
-      ? (verdict as { readonly kind?: unknown }).kind
-      : undefined;
-
-  const noIntent = kind === "no-intent";
+  const parsedEligibility = Result.fromThrowable(
+    () => ELIGIBILITY_SCHEMA.safeParse(eligibility),
+    (): null => null,
+  )().unwrapOr(null);
+  const noIntent =
+    parsedEligibility?.success === true &&
+    parsedEligibility.data.kind === "no-intent";
 
   let ruleId: CodexFastAllowlistRuleId | "none" = "none";
   let terminalSnapshot: CodexFastSnapshot | undefined;
@@ -384,21 +425,25 @@ export function createCodexFastAttempt(
 
   if (noIntent) {
     // Nothing to correlate and nothing to report, ever.
-  } else if (kind === "eligible") {
-    const declared = (verdict as { readonly ruleId?: unknown }).ruleId;
+  } else if (parsedEligibility === null || !parsedEligibility.success) {
+    endWith("wrapper-degraded");
+  } else if (parsedEligibility.data.kind === "eligible") {
+    const declared = parsedEligibility.data.ruleId;
     if (isAllowlistRuleId(declared)) {
       ruleId = declared;
     } else {
       endWith("wrapper-degraded");
     }
-  } else if (kind === "ineligible") {
-    const reason = (verdict as { readonly reason?: unknown }).reason;
+  } else if (parsedEligibility.data.kind === "ineligible") {
+    const reason = parsedEligibility.data.reason;
     if (isIneligibleReason(reason)) {
       collision = reason === "request-collision";
       endWith(reason);
     } else {
       endWith("wrapper-degraded");
     }
+  } else if (parsedEligibility.data.kind === "wrapper-degraded") {
+    endWith("wrapper-degraded");
   } else {
     endWith("wrapper-degraded");
   }
@@ -469,11 +514,10 @@ export function createCodexFastAttempt(
     if (current.activated) {
       return IGNORED.duplicate;
     }
-    const both =
-      typeof parts === "object" &&
-      parts !== null &&
-      parts.originator === true &&
-      parts.routingHint === true;
+    const both = Result.fromThrowable(
+      () => HEADER_PARTS_SCHEMA.safeParse(parts).success,
+      (): boolean => false,
+    )().unwrapOr(false);
     if (!both) {
       // Rule 8 is both parts or neither. A partial write means the wrapper
       // broke its own invariant, so the mapping is abandoned rather than
@@ -497,8 +541,8 @@ export function createCodexFastAttempt(
     return ACCEPTED;
   }
 
-  function recordEvidence(
-    attempt: unknown,
+  function recordEvidence<TAttempt>(
+    attempt: TAttempt,
     outcome: CodexFastEvidenceOutcome,
   ): CodexFastTransition {
     const gate = blocked();

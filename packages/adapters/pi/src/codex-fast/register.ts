@@ -46,11 +46,16 @@
  */
 
 import { err, errAsync, ok, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type {
   PiHostModuleProvenance,
   PiHostModuleProvenanceReason,
 } from "../host-module-loader.js";
-import type { CodexFastAttemptSink, CodexFastIntentPort } from "./provider.js";
+import type {
+  CodexFastAttemptSink,
+  CodexFastIntentPort,
+  CodexWrappableProvider,
+} from "./provider.js";
 import { wrapCodexProviderForFast } from "./provider.js";
 import { CODEX_PROVIDER_ID } from "./routing.js";
 
@@ -119,11 +124,11 @@ export type CodexFastRegistrationOutcome = {
  * The host-facing probes, injected so a test never needs a real Pi process,
  * a real host version, or the real pi-ai package.
  */
-export type CodexFastRegistrationInput = {
-  /** The host's public `VERSION` export, read as an unknown. */
-  readonly readHostVersion: () => unknown;
+export type CodexFastRegistrationInput<TVersion, TModule, TRegistrar> = {
+  /** The host's public `VERSION` export, read at the adapter boundary. */
+  readonly readHostVersion: () => TVersion;
   /** Dynamic import of {@link CODEX_PROVIDER_MODULE_SPECIFIER}. */
-  readonly importProviderModule: () => Promise<unknown>;
+  readonly importProviderModule: () => Promise<TModule>;
   /**
    * Provenance of {@link CODEX_PROVIDER_MODULE_SPECIFIER} itself — the exact
    * module the import above will load — as established by the host-module
@@ -133,9 +138,11 @@ export type CodexFastRegistrationInput = {
   readonly readProviderModuleProvenance: () => PiHostModuleProvenance;
   /**
    * `ExtensionAPI.registerProvider`, already bound to the host object, or
-   * absent when this host exposes no such surface.
+   * absent when this host exposes no such surface. The generic keeps the
+   * host's own callable type at this boundary; the parser below decides
+   * whether it is usable before registration.
    */
-  readonly registerProvider: unknown;
+  readonly registerProvider: TRegistrar | undefined;
   /** Read per stream call by the wrapper; never captured as a value. */
   readonly intentPort: CodexFastIntentPort;
   /** Where the wrapper reports one call's sanitized states. */
@@ -154,113 +161,173 @@ function unprovenModuleFailure(
   return { reason: "provider-module-unproven", provenance };
 }
 
-/**
- * Every token {@link PiHostModuleProvenanceReason} admits, as a runtime set.
- *
- * The record's key type is the union itself, so the type checker rejects both
- * a missing token and an invented one: the set cannot drift from the loader's
- * closed enum without failing `typecheck`. It exists because the probe's
- * declared return type is a promise, not a proof — a hostile or simply broken
- * caller can return any object at all, and the failure token this seam hands
- * the caller is logged verbatim.
- */
-const PROVENANCE_REASONS: Readonly<Record<PiHostModuleProvenanceReason, true>> =
-  Object.freeze({
-    "host-root-unproven": true,
-    "host-package-mismatch": true,
-    "no-local-copy": true,
-    "already-host": true,
-    "local-path-unsafe": true,
-    "plugin-unavailable": true,
-    "redirect-registered": true,
-    "redirect-disabled": true,
-    "outcome-missing": true,
-    "specifier-unknown": true,
-  });
+/** Values supplied by a host probe stay opaque until this module parses them. */
+const HOST_INPUT_BOUNDARY = z.unknown();
+type HostInput = z.input<typeof HOST_INPUT_BOUNDARY>;
 
-/**
- * The one token every unrecognized answer collapses to. A reason this module
- * cannot place in the closed set is exactly as informative as no recorded
- * outcome at all, and it must never be the caller's string.
- */
+/** A host object accepted only after its own descriptors pass inspection. */
+interface HostObjectReference {
+  readonly hostObjectMarker?: never;
+}
+
+type HostCallable = (...args: never[]) => HostInput;
+type ProviderFactory = () => HostInput;
+type HostRegistrar = (provider: CodexWrappableProvider) => void;
+
+type HostObjectParseFailure = "host-object-unavailable";
+
+/** Return a callable without replacing the host's original function. */
+function isHostCallable(value: HostInput): value is HostCallable {
+  return Result.fromThrowable(
+    () => value instanceof Function,
+    (): boolean => false,
+  )().unwrapOr(false);
+}
+
+/** Reject arrays and callables before any member descriptor is inspected. */
+const HOST_OBJECT_REFERENCE_SCHEMA = z.custom<HostObjectReference>(
+  (value: HostInput): boolean => {
+    const reference = Result.fromThrowable(
+      (): boolean =>
+        value !== null &&
+        Object(value) === value &&
+        Array.isArray(value) === false,
+      (): boolean => false,
+    )();
+    return reference.isOk() && reference.value && !isHostCallable(value);
+  },
+);
+
+function parseHostObject<TValue>(
+  value: TValue,
+): Result<HostObjectReference, HostObjectParseFailure> {
+  const parsed = Result.fromThrowable(
+    () => HOST_OBJECT_REFERENCE_SCHEMA.safeParse(value),
+    (): HostObjectParseFailure => "host-object-unavailable",
+  )();
+  if (parsed.isErr() || !parsed.value.success) {
+    return err("host-object-unavailable");
+  }
+  return ok(parsed.value.data);
+}
+
+/** Read only own enumerable data; missing, inherited, and accessor fields fail. */
+function readDataProperty(
+  source: HostObjectReference,
+  key: string,
+): HostInput | undefined {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(source, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return;
+  const found = descriptor.value;
+  if (found === undefined || !("value" in found) || found.enumerable !== true) {
+    return;
+  }
+  return found.value;
+}
+
+/** Every reason that may cross the host-module provenance boundary. */
+const PROVENANCE_REASON_SCHEMA = z.enum([
+  "host-root-unproven",
+  "host-package-mismatch",
+  "no-local-copy",
+  "already-host",
+  "local-path-unsafe",
+  "plugin-unavailable",
+  "redirect-registered",
+  "redirect-disabled",
+  "outcome-missing",
+  "specifier-unknown",
+]);
+const PROVENANCE_KIND_SCHEMA = z.enum(["host", "unproven"]);
+const PROVENANCE_OUTCOME_SCHEMA = z.enum(["redirected", "already-host"]);
+
+/** Keep the failure token inside the loader's closed enum. */
+function isProvenanceReason<TValue>(
+  value: TValue,
+): value is TValue & PiHostModuleProvenanceReason {
+  const parsed = Result.fromThrowable(
+    () => PROVENANCE_REASON_SCHEMA.safeParse(value),
+    (): boolean => false,
+  )();
+  return parsed.isOk() && parsed.value.success;
+}
+
+/** The one token used for every malformed or absent provenance answer. */
 const PROVENANCE_REASON_FALLBACK: PiHostModuleProvenanceReason =
   "outcome-missing";
-
 const UNPROVEN_PROVENANCE: PiHostModuleProvenance = Object.freeze({
   kind: "unproven",
   reason: PROVENANCE_REASON_FALLBACK,
 });
 
 /**
- * Whether one observed value is a member of the closed reason set. Own data
- * keys of a frozen literal only, so `constructor`, `__proto__`, and every
- * other inherited name answer `false`.
- */
-function isProvenanceReason(
-  value: unknown,
-): value is PiHostModuleProvenanceReason {
-  return typeof value === "string" && Object.hasOwn(PROVENANCE_REASONS, value);
-}
-
-/**
- * Read one own data property. A getter, a missing key, and an inherited key
- * all read as `undefined`: a verdict this seam acts on must be stated as
- * plain data, never computed by the object being judged.
- */
-function readDataProperty(source: object, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(source, key);
-  if (descriptor === undefined || !("value" in descriptor)) {
-    return undefined;
-  }
-  return descriptor.value;
-}
-
-/**
  * Narrow whatever the probe returned to the closed provenance shape.
  *
- * The probe's static type promises {@link PiHostModuleProvenance}; this
- * function assumes nothing of the sort. A non-object, a foreign `kind`, a
- * `host` verdict without a known outcome, an accessor-backed field, a proxy
- * whose traps throw, and a `reason` that is not one of the loader's tokens
- * all resolve to a value built here — so the token that later reaches a log,
- * a journal, or a status line is always one of this module's own constants.
+ * Only own enumerable data properties count. A callable, an array, an
+ * accessor, an inherited field, a throwing proxy, or an unknown token becomes
+ * the local fallback, so no caller-controlled text reaches a failure value.
  */
-const narrowProviderModuleProvenance = Result.fromThrowable(
-  (read: () => PiHostModuleProvenance): PiHostModuleProvenance => {
-    const observed: unknown = read();
-    if (typeof observed !== "object" || observed === null) {
-      return UNPROVEN_PROVENANCE;
-    }
-    if (readDataProperty(observed, "kind") !== "host") {
-      const reason = readDataProperty(observed, "reason");
+function narrowProviderModuleProvenance<TProvenance>(
+  read: () => TProvenance,
+): PiHostModuleProvenance {
+  const narrowed = Result.fromThrowable(
+    (): PiHostModuleProvenance => {
+      const record = parseHostObject(read());
+      if (record.isErr()) return UNPROVEN_PROVENANCE;
+
+      const kind = PROVENANCE_KIND_SCHEMA.safeParse(
+        readDataProperty(record.value, "kind"),
+      );
+      if (kind.success && kind.data === "host") {
+        const outcome = PROVENANCE_OUTCOME_SCHEMA.safeParse(
+          readDataProperty(record.value, "outcome"),
+        );
+        return outcome.success
+          ? { kind: "host", outcome: outcome.data }
+          : { kind: "unproven", reason: "specifier-unknown" };
+      }
+
+      const reason = readDataProperty(record.value, "reason");
       return isProvenanceReason(reason)
         ? { kind: "unproven", reason }
         : UNPROVEN_PROVENANCE;
-    }
-    const outcome = readDataProperty(observed, "outcome");
-    if (outcome !== "redirected" && outcome !== "already-host") {
-      return { kind: "unproven", reason: "specifier-unknown" };
-    }
-    return { kind: "host", outcome };
-  },
-  (): PiHostModuleProvenance => UNPROVEN_PROVENANCE,
-);
+    },
+    (): PiHostModuleProvenance => UNPROVEN_PROVENANCE,
+  )();
+  return narrowed.isOk() ? narrowed.value : UNPROVEN_PROVENANCE;
+}
 
 /**
  * Read the provenance probe behind a boundary and accept only a positive
  * host verdict. An absent probe, a throwing probe, a malformed verdict, and
- * every `unproven` reason all refuse registration: the seam's whole job is
- * to prove that the module it is about to wrap is the host's copy, and
- * anything less is a reason to leave the native provider alone.
+ * every `unproven` reason all refuse registration.
  */
-function readProviderModuleProvenance(
-  read: () => PiHostModuleProvenance,
+function readProviderModuleProvenance<TProvenance>(
+  read: () => TProvenance,
 ): Result<"redirected" | "already-host", CodexFastRegistrationFailure> {
-  const provenance =
-    narrowProviderModuleProvenance(read).unwrapOr(UNPROVEN_PROVENANCE);
+  const provenance = narrowProviderModuleProvenance(read);
   return provenance.kind === "host"
     ? ok(provenance.outcome)
     : err(unprovenModuleFailure(provenance.reason));
+}
+
+const HOST_VERSION_SCHEMA = z
+  .string()
+  .max(MAX_HOST_VERSION_LENGTH)
+  .regex(HOST_VERSION_PATTERN);
+
+type HostVersionReadFailure = "host-version-unavailable";
+
+function parseHostVersion<TVersion>(version: TVersion): string | undefined {
+  const parsed = Result.fromThrowable(
+    () => HOST_VERSION_SCHEMA.safeParse(version),
+    (): boolean => false,
+  )();
+  if (parsed.isErr() || !parsed.value.success) return;
+  return parsed.value.data;
 }
 
 /**
@@ -268,14 +335,13 @@ function readProviderModuleProvenance(
  * this module cannot parse — absent, prereleased, hostile, or overlong — is
  * not evidence of a supported host, so it fails the gate.
  */
-export function isCodexFastHostVersionSupported(version: unknown): boolean {
-  if (typeof version !== "string" || version.length > MAX_HOST_VERSION_LENGTH) {
-    return false;
-  }
-  if (!HOST_VERSION_PATTERN.test(version)) {
-    return false;
-  }
-  const parts = version.split(".").map(Number);
+export function isCodexFastHostVersionSupported<TVersion>(
+  version: TVersion,
+): boolean {
+  const parsed = parseHostVersion(version);
+  if (parsed === undefined) return false;
+
+  const parts = parsed.split(".").map(Number);
   for (const [index, floor] of MINIMUM_HOST_VERSION_PARTS.entries()) {
     const part = parts[index];
     if (part === undefined || !Number.isSafeInteger(part)) {
@@ -291,10 +357,50 @@ export function isCodexFastHostVersionSupported(version: unknown): boolean {
   return true;
 }
 
-/** Read the host version behind a boundary: the export may be an accessor. */
-const readHostVersionSafely = Result.fromThrowable(
-  (read: () => unknown): unknown => read(),
-  (): unknown => undefined,
+/** Read and parse the host version without exposing a probe failure. */
+function readHostVersionSafely<TVersion>(
+  read: () => TVersion,
+): Result<string, HostVersionReadFailure> {
+  const observed = Result.fromThrowable(
+    (): TVersion => read(),
+    (): HostVersionReadFailure => "host-version-unavailable",
+  )();
+  if (observed.isErr()) return err(observed.error);
+
+  const parsed = parseHostVersion(observed.value);
+  return parsed === undefined ? err("host-version-unavailable") : ok(parsed);
+}
+
+const PROVIDER_FACTORY_SCHEMA = z.custom<ProviderFactory>(
+  (value: HostInput): boolean => isHostCallable(value),
+);
+
+/** A callable provider with the exact fields the wrapper owns. */
+type NativeCodexProvider = CodexWrappableProvider & HostObjectReference;
+
+function isNativeCodexProvider(value: HostInput): value is NativeCodexProvider {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      const record = HOST_OBJECT_REFERENCE_SCHEMA.safeParse(value);
+      if (!record.success) return false;
+
+      const id = z
+        .literal(CODEX_PROVIDER_ID)
+        .safeParse(readDataProperty(record.data, "id"));
+      if (!id.success) return false;
+
+      return (
+        isHostCallable(readDataProperty(record.data, "stream")) &&
+        isHostCallable(readDataProperty(record.data, "streamSimple"))
+      );
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+}
+
+const NATIVE_PROVIDER_SCHEMA = z.custom<NativeCodexProvider>(
+  isNativeCodexProvider,
 );
 
 /**
@@ -302,61 +408,49 @@ const readHostVersionSafely = Result.fromThrowable(
  * an own, enumerable, callable data property counts, so a namespace whose
  * factory is a trap is treated as a host without one.
  */
-const readProviderFactory = Result.fromThrowable(
-  (module: unknown): ((...args: never[]) => unknown) => {
-    if (typeof module !== "object" || module === null) {
-      throw new Error("module-namespace-unexpected");
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(
-      module,
-      CODEX_PROVIDER_FACTORY_NAME,
-    );
-    if (
-      descriptor === undefined ||
-      !("value" in descriptor) ||
-      typeof descriptor.value !== "function"
-    ) {
-      throw new Error("factory-missing");
-    }
-    return descriptor.value as (...args: never[]) => unknown;
-  },
-  (): CodexFastRegistrationFailure => failure("provider-factory-unavailable"),
-);
-
-/** The minimum shape the wrapper needs, proven before it is handed over. */
-type NativeCodexProvider = {
-  readonly id: string;
-  stream: (...args: never[]) => unknown;
-  streamSimple: (...args: never[]) => unknown;
-};
+function readProviderFactory<TModule>(
+  module: TModule,
+): Result<ProviderFactory, CodexFastRegistrationFailure> {
+  const record = parseHostObject(module);
+  if (record.isErr()) {
+    return err(failure("provider-factory-unavailable"));
+  }
+  const parsed = Result.fromThrowable(
+    () =>
+      PROVIDER_FACTORY_SCHEMA.safeParse(
+        readDataProperty(record.value, CODEX_PROVIDER_FACTORY_NAME),
+      ),
+    (): CodexFastRegistrationFailure => failure("provider-factory-unavailable"),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return parsed.value.success
+    ? ok(parsed.value.data)
+    : err(failure("provider-factory-unavailable"));
+}
 
 /**
  * Build one native provider. Identity is checked here rather than trusted:
  * eligibility rule 1 keys the whole mapping on the provider id, so a factory
  * that returned something else must never be wrapped under that name.
  */
-const createNativeProvider = Result.fromThrowable(
-  (factory: (...args: never[]) => unknown): NativeCodexProvider => {
-    const provider = (factory as () => unknown)();
-    if (typeof provider !== "object" || provider === null) {
-      throw new Error("provider-shape-unexpected");
-    }
-    const candidate = provider as {
-      readonly id?: unknown;
-      readonly stream?: unknown;
-      readonly streamSimple?: unknown;
-    };
-    if (
-      candidate.id !== CODEX_PROVIDER_ID ||
-      typeof candidate.stream !== "function" ||
-      typeof candidate.streamSimple !== "function"
-    ) {
-      throw new Error("provider-identity-unexpected");
-    }
-    return provider as NativeCodexProvider;
-  },
-  (): CodexFastRegistrationFailure => failure("provider-identity-unexpected"),
-);
+function createNativeProvider(
+  factory: ProviderFactory,
+): Result<NativeCodexProvider, CodexFastRegistrationFailure> {
+  const produced = Result.fromThrowable(
+    (): HostInput => factory(),
+    (): CodexFastRegistrationFailure => failure("provider-identity-unexpected"),
+  )();
+  if (produced.isErr()) return err(produced.error);
+
+  const parsed = Result.fromThrowable(
+    () => NATIVE_PROVIDER_SCHEMA.safeParse(produced.value),
+    (): CodexFastRegistrationFailure => failure("provider-identity-unexpected"),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return parsed.value.success
+    ? ok(parsed.value.data)
+    : err(failure("provider-identity-unexpected"));
+}
 
 /**
  * Import the provider module. `fromThrowable` rather than `fromPromise`,
@@ -364,18 +458,45 @@ const createNativeProvider = Result.fromThrowable(
  * exists. The rejection value is discarded: a module-resolution diagnostic
  * names paths and loader internals, and none of that may reach a log.
  */
-const importProviderModule = ResultAsync.fromThrowable(
-  async (load: () => Promise<unknown>): Promise<unknown> => await load(),
-  (): CodexFastRegistrationFailure => failure("provider-module-unavailable"),
+function importProviderModule<TModule>(
+  load: () => Promise<TModule>,
+): ResultAsync<TModule, CodexFastRegistrationFailure> {
+  return ResultAsync.fromThrowable(
+    async (): Promise<TModule> => await load(),
+    (): CodexFastRegistrationFailure => failure("provider-module-unavailable"),
+  )();
+}
+
+const HOST_REGISTRAR_SCHEMA = z.custom<HostRegistrar>(
+  (value: HostInput): boolean => isHostCallable(value),
 );
 
+function readRegisterProvider<TRegistrar>(
+  register: TRegistrar | undefined,
+): Result<HostRegistrar, CodexFastRegistrationFailure> {
+  const parsed = Result.fromThrowable(
+    () => HOST_REGISTRAR_SCHEMA.safeParse(register),
+    (): CodexFastRegistrationFailure =>
+      failure("register-provider-unavailable"),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return parsed.value.success
+    ? ok(parsed.value.data)
+    : err(failure("register-provider-unavailable"));
+}
+
 /** Hand the wrapped provider to the host. A host that throws changes nothing. */
-const callRegisterProvider = Result.fromThrowable(
-  (register: (provider: unknown) => unknown, provider: unknown): void => {
-    register(provider);
-  },
-  (): CodexFastRegistrationFailure => failure("register-provider-failed"),
-);
+function callRegisterProvider(
+  register: HostRegistrar,
+  provider: CodexWrappableProvider,
+): Result<void, CodexFastRegistrationFailure> {
+  return Result.fromThrowable(
+    (): void => {
+      register(provider);
+    },
+    (): CodexFastRegistrationFailure => failure("register-provider-failed"),
+  )();
+}
 
 /**
  * Register the wrapped Codex provider, or explain in one bounded token why
@@ -386,13 +507,11 @@ const callRegisterProvider = Result.fromThrowable(
  * terminal `unsupported` / `harness-seam-unavailable` exactly as it did
  * before this feature existed. Agent activation never depends on this call.
  */
-export function registerCodexFastProvider(
-  input: CodexFastRegistrationInput,
+export function registerCodexFastProvider<TVersion, TModule, TRegistrar>(
+  input: CodexFastRegistrationInput<TVersion, TModule, TRegistrar>,
 ): ResultAsync<CodexFastRegistrationOutcome, CodexFastRegistrationFailure> {
-  const version = readHostVersionSafely(input.readHostVersion).unwrapOr(
-    undefined,
-  );
-  if (!isCodexFastHostVersionSupported(version)) {
+  const version = readHostVersionSafely(input.readHostVersion);
+  if (version.isErr() || !isCodexFastHostVersionSupported(version.value)) {
     return errAsync(failure("host-version-unsupported"));
   }
   // Header authority lives in the imported module, not in the host package
@@ -406,11 +525,12 @@ export function registerCodexFastProvider(
   if (provenance.isErr()) {
     return errAsync(provenance.error);
   }
-  const register = input.registerProvider;
-  if (typeof register !== "function") {
-    return errAsync(failure("register-provider-unavailable"));
+
+  const register = readRegisterProvider(input.registerProvider);
+  if (register.isErr()) {
+    return errAsync(register.error);
   }
-  const registerProvider = register as (provider: unknown) => unknown;
+
   return importProviderModule(input.importProviderModule)
     .andThen((module) => readProviderFactory(module))
     .andThen((factory) => createNativeProvider(factory))
@@ -421,6 +541,10 @@ export function registerCodexFastProvider(
         input.attemptSink,
       ).mapErr(() => failure("provider-not-wrappable")),
     )
-    .andThen((wrapped) => callRegisterProvider(registerProvider, wrapped))
-    .map(() => ({ providerId: CODEX_PROVIDER_ID }) as const);
+    .andThen((wrapped) => callRegisterProvider(register.value, wrapped))
+    .map(
+      (): CodexFastRegistrationOutcome => ({
+        providerId: CODEX_PROVIDER_ID,
+      }),
+    );
 }
