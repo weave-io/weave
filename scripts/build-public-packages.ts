@@ -209,6 +209,13 @@ function siblingEntryExternals(
     .map((entry) => resolve(entry.source.replace(/\.tsx?$/, ".js")));
 }
 
+/** A bundled Pi preloader must not evaluate a source seam from disk. */
+export function hasRuntimeRelativeImport(contents: string): boolean {
+  return /(?:from|import|export)\s*(?:\(\s*)?["'](?:\.\.\/|\.\/)/u.test(
+    contents,
+  );
+}
+
 /** Bun-only filesystem operations required to assemble public package outputs. */
 export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
   copyFile(
@@ -588,7 +595,18 @@ export class PublicPackageBuilder {
         diagnostics: "Bun.build rejected",
       }),
     ).andThen((result) => {
-      if (result.success) return okAsync(define);
+      if (result.success) {
+        if (
+          entry.source === "packages/adapters/pi/src/extension.ts" &&
+          result.outputs.length !== 1
+        ) {
+          return errAsync({
+            type: "BuildIdentity" as const,
+            reason: "output-unavailable" as const,
+          });
+        }
+        return okAsync(define);
+      }
       return errAsync({
         type: "BuildDiagnostics" as const,
         packageName,
@@ -638,6 +656,16 @@ export class PublicPackageBuilder {
     for (const entry of entries) {
       result = result.andThen(() =>
         this.fileSystem.readText(entry.output).andThen((contents) => {
+          if (
+            packageName === "@weaveio/weave-adapter-pi" &&
+            entry.output === "packages/adapters/pi/dist/extension.js" &&
+            hasRuntimeRelativeImport(contents)
+          ) {
+            return errAsync({
+              type: "BuildIdentity" as const,
+              reason: "output-unavailable" as const,
+            });
+          }
           const privatePackageName = this.findPrivateReference(
             packageName,
             contents,
@@ -797,7 +825,7 @@ export class PublicPackageBuilder {
     buildBinding: string,
   ): ResultAsync<void, PublicPackageBuildError> {
     const marker = new RegExp(
-      `const\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*"${EXTENSION_BUILD_BINDING_PLACEHOLDER}"\\s*;`,
+      `((?:const|var)\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*)"${EXTENSION_BUILD_BINDING_PLACEHOLDER}"(\\s*;)`,
       "gu",
     );
     return this.fileSystem
@@ -812,10 +840,7 @@ export class PublicPackageBuilder {
         }
         return this.fileSystem.writeText(
           "packages/adapters/pi/dist/extension.js",
-          contents.replace(
-            marker,
-            `const WEAVE_PI_EMBEDDED_BUILD_BINDING = "${buildBinding}";`,
-          ),
+          contents.replace(marker, `$1"${buildBinding}"$2`),
         );
       });
   }

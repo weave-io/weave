@@ -3,6 +3,7 @@ import { errAsync, okAsync } from "neverthrow";
 import {
   hasPrivateDeclarationReference,
   hasPrivateDependencyReference,
+  hasRuntimeRelativeImport,
   PI_EXTENSION_IDENTITY_MANIFEST,
   type PublicPackageBuildError,
   type PublicPackageFileSystem,
@@ -78,11 +79,11 @@ describe("public package build guard", () => {
     );
     expect(outputs).toContain("packages/adapters/pi/dist/extension-impl.js");
     expect(piBuild.extraFiles).toEqual(["dist/extension-build-identity.json"]);
-    expect(
-      piBuild.entries.find(
-        (entry) => entry.output === "packages/adapters/pi/dist/extension.js",
-      )?.transpileOnly,
-    ).toBe(true);
+    const extensionEntry = piBuild.entries.find(
+      (entry) => entry.output === "packages/adapters/pi/dist/extension.js",
+    );
+    expect(extensionEntry).toBeDefined();
+    expect("transpileOnly" in (extensionEntry ?? {})).toBe(false);
     const identityEntry = piBuild.entries.find(
       (entry) =>
         entry.output ===
@@ -90,6 +91,29 @@ describe("public package build guard", () => {
     );
     expect(identityEntry).toBeDefined();
     expect("transpileOnly" in (identityEntry ?? {})).toBe(false);
+  });
+
+  it("bundles the preloader into one self-contained output", async () => {
+    expect(
+      hasRuntimeRelativeImport('import "./extension-preloader-factory.js";'),
+    ).toBe(true);
+    const outdir = `/tmp/weave-pi-preloader-build-${crypto.randomUUID()}`;
+    const result = await Bun.build({
+      entrypoints: ["packages/adapters/pi/src/extension.ts"],
+      outdir,
+      target: "bun",
+      format: "esm",
+    });
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(1);
+    const output = result.outputs[0];
+    if (output === undefined) throw new Error("preloader output missing");
+    const contents = await new Response(output).text();
+    expect(hasRuntimeRelativeImport(contents)).toBe(false);
+    expect(contents).not.toMatch(
+      /(?:from|import)\s*["']\.\/extension-preloader-/u,
+    );
+    await Bun.file(output.path).delete();
   });
 
   it("keeps the three Pi host packages as public runtime externals", () => {

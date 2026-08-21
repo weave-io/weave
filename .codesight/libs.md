@@ -809,10 +809,24 @@
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
   - _...16 more_
-- `packages/adapters/pi/src/extension.ts`
+- `packages/adapters/pi/src/extension-preloader-factory.ts` — function createWeaveAdapterExtension: (pi, embeddedBinding, entryPath) => Promise<void>
+- `packages/adapters/pi/src/extension-preloader-loader.ts` — function installPinnedModulePlugin: (state) => boolean
+- `packages/adapters/pi/src/extension-preloader-manifest.ts`
+  - function isSafeAbsolutePath: (value) => value is string
+  - function modulePathFor: (artifactPath, fileName) => string
+  - function digestBytes: (bytes) => string | undefined
+  - function decodeUtf8: (bytes) => string | undefined
+  - function encodeUtf8: (value) => Uint8Array | undefined
+  - function readBytes: (path, maxBytes) => Promise<Uint8Array | undefined>
+  - _...4 more_
+- `packages/adapters/pi/src/extension-preloader-pinned-runtime.ts`
+  - function loaderState: () => GlobalLoaderState
   - function readExtensionPreloaderRetentionForTesting: () => ExtensionPreloaderRetentionSnapshot
-  - interface ExtensionPreloaderDigest
-  - interface ExtensionPreloaderRetentionSnapshot
+  - function beginLoad: (state) => LoadSlot | undefined
+  - function finishLoad: (state, slot) => void
+  - function recordPreloaderFailure: (state, reason) => void
+  - function recordPreloaderLoaded: (state, pinned) => void
+  - _...2 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -1862,8 +1876,8 @@
   - function writePiExtensionBuildIdentityManifest: (input) => ResultAsync<void, PublicPackageBuildError>
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
-  - class BunPublicPackageFileSystem
-  - _...4 more_
+  - function hasRuntimeRelativeImport: (contents) => boolean
+  - _...5 more_
 - `scripts/ci/verify-action-pins.ts`
   - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
   - function loadActionFiles: (root) => Promise<Record<string, string>>
@@ -1890,7 +1904,7 @@
   - interface FixtureValidationFailure
   - interface SanitizedEvent
   - _...24 more_
-- `scripts/pi/child-stream-capture-harness.ts` — function captureChildEvents: (input) => ResultAsync<CaptureSuccess, CaptureFailure>
+- `scripts/pi/child-stream-capture-harness.ts` — function verifyPiVersion: (pi, requiredVersion) => ResultAsync<string, CaptureFailure>, function captureChildEvents: (input) => ResultAsync<CaptureSuccess, CaptureFailure>
 - `scripts/pi/child-stream-capture-replay.ts` — function injectControlledReasoningInMemory: (payload, unknown>, ordinalId) => Record<string, unknown>, function replayFixtureThroughAdapter: (fixture, options) => Result<ReplayFacts, FixtureValidationFailure>
 - `scripts/pi/child-stream-capture-sanitizer.ts`
   - function isRecord: (value) => value is Record<string, unknown>
@@ -1920,10 +1934,10 @@
   readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
 - `scripts/pi/child-stream-identity-probe.ts` — function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>, function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
 - `scripts/pi/child-stream-identity-report.ts` — function renderIdentityVerification: (result, VerifyChildStreamingFailure>) => string
-- `scripts/pi/child-stream-live-proof-bounded-runner.ts` — function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, LiveProofSystemFailure>
+- `scripts/pi/child-stream-live-proof-bounded-runner.ts` — function spawnBoundedInteractiveProcess: (input) => Result<BoundedProcess, LiveProofSystemFailure>, function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, LiveProofSystemFailure>
 - `scripts/pi/child-stream-live-proof-bounded-stream.ts`
   - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
-  - function readProcessLines: (process) => AsyncIterable<string>
+  - function readProcessLines: (process, "stdout" | "stderr">) => AsyncIterable<string>
   - const MAX_LIVE_PROOF_LINE_BYTES
   - const MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
   - const MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM
@@ -1972,7 +1986,7 @@
   - interface LiveProofProcess
   - interface LiveProofTimer
   - interface LiveProofCommandOutput
-  - _...10 more_
+  - _...11 more_
 - `scripts/pi/child-stream-verify-args.ts` — function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
 - `scripts/pi/child-stream-verify-capture-command.ts`
   - function runCaptureCommand: (input) => ResultAsync<CaptureCommandSuccess, VerifyChildStreamingFailure>

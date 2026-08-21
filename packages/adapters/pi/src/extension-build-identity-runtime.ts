@@ -16,6 +16,7 @@ import type {
 } from "./extension-build-identity-types.js";
 import {
   EXTENSION_BUILD_MANIFEST_FILENAME,
+  EXTENSION_RUNTIME_OUTPUT_FILES,
   EXTENSION_RUNTIME_OUTPUT_NAMES,
   MAX_EXTENSION_BUILD_MANIFEST_BYTES,
 } from "./extension-build-identity-types.js";
@@ -38,15 +39,10 @@ import {
 const RUNTIME_OUTPUT_FILES: readonly {
   readonly name: ExtensionRuntimeOutputName;
   readonly fileName: string;
-}[] = [
-  { name: "extension", fileName: "extension.js" },
-  {
-    name: "extension-build-identity",
-    fileName: "extension-build-identity.js",
-  },
-  { name: "extension-impl", fileName: "extension-impl.js" },
-  { name: "host-module-loader", fileName: "host-module-loader.js" },
-];
+}[] = EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+  name,
+  fileName: EXTENSION_RUNTIME_OUTPUT_FILES[name],
+}));
 
 /** A stable process-start fact captured once when this module is evaluated. */
 const PROCESS_START_MS = (() => {

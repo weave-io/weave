@@ -5,6 +5,7 @@ import {
   createExtensionBuildManifest,
   EXTENSION_BUILD_BINDING_PLACEHOLDER,
   EXTENSION_RUNTIME_OUTPUT_NAMES,
+  MAX_EXTENSION_IN_FLIGHT_PINNED_BYTES,
   renderExtensionBuildManifest,
   sha256Hex,
 } from "../extension-build-identity.js";
@@ -46,13 +47,25 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error("test setup: condition did not settle");
 }
 
-function compileLoader(source: string): string {
-  return new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+async function compileLoader(entryPath: string): Promise<string> {
+  const slash = entryPath.lastIndexOf("/");
+  const result = await Bun.build({
+    entrypoints: [new URL("../extension.ts", import.meta.url).pathname],
+    outdir: entryPath.slice(0, slash),
+    target: "bun",
+    format: "esm",
+  });
+  if (!result.success) {
+    throw new Error(result.logs.map((log) => log.message).join("\n"));
+  }
+  const output = result.outputs[0];
+  if (output === undefined) throw new Error("loader output missing");
+  return new Response(output).text();
 }
 
 function replaceEmbeddedBinding(source: string, binding: string): string {
   const pattern = new RegExp(
-    `(const\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*")${EXTENSION_BUILD_BINDING_PLACEHOLDER}("\\s*;)`,
+    `((?:const|var)\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*")${EXTENSION_BUILD_BINDING_PLACEHOLDER}("\\s*;)`,
     "u",
   );
   const replaced = source.replace(pattern, `$1${binding}$2`);
@@ -132,10 +145,7 @@ async function createFixture(
   const identityPath = `${directory}/extension-build-identity.js`;
   const implementationPath = `${directory}/extension-impl.js`;
   const hostPath = `${directory}/host-module-loader.js`;
-  const loaderSource = await Bun.file(
-    new URL("../extension.ts", import.meta.url),
-  ).text();
-  const loaderPlaceholder = compileLoader(loaderSource);
+  const loaderPlaceholder = await compileLoader(entryPath);
   const identity =
     typeof options.identitySource === "function"
       ? options.identitySource(implementationPath)
@@ -271,7 +281,9 @@ describe("trusted extension preloader", () => {
       const during = readExtensionPreloaderRetentionForTesting();
       expect(during.inFlightLoadCount).toBe(1);
       expect(during.inFlightPinnedBytes).toBeGreaterThan(0);
-      expect(during.inFlightPinnedBytes).toBeLessThanOrEqual(16 * 1024 * 1024);
+      expect(during.inFlightPinnedBytes).toBeLessThanOrEqual(
+        MAX_EXTENSION_IN_FLIGHT_PINNED_BYTES,
+      );
       expect(during.retainedPinnedEntries).toBe(4);
       expect(during.activeLoaderRegistrations).toBe(1);
 

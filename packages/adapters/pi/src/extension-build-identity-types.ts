@@ -27,6 +27,20 @@ export const EXTENSION_RUNTIME_OUTPUT_NAMES = Object.freeze([
 export type ExtensionRuntimeOutputName =
   (typeof EXTENSION_RUNTIME_OUTPUT_NAMES)[number];
 
+/** The filenames are part of the loader/identity contract, not adapter wiring. */
+export const EXTENSION_RUNTIME_OUTPUT_FILES = Object.freeze({
+  extension: "extension.js",
+  "extension-build-identity": "extension-build-identity.js",
+  "extension-impl": "extension-impl.js",
+  "host-module-loader": "host-module-loader.js",
+} as const satisfies Record<ExtensionRuntimeOutputName, string>);
+
+/** Bounds shared by the trusted preloader and identity readers. */
+export const MAX_EXTENSION_ENTRY_PATH_LENGTH = 4_096;
+export const MAX_EXTENSION_IN_FLIGHT_PRELOADS = 1;
+export const MAX_EXTENSION_IN_FLIGHT_PINNED_BYTES =
+  MAX_EXTENSION_BUILD_OUTPUT_BYTES;
+
 /** A bounded, path-free digest for one logical build output. */
 export interface ExtensionBuildOutputDigest {
   readonly name: string;
