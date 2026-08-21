@@ -4,6 +4,7 @@ import { readLocalWorkflowTopology } from "../rollout-gate.js";
 import {
   createRolloutActivationRecord,
   createRolloutFreezeRecord,
+  ROLLOUT_STAGE_DECLARATION,
   type RolloutStageDeclaration,
   validateRolloutTuple,
   type WorkflowTopology,
@@ -74,29 +75,37 @@ function invalidTuple(
 }
 
 describe("release rollout topology transitions", () => {
-  it("matches the checked-in pre-cutover topology and leaves the old schedule as sole publisher", async () => {
+  it("removes the old publisher, lands the new schedule, and stays unpublishable until the freeze record", async () => {
     const observed = await readLocalWorkflowTopology(ROOT);
     const topology = observed._unsafeUnwrap();
-    expect(topology).toMatchObject(preTopology);
 
-    expect(validateRolloutTuple(preCutover, "disabled", topology).isOk()).toBe(
-      true,
-    );
-    expect(validateRolloutTuple(preCutover, "dry-run", topology).isOk()).toBe(
-      true,
+    // Cutover code shape: the old publisher is gone and the nightly cron now
+    // lives on release-publish.yml.
+    expect(topology).toMatchObject(frozenTopology);
+    expect(
+      await Bun.file(resolve(ROOT, ".github/workflows/publish.yml")).exists(),
+    ).toBe(false);
+    const newWorkflow = await Bun.file(
+      resolve(ROOT, ".github/workflows/release-publish.yml"),
+    ).text();
+    expect(newWorkflow).toMatch(/^\s+schedule:/m);
+    expect(newWorkflow).toContain('- cron: "17 0 * * *"');
+
+    // The checked-in declaration is deliberately still `pre-cutover`: the
+    // freeze record needs quiescence evidence that only the freeze protocol
+    // can produce. Until it lands, no mode yields a valid tuple, so the new
+    // schedule cannot reach attestation, proof, OIDC, or publish.
+    expect(ROLLOUT_STAGE_DECLARATION.stage).toBe("pre-cutover");
+    for (const mode of ["disabled", "dry-run", "enabled"] as const)
+      expect(
+        validateRolloutTuple(ROLLOUT_STAGE_DECLARATION, mode, topology).isErr(),
+      ).toBe(true);
+    expect(invalidTuple(preCutover, "disabled", topology)).toContain(
+      "pre-cutover requires the old scheduled workflow",
     );
     expect(invalidTuple(preCutover, "enabled", topology)).toContain(
       "before cutover",
     );
-
-    const oldWorkflow = await Bun.file(
-      resolve(ROOT, ".github/workflows/publish.yml"),
-    ).text();
-    const newWorkflow = await Bun.file(
-      resolve(ROOT, ".github/workflows/release-publish.yml"),
-    ).text();
-    expect(oldWorkflow).toMatch(/^\s+schedule:/m);
-    expect(newWorkflow).not.toMatch(/^\s+schedule:/m);
   });
 
   it("permits the frozen handoff only after old removal and new schedule activation", () => {

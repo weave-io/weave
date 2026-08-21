@@ -12,7 +12,6 @@ import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
-  LEGACY_PREFLIGHT_RUN_NAME,
   PUBLIC_PACKAGES,
   type PublicPackageName,
   RELEASE_ATTEST_WORKFLOW_PATH,
@@ -51,8 +50,6 @@ const OLD_WORKFLOW_API_PATHS = [
   `${RELEASE_WORKFLOW_PATH}@main`,
   `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@main`,
 ] as const;
-
-export { LEGACY_PREFLIGHT_RUN_NAME };
 
 export const DOCTOR_MODES = [
   "pre-cutover",
@@ -239,23 +236,15 @@ export interface OldSystemOperationalProof {
   readonly publicationPathEnabled: boolean;
   /** True only for an accepted recent scheduled run on protected main. */
   readonly recentSuccessfulRun: boolean;
-  /** True only for an accepted recent named read-only preflight run. */
-  readonly readOnlyPreflight: boolean;
   readonly runId?: number;
   readonly evidence?: string;
 }
 
-export type OldSystemRunEvidence =
-  | {
-      readonly kind: "scheduled";
-      readonly runId: number;
-      readonly evidence: string;
-    }
-  | {
-      readonly kind: "read-only-preflight";
-      readonly runId: number;
-      readonly evidence: string;
-    };
+export type OldSystemRunEvidence = {
+  readonly kind: "scheduled";
+  readonly runId: number;
+  readonly evidence: string;
+};
 
 export interface DoctorHarnessObservation {
   readonly binaries: Readonly<Record<string, boolean>>;
@@ -1000,19 +989,13 @@ function verifyOldSystem(
     return failCheck(
       "release.old-system-operational",
       "old publication path is not authoritatively enabled",
-      "run the old workflow's read-only preflight or inspect a recent successful scheduled run on protected main",
+      "inspect a recent successful scheduled run on protected main",
     );
-  if (oldSystem.recentSuccessfulRun && oldSystem.readOnlyPreflight)
+  if (!oldSystem.recentSuccessfulRun)
     return failCheck(
       "release.old-system-operational",
-      "old-system run evidence is ambiguous: scheduled and preflight proofs were both asserted",
-      "keep exactly one positively identified recent scheduled or read-only preflight run in the doctor snapshot",
-    );
-  if (!oldSystem.recentSuccessfulRun && !oldSystem.readOnlyPreflight)
-    return failCheck(
-      "release.old-system-operational",
-      "no recent successful scheduled run or explicit read-only preflight was observed",
-      "dispatch the old workflow's read-only preflight or prove a recent successful scheduled run, then rerun this mode",
+      "no recent successful scheduled run was observed",
+      "prove a recent successful scheduled run on protected main, then rerun this mode",
     );
   if (
     oldSystem.runId === undefined ||
@@ -1024,11 +1007,9 @@ function verifyOldSystem(
     return failCheck(
       "release.old-system-operational",
       "accepted old-system proof is missing its authoritative run identity",
-      "capture the GitHub workflow run ID and exact scheduled/preflight evidence before rerunning the doctor",
+      "capture the GitHub workflow run ID and exact scheduled evidence before rerunning the doctor",
     );
-  const expectedEvidence = oldSystem.recentSuccessfulRun
-    ? `successful scheduled run ${oldSystem.runId} on protected main`
-    : `successful read-only preflight run ${oldSystem.runId} on protected main`;
+  const expectedEvidence = `successful scheduled run ${oldSystem.runId} on protected main`;
   if (oldSystem.evidence !== expectedEvidence)
     return failCheck(
       "release.old-system-operational",
@@ -1776,7 +1757,6 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled: false,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
     };
   const text = await workflow.text();
   const hasSchedule = /(^|\n)\s*schedule\s*:/m.test(text);
@@ -1793,7 +1773,6 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
     };
   }
   const runs = await new GitHubReadClient(
@@ -1806,7 +1785,6 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
     };
   }
   const recent = recentSuccessfulOldRun(runs.value);
@@ -1814,7 +1792,6 @@ async function collectOldSystem(
     authoritative: hasSchedule && publicationPathEnabled,
     publicationPathEnabled,
     recentSuccessfulRun: recent?.kind === "scheduled",
-    readOnlyPreflight: recent?.kind === "read-only-preflight",
     ...(recent === null
       ? {}
       : { runId: recent.runId, evidence: recent.evidence }),
@@ -1822,10 +1799,10 @@ async function collectOldSystem(
 }
 
 /**
- * Selects only bounded, positively identified old-publisher evidence. The
- * workflow endpoint is already scoped to publish.yml; branch, repository, and
- * run-name checks below prevent an unrelated successful dispatch from becoming
- * operational proof.
+ * Selects only bounded, positively identified scheduled old-publisher
+ * evidence. The workflow endpoint is already scoped to publish.yml; branch,
+ * repository, and run-name checks below prevent an unrelated run from
+ * becoming operational proof.
  */
 export function recentSuccessfulOldRun(
   value: unknown,
@@ -1847,16 +1824,12 @@ export function recentSuccessfulOldRun(
     const runId = run.id;
     if (typeof runId !== "number" || !Number.isSafeInteger(runId) || runId <= 0)
       continue;
-    const kind = oldRunKind(run);
-    if (kind === undefined) continue;
+    if (run.event !== "schedule") continue;
     candidates.push({
-      kind,
+      kind: "scheduled",
       runId,
       time,
-      evidence:
-        kind === "scheduled"
-          ? `successful scheduled run ${runId} on protected main`
-          : `successful read-only preflight run ${runId} on protected main`,
+      evidence: `successful scheduled run ${runId} on protected main`,
     });
   }
   candidates.sort((left, right) => right.time - left.time);
@@ -1872,7 +1845,7 @@ export function recentSuccessfulOldRun(
 function isProtectedOldRun(run: Record<string, unknown>): boolean {
   if (
     run.conclusion !== "success" ||
-    (run.event !== "schedule" && run.event !== "workflow_dispatch") ||
+    run.event !== "schedule" ||
     run.head_branch !== "main"
   )
     return false;
@@ -1897,24 +1870,6 @@ function isProtectedOldRun(run: Record<string, unknown>): boolean {
   }
   if (typeof run.display_title !== "string") return false;
   return true;
-}
-
-function oldRunKind(
-  run: Record<string, unknown>,
-): OldSystemRunEvidence["kind"] | undefined {
-  if (run.event === "schedule") return "scheduled";
-  if (run.event !== "workflow_dispatch") return undefined;
-  const identity = oldRunIdentity(run);
-  if (identity !== LEGACY_PREFLIGHT_RUN_NAME) return undefined;
-  return "read-only-preflight";
-}
-
-function oldRunIdentity(run: Record<string, unknown>): string | undefined {
-  const displayTitle = run.display_title;
-  if (typeof displayTitle !== "string") return undefined;
-  const runName = run.run_name;
-  if (runName !== undefined && runName !== displayTitle) return undefined;
-  return displayTitle;
 }
 
 function runTimestamp(run: Record<string, unknown>): string | undefined {

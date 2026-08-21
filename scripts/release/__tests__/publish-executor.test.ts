@@ -27,6 +27,7 @@ import {
   type ReleasePlanBinding,
   serializeReleasePlanArtifact,
 } from "../release-plan.js";
+import { LEGACY_DENYLIST_IDENTIFIERS } from "./legacy-denylist.js";
 
 const CLI = "@weaveio/weave-cli";
 const OPENCODE = "@weaveio/weave-adapter-opencode";
@@ -957,11 +958,12 @@ describe("publish-main", () => {
             specifier.includes("changeset") ||
             specifier.includes("/ai/") ||
             specifier.includes("github-client") ||
-            specifier.includes("stable-train"),
+            LEGACY_DENYLIST_IDENTIFIERS.some((id) => specifier.includes(id)),
         ),
       ).toBe(false);
       expect(source).not.toContain("npm unpublish");
-      expect(source).not.toContain("dist-tag add");
+      for (const id of LEGACY_DENYLIST_IDENTIFIERS)
+        expect(source, id).not.toContain(id);
     }
   });
 });

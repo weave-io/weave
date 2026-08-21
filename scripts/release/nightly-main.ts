@@ -103,7 +103,7 @@ import {
 } from "./selection-closure.js";
 import { sha256Digest } from "./tar-inspector.js";
 
-/** Nightly has one route: an authorized manual dispatch on protected main. */
+/** Nightly accepts an authorized dispatch or the exact protected schedule on main. */
 export const NIGHTLY_PACKAGE_INPUTS = [
   "cli",
   "opencode",
@@ -144,18 +144,30 @@ export function parseNightlyInput(
   return ok(parsed.data);
 }
 
-/** Strict route carrier. Schedule support is intentionally added at cutover. */
+/**
+ * Strict route carrier for the manual and protected scheduled nightly paths.
+ * The schedule has no workflow-dispatch inputs, so the environment parser
+ * supplies the derived nightly channel and protected authorization.
+ */
 export const NightlyRouteEventSchema = z
   .object({
     repository: z.literal(RELEASE_REPOSITORY),
-    eventName: z.literal("workflow_dispatch"),
-    action: z.literal("workflow_dispatch"),
+    eventName: z.enum(["workflow_dispatch", "schedule"]),
+    action: z.enum(["workflow_dispatch", "schedule"]),
     ref: z.literal(RELEASE_CONTROL_REF),
     actor: z.string().min(1).max(128),
     maintainerAuthorized: z.boolean(),
     channel: z.literal("nightly"),
   })
-  .strict();
+  .strict()
+  .superRefine((event, context) => {
+    if (event.action !== event.eventName)
+      context.addIssue({
+        code: "custom",
+        path: ["action"],
+        message: "route action must exactly match the event name",
+      });
+  });
 export type NightlyRouteEvent = z.infer<typeof NightlyRouteEventSchema>;
 
 export type NightlyRouteError =
@@ -173,7 +185,10 @@ export function validateNightlyRouteEvent(
   input: unknown,
 ): Result<ValidatedNightlyRoute, NightlyRouteError> {
   if (isRecord(input)) {
-    if (input.eventName !== "workflow_dispatch")
+    if (
+      input.eventName !== "workflow_dispatch" &&
+      input.eventName !== "schedule"
+    )
       return err({
         type: "UnsupportedNightlyEvent",
         eventName: String(input.eventName ?? ""),
@@ -214,19 +229,25 @@ export function validateNightlyRouteEvent(
 export function parseNightlyRouteEnvironment(
   env: Readonly<Record<string, string | undefined>>,
 ): Result<ValidatedNightlyRoute, NightlyRouteError> {
-  if (env.GITHUB_EVENT_NAME !== "workflow_dispatch")
+  const eventName = env.GITHUB_EVENT_NAME;
+  if (eventName !== "workflow_dispatch" && eventName !== "schedule")
     return err({
       type: "UnsupportedNightlyEvent",
-      eventName: env.GITHUB_EVENT_NAME ?? "",
+      eventName: eventName ?? "",
     });
+  const scheduled = eventName === "schedule";
   return validateNightlyRouteEvent({
     repository: env.GITHUB_REPOSITORY ?? "",
-    eventName: "workflow_dispatch",
+    eventName,
     action: env.GITHUB_EVENT_ACTION ?? "",
     ref: env.GITHUB_REF ?? "",
     actor: env.GITHUB_ACTOR ?? "",
-    maintainerAuthorized: env.RELEASE_MAINTAINER_AUTHORIZED === "true",
-    channel: env.INPUT_CHANNEL ?? "",
+    // A schedule on this exact protected workflow is the authorization
+    // boundary. Dispatches still require the explicit maintainer gate.
+    maintainerAuthorized: scheduled
+      ? true
+      : env.RELEASE_MAINTAINER_AUTHORIZED === "true",
+    channel: scheduled ? "nightly" : (env.INPUT_CHANNEL ?? ""),
   });
 }
 
@@ -247,6 +268,7 @@ export function authorizeNightlyRoute(
 ): ResultAsync<ValidatedNightlyRoute, NightlyAuthorizationError> {
   const route = validateNightlyRouteEvent(input);
   if (route.isErr()) return errAsync(route.error);
+  if (route.value.eventName === "schedule") return okAsync(route.value);
   const invoked = Result.fromThrowable(
     () => authorization.assertStableRequestAuthorized(route.value.actor),
     () => ({
@@ -1123,7 +1145,7 @@ function runNightlyRoute(
               "- Selection: affected packages since the last successful nightly, closed over shared changesets and bundled artifacts.",
               "- Changesets: none are consumed or deleted by this channel.",
               `- Rollout: ${output.outcome}`,
-              "- Schedule: not active in this task; manual maintainer dispatch only.",
+              "- Schedule: the exact protected cron is routed to nightly; rollout activation remains gated.",
             ].join("\n"),
           ),
         )

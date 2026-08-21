@@ -6,6 +6,15 @@ on:
       - main
     types:
       - closed
+  # Task 35 cutover: the nightly schedule lives here, replacing the removed
+  # publish.yml cron. The route job maps the protected scheduled event to the
+  # nightly controller before any attestation, proof, OIDC, or publish work.
+  # The checked-in rollout stage is still `pre-cutover`, so the current
+  # schedule fails closed in the route gate and reaches no downstream job.
+  # A frozen+disabled tuple exits typed `RolloutDisabled`; activation remains
+  # a later reviewed rollout decision.
+  schedule:
+    - cron: "17 0 * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -54,15 +63,15 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-publish-${{ inputs.channel || 'stable' }}
+  group: release-publish-${{ github.event_name == 'schedule' && 'nightly' || inputs.channel || 'stable' }}
   cancel-in-progress: false
 
 jobs:
   route:
     name: Route and gate stable release
     runs-on: ubuntu-latest
-    # Nightly is a maintainer-guarded manual route and has no approval environment.
-    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
+    # Nightly dispatches and the protected schedule have no approval environment.
+    environment: ${{ (inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release-app' }}
     permissions:
       contents: read
       pull-requests: read
@@ -76,7 +85,7 @@ jobs:
       closure-explanation: ${{ steps.route.outputs.closureExplanation }}
     env:
       GITHUB_EVENT_NAME: ${{ github.event_name }}
-      GITHUB_EVENT_ACTION: ${{ github.event.action || github.event_name == 'workflow_dispatch' && 'workflow_dispatch' || 'closed' }}
+      GITHUB_EVENT_ACTION: ${{ github.event.action || github.event_name }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
@@ -86,18 +95,18 @@ jobs:
       PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
       PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-      INPUT_CHANNEL: ${{ inputs.channel }}
+      INPUT_CHANNEL: ${{ inputs.channel || (github.event_name == 'schedule' && 'nightly' || '') }}
       INPUT_RELEASED_SHA: ${{ inputs.released_sha }}
       INPUT_CLI: ${{ inputs.cli }}
       INPUT_OPENCODE: ${{ inputs.opencode }}
       INPUT_CLAUDE_CODE: ${{ inputs.claude-code }}
       INPUT_PI: ${{ inputs.pi }}
-      RELEASE_MAINTAINER_AUTHORIZED: ${{ github.event_name == 'pull_request' || github.actor == github.repository_owner }}
+      RELEASE_MAINTAINER_AUTHORIZED: ${{ github.event_name == 'schedule' || github.event_name == 'pull_request' || github.actor == github.repository_owner }}
       RELEASE_ROLLOUT_MODE: ${{ vars.RELEASE_ROLLOUT_MODE }}
     steps:
       - id: release-app-token
         name: Mint short-lived release App token
-        if: inputs.channel != 'nightly'
+        if: inputs.channel != 'nightly' && github.event_name != 'schedule'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.RELEASE_APP_ID }}
@@ -117,7 +126,9 @@ jobs:
           RELEASE_APP_INSTALLATION_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
-          if [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
+          if [[ "${GITHUB_EVENT_NAME:-}" == "schedule" ]]; then
+            bun scripts/release/nightly-main.ts --phase route
+          elif [[ "${INPUT_CHANNEL:-}" == "next" ]]; then
             bun scripts/release/next-main.ts --phase route
           elif [[ "${INPUT_CHANNEL:-}" == "nightly" ]]; then
             bun scripts/release/nightly-main.ts --phase route
@@ -373,7 +384,7 @@ jobs:
     needs: consumer-proof
     runs-on: ubuntu-latest
     # Nightly harness checks are part of the dry-run chain, not an approval gate.
-    environment: ${{ inputs.channel == 'nightly' && '' || 'harness-proof' }}
+    environment: ${{ (inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'harness-proof' }}
     outputs:
       artifact-id: ${{ needs.consumer-proof.outputs.artifact-id }}
       source-sha: ${{ needs.consumer-proof.outputs.source-sha }}
@@ -402,7 +413,7 @@ jobs:
     runs-on: ubuntu-latest
     # Task 26's next expression remains the stable/prerelease contract:
     # environment: ${{ inputs.channel == 'next' && 'prerelease' || 'release' }}
-    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || ((inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release') }}
     outputs:
       artifact-id: ${{ needs.harness-proof.outputs.artifact-id }}
       source-sha: ${{ needs.harness-proof.outputs.source-sha }}
@@ -420,10 +431,10 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - name: Confirm the proven release
-        if: inputs.channel != 'nightly'
+        if: inputs.channel != 'nightly' && github.event_name != 'schedule'
         run: echo "All independent proof jobs passed; release approval is required before publish."
       - name: Confirm the proven nightly
-        if: inputs.channel == 'nightly'
+        if: inputs.channel == 'nightly' || github.event_name == 'schedule'
         run: echo "All independent proof jobs passed; nightly has no approval environment."
       - name: Run the authorized incident-resolution boundary
         if: github.event_name == 'workflow_dispatch' && inputs.channel == 'incident-resolution'
@@ -439,9 +450,9 @@ jobs:
     needs: release-approval
     if: vars.RELEASE_ROLLOUT_MODE == 'enabled' && (github.event_name != 'workflow_dispatch' || inputs.channel != 'incident-resolution')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.channel == 'next' && 'prerelease' || (inputs.channel == 'nightly' && '' || 'release') }}
+    environment: ${{ inputs.channel == 'next' && 'prerelease' || ((inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release') }}
     env:
-      CHANNEL: ${{ inputs.channel || 'stable' }}
+      CHANNEL: ${{ inputs.channel || (github.event_name == 'schedule' && 'nightly' || 'stable') }}
     outputs:
       artifact-id: ${{ needs.release-approval.outputs.artifact-id }}
       publication-artifact-id: ${{ steps.upload-publication.outputs.artifact-id }}
@@ -504,14 +515,14 @@ jobs:
   refs-cleanup:
     name: Apply tags, releases, and cleanup PR
     needs: registry-verification
-    if: inputs.channel != 'nightly'
+    if: inputs.channel != 'nightly' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.channel == 'nightly' && '' || 'release-app' }}
+    environment: ${{ (inputs.channel == 'nightly' || github.event_name == 'schedule') && '' || 'release-app' }}
     permissions:
       contents: write
       pull-requests: write
     env:
-      CHANNEL: ${{ inputs.channel || 'stable' }}
+      CHANNEL: ${{ inputs.channel || (github.event_name == 'schedule' && 'nightly' || 'stable') }}
     steps:
       - id: release-app-token
         name: Mint short-lived release App token

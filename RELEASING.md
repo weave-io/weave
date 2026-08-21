@@ -90,12 +90,18 @@ prereleases are skipped; conflicts stop the run. Do not edit source files,
 consume changesets, or create a manual stable changelog entry to repair a
 `next` run.
 
-## `nightly` channel (manual path only)
+## `nightly` channel
 
-Task 27 adds a maintainer-guarded `channel: nightly` option to the trusted
-workflow. It has no schedule trigger. The old `publish.yml` schedule remains
-the only scheduled publisher. Planned schedule activation belongs to Task 35;
-do not treat this manual path as active scheduled nightly publication.
+Dispatch the trusted workflow with the maintainer-guarded `channel: nightly`
+option, or let its exact protected `17 0 * * *` schedule invoke the nightly
+route. The cutover moved that schedule onto `release-publish.yml`, and it is
+the only schedule that workflow may declare.
+
+The schedule is inert until the rollout tuple reaches stage `ready` and mode
+`enabled`. While the rollout is gated, a scheduled or dispatched event exits in
+the route job before any attestation, proof, OIDC, or publish work. Nightly
+coverage is deliberately paused for the cutover freeze window; that pause is
+the only sanctioned coverage gap.
 
 Nightly reads the latest successful nightly source SHA from the registry and
 computes the affected package set since that SHA. It closes the set over shared
@@ -114,8 +120,9 @@ proof. Missing, skipped, or mismatched evidence blocks before OIDC.
 `disabled` is a typed early exit. `dry-run` runs the complete build and proof
 chain but skips publish and OIDC. An eventual enabled run uses the trusted
 workflow's `nightly` dist-tag, verifies registry digests, and creates no Git
-tags or releases. Schedule activation is a later rollout decision, not part of
-Task 27.
+tags or releases. Task 35 installs the schedule while the checked-in
+pre-cutover stage keeps it fail-closed; rollout activation remains a later
+reviewed decision.
 
 ## Resume
 

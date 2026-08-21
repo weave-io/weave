@@ -28,7 +28,6 @@ const protectedRules = `
 /packages/adapters/*/tsconfig.build.json ${OWNER}
 /scripts/release/ ${OWNER}
 /scripts/build-public-packages.ts ${OWNER}
-/scripts/build-release-control.ts ${OWNER}
 /packages/cli/ ${OWNER}
 /packages/adapters/opencode/ ${OWNER}
 /packages/adapters/claude-code/ ${OWNER}

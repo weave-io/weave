@@ -10,8 +10,6 @@ import {
   RELEASE_OPERATIONS,
   RELEASE_REPOSITORY,
   RELEASE_WORKFLOW_PATH,
-  STABLE_TRAIN_STATES,
-  TRAIN_SCHEMA_VERSION,
 } from "./constants.js";
 
 const ASCII = /^[\x21-\x7e]+$/;
@@ -47,7 +45,6 @@ export const PackageNameSchema = z.enum(
 );
 export const ReleaseChannelSchema = z.enum(RELEASE_CHANNELS);
 export const ReleaseOperationSchema = z.enum(RELEASE_OPERATIONS);
-export const StableTrainStateSchema = z.enum(STABLE_TRAIN_STATES);
 export const ReleaseBranchSchema = z
   .string()
   .regex(/^release\/\d{8}-[0-9a-f]{12}$/);
@@ -122,8 +119,6 @@ export const ArtifactManifestSchema = z
       .array(ArtifactFileSchema)
       .min(1)
       .max(RELEASE_INPUT_LIMITS.artifactCount),
-    /** Stable payloads embed the train record advanced by control-plane gates. */
-    stableTrain: z.unknown().optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
@@ -151,41 +146,6 @@ export const ArtifactManifestSchema = z
         path: ["packages"],
         message: "stable excludes Claude Code",
       });
-    if (manifest.channel === "stable" && manifest.stableTrain !== undefined) {
-      const train = StableTrainRecordSchema.safeParse(manifest.stableTrain);
-      if (!train.success)
-        context.addIssue({
-          code: "custom",
-          path: ["stableTrain"],
-          message: "stable manifests require a valid stable train",
-        });
-      else {
-        if (train.data.subjectSha !== manifest.releaseSubjectSha)
-          context.addIssue({
-            code: "custom",
-            path: ["stableTrain", "subjectSha"],
-            message: "stable train subject must match manifest",
-          });
-        if (
-          JSON.stringify(train.data.packages) !==
-          JSON.stringify(manifest.packages)
-        )
-          context.addIssue({
-            code: "custom",
-            path: ["stableTrain", "packages"],
-            message: "stable train packages must exactly match manifest",
-          });
-        if (
-          JSON.stringify(train.data.versions) !==
-          JSON.stringify(manifest.versions)
-        )
-          context.addIssue({
-            code: "custom",
-            path: ["stableTrain", "versions"],
-            message: "stable train versions must exactly match manifest",
-          });
-      }
-    }
   });
 
 /** Server-bound release artifact identity. Task 9's extension to ArtifactManifest. */
@@ -242,8 +202,6 @@ export const ArtifactBindingRecordSchema = z
     versions: z.record(z.string(), SemVerSchema),
     releaseSubjectSha: FullShaSchema,
     manifestDigest: DigestSchema,
-    /** Stable train advanced after Actions assigned immutable artifact identity. */
-    stableTrain: z.unknown().optional(),
     files: z
       .array(ArtifactBindingFileSchema)
       .min(1)
@@ -270,108 +228,7 @@ export const ArtifactBindingRecordSchema = z
         path: ["files"],
         message: "file names must be unique",
       });
-    if (record.operation === "stable-publish") {
-      const train = StableTrainRecordSchema.safeParse(record.stableTrain);
-      if (!train.success || train.data.state !== "bound")
-        context.addIssue({
-          code: "custom",
-          path: ["stableTrain"],
-          message: "stable bindings require a bound stable train",
-        });
-    }
   });
-
-export const StableTrainRecordSchema = z
-  .object({
-    schemaVersion: z.literal(TRAIN_SCHEMA_VERSION),
-    recordDigest: DigestSchema,
-    trainRef: ReleaseBranchSchema,
-    subjectSha: FullShaSchema,
-    cutAt: UtcTimestampSchema,
-    expiresAt: UtcTimestampSchema,
-    state: StableTrainStateSchema,
-    packages: z.array(PackageNameSchema).min(1).max(2),
-    versions: z.record(z.string(), SemVerSchema),
-    artifactManifestDigest: DigestSchema.optional(),
-    /** Replay input: exact stable changesets removed on the release branch. */
-    consumedChangesets: z
-      .array(
-        z
-          .object({ path: z.string().min(1), preimageDigest: DigestSchema })
-          .strict(),
-      )
-      .optional(),
-    /** Replay input: deterministic package/changelog writes made at the cut. */
-    metadataWrites: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1),
-            contentsDigest: DigestSchema,
-            contents: z.string(),
-          })
-          .strict(),
-      )
-      .optional(),
-    /** Actions artifact IDs are deliberately discarded after a stable fix. */
-    artifactIds: z.array(z.number().int().positive()).optional(),
-  })
-  .strict()
-  .superRefine((record, context) => {
-    validatePackageSet(record, context);
-    if (
-      Object.values(record.versions).some(
-        (version) => !StableVersionSchema.safeParse(version).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["versions"],
-        message: "stable versions cannot include prerelease or build metadata",
-      });
-    if (record.packages.includes("@weaveio/weave-adapter-claude-code"))
-      context.addIssue({
-        code: "custom",
-        path: ["packages"],
-        message: "stable trains cannot contain Claude Code",
-      });
-    if (
-      Date.parse(record.expiresAt) - Date.parse(record.cutAt) !==
-      7 * 24 * 60 * 60 * 1000
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["expiresAt"],
-        message: "expiresAt must be exactly seven days after cutAt",
-      });
-  });
-
-/** Immutable replay payload copied from a finalized stable train. */
-export const MetadataReplayRecordSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    recordDigest: DigestSchema,
-    sourceTrainRef: ReleaseBranchSchema,
-    sourceTrainDigest: DigestSchema,
-    subjectSha: FullShaSchema,
-    generatedAt: UtcTimestampSchema,
-    versions: z.record(z.string(), StableVersionSchema),
-    consumedChangesets: z.array(
-      z
-        .object({ path: z.string().min(1), preimageDigest: DigestSchema })
-        .strict(),
-    ),
-    metadataWrites: z.array(
-      z
-        .object({
-          path: z.string().min(1),
-          contentsDigest: DigestSchema,
-          contents: z.string(),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
 
 function validatePackageSet(
   value: { packages: readonly string[]; versions: Record<string, string> },
@@ -427,5 +284,3 @@ export function packageArtifactFilename(
 
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 export type ArtifactBindingRecord = z.infer<typeof ArtifactBindingRecordSchema>;
-export type StableTrainRecord = z.infer<typeof StableTrainRecordSchema>;
-export type MetadataReplayRecord = z.infer<typeof MetadataReplayRecordSchema>;
