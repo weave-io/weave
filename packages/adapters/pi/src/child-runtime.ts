@@ -49,7 +49,11 @@ import {
   signEnvelope,
   verifyEnvelope,
 } from "./child-envelope.js";
-import { SystemTimerPort, type TimerPort } from "./child-timer.js";
+import {
+  SystemTimerPort,
+  type TimerHandle,
+  type TimerPort,
+} from "./child-timer.js";
 import { encodeTransferChunks } from "./child-transfer.js";
 import { encodeDelegateRequestChunks } from "./delegate-request-chunking.js";
 import {
@@ -84,6 +88,16 @@ export type PiChildOutputError = {
 const CHILD_CORRELATED_TIMEOUT_MS = 300_000;
 /** Bounded number of fallback transitions admitted by one child runtime. */
 const MAX_MODEL_TRANSITION_REPORTS = 64;
+/**
+ * A model-transition proof is nonterminal, but it must never hold the
+ * serialized child-control lane (and therefore terminal settlement) open
+ * forever when the host output writer stops settling.
+ */
+const MODEL_TRANSITION_REPORT_TIMEOUT_MS = 5_000;
+const MODEL_TRANSITION_REPORT_TIMEOUT_REASON =
+  "model-transition-report-timeout";
+const MODEL_TRANSITION_REPORT_CANCEL_REASON =
+  "model-transition-report-cancelled";
 
 export interface PiChildOutputPort {
   /** Writes one already-LF-terminated line directly to this process's own stdout. */
@@ -97,6 +111,19 @@ export interface PiChildRuntimeDeps {
   readonly outputPort: PiChildOutputPort;
   readonly logger: PiAdapterLogger;
   readonly timerPort?: TimerPort;
+}
+
+interface ChildControlSendOptions {
+  readonly isCancelled?: () => boolean;
+  readonly onSequenceAllocated?: (
+    sequence: number,
+    releaseSequence: () => void,
+  ) => void;
+}
+
+interface ActiveModelTransition {
+  readonly result: ResultAsync<void, PiChildRuntimeError>;
+  readonly cancel: (reason: string) => void;
 }
 
 export interface PiChildBootstrapHandlers {
@@ -144,12 +171,18 @@ export class PiChildRuntime {
   private cancelledReportInFlight = false;
   /** Prevents concurrent model-transition reports from racing their phase cursor. */
   private modelTransitionReportInFlight = false;
+  /** Identifies the report that owns the in-flight flag and phase commit. */
+  private modelTransitionAttemptId = 0;
   /** Every accepted transition id is retained so a late phase cannot be reused. */
   private readonly reportedModelTransitionIds = new Set<string>();
   /** The last successfully reported phase in the current transition. */
   private lastModelTransition: PiModelTransitionBody | undefined;
   /** Serializes allocation, signing, and output so failed sequences can be reused safely. */
   private outgoingSendTail: Promise<void> = Promise.resolve();
+  /** Invalidates queued/in-flight sends when a generation-owned delivery is cancelled. */
+  private outgoingSendEpoch = 0;
+  /** The one model-transition delivery that may hold the send lane. */
+  private activeModelTransition: ActiveModelTransition | undefined;
   /** Pending correlated delegation requests initiated by this child. */
   private readonly pendingCorrelated = new Map<
     string,
@@ -501,6 +534,7 @@ export class PiChildRuntime {
         reason: "terminal-already-reported",
       });
     }
+    this.activeModelTransition?.cancel("authenticated-cancel");
     this.cancelledReportInFlight = true;
     return this.sendControl("cancelled", this.childId, {})
       .map(() => {
@@ -585,8 +619,10 @@ export class PiChildRuntime {
     }
 
     this.modelTransitionReportInFlight = true;
-    return this.sendControl("model-transition", this.childId, transition)
+    const attemptId = ++this.modelTransitionAttemptId;
+    return this.sendModelTransitionControl(transition)
       .map(() => {
+        if (this.modelTransitionAttemptId !== attemptId) return undefined;
         this.modelTransitionReportInFlight = false;
         this.lastModelTransition = transition;
         if (transition.phase === "applied") {
@@ -595,9 +631,153 @@ export class PiChildRuntime {
         return undefined;
       })
       .mapErr((failure) => {
-        this.modelTransitionReportInFlight = false;
+        if (this.modelTransitionAttemptId === attemptId) {
+          this.modelTransitionReportInFlight = false;
+        }
         return failure;
       });
+  }
+
+  /**
+   * Sends one model-transition proof as a generation-owned lane task.
+   *
+   * The underlying output promise is deliberately observed rather than
+   * awaited by the lane after the deadline. This is the key distinction from
+   * a normal serialized write: a wedged host writer can finish only its own
+   * stale operation and can never retain terminal settlement behind it.
+   */
+  private sendModelTransitionControl(
+    transition: PiModelTransitionBody,
+  ): ResultAsync<void, PiChildRuntimeError> {
+    let resolveResult!: (result: Result<void, PiChildRuntimeError>) => void;
+    const result = new ResultAsync<void, PiChildRuntimeError>(
+      new Promise((resolve) => {
+        resolveResult = resolve;
+      }),
+    );
+    const prior = this.outgoingSendTail;
+    const epoch = this.outgoingSendEpoch;
+    let completed = false;
+    let cancelled = false;
+    let timer: TimerHandle | undefined;
+    let releaseLane!: () => void;
+    let releaseSequence: (() => void) | undefined;
+    let lane: Promise<void> | undefined;
+    const laneDone = new Promise<void>((resolve) => {
+      releaseLane = resolve;
+    });
+
+    const finish = (value: Result<void, PiChildRuntimeError>): void => {
+      if (completed) return;
+      completed = true;
+      timer?.cancel();
+      if (this.activeModelTransition?.cancel === cancel) {
+        this.activeModelTransition = undefined;
+      }
+      // Release the logical lane before resolving the caller. A terminal
+      // caller waiting on this result must see a completed transition lane.
+      releaseLane();
+      resolveResult(value);
+    };
+
+    const cancel = (reason: string): void => {
+      if (completed) return;
+      cancelled = true;
+      this.outgoingSendEpoch += 1;
+      this.modelTransitionReportInFlight = false;
+      releaseSequence?.();
+      // The old lane may still be waiting for an output promise. Detach it
+      // only while it is still the current owner; a newer generation-owned
+      // send must never be overwritten by an old timeout callback.
+      if (lane !== undefined && this.outgoingSendTail === lane) {
+        this.outgoingSendTail = Promise.resolve();
+      }
+      finish(
+        err({
+          type: "EnvelopeSignFailed",
+          reason,
+        }),
+      );
+    };
+
+    this.activeModelTransition = { result, cancel };
+    lane = prior.then(
+      () => {
+        if (cancelled || this.outgoingSendEpoch !== epoch) {
+          finish(
+            err({
+              type: "EnvelopeSignFailed",
+              reason: MODEL_TRANSITION_REPORT_CANCEL_REASON,
+            }),
+          );
+          return laneDone;
+        }
+
+        let sent: ResultAsync<void, PiChildRuntimeError>;
+        try {
+          sent = this.sendControlNow(
+            "model-transition",
+            this.childId,
+            transition,
+            {
+              isCancelled: () => cancelled || this.outgoingSendEpoch !== epoch,
+              onSequenceAllocated: (_sequence, release) => {
+                releaseSequence = release;
+                if (cancelled || this.outgoingSendEpoch !== epoch) release();
+              },
+            },
+          );
+        } catch (error: unknown) {
+          finish(
+            err({
+              type: "EnvelopeSignFailed",
+              reason:
+                error instanceof Error ? error.message : "control send failed",
+            }),
+          );
+          return laneDone;
+        }
+
+        // `sendControlNow` is a ResultAsync, so this handler observes both
+        // success and failure even if the lane has already detached. The
+        // timeout/cancel latch below makes late completion side-effect free.
+        void sent.match(
+          () => {
+            if (cancelled || this.outgoingSendEpoch !== epoch) {
+              finish(
+                err({
+                  type: "EnvelopeSignFailed",
+                  reason: MODEL_TRANSITION_REPORT_CANCEL_REASON,
+                }),
+              );
+              return;
+            }
+            finish(ok(undefined));
+          },
+          (failure) => finish(err(failure)),
+        );
+        return laneDone;
+      },
+      (error: unknown) => {
+        finish(
+          err({
+            type: "EnvelopeSignFailed",
+            reason:
+              error instanceof Error ? error.message : "control send failed",
+          }),
+        );
+        return laneDone;
+      },
+    );
+    this.outgoingSendTail = lane;
+    timer = this.timerPort.schedule(
+      () => cancel(MODEL_TRANSITION_REPORT_TIMEOUT_REASON),
+      MODEL_TRANSITION_REPORT_TIMEOUT_MS,
+    );
+    // A synchronous fake timer can expire before schedule() returns. Cancel
+    // the returned handle as soon as it exists so no timer remains live.
+    if (completed) timer.cancel();
+    return result;
   }
 
   /** Proves to the parent that bootstrap completed before task work starts. */
@@ -788,18 +968,37 @@ export class PiChildRuntime {
     correlationId: string,
     body: JsonValue,
   ): ResultAsync<void, PiChildRuntimeError> {
+    const active = this.activeModelTransition;
+    if (active !== undefined) {
+      return this.sendAfterModelTransition(active, () =>
+        this.enqueueControlSend(kind, correlationId, body),
+      );
+    }
+    return this.enqueueControlSend(kind, correlationId, body);
+  }
+
+  /**
+   * Keeps a send requested while a transition is active behind that
+   * transition's actual result. This is separate from the promise stored in
+   * `outgoingSendTail`: callers may arrive before a timeout detaches the old
+   * lane and must not retain a reference to that old promise forever.
+   */
+  private sendAfterModelTransition(
+    active: ActiveModelTransition,
+    send: () => ResultAsync<void, PiChildRuntimeError>,
+  ): ResultAsync<void, PiChildRuntimeError> {
     let resolveResult!: (result: Result<void, PiChildRuntimeError>) => void;
     const result = new ResultAsync<void, PiChildRuntimeError>(
       new Promise((resolve) => {
         resolveResult = resolve;
       }),
     );
-    const operation = this.outgoingSendTail.then(async () => {
-      resolveResult(await this.sendControlNow(kind, correlationId, body));
-    });
-    this.outgoingSendTail = operation.then(
-      () => undefined,
-      (error: unknown) => {
+
+    const continueSend = (): void => {
+      let next: ResultAsync<void, PiChildRuntimeError>;
+      try {
+        next = send();
+      } catch (error: unknown) {
         resolveResult(
           err({
             type: "EnvelopeSignFailed",
@@ -807,7 +1006,68 @@ export class PiChildRuntime {
               error instanceof Error ? error.message : "control send failed",
           }),
         );
-      },
+        return;
+      }
+      void next.match(
+        () => resolveResult(ok(undefined)),
+        (failure) => resolveResult(err(failure)),
+      );
+    };
+
+    // Both branches continue: a failed or timed-out nonterminal proof must
+    // not prevent the terminal envelope from being attempted.
+    void active.result
+      .match(continueSend, continueSend)
+      .catch((error: unknown) => {
+        resolveResult(
+          err({
+            type: "EnvelopeSignFailed",
+            reason:
+              error instanceof Error ? error.message : "control send failed",
+          }),
+        );
+      });
+    return result;
+  }
+
+  private enqueueControlSend(
+    kind: PiControlKind,
+    correlationId: string,
+    body: JsonValue,
+  ): ResultAsync<void, PiChildRuntimeError> {
+    let resolveResult!: (result: Result<void, PiChildRuntimeError>) => void;
+    const result = new ResultAsync<void, PiChildRuntimeError>(
+      new Promise((resolve) => {
+        resolveResult = resolve;
+      }),
+    );
+    const epoch = this.outgoingSendEpoch;
+    const prior = this.outgoingSendTail;
+    const operation = prior.then(async () => {
+      if (epoch !== this.outgoingSendEpoch) {
+        return err({
+          type: "EnvelopeSignFailed",
+          reason: "control-send-cancelled",
+        } satisfies PiChildRuntimeError);
+      }
+      return await this.sendControlNow(kind, correlationId, body, {
+        isCancelled: () => epoch !== this.outgoingSendEpoch,
+      });
+    });
+    this.outgoingSendTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    void operation.then(
+      (value) => resolveResult(value),
+      (error: unknown) =>
+        resolveResult(
+          err({
+            type: "EnvelopeSignFailed",
+            reason:
+              error instanceof Error ? error.message : "control send failed",
+          }),
+        ),
     );
     return result;
   }
@@ -816,6 +1076,7 @@ export class PiChildRuntime {
     kind: PiControlKind,
     correlationId: string,
     body: JsonValue,
+    options: ChildControlSendOptions = {},
   ): ResultAsync<void, PiChildRuntimeError> {
     const secretBytes = this.secretBytes;
     const authState = this.authState;
@@ -825,7 +1086,27 @@ export class PiChildRuntime {
         reason: "runtime not activated",
       });
     }
+    if (options.isCancelled?.() === true) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "control-send-cancelled",
+      });
+    }
     const sequence = authState.allocateOutgoingSequence();
+    let sequenceReleased = false;
+    const releaseSequence = (): void => {
+      if (sequenceReleased) return;
+      sequenceReleased = true;
+      authState.releaseOutgoingSequence(sequence);
+    };
+    options.onSequenceAllocated?.(sequence, releaseSequence);
+    if (options.isCancelled?.() === true) {
+      releaseSequence();
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "control-send-cancelled",
+      });
+    }
     return signEnvelope(
       {
         childId: this.childId,
@@ -846,18 +1127,33 @@ export class PiChildRuntime {
           reason: envelopeError.type,
         }),
       )
-      .andThen((envelope) =>
-        this.deps.outputPort
+      .andThen((envelope) => {
+        if (options.isCancelled?.() === true) {
+          releaseSequence();
+          return errAsync<void, PiChildRuntimeError>({
+            type: "EnvelopeSignFailed",
+            reason: "control-send-cancelled",
+          });
+        }
+        return this.deps.outputPort
           .writeLine(new TextEncoder().encode(`${JSON.stringify(envelope)}\n`))
           .mapErr(
             (outputError): PiChildRuntimeError => ({
               type: "EnvelopeSignFailed",
               reason: outputError.type,
             }),
-          ),
-      )
+          )
+          .andThen(() =>
+            options.isCancelled?.() === true
+              ? errAsync<void, PiChildRuntimeError>({
+                  type: "EnvelopeSignFailed",
+                  reason: "control-send-cancelled",
+                })
+              : okAsync<void, PiChildRuntimeError>(undefined),
+          );
+      })
       .orElse((failure) => {
-        authState.releaseOutgoingSequence(sequence);
+        releaseSequence();
         return errAsync(failure);
       });
   }
@@ -866,6 +1162,10 @@ export class PiChildRuntime {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.activeModelTransition?.cancel("runtime-disposed");
+    this.outgoingSendEpoch += 1;
+    this.outgoingSendTail = Promise.resolve();
+    this.modelTransitionReportInFlight = false;
     for (const pending of this.pendingCorrelated.values()) {
       pending.reject({
         type: "CorrelatedRequestTimedOut",
