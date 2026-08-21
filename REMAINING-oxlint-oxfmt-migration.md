@@ -1,56 +1,48 @@
 # Remaining: Oxlint and Oxfmt migration
 
-## Checkpoint
+## Integrated checkpoint
 
-- Branch: `chore/oxlint-oxfmt-migration`
-- Plan: `.weave/plans/oxlint-oxfmt-full-green-migration.md`
-- Tasks 1–25 are complete.
-- Task 26 is in progress.
-- Checkpoint commit: `50ecd9e7f33053bf22568795dd02093e37ba212c`
+- Integration branch: `integration/all-active-workstreams`
+- Source branch: `chore/oxlint-oxfmt-migration`
+- Source checkpoint: `50ecd9e7f33053bf22568795dd02093e37ba212c`
+- The source plan `.weave/plans/oxlint-oxfmt-full-green-migration.md` is not present in this integrated branch. This root note is the retained handoff for that workstream.
+- Source Tasks 1–25 were complete. Task 26 was in progress. Tasks 27–41 remain.
 
-The checkpoint commit contains only these six Task 26 files:
+The integrated branch includes the Task 26 plan/artifact projection changes and the previously uncommitted delegation controller/tool work. The integration now passes workspace typecheck and the full test suite, but the full Oxlint migration is not complete.
 
-- `packages/adapters/pi/src/active-plan-ui-state.ts`
-- `packages/adapters/pi/src/artifact-provider.ts`
-- `packages/adapters/pi/src/dispatch-snapshot.ts`
-- `packages/adapters/pi/src/foreground-plan-display.ts`
-- `packages/adapters/pi/src/plan-task-list.ts`
-- `packages/adapters/pi/src/runtime-store-port.ts`
+## Current blocker
 
-## Work still in progress
+`bun run lint` fails in the integrated branch with 6,617 Oxlint errors and 1,718 warnings across 379 files. Most failures come from Pi model-fallback, child-streaming, and release code integrated after the migration checkpoint. Common rules include:
 
-The following Task 26 files have uncommitted work and must remain unstaged until their type errors and focused tests are resolved:
+- `anti-slop/no-runtime-typeof`
+- `anti-slop/require-safety-comment-for-type-assertion`
+- `anti-slop/no-unknown-parameters`
+- `anti-slop/no-conditional-empty-object-spread`
+- `anti-slop/no-unsafe-dictionary-type`
 
-- `packages/adapters/pi/src/delegation-controller.ts`
-- `packages/adapters/pi/src/delegation-tool.ts`
+The exact final run is saved locally at `/tmp/weave-all-active-lint.log`; it is not a durable repository artifact.
 
-Current Pi typecheck blockers are readonly assignments to `model` and `reasoning` in `delegation-controller.ts` near lines 2570–2571.
+## Current validation
 
-Task 26 also still includes these production files, which need a final strict-lint audit or implementation pass:
+At the integrated branch checkpoint:
 
-- `packages/adapters/pi/src/plan-catalog.ts`
-- `packages/adapters/pi/src/plan-provider.ts`
-- `packages/adapters/pi/src/plan-render.ts`
-- `packages/adapters/pi/src/workflow-commands.ts`
-- `packages/adapters/pi/src/workflow-controller.ts`
-
-Tasks 27–41 remain after Task 26. Follow their order and acceptance criteria in the plan.
-
-## Validation completed for the checkpoint
-
-- Six-file Oxlint with warnings denied: passed.
-- Biome 2.4.14 check on the six files: passed.
-- Focused artifact, plan, display, runtime-store, and dispatch tests: 145 passed, 0 failed.
-- `git diff --check`: passed.
-- Pre-commit repository hook: 11,132 passed, 11 skipped, 0 failed.
-- Pi package typecheck: blocked only by the two unstaged Task 26 WIP assignments listed above.
+- Full repository tests: 11,990 passed, 12 skipped, 0 failed.
+- Workspace typecheck: passed.
+- Build: passed.
+- Biome on the integration repair files: passed.
+- Documentation links: passed.
+- Action pins: passed.
+- CODEOWNERS: passed.
+- Changeset policy: passed.
+- API report check: passed.
+- Full lint: failed as described above.
 
 ## Next safe action
 
-1. Fix the two readonly assignment errors without weakening the dispatch model contract.
-2. Run focused delegation controller/tool tests and Pi typecheck.
-3. Finish the remaining Task 26 files and run the full Task 26 acceptance suite.
-4. Continue Tasks 27–41 in plan order.
-5. Run the final Oxlint/Oxfmt migration gate, including formatting, lint, declarations, config validation, typecheck, tests, build, docs links, action pins, CODEOWNERS, and changeset checks.
+1. Continue the migration against the integrated branch, not the obsolete source worktree status.
+2. Fix lint findings in bounded groups without weakening rules.
+3. Run focused tests and typecheck after each group.
+4. Finish the remaining source-plan task sequence or create a replacement plan before broad continuation.
+5. Run the final formatting, lint, declarations, config validation, typecheck, tests, build, docs links, action pins, CODEOWNERS, and Changesets gates.
 
-Do not modify or restore `~/.weave/config.weave` or shared Pi settings. Any config-sensitive proof must use isolated temporary HOME, config, runtime, data, cache, and temporary directories.
+Do not modify or restore `~/.weave/config.weave` or shared Pi settings. Use isolated temporary HOME, config, runtime, data, cache, and temporary directories for config-sensitive tests and proofs.

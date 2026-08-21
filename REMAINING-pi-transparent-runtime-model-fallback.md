@@ -2,7 +2,8 @@
 
 ## Checkpoint
 
-- Branch: `feat/pi-native-child-stream-rendering`
+- Integration branch: `integration/all-active-workstreams`
+- Source branch: `feat/pi-native-child-stream-rendering`
 - Plan: `.weave/plans/pi-transparent-runtime-model-fallback.md`
 - Plan bookkeeping HEAD: `6ec58fc69dd2787de04337485234062f03f870af`
 - Tasks 1–15 are complete.
@@ -87,17 +88,8 @@ Do not modify or restore shared global Weave config or shared Pi settings. Use i
 
 ## Current blockers
 
-- Shuttle launches return `assistant error · details unavailable`.
-- Warp attempts returned cancelled/error; one correctly refused because the temporary evidence was absent.
-- An independent coordinator confirmed Shuttle unavailable while Warp and Thread were available.
+- Fresh preserved Task 16 evidence is still absent.
+- The latest Warp delegation on the integrated branch returned `assistant error · details unavailable`; no current security approval exists.
+- Task 17 installation, rollback, and cleanup proof has not run.
 
-Do not override the user's authoritative Shuttle route or modify shared configuration to bypass these failures. Regenerate evidence first, then run Warp.
-
-## Unrelated shared-worktree state
-
-The following current paths are not owned by this checkpoint and must be preserved:
-
-- Modified: `.codesight/CODESIGHT.md`, `.codesight/cicd.md`, `.codesight/config.md`, `.codesight/coverage.md`, `.codesight/graph.md`, `.codesight/libs.md`, `.codesight/middleware.md`, `bun.lock`, `package.json`, `packages/adapters/pi/src/__tests__/child-control-bodies.test.ts`, and `packages/adapters/pi/src/__tests__/child-envelope.test.ts`.
-- Untracked: `.oxlintrc.json`, `eave-debug.ts`, `packages/adapters/pi/AGENTS.md`, `packages/adapters/pi/weave-adapter-pi.task11-proof`, `tools/`, and `undefined/`.
-
-Do not stage, restore, or rewrite these paths as part of Tasks 16–17.
+Do not override the user's authoritative Shuttle route or modify shared configuration to bypass these failures. Regenerate isolated evidence first, then run Warp.

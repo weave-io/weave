@@ -1,6 +1,6 @@
 # Remaining release pipeline replacement work
 
-This checkpoint records the state of [the release pipeline replacement plan](.weave/plans/release-pipeline-replacement.md) on 2026-08-21.
+This checkpoint records the 2026-08-21 state of the release pipeline replacement work now integrated on `integration/all-active-workstreams`. The source plan `.weave/plans/release-pipeline-replacement.md` is not present in this integrated branch; this root note is the retained handoff and completion checklist.
 
 ## Protected-main baseline
 
@@ -87,7 +87,7 @@ A Pi-only restoration was proven unsafe and PR #157 was closed without merge. Th
 
 ### Task 35 — cutover
 
-Status: draft and incomplete.
+Status: integrated but incomplete. An adversarial Weft review of the integration branch confirmed the following blockers.
 
 The remaining code blocker is the real release-ref runtime seam:
 
@@ -132,7 +132,7 @@ Do not edit, restore, replace, chmod, or snapshot/restore `~/.weave/config.weave
 Before cutover and release, run and record:
 
 - The full repository gate: frozen install, lint, typecheck, build, all tests, docs links, action pins, CODEOWNERS, API reports, Changesets policy, and the doctor mode for the current rollout rung.
-- Adversarial Weft and Warp approval for PRs #155, #156, and #158 after every blocker is fixed.
+- Adversarial Weft and Warp approval after every blocker is fixed. The latest integrated Weft review returned REQUEST_CHANGES, and the latest Warp delegation failed before review.
 - Task 32 `ReadyForCutover` evidence.
 - All 16 Task 33 evidence items.
 - All Task 34 consumer and six adapter-host readiness cells.

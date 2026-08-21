@@ -2,11 +2,11 @@
 
 ## Checkpoint
 
-- Branch: `feat/pi-stale-runtime-identity-gate`
-- Checkpoint base: `ea18f0324b06f69b560b704a6186318173c7bcce`
-- Plan: `.weave/plans/pi-child-streaming-remediation.md`
-- Plan status: Tasks 1–10 complete; Task 11 remains unchecked.
-- Worktree was clean before this note.
+- Integration branch: `integration/all-active-workstreams`
+- Source branch: `feat/pi-stale-runtime-identity-gate`
+- Source checkpoint: `ea18f0324b06f69b560b704a6186318173c7bcce`
+- The source plan `.weave/plans/pi-child-streaming-remediation.md` is not present in this integrated branch. This root note is the retained Task 11 handoff.
+- Source-plan status: Tasks 1–10 complete; Task 11 remains unchecked.
 
 Do not modify or restore shared `~/.weave/config.weave` or shared Pi settings. Use an isolated temporary `HOME`, config root, Runtime Store, data directory, and session directory for all remaining tests and proofs.
 
@@ -142,23 +142,12 @@ K1, at the same subject and `extension-impl` digest, reported exit `0`, lanes `4
 
 ## Current blocker
 
-`shuttle` and `thread` currently fail immediately with:
-
-```text
-assistant error · details unavailable
-```
-
-The failure also occurs for a no-op delegation. Do not work around this by changing shared global configuration. Wait for the current Weave provider route to recover or for the user to repair it.
+An adversarial Weft review of the integrated branch rejected Task 11 completion on the two unfinished items above. Warp delegation returned `assistant error · details unavailable`, so no current security approval exists. Do not work around review or provider failures by changing shared global configuration.
 
 ## Next safe action
 
-1. Confirm the task worktree is clean:
-
-   ```bash
-   cd /Users/jose/projects/weave.worktrees/task1-stale-runtime-identity-gate
-   git status --short
-   ```
-
-2. Retry a no-op Weave Shuttle delegation. Do not inspect or modify shared configuration.
-3. When Shuttle is available, delegate unfinished item 1 first from the clean checkpoint.
+1. Continue from `integration/all-active-workstreams` or a branch based on it.
+2. Fix inspector tool-data sanitization first.
+3. Make each live-verifier isolation claim depend on a direct sink observation, and load the real Weave extension in the proof child.
 4. Use isolated temporary roots for all test and proof state.
+5. Repeat focused/full validation, real Pi 0.84.2 live proof, Weft, and mandatory Warp.
