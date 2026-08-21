@@ -14,7 +14,6 @@ import {
   type DefaultTextStyle,
   Markdown,
   type MarkdownTheme,
-  Text,
   type TUI,
 } from "@earendil-works/pi-tui";
 import { err, type Result as NeverthrowResult, Result } from "neverthrow";
@@ -23,7 +22,9 @@ import {
   degradedDelegationCard,
   renderDelegationCard,
 } from "./child-card-render.js";
+import type { PiChildEventJsonValue } from "./child-session-events.js";
 import type {
+  PiChildTranscriptToolEntry,
   PiTranscriptComponent,
   PiTranscriptComponentFactory,
   PiTranscriptComponentRequest,
@@ -60,61 +61,173 @@ export interface PiNativeTranscriptComponentDeps {
   readonly thinkingColor?: (text: string) => string;
 }
 
+interface NativeToolResultContent {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
+/** A value retained by the child event parser for a tool argument or result. */
+type PiParserApprovedToolInput = PiChildTranscriptToolEntry["result"];
+type PiParserApprovedToolValue = PiChildEventJsonValue | undefined;
+
+/** The bounded fields a native tool renderer may read from one result block. */
+type PiParserApprovedToolRecord = Extract<
+  PiChildEventJsonValue,
+  { readonly [key: string]: PiChildEventJsonValue }
+> & {
+  readonly content?: PiChildEventJsonValue;
+  readonly details?: PiChildEventJsonValue;
+  readonly isError?: PiChildEventJsonValue;
+  readonly type?: PiChildEventJsonValue;
+  readonly text?: PiChildEventJsonValue;
+  readonly data?: PiChildEventJsonValue;
+  readonly mimeType?: PiChildEventJsonValue;
+};
+
 interface NormalizedToolResult {
-  readonly content: {
-    type: string;
-    text?: string;
-    data?: string;
-    mimeType?: string;
-  }[];
-  readonly details?: unknown;
+  readonly content: NativeToolResultContent[];
+  readonly details?: PiParserApprovedToolValue;
   readonly isError: boolean;
 }
+
+type NativeToolDefinition = NonNullable<
+  ConstructorParameters<typeof ToolExecutionComponent>[4]
+>;
+type BuiltinToolDefinitionFactory = (cwd: string) => NativeToolDefinition;
 
 /**
  * Pi renders a tool call through its definition's own renderer; without one it
  * prints just the bold tool name. The builtin definitions only need a cwd, so
  * an inspected child can show `read <path>` exactly like the native view.
  */
-const BUILTIN_TOOL_DEFINITION_FACTORIES: Readonly<
-  Record<string, (cwd: string) => unknown>
-> = {
-  bash: createBashToolDefinition,
-  edit: createEditToolDefinition,
-  find: createFindToolDefinition,
-  grep: createGrepToolDefinition,
-  ls: createLsToolDefinition,
-  read: createReadToolDefinition,
-  write: createWriteToolDefinition,
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function builtinToolDefinitionFactory(
+  toolName: string,
+): BuiltinToolDefinitionFactory | undefined {
+  switch (toolName) {
+    case "bash":
+      return createBashToolDefinition;
+    case "edit":
+      return createEditToolDefinition;
+    case "find":
+      return createFindToolDefinition;
+    case "grep":
+      return createGrepToolDefinition;
+    case "ls":
+      return createLsToolDefinition;
+    case "read":
+      return createReadToolDefinition;
+    case "write":
+      return createWriteToolDefinition;
+    default:
+      return undefined;
+  }
 }
 
-function textBlock(value: unknown): string {
-  if (typeof value === "string") return value;
+function parserApprovedToolValue(
+  value: PiParserApprovedToolInput,
+): PiParserApprovedToolValue {
+  if (value === undefined) return undefined;
+  // SAFETY: PiChildTranscriptRenderer receives payloads only from the
+  // Zod-bounded child-event parser; this seam does not admit raw host values.
+  return value as PiChildEventJsonValue;
+}
+
+function isParserApprovedRecord(
+  value: PiParserApprovedToolValue,
+): value is PiParserApprovedToolRecord {
+  return (
+    value !== null &&
+    Object.prototype.toString.call(value) === "[object Object]"
+  );
+}
+
+function parserApprovedRecord(
+  value: PiParserApprovedToolValue,
+): PiParserApprovedToolRecord | undefined {
+  const parsed = Result.fromThrowable(
+    () => (isParserApprovedRecord(value) ? value : null),
+    () => "tool_result_record_unreadable",
+  )().match(
+    (record) => record,
+    () => null,
+  );
+  return parsed === null ? undefined : parsed;
+}
+
+function parserApprovedString(
+  value: PiParserApprovedToolValue,
+): string | undefined {
+  const parsed = Result.fromThrowable(
+    () => String(value),
+    () => "tool_result_string_unreadable",
+  )();
+  if (parsed.isErr() || parsed.value !== value) return undefined;
+  return parsed.value;
+}
+
+function isParserApprovedArray(
+  value: PiParserApprovedToolValue,
+): value is readonly PiChildEventJsonValue[] {
+  return Array.isArray(value);
+}
+
+function textBlock(value: PiParserApprovedToolValue): string {
+  const stringValue = parserApprovedString(value);
+  if (stringValue !== undefined) return stringValue;
   if (value === undefined) return "";
   return Result.fromThrowable(
-    () => JSON.stringify(value, undefined, 2) ?? "",
+    () => JSON.stringify(value, null, 2) ?? "",
     () => "tool_result_not_serializable",
   )().unwrapOr("[unserializable tool result]");
 }
 
+function normalizeToolContentBlock(
+  value: PiParserApprovedToolValue,
+): NativeToolResultContent {
+  const record = parserApprovedRecord(value);
+  if (record === undefined) return { type: "text", text: textBlock(value) };
+
+  const block: NativeToolResultContent = {
+    type: parserApprovedString(record.type) ?? "text",
+  };
+  const text = parserApprovedString(record.text);
+  if (text !== undefined) block.text = text;
+  const data = parserApprovedString(record.data);
+  if (data !== undefined) block.data = data;
+  const mimeType = parserApprovedString(record.mimeType);
+  if (mimeType !== undefined) block.mimeType = mimeType;
+  return block;
+}
+
 function normalizeToolResult(
-  value: unknown,
+  value: PiParserApprovedToolValue,
   isError: boolean,
 ): NormalizedToolResult {
-  if (isRecord(value) && Array.isArray(value.content))
+  const record = parserApprovedRecord(value);
+  if (record !== undefined && isParserApprovedArray(record.content)) {
     return {
-      content: value.content as NormalizedToolResult["content"],
-      details: value.details,
-      isError: value.isError === true || isError,
+      content: record.content.map(normalizeToolContentBlock),
+      details: record.details,
+      isError: record.isError === true || isError,
     };
+  }
   return {
     content: [{ type: "text", text: textBlock(value) }],
     isError,
   };
+}
+
+function hostToolDefinition(
+  value: PiTranscriptComponentRequest["knownToolDefinition"],
+): NativeToolDefinition | undefined {
+  if (value === undefined || value === null || Object(value) !== value)
+    return undefined;
+  // SAFETY: the transcript renderer forwards this object from Pi's host-owned
+  // tool registry; the object check rejects primitives while preserving its
+  // exact identity for ToolExecutionComponent.
+  return value as NativeToolDefinition;
 }
 
 function markdownComponent(
@@ -157,7 +270,7 @@ function spacedBlock(component: PiTranscriptComponent): PiTranscriptComponent {
 function toolComponent(
   request: PiTranscriptComponentRequest,
   deps: PiNativeTranscriptComponentDeps,
-  definitionFor: (toolName: string) => unknown,
+  definitionFor: (toolName: string) => NativeToolDefinition | undefined,
 ): PiTranscriptComponent {
   const payload =
     request.payload?.type === "tool" ? request.payload : undefined;
@@ -170,7 +283,7 @@ function toolComponent(
       showImages: deps.showImages ?? false,
       imageWidthCells: deps.imageWidthCells,
     },
-    (request.knownToolDefinition ?? definitionFor(toolName)) as never,
+    hostToolDefinition(request.knownToolDefinition) ?? definitionFor(toolName),
     deps.tui,
     deps.cwd,
   );
@@ -178,14 +291,23 @@ function toolComponent(
   if (payload.argumentsKnown) component.setArgsComplete();
   if (payload.state !== "placeholder") component.markExecutionStarted();
   for (const partial of payload.partialResults)
-    component.updateResult(normalizeToolResult(partial, false), true);
+    component.updateResult(
+      normalizeToolResult(parserApprovedToolValue(partial), false),
+      true,
+    );
   if (payload.state === "error")
     component.updateResult(
-      normalizeToolResult(payload.error ?? payload.result, true),
+      normalizeToolResult(
+        parserApprovedToolValue(payload.error ?? payload.result),
+        true,
+      ),
       false,
     );
   else if (payload.state === "result")
-    component.updateResult(normalizeToolResult(payload.result, false), false);
+    component.updateResult(
+      normalizeToolResult(parserApprovedToolValue(payload.result), false),
+      false,
+    );
   return component;
 }
 
@@ -203,7 +325,9 @@ function thinkingText(request: PiTranscriptComponentRequest): string {
   // never stores raw chain-of-thought for this component to print.
   if (payload?.type === "assistant") return payload.reasoningSummary;
   if (payload?.type === "text") return payload.text;
-  return request.content;
+  // A parser-approved thinking entry has no body unless the host published a
+  // summary. Never use the fallback row, which could carry raw reasoning.
+  return "";
 }
 
 const FALLBACK_MARKDOWN_THEME: MarkdownTheme = {
@@ -341,17 +465,23 @@ export function createPiNativeTranscriptComponentFactory(
     return resolvedTheme;
   };
   const outputPad = deps.outputPad ?? 1;
-  const definitions = new Map<string, unknown>();
-  const definitionFor = (toolName: string): unknown => {
+  const definitions = new Map<string, NativeToolDefinition | undefined>();
+  const definitionFor = (
+    toolName: string,
+  ): NativeToolDefinition | undefined => {
     if (definitions.has(toolName)) return definitions.get(toolName);
-    const factory = BUILTIN_TOOL_DEFINITION_FACTORIES[toolName];
-    const definition =
+    const factory = builtinToolDefinitionFactory(toolName);
+    const built =
       factory === undefined
-        ? undefined
+        ? null
         : Result.fromThrowable(
             () => factory(deps.cwd),
             () => "tool_definition_unavailable",
-          )().unwrapOr(undefined);
+          )().match(
+            (value) => value,
+            () => null,
+          );
+    const definition = built === null ? undefined : built;
     definitions.set(toolName, definition);
     return definition;
   };

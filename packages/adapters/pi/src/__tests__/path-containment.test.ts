@@ -5,6 +5,7 @@ import { err, ok } from "neverthrow";
 import {
   BunPathContainmentPort,
   FakePathContainmentPort,
+  inspectNoFollowFile,
   isDirectoryContainmentSafeWith,
   isLexicallyContained,
   NullPathContainmentPort,
@@ -50,6 +51,17 @@ describe("BunPathContainmentPort (production port)", () => {
     const result = await port.verifyContainment(root, "linked");
     expect(result).toEqual(err("symlink-component-rejected"));
     await $`rm -rf ${outside}`.quiet();
+  });
+
+  test("reports a symlinked file leaf as a symlink rejection on every supported platform", async () => {
+    const target = join(root, "target");
+    const link = join(root, "linked-file");
+    await Bun.write(target, "content");
+    await $`ln -s ${target} ${link}`.quiet();
+
+    const result = await inspectNoFollowFile(link, 0o600);
+
+    expect(result).toEqual(err({ type: "symlink-rejected" }));
   });
 });
 

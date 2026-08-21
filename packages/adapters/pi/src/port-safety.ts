@@ -34,6 +34,9 @@ export function safelyAwaitPortResult<T, E, F>(
  */
 export const MODEL_REGISTRY_THREW_REASON = "model-registry-get-available-threw";
 
+/** The closed, path-free failure type returned when the model port throws. */
+export type ModelRegistryFailureReason = typeof MODEL_REGISTRY_THREW_REASON;
+
 /**
  * Safely calls an injected `modelRegistry.getAvailable()` port. It is
  * *typed* as a plain synchronous array return, but - like any
@@ -52,9 +55,9 @@ export const MODEL_REGISTRY_THREW_REASON = "model-registry-get-available-threw";
  */
 export function safelyListAvailableModels(
   modelRegistry: Pick<PiModelRegistry, "getAvailable">,
-): Result<readonly PiModelInfo[], string> {
+): Result<readonly PiModelInfo[], ModelRegistryFailureReason> {
   return ResultNs.fromThrowable(
     () => modelRegistry.getAvailable(),
-    (): string => MODEL_REGISTRY_THREW_REASON,
+    (): ModelRegistryFailureReason => MODEL_REGISTRY_THREW_REASON,
   )();
 }

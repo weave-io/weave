@@ -6,6 +6,13 @@ import {
   safelyListAvailableModels,
 } from "../port-safety.js";
 
+/** A thrown value whose coercion hooks all fail if called. */
+interface HostileThrowable {
+  toString(): string;
+  valueOf(): never;
+  [Symbol.toPrimitive](): never;
+}
+
 /**
  * A "hostile" thrown value whose `toString`/`valueOf`/`Symbol.toPrimitive`
  * all throw - if any code path ever tried to stringify or template-
@@ -13,7 +20,7 @@ import {
  * would itself throw. Used to prove nothing in this module's failure paths
  * ever attempts that.
  */
-function hostileThrowable(): unknown {
+function hostileThrowable(): HostileThrowable {
   return {
     toString(): string {
       throw new Error("toString exploded");

@@ -1,13 +1,18 @@
 import { describe, expect, it } from "bun:test";
+import {
+  DEFAULT_RUNTIME_SETTINGS,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
 import type {
   AgentDescriptor,
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
-import { okAsync } from "neverthrow";
+import { okAsync, ResultAsync } from "neverthrow";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
+  type PiPreflightContext,
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
 } from "../capability-prober.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
@@ -33,6 +38,23 @@ const ALL_OWNED_COMMANDS: PiCommandInfo[] = WEAVE_COMMAND_NAMES.map((name) => ({
     origin: "package",
   },
 }));
+
+const INVALID_CHILD_INSPECTION_CONFIG: WeaveConfig = {
+  agents: {},
+  categories: {},
+  disabled: { agents: [], hooks: [], skills: [] },
+  settings: {
+    log_level: "INFO",
+    runtime: DEFAULT_RUNTIME_SETTINGS,
+    adapters: {
+      pi: {
+        child_inspection: { recovery_countdown_seconds: 600 },
+      },
+    },
+  },
+  workflows: {},
+  extend_before_plan: { steps: [] },
+};
 
 /** Fully-controlled prober so tests can force every branch of the gating logic. */
 class FixedProber implements PiCapabilityProbeSource {
@@ -86,8 +108,8 @@ function initializerWith(prober: PiCapabilityProbeSource) {
 
 /** Captures the probe context so a test can assert what preflight passed on. */
 class RecordingProber implements PiCapabilityProbeSource {
-  readonly contexts: unknown[] = [];
-  probe(context: unknown): readonly CapabilityProbeResult[] {
+  readonly contexts: PiPreflightContext[] = [];
+  probe(context: PiPreflightContext): readonly CapabilityProbeResult[] {
     this.contexts.push(context);
     return allOkProbes();
   }
@@ -115,10 +137,10 @@ describe("PiSafeInitializer delegation authority", () => {
       readyHostSurfaceReport(),
     );
 
-    expect(
-      (prober.contexts[0] as { delegationAuthority?: unknown })
-        .delegationAuthority,
-    ).toEqual({ status: "unavailable", reason: "pi-session-root-unsafe" });
+    expect(prober.contexts[0]?.delegationAuthority).toEqual({
+      status: "unavailable",
+      reason: "pi-session-root-unsafe",
+    });
   });
 
   it("always hands the prober this generation's spawn-authority verdict", async () => {
@@ -133,10 +155,9 @@ describe("PiSafeInitializer delegation authority", () => {
 
     // The authority is mandatory, so probing can never fall back to a
     // candidate-plan verdict that promises a spawn nothing proved.
-    expect(
-      (prober.contexts[0] as { delegationAuthority?: unknown })
-        .delegationAuthority,
-    ).toEqual({ status: "ready" });
+    expect(prober.contexts[0]?.delegationAuthority).toEqual({
+      status: "ready",
+    });
   });
 });
 
@@ -226,19 +247,10 @@ describe("PiSafeInitializer.preflight", () => {
         version: "0.81.1",
       }),
       capabilityProber: new FixedProber(allOkProbes()),
-      configActivator: fakeConfigActivator({ agents: [], errors: [] }, {
-        agents: {},
-        disabled: { agents: [], skills: [] },
-        settings: {
-          adapters: {
-            pi: {
-              child_inspection: {
-                recovery_countdown_seconds: 600,
-              },
-            },
-          },
-        },
-      } as never),
+      configActivator: fakeConfigActivator(
+        { agents: [], errors: [] },
+        INVALID_CHILD_INSPECTION_CONFIG,
+      ),
       chooseInvalidChildInspectionSettings: () => okAsync("defaults" as const),
     });
 
@@ -264,15 +276,10 @@ describe("PiSafeInitializer.preflight", () => {
         version: "0.81.1",
       }),
       capabilityProber: new FixedProber(allOkProbes()),
-      configActivator: fakeConfigActivator({ agents: [], errors: [] }, {
-        agents: {},
-        disabled: { agents: [], skills: [] },
-        settings: {
-          adapters: {
-            pi: { child_inspection: { recovery_countdown_seconds: 600 } },
-          },
-        },
-      } as never),
+      configActivator: fakeConfigActivator(
+        { agents: [], errors: [] },
+        INVALID_CHILD_INSPECTION_CONFIG,
+      ),
       chooseInvalidChildInspectionSettings: () =>
         okAsync("health-only" as const),
     });
@@ -373,6 +380,32 @@ describe("PiSafeInitializer.preflight", () => {
     expect(result._unsafeUnwrap().healthOnlyMode).toBe(true);
   });
 
+  it("fails closed when an injected host reader throws before returning its ResultAsync", async () => {
+    const initializer = new PiSafeInitializer({
+      delegationAuthority: () => ({ status: "ready" as const }),
+      hostPackageReader: {
+        read: () => {
+          throw new Error(
+            "leaked: /Users/attacker/.ssh/id_rsa token=sk-super-secret-123",
+          );
+        },
+      },
+      capabilityProber: new FixedProber(allOkProbes()),
+      configActivator: fakeConfigActivator(),
+    });
+    const result = await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+    );
+
+    expect(result.isOk()).toBe(true);
+    const preflight = result._unsafeUnwrap();
+    expect(preflight.healthOnlyMode).toBe(true);
+    expect(preflight.hostSupported).toBe(false);
+    expect(JSON.stringify(preflight)).not.toContain("id_rsa");
+    expect(JSON.stringify(preflight)).not.toContain("sk-super-secret-123");
+  });
+
   it("reports trust as withheld but forces health-only mode fail-closed, even when every probe (including project-path ones) reports ok", async () => {
     const okProbes = allOkProbes();
     const initializer = new PiSafeInitializer({
@@ -415,7 +448,7 @@ describe("PiSafeInitializer.preflight", () => {
     // activation itself succeeds (no loom descriptor in the empty fake
     // plan), so config/agent materialization report ok while primary
     // selection and prompt composition correctly report unavailable.
-    const candidatePlanAwareIds = [
+    const candidatePlanAwareIds = new Set([
       "config-materialization",
       "agent-materialization",
       "primary-agent-selection",
@@ -424,10 +457,10 @@ describe("PiSafeInitializer.preflight", () => {
       "workflow-persistence",
       "workflow-step-dispatch",
       "plan-file-compatibility",
-    ] as const;
+    ]);
     const otherProjectPathDependentIds =
       PROJECT_PATH_DEPENDENT_CAPABILITIES.filter(
-        (id) => !(candidatePlanAwareIds as readonly string[]).includes(id),
+        (id) => !candidatePlanAwareIds.has(id),
       );
     for (const id of otherProjectPathDependentIds) {
       const entry = preflight.healthReport.probeResults.find(
@@ -609,7 +642,7 @@ describe("PiSafeInitializer.preflight", () => {
       { surfaceId: "assistant-rendering", status: "bad" },
       { surfaceId: "rpc-steer", status: "bad" },
       { surfaceId: "unknown", status: "native" },
-    ] as never);
+    ]);
     expect(malformed.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
@@ -893,9 +926,9 @@ describe("PiSafeInitializer.preflight", () => {
       configActivator: new PiConfigActivator({
         configLoader: {
           load: () =>
-            Promise.reject(
-              new Error("leaked: token=sk-super-secret-123"),
-            ) as never,
+            ResultAsync.fromSafePromise(
+              Promise.reject(new Error("leaked: token=sk-super-secret-123")),
+            ),
         },
       }),
     });

@@ -77,11 +77,10 @@ describe("createPiNativeSessionHost", () => {
     const sessionManager: PiSessionManagerStatic = {
       create: (_cwd, sessionDir) => ({
         ...handle(`${sessionDir ?? ""}/pi-generated.jsonl`, sessionDir ?? ""),
-        getHeader: () =>
-          ({
-            ...HEADER,
-            injected: "must-not-persist",
-          }) as unknown as typeof HEADER,
+        getHeader: () => ({
+          ...HEADER,
+          injected: "must-not-persist",
+        }),
       }),
       open: (path, sessionDir) => handle(path, sessionDir ?? ""),
     };
@@ -97,6 +96,74 @@ describe("createPiNativeSessionHost", () => {
   test("recognizes only a host with both public constructors", () => {
     expect(isPiSessionManagerStatic({ create() {}, open() {} })).toBe(true);
     expect(isPiSessionManagerStatic({ create() {} })).toBe(false);
-    expect(isPiSessionManagerStatic(undefined)).toBe(false);
+    expect(
+      isPiSessionManagerStatic(Object.create({ create() {}, open() {} })),
+    ).toBe(false);
+    expect(isPiSessionManagerStatic(void 0)).toBe(false);
+    expect(isPiSessionManagerStatic(null)).toBe(false);
+  });
+
+  test("refuses accessor-backed and hostile static members without throwing", () => {
+    let getterCalls = 0;
+    const accessorHost = Object.defineProperties(
+      {},
+      {
+        create: {
+          get() {
+            getterCalls += 1;
+            throw new Error("create getter");
+          },
+          enumerable: true,
+        },
+        open: {
+          value: () => null,
+          enumerable: true,
+        },
+      },
+    );
+    expect(isPiSessionManagerStatic(accessorHost)).toBe(false);
+    expect(getterCalls).toBe(0);
+
+    const throwingProxy = new Proxy(
+      { create() {}, open() {} },
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error("static descriptor trap");
+        },
+      },
+    );
+    expect(isPiSessionManagerStatic(throwingProxy)).toBe(false);
+
+    const prototypeThrowingProxy = new Proxy(
+      { create() {}, open() {} },
+      {
+        getPrototypeOf() {
+          throw new Error("static prototype trap");
+        },
+      },
+    );
+    expect(isPiSessionManagerStatic(prototypeThrowingProxy)).toBe(false);
+
+    const revoked = Proxy.revocable({ create() {}, open() {} }, {});
+    revoked.revoke();
+    expect(isPiSessionManagerStatic(revoked.proxy)).toBe(false);
+
+    const revokedCallable = Proxy.revocable(() => null, {});
+    revokedCallable.revoke();
+    expect(
+      isPiSessionManagerStatic({
+        create: revokedCallable.proxy,
+        open() {},
+      }),
+    ).toBe(false);
+  });
+
+  test("does not treat package metadata as a native session API", () => {
+    expect(
+      isPiSessionManagerStatic({
+        name: "@earendil-works/pi-coding-agent",
+        version: "0.83.0",
+      }),
+    ).toBe(false);
   });
 });

@@ -49,7 +49,7 @@
  * covered separately by scratch-temp-directory tests (Pi adapter contract).
  */
 
-import { dlopen, ptr, read } from "bun:ffi";
+import { dlopen, type Pointer, ptr, read } from "bun:ffi";
 import { platform } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
@@ -138,23 +138,30 @@ function noFollowOpenFlags(): NoFollowOpenFlags | undefined {
   return undefined;
 }
 
-function libcPath(): string | undefined {
-  const os = platform();
-  if (os === "darwin") return "/usr/lib/libSystem.B.dylib";
-  if (os === "linux") return "libc.so.6";
-  return undefined;
-}
-
-/** libc exposes the calling thread's `errno` only through this accessor function - there is no plain exported symbol to read. */
-function errnoAccessorName(): string | undefined {
-  const os = platform();
-  if (os === "darwin") return "__error";
-  if (os === "linux") return "__errno_location";
-  return undefined;
-}
-
 function cstr(value: string): Uint8Array {
   return new TextEncoder().encode(`${value}\0`);
+}
+
+/**
+ * Native symbols used by containment opens. The declarations contain only the
+ * required arguments for `open(2)` and `openat(2)`: containment never passes
+ * `O_CREAT`, so their optional variadic mode argument is not part of this ABI.
+ */
+const NO_FOLLOW_SYMBOL_DEFINITIONS = {
+  open: { args: ["ptr", "i32"], returns: "i32" },
+  openat: { args: ["i32", "ptr", "i32"], returns: "i32" },
+  close: { args: ["i32"], returns: "i32" },
+} as const;
+
+interface NoFollowNativeSymbols {
+  readonly open: (path: Pointer, flags: number) => number;
+  readonly openat: (dirFd: number, path: Pointer, flags: number) => number;
+  readonly close: (fd: number) => number;
+}
+
+interface NoFollowNativeLibrary {
+  readonly symbols: NoFollowNativeSymbols;
+  readonly close: () => void;
 }
 
 interface LoadedNoFollowLibc {
@@ -166,47 +173,74 @@ interface LoadedNoFollowLibc {
   readonly dispose: () => void;
 }
 
-/** Dlopens libc's `open`/`openat`/`close` plus its errno accessor. Fails closed (never throws) when the platform is unsupported or the library fails to load. */
+function readErrno(pointer: Pointer | null): number {
+  return pointer === null ? -1 : read.i32(pointer, 0);
+}
+
+function makeLoadedNoFollowLibc(
+  flags: NoFollowOpenFlags,
+  library: NoFollowNativeLibrary,
+  errnoAccessor: () => Pointer | null,
+): LoadedNoFollowLibc {
+  const { symbols } = library;
+  return {
+    flags,
+    open: (path, openFlags) => symbols.open(ptr(path), openFlags),
+    openat: (dirFd, path, openFlags) =>
+      symbols.openat(dirFd, ptr(path), openFlags),
+    close: (fd) => symbols.close(fd),
+    errno: () => readErrno(errnoAccessor()),
+    dispose: () => library.close(),
+  };
+}
+
+/** Dlopens the platform's libc with a statically declared symbol map. Fails closed (never throws) when the platform is unsupported or the library fails to load. */
 function loadNoFollowLibc(): Result<LoadedNoFollowLibc, PathContainmentError> {
   const flags = noFollowOpenFlags();
-  const libraryPath = libcPath();
-  const errnoSymbol = errnoAccessorName();
-  if (
-    flags === undefined ||
-    libraryPath === undefined ||
-    errnoSymbol === undefined
-  ) {
-    return err("project-root-unresolvable");
+  if (flags === undefined) return err("project-root-unresolvable");
+
+  const os = platform();
+  if (os === "darwin") {
+    const loaded = Result.fromThrowable(
+      () =>
+        dlopen("/usr/lib/libSystem.B.dylib", {
+          ...NO_FOLLOW_SYMBOL_DEFINITIONS,
+          __error: { args: [], returns: "ptr" },
+        }),
+      (): PathContainmentError => "project-root-unresolvable",
+    )();
+    return loaded.map((library) =>
+      makeLoadedNoFollowLibc(flags, library, library.symbols.__error),
+    );
   }
-  const loaded = Result.fromThrowable(
-    () =>
-      dlopen(libraryPath, {
-        open: { args: ["ptr", "i32", "i32"], returns: "i32" },
-        openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
-        close: { args: ["i32"], returns: "i32" },
-        [errnoSymbol]: { args: [], returns: "ptr" },
-      }),
-    (): PathContainmentError => "project-root-unresolvable",
-  )();
-  return loaded.map((library) => {
-    // biome-ignore lint/suspicious/noExplicitAny: dlopen's symbol map is keyed by a runtime-computed platform name.
-    const symbols = library.symbols as any;
-    return {
-      flags,
-      open: (path: Uint8Array, openFlags: number) =>
-        symbols.open(ptr(path), openFlags, 0) as number,
-      openat: (dirFd: number, path: Uint8Array, openFlags: number) =>
-        symbols.openat(dirFd, ptr(path), openFlags, 0) as number,
-      close: (fd: number) => symbols.close(fd) as number,
-      errno: () => read.i32(symbols[errnoSymbol](), 0) as number,
-      dispose: () => library.close(),
-    };
-  });
+  if (os === "linux") {
+    const loaded = Result.fromThrowable(
+      () =>
+        dlopen("libc.so.6", {
+          ...NO_FOLLOW_SYMBOL_DEFINITIONS,
+          __errno_location: { args: [], returns: "ptr" },
+        }),
+      (): PathContainmentError => "project-root-unresolvable",
+    )();
+    return loaded.map((library) =>
+      makeLoadedNoFollowLibc(flags, library, library.symbols.__errno_location),
+    );
+  }
+  return err("project-root-unresolvable");
 }
 
 /** Only ENOENT ("no such file or directory") is a genuinely missing component; every other open failure (ELOOP for a symlink, ENOTDIR for a non-directory where one was required, EACCES, ...) is treated as an unsafe/rejected component rather than guessed at further - no-follow containment fails closed on anything it cannot positively prove safe. */
 function isMissingComponentErrno(errnoValue: number): boolean {
   return errnoValue === 2;
+}
+
+/** ELOOP is 40 on Linux and 62 on Darwin. */
+function isSymlinkErrno(errnoValue: number): boolean {
+  const os = platform();
+  return (
+    (os === "linux" && errnoValue === 40) ||
+    (os === "darwin" && errnoValue === 62)
+  );
 }
 
 /**
@@ -309,7 +343,10 @@ function inspectOpenedEntry(
     (): NoFollowInspectionError => ({ type: "io" }),
   )()
     .andThen((stat) => {
-      if ((kind === "directory" && !stat.isDirectory()) || (kind === "file" && !stat.isFile())) {
+      if (
+        (kind === "directory" && !stat.isDirectory()) ||
+        (kind === "file" && !stat.isFile())
+      ) {
         return errAsync<NoFollowEntryIdentity, NoFollowInspectionError>({
           type: "wrong-kind",
           kind,
@@ -384,7 +421,11 @@ export function inspectNoFollowFile(
   const libcResult = loadNoFollowLibc();
   if (libcResult.isErr()) return errAsync(inspectionError(libcResult.error));
   const libc = libcResult.value;
-  const opened = openNoFollowDirectoryChain(libc, "/", segments.value.slice(0, -1));
+  const opened = openNoFollowDirectoryChain(
+    libc,
+    "/",
+    segments.value.slice(0, -1),
+  );
   if (opened.isErr()) {
     libc.dispose();
     return errAsync(inspectionError(opened.error));
@@ -394,13 +435,17 @@ export function inspectNoFollowFile(
     cstr(fileName),
     libc.flags.O_RDONLY | libc.flags.O_NOFOLLOW | libc.flags.O_CLOEXEC,
   );
-  const openErrno = fileFd < 0 ? libc.errno() : undefined;
+  const openErrno = fileFd < 0 ? libc.errno() : null;
   libc.close(opened.value);
   if (fileFd < 0) {
     libc.dispose();
-    if (isMissingComponentErrno(openErrno ?? -1)) return okAsync(undefined);
+    if (isMissingComponentErrno(openErrno ?? -1)) {
+      return okAsync<NoFollowEntryIdentity | undefined>(void 0);
+    }
     return errAsync(
-      openErrno === 40 ? { type: "symlink-rejected" } : { type: "io" },
+      isSymlinkErrno(openErrno ?? -1)
+        ? { type: "symlink-rejected" }
+        : { type: "io" },
     );
   }
   return inspectOpenedEntry(libc, fileFd, "file", mode)
@@ -618,7 +663,7 @@ async function readSecureFile(
   // Read errno immediately - before any other libc call, including
   // `close()`, which can itself reset the calling thread's errno and
   // corrupt the missing-vs-symlink-rejected classification below.
-  const openErrno = fileFd < 0 ? libc.errno() : undefined;
+  const openErrno = fileFd < 0 ? libc.errno() : null;
   libc.close(dirFd);
   if (fileFd < 0) {
     const missing = isMissingComponentErrno(openErrno ?? -1);
