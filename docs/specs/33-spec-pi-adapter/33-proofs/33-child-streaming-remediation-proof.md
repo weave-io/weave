@@ -1086,3 +1086,74 @@ substituted for either proof.
 The previous authoritative C2 section remains unchanged. Task 11 remains
 unchecked in `.weave/plans/pi-child-streaming-remediation.md`. The focused
 proof update is the only intended source change for this record.
+
+## Task 11 final all-remediation proof F2 (2026-08-21)
+
+This append-only section records the verified F1 facts for subject
+`03908522d1c7093eaf22cc3c7684f8e975a4cf40`. It preserves all earlier proof
+history. It does not change the Task 11 plan checkbox. No new Herdr result is
+claimed.
+
+### F1 validation gates
+
+| Gate | Bounded result |
+| --- | --- |
+| Focused tests | **PASS** — `144` |
+| Pi test suite | **PASS** — `4213` |
+| Repository test suite | **PASS** — `9713` |
+| Build | **PASS** |
+| Typecheck | **PASS** |
+| Lint | **PASS** |
+| Config validation | **PASS** |
+| Documentation checks | **PASS** |
+
+### Complete pinned identity and adversarial controls
+
+| Control | Bounded result |
+| --- | --- |
+| Complete pinned runtime identity | **PASS** — `current` |
+| Retained pinned counters | **PASS** — all `0` |
+| Stale-runtime control | **PASS** — stale identity refused |
+| Runtime-swap control | **PASS** — swapped implementation refused |
+| Corrupt-identity control | **PASS** — corrupt or mismatched identity refused |
+| Environment-boundary control | **PASS** — restricted environment proof passed |
+| Silent-parent control | **PASS** — bounded timeout and cleanup passed |
+| Overflow controls | **PASS** — bounded stream and queue controls passed |
+
+### Real Pi executable live proof
+
+The real Pi live proof is an executable result, not a new Herdr result.
+
+| Gate | Bounded result |
+| --- | --- |
+| Real Pi live command | **PASS** — exit `0` |
+| Requested lanes | **PASS** — `4/4` |
+| Isolation | **PASS** — isolated |
+| Settlement | **PASS** — one authoritative settlement |
+| Registry | **PASS** — empty |
+| Diagnostics | **PASS** — clean |
+| Cleanup | **PASS** — clean and complete |
+| Bounded report | **PASS** — mode `0600`, `699` bytes, removed |
+
+### Runtime implementation digest and terminal-continuity boundary
+
+| Digest fact | SHA-256 / result |
+| --- | --- |
+| Current built `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Authoritative C2 `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Equality | **PASS** — byte-identical |
+
+The current built `extension-impl` is byte-identical to the authoritative C2
+implementation payload. Terminal continuity is limited to that byte-identical
+payload. This section makes no terminal-continuity claim for any other runtime
+output, loader, or identity artifact. No new Herdr result is claimed.
+
+### Resource cleanup and exact restoration
+
+| Gate | Bounded result |
+| --- | --- |
+| Resources | **PASS** — no child, provider, proof, pane, lease, or temporary resource remained |
+| Exact global config | **PASS** — original bytes restored; temporary mode-`0600` backup removed |
+| Runtime Store | **PASS** — no active lease and no workflow instance remained |
+| Reports | **PASS** — bounded report removed |
+| Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |
