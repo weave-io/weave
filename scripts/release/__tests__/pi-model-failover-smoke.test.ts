@@ -33,6 +33,7 @@ import {
   fixtureMarkerTokenHash,
   fixtureRoleHash,
   MAX_REPORT_BYTES,
+  MAX_REPORT_INTEGER,
   MAX_REPORT_STRING_LENGTH,
   MAX_REPORT_TIMESTAMP_MS,
   type NativeSessionObservation,
@@ -72,6 +73,7 @@ import {
   parseHealthFacts,
   visibleEventCount,
 } from "../pi-model-failover-smoke/health-observation.js";
+import { buildNativeHistoryFacts } from "../pi-model-failover-smoke/native-observation.js";
 import {
   MAX_NATIVE_INITIAL_MODEL_ENTRIES,
   MAX_NATIVE_MODEL_TIMELINE_ENTRIES,
@@ -1446,6 +1448,73 @@ describe("Pi model-fallback release smoke", () => {
     expect(serializeSmokeReport(validRollbackReport()).isOk()).toBe(true);
   });
 
+  it("keeps native history closed without dropping fallback proof", () => {
+    const input = successfulFallbackInput();
+    const source = input.child.history;
+    if (source === undefined) return;
+    const markerEvidence =
+      source.markerTokenHash === undefined ||
+      source.markerTokenValid === undefined
+        ? undefined
+        : {
+            markerTokenHash: source.markerTokenHash,
+            markerTokenValid: source.markerTokenValid,
+          };
+    const history = buildNativeHistoryFacts({
+      entryCount: source.entryCount,
+      historyHash: source.historyHash,
+      descriptors: source.descriptors,
+      successfulAssistantPresent: source.successfulAssistantPresent,
+      recoveryEntryPresent: source.recoveryEntryPresent,
+      markerEvidence,
+      markerCorrelation: source.markerCorrelation,
+    });
+    expect(Object.keys(history).sort()).toEqual(
+      [
+        "assistantCount",
+        "customCount",
+        "descriptorCount",
+        "descriptors",
+        "entryCount",
+        "failedAssistantPresent",
+        "historyHash",
+        "markerCorrelation",
+        "markerTokenHash",
+        "markerTokenValid",
+        "recoveryEntryPresent",
+        "recoveryMarkerPresent",
+        "successfulAssistantPresent",
+        "toolResultCount",
+        "userCount",
+      ].sort(),
+    );
+    expect(history.failedAssistantPresent).toBe(true);
+    expect(history.recoveryMarkerPresent).toBe(true);
+    expect(history.successfulAssistantPresent).toBe(true);
+    expect(history.recoveryEntryPresent).toBe(true);
+    const report = validFallbackReport();
+    if (report.fallback === undefined) return;
+    const provider = report.fallback.providerRequest;
+    const expectedProviderFacts = derivedFacts(provider.descriptors);
+    for (const fact of [
+      "originalUserPresent",
+      "taskPresent",
+      "toolCallPresent",
+      "toolResultPresent",
+      "failedAssistantPresent",
+      "recoveryMarkerPresent",
+      "syntheticProviderUserMessagePresent",
+    ] as const) {
+      expect(provider[fact]).toBe(expectedProviderFacts[fact]);
+    }
+    expect(
+      validateReportSafety({
+        ...report,
+        fallback: { ...report.fallback, durableHistory: history },
+      }).isOk(),
+    ).toBe(true);
+  });
+
   it("projects one bounded fallback report into closed safe outcomes", () => {
     const projected = projectSanitizedSmokeReport(validFallbackReport());
     expect(projected.isOk()).toBe(true);
@@ -1468,6 +1537,57 @@ describe("Pi model-fallback release smoke", () => {
   it("rejects extra keys, accessors, proxies, unsupported values, and malformed fields", () => {
     const valid = validRollbackReport();
     expect(validateReportSafety({ ...valid, extra: true }).isErr()).toBe(true);
+    const nestedFallback = validFallbackReport();
+    if (nestedFallback.fallback !== undefined) {
+      const history = nestedFallback.fallback.durableHistory;
+      expect(
+        validateReportSafety({
+          ...nestedFallback,
+          fallback: {
+            ...nestedFallback.fallback,
+            durableHistory: { ...history, originalUserPresent: true },
+          },
+        }).isErr(),
+      ).toBe(true);
+      expect(
+        validateReportSafety({
+          ...nestedFallback,
+          fallback: {
+            ...nestedFallback.fallback,
+            durableHistory: { ...history, failedAssistantPresent: "true" },
+          },
+        }).isErr(),
+      ).toBe(true);
+      expect(
+        validateReportSafety({
+          ...nestedFallback,
+          fallback: {
+            ...nestedFallback.fallback,
+            durableHistory: {
+              ...history,
+              entryCount: MAX_REPORT_INTEGER + 1,
+            },
+          },
+        }).isErr(),
+      ).toBe(true);
+      if (history.markerCorrelation !== undefined) {
+        expect(
+          validateReportSafety({
+            ...nestedFallback,
+            fallback: {
+              ...nestedFallback.fallback,
+              durableHistory: {
+                ...history,
+                markerCorrelation: {
+                  ...history.markerCorrelation,
+                  extra: true,
+                },
+              },
+            },
+          }).isErr(),
+        ).toBe(true);
+      }
+    }
     const accessor = validRollbackReport() as unknown as Record<
       string,
       unknown

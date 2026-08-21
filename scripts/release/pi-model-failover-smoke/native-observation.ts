@@ -14,6 +14,7 @@ import {
   type FixtureContextFact,
   type FixtureHistoryDescriptor,
   type FixtureHistoryFacts,
+  type FixtureMarkerCorrelation,
   type FixtureSnapshot,
   FOLLOW_UP_USER,
   FOLLOW_UP_USER_ID,
@@ -63,6 +64,52 @@ import {
 const MAX_NATIVE_SESSION_BYTES = MAX_CAPTURE_BYTES * 32;
 const MAX_NATIVE_SESSION_FILES = 8;
 const MAX_NATIVE_SESSION_RECORDS = MAX_HISTORY_DESCRIPTOR_COUNT + 1;
+
+type NativeHistoryMarkerEvidence = Pick<
+  FixtureHistoryFacts,
+  "markerTokenHash" | "markerTokenValid"
+> & {
+  readonly markerTokenHash: string;
+  readonly markerTokenValid: boolean;
+};
+
+/**
+ * Build the closed history contract without leaking provider-only descriptor
+ * facts into the durable-history report object.
+ */
+export function buildNativeHistoryFacts(input: {
+  readonly entryCount: number;
+  readonly historyHash: string;
+  readonly descriptors: readonly FixtureHistoryDescriptor[];
+  readonly successfulAssistantPresent: boolean;
+  readonly recoveryEntryPresent: boolean;
+  readonly markerEvidence: NativeHistoryMarkerEvidence | undefined;
+  readonly markerCorrelation: FixtureMarkerCorrelation | undefined;
+}): FixtureHistoryFacts {
+  const counts = descriptorCounts(input.descriptors);
+  const facts = descriptorFactsFromDescriptors(input.descriptors);
+  const base: FixtureHistoryFacts = {
+    entryCount: input.entryCount,
+    historyHash: input.historyHash,
+    descriptors: input.descriptors,
+    ...counts,
+    failedAssistantPresent: facts.failedAssistantPresent,
+    recoveryMarkerPresent: facts.recoveryMarkerPresent,
+    successfulAssistantPresent: input.successfulAssistantPresent,
+    recoveryEntryPresent: input.recoveryEntryPresent,
+  };
+  if (input.markerEvidence === undefined) {
+    if (input.markerCorrelation === undefined) return base;
+    return { ...base, markerCorrelation: input.markerCorrelation };
+  }
+  if (input.markerCorrelation === undefined)
+    return { ...base, ...input.markerEvidence };
+  return {
+    ...base,
+    ...input.markerEvidence,
+    markerCorrelation: input.markerCorrelation,
+  };
+}
 
 /** Yields JSONL records without first materializing an unbounded line array. */
 function* nativeSessionLines(body: string): Generator<string> {
@@ -497,14 +544,10 @@ export async function readNativeSessionSnapshots(
               markerTokenHash: fixtureMarkerTokenHash(markerToken),
             }
           : undefined;
-      const counts = descriptorCounts(descriptors);
-      const facts = descriptorFactsFromDescriptors(descriptors);
-      const history: FixtureHistoryFacts = {
+      const history = buildNativeHistoryFacts({
         entryCount: entries.length,
         historyHash: artifactDigest(bytes.value),
         descriptors,
-        ...counts,
-        ...facts,
         successfulAssistantPresent: descriptors.some(
           (descriptor) =>
             descriptor.correlationHash ===
@@ -515,14 +558,15 @@ export async function readNativeSessionSnapshots(
             entry.type === "custom" &&
             entry.customType === NATIVE_RECOVERY_ENTRY_TYPE,
         ),
-        ...(markerToken === undefined
-          ? {}
-          : {
-              markerTokenHash: fixtureMarkerTokenHash(markerToken),
-              markerTokenValid: UUID_V4.test(markerToken),
-            }),
-        ...(markerCorrelation === undefined ? {} : { markerCorrelation }),
-      };
+        markerEvidence:
+          markerToken === undefined
+            ? undefined
+            : {
+                markerTokenHash: fixtureMarkerTokenHash(markerToken),
+                markerTokenValid: UUID_V4.test(markerToken),
+              },
+        markerCorrelation,
+      });
       const modelChanges = entries.filter(
         (entry) => entry.type === "model_change",
       );
