@@ -13920,6 +13920,102 @@ describe("createPiExtension: primary model fallback C4a", () => {
     ).toHaveLength(0);
   });
 
+  it("fails the primary fallback once when native history is unreadable", async () => {
+    const journalEntries: unknown[] = [];
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: loomOrigin,
+      availableModels: [loomOrigin, loomFallback],
+      sessionManager: {
+        ...persistentFakeSessionManager(),
+        getEntries: (): readonly unknown[] => {
+          throw new Error("native fallback history is unreadable");
+        },
+      },
+    });
+    installModelFallbackExtension(host, journalEntries);
+    await host.triggerSessionStart();
+
+    const failedEvent = failureEvent("history-unreadable-failure");
+    const deferred = host.deferNextSetModel();
+    await host.triggerEvent("message_end", failedEvent);
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await deferred.called;
+    deferred.settle(true);
+    await host.triggerModelSelect(loomFallback, "set");
+    await flushBackgroundWork();
+
+    const marker = host.sendMessageCalls.at(-1)?.message;
+    expect(marker).toMatchObject({
+      customType: "weave.model-fallback.recovery-marker",
+    });
+    if (marker === undefined) throw new Error("fallback marker was not sent");
+    await host.triggerEvent("message_start", {
+      type: "message_start",
+      message: marker,
+    });
+    const successfulAssistant = {
+      role: "assistant",
+      id: "history-unreadable-success",
+      stopReason: "stop",
+      content: [{ type: "text", text: "fallback output" }],
+    };
+    const providerContext = await host.triggerContext([
+      failedEvent.message,
+      marker,
+      successfulAssistant,
+    ]);
+    // The durable record is the admission boundary. If it fails, the exact
+    // failed assistant and marker stay in the provider context and no
+    // recovery-confirmed run is allowed to start.
+    expect(providerContext).toEqual([
+      failedEvent.message,
+      marker,
+      successfulAssistant,
+    ]);
+    await host.triggerEvent("agent_start", { type: "agent_start" });
+    await host.triggerEvent("message_end", {
+      type: "message_end",
+      message: successfulAssistant,
+    });
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+
+    const records = modelFallbackRecords(journalEntries);
+    expect(
+      records.filter((record) => record.outcome === "applied"),
+    ).toHaveLength(1);
+    expect(
+      records.filter((record) => record.outcome === "failed"),
+    ).toHaveLength(1);
+    expect(
+      records.some((record) => record.outcome === "recovery-confirmed"),
+    ).toBe(false);
+    expect(records.some((record) => record.outcome === "success")).toBe(false);
+    expect(records.find((record) => record.outcome === "failed")).toMatchObject(
+      {
+        toProvider: loomFallback.provider,
+        toId: loomFallback.id,
+      },
+    );
+    expect(host.getCurrentModel()).toBe(loomFallback);
+    expect(
+      host.appendedEntries.filter(
+        (entry) => entry.type === "weave.model-failover",
+      ),
+    ).toHaveLength(0);
+
+    // A late settlement cannot convert the retained failure into success or
+    // publish a second terminal result.
+    await host.triggerEvent("agent_settled", { type: "agent_settled" });
+    await flushBackgroundWork();
+    const failedRecords = modelFallbackRecords(journalEntries).filter(
+      (record) => record.outcome === "failed",
+    );
+    expect(failedRecords).toHaveLength(1);
+  });
+
   it("registers the primary model-fallback renderer exactly once", () => {
     const host = new RecordingFakePiHost({
       mode: "tui",

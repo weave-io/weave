@@ -741,6 +741,116 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(host.appendedEntries).toHaveLength(1);
   });
 
+  it("fails the fallback once when native history is unreadable", async () => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+      hasPendingMessages: () => false,
+      sessionManager: {
+        getSessionId: () => "child-session",
+        getSessionFile: () => "/sessions/child.jsonl",
+        isPersisted: () => true,
+        getEntries: () => {
+          throw new Error("history is unreadable");
+        },
+      },
+    });
+    const { host, output, secretBytes } =
+      await buildChildExtension(recoveryCtx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        models: ["origin/first", "fallback/second"],
+      }),
+      recoveryCtx,
+    );
+
+    const failedMessage = {
+      role: "assistant",
+      id: "history-unreadable-failure",
+      stopReason: "error",
+      error: { status: 429, message: "provider details stay private" },
+      content: [{ type: "text", text: "failed output stays private" }],
+    } as const;
+    const deferred = host.deferNextSetModel();
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: failedMessage },
+      recoveryCtx,
+    );
+    const fallbackSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    await deferred.called;
+    await host.fire(
+      "model_select",
+      { type: "model_select", model: fallback },
+      recoveryCtx,
+    );
+    deferred.settle(true);
+    await fallbackSettlement;
+    await waitFor(() => host.sentMessages.length === 1);
+    const marker = host.sentMessages[0];
+    await host.fire(
+      "message_start",
+      { type: "message_start", message: marker },
+      recoveryCtx,
+    );
+    const providerContext = await host.fire(
+      "context",
+      [failedMessage, marker, { role: "user", content: "continue" }],
+      recoveryCtx,
+    );
+    // A failed durable append is not recovery proof. Keep the failed attempt
+    // and marker in the provider context instead of admitting a new run.
+    expect(providerContext).toEqual([
+      failedMessage,
+      marker,
+      { role: "user", content: "continue" },
+    ]);
+    await waitFor(() => output.lines.some((line) => line.kind === "settled"));
+
+    const transitions = output.lines.filter(
+      (line) => line.kind === "model-transition",
+    );
+    expect(transitions).toHaveLength(1);
+    expect((transitions[0]?.body as Record<string, unknown>).phase).toBe(
+      "applied",
+    );
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+    expect(
+      (
+        output.lines.find((line) => line.kind === "settled")?.body as Record<
+          string,
+          unknown
+        >
+      ).outcome,
+    ).toBe("failed");
+    expect(host.setModelCalls).toEqual([origin, fallback]);
+    expect(host.appendedEntries).toHaveLength(0);
+
+    // A late recovered-turn settlement cannot turn the retained failure into
+    // success or publish a second terminal result.
+    await host.fire("agent_settled", { type: "agent_settled" }, recoveryCtx);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+  });
+
   it("retries a failed applied-transition delivery twice and settles terminally", async () => {
     const origin: PiModelInfo = {
       provider: "origin",

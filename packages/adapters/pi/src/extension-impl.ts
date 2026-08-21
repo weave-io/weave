@@ -330,6 +330,7 @@ import {
 import {
   appendConfirmedPiModelFailoverRecord,
   modelFailoverRecordFromTransition,
+  type PiModelFailoverAppendError,
   type PiModelFailoverAppendPort,
   parsePiModelFailoverNativeEntry,
   parsePiModelFailoverRecord,
@@ -558,23 +559,25 @@ function appendPiModelFailoverTransition(
   port: PiModelFailoverAppendPort,
   transition: unknown,
   log: PiAdapterLogger,
-): void {
+): Result<void, PiModelFailoverAppendError> {
   const record = modelFailoverRecordFromTransition(transition);
   if (record.isErr()) {
     log.warn(
       { reason: record.error.reason },
       "model-failover transition record rejected",
     );
-    return;
+    return err(record.error);
   }
-  if (record.value === undefined) return;
+  if (record.value === undefined) return ok(undefined);
   const appended = appendConfirmedPiModelFailoverRecord(port, record.value);
   if (appended.isErr()) {
     log.warn(
       { reason: appended.error.reason },
       "model-failover durable append failed",
     );
+    return err(appended.error);
   }
+  return ok(undefined);
 }
 
 type PiEntryRendererComponent = {
@@ -2066,6 +2069,21 @@ async function activateChildModeIfApplicable(
     | "applied"
     | "recovery-confirmed"
     | undefined;
+  let childRecoveryTransitionStatus:
+    | "pending"
+    | "succeeded"
+    | "failed"
+    | undefined;
+  let childAppliedTransitionStatus:
+    | "pending"
+    | "succeeded"
+    | "failed"
+    | undefined;
+  let childRecoverySettlementPending = false;
+  // A durable recovery append is synchronous at the context boundary. Keep
+  // this flag so the handler can retain the failed pair when that append
+  // rejects before Pi receives a replacement provider context.
+  let childRecoveryAdmissionFailed = false;
 
   const reportChildModelTransitionWithRetry = async (
     transition: PiModelTransitionBody,
@@ -2093,12 +2111,27 @@ async function activateChildModeIfApplicable(
 
   const queueChildModelTransition = (
     phase: PiModelTransitionBody["phase"],
+    recordAlreadyAppended = false,
   ): void => {
     const facts = childModelTransitionFacts;
     if (facts === undefined) return;
     const generation = state.bootstrapGeneration;
     const previous = childModelTransitionReportTail;
     const transition = { ...facts, phase };
+    if (phase === "applied") {
+      childModelTransitionDeliveryFailure = undefined;
+      childRecoveryTransitionStatus = undefined;
+      childAppliedTransitionStatus = "pending";
+      childRecoverySettlementPending = false;
+      childRecoveryAdmissionFailed = false;
+    } else {
+      // The coordinator has admitted context repair, but recovery is not
+      // complete until the durable record and the authenticated report both
+      // succeed. Keep agent_settled behind this proof so a failed append can
+      // never be converted into a successful fallback settlement.
+      childRecoveryTransitionStatus = "pending";
+      childRecoverySettlementPending = false;
+    }
     const queued = previous
       .then(async (priorSucceeded) => {
         if (state.bootstrapGeneration !== generation) return false;
@@ -2106,28 +2139,55 @@ async function activateChildModeIfApplicable(
         // the parent. The runtime serializes control envelopes, while this
         // local queue preserves the phase order at the lifecycle seam.
         if (!priorSucceeded && phase === "recovery-confirmed") return false;
-        if (phase === "recovery-confirmed") {
+        if (phase === "recovery-confirmed" && !recordAlreadyAppended) {
           // The local durable event follows the same applied proof that the
           // authenticated recovery phase depends on. If applied reporting
           // failed, keep the child transcript free of an unsupported recovery
-          // claim as well.
-          appendPiModelFailoverTransition(
+          // claim as well. A durable append failure is terminal for this
+          // fallback epoch; do not report recovery-confirmed after it.
+          const appended = appendPiModelFailoverTransition(
             modelFailoverAppendPort,
             transition,
             deps.logger,
           );
+          if (appended.isErr()) return false;
         }
         return reportChildModelTransitionWithRetry(transition);
       })
       .catch(() => false);
     childModelTransitionReportTail = queued;
-    if (phase === "applied") {
-      void queued.then((succeeded) => {
-        if (succeeded || state.bootstrapGeneration !== generation) return;
-        childModelTransitionDeliveryFailure = "applied";
-        void reportChildFailure("model-transition-applied-report-failed");
-      });
-    }
+    void queued.then((succeeded) => {
+      if (state.bootstrapGeneration !== generation) return;
+      if (phase === "applied") {
+        childAppliedTransitionStatus = succeeded ? "succeeded" : "failed";
+      }
+      if (phase === "recovery-confirmed") {
+        childRecoveryTransitionStatus = succeeded ? "succeeded" : "failed";
+        if (!succeeded) {
+          childModelTransitionDeliveryFailure = phase;
+          childRecoverySettlementPending = false;
+          // The model was already applied and remains authoritative. End only
+          // the fallback epoch, which publishes its retained failure once.
+          if (childFailoverCoordinator !== undefined) {
+            childFailoverCoordinator.cancelRecovery();
+          } else {
+            fallbackGate?.fail(childFallbackEpoch);
+          }
+          return;
+        }
+        if (childRecoverySettlementPending) {
+          childRecoverySettlementPending = false;
+          void childFailoverCoordinator?.handleAgentSettled(
+            undefined,
+            childFailoverScope(),
+          );
+        }
+        return;
+      }
+      if (succeeded) return;
+      childModelTransitionDeliveryFailure = phase;
+      void reportChildFailure("model-transition-applied-report-failed");
+    });
   };
 
   const claimTerminalSettlement = (): boolean => {
@@ -2206,21 +2266,30 @@ async function activateChildModeIfApplicable(
    * completion candidate or a large-output transfer into a second report.
    */
   async function settleChildCompleted(): Promise<void> {
-    if (!claimTerminalSettlement()) return;
     // Model-transition reports are nonterminal, but the terminal settlement
     // must not overtake a recovery claim that the child has already admitted.
     // Awaiting the bounded local queue preserves the authenticated sequence.
     const transitionReported = await childModelTransitionReportTail;
     if (!transitionReported) {
       if (state.directStep !== undefined) state.directStep.windowOpen = false;
-      await reportSettlement("failed", {
-        reason:
-          childModelTransitionDeliveryFailure === "applied"
-            ? "model-transition-applied-report-failed"
-            : "model-transition-recovery-confirmed-report-failed",
-      });
+      if (
+        childModelTransitionDeliveryFailure === "recovery-confirmed" &&
+        fallbackGate?.active === true
+      ) {
+        // The recovery record is durable evidence for the fallback epoch. A
+        // failed append closes that epoch through its retained-failure gate;
+        // it must not degrade into a normal successful settlement.
+        fallbackGate.fail(childFallbackEpoch);
+        return;
+      }
+      await reportChildFailure(
+        childModelTransitionDeliveryFailure === "applied"
+          ? "model-transition-applied-report-failed"
+          : "model-transition-recovery-confirmed-report-failed",
+      );
       return;
     }
+    if (!claimTerminalSettlement()) return;
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (state.directStep !== undefined) {
       const candidate = state.directStep.recorder.take();
@@ -2321,12 +2390,22 @@ async function activateChildModeIfApplicable(
       childPendingFailure = undefined;
       childModelTransitionFacts = undefined;
       childModelTransitionReportTail = Promise.resolve(true);
+      childModelTransitionDeliveryFailure = undefined;
+      childRecoveryTransitionStatus = undefined;
+      childAppliedTransitionStatus = undefined;
+      childRecoverySettlementPending = false;
+      childRecoveryAdmissionFailed = false;
       abortGate.reset();
     }
     // The gate can also be closed by a previous terminal outcome before a
     // later bootstrap creates its first coordinator. Re-open it only at this
     // explicit generation boundary, never from an ordinary turn.
     fallbackGate?.reset();
+    childModelTransitionDeliveryFailure = undefined;
+    childRecoveryTransitionStatus = undefined;
+    childAppliedTransitionStatus = undefined;
+    childRecoverySettlementPending = false;
+    childRecoveryAdmissionFailed = false;
     const live = latestChildCtx;
     const available = safelyListAvailableModels(live.modelRegistry).unwrapOr(
       [],
@@ -2396,13 +2475,51 @@ async function activateChildModeIfApplicable(
       onRecoveryConfirmed: (event) => {
         const epoch = childFallbackEpoch;
         const gate = fallbackGate;
-        if (epoch === undefined || gate === undefined) return;
+        const facts = childModelTransitionFacts;
+        const failRecoveryAdmission = (): void => {
+          // Context repair is not recovery proof until the applied phase and
+          // its durable record both succeeded. Close the active epoch through
+          // the coordinator so the retained failure is reported once.
+          childRecoveryAdmissionFailed = true;
+          childModelTransitionDeliveryFailure = "recovery-confirmed";
+          childRecoveryTransitionStatus = "failed";
+          childRecoverySettlementPending = false;
+          if (childFailoverCoordinator !== undefined) {
+            childFailoverCoordinator.cancelRecovery();
+          } else if (epoch !== undefined) {
+            gate?.fail(epoch);
+          }
+        };
+        if (
+          epoch === undefined ||
+          gate === undefined ||
+          facts === undefined ||
+          childAppliedTransitionStatus === "failed" ||
+          facts.failureClass !== event.failureClass ||
+          facts.to.provider !== event.model.provider ||
+          facts.to.id !== event.model.id
+        ) {
+          failRecoveryAdmission();
+          return;
+        }
+        const appended = appendPiModelFailoverTransition(
+          modelFailoverAppendPort,
+          { ...facts, phase: event.phase },
+          deps.logger,
+        );
+        if (appended.isErr()) {
+          failRecoveryAdmission();
+          return;
+        }
         if (gate.observeContextRepair(epoch).kind === "admit") {
           // The failed assistant remains in native history. Only this
           // confirmed context proof clears transient assembly for the new
           // provider run, so failed text can never join fallback output.
           resetChildTransientAttempt();
-          queueChildModelTransition(event.phase);
+          // The durable record was appended above. The queued control report
+          // still waits behind the applied report, but it must not append a
+          // second record.
+          queueChildModelTransition(event.phase, true);
         }
       },
       onTerminal: (decision) => {
@@ -2489,6 +2606,22 @@ async function activateChildModeIfApplicable(
       childFallbackEpoch = epoch;
       childPendingFailure = undefined;
       abortGate.reset();
+    }
+    if (
+      snapshot.state === "recovering" &&
+      childRecoveryTransitionStatus === "pending"
+    ) {
+      // Context repair has completed, but the durable recovery record is still
+      // in flight. A failed history read must terminate the fallback instead
+      // of letting this settlement reach the coordinator's success branch.
+      childRecoverySettlementPending = true;
+      return true;
+    }
+    if (
+      snapshot.state === "recovering" &&
+      childRecoveryTransitionStatus === "failed"
+    ) {
+      return true;
     }
     void coordinator.handleAgentSettled(undefined, childFailoverScope());
     return true;
@@ -2649,7 +2782,9 @@ async function activateChildModeIfApplicable(
       return undefined;
     }
     const messages = payload.value as readonly unknown[];
+    childRecoveryAdmissionFailed = false;
     const repaired = coordinator.onContext(messages, childFailoverScope());
+    if (childRecoveryAdmissionFailed) return undefined;
     return repaired.match(
       (value) =>
         value === messages
@@ -4020,6 +4155,10 @@ export function createPiExtension(
 
   let primaryFailoverSettlementDeferred = false;
   let primaryModelTransitionFacts: PiModelTransitionFacts | undefined;
+  // Context repair is not admitted to the provider when its durable fallback
+  // record cannot be appended. The coordinator callback is synchronous, so
+  // the context route can suppress the replacement before it returns it.
+  let primaryRecoveryAppendFailed = false;
   /**
    * Native entry data has no source field by design. Keep source-scoped
    * in-process ports so two authenticated observers may legitimately carry
@@ -4237,16 +4376,33 @@ export function createPiExtension(
   ): void => {
     const facts = primaryModelTransitionFacts;
     if (
-      facts !== undefined &&
-      facts.failureClass === event.failureClass &&
-      facts.to.provider === event.model.provider &&
-      facts.to.id === event.model.id
+      facts === undefined ||
+      facts.failureClass !== event.failureClass ||
+      facts.to.provider !== event.model.provider ||
+      facts.to.id !== event.model.id
     ) {
-      appendPiModelFailoverTransition(
-        primaryModelFailoverAppendPort,
-        { ...facts, phase: "recovery-confirmed" },
-        deps.logger,
-      );
+      // The coordinator must never expose a recovery-confirmed outcome
+      // without the paired applied facts and durable record.
+      primaryRecoveryAppendFailed = true;
+      primaryModelTransitionFacts = undefined;
+      readPrimaryModelFailover()?.cancelRecovery();
+      return;
+    }
+    const appended = appendPiModelFailoverTransition(
+      primaryModelFailoverAppendPort,
+      { ...facts, phase: "recovery-confirmed" },
+      deps.logger,
+    );
+    // Model identity was already applied before this callback. If native
+    // history is unreadable, terminate the fallback without publishing a
+    // recovery fact or allowing the deferred turn to look successful. The
+    // surrounding context route consumes this flag and keeps the repaired
+    // list out of the provider request.
+    if (appended.isErr()) {
+      primaryRecoveryAppendFailed = true;
+      primaryModelTransitionFacts = undefined;
+      readPrimaryModelFailover()?.cancelRecovery();
+      return;
     }
     // A terminal callback is not allowed to reuse a prior transition id after
     // this recovery proof has been consumed.
@@ -4422,10 +4578,12 @@ export function createPiExtension(
       return undefined;
     }
     const messages = payload.value as readonly unknown[];
+    primaryRecoveryAppendFailed = false;
     const repaired = coordinator.onContext(
       messages,
       currentModelFailoverEventScope(),
     );
+    if (primaryRecoveryAppendFailed) return undefined;
     return repaired.match(
       (value) =>
         value === messages
