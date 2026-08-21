@@ -38,59 +38,13 @@
     function node(x, y, w, h, label, sub, accent) {
       var st = accent || 'var(--border-strong)';
       var fill = accent
-        ? 'color-mix(in oklab, ' + accent + ' 14%, var(--bg-elev-1))'
+        ? `color-mix(in oklab, ${accent} 14%, var(--bg-elev-1))`
         : 'var(--bg-elev-1)';
-      return (
-        '<g><rect x="' +
-        x +
-        '" y="' +
-        y +
-        '" width="' +
-        w +
-        '" height="' +
-        h +
-        '" rx="7" fill="' +
-        fill +
-        '" stroke="' +
-        st +
-        '" stroke-width="1.2"/>' +
-        '<text x="' +
-        (x + w / 2) +
-        '" y="' +
-        (y + h / 2 - 2) +
-        '" text-anchor="middle" font-family="var(--font-mono)" font-size="13" fill="var(--text)">' +
-        label +
-        '</text>' +
-        '<text x="' +
-        (x + w / 2) +
-        '" y="' +
-        (y + h / 2 + 15) +
-        '" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">' +
-        sub +
-        '</text></g>'
-      );
+      return `<g><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${fill}" stroke="${st}" stroke-width="1.2"/><text x="${x + w / 2}" y="${y + h / 2 - 2}" text-anchor="middle" font-family="var(--font-mono)" font-size="13" fill="var(--text)">${label}</text><text x="${x + w / 2}" y="${y + h / 2 + 15}" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">${sub}</text></g>`;
     }
     function edge(x1, y1, x2, y2) {
       var mx = (x1 + x2) / 2;
-      return (
-        '<path d="M' +
-        x1 +
-        ' ' +
-        y1 +
-        ' C' +
-        mx +
-        ' ' +
-        y1 +
-        ',' +
-        mx +
-        ' ' +
-        y2 +
-        ',' +
-        (x2 - 9) +
-        ' ' +
-        y2 +
-        '" fill="none" stroke="var(--border-strong)" stroke-width="1.4" marker-end="url(#ah)"/>'
-      );
+      return `<path d="M${x1} ${y1} C${mx} ${y1},${mx} ${y2},${x2 - 9} ${y2}" fill="none" stroke="var(--border-strong)" stroke-width="1.4" marker-end="url(#ah)"/>`;
     }
     var s = defs();
     var nw = 120,
@@ -111,6 +65,6 @@
     s += edge(rx, 218, xs[3] + nw, y0 + nh - 6);
     s +=
       '<text x="781" y="120" text-anchor="middle" font-family="var(--font-mono)" font-size="18" fill="var(--text-3)">+</text>';
-    fig.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + s + '</svg>';
+    fig.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${s}</svg>`;
   })();
 </script>

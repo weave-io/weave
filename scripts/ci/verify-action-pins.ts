@@ -47,7 +47,7 @@ export function verifyActionPins(
       errors.push({ type: "UnresolvedActionReference", file, value: "uses:" });
   }
   if (errors.length > 0) return err(errors);
-  return ok(undefined);
+  return ok();
 }
 
 /** Returns undefined for non-uses lines, null for unresolved YAML scalar forms. */

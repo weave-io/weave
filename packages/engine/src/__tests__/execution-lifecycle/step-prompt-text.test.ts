@@ -49,7 +49,8 @@ function expectRedactedPromptMetadata(runAgent: {
   readonly promptMetadata?: { readonly byteLength: number };
 }): void {
   expect(runAgent.promptMetadata).toBeDefined();
-  const pm = runAgent.promptMetadata as Record<string, unknown>;
+  const pm = runAgent.promptMetadata;
+  if (pm === undefined) return;
   expect(Object.keys(pm)).toEqual(["byteLength"]);
   expect(pm.byteLength).toBeGreaterThan(0);
 }
@@ -73,6 +74,11 @@ workflow dispatch-flow {
 }
 `);
 
+  const dispatchFlow = DISPATCH_WORKFLOW.workflows["dispatch-flow"];
+  if (dispatchFlow === undefined) {
+    throw new Error("dispatch-flow fixture is missing");
+  }
+
   async function setup() {
     const store = createInMemoryRuntimeStore();
     const createResult = await store.instances.create({
@@ -94,7 +100,7 @@ workflow dispatch-flow {
       goal: "ship the dispatch fix",
       slug: "dispatch-fix",
       workflows: {
-        "dispatch-flow": DISPATCH_WORKFLOW.workflows["dispatch-flow"]!,
+        "dispatch-flow": dispatchFlow,
       },
     };
 
@@ -178,6 +184,11 @@ workflow two-step-flow {
 }
 `);
 
+  const twoStepFlow = TWO_STEP_WORKFLOW.workflows["two-step-flow"];
+  if (twoStepFlow === undefined) {
+    throw new Error("two-step-flow fixture is missing");
+  }
+
   async function setup() {
     const store = createInMemoryRuntimeStore();
     const createResult = await store.instances.create({
@@ -193,7 +204,7 @@ workflow two-step-flow {
       goal: "advance to step two",
       slug: "advance-to-step-two",
       workflows: {
-        "two-step-flow": TWO_STEP_WORKFLOW.workflows["two-step-flow"]!,
+        "two-step-flow": twoStepFlow,
       },
     };
 
@@ -287,6 +298,11 @@ workflow gate-retry-flow {
 }
 `);
 
+  const gateRetryFlow = GATE_WORKFLOW.workflows["gate-retry-flow"];
+  if (gateRetryFlow === undefined) {
+    throw new Error("gate-retry-flow fixture is missing");
+  }
+
   async function setup() {
     const store = createInMemoryRuntimeStore();
     const createResult = await store.instances.create({
@@ -302,7 +318,7 @@ workflow gate-retry-flow {
       goal: "harden the gate",
       slug: "harden-the-gate",
       workflows: {
-        "gate-retry-flow": GATE_WORKFLOW.workflows["gate-retry-flow"]!,
+        "gate-retry-flow": gateRetryFlow,
       },
     };
 
@@ -379,6 +395,11 @@ workflow reconcile-flow {
 }
 `);
 
+  const reconcileFlow = RECONCILE_WORKFLOW.workflows["reconcile-flow"];
+  if (reconcileFlow === undefined) {
+    throw new Error("reconcile-flow fixture is missing");
+  }
+
   async function setup() {
     const store = createInMemoryRuntimeStore();
     const createResult = await store.instances.create({
@@ -394,7 +415,7 @@ workflow reconcile-flow {
       goal: "route back to plan",
       slug: "route-back-to-plan",
       workflows: {
-        "reconcile-flow": RECONCILE_WORKFLOW.workflows["reconcile-flow"]!,
+        "reconcile-flow": reconcileFlow,
       },
     };
 

@@ -161,10 +161,11 @@ describe("discoverAndParse", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors).toHaveLength(1);
-    expect(errors[0]?.type).toBe("FileReadError");
-    expect((errors[0] as { type: "FileReadError"; path: string })?.path).toBe(
-      PROJECT_PATH,
-    );
+    const error = errors[0];
+    expect(error?.type).toBe("FileReadError");
+    if (error?.type === "FileReadError") {
+      expect(error.path).toBe(PROJECT_PATH);
+    }
   });
 
   it("(f) file reads but has invalid DSL → returns err with ParseError containing path and errors", async () => {

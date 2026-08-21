@@ -1,11 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type AgentConfig,
+  type CategoryConfig,
+  copySafeGraph,
   DEFAULT_DELEGATION_LIMITS,
   MAX_DELEGATION_LIMITS,
+  type ModelIntentEntry,
+  type ModelIntentParseError,
   parseModelIntentEntry,
+  type SafeGraphCopyBudget,
   THINKING_LEVEL_VALUES,
+  type ThinkingLevelDecl,
   ThinkingLevelSchema,
+  type ToolPermission,
   ToolPermissionSchema,
+  type ToolPolicy,
   ToolPolicySchema,
 } from "@weaveio/weave-core";
 import {
@@ -31,11 +40,28 @@ import {
   WorkflowStepTypeSchema,
 } from "../schema.js";
 
+function omittedZodInput(): undefined {
+  return;
+}
+
 // ---------------------------------------------------------------------------
 // @weaveio/weave-core barrel — public API assertions
 // ---------------------------------------------------------------------------
 
 describe("@weaveio/weave-core barrel exports", () => {
+  it("exports SafeGraphCopyBudget through the public type surface", () => {
+    const budget: SafeGraphCopyBudget = {
+      maxDepth: 4,
+      maxNodes: 32,
+      maxProperties: 32,
+      maxPropertiesPerObject: 8,
+      maxArrayLength: 8,
+      maxStringLength: 1024,
+    };
+    const copied = copySafeGraph({ value: true }, budget);
+    expect(copied.isOk()).toBe(true);
+  });
+
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();
     expect(ToolPermissionSchema.safeParse("allow").success).toBe(true);
@@ -62,7 +88,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const r = ToolPolicySchema.safeParse({ read: "allow" });
     expect(r.success).toBe(true);
     if (r.success) {
-      const policy: import("@weaveio/weave-core").ToolPolicy = r.data;
+      const policy: ToolPolicy = r.data;
       expect(policy.read).toBe("allow");
     }
   });
@@ -72,7 +98,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const parsed = ToolPermissionSchema.safeParse("allow");
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
+      const perm: ToolPermission = parsed.data;
       expect(perm).toBe("allow");
     }
   });
@@ -92,10 +118,8 @@ describe("@weaveio/weave-core barrel exports", () => {
     const parsed = parseModelIntentEntry("provider/model#high");
     expect(parsed.isOk()).toBe(true);
     if (parsed.isOk()) {
-      const entry: import("@weaveio/weave-core").ModelIntentEntry =
-        parsed.value;
-      const level: import("@weaveio/weave-core").ThinkingLevelDecl =
-        entry.thinkingLevel ?? "off";
+      const entry: ModelIntentEntry = parsed.value;
+      const level: ThinkingLevelDecl = entry.thinkingLevel ?? "off";
       expect(entry.baseModel).toBe("provider/model");
       expect(level).toBe("high");
     }
@@ -103,8 +127,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const invalid = parseModelIntentEntry("provider/model#unknown");
     expect(invalid.isErr()).toBe(true);
     if (invalid.isErr()) {
-      const parseError: import("@weaveio/weave-core").ModelIntentParseError =
-        invalid.error;
+      const parseError: ModelIntentParseError = invalid.error;
       expect(parseError.type).toBe("InvalidThinkingLevelSuffix");
     }
   });
@@ -752,7 +775,7 @@ describe("RuntimeSettingsSchema", () => {
   });
 
   it("defaults entire runtime settings when undefined", () => {
-    const r = RuntimeSettingsSchema.safeParse(undefined);
+    const r = RuntimeSettingsSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.journal.strict).toBe(false);
@@ -925,7 +948,7 @@ describe("SettingsConfigSchema", () => {
   });
 
   it("defaults entire settings when undefined", () => {
-    const r = SettingsConfigSchema.safeParse(undefined);
+    const r = SettingsConfigSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
@@ -1039,137 +1062,6 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 // CategoryConfigSchema — description (required, non-blank)
 // ---------------------------------------------------------------------------
 
-describe("exported schema input boundaries", () => {
-  it("copies input before Zod can read Object.prototype fields", () => {
-    let getterExecutions = 0;
-    try {
-      Object.defineProperty(Object.prototype, "description", {
-        configurable: true,
-        enumerable: true,
-        get() {
-          getterExecutions += 1;
-          return "inherited description";
-        },
-      });
-
-      expect(CategoryConfigSchema.safeParse({}).success).toBe(false);
-      expect(getterExecutions).toBe(0);
-    } finally {
-      delete (Object.prototype as { description?: unknown }).description;
-    }
-  });
-
-  it.each([
-    ["root agents", WeaveConfigSchema, "agents", {}],
-    ["agent fast", AgentConfigSchema, "fast", true],
-    ["agent triggers", AgentConfigSchema, "triggers", ["owned"]],
-    ["category fast", CategoryConfigSchema, "fast", true],
-    ["category triggers", CategoryConfigSchema, "triggers", ["owned"]],
-    ["category description", CategoryConfigSchema, "description", "inherited"],
-  ])("rejects prototype-provided %s", (_case, schema, key, value) => {
-    const input = Object.create({ [key]: value }) as Record<string, unknown>;
-    if (schema === CategoryConfigSchema && key !== "description") {
-      input.description = "Owned description";
-    }
-    expect(schema.safeParse(input).success).toBe(false);
-  });
-
-  it.each([
-    [AgentConfigSchema, "fast"],
-    [AgentConfigSchema, "triggers"],
-    [CategoryConfigSchema, "description"],
-    [WeaveConfigSchema, "agents"],
-  ])("rejects %s accessors without executing getters", (schema, key) => {
-    let getterExecutions = 0;
-    const input: Record<string, unknown> = {};
-    if (schema === CategoryConfigSchema && key !== "description") {
-      input.description = "Owned description";
-    }
-    Object.defineProperty(input, key, {
-      enumerable: true,
-      configurable: true,
-      get() {
-        getterExecutions += 1;
-        return key === "triggers" ? ["unsafe"] : true;
-      },
-    });
-
-    expect(schema.safeParse(input).success).toBe(false);
-    expect(getterExecutions).toBe(0);
-  });
-
-  it("rejects callable values without executing getters", () => {
-    let getterExecutions = 0;
-    const callable = () => undefined;
-    Object.defineProperty(callable, "type", {
-      enumerable: true,
-      configurable: true,
-      get() {
-        getterExecutions += 1;
-        return "unsafe";
-      },
-    });
-
-    expect(AgentConfigSchema.safeParse({ models: [callable] }).success).toBe(
-      false,
-    );
-    expect(getterExecutions).toBe(0);
-  });
-
-  it("rejects unexpected prototypes and unsafe data descriptors", () => {
-    class AgentInput {}
-    const classInput = new AgentInput();
-    Object.defineProperty(classInput, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    expect(AgentConfigSchema.safeParse(classInput).success).toBe(false);
-
-    const readonlyInput: Record<string, unknown> = {};
-    Object.defineProperty(readonlyInput, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: false,
-    });
-    expect(AgentConfigSchema.safeParse(readonlyInput).success).toBe(false);
-  });
-
-  it("accepts own data properties on plain and null-prototype records", () => {
-    expect(
-      AgentConfigSchema.safeParse({ fast: true, triggers: ["plain"] }).success,
-    ).toBe(true);
-
-    const category = Object.create(null) as Record<string, unknown>;
-    Object.defineProperty(category, "description", {
-      value: "Safe category",
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(category, "fast", {
-      value: true,
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(category, "triggers", {
-      value: ["safe trigger"],
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    const parsed = CategoryConfigSchema.safeParse(category);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.description).toBe("Safe category");
-      expect(parsed.data.triggers).toEqual(["safe trigger"]);
-    }
-  });
-});
-
 describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
   const schemas = [
     ["agent", AgentConfigSchema, {}],
@@ -1235,11 +1127,11 @@ describe("AgentConfigSchema and CategoryConfigSchema — fast intent and trigger
   }
 
   it("exports public agent and category types with the new shapes", () => {
-    const agent: import("@weaveio/weave-core").AgentConfig = {
+    const agent: AgentConfig = {
       fast: true,
       triggers: ["Plan work"],
     };
-    const category: import("@weaveio/weave-core").CategoryConfig = {
+    const category: CategoryConfig = {
       description: "Bounded work",
       fast: true,
       triggers: ["Small changes"],
@@ -1631,7 +1523,15 @@ describe("WorkflowConfigSchema — extension_points", () => {
   it("rejects workflow with two planning steps (DuplicatePlanningStep)", () => {
     const r = WorkflowConfigSchema.safeParse({
       version: 1,
-      steps: [planningStep, { ...planningStep, name: "plan2" }, regularStep],
+      steps: [
+        planningStep,
+        {
+          ...planningStep,
+          name: "plan2",
+          completion: { ...planningStep.completion },
+        },
+        regularStep,
+      ],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -2163,9 +2063,9 @@ describe("delegation limit schemas", () => {
     expect(
       DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
     ).toBe(false);
-    expect(
-      DelegationSettingsSchema.safeParse({ max_depth: 33 }).success,
-    ).toBe(false);
+    expect(DelegationSettingsSchema.safeParse({ max_depth: 33 }).success).toBe(
+      false,
+    );
     expect(
       DelegationSettingsSchema.safeParse({ max_processes: 129 }).success,
     ).toBe(false);

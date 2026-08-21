@@ -1,93 +1,33 @@
 /**
  * OpenCode plugin entry point for `@weaveio/weave-adapter-opencode`.
  *
- * This module exports the `Plugin` function that OpenCode loads at startup
- * when `@weaveio/weave-adapter-opencode` is listed in the `plugin` array of
- * `opencode.json`. It is the primary runtime integration surface between
- * Weave and OpenCode.
+ * OpenCode calls the exported `server` function at startup. The plugin loads
+ * Weave configuration, translates the normalized agents, and exposes them
+ * through OpenCode's config hook. The hook is the only materialization path:
+ * it changes the in-memory config that OpenCode is already assembling and
+ * never calls the OpenCode SDK or a persistence API.
  *
- * ## How it works
+ * Existing same-name entries are left untouched. OpenCode configuration can
+ * contain user-authored agents, and this plugin has no trusted ownership
+ * authority that permits replacing one. The same rule applies when an entry
+ * contains metadata that looks like it came from Weave.
  *
- * 1. OpenCode calls the exported `server` function (the `Plugin`) with a
- *    `PluginInput` context that includes a pre-constructed SDK client and the
- *    project directory.
- * 2. The plugin loads the Weave config from `input.directory` via
- *    `loadConfig()`.
- * 3. It calls `materializeAgents()` to compose all agent descriptors from the
- *    resolved config.
- * 4. It translates each descriptor into an `OpenCodeAgentConfig` via
- *    `translateAgent()` and collects the results into a `translatedMap`.
- * 5. It returns a `Hooks` object **immediately** with two hooks:
- *    a. **`config` hook** — injects the translated agent configs into
- *       `cfg.agent` so that `opencode debug config` reflects all Weave-managed
- *       agents. This runs once at startup before OpenCode finalises its config.
- *    b. **`event` hook** — listens for the first `session.created` event and
- *       then performs SDK-backed reconciliation (`adapter.init()` +
- *       `spawnSubagent()`) exactly once per plugin activation. This defers the
- *       SDK/DB path to real session time, so `opencode debug config` is never
- *       blocked by runtime SDK calls.
+ * The plugin registers only the prompt-based Weave slash commands. The
+ * adapter's RuntimeCommandProjection is a library-only projection and is not
+ * wired into this config hook; no session event starts work.
  *
- * ## Why deferred SDK reconciliation?
- *
- * `opencode debug config` calls the plugin function and waits for `Hooks` to
- * be returned. In the previous design, `adapter.init()` and `spawnSubagent()`
- * were called eagerly before `Hooks` was returned. Both operations touch the
- * OpenCode SDK / DB path (`client.app.agents()`, `config.update()`), which
- * hangs in the `debug config` context because the runtime store is not
- * available.
- *
- * The fix: config loading and agent translation are pure computation (no SDK
- * calls). `Hooks` is returned immediately after translation. SDK reconciliation
- * is deferred to the `event` hook, which only fires during a real OpenCode
- * session — never during `debug config`.
- *
- * ## Why both paths?
- *
- * The `config` hook and the SDK-backed reconciliation serve different purposes:
- *
- * - The `config` hook makes agents visible to `opencode debug config` and to
- *   any OpenCode subsystem that reads the merged config at startup. It is
- *   purely additive — it does not persist agents across restarts.
- * - The SDK-backed reconciliation (`spawnSubagent`) writes agents into
- *   OpenCode's runtime store via `client.config.update()`. This is the
- *   durable path that survives config reloads and is the source of truth for
- *   what OpenCode actually uses at runtime.
- *
- * Both paths are required for full materialization: the `config` hook for
- * observability and startup-time config visibility, and the SDK path for
- * runtime persistence and ownership-safe upsert.
- *
- * ## Installation
- *
- * Add `@weaveio/weave-adapter-opencode` to the `plugin` array in `opencode.json`:
- *
- * ```jsonc
- * // opencode.json
- * {
- *   "plugin": ["@weaveio/weave-adapter-opencode"]
- * }
- * ```
- *
- * OpenCode resolves the `./server` subpath export from `package.json`, which
- * points to this module (`dist/plugin.js`). The bare package name works because
- * the `./server` export is defined alongside the main entry point.
- *
- * Restart OpenCode after adding the plugin. The plugin entry point receives
- * the runtime context, constructs an `OpenCodeAdapter` with the injected SDK
- * client, and materializes all agents declared in `.weave/config.weave`.
- *
- * ## Boundary rules
- *
- * - The plugin entry point is the only place that imports from
- *   `@opencode-ai/plugin`. All other adapter modules remain plugin-agnostic.
- * - The `PluginInput.client` is injected into `SdkOpenCodeClient` — the
- *   adapter never constructs its own SDK client.
- * - Config loading and agent materialization follow the same path as any
- *   other adapter consumer: `loadConfig → materializeAgents → spawnSubagent`.
+ * The plugin entry point is the only module that imports `@opencode-ai/plugin`.
+ * Other adapter modules remain plugin-agnostic and use `sdk-types.ts` for
+ * OpenCode configuration types.
  */
 
 import { join } from "node:path";
-import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
+import type {
+  Hooks,
+  Config as OpenCodePluginConfig,
+  Plugin,
+  PluginInput,
+} from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weaveio/weave-config";
 import {
   env,
@@ -101,114 +41,152 @@ import {
   WEAVE_START_COMMAND_TEMPLATE,
 } from "./command-templates.js";
 import { resolveModelForAgent } from "./model-resolution.js";
-import type { OpenCodeClientFacade } from "./opencode-client.js";
-import { tagWithOwnership } from "./reconcile-agent.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/plugin" });
 
 /**
+ * OpenCode calls the `config` hook after parsing user JSON/JSONC into ordinary
+ * configuration records. This is an explicit trusted harness boundary. The
+ * adapter preserves that contract and does not attempt to detect arbitrary
+ * JavaScript proxies or prove ownership with reflection. Callers that provide
+ * values outside OpenCode's config-hook contract are unsupported.
+ */
+type TrustedOpenCodeConfig = OpenCodePluginConfig & {
+  /** OpenCode consumes this runtime field even though the SDK type omits it. */
+  default_agent?: string;
+};
+
+/**
  * Default log file path relative to the project directory.
  *
- * When the OpenCode plugin runs without an explicit `WEAVE_LOG_FILE` env var,
- * Weave logs are written to this path under the project root. The `.weave/`
- * directory is already the conventional home for Weave project state, so
- * placing the log file there keeps everything in one place.
- *
- * Example: `/path/to/project/.weave/weave.log`
- *
- * Not exported from `plugin.ts` — the plugin entry point must export only
- * functions to satisfy OpenCode's `getLegacyPlugins` loader. This constant
- * is exported from the barrel `index.ts` as a standalone export.
+ * This constant is intentionally local to the plugin entry point. The barrel
+ * exports the same path for callers that need to document or test the plugin
+ * logging behavior.
  */
 const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 
-/**
- * Options for `createWeavePlugin`.
- *
- * All fields are optional. In production, the defaults are used. In tests,
- * pass a custom `fileReader` and/or `clientFacade` to isolate the test from
- * the developer's environment.
- */
+/** Options for `createWeavePlugin`. */
 export interface WeavePluginOptions {
-  /**
-   * Custom file reader for config loading.
-   *
-   * In production, the default `bunFileReader` is used. In tests, pass a
-   * `projectOnlyReader` to prevent the developer's global config from
-   * interfering with test results.
-   *
-   * @example
-   * ```ts
-   * const plugin = createWeavePlugin({ fileReader: projectOnlyReader(root) });
-   * const hooks = await plugin(input);
-   * ```
-   */
+  /** Custom file reader used to isolate config loading in tests. */
   readonly fileReader?: FileReader;
-
-  /**
-   * Pre-constructed `OpenCodeClientFacade` to use instead of wrapping
-   * `input.client` in `SdkOpenCodeClient`.
-   *
-   * In production, this is always `undefined` — the plugin wraps `input.client`
-   * (the raw SDK client) in `SdkOpenCodeClient`. In tests, pass a
-   * `MockOpenCodeClient` here to avoid needing a real SDK client.
-   *
-   * @example
-   * ```ts
-   * const mockClient = new MockOpenCodeClient();
-   * const plugin = createWeavePlugin({ clientFacade: mockClient });
-   * const hooks = await plugin(input);
-   * ```
-   */
-  readonly clientFacade?: OpenCodeClientFacade;
 }
 
 /**
- * Creates a Weave OpenCode plugin with optional configuration.
+ * Inject translated entries into the config supplied by OpenCode.
  *
- * Returns a `Plugin` function that OpenCode can load at startup. In
- * production, call `createWeavePlugin()` with no arguments (or use the
- * pre-built `WeavePlugin` export). In tests, pass a custom `fileReader` to
- * isolate the test from the developer's global `~/.weave/config.weave`.
+ * This function deliberately relies on the trusted OpenCode config-hook
+ * contract. OpenCode supplies ordinary records, so own-name checks and normal
+ * assignments are the complete materialization seam. A collision is skipped;
+ * no entry is replaced, merged, rolled back, or authorized by metadata.
+ */
+async function applyTrustedConfig(
+  cfg: TrustedOpenCodeConfig,
+  translatedMap: ReadonlyMap<string, OpenCodeAgentConfig>,
+): Promise<void> {
+  let loomInjected = false;
+  let tapestryInjected = false;
+  let injectedCount = 0;
+
+  if (translatedMap.size > 0) {
+    const agents = cfg.agent ?? {};
+    cfg.agent = agents;
+
+    for (const [agentName, agentConfig] of translatedMap) {
+      // OpenCode's parsed record is the source of truth for collisions. Keep
+      // every existing own entry, including its nested values and identity.
+      if (Object.hasOwn(agents, agentName)) {
+        log.warn(
+          { agent: agentName },
+          "Skipping existing OpenCode agent in config hook",
+        );
+        continue;
+      }
+
+      agents[agentName] = agentConfig;
+      injectedCount += 1;
+
+      // These flags describe this invocation's own insertion branches. They
+      // are not inferred from host metadata or a post-mutation proof.
+      if (agentName === "loom") loomInjected = true;
+      if (agentName === "tapestry") tapestryInjected = true;
+      log.debug({ agent: agentName }, "Agent injected into config hook");
+    }
+
+    log.info(
+      {
+        agentCount: injectedCount,
+        skippedCount: translatedMap.size - injectedCount,
+      },
+      "Weave agents projected into OpenCode config",
+    );
+  }
+
+  // Only choose Loom when this invocation inserted it. A pre-existing Loom
+  // entry remains fully user-owned and does not change the default.
+  if (loomInjected) {
+    cfg.default_agent = "loom";
+    log.info("Set default_agent to 'loom'");
+  }
+
+  // Commands are tied to this invocation's own Tapestry insertion. A normal
+  // collision or a missing Tapestry skips command registration entirely.
+  if (!tapestryInjected) {
+    log.warn(
+      "Skipping Weave slash command registration because Tapestry was not injected by this config hook",
+    );
+    return;
+  }
+
+  const commands = cfg.command ?? {};
+  cfg.command = commands;
+  const commandDefinitions = {
+    "start-work": {
+      template: START_WORK_COMMAND_TEMPLATE,
+      description: "Start executing a Weave plan created by Pattern",
+      agent: "tapestry",
+    },
+    "weave:start": {
+      template: WEAVE_START_COMMAND_TEMPLATE,
+      description: "Start executing a Weave plan (preferred command)",
+      agent: "tapestry",
+    },
+  };
+  const registeredCommands: string[] = [];
+
+  for (const [commandName, command] of Object.entries(commandDefinitions)) {
+    // Preserve every existing command object, including nested fields.
+    if (Object.hasOwn(commands, commandName)) {
+      log.warn(
+        { command: commandName },
+        "Skipping existing OpenCode command in config hook",
+      );
+      continue;
+    }
+
+    commands[commandName] = command;
+    registeredCommands.push(commandName);
+  }
+
+  log.info({ commands: registeredCommands }, "Weave slash commands registered");
+}
+
+/**
+ * Creates the OpenCode plugin.
  *
- * The returned plugin function:
- * 1. Loads Weave config and translates agent descriptors (pure computation).
- * 2. Returns `Hooks` **immediately** — never blocks on SDK/DB calls.
- * 3. Defers `adapter.init()` + `spawnSubagent()` to the `event` hook, which
- *    fires on the first `session.created` event during a real OpenCode session.
- *
- * This design ensures `opencode debug config` returns quickly because it only
- * exercises the `config` hook path, never the deferred SDK reconciliation path.
- *
- * @param options - Optional plugin configuration.
- * @returns A `Plugin` function compatible with `@opencode-ai/plugin`.
+ * The returned plugin performs config loading and translation before returning
+ * its hooks. Its config hook injects translated agents and commands. It never
+ * uses the SDK client supplied by OpenCode, so `opencode debug config` and a
+ * live startup follow the same config-only materialization path.
  */
 export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
   return async (input: PluginInput): Promise<Hooks> => {
     const { directory } = input;
 
-    // Redirect logs to a project-local file before any log calls.
-    //
-    // When running as an OpenCode plugin, stdout is read by the OpenCode UI.
-    // Writing structured JSON logs to stdout would surface raw log lines in
-    // the chat interface, which is confusing for users.
-    //
-    // `redirectLogsToFile` is a no-op when `WEAVE_LOG_FILE` is already set
-    // (the env var is the explicit override). Otherwise it redirects the
-    // shared pino stream to `.weave/weave.log` under the project directory.
-    // All existing child loggers share the same stream and automatically write
-    // to the new destination after this call.
-    //
-    // We only redirect when the project directory exists. If it doesn't (e.g.
-    // in tests using a non-existent path), we skip the redirect and let logs
-    // fall through to stdout — the config load will fail anyway.
+    // OpenCode reads stdout as UI output. Keep structured Weave logs in the
+    // project-local file unless the caller supplied an explicit destination.
     if (!env.WEAVE_LOG_FILE) {
-      // Check if the project directory exists before redirecting. If it
-      // doesn't (e.g. in tests using a non-existent path), skip the redirect
-      // and let logs fall through to stdout — the config load will fail anyway.
-      // Note: Bun.file().exists() returns false for directories; use stat().
       const dirExists = await Bun.file(directory)
         .stat()
         .then(() => true)
@@ -220,46 +198,32 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
 
     log.info({ directory }, "Weave plugin starting");
 
-    // Load Weave config from the project directory.
     const configResult = await loadConfig(directory, options.fileReader);
     if (configResult.isErr()) {
-      const errors = configResult.error;
       log.error(
-        { errors },
+        { errors: configResult.error },
         "Failed to load Weave config — no agents will be materialized",
       );
-      // Return empty hooks rather than throwing — a config load failure should
-      // not crash the entire OpenCode session. The error is logged for diagnosis.
       return {};
     }
 
-    const config = configResult.value;
-
-    // Compose all agent descriptors from the resolved config.
-    const planResult = await materializeAgents({ config });
-
-    // materializeAgents returns ResultAsync<MaterializationPlan, never> — it
-    // always resolves to ok(). The never error type means we can safely unwrap.
+    const planResult = await materializeAgents({ config: configResult.value });
+    // materializeAgents returns ResultAsync<MaterializationPlan, never>.
     const plan = planResult._unsafeUnwrap();
 
     if (plan.errors.length > 0) {
       log.warn(
-        { errors: plan.errors.map((e: { type: string }) => e.type) },
+        { errors: plan.errors.map((error: { type: string }) => error.type) },
         "Materialization plan has partial errors — some agents may not be registered",
       );
     }
 
-    // Translate each descriptor into an OpenCodeAgentConfig and collect into a
-    // map. This map is used by the config hook to inject agents into cfg.agent.
-    // Translation is performed here (before the config hook is returned) so that
-    // any translation errors are surfaced at startup, not deferred to hook time.
     const translatedMap = new Map<string, OpenCodeAgentConfig>();
 
     for (const { agentName, descriptor } of plan.agents) {
-      // Resolve model using an empty context (no harness model context available
-      // at config-hook time — the hook runs before the harness is fully started).
+      // Config hooks run before OpenCode exposes harness model context. The
+      // adapter therefore resolves only against the descriptor and fallback.
       const modelResult = resolveModelForAgent(descriptor, {});
-
       if (modelResult.isErr()) {
         log.warn(
           {
@@ -276,7 +240,6 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         descriptor,
         modelResult.value.model,
       );
-
       if (translateResult.isErr()) {
         log.warn(
           {
@@ -298,105 +261,19 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       "Agents translated for config hook injection",
     );
 
-    log.info("Weave plugin hooks ready — returning immediately");
-
-    // Return hooks immediately. The config hook is populated now; the event
-    // hook defers SDK reconciliation to the first real session.
     return {
-      config: async (cfg) => {
-        // --- Agent injection ---
-        if (translatedMap.size > 0) {
-          if (cfg.agent === undefined) {
-            cfg.agent = {};
-          }
-
-          for (const [agentName, agentConfig] of translatedMap) {
-            // Tag with ownership before injecting so that deferred SDK
-            // reconciliation (session.created) sees the same ownership marker
-            // and classifies these agents as "update" rather than "collision".
-            cfg.agent[agentName] = tagWithOwnership(agentConfig);
-            log.debug({ agent: agentName }, "Agent injected into config hook");
-          }
-
-          log.info(
-            { agentCount: translatedMap.size },
-            "Weave agents injected into OpenCode config",
-          );
-        }
-
-        // --- Default agent configuration ---
-        // Set Loom as the default agent so new sessions start with the
-        // orchestrator rather than OpenCode's built-in 'build' agent.
-        // Type assertion needed: OpenCode supports `default_agent` but the
-        // @opencode-ai/plugin type definitions may lag behind the runtime.
-        if (translatedMap.has("loom")) {
-          (cfg as Record<string, unknown>).default_agent = "loom";
-          log.info("Set default_agent to 'loom'");
-        }
-
-        // --- Command injection ---
-        // Register /start-work and /weave:start as OpenCode
-        // slash commands. These are prompt-based commands (not LLM tools) —
-        // they inject the Tapestry execution template into the conversation
-        // when the user types the command in the TUI.
-        if (cfg.command === undefined) {
-          cfg.command = {};
-        }
-
-        cfg.command["start-work"] = {
-          template: START_WORK_COMMAND_TEMPLATE,
-          description: "Start executing a Weave plan created by Pattern",
-          agent: "tapestry",
-        };
-
-        cfg.command["weave:start"] = {
-          template: WEAVE_START_COMMAND_TEMPLATE,
-          description: "Start executing a Weave plan (preferred command)",
-          agent: "tapestry",
-        };
-
-        log.info(
-          { commands: ["start-work", "weave:start"] },
-          "Weave slash commands registered",
-        );
-      },
-
-      event: async ({ event }) => {
-        if (event.type !== "session.created") return;
-      },
+      // OpenCode's hook argument is the trusted parsed-config boundary
+      // described by TrustedOpenCodeConfig above.
+      config: (cfg: TrustedOpenCodeConfig) =>
+        applyTrustedConfig(cfg, translatedMap),
     };
   };
 }
 
-/**
- * Weave OpenCode plugin.
- *
- * Loaded by OpenCode at startup when `@weaveio/weave-adapter-opencode` is listed in
- * the `plugin` array of `opencode.json`. Materializes all agents declared in
- * `.weave/config.weave` into the running OpenCode instance.
- *
- * Returns a `Hooks` object **immediately** with:
- * - `config` hook — injects translated agent configs into `cfg.agent` so that
- *   `opencode debug config` shows all Weave-managed agents.
- * - `event` hook — defers SDK-backed reconciliation (`spawnSubagent`) to the
- *   first `session.created` event, ensuring `opencode debug config` never
- *   blocks on SDK/DB calls.
- *
- * @param input - Runtime context provided by OpenCode, including the SDK
- *   client and the project directory.
- * @returns A `Hooks` object with `config` and `event` hooks on success, or an
- *   empty `Hooks` object when config loading fails.
- */
+/** OpenCode's Weave plugin entry point. */
 export const WeavePlugin: Plugin = createWeavePlugin();
 
-/**
- * Named `server` export for `PluginModule` compatibility.
- *
- * OpenCode resolves plugins as `PluginModule` objects with a `server` property.
- * When the module's default export is a function, OpenCode also accepts it
- * directly as the plugin. Both forms are exported here for maximum
- * compatibility.
- */
+/** Named `server` export for OpenCode `PluginModule` compatibility. */
 export const server = WeavePlugin;
 
 export default WeavePlugin;

@@ -31,6 +31,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   completeStep,
+  createExecutionLeaseId,
   createInMemoryRuntimeStore,
   handleUserInterrupt,
   startExecution,
@@ -140,6 +141,19 @@ workflow plan-workflow {
   }
 }
 `);
+
+const twoStepWorkflow = TWO_STEP_WORKFLOW.workflows["two-step"];
+if (twoStepWorkflow === undefined) {
+  throw new Error("two-step fixture workflow is missing");
+}
+const gateWorkflow = GATE_WORKFLOW.workflows["gate-workflow"];
+if (gateWorkflow === undefined) {
+  throw new Error("gate-workflow fixture workflow is missing");
+}
+const planWorkflow = PLAN_WORKFLOW.workflows["plan-workflow"];
+if (planWorkflow === undefined) {
+  throw new Error("plan-workflow fixture workflow is missing");
+}
 
 async function createRunningInstance(workflowName = "two-step") {
   const store = createInMemoryRuntimeStore();
@@ -253,7 +267,7 @@ describe("completeStep — configured (with context)", () => {
       workflowName: "two-step",
       goal: "test goal",
       slug: "test-goal",
-      workflows: { "two-step": TWO_STEP_WORKFLOW.workflows["two-step"]! },
+      workflows: { "two-step": twoStepWorkflow },
     };
 
     const result = await completeStep(
@@ -287,7 +301,7 @@ describe("completeStep — configured (with context)", () => {
       workflowName: "two-step",
       goal: "test goal",
       slug: "test-goal",
-      workflows: { "two-step": TWO_STEP_WORKFLOW.workflows["two-step"]! },
+      workflows: { "two-step": twoStepWorkflow },
     };
 
     const result = await completeStep(
@@ -367,9 +381,7 @@ describe("handleUserInterrupt", () => {
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: instanceId,
-        leaseId: "wrong-lease" as ReturnType<
-          typeof import("@weaveio/weave-engine").createExecutionLeaseId
-        >,
+        leaseId: createExecutionLeaseId("wrong-lease"),
         signal: "pause",
       },
       store,
@@ -383,14 +395,13 @@ describe("handleUserInterrupt", () => {
   it("returns validation error for missing signal", async () => {
     const { store, instanceId, leaseId } = await createRunningInstance();
 
-    const result = await handleUserInterrupt(
-      {
-        workflowInstanceId: instanceId,
-        leaseId,
-        signal: "" as "pause" | "cancel",
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: instanceId,
+      leaseId,
+      signal: "pause" as const,
+    };
+    Object.defineProperty(input, "signal", { value: "" });
+    const result = await handleUserInterrupt(input, store);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -415,7 +426,7 @@ describe("completeStep — agent_signal explicit method matching", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -446,7 +457,7 @@ describe("completeStep — agent_signal explicit method matching", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -508,7 +519,7 @@ describe("completeStep — review_verdict: approved (success path)", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -548,7 +559,7 @@ describe("completeStep — review_verdict: approved (success path)", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -591,7 +602,7 @@ describe("completeStep — review_verdict: rejected + on_reject: pause", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -636,7 +647,7 @@ describe("completeStep — review_verdict: rejected + on_reject: pause", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -680,7 +691,7 @@ describe("completeStep — review_verdict: rejected + on_reject: fail", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -725,7 +736,7 @@ describe("completeStep — review_verdict: rejected + on_reject: fail", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -764,7 +775,7 @@ describe("completeStep — review_verdict: missing approved field", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "gate-workflow": GATE_WORKFLOW.workflows["gate-workflow"]!,
+        "gate-workflow": gateWorkflow,
       },
     };
 
@@ -811,7 +822,7 @@ describe("completeStep — plan_created: missing planStateProvider (degraded fal
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 
@@ -847,7 +858,7 @@ describe("completeStep — plan_created: missing planStateProvider (degraded fal
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 
@@ -886,7 +897,7 @@ describe("completeStep — plan_created: missing planStateProvider (degraded fal
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 
@@ -925,7 +936,7 @@ describe("completeStep — plan_complete: missing planStateProvider (degraded fa
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 
@@ -961,7 +972,7 @@ describe("completeStep — plan_complete: missing planStateProvider (degraded fa
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 
@@ -1004,7 +1015,7 @@ describe("completeStep — plan_complete: missing planStateProvider (degraded fa
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "plan-workflow": PLAN_WORKFLOW.workflows["plan-workflow"]!,
+        "plan-workflow": planWorkflow,
       },
     };
 

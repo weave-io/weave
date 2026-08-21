@@ -980,7 +980,7 @@ describe("appendSuiteHistoryPoint", () => {
     totalCases: 5,
     passedCases: 4,
     suiteGreen: false,
-    passRate: 0.8 as number | null,
+    passRate: 0.8,
   };
 
   it("creates a new history manifest when existing is null", () => {

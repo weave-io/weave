@@ -39,7 +39,8 @@ import {
   matchesKey,
   truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import {
   CHILD_EXTENSION_SELECTION_SCHEMA_VERSION,
   type ChildExtensionSelectionEntry,
@@ -111,12 +112,19 @@ export type PiConfigBinding =
  * *mutating* overlay with no way to save; an explicitly configured empty list
  * still means "unbound", because that is a user decision rather than a gap.
  */
-const DEFAULT_BINDING_KEYS: Record<PiConfigBinding, readonly KeyId[]> = {
+interface PiConfigDefaultBindingKeys {
+  readonly "tui.select.up": readonly KeyId[];
+  readonly "tui.select.down": readonly KeyId[];
+  readonly "tui.select.confirm": readonly KeyId[];
+  readonly "tui.select.cancel": readonly KeyId[];
+}
+
+const DEFAULT_BINDING_KEYS = {
   "tui.select.up": ["up"],
   "tui.select.down": ["down"],
   "tui.select.confirm": ["enter"],
   "tui.select.cancel": ["escape", "ctrl+c"],
-};
+} satisfies PiConfigDefaultBindingKeys;
 
 /** Toggle a row. Fixed because Pi binds no equivalent action. */
 const TOGGLE_KEY: KeyId = "space";
@@ -137,6 +145,105 @@ export interface PiConfigThemePort {
     text: string,
   ): string;
   bold(text: string): string;
+}
+
+type PiConfigGetKeys = NonNullable<PiConfigKeybindingsPort["getKeys"]>;
+interface PiConfigParsedTheme {
+  readonly owner: PiConfigThemePort;
+  readonly fg: PiConfigThemePort["fg"];
+  readonly bold: PiConfigThemePort["bold"];
+}
+
+const PI_CONFIG_OBSERVED_VALUE_SCHEMA = z.unknown();
+type PiConfigObservedValue = z.input<typeof PI_CONFIG_OBSERVED_VALUE_SCHEMA>;
+const PI_CONFIG_CALLABLE_CHECK = (value: PiConfigObservedValue): boolean =>
+  Result.fromThrowable(
+    () => value instanceof Function,
+    (): boolean => false,
+  )().unwrapOr(false);
+const PI_CONFIG_GET_KEYS_SCHEMA = z.custom<PiConfigGetKeys>(
+  PI_CONFIG_CALLABLE_CHECK,
+);
+type PiConfigCallable =
+  | PiConfigGetKeys
+  | PiConfigThemePort["fg"]
+  | PiConfigThemePort["bold"];
+const PI_CONFIG_MEMBER_SCHEMA = z.custom<PiConfigCallable>(
+  PI_CONFIG_CALLABLE_CHECK,
+);
+const PI_CONFIG_THEME_FG_SCHEMA = z.custom<PiConfigThemePort["fg"]>(
+  PI_CONFIG_CALLABLE_CHECK,
+);
+const PI_CONFIG_THEME_BOLD_SCHEMA = z.custom<PiConfigThemePort["bold"]>(
+  PI_CONFIG_CALLABLE_CHECK,
+);
+interface PiConfigObjectReference {
+  readonly piConfigObjectMarker?: never;
+}
+const PI_CONFIG_OBJECT_SCHEMA = z.custom<PiConfigObjectReference>((value) =>
+  Result.fromThrowable(
+    (): boolean =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+type PiConfigMember = z.output<typeof PI_CONFIG_MEMBER_SCHEMA>;
+
+function readPiConfigMember(
+  target: PiConfigObservedValue,
+  key: string,
+): PiConfigMember | undefined {
+  const parsedTarget = PI_CONFIG_OBJECT_SCHEMA.safeParse(target);
+  if (!parsedTarget.success) return undefined;
+  let current: object | null = parsedTarget.data;
+  const seen = new Set<object>();
+  for (let depth = 0; current !== null && depth < 16; depth += 1) {
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(current, key),
+      (): PropertyDescriptor | undefined => undefined,
+    )();
+    if (descriptor.isErr()) return undefined;
+    if (descriptor.value !== undefined) {
+      if (!("value" in descriptor.value)) return undefined;
+      const parsed = PI_CONFIG_MEMBER_SCHEMA.safeParse(descriptor.value.value);
+      return parsed.success ? parsed.data : undefined;
+    }
+    const prototype = Result.fromThrowable(
+      () => Object.getPrototypeOf(current),
+      (): object | null => null,
+    )();
+    if (prototype.isErr()) return undefined;
+    current = prototype.value;
+  }
+  return undefined;
+}
+
+function parsePiConfigKeybindings(
+  keybindings: PiConfigKeybindingsPort | undefined,
+): { readonly getKeys?: PiConfigGetKeys } | undefined {
+  if (keybindings === undefined) return undefined;
+  const value = readPiConfigMember(keybindings, "getKeys");
+  if (value === undefined) return {};
+  const parsed = PI_CONFIG_GET_KEYS_SCHEMA.safeParse(value);
+  return parsed.success ? { getKeys: parsed.data } : undefined;
+}
+
+function parsePiConfigTheme(
+  theme: PiConfigThemePort | undefined,
+): PiConfigParsedTheme | undefined {
+  if (theme === undefined) return undefined;
+  const fg = readPiConfigMember(theme, "fg");
+  const bold = readPiConfigMember(theme, "bold");
+  const parsedFg = PI_CONFIG_THEME_FG_SCHEMA.safeParse(fg);
+  const parsedBold = PI_CONFIG_THEME_BOLD_SCHEMA.safeParse(bold);
+  return parsedFg.success && parsedBold.success
+    ? { owner: theme, fg: parsedFg.data, bold: parsedBold.data }
+    : undefined;
 }
 
 /**
@@ -372,7 +479,7 @@ function clamp(value: number, min: number, max: number): number {
 /** Rows the overlay may occupy on a terminal of `terminalRows` height. */
 export function piConfigRowBudget(terminalRows: number | undefined): number {
   const usable =
-    typeof terminalRows === "number" &&
+    terminalRows !== undefined &&
     Number.isFinite(terminalRows) &&
     terminalRows > 0
       ? Math.trunc(terminalRows)
@@ -420,7 +527,23 @@ export interface RenderPiConfigInput {
   readonly readOnly?: boolean;
 }
 
+interface PiConfigRenderInputBuilder {
+  rows: readonly PiConfigRow[];
+  state: PiConfigSelectionState;
+  cursor: number;
+  viewport: PiConfigViewport;
+  width: number;
+  hint: string;
+  theme?: PiConfigThemePort;
+  readOnly?: boolean;
+}
+
 type StyleColor = "accent" | "muted" | "text" | "success" | "dim" | "warning";
+
+interface PiConfigRowMarker {
+  readonly marker: string;
+  readonly color: StyleColor;
+}
 
 /** True when the row was in the stored selection but cannot be honoured. */
 function isDroppedStoredRow(
@@ -437,7 +560,7 @@ function isDroppedStoredRow(
 function rowMarker(
   row: PiConfigRow,
   state: PiConfigSelectionState,
-): { readonly marker: string; readonly color: StyleColor } {
+): PiConfigRowMarker {
   if (row.kind === "mandatory") {
     // No checkbox: a locked row must not look like something the user failed
     // to toggle.
@@ -510,10 +633,9 @@ function rowText(row: PiConfigRow, state: PiConfigSelectionState): string {
  * has to be visible at the moment of the decision.
  */
 export function renderPiConfigLines(input: RenderPiConfigInput): string[] {
-  const theme = input.theme;
-  const fg = typeof theme?.fg === "function" ? theme.fg.bind(theme) : undefined;
-  const bold =
-    typeof theme?.bold === "function" ? theme.bold.bind(theme) : undefined;
+  const theme = parsePiConfigTheme(input.theme);
+  const fg = theme?.fg.bind(theme.owner);
+  const bold = theme?.bold.bind(theme.owner);
   const cap =
     input.width === undefined
       ? undefined
@@ -658,10 +780,10 @@ function resolveKeys(
   keybindings: PiConfigKeybindingsPort | undefined,
   binding: PiConfigBinding,
 ): readonly KeyId[] {
-  if (typeof keybindings?.getKeys !== "function") {
-    return DEFAULT_BINDING_KEYS[binding];
-  }
-  return keybindings.getKeys(binding) ?? DEFAULT_BINDING_KEYS[binding];
+  const parsed = parsePiConfigKeybindings(keybindings);
+  return (
+    parsed?.getKeys?.call(keybindings, binding) ?? DEFAULT_BINDING_KEYS[binding]
+  );
 }
 
 function matchesAny(data: string, keys: readonly KeyId[]): boolean {
@@ -826,11 +948,10 @@ export function createPiConfigComponent(
   };
 
   const save = (): void => {
-    const intent = buildPiConfigSaveIntent({
-      state: currentState(),
-      entries,
-      ...(readOnly ? { readOnly: true } : {}),
-    });
+    const state = currentState();
+    const intent = readOnly
+      ? buildPiConfigSaveIntent({ state, entries, readOnly: true })
+      : buildPiConfigSaveIntent({ state, entries });
     if (intent.isErr()) {
       // A refused payload still ends the overlay: leaving the user inside a
       // surface whose Enter does nothing is worse than closing with a reason.
@@ -862,16 +983,17 @@ export function createPiConfigComponent(
         0,
         piConfigMaxScroll(rows.length, viewportRows),
       );
-      const lines = renderPiConfigLines({
+      const renderInput: PiConfigRenderInputBuilder = {
         rows,
         state: currentState(),
         cursor,
         viewport: { rows: viewportRows, scrollOffset },
         width,
         hint,
-        ...(input.theme === undefined ? {} : { theme: input.theme }),
-        ...(readOnly ? { readOnly: true } : {}),
-      });
+      };
+      if (input.theme !== undefined) renderInput.theme = input.theme;
+      if (readOnly) renderInput.readOnly = true;
+      const lines = renderPiConfigLines(renderInput);
       cachedLines = lines;
       cachedWidth = width;
       cachedRows = viewportRows;

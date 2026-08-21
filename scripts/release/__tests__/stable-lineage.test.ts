@@ -1,9 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import type { StableTrainRecord } from "../model.js";
 import { hasProgressedLineage } from "../stable-lineage.js";
-import { trainRecordDigest } from "../stable-train.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
 
-function train(state: "awaiting-promotion" | "promoted", overrides = {}) {
-  const content = {
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function train(
+  state: "awaiting-promotion" | "promoted",
+  overrides: Partial<StableTrainContent> = {},
+): StableTrainRecord {
+  const content: StableTrainContent = {
     schemaVersion: 1 as const,
     trainRef: "release/20260719-aaaaaaaaaaaa",
     subjectSha: "a".repeat(40),
@@ -14,7 +28,12 @@ function train(state: "awaiting-promotion" | "promoted", overrides = {}) {
     versions: { "@weaveio/weave-cli": "1.2.3" },
     ...overrides,
   };
-  return { ...content, recordDigest: trainRecordDigest(content) } as never;
+  const result = validateStableTrain({
+    ...content,
+    recordDigest: trainDigest(content),
+  });
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
 }
 
 describe("finalize to release-refs stable-train hand-off", () => {
@@ -23,7 +42,7 @@ describe("finalize to release-refs stable-train hand-off", () => {
       hasProgressedLineage(train("awaiting-promotion"), train("promoted")),
     ).toBe(true));
 
-  test.each([
+  test.each<[string, Partial<StableTrainContent>]>([
     ["train ref", { trainRef: "release/20260720-aaaaaaaaaaaa" }],
     ["cut sha", { subjectSha: "b".repeat(40) }],
     [

@@ -11,6 +11,7 @@
  */
 import { dirname, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   CODEX_PROVIDER_SUBPATH_SPECIFIER,
   hostEntrySpecifierFor,
@@ -23,6 +24,12 @@ import {
   renderHostReexportStub,
 } from "./host-module-redirect.js";
 import { safelyAwaitPortResult } from "./port-safety.js";
+
+const HOST_BOUNDARY_INPUT_SCHEMA = z.unknown();
+export type PiHostModuleObservedValue = z.input<
+  typeof HOST_BOUNDARY_INPUT_SCHEMA
+>;
+const HOST_STRING_SCHEMA = z.string();
 
 /** Operator escape hatch and Task 5 negative control. Honor only the value `1`. */
 export const WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV =
@@ -56,11 +63,16 @@ export type PiHostModuleEnvironmentError =
  * Injectable I/O and plugin surface. Every member is fallible so a missing
  * host, unreadable package, or plugin gap becomes a skip rather than a throw.
  */
+export interface PiHostModuleObjectValue {
+  readonly hostModuleObjectMarker?: never;
+  readonly default?: PiHostModuleObservedValue;
+}
+
 export interface PiHostModuleEnvironmentPort {
   mainModulePath(): ResultAsync<string, PiHostModuleEnvironmentError>;
   readJsonFile(
     path: string,
-  ): ResultAsync<unknown, PiHostModuleEnvironmentError>;
+  ): ResultAsync<PiHostModuleObservedValue, PiHostModuleEnvironmentError>;
   resolveFrom(
     specifier: string,
     fromDir: string,
@@ -74,7 +86,7 @@ export interface PiHostModuleEnvironmentPort {
   ): ResultAsync<void, PiHostModuleEnvironmentError>;
   importAbsolute(
     path: string,
-  ): ResultAsync<unknown, PiHostModuleEnvironmentError>;
+  ): ResultAsync<PiHostModuleObservedValue, PiHostModuleEnvironmentError>;
 }
 
 export interface ResolveHostModulesOptions {
@@ -225,26 +237,57 @@ function skipAllSpecifiers(
   }));
 }
 
+type MutableHostModuleProofSpecifier = {
+  specifier: PiHostModuleSpecifier;
+  hostSpecifier: string;
+  localEntryPath?: string;
+  hostEntryPath?: string;
+  redirected: boolean;
+  skipReason?: PiHostModuleSkipReason;
+  bareResolution?: string;
+  loadedFrom?: string;
+};
+
+type MutableHostModuleProofRecord = {
+  hostRoot?: string;
+  hostVersion?: string;
+  specifiers: MutableHostModuleProofSpecifier[];
+};
+
+type MutableHostSpecifierFacts = {
+  localEntryPath?: string;
+  hostEntryPath?: string;
+};
+
+type MutableHostSpecifiers = {
+  -readonly [K in PiHostModuleSpecifier]: MutableHostSpecifierFacts;
+};
+
+type MutableHostLocalResolutions = {
+  -readonly [K in PiHostModuleSpecifier]: string | undefined;
+};
+
 function skipAllProof(
   reason: PiHostModuleSkipReason,
   hostRoot: string | undefined,
   hostVersion: string | undefined,
   localResolutions: PiHostLocalResolutions,
 ): PiHostModuleProofRecord {
-  return {
-    ...(hostRoot === undefined ? {} : { hostRoot }),
-    ...(hostVersion === undefined ? {} : { hostVersion }),
-    specifiers: PI_HOST_MODULE_SPECIFIERS.map((specifier) => {
-      const local = localResolutions[specifier];
-      return {
-        specifier,
-        hostSpecifier: hostEntrySpecifierFor(specifier),
-        redirected: false,
-        skipReason: reason,
-        ...(local === undefined ? {} : { bareResolution: local }),
-      };
-    }),
-  };
+  const record: MutableHostModuleProofRecord = { specifiers: [] };
+  if (hostRoot !== undefined) record.hostRoot = hostRoot;
+  if (hostVersion !== undefined) record.hostVersion = hostVersion;
+  for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
+    const entry: MutableHostModuleProofSpecifier = {
+      specifier,
+      hostSpecifier: hostEntrySpecifierFor(specifier),
+      redirected: false,
+      skipReason: reason,
+    };
+    const local = localResolutions[specifier];
+    if (local !== undefined) entry.bareResolution = local;
+    record.specifiers.push(entry);
+  }
+  return record;
 }
 
 function skipAllOutcome(input: {
@@ -254,21 +297,31 @@ function skipAllOutcome(input: {
   readonly localResolutions?: PiHostLocalResolutions;
 }): PiHostModuleOutcome {
   const localResolutions = input.localResolutions ?? emptyLocalResolutions();
-  return {
+  const proofRecord = skipAllProof(
+    input.reason,
+    input.hostRoot,
+    input.hostVersion,
+    localResolutions,
+  );
+  const base = {
     redirected: [],
     skipped: skipAllSpecifiers(input.reason),
-    ...(input.hostVersion === undefined
-      ? {}
-      : { hostVersion: input.hostVersion }),
-    ...(input.hostRoot === undefined ? {} : { hostRoot: input.hostRoot }),
     localResolutions,
-    proofRecord: skipAllProof(
-      input.reason,
-      input.hostRoot,
-      input.hostVersion,
-      localResolutions,
-    ),
+    proofRecord,
   };
+  if (input.hostVersion !== undefined && input.hostRoot !== undefined) {
+    return {
+      ...base,
+      hostVersion: input.hostVersion,
+      hostRoot: input.hostRoot,
+    };
+  }
+  if (input.hostVersion !== undefined) {
+    return { ...base, hostVersion: input.hostVersion };
+  }
+  if (input.hostRoot !== undefined)
+    return { ...base, hostRoot: input.hostRoot };
+  return base;
 }
 
 /**
@@ -304,47 +357,97 @@ export function deriveHostPackageRoot(
   return ok(hostRoot);
 }
 
-function parseHostPackageIdentity(
-  value: unknown,
-): Result<
-  { readonly name: string; readonly version: string },
-  { readonly reason: "host-package-mismatch" }
-> {
-  if (typeof value !== "object" || value === null) {
-    return err({ reason: "host-package-mismatch" });
+type HostPackageIdentity = { readonly name: string; readonly version: string };
+type HostPackageMismatch = { readonly reason: "host-package-mismatch" };
+type HostModuleRecord = PiHostModuleObjectValue;
+
+const HOST_MODULE_RECORD_SCHEMA = z.custom<HostModuleRecord>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      if (value === null || Object(value) !== value) return false;
+      if (Array.isArray(value) || value instanceof Function) return false;
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype === Object.prototype || prototype === null) return true;
+
+      // Bun may expose imported namespaces through a module wrapper prototype.
+      // Accept that exact shape without accepting arbitrary class instances.
+      if (Object.getPrototypeOf(prototype) !== null) return false;
+      const esModule = Object.getOwnPropertyDescriptor(prototype, "__esModule");
+      if (esModule === undefined) return false;
+      const tag = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+      return "value" in (tag ?? {}) && tag?.value === "Module";
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+function readHostModuleData(
+  value: PiHostModuleObservedValue,
+  key: string,
+): PiHostModuleObservedValue | undefined {
+  const record = HOST_MODULE_RECORD_SCHEMA.safeParse(value);
+  if (!record.success) return undefined;
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return undefined;
   }
-  if (!("name" in value) || !("version" in value)) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  if (typeof value.name !== "string" || value.name.length === 0) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  if (typeof value.version !== "string" || value.version.length === 0) {
-    return err({ reason: "host-package-mismatch" });
-  }
-  return ok({ name: value.name, version: value.version });
+  return descriptor.value.value;
 }
 
-function namespaceHasDefaultExport(namespace: unknown): boolean {
-  return (
-    typeof namespace === "object" &&
-    namespace !== null &&
-    "default" in namespace
-  );
+function parseHostPackageIdentity(
+  value: PiHostModuleObservedValue,
+): Result<HostPackageIdentity, HostPackageMismatch> {
+  const nameValue = readHostModuleData(value, "name");
+  const versionValue = readHostModuleData(value, "version");
+  const name = HOST_STRING_SCHEMA.min(1).safeParse(nameValue);
+  const version = HOST_STRING_SCHEMA.min(1).safeParse(versionValue);
+  if (!name.success || !version.success) {
+    return err({ reason: "host-package-mismatch" });
+  }
+  return ok({ name: name.data, version: version.data });
+}
+
+function namespaceHasDefaultExport(
+  namespace: PiHostModuleObservedValue,
+): boolean {
+  const record = HOST_MODULE_RECORD_SCHEMA.safeParse(namespace);
+  if (!record.success) return false;
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, "default"),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return false;
+  return "value" in descriptor.value && descriptor.value.enumerable === true;
+}
+
+function environmentFlagRequested(
+  options: ResolveHostModulesOptions | undefined,
+  name: string,
+): boolean {
+  const source = options?.env ?? Bun.env;
+  const value = readHostModuleData(source, name);
+  const parsed = HOST_STRING_SCHEMA.safeParse(value);
+  return parsed.success && parsed.data === "1";
 }
 
 function disableRedirectRequested(
   options: ResolveHostModulesOptions | undefined,
 ): boolean {
-  const source = options?.env ?? Bun.env;
-  return source[WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV] === "1";
+  return environmentFlagRequested(
+    options,
+    WEAVE_PI_DISABLE_HOST_MODULE_REDIRECT_ENV,
+  );
 }
 
 function hostModuleProofRequested(
   options: ResolveHostModulesOptions | undefined,
 ): boolean {
-  const source = options?.env ?? Bun.env;
-  return source[WEAVE_PI_HOST_MODULE_PROOF_ENV] === "1";
+  return environmentFlagRequested(options, WEAVE_PI_HOST_MODULE_PROOF_ENV);
 }
 
 function boundProofPath(value: string | undefined): string | undefined {
@@ -353,10 +456,16 @@ function boundProofPath(value: string | undefined): string | undefined {
   return value;
 }
 
+const PROOF_VERSION_SCHEMA = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[\x20-\x7e]*$/);
+
 function boundProofVersion(value: string | undefined): string | undefined {
-  if (value === undefined || value.length === 0) return undefined;
-  if (value.length <= 64) return value;
-  return value.slice(0, 64);
+  if (value === undefined) return undefined;
+  const parsed = PROOF_VERSION_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : void 0;
 }
 
 function writeProofLineToStderr(line: string): void {
@@ -367,7 +476,7 @@ function writeProofLineToStderr(line: string): void {
         void written;
       }
     },
-    () => undefined,
+    () => void 0,
   )();
 }
 
@@ -375,29 +484,39 @@ function writeProofLineToStderr(line: string): void {
  * Project the detailed proof record to the opt-in stderr JSON shape.
  * One line, valid JSON, bounded, with absolute paths only.
  */
+type RenderedHostModuleProofSpecifier = {
+  specifier: PiHostModuleSpecifier;
+  bareResolution?: string;
+  loadedFrom?: string;
+  redirected: boolean;
+};
+
+type RenderedHostModuleProofBody = {
+  hostRoot?: string;
+  hostVersion?: string;
+  specifiers: RenderedHostModuleProofSpecifier[];
+};
+
 export function renderHostModuleProofLine(
   outcome: PiHostModuleOutcome,
 ): string {
-  const proof: PiHostModuleProofLine = {
-    weaveHostModuleProof: {
-      ...(boundProofPath(outcome.proofRecord.hostRoot) === undefined
-        ? {}
-        : { hostRoot: boundProofPath(outcome.proofRecord.hostRoot) }),
-      ...(boundProofVersion(outcome.proofRecord.hostVersion) === undefined
-        ? {}
-        : { hostVersion: boundProofVersion(outcome.proofRecord.hostVersion) }),
-      specifiers: outcome.proofRecord.specifiers.map((entry) => ({
-        specifier: entry.specifier,
-        ...(boundProofPath(entry.bareResolution) === undefined
-          ? {}
-          : { bareResolution: boundProofPath(entry.bareResolution) }),
-        ...(boundProofPath(entry.loadedFrom) === undefined
-          ? {}
-          : { loadedFrom: boundProofPath(entry.loadedFrom) }),
-        redirected: entry.redirected,
-      })),
-    },
-  };
+  const body: RenderedHostModuleProofBody = { specifiers: [] };
+  const hostRoot = boundProofPath(outcome.proofRecord.hostRoot);
+  const hostVersion = boundProofVersion(outcome.proofRecord.hostVersion);
+  if (hostRoot !== undefined) body.hostRoot = hostRoot;
+  if (hostVersion !== undefined) body.hostVersion = hostVersion;
+  for (const entry of outcome.proofRecord.specifiers) {
+    const projected: RenderedHostModuleProofSpecifier = {
+      specifier: entry.specifier,
+      redirected: entry.redirected,
+    };
+    const bareResolution = boundProofPath(entry.bareResolution);
+    const loadedFrom = boundProofPath(entry.loadedFrom);
+    if (bareResolution !== undefined) projected.bareResolution = bareResolution;
+    if (loadedFrom !== undefined) projected.loadedFrom = loadedFrom;
+    body.specifiers.push(projected);
+  }
+  const proof: PiHostModuleProofLine = { weaveHostModuleProof: body };
   const json = JSON.stringify(proof);
   if (
     json.length <= MAX_HOST_MODULE_PROOF_LINE_LENGTH &&
@@ -405,14 +524,9 @@ export function renderHostModuleProofLine(
   ) {
     return json;
   }
-  return JSON.stringify({
-    weaveHostModuleProof: {
-      ...(boundProofVersion(outcome.proofRecord.hostVersion) === undefined
-        ? {}
-        : { hostVersion: boundProofVersion(outcome.proofRecord.hostVersion) }),
-      specifiers: [],
-    },
-  });
+  const fallbackBody: RenderedHostModuleProofBody = { specifiers: [] };
+  if (hostVersion !== undefined) fallbackBody.hostVersion = hostVersion;
+  return JSON.stringify({ weaveHostModuleProof: fallbackBody });
 }
 
 /**
@@ -442,8 +556,11 @@ function optionalEnvString(
   call: () => ResultAsync<string, PiHostModuleEnvironmentError>,
 ): ResultAsync<string | undefined, never> {
   return callEnv(call)
-    .map((value): string | undefined => value)
-    .orElse(() => okAsync(undefined));
+    .map((value): string | undefined => {
+      const parsed = HOST_STRING_SCHEMA.safeParse(value);
+      return parsed.success ? parsed.data : void 0;
+    })
+    .orElse(() => okAsync(void 0));
 }
 
 function liftResult<T, E>(result: Result<T, E>): ResultAsync<T, E> {
@@ -465,17 +582,14 @@ async function gatherSpecifierFacts(
   readonly specifiers: PiHostModuleRedirectInput["specifiers"];
   readonly localResolutions: PiHostLocalResolutions;
 }> {
-  const localResolutions = { ...emptyLocalResolutions() };
-  const specifiers = {
+  const localResolutions: MutableHostLocalResolutions = {
+    ...emptyLocalResolutions(),
+  };
+  const specifiers: MutableHostSpecifiers = {
     "@earendil-works/pi-coding-agent": {},
     "@earendil-works/pi-ai": {},
     "@earendil-works/pi-tui": {},
     [CODEX_PROVIDER_SUBPATH_SPECIFIER]: {},
-  } as {
-    [K in PiHostModuleSpecifier]: {
-      localEntryPath?: string;
-      hostEntryPath?: string;
-    };
   };
 
   for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
@@ -489,10 +603,10 @@ async function gatherSpecifierFacts(
     const hostEntryPath = hostEntry.isOk() ? hostEntry.value : undefined;
     const localEntryPath = localEntry.isOk() ? localEntry.value : undefined;
     localResolutions[specifier] = localEntryPath;
-    specifiers[specifier] = {
-      ...(localEntryPath === undefined ? {} : { localEntryPath }),
-      ...(hostEntryPath === undefined ? {} : { hostEntryPath }),
-    };
+    const facts: MutableHostSpecifierFacts = {};
+    if (localEntryPath !== undefined) facts.localEntryPath = localEntryPath;
+    if (hostEntryPath !== undefined) facts.hostEntryPath = hostEntryPath;
+    specifiers[specifier] = facts;
   }
 
   return { specifiers, localResolutions };
@@ -514,32 +628,35 @@ function proofFromAppliedPlan(input: {
     ? input.planned.value.proof
     : undefined;
 
+  const specifiers: PiHostModuleProofSpecifier[] = [];
+  for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
+    const plannedEntry = plannedProof?.specifiers.find(
+      (entry) => entry.specifier === specifier,
+    );
+    const skipped = skipBySpecifier.get(specifier);
+    const local = input.localResolutions[specifier];
+    const hostEntryPath = plannedEntry?.hostEntryPath;
+    const redirected = redirectedSet.has(specifier);
+    const entry: MutableHostModuleProofSpecifier = {
+      specifier,
+      hostSpecifier: hostEntrySpecifierFor(specifier),
+      redirected,
+    };
+    if (plannedEntry?.localEntryPath !== undefined) {
+      entry.localEntryPath = plannedEntry.localEntryPath;
+    }
+    if (hostEntryPath !== undefined) entry.hostEntryPath = hostEntryPath;
+    if (skipped !== undefined) entry.skipReason = skipped.reason;
+    if (local !== undefined) entry.bareResolution = local;
+    if (redirected && hostEntryPath !== undefined) {
+      entry.loadedFrom = hostEntryPath;
+    }
+    specifiers.push(entry);
+  }
   return {
     hostRoot: input.hostRoot,
     hostVersion: input.hostVersion,
-    specifiers: PI_HOST_MODULE_SPECIFIERS.map((specifier) => {
-      const plannedEntry = plannedProof?.specifiers.find(
-        (entry) => entry.specifier === specifier,
-      );
-      const skipped = skipBySpecifier.get(specifier);
-      const local = input.localResolutions[specifier];
-      const hostEntryPath = plannedEntry?.hostEntryPath;
-      const redirected = redirectedSet.has(specifier);
-      return {
-        specifier,
-        hostSpecifier: hostEntrySpecifierFor(specifier),
-        ...(plannedEntry?.localEntryPath === undefined
-          ? {}
-          : { localEntryPath: plannedEntry.localEntryPath }),
-        ...(hostEntryPath === undefined ? {} : { hostEntryPath }),
-        redirected,
-        ...(skipped === undefined ? {} : { skipReason: skipped.reason }),
-        ...(local === undefined ? {} : { bareResolution: local }),
-        ...(redirected && hostEntryPath !== undefined
-          ? { loadedFrom: hostEntryPath }
-          : {}),
-      };
-    }),
+    specifiers,
   };
 }
 
@@ -701,13 +818,10 @@ export class BunPiHostModuleEnvironment implements PiHostModuleEnvironmentPort {
     return liftResult(
       Result.fromThrowable(
         (): string => {
-          if (typeof Bun.main === "string" && Bun.main.length > 0) {
-            return Bun.main;
-          }
-          const argvPath = process.argv[1];
-          if (typeof argvPath === "string" && argvPath.length > 0) {
-            return argvPath;
-          }
+          const mainPath = z.string().min(1).safeParse(Bun.main);
+          if (mainPath.success) return mainPath.data;
+          const argvPath = z.string().min(1).safeParse(process.argv[1]);
+          if (argvPath.success) return argvPath.data;
           throw new Error("missing-main-module");
         },
         (): PiHostModuleEnvironmentError => ({ type: "MainModuleUnavailable" }),
@@ -717,7 +831,7 @@ export class BunPiHostModuleEnvironment implements PiHostModuleEnvironmentPort {
 
   readJsonFile(
     path: string,
-  ): ResultAsync<unknown, PiHostModuleEnvironmentError> {
+  ): ResultAsync<PiHostModuleObservedValue, PiHostModuleEnvironmentError> {
     return ResultAsync.fromThrowable(
       () => Bun.file(path).json(),
       (): PiHostModuleEnvironmentError => ({ type: "JsonReadFailed", path }),
@@ -785,7 +899,7 @@ export class BunPiHostModuleEnvironment implements PiHostModuleEnvironmentPort {
 
   importAbsolute(
     path: string,
-  ): ResultAsync<unknown, PiHostModuleEnvironmentError> {
+  ): ResultAsync<PiHostModuleObservedValue, PiHostModuleEnvironmentError> {
     return ResultAsync.fromThrowable(
       () => import(path),
       (): PiHostModuleEnvironmentError => ({ type: "ImportFailed", path }),
@@ -808,11 +922,14 @@ let recordedExtensionEntryPath: string | undefined;
  * The value is a filesystem path, so it must never reach health output or a
  * log line.
  */
-export function recordPiExtensionEntryPath(path: unknown): void {
+export function recordPiExtensionEntryPath(
+  path: z.input<typeof HOST_BOUNDARY_INPUT_SCHEMA>,
+): void {
   if (recordedExtensionEntryPath !== undefined) return;
-  if (typeof path !== "string") return;
-  if (!isSafeAbsoluteHostPath(path)) return;
-  recordedExtensionEntryPath = path;
+  const parsed = z.string().safeParse(path);
+  if (!parsed.success) return;
+  if (!isSafeAbsoluteHostPath(parsed.data)) return;
+  recordedExtensionEntryPath = parsed.data;
 }
 
 /** The loader entry path recorded by the extension entry, if any. */

@@ -43,7 +43,7 @@ describe("observeSession", () => {
     if (!result.isOk()) return;
 
     const { snapshotId } = result.value;
-    expect(typeof snapshotId).toBe("string");
+    expect(snapshotId).toBeDefined();
     expect(snapshotId.length).toBeGreaterThan(0);
 
     const fetchResult = await store.snapshots.getById(snapshotId);
@@ -66,10 +66,7 @@ describe("observeSession", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { password: "hunter2" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { password: "hunter2" },
       },
       store,
     );
@@ -83,7 +80,7 @@ describe("observeSession", () => {
     const store = createInMemoryRuntimeStore();
     const result = await observeSession(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         harnessName: "opencode",
         agentName: "loom",
@@ -140,7 +137,7 @@ describe("startExecution", () => {
     if (!result.isOk()) return;
 
     const { leaseId: acquiredLeaseId, effects } = result.value;
-    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId).toBeDefined();
     expect(effects).toHaveLength(0);
 
     const leaseResult = await store.leases.getById(acquiredLeaseId);
@@ -255,7 +252,7 @@ describe("resumeExecution", () => {
     if (!result.isOk()) return;
 
     const { leaseId: newLeaseId, effects } = result.value;
-    expect(typeof newLeaseId).toBe("string");
+    expect(newLeaseId).toBeDefined();
     expect(effects).toHaveLength(0);
 
     const instanceResult = await store.instances.getById(instanceId);
@@ -278,7 +275,7 @@ describe("resumeExecution", () => {
 
     const firstLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "session-foreign-owner" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("session-foreign-owner"),
       ttlMs: 3_600_000,
     });
     expect(firstLeaseResult.isOk()).toBe(true);
@@ -357,7 +354,7 @@ describe("resumeExecution > recoveryTakeover", () => {
 
     const oldLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "controller-gen-old" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("controller-gen-old"),
       ttlMs: 3_600_000,
     });
     if (!oldLeaseResult.isOk()) throw new Error("failed to acquire old lease");
@@ -543,7 +540,7 @@ describe("resumeExecution > recoveryTakeover", () => {
     // (e.g. it already expired) — takeover should not be required to resume.
     await store.leases.release(
       oldLease.id,
-      "controller-gen-old" as ReturnType<typeof createOwnerId>,
+      createOwnerId("controller-gen-old"),
     );
 
     const result = await resumeExecution(

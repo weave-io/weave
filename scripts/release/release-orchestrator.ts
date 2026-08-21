@@ -26,7 +26,11 @@ import {
   type MetadataReplayError,
   type ReplayPlan,
 } from "./metadata-replay.js";
-import type { MetadataReplayRecord, StableTrainRecord } from "./model.js";
+import type {
+  ArtifactManifest,
+  MetadataReplayRecord,
+  StableTrainRecord,
+} from "./model.js";
 import {
   DigestSchema,
   FullShaSchema,
@@ -51,6 +55,7 @@ import type {
   StableCutPlan,
   StableFixInput,
   StableFixPlan,
+  StableTrainError,
 } from "./stable-train.js";
 import {
   guardTrainExpiry,
@@ -60,10 +65,10 @@ import {
 } from "./stable-train.js";
 import { TarInspector } from "./tar-inspector.js";
 
-const STABLE_PROMOTION_PACKAGES = [
-  "@weaveio/weave-cli",
-  "@weaveio/weave-adapter-opencode",
-] as const;
+type PromotionAuthorizationInput = Parameters<
+  typeof PromotionAuthorizationSchema.safeParse
+>[0];
+
 const IMMUTABLE_POLL_ATTEMPTS = 5;
 const IMMUTABLE_POLL_DELAY_MS = 1_000;
 interface ExpectedReleaseAsset {
@@ -210,14 +215,14 @@ export class ReleaseOrchestrator {
   /** Pure cut planning; the release-refs job alone performs the corresponding ref mutation. */
   planStableCut(
     input: StableCutInput,
-  ): ResultAsync<StableCutPlan, import("./stable-train.js").StableTrainError> {
+  ): ResultAsync<StableCutPlan, StableTrainError> {
     const plan = planStableCut(input);
     return plan.isOk() ? okAsync(plan.value) : errAsync(plan.error);
   }
   /** Pure fix planning; callers must execute only the listed CAS cherry-pick result. */
   planStableFix(
     input: StableFixInput,
-  ): ResultAsync<StableFixPlan, import("./stable-train.js").StableTrainError> {
+  ): ResultAsync<StableFixPlan, StableTrainError> {
     const plan = planStableFix(input);
     return plan.isOk() ? okAsync(plan.value) : errAsync(plan.error);
   }
@@ -297,7 +302,7 @@ export class ReleaseOrchestrator {
 
   /** Read-only final gate; Task 19 may attach App tag/release actions after this proof. */
   stableFinalize(
-    authorization: unknown,
+    authorization: PromotionAuthorizationInput,
     stableTrain?: StableTrainRecord,
   ): ResultAsync<StableFinalizeResult, ReleaseError> {
     return this.validatePromotionAuthorization(authorization).andThen(
@@ -381,7 +386,7 @@ export class ReleaseOrchestrator {
 
   /** Verifies a human-executed rollback is back at both recorded prior versions. */
   verifyPromotionRollback(
-    authorization: unknown,
+    authorization: PromotionAuthorizationInput,
     priorLatestVersions: Readonly<Record<string, string>>,
   ): ResultAsync<{ state: "rolled-back" }, ReleaseError> {
     return this.validatePromotionAuthorization(authorization).andThen(
@@ -397,7 +402,7 @@ export class ReleaseOrchestrator {
               chain.andThen(() =>
                 this.npm.distTagLs(packageName).andThen((tags) => {
                   if (tags.latest === prior.value[packageName])
-                    return okAsync(undefined);
+                    return okAsync();
                   return errAsync({
                     type: "RollbackVerificationFailed" as const,
                     packageName,
@@ -406,7 +411,7 @@ export class ReleaseOrchestrator {
                   });
                 }),
               ),
-            okAsync(undefined),
+            okAsync(),
           )
           .map(() => ({ state: "rolled-back" as const }));
       },
@@ -498,7 +503,7 @@ export class ReleaseOrchestrator {
               });
             });
           }),
-        okAsync(undefined),
+        okAsync(),
       )
       .andThen(() => {
         if (!stablePublication) return okAsync({ state: "published" as const });
@@ -587,7 +592,7 @@ export class ReleaseOrchestrator {
   private releasePackage(
     packageName: string,
     authorization: PromotionAuthorization,
-    manifest: import("./model.js").ArtifactManifest,
+    manifest: ArtifactManifest,
     request: StableReleaseRefsRequest,
     attempts: number,
   ): ResultAsync<"released" | "already-immutable", ReleaseError> {
@@ -682,7 +687,7 @@ export class ReleaseOrchestrator {
   private expectedAssets(
     packageName: string,
     version: string,
-    manifest: import("./model.js").ArtifactManifest,
+    manifest: ArtifactManifest,
     directory: string,
   ): ResultAsync<readonly ExpectedReleaseAsset[], ReleaseError> {
     const filename = packageArtifactFilename(packageName, version);
@@ -764,12 +769,12 @@ export class ReleaseOrchestrator {
             if (current === undefined)
               return github
                 .uploadReleaseAsset(release.id, expected.name, expected.bytes)
-                .map(() => undefined);
+                .andThen(() => okAsync());
             if (
               current.size === expected.size &&
               current.digest === expected.digest
             )
-              return okAsync(undefined);
+              return okAsync();
             // Strict policy: delete and replace only while the release remains a draft.
             return github
               .deleteReleaseAsset(release.id, current.id)
@@ -780,9 +785,9 @@ export class ReleaseOrchestrator {
                   expected.bytes,
                 ),
               )
-              .map(() => undefined);
+              .andThen(() => okAsync());
           }),
-        okAsync<void, ReleaseError>(undefined),
+        okAsync(),
       )
       .andThen(() => github.getRelease(tag))
       .andThen((draft) =>
@@ -879,7 +884,7 @@ export class ReleaseOrchestrator {
           reason: `asset ${expected.name} differs`,
         });
     }
-    return okAsync(undefined);
+    return okAsync();
   }
 
   private releaseTag(packageName: string, version: string): string {
@@ -887,7 +892,7 @@ export class ReleaseOrchestrator {
   }
 
   private validatePromotionAuthorization(
-    authorization: unknown,
+    authorization: PromotionAuthorizationInput,
   ): ResultAsync<PromotionAuthorization, ReleaseError> {
     const parsed = PromotionAuthorizationSchema.safeParse(authorization);
     if (parsed.success) return okAsync(parsed.data);
@@ -969,7 +974,7 @@ export class ReleaseOrchestrator {
         type: "StableTrainStateInvalid",
         reason: "train lacks bound artifact identity",
       });
-    return ok(undefined);
+    return ok();
   }
 
   private validatePriorLatest(
@@ -1018,9 +1023,9 @@ export class ReleaseOrchestrator {
                 }));
             }),
           ),
-        okAsync(undefined),
+        okAsync(),
       )
-      .andThen(() => okAsync(undefined))
+      .andThen(() => okAsync())
       .orElse((error) => {
         if (error.type !== "PromotionRegistryMismatch" || tag !== "latest")
           return errAsync(error);

@@ -9,17 +9,20 @@ import type {
  * association. Adapters receive only the RuntimeStore repositories and cannot
  * mutate durable permission records through the store object.
  */
+/** Opaque object identity used to associate engine-private repositories. */
+type PermissionRepositoryOwner = object;
+
 const repositories = new WeakMap<object, PermissionApprovalRepository>();
 
-export function registerPermissionApprovalRepository(
-  store: object,
+export function registerPermissionApprovalRepository<T extends PermissionRepositoryOwner>(
+  store: T,
   repository: PermissionApprovalRepository,
 ): void {
   repositories.set(store, repository);
 }
 
-export function getPermissionApprovalRepository(
-  store: object,
+export function getPermissionApprovalRepository<T extends PermissionRepositoryOwner>(
+  store: T,
 ): Result<PermissionApprovalRepository, PermissionError> {
   const repository = repositories.get(store);
   if (repository === undefined)

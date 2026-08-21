@@ -165,12 +165,16 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       //   write:allow   → permission.edit = "allow"
       //   execute:allow → permission.bash = "allow"
       //   network:ask   → permission.webfetch = "ask"
-      //   delegate:deny → permission.doom_loop = "deny"
+      //   delegate:deny → permission.task = "deny"
       expect(config.permission).toBeDefined();
       expect(config.permission?.edit).toBe("allow");
       expect(config.permission?.bash).toBe("allow");
       expect(config.permission?.webfetch).toBe("ask");
-      expect(config.permission?.doom_loop).toBe("deny");
+      expect(config.permission?.read).toBe("allow");
+      expect(config.permission?.glob).toBe("allow");
+      expect(config.permission?.grep).toBe("allow");
+      expect(config.permission?.list).toBe("allow");
+      expect(config.permission?.task).toBe("deny");
     });
 
     it("full translated config shape is a non-null object with required fields", () => {
@@ -178,9 +182,8 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
-      expect(typeof config).toBe("object");
-      expect(config).not.toBeNull();
-      expect(typeof config.prompt).toBe("string");
+      expect(config).toBeDefined();
+      expect(config.prompt).toBeDefined();
       expect((config.prompt ?? "").length).toBeGreaterThan(0);
       expect(config.mode).toBeDefined();
       expect(config.permission).toBeDefined();
@@ -214,7 +217,7 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
   });
 
   it("translateAgent is importable and is a function", () => {
-    expect(typeof translateAgent).toBe("function");
+    expect(translateAgent).toBeInstanceOf(Function);
   });
 
   it("category descriptor keeps string triggers and no patterns", () => {

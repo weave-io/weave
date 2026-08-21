@@ -86,7 +86,7 @@
  */
 
 import { basename, join } from "node:path";
-import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import { DashboardIndexWriter } from "./dashboard-indexes.js";
 import { assemblePublicReportBundle } from "./report-bundle.js";
 import { renderPublicReportBundle } from "./report-markdown.js";
@@ -636,10 +636,7 @@ export function assembleBundle(options: {
   };
 
   // Validate the assembled bundle passes publish-safety checks
-  const bundleCheck = assertPublishSafe(
-    bundle as unknown as Record<string, unknown>,
-    "EvalBundle",
-  );
+  const bundleCheck = assertPublishSafe(bundle, "EvalBundle");
   if (bundleCheck.isErr()) {
     return err({
       type: "BundleSanitizationError",
@@ -798,7 +795,7 @@ export class ArtifactBundleWriter {
               token.trim(),
             );
           })()
-        : ResultAsync.fromSafePromise(Promise.resolve([] as string[]));
+        : ResultAsync.fromSafePromise<string[], never>(Promise.resolve([]));
 
     return remoteRunIdsAsync.andThen((remoteRunIds) =>
       ResultAsync.fromPromise(
@@ -835,10 +832,10 @@ export class ArtifactBundleWriter {
                   .rebuildFromRuns()
                   .then(
                     (r) => (r.isOk() ? r.value.filesWritten : []),
-                    () => [] as string[],
+                    () => [],
                   ),
               ).then((v) => v)
-            : Promise.resolve([] as string[]);
+            : Promise.resolve<string[]>([]);
 
           return ResultAsync.fromSafePromise(indexPromise).andThen(
             (indexFilesWritten) => {
@@ -925,8 +922,8 @@ export class ArtifactBundleWriter {
     const publicFilesWritten: string[] = [];
 
     // Helper: serialize, safety-check, and write a single JSON file
-    const writeJson = (
-      obj: unknown,
+    const writeJson = <T extends object>(
+      obj: T,
       fileName: string,
       contextLabel: string,
     ): ResultAsync<string, BundleError> => {
@@ -1001,20 +998,16 @@ export class ArtifactBundleWriter {
                 `score-${scoreFile.suite}`,
               ).andThen((p) => {
                 filesWritten.push(p);
-                return ResultAsync.fromSafePromise<void, BundleError>(
-                  Promise.resolve(),
-                );
+                return okAsync<null, BundleError>(null);
               });
             }),
-          ResultAsync.fromSafePromise<void, BundleError>(Promise.resolve()),
+          okAsync<null, BundleError>(null),
         );
       })
       .andThen(() => {
         // Write prompt-hashes.json
         if (bundle.promptHashRecords.length === 0) {
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         }
         return writeJson(
           { promptHashes: bundle.promptHashRecords },
@@ -1022,17 +1015,13 @@ export class ArtifactBundleWriter {
           "prompt-hashes",
         ).andThen((p) => {
           filesWritten.push(p);
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         });
       })
       .andThen(() => {
         // Write provenance-manifest.json when available
         if (provenanceManifest === null) {
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         }
         // Sanitize the manifest before writing
         const sanitized = sanitizeProvenanceManifest(provenanceManifest);
@@ -1042,9 +1031,7 @@ export class ArtifactBundleWriter {
           "provenance-manifest",
         ).andThen((p) => {
           filesWritten.push(p);
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         });
       })
       .andThen(() => {
@@ -1054,9 +1041,7 @@ export class ArtifactBundleWriter {
         const reportResult = assemblePublicReportBundle(bundle, runId);
         if (reportResult.isErr()) {
           // Non-fatal: log-level omission, not a hard error
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         }
         const publicReport = reportResult.value;
 
@@ -1071,18 +1056,14 @@ export class ArtifactBundleWriter {
 
           // Optionally write public-report.md
           if (!writeMarkdown) {
-            return ResultAsync.fromSafePromise<void, BundleError>(
-              Promise.resolve(),
-            );
+            return okAsync<null, BundleError>(null);
           }
           const markdown = renderPublicReportBundle(publicReport);
           return writeText(markdown, "public-report.md").andThen((mdPath) => {
             filesWritten.push(mdPath);
             // Track public-report.md as a public file
             publicFilesWritten.push("public-report.md");
-            return ResultAsync.fromSafePromise<void, BundleError>(
-              Promise.resolve(),
-            );
+            return okAsync<null, BundleError>(null);
           });
         });
       })
@@ -1121,9 +1102,7 @@ export class ArtifactBundleWriter {
           "bundle-index",
         ).andThen((indexPath) => {
           filesWritten.push(indexPath);
-          return ResultAsync.fromSafePromise<void, BundleError>(
-            Promise.resolve(),
-          );
+          return okAsync<null, BundleError>(null);
         });
       })
       .map(
@@ -1156,7 +1135,7 @@ export class ArtifactBundleWriter {
  */
 export function assertBundlePublishEligible(
   bundle: EvalBundle,
-): Result<undefined, BundleError> {
+): Result<null, BundleError> {
   if (bundle.dryRun) {
     return err({
       type: "PublishPolicyViolation",
@@ -1174,5 +1153,5 @@ export function assertBundlePublishEligible(
     });
   }
 
-  return ok(undefined);
+  return ok(null);
 }

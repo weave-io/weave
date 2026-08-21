@@ -1,4 +1,5 @@
 import { Result } from "neverthrow";
+import { z } from "zod";
 import type { CodexFastSnapshot } from "./codex-fast/attempt.js";
 import type { CodexFastAllowlistRuleId } from "./codex-fast/routing.js";
 import { CODEX_FAST_MODEL_ALLOWLIST } from "./codex-fast/routing.js";
@@ -142,13 +143,10 @@ export const PROVIDER_FAST_RULE_IDS: readonly ProviderFastRuleId[] =
   ]);
 
 /** Accept an allowlist rule id only in its exact frozen shape. */
-export function isProviderFastRuleId(
-  value: unknown,
-): value is ProviderFastRuleId {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_RULE_IDS.includes(value as ProviderFastRuleId)
-  );
+export function isProviderFastRuleId<TValue>(
+  value: TValue,
+): value is TValue & ProviderFastRuleId {
+  return PROVIDER_FAST_RULE_IDS.some((candidate) => candidate === value);
 }
 
 /**
@@ -194,6 +192,10 @@ export const PROVIDER_FAST_DEGRADED_SNAPSHOT: ProviderFastPublicSnapshot =
     reason: "wrapper-degraded",
   });
 
+const PROVIDER_FAST_RULE_ID_SCHEMA = z.custom<ProviderFastRuleId>(
+  (value): boolean => isProviderFastRuleId(value),
+);
+
 /** Attempt states that may exist only for a matched allowlist entry. */
 const RULE_BOUND_STATES: readonly ProviderFastState[] = Object.freeze([
   "requested",
@@ -201,39 +203,19 @@ const RULE_BOUND_STATES: readonly ProviderFastState[] = Object.freeze([
   "not-confirmed",
 ] as const);
 
-function isProviderFastState(value: unknown): value is ProviderFastState {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_STATES.includes(value as ProviderFastState)
-  );
-}
-
-function isProviderFastReason(value: unknown): value is ProviderFastReason {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_REASONS.includes(value as ProviderFastReason)
-  );
-}
-
-function isProviderFastEvidenceKind(
-  value: unknown,
-): value is ProviderFastEvidenceKind {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_EVIDENCE_KINDS.includes(value as ProviderFastEvidenceKind)
-  );
-}
-
-function isProviderFastEvidenceOutcome(
-  value: unknown,
-): value is ProviderFastEvidenceOutcome {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_EVIDENCE_OUTCOMES.includes(
-      value as ProviderFastEvidenceOutcome,
-    )
-  );
-}
+const PROVIDER_FAST_STATE_SCHEMA = z.enum(PROVIDER_FAST_STATES);
+const PROVIDER_FAST_REASON_SCHEMA = z.enum(PROVIDER_FAST_REASONS);
+const PROVIDER_FAST_EVIDENCE_KIND_SCHEMA = z.enum(PROVIDER_FAST_EVIDENCE_KINDS);
+const PROVIDER_FAST_EVIDENCE_OUTCOME_SCHEMA = z.enum(
+  PROVIDER_FAST_EVIDENCE_OUTCOMES,
+);
+const PROVIDER_FAST_SNAPSHOT_SCHEMA = z.object({
+  state: PROVIDER_FAST_STATE_SCHEMA,
+  evidenceKind: PROVIDER_FAST_EVIDENCE_KIND_SCHEMA,
+  evidenceOutcome: PROVIDER_FAST_EVIDENCE_OUTCOME_SCHEMA,
+  reason: PROVIDER_FAST_REASON_SCHEMA,
+  ruleId: PROVIDER_FAST_RULE_ID_SCHEMA.or(z.literal("none")).optional(),
+});
 
 /**
  * Project one correlated Codex attempt state into the public vocabulary.
@@ -259,23 +241,13 @@ function isProviderFastEvidenceOutcome(
  */
 const projectCodexSnapshot = Result.fromThrowable(
   (snapshot: CodexFastSnapshot): ProviderFastPublicSnapshot => {
-    const state = snapshot.state;
-    const reason = snapshot.reason;
-    const evidenceKind = snapshot.evidenceKind;
-    const evidenceOutcome = snapshot.evidenceOutcome;
-    const ruleId = snapshot.ruleId;
-    if (
-      !isProviderFastState(state) ||
-      !isProviderFastReason(reason) ||
-      !isProviderFastEvidenceKind(evidenceKind) ||
-      !isProviderFastEvidenceOutcome(evidenceOutcome)
-    ) {
+    const parsed = PROVIDER_FAST_SNAPSHOT_SCHEMA.safeParse(snapshot);
+    if (!parsed.success) {
       return PROVIDER_FAST_DEGRADED_SNAPSHOT;
     }
-    const matched = isProviderFastRuleId(ruleId);
-    if (!matched && ruleId !== "none") {
-      return PROVIDER_FAST_DEGRADED_SNAPSHOT;
-    }
+    const { state, reason, evidenceKind, evidenceOutcome, ruleId } =
+      parsed.data;
+    const matched = ruleId !== undefined && ruleId !== "none";
     if (!matched && RULE_BOUND_STATES.includes(state)) {
       return PROVIDER_FAST_DEGRADED_SNAPSHOT;
     }
@@ -331,19 +303,31 @@ const UNSUPPORTED: ProviderFastClassification = Object.freeze({
  * Read exact own `fast: true`. Only an own data property counts, so an
  * inherited field or an accessor never declares intent and never runs.
  */
-const readOwnFastIntent = Result.fromThrowable(
-  (intent: unknown): boolean => {
-    if (typeof intent !== "object" || intent === null) {
-      return false;
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(intent, "fast");
-    if (descriptor === undefined || !("value" in descriptor)) {
-      return false;
-    }
-    return descriptor.value === true;
-  },
-  () => false,
-);
+interface FastIntentObject {
+  readonly fast?: true;
+}
+
+const FAST_INTENT_OBJECT_SCHEMA = z.custom<FastIntentObject>((value) => {
+  const tag = Object.prototype.toString.call(value);
+  return tag === "[object Object]" || tag === "[object Function]";
+});
+
+function readOwnFastIntent<TIntent>(intent: TIntent): boolean {
+  return Result.fromThrowable(
+    () => {
+      const parsed = FAST_INTENT_OBJECT_SCHEMA.safeParse(intent);
+      if (!parsed.success) {
+        return false;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(parsed.data, "fast");
+      if (descriptor === undefined || !("value" in descriptor)) {
+        return false;
+      }
+      return descriptor.value === true;
+    },
+    () => false,
+  )().unwrapOr(false);
+}
 
 /**
  * Classify one owner's neutral fast intent through the hook seam.
@@ -358,10 +342,10 @@ const readOwnFastIntent = Result.fromThrowable(
  * An eligible Codex attempt reports through `projectCodexFastSnapshot`
  * instead; the wrapped provider owns that path end to end.
  */
-export function classifyProviderFastIntent(
-  intent: unknown,
+export function classifyProviderFastIntent<TIntent>(
+  intent: TIntent,
 ): ProviderFastClassification {
-  return readOwnFastIntent(intent).unwrapOr(false) ? UNSUPPORTED : NO_INTENT;
+  return readOwnFastIntent(intent) ? UNSUPPORTED : NO_INTENT;
 }
 
 /**

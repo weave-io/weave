@@ -110,7 +110,7 @@ function memorySource(bodyLines: readonly string[]): {
   const located = all.map((line, index) => ({
     offset: offsets[index] ?? 0,
     endOffset: (offsets[index] ?? 0) + textEncoder.encode(line).byteLength,
-    entry: JSON.parse(line) as unknown,
+    entry: JSON.parse(line),
   }));
 
   const page = (

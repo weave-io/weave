@@ -203,7 +203,7 @@ export class MockEffectProjector {
     effect: DispatchAgentEffect,
   ): ResultAsync<void, WorkflowRunnerError> => {
     this.calls.push(effect);
-    return okAsync(undefined);
+    return okAsync();
   };
 }
 
@@ -235,7 +235,7 @@ export class MockSecondAdapter {
     effect: DispatchAgentEffect,
   ): ResultAsync<void, WorkflowRunnerError> => {
     this.projectedEffects.push(effect);
-    return okAsync(undefined);
+    return okAsync();
   };
 
   /**
@@ -261,7 +261,7 @@ export class MockSecondAdapter {
  * Used for tests that need a successful `runWorkflowLifecycle` call without
  * plan-oriented completion methods.
  */
-export const SIMPLE_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const SIMPLE_WORKFLOWS = {
   "simple-execution": {
     description: "Simple execution workflow for testing",
     version: 1,
@@ -276,14 +276,14 @@ export const SIMPLE_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Multi-step workflow registry with two sequential `agent_signal` steps.
  *
  * Used for tests that need to verify multi-step execution and effect ordering.
  */
-export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const MULTI_STEP_WORKFLOWS = {
   "multi-step-execution": {
     description: "Multi-step execution workflow for testing",
     version: 1,
@@ -306,7 +306,7 @@ export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Gate workflow with a `review_verdict` step for completion signal tests.
@@ -316,7 +316,7 @@ export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
  *
  * Used to test `advanceStep` with `review_verdict` approved/rejected signals.
  */
-export const GATE_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const GATE_WORKFLOWS = {
   "gate-execution": {
     description: "Gate workflow with review_verdict step for testing",
     version: 1,
@@ -340,14 +340,14 @@ export const GATE_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Plan workflow with `plan_created` and `plan_complete` completion methods.
  *
  * Used to test the degraded fallback when `planStateProvider` is absent.
  */
-export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const PLAN_COMPLETION_WORKFLOWS = {
   "plan-completion-execution": {
     description: "Plan completion workflow for testing",
     version: 1,
@@ -376,7 +376,7 @@ export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 // ---------------------------------------------------------------------------
 // § 7 — No-op projectEffect
@@ -389,7 +389,7 @@ export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
  */
 export const noopProjectEffect = (
   _effect: DispatchAgentEffect,
-): ResultAsync<void, WorkflowRunnerError> => okAsync(undefined);
+): ResultAsync<void, WorkflowRunnerError> => okAsync();
 
 // ---------------------------------------------------------------------------
 // § 8 — Capability contract fixture helpers

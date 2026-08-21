@@ -63,6 +63,14 @@ export type {
 export { parseModelIntentEntry } from "./model-thinking-syntax.js";
 export { parseConfig } from "./parse-config.js";
 export { parse } from "./parser.js";
+export type {
+  SafeGraphCopyBudget,
+  SafeGraphCopyError,
+  SafeGraphObject,
+  SafeGraphPrimitive,
+  SafeGraphValue,
+} from "./safe-graph-copy.js";
+export { copySafeGraph } from "./safe-graph-copy.js";
 // ---------------------------------------------------------------------------
 // Inferred config types
 // ---------------------------------------------------------------------------
@@ -96,7 +104,8 @@ export type {
   WorkflowStepType,
 } from "./schema.js";
 // ---------------------------------------------------------------------------
-// Schemas (Zod objects — useful for re-validation or extension)
+// Schemas (bounded Zod schemas — useful for re-validation or extension)
+// Object, array, and recursive schemas snapshot hostile input before validation.
 // ---------------------------------------------------------------------------
 export {
   AdapterSettingsSchema,
@@ -106,7 +115,6 @@ export {
   CategoryConfigSchema,
   CompletionMethodSchema,
   DEFAULT_DELEGATION_LIMITS,
-  MAX_DELEGATION_LIMITS,
   DEFAULT_RUNTIME_JOURNAL_SETTINGS,
   DEFAULT_RUNTIME_LOG_SETTINGS,
   DEFAULT_RUNTIME_SETTINGS,
@@ -116,6 +124,7 @@ export {
   ExtensionPointsSchema,
   JsonValueSchema,
   LogLevelSchema,
+  MAX_DELEGATION_LIMITS,
   OnRejectSchema,
   ReconciliationHandlerListSchema,
   ReconciliationHandlerSchema,

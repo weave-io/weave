@@ -12,6 +12,12 @@ export const MAX_CHILD_EVENT_STRING = 16_384;
 export const MAX_CHILD_EVENT_KEYS = 64;
 export const MAX_CHILD_EVENT_ITEMS = 128;
 
+export type PiChildEventJsonPrimitive = string | number | boolean | null;
+export type PiChildEventJsonValue =
+  | PiChildEventJsonPrimitive
+  | readonly PiChildEventJsonValue[]
+  | { readonly [key: string]: PiChildEventJsonValue };
+
 const boundedString = z.string().max(MAX_CHILD_EVENT_STRING);
 const boundedKey = z.string().max(256);
 const boundedJson: z.ZodType<unknown> = z.lazy(() =>

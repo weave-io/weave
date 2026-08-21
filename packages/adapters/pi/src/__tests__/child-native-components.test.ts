@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import {
+  createReadToolDefinition,
+  initTheme,
+  UserMessageComponent,
+} from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme, TUI } from "@earendil-works/pi-tui";
 import type { PiDelegationCardFacts } from "../child-card-model.js";
 import { CARD_MIN_WIDTH } from "../child-card-render.js";
@@ -111,6 +115,33 @@ describe("Pi native transcript components", () => {
     const output = component.render(80).join("\n");
     expect(output).toContain("read");
     expect(output).not.toContain("state:result");
+  });
+
+  it("keeps the host tool definition when rendering a known tool", () => {
+    const hostDefinition = {
+      ...createReadToolDefinition("/workspace"),
+      name: "custom_tool",
+      renderCall: () =>
+        new UserMessageComponent("host definition", plainTheme, 0),
+    };
+    const component = factory.create(
+      request({
+        kind: "tool",
+        factId: "entry:tool",
+        toolName: "custom_tool",
+        knownToolDefinition: hostDefinition,
+        payload: {
+          type: "tool",
+          toolName: "custom_tool",
+          toolCallId: "call-host",
+          state: "called",
+          knownTool: true,
+          argumentsKnown: false,
+          partialResults: [],
+        },
+      }),
+    );
+    expect(component.render(80).join("\n")).toContain("host definition");
   });
 
   it("keeps an unserializable tool result renderable", () => {
@@ -260,6 +291,17 @@ describe("Pi native transcript components", () => {
     expect(output).not.toContain("unknown event:");
     expect(output).not.toContain("assistant: [empty]");
     expect(output).not.toContain("status:");
+  });
+
+  it("never renders fallback content for a thinking fact", () => {
+    const thinking = request({
+      kind: "thinking",
+      content: "private chain of thought /secret/session.jsonl",
+    });
+    expect(factory.suppress?.(thinking)).toBe(true);
+    expect(factory.create(thinking).render(80).join("\n")).not.toContain(
+      "private chain of thought",
+    );
   });
 
   it("separates messages with a single blank row", () => {

@@ -53,6 +53,10 @@ function invalidPlanName(planName: string, reason: string): PlanStateError {
   return { type: "InvalidPlanName", planName, reason };
 }
 
+function missingPlan(planName: string): PlanStateError {
+  return { type: "PlanMissing", planName };
+}
+
 function isSafePlanName(planName: string): boolean {
   return SAFE_PLAN_NAME_RE.test(planName);
 }
@@ -431,21 +435,14 @@ function tryParseCanonical(
 function tryParseLegacy(
   lines: readonly ParsedLine[],
 ): NeverthrowResult<PlanTaskNode[], string> {
-  type StackItem = {
-    indent: number;
-    node: {
-      id: string;
-      title: string;
-      state: PlanTaskState;
-      lineIndex: number;
-      children: Array<{
-        id: string;
-        title: string;
-        state: PlanTaskState;
-        lineIndex: number;
-      }>;
-    };
+  type LegacyNode = {
+    id: string;
+    title: string;
+    state: PlanTaskState;
+    lineIndex: number;
+    children: LegacyNode[];
   };
+  type StackItem = { indent: number; node: LegacyNode };
 
   const roots: StackItem["node"][] = [];
   const stack: StackItem[] = [];
@@ -480,12 +477,7 @@ function tryParseLegacy(
         title,
         state,
         lineIndex: line.lineIndex,
-        children: [] as Array<{
-          id: string;
-          title: string;
-          state: PlanTaskState;
-          lineIndex: number;
-        }>,
+        children: [],
       };
       roots.push(node);
       stack.push({ indent, node });
@@ -502,6 +494,7 @@ function tryParseLegacy(
       title,
       state,
       lineIndex: line.lineIndex,
+      children: [],
     };
     parent.node.children.push(child);
     stack.push({
@@ -867,7 +860,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
     path: string,
     planName: string,
     allowMissing: boolean,
-  ): ResultAsync<undefined, PlanStateError> {
+  ): ResultAsync<null, PlanStateError> {
     return isSymlink(path)
       .mapErr(() => this.unavailable("failed to inspect plan path component"))
       .andThen((linked) => {
@@ -879,15 +872,15 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
           );
         }
         return fileStatus(path)
-          .map(() => undefined)
+          .map(() => null)
           .mapErr(() => {
-            if (allowMissing) return { type: "PlanMissing", planName } as const;
+            if (allowMissing) return missingPlan(planName);
             return this.unavailable("failed to inspect plan path component");
           });
       })
       .orElse((error) => {
         if (allowMissing && error.type === "PlanMissing") {
-          return okAsync(undefined);
+          return okAsync<null, PlanStateError>(null);
         }
         return errAsync(error);
       });
@@ -971,7 +964,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
     expectedIdentity: FileIdentity,
     expectedRevision: string,
     content: string,
-  ): ResultAsync<undefined, PlanStateError> {
+  ): ResultAsync<null, PlanStateError> {
     const plansDir = dirname(planPath);
     const tempPath = join(
       plansDir,
@@ -982,10 +975,10 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
       planName,
       reason: "atomic plan replacement failed",
     });
-    const cleanup = (): ResultAsync<undefined, never> =>
-      ResultAsync.fromPromise(Bun.file(tempPath).unlink(), () => undefined)
-        .map(() => undefined)
-        .orElse(() => okAsync(undefined));
+    const cleanup = (): ResultAsync<null, never> =>
+      ResultAsync.fromPromise(Bun.file(tempPath).unlink(), () => null)
+        .map(() => null)
+        .orElse(() => okAsync<null, never>(null));
 
     return ResultAsync.fromPromise(Bun.write(tempPath, content), writeError)
       .andThen(() =>
@@ -1027,7 +1020,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
               .mapErr(writeError)
               .andThen((output) => {
                 if (output.exitCode !== 0) return errAsync(writeError());
-                return okAsync(undefined);
+                return okAsync<null, PlanStateError>(null);
               });
           }),
       )

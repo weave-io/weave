@@ -23,6 +23,7 @@ import {
   REQUIRED_CAPABILITIES,
 } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 import {
   makeRequiredCapabilityUnavailableFailure,
   type PiAdapterFailure,
@@ -49,6 +50,28 @@ export interface PiRequiredCapabilityGap {
 
 const MAX_REASON_LENGTH = 120;
 const SAFE_REASON_PATTERN = /^[A-Za-z0-9:_,.\- ]+$/;
+const CAPABILITY_GAP_REASON_OBJECT_SCHEMA = z.custom<object>(
+  (value) => value !== null && Object(value) === value,
+);
+const CAPABILITY_GAP_REASON_INPUT_SCHEMA = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.bigint(),
+  z.symbol(),
+  z.null(),
+  z.undefined(),
+  CAPABILITY_GAP_REASON_OBJECT_SCHEMA,
+]);
+const SAFE_CAPABILITY_GAP_REASON_SCHEMA = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_REASON_LENGTH)
+  .regex(SAFE_REASON_PATTERN);
+type PiCapabilityGapReasonInput = z.input<
+  typeof CAPABILITY_GAP_REASON_INPUT_SCHEMA
+>;
 
 /**
  * Keep only short, printable, obviously non-sensitive reasons.
@@ -58,13 +81,11 @@ const SAFE_REASON_PATTERN = /^[A-Za-z0-9:_,.\- ]+$/;
  * than trusting an upstream contract. Anything unexpected degrades to a
  * constant instead of leaking a path or prompt fragment.
  */
-export function sanitizeCapabilityGapReason(raw: unknown): string {
-  if (typeof raw !== "string") return UNKNOWN_CAPABILITY_GAP_REASON;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed.length > MAX_REASON_LENGTH)
-    return UNKNOWN_CAPABILITY_GAP_REASON;
-  if (!SAFE_REASON_PATTERN.test(trimmed)) return UNKNOWN_CAPABILITY_GAP_REASON;
-  return trimmed;
+export function sanitizeCapabilityGapReason(
+  raw: PiCapabilityGapReasonInput,
+): string {
+  const parsed = SAFE_CAPABILITY_GAP_REASON_SCHEMA.safeParse(raw);
+  return parsed.success ? parsed.data : UNKNOWN_CAPABILITY_GAP_REASON;
 }
 
 const REQUIRED_SET: ReadonlySet<CapabilityId> = new Set(REQUIRED_CAPABILITIES);
@@ -158,7 +179,7 @@ export function createSessionMutationGate(
         );
       }
       const gap = findSessionMutationGap(gaps);
-      if (gap === undefined) return ok(undefined);
+      if (gap === undefined) return ok(void 0);
       return err(
         makeRequiredCapabilityUnavailableFailure(gap.capabilityId, gap.reason),
       );
@@ -213,6 +234,6 @@ export function requireSessionMutationCapability(
  */
 export function createOpenSessionMutationGate(): PiSessionMutationGate {
   return Object.freeze({
-    evaluate: (): Result<void, PiAdapterFailure> => ok(undefined),
+    evaluate: (): Result<void, PiAdapterFailure> => ok(void 0),
   });
 }

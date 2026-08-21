@@ -74,19 +74,19 @@ export function loadModelMatrix(
   matrixPath: string = MATRIX_PATH,
 ): ResultAsync<ModelMatrix, FixtureSchemaError> {
   const readFile = ResultAsync.fromPromise(
-    Bun.file(matrixPath).json() as Promise<unknown>,
+    Bun.file(matrixPath).json(),
     (cause) => {
       const msg = cause instanceof Error ? cause.message : String(cause);
       // Bun throws on missing file with ENOENT; treat other errors as parse errors
       if (msg.includes("ENOENT") || msg.includes("No such file")) {
         return {
-          type: "FixtureFileNotFound" as const,
+          type: "FixtureFileNotFound",
           file: matrixPath,
           message: `Model matrix file not found: ${matrixPath}`,
         } satisfies FixtureSchemaError;
       }
       return {
-        type: "FixtureParseError" as const,
+        type: "FixtureParseError",
         file: matrixPath,
         message: `Failed to parse model matrix as JSON: ${matrixPath} — ${msg}`,
       } satisfies FixtureSchemaError;
@@ -97,7 +97,7 @@ export function loadModelMatrix(
     const parsed = ModelMatrixSchema.safeParse(raw);
     if (!parsed.success) {
       return err({
-        type: "FixtureValidationFailed" as const,
+        type: "FixtureValidationFailed",
         file: matrixPath,
         message: `Model matrix schema validation failed: ${matrixPath}`,
         issues: zodIssuesToPairs(parsed.error.issues),
@@ -110,7 +110,7 @@ export function loadModelMatrix(
     const defaultCount = matrix.models.filter((m) => m.default).length;
     if (defaultCount < MIN_DEFAULT_MODELS) {
       return err({
-        type: "ModelMatrixConstraintViolation" as const,
+        type: "ModelMatrixConstraintViolation",
         file: matrixPath,
         message: `Model matrix must have at least ${MIN_DEFAULT_MODELS} models with default: true, but found ${defaultCount} in ${matrixPath}`,
       } satisfies FixtureSchemaError);
@@ -162,7 +162,7 @@ export function validateModelInMatrix(
   if (match === undefined) {
     const allowlist = matrix.models.map((m) => m.id).join(", ");
     return err({
-      type: "FixtureValidationFailed" as const,
+      type: "FixtureValidationFailed",
       file: MATRIX_PATH,
       message: `Model "${modelId}" is not in the model matrix allowlist. Allowed models: ${allowlist}`,
       issues: [

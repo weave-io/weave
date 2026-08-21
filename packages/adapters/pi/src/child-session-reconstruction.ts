@@ -182,14 +182,16 @@ function boundedLimit(limit: number | undefined): number {
  * never passed its own parse boundary.
  */
 function reconstructedFromRef(ref: PiChildRefRecord): PiReconstructedChild {
-  const stored = {
-    title: ref.title,
-    threadId: ref.threadId,
-    ...(ref.titleProvenance === undefined
-      ? {}
-      : { provenance: ref.titleProvenance }),
-  };
-  return {
+  const stored =
+    ref.titleProvenance === undefined
+      ? { title: ref.title, threadId: ref.threadId }
+      : {
+          title: ref.title,
+          threadId: ref.threadId,
+          provenance: ref.titleProvenance,
+        };
+
+  const child: PiReconstructedChild = {
     childId: ref.childId,
     threadId: ref.threadId,
     title: enforceDurableChildTitle(stored),
@@ -198,8 +200,11 @@ function reconstructedFromRef(ref: PiChildRefRecord): PiReconstructedChild {
     originParentSessionId: ref.originParentSessionId,
     createdAt: ref.createdAt,
     updatedAt: ref.updatedAt,
-    ...(ref.settledAt === undefined ? {} : { settledAt: ref.settledAt }),
   };
+  if (ref.settledAt !== undefined) {
+    return { ...child, settledAt: ref.settledAt };
+  }
+  return child;
 }
 
 /**
@@ -280,7 +285,7 @@ function collectSummary(
     // projection and never fails the reconstruction.
     const written = Result.fromThrowable(
       () => cache.upsertRef(ref, input.workspaceKey),
-      () => undefined,
+      () => null,
     )();
     const cached = written.match(
       (inner) => inner.isOk(),

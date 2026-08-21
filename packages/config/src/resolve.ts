@@ -78,11 +78,14 @@ export function resolvePromptPaths(
     };
   }
 
-  const hasCategories = Object.keys(resolvedCategories).length > 0;
-
-  return {
+  const resolvedConfig = {
     ...config,
     agents: resolvedAgents,
-    ...(hasCategories ? { categories: resolvedCategories } : {}),
   };
+
+  if (Object.keys(resolvedCategories).length > 0) {
+    resolvedConfig.categories = resolvedCategories;
+  }
+
+  return resolvedConfig;
 }

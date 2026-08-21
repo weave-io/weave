@@ -17,10 +17,10 @@
  * ## Why this matters
  *
  * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports
- * `WEAVE_OWNERSHIP_TAG` (a string) and other non-function values. That caused
- * OpenCode to throw at startup. The `./plugin` subpath (`dist/plugin.js`) was
- * introduced to export only functions. This test is the regression guard that
- * keeps the plugin subpath safe.
+ * non-function library values. OpenCode would throw if it loaded that entry as
+ * a legacy plugin. The `./plugin` subpath (`dist/plugin.js`) exports only
+ * functions. This test is the regression guard that keeps the plugin subpath
+ * safe.
  *
  * See: docs/adr/0003-opencode-adapter-materialization-shape.md#decision
  * See: docs/reference/adapter-capabilities.md — Installation and runtime story
@@ -41,34 +41,30 @@ describe("plugin subpath — OpenCode getLegacyPlugins loader shape", () => {
     // OpenCode iterates all exports and throws TypeError for non-functions.
     // If this test fails, a non-function value was added to plugin.ts and
     // would break OpenCode's plugin loader at startup.
-    const nonFunctionExports: string[] = [];
-
-    for (const [key, value] of Object.entries(pluginModule)) {
-      if (typeof value !== "function") {
-        nonFunctionExports.push(`${key}: ${typeof value} (${String(value)})`);
-      }
-    }
+    const nonFunctionExports = Object.entries(pluginModule)
+      .filter(([, value]) => !(value instanceof Function))
+      .map(([key, value]) => `${key}: ${String(value)}`);
 
     expect(nonFunctionExports).toEqual([]);
   });
 
   it("default export is a function (the Plugin entry point)", () => {
     // OpenCode calls the default export as the plugin function.
-    expect(typeof pluginModule.default).toBe("function");
+    expect(pluginModule.default).toBeInstanceOf(Function);
   });
 
   it("server export is a function (PluginModule.server alias)", () => {
     // PluginModule shape: { id?: string; server: Plugin; tui?: never }
     // OpenCode also accepts { server: Plugin } as a PluginModule.
-    expect(typeof pluginModule.server).toBe("function");
+    expect(pluginModule.server).toBeInstanceOf(Function);
   });
 
   it("WeavePlugin export is a function", () => {
-    expect(typeof pluginModule.WeavePlugin).toBe("function");
+    expect(pluginModule.WeavePlugin).toBeInstanceOf(Function);
   });
 
   it("createWeavePlugin export is a function", () => {
-    expect(typeof pluginModule.createWeavePlugin).toBe("function");
+    expect(pluginModule.createWeavePlugin).toBeInstanceOf(Function);
   });
 
   it("default, server, and WeavePlugin are the same function", () => {
@@ -80,16 +76,13 @@ describe("plugin subpath — OpenCode getLegacyPlugins loader shape", () => {
   it("module has no non-function named exports (exhaustive check)", () => {
     // Explicit exhaustive list — if a new export is added to plugin.ts,
     // this test will catch it if it is not a function.
-    const exportNames = Object.keys(pluginModule).sort();
-
     // All known exports are functions. If this list grows with a non-function,
     // the 'every named export is a function' test above will fail first.
-    for (const name of exportNames) {
-      const value = pluginModule[name as keyof typeof pluginModule];
+    for (const [name, value] of Object.entries(pluginModule)) {
       expect(
-        typeof value,
+        value,
         `export '${name}' must be a function to satisfy OpenCode getLegacyPlugins loader`,
-      ).toBe("function");
+      ).toBeInstanceOf(Function);
     }
   });
 });

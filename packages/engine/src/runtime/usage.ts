@@ -8,7 +8,7 @@
  * - Detail pruning never subtracts durable rollups
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import {
   invariantViolationError,
   type RuntimeStoreError,
@@ -43,16 +43,62 @@ export interface NormalizedUsageObservation {
   readonly timestamp: string;
   readonly sourceKind: "engine" | "adapter";
   readonly sourceName: string;
-  readonly workflowInstanceId?: string;
-  readonly stepId?: string;
-  readonly agentName?: string;
-  readonly model?: string;
+  readonly workflowInstanceId?: UsageObservation["workflowInstanceId"];
+  readonly stepId?: UsageObservation["stepId"];
+  readonly agentName?: UsageObservation["agentName"];
+  readonly model?: UsageObservation["model"];
   readonly inputTokens?: number;
   readonly outputTokens?: number;
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
   readonly totalTokens?: number;
   readonly cost?: number;
+}
+
+type MutableNormalizedUsageObservation = {
+  -readonly [K in keyof NormalizedUsageObservation]: NormalizedUsageObservation[K];
+};
+
+type MutableUsageObservation = {
+  -readonly [K in keyof UsageObservation]: UsageObservation[K];
+};
+
+type MutableUsageRollup = {
+  -readonly [K in keyof UsageRollup]: UsageRollup[K];
+};
+
+type ValueTag =
+  | "undefined"
+  | "string"
+  | "number"
+  | "boolean"
+  | "object"
+  | "other";
+
+function valueTag<T>(value: T): ValueTag {
+  if (value === undefined) return "undefined";
+  if (Object(value) === value) return "object";
+  const tag = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Other]",
+  )();
+  if (tag.isErr()) return "other";
+  if (tag.value === "[object String]") return "string";
+  if (tag.value === "[object Number]") return "number";
+  if (tag.value === "[object Boolean]") return "boolean";
+  return "other";
+}
+
+function isStringValue<T>(value: T): value is T & string {
+  return valueTag(value) === "string";
+}
+
+function isNumberValue<T>(value: T): value is T & number {
+  return valueTag(value) === "number";
+}
+
+function isObjectLike<T>(value: T): value is T & object {
+  return value !== null && value !== undefined && Object(value) === value;
 }
 
 function isNonNegativeInteger(value: number): boolean {
@@ -63,16 +109,14 @@ function isNonNegativeFinite(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
 }
 
-/**
- * Validate and normalize a usage observation input.
- */
-export function normalizeUsageObservation(
+/** Validate and normalize a usage observation input after its owner checks it. */
+function normalizeUsageObservationUnsafe(
   input: UsageObservation,
 ): Result<NormalizedUsageObservation, RuntimeStoreError> {
-  if (typeof input.id !== "string" || input.id.length === 0) {
+  if (!isStringValue(input.id) || input.id.length === 0) {
     return err(validationError("usage observation id is required", "id"));
   }
-  if (typeof input.timestamp !== "string" || input.timestamp.length === 0) {
+  if (!isStringValue(input.timestamp) || input.timestamp.length === 0) {
     return err(
       validationError("usage observation timestamp is required", "timestamp"),
     );
@@ -86,9 +130,9 @@ export function normalizeUsageObservation(
     );
   }
   if (
-    input.source === undefined ||
+    !isObjectLike(input.source) ||
     (input.source.kind !== "engine" && input.source.kind !== "adapter") ||
-    typeof input.source.name !== "string" ||
+    !isStringValue(input.source.name) ||
     input.source.name.length === 0
   ) {
     return err(
@@ -99,9 +143,7 @@ export function normalizeUsageObservation(
     );
   }
 
-  const normalized: {
-    -readonly [K in keyof NormalizedUsageObservation]?: NormalizedUsageObservation[K];
-  } = {
+  const normalized: MutableNormalizedUsageObservation = {
     id: createUsageObservationId(input.id),
     timestamp: input.timestamp,
     sourceKind: input.source.kind,
@@ -110,7 +152,7 @@ export function normalizeUsageObservation(
 
   if (input.workflowInstanceId !== undefined) {
     if (
-      typeof input.workflowInstanceId !== "string" ||
+      !isStringValue(input.workflowInstanceId) ||
       input.workflowInstanceId.length === 0
     ) {
       return err(
@@ -123,7 +165,7 @@ export function normalizeUsageObservation(
     normalized.workflowInstanceId = input.workflowInstanceId;
   }
   if (input.stepId !== undefined) {
-    if (typeof input.stepId !== "string" || input.stepId.length === 0) {
+    if (!isStringValue(input.stepId) || input.stepId.length === 0) {
       return err(
         validationError(
           "stepId must be a non-empty string when present",
@@ -134,7 +176,7 @@ export function normalizeUsageObservation(
     normalized.stepId = input.stepId;
   }
   if (input.agentName !== undefined) {
-    if (typeof input.agentName !== "string" || input.agentName.length === 0) {
+    if (!isStringValue(input.agentName) || input.agentName.length === 0) {
       return err(
         validationError(
           "agentName must be a non-empty string when present",
@@ -145,7 +187,7 @@ export function normalizeUsageObservation(
     normalized.agentName = input.agentName;
   }
   if (input.model !== undefined) {
-    if (typeof input.model !== "string" || input.model.length === 0) {
+    if (!isStringValue(input.model) || input.model.length === 0) {
       return err(
         validationError(
           "model must be a non-empty string when present",
@@ -159,7 +201,7 @@ export function normalizeUsageObservation(
   for (const field of TOKEN_FIELDS) {
     const value = input[field];
     if (value === undefined) continue;
-    if (typeof value !== "number" || !isNonNegativeInteger(value)) {
+    if (!isNumberValue(value) || !isNonNegativeInteger(value)) {
       return err(
         validationError(
           `${field} must be a non-negative safe integer when present`,
@@ -171,7 +213,7 @@ export function normalizeUsageObservation(
   }
 
   if (input.cost !== undefined) {
-    if (typeof input.cost !== "number" || !isNonNegativeFinite(input.cost)) {
+    if (!isNumberValue(input.cost) || !isNonNegativeFinite(input.cost)) {
       return err(
         validationError(
           "cost must be a non-negative finite number when present",
@@ -182,49 +224,52 @@ export function normalizeUsageObservation(
     normalized.cost = input.cost;
   }
 
-  return ok(normalized as NormalizedUsageObservation);
+  return ok(normalized);
+}
+
+export function normalizeUsageObservation(
+  input: UsageObservation,
+): Result<NormalizedUsageObservation, RuntimeStoreError> {
+  return Result.fromThrowable(
+    () => normalizeUsageObservationUnsafe(input),
+    () => validationError("usage observation input is unsafe"),
+  )().andThen((result) => result);
 }
 
 /** Convert a normalized observation back to the public domain type. */
 export function denormalizeUsageObservation(
   normalized: NormalizedUsageObservation,
 ): UsageObservation {
-  const observation: UsageObservation = {
+  const observation: MutableUsageObservation = {
     id: normalized.id,
     timestamp: normalized.timestamp,
     source: { kind: normalized.sourceKind, name: normalized.sourceName },
   };
-
-  return {
-    ...observation,
-    ...(normalized.workflowInstanceId !== undefined
-      ? {
-          workflowInstanceId:
-            normalized.workflowInstanceId as UsageObservation["workflowInstanceId"],
-        }
-      : {}),
-    ...(normalized.stepId !== undefined ? { stepId: normalized.stepId } : {}),
-    ...(normalized.agentName !== undefined
-      ? { agentName: normalized.agentName }
-      : {}),
-    ...(normalized.model !== undefined ? { model: normalized.model } : {}),
-    ...(normalized.inputTokens !== undefined
-      ? { inputTokens: normalized.inputTokens }
-      : {}),
-    ...(normalized.outputTokens !== undefined
-      ? { outputTokens: normalized.outputTokens }
-      : {}),
-    ...(normalized.cacheReadTokens !== undefined
-      ? { cacheReadTokens: normalized.cacheReadTokens }
-      : {}),
-    ...(normalized.cacheWriteTokens !== undefined
-      ? { cacheWriteTokens: normalized.cacheWriteTokens }
-      : {}),
-    ...(normalized.totalTokens !== undefined
-      ? { totalTokens: normalized.totalTokens }
-      : {}),
-    ...(normalized.cost !== undefined ? { cost: normalized.cost } : {}),
-  };
+  if (normalized.workflowInstanceId !== undefined) {
+    observation.workflowInstanceId = normalized.workflowInstanceId;
+  }
+  if (normalized.stepId !== undefined) observation.stepId = normalized.stepId;
+  if (normalized.agentName !== undefined) {
+    observation.agentName = normalized.agentName;
+  }
+  if (normalized.model !== undefined) observation.model = normalized.model;
+  if (normalized.inputTokens !== undefined) {
+    observation.inputTokens = normalized.inputTokens;
+  }
+  if (normalized.outputTokens !== undefined) {
+    observation.outputTokens = normalized.outputTokens;
+  }
+  if (normalized.cacheReadTokens !== undefined) {
+    observation.cacheReadTokens = normalized.cacheReadTokens;
+  }
+  if (normalized.cacheWriteTokens !== undefined) {
+    observation.cacheWriteTokens = normalized.cacheWriteTokens;
+  }
+  if (normalized.totalTokens !== undefined) {
+    observation.totalTokens = normalized.totalTokens;
+  }
+  if (normalized.cost !== undefined) observation.cost = normalized.cost;
+  return observation;
 }
 
 /**
@@ -268,21 +313,17 @@ export function usageRollupKey(normalized: NormalizedUsageObservation): string {
 export function emptyUsageRollup(
   normalized: NormalizedUsageObservation,
 ): UsageRollup {
-  return {
+  const rollup: MutableUsageRollup = {
     source: { kind: normalized.sourceKind, name: normalized.sourceName },
     observationCount: 0,
-    ...(normalized.workflowInstanceId !== undefined
-      ? {
-          workflowInstanceId:
-            normalized.workflowInstanceId as UsageRollup["workflowInstanceId"],
-        }
-      : {}),
-    ...(normalized.stepId !== undefined ? { stepId: normalized.stepId } : {}),
-    ...(normalized.agentName !== undefined
-      ? { agentName: normalized.agentName }
-      : {}),
-    ...(normalized.model !== undefined ? { model: normalized.model } : {}),
   };
+  if (normalized.workflowInstanceId !== undefined) {
+    rollup.workflowInstanceId = normalized.workflowInstanceId;
+  }
+  if (normalized.stepId !== undefined) rollup.stepId = normalized.stepId;
+  if (normalized.agentName !== undefined) rollup.agentName = normalized.agentName;
+  if (normalized.model !== undefined) rollup.model = normalized.model;
+  return rollup;
 }
 
 /**
@@ -293,14 +334,12 @@ export function applyObservationToRollup(
   rollup: UsageRollup,
   normalized: NormalizedUsageObservation,
 ): UsageRollup {
-  const next: UsageRollup = {
+  const next: MutableUsageRollup = {
     ...rollup,
     observationCount: rollup.observationCount + 1,
   };
 
-  const mutable = next as {
-    -readonly [K in keyof UsageRollup]?: UsageRollup[K];
-  };
+  const mutable = next;
 
   for (const field of TOKEN_FIELDS) {
     const value = normalized[field];

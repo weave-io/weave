@@ -4,6 +4,7 @@ import {
   readinessForProviderFastStatus,
   resolveAdapterModelIntent,
 } from "@weaveio/weave-engine";
+import { z } from "zod";
 import {
   buildClaudeCodeModelInput,
   CLAUDE_CODE_AVAILABLE_MODELS,
@@ -31,6 +32,23 @@ function makeDescriptor(
     skills: [],
     ...overrides,
   };
+}
+
+const fastIntentFixtureSchema = z.object({
+  fast: z.literal(true).optional(),
+});
+
+type FastIntentFixture = z.infer<typeof fastIntentFixtureSchema>;
+
+interface RawFastIntentFixture {
+  readonly fast?: boolean | string;
+}
+
+function parseFastIntentFixture(
+  input: RawFastIntentFixture,
+): FastIntentFixture {
+  const parsed = fastIntentFixtureSchema.safeParse(input);
+  return parsed.success ? parsed.data : {};
 }
 
 describe("CLAUDE_CODE_AVAILABLE_MODELS", () => {
@@ -115,8 +133,9 @@ describe("describeClaudeCodeFastActivation", () => {
   });
 
   it("emits no acceleration state for a non-literal fast value", () => {
-    const forged = { fast: "true" } as unknown as { readonly fast?: true };
-    expect(describeClaudeCodeFastActivation(forged)).toBeUndefined();
+    const parsed = parseFastIntentFixture({ fast: "true" });
+    expect(parsed).toEqual({});
+    expect(describeClaudeCodeFastActivation(parsed)).toBeUndefined();
   });
 
   it("reports declared fast intent as unsupported with bounded evidence", () => {

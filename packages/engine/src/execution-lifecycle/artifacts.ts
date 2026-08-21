@@ -21,7 +21,6 @@ import {
 } from "./errors.js";
 import { mapStoreError } from "./lease.js";
 import type {
-  ArtifactInputDecl,
   ArtifactInputSummary,
   ArtifactRef,
   ArtifactRefInput,
@@ -126,8 +125,12 @@ export function verifyArtifactIntegrity(
   artifact: ArtifactRef,
   suppliedDigest: string | undefined,
 ): Result<undefined, LifecycleError> {
-  if (artifact.integrity === undefined) return ok(undefined);
-  if (suppliedDigest === undefined) return ok(undefined);
+  if (artifact.integrity === undefined) {
+    return ok<undefined, LifecycleError>(void 0);
+  }
+  if (suppliedDigest === undefined) {
+    return ok<undefined, LifecycleError>(void 0);
+  }
 
   const formatCheck = validateDigestFormat(artifact.name, suppliedDigest);
   if (formatCheck.isErr()) return err(formatCheck.error);
@@ -144,7 +147,7 @@ export function verifyArtifactIntegrity(
     );
   }
 
-  return ok(undefined);
+  return ok<undefined, LifecycleError>(void 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +209,7 @@ export function validateStepInputs(
   const informationalAbsent: string[] = [];
 
   for (const input of step.inputs) {
-    const role = inputRole(input as ArtifactInputDecl);
+    const role = inputRole(input);
     const isPinned = pinnedNames?.has(input.name) ?? false;
     const latest = latestArtifactByName(instance, input.name);
 
@@ -311,7 +314,9 @@ export function validateOutputArtifacts(
   step: WorkflowStep,
   artifacts: readonly ArtifactRefInput[] | undefined,
 ): Result<undefined, LifecycleError> {
-  if (!step.outputs || step.outputs.length === 0) return ok(undefined);
+  if (!step.outputs || step.outputs.length === 0) {
+    return ok<undefined, LifecycleError>(void 0);
+  }
 
   const providedNames = new Set((artifacts ?? []).map((a) => a.name));
 
@@ -338,12 +343,20 @@ export function validateOutputArtifacts(
     }
   }
 
-  return ok(undefined);
+  return ok<undefined, LifecycleError>(void 0);
 }
 
 // ---------------------------------------------------------------------------
 // Sequential artifact persistence
 // ---------------------------------------------------------------------------
+
+interface ArtifactWriteInput {
+  name: string;
+  path: string;
+  mimeType?: string;
+  description?: string;
+  integrity?: ArtifactRefInput["integrity"];
+}
 
 /**
  * Persist a list of artifact references sequentially.
@@ -356,16 +369,18 @@ export function addArtifactsSequentially(
   artifacts: readonly ArtifactRefInput[],
 ): ResultAsync<undefined, LifecycleError> {
   const first = artifacts[0];
-  if (!first) return okAsync(undefined);
+  if (!first) return okAsync<undefined, LifecycleError>(void 0);
+
+  const artifactInput: ArtifactWriteInput = {
+    name: first.name,
+    path: first.path,
+  };
+  if (first.mimeType) artifactInput.mimeType = first.mimeType;
+  if (first.description) artifactInput.description = first.description;
+  if (first.integrity) artifactInput.integrity = first.integrity;
 
   return store.instances
-    .addArtifact(workflowInstanceId, {
-      name: first.name,
-      path: first.path,
-      ...(first.mimeType ? { mimeType: first.mimeType } : {}),
-      ...(first.description ? { description: first.description } : {}),
-      ...(first.integrity ? { integrity: first.integrity } : {}),
-    })
+    .addArtifact(workflowInstanceId, artifactInput)
     .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen(() =>
       addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),

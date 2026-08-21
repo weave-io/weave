@@ -9,6 +9,7 @@ import {
 import type { Clock } from "./clock.js";
 import type { FileSystem } from "./filesystem.js";
 import type { GitHubRefClient } from "./github-client.js";
+import { digestJson, validateJsonValue } from "./json.js";
 import {
   MetadataBranchSchema,
   type MetadataReplayRecord,
@@ -30,7 +31,8 @@ export type MetadataReplayError =
       actual: string;
     }
   | { type: "ReplayWriteFailed"; path: string; message: string }
-  | { type: "ReleaseDeletionPrecondition"; reason: string };
+  | { type: "ReleaseDeletionPrecondition"; reason: string }
+  | { type: "CanonicalJsonFailed"; reason: string };
 
 export type ReplayMutation =
   | { type: "write"; path: string; contents: string }
@@ -46,6 +48,8 @@ export interface ReleaseBranchDeletion {
   mergedMetadataPr: { number: number; head: string; merged: boolean };
   manualStopApproved: boolean;
 }
+
+type MetadataReplayDigestInput = Omit<MetadataReplayRecord, "recordDigest">;
 
 /**
  * Replays only content recorded by the stable train onto fresh protected main.
@@ -79,11 +83,14 @@ export class MetadataReplay {
       consumedChangesets: train.consumedChangesets ?? [],
       metadataWrites: train.metadataWrites ?? [],
     };
-    return ok({ ...content, recordDigest: metadataReplayDigest(content) });
+    return metadataReplayDigest(content).map((recordDigest) => ({
+      ...content,
+      recordDigest,
+    }));
   }
 
   applyReplay(
-    record: unknown,
+    record: MetadataReplayInput,
     branch: string,
   ): ResultAsync<ReplayPlan, MetadataReplayError> {
     const checked = validateReplay(record, branch);
@@ -93,14 +100,14 @@ export class MetadataReplay {
         .reduce<ResultAsync<void, MetadataReplayError>>(
           (chain, mutation) =>
             chain.andThen(() => this.applyMutation(mutation)),
-          okAsync(undefined),
+          okAsync(),
         )
         .map(() => plan),
     );
   }
 
   verifyIdempotent(
-    record: unknown,
+    record: MetadataReplayInput,
     branch: string,
   ): ResultAsync<boolean, MetadataReplayError> {
     const checked = validateReplay(record, branch);
@@ -277,13 +284,22 @@ export class MetadataReplay {
 }
 
 export function metadataReplayDigest(
-  record: Omit<MetadataReplayRecord, "recordDigest">,
-): string {
-  return `sha256:${Bun.CryptoHasher.hash("sha256", JSON.stringify(sortObject(record)), "hex")}`;
+  record: MetadataReplayDigestInput,
+): Result<string, MetadataReplayError> {
+  return validateJsonValue(record)
+    .andThen((value) => digestJson(value))
+    .mapErr((error) => ({
+      type: "CanonicalJsonFailed" as const,
+      reason: error.reason,
+    }));
 }
 
+type MetadataReplayInput = Parameters<
+  typeof MetadataReplayRecordSchema.safeParse
+>[0];
+
 export function validateReplay(
-  record: unknown,
+  record: MetadataReplayInput,
   branch: string,
 ): Result<MetadataReplayRecord, MetadataReplayError> {
   if (ReleaseBranchSchema.safeParse(branch).success)
@@ -303,7 +319,9 @@ export function validateReplay(
       issues: parsed.error.issues.map((issue) => issue.message),
     });
   const { recordDigest, ...content } = parsed.data;
-  if (recordDigest !== metadataReplayDigest(content))
+  const expectedDigest = metadataReplayDigest(content);
+  if (expectedDigest.isErr()) return err(expectedDigest.error);
+  if (recordDigest !== expectedDigest.value)
     return err({
       type: "InvalidReplayRecord",
       issues: ["record digest does not match canonical content"],
@@ -326,19 +344,9 @@ export function validatePullRequestHead(
       type: "ReplayPolicyViolation",
       reason: "release branches cannot be PR heads",
     });
-  return ok(undefined);
+  return ok();
 }
 
 function digest(contents: string): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", contents, "hex")}`;
-}
-function sortObject(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortObject);
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, child]) => [key, sortObject(child)]),
-    );
-  return value;
 }

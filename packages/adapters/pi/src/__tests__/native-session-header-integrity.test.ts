@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  type PiNativeSessionFsPort,
-  PiNativeSessionStore,
-} from "../child-native-sessions.js";
+import { PiNativeSessionStore } from "../child-native-sessions.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
-import { validatePiNativeSessionHeader } from "../native-session-header.js";
+import {
+  PI_SESSION_HEADER_REQUIRED_FIELDS,
+  validatePiNativeSessionHeader,
+} from "../native-session-header.js";
 import {
   createPiNativeSessionHost,
   type PiSessionManagerInstance,
@@ -20,18 +20,40 @@ const SUPPORTED_HEADER = {
   parentSession: "parent-session-1",
 } as const;
 
+interface MutableTestHeader {
+  type: string;
+  version: number;
+  id: string;
+  timestamp: string;
+  cwd: string;
+  parentSession: string;
+}
+
+type HeaderOverride =
+  | { readonly type: string | number }
+  | { readonly version: string | number }
+  | { readonly id: string | number }
+  | { readonly timestamp: string }
+  | { readonly cwd: string }
+  | { readonly parentSession: string | number };
+
 /**
  * Reads one header through the production host adapter. The adapter is the
  * only place a host header is copied, so this is exactly the path the
  * deferred-header bridge persists from.
  */
-function readHeader(header: unknown): unknown {
+function readHeader<THeader>(
+  header: THeader,
+): ReturnType<PiSessionManagerInstance["getHeader"]> {
   const instance = {
     getSessionId: () => "pi-session-1",
     getSessionFile: () => "/data/weave/sessions/child-1/pi.jsonl",
     getSessionDir: () => "/data/weave/sessions/child-1",
-    getHeader: () =>
-      header as ReturnType<PiSessionManagerInstance["getHeader"]>,
+    getHeader: (): ReturnType<PiSessionManagerInstance["getHeader"]> => {
+      // SAFETY: this test deliberately injects arbitrary values at the host
+      // boundary; the production adapter validates them before returning.
+      return header as ReturnType<PiSessionManagerInstance["getHeader"]>;
+    },
     getEntries: () => [],
     isPersisted: () => true,
     getLeafId: () => null,
@@ -91,13 +113,15 @@ describe("Pi v3 header integrity", () => {
   });
 
   test("rejects an inherited supported field that is not an own property", () => {
-    const inherited = Object.create({
-      type: "session",
-      version: 3,
-      id: "pi-session-1",
-      timestamp: "2026-08-11T00:00:00.000Z",
-      cwd: "/repo",
-    }) as Record<string, unknown>;
+    const inherited = {
+      __proto__: {
+        type: "session",
+        version: 3,
+        id: "pi-session-1",
+        timestamp: "2026-08-11T00:00:00.000Z",
+        cwd: "/repo",
+      },
+    };
 
     expect(readHeader(inherited)).toBeNull();
   });
@@ -133,8 +157,8 @@ describe("Pi v3 header integrity", () => {
   });
 
   test("rejects a missing required field", () => {
-    for (const field of ["type", "version", "id", "timestamp", "cwd"]) {
-      const partial: Record<string, unknown> = { ...SUPPORTED_HEADER };
+    for (const field of PI_SESSION_HEADER_REQUIRED_FIELDS) {
+      const partial: Partial<MutableTestHeader> = { ...SUPPORTED_HEADER };
       delete partial[field];
       expect(readHeader(partial)).toBeNull();
       expect(
@@ -144,7 +168,7 @@ describe("Pi v3 header integrity", () => {
   });
 
   test("rejects wrong types, wrong version, empty and hostile string values", () => {
-    const hostile: readonly Record<string, unknown>[] = [
+    const hostile: readonly HeaderOverride[] = [
       { type: "fork" },
       { type: 3 },
       { version: 2 },
@@ -183,7 +207,7 @@ describe("one strict validator guards every lifecycle path", () => {
     return new PiNativeSessionStore({
       root: ROOT,
       launch: { mode: "read-only" },
-      fs: fs as unknown as PiNativeSessionFsPort,
+      fs,
       host: {
         create: () => {
           throw new Error("host.create must not run on a read path");
@@ -237,7 +261,7 @@ describe("one strict validator guards every lifecycle path", () => {
     );
     expect(
       validatePiNativeSessionHeader(
-        Object.assign(Object.create({ evil: true }), SUPPORTED_HEADER),
+        Object.assign({ __proto__: { evil: true } }, SUPPORTED_HEADER),
       ).isErr(),
     ).toBe(true);
   });
@@ -247,6 +271,7 @@ describe("one strict validator guards every lifecycle path", () => {
       "2026-08-11T00:00:00Z",
       "2026-08-11",
       "2026-13-40T00:00:00.000Z",
+      "2026-02-31T00:00:00.000Z",
       "not-a-time",
     ]) {
       expect(
@@ -259,13 +284,12 @@ describe("one strict validator guards every lifecycle path", () => {
   });
 
   test("returns a frozen copy a caller cannot mutate after validation", () => {
-    const validated = validatePiNativeSessionHeader(
-      SUPPORTED_HEADER,
-    )._unsafeUnwrap() as { cwd: string };
+    const validated =
+      validatePiNativeSessionHeader(SUPPORTED_HEADER)._unsafeUnwrap();
 
-    expect(() => {
-      validated.cwd = "/hostile";
-    }).toThrow();
+    expect(Object.isFrozen(validated)).toBe(true);
+    expect(Reflect.set(validated, "cwd", "/hostile")).toBe(false);
+    expect(validated.cwd).toBe("/repo");
   });
 
   test("refuses an incomplete on-disk header on the descriptor read path", async () => {
@@ -293,7 +317,11 @@ describe("one strict validator guards every lifecycle path", () => {
       (
         await readOnlyStore(injected).openSession(REF, PARENT)
       )._unsafeUnwrapErr(),
-    ).toEqual({ type: "SessionCorrupt", ref: REF, reason: "missing-header" });
+    ).toEqual({
+      type: "SessionCorrupt",
+      ref: REF,
+      reason: "missing-header",
+    });
   });
 
   test("refuses the same header on the bounded paging path", async () => {
@@ -304,7 +332,9 @@ describe("one strict validator guards every lifecycle path", () => {
     const page = await readOnlyStore(injected).readSessionEntryPage(
       REF,
       PARENT,
-      { direction: "newest" },
+      {
+        direction: "newest",
+      },
     );
 
     expect(page._unsafeUnwrapErr()).toEqual({
@@ -321,7 +351,7 @@ describe("one strict validator guards every lifecycle path", () => {
     const store = new PiNativeSessionStore({
       root: ROOT,
       launch: { mode: "read-only" },
-      fs: fs as unknown as PiNativeSessionFsPort,
+      fs,
       host: {
         create: () => {
           throw new Error("unused");
@@ -331,13 +361,16 @@ describe("one strict validator guards every lifecycle path", () => {
           getSessionId: () => "pi-session-1",
           getSessionFile: () => `${ROOT}/${REF}`,
           getSessionDir: () => `${ROOT}/child-1`,
-          getHeader: () =>
-            ({
+          getHeader: () => {
+            // SAFETY: this test deliberately injects an incomplete host header
+            // to prove the reopen path refuses it before leaf establishment.
+            return {
               type: "session",
               version: 3,
               id: "pi-session-1",
               parentSession: PARENT,
-            }) as never,
+            } as ReturnType<PiSessionManagerInstance["getHeader"]>;
+          },
           getEntries: () => [],
           isPersisted: () => true,
           getLeafId: () => "leaf-1",

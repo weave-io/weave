@@ -80,7 +80,7 @@ export function buildConfiguredRunAgentEffect(
   step: WorkflowStep,
   promptMetadata: { byteLength: number },
 ): RunAgentEffect {
-  const effectivePolicy = evaluateEffectiveToolPolicy(undefined);
+  const effectivePolicy = evaluateEffectiveToolPolicy(void 0);
 
   return {
     kind: "run-agent",
@@ -181,7 +181,7 @@ export function dispatchStep(
         input.leaseId,
       );
       if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
-      return okAsync(undefined);
+      return okAsync();
     })
     .andThen(() =>
       store.instances
@@ -192,7 +192,7 @@ export function dispatchStep(
             return errAsync(
               lifecycleNotFoundError(
                 "WorkflowInstance",
-                input.workflowInstanceId as string,
+                input.workflowInstanceId,
               ),
             );
           }
@@ -310,12 +310,12 @@ export function dispatchStep(
                   (storeError): LifecycleError => mapStoreError(storeError),
                 ),
             )
-            .map(
-              (): DispatchStepOutput => ({
+            .map((): DispatchStepOutput => {
+              const output = {
                 stepName: resolvedStepName,
                 effects: [
                   {
-                    kind: "dispatch-agent",
+                    kind: "dispatch-agent" as const,
                     runAgent: buildConfiguredRunAgentEffect(
                       step,
                       promptMetadata,
@@ -323,9 +323,12 @@ export function dispatchStep(
                   },
                 ],
                 stepPromptText,
-                ...(hasInputs ? { artifactInputSummary } : {}),
-              }),
-            );
+              };
+              if (hasInputs) {
+                return { ...output, artifactInputSummary };
+              }
+              return output;
+            });
         }),
     );
 }

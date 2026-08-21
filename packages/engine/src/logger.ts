@@ -17,6 +17,26 @@ interface PinoWritable {
   write(chunk: string): boolean;
 }
 
+interface FlushablePinoWritable extends PinoWritable {
+  flush(callback?: (err?: Error) => void): void;
+}
+
+interface SyncFlushablePinoWritable extends PinoWritable {
+  flushSync(): void;
+}
+
+function isFlushablePinoWritable(
+  sink: PinoWritable,
+): sink is FlushablePinoWritable {
+  return "flush" in sink && sink.flush instanceof Function;
+}
+
+function isSyncFlushablePinoWritable(
+  sink: PinoWritable,
+): sink is SyncFlushablePinoWritable {
+  return "flushSync" in sink && sink.flushSync instanceof Function;
+}
+
 class MutableDestination {
   private _sink: PinoWritable;
 
@@ -41,11 +61,8 @@ class MutableDestination {
    * No-op if the sink does not support flushing.
    */
   flush(callback?: (err?: Error) => void): void {
-    const sink = this._sink as PinoWritable & {
-      flush?: (cb?: (err?: Error) => void) => void;
-    };
-    if (typeof sink.flush === "function") {
-      sink.flush(callback);
+    if (isFlushablePinoWritable(this._sink)) {
+      this._sink.flush(callback);
     } else {
       callback?.();
     }
@@ -56,9 +73,8 @@ class MutableDestination {
    * (e.g. SonicBoom's `flushSync`). No-op if the sink does not support it.
    */
   flushSync(): void {
-    const sink = this._sink as PinoWritable & { flushSync?: () => void };
-    if (typeof sink.flushSync === "function") {
-      sink.flushSync();
+    if (isSyncFlushablePinoWritable(this._sink)) {
+      this._sink.flushSync();
     }
   }
 }
@@ -119,7 +135,7 @@ export const logDestination = new MutableDestination(buildInitialSink());
  */
 export const logger = pino(
   { name: "weave", level: env.LOG_LEVEL },
-  logDestination as unknown as pino.DestinationStream,
+  logDestination,
 );
 
 /**

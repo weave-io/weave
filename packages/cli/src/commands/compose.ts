@@ -62,7 +62,7 @@ export interface ComposeContext {
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
-  return (SUPPORTED_ADAPTERS as readonly string[]).includes(value);
+  return value === SUPPORTED_ADAPTERS[0];
 }
 
 /**
@@ -136,9 +136,7 @@ export async function runCompose(
     terminal.stderr(
       formatCliError({
         type: "InvalidArgs",
-        message:
-          "--adapter is required. Supported adapters: " +
-          SUPPORTED_ADAPTERS.join(", "),
+        message: `--adapter is required. Supported adapters: ${SUPPORTED_ADAPTERS.join(", ")}`,
       }),
     );
     return ok(1);

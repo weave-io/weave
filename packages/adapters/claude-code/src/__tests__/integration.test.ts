@@ -16,15 +16,65 @@ import { ClaudeCodeAdapter } from "../adapter.js";
 const OUT_DIR =
   "C:\\Users\\piete\\AppData\\Local\\Temp\\opencode\\weave-cc-integration";
 
+interface ClaudeCodeFrontmatter {
+  name?: string;
+  description?: string;
+  model?: string;
+  tools?: string[];
+  fast?: string;
+  fastMode?: string;
+  triggers?: string[];
+  patterns?: string[];
+}
+
+type ClaudeCodeFrontmatterArrayKey = "tools" | "triggers" | "patterns";
+
+function frontmatterArrayKey(
+  key: string,
+): ClaudeCodeFrontmatterArrayKey | undefined {
+  switch (key) {
+    case "tools":
+    case "triggers":
+    case "patterns":
+      return key;
+    default:
+      return undefined;
+  }
+}
+
+function setFrontmatterScalar(
+  result: ClaudeCodeFrontmatter,
+  key: string,
+  value: string,
+) {
+  switch (key) {
+    case "name":
+      result.name = value;
+      break;
+    case "description":
+      result.description = value;
+      break;
+    case "model":
+      result.model = value;
+      break;
+    case "fast":
+      result.fast = value;
+      break;
+    case "fastMode":
+      result.fastMode = value;
+      break;
+  }
+}
+
 /** Parses YAML frontmatter from a markdown string (between the first two ---). */
-function parseFrontmatter(markdown: string): Record<string, unknown> {
+function parseFrontmatter(markdown: string): ClaudeCodeFrontmatter {
   const parts = markdown.split("---");
   // parts[0] is empty string before first ---, parts[1] is frontmatter body
   if (parts.length < 3) return {};
   const body = parts[1] ?? "";
-  const result: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  let currentArray: string[] | null = null;
+  const result: ClaudeCodeFrontmatter = {};
+  let currentArrayKey: ClaudeCodeFrontmatterArrayKey | undefined;
+  let currentArray: string[] | undefined;
 
   for (const raw of body.split("\n")) {
     const line = raw.trimEnd();
@@ -32,17 +82,17 @@ function parseFrontmatter(markdown: string): Record<string, unknown> {
 
     // Array item inside a list block
     if (line.startsWith("  - ")) {
-      if (currentArray !== null) {
+      if (currentArray !== undefined) {
         currentArray.push(line.slice(4).trim());
       }
       continue;
     }
 
     // If we were building an array, commit it before processing new key
-    if (currentArray !== null && currentKey !== null) {
-      result[currentKey] = currentArray;
-      currentArray = null;
-      currentKey = null;
+    if (currentArray !== undefined && currentArrayKey !== undefined) {
+      result[currentArrayKey] = currentArray;
+      currentArray = undefined;
+      currentArrayKey = undefined;
     }
 
     const colonIdx = line.indexOf(":");
@@ -53,16 +103,16 @@ function parseFrontmatter(markdown: string): Record<string, unknown> {
 
     if (value === "") {
       // Next lines are an array
-      currentKey = key;
-      currentArray = [];
+      currentArrayKey = frontmatterArrayKey(key);
+      currentArray = currentArrayKey === undefined ? undefined : [];
     } else {
-      result[key] = value;
+      setFrontmatterScalar(result, key, value);
     }
   }
 
   // Flush trailing array
-  if (currentArray !== null && currentKey !== null) {
-    result[currentKey] = currentArray;
+  if (currentArray !== undefined && currentArrayKey !== undefined) {
+    result[currentArrayKey] = currentArray;
   }
 
   return result;
@@ -185,8 +235,8 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
     expect(fm.name).toBe("loom");
-    expect(typeof fm.model).toBe("string");
-    expect((fm.model as string).length).toBeGreaterThan(0);
+    expect(fm.model).toBeDefined();
+    expect(fm.model?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("loom.md frontmatter includes Agent (delegate) in tools", () => {
@@ -195,10 +245,9 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    const tools = fm.tools as string[];
-    expect(Array.isArray(tools)).toBe(true);
+    expect(fm.tools).toBeDefined();
     // "Task" is the Claude Code tool that maps to delegate capability
-    expect(tools).toContain("Task");
+    expect(fm.tools ?? []).toContain("Task");
   });
 
   it("loom.md contains the composed prompt body", () => {
@@ -244,8 +293,8 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(typeof fm.description).toBe("string");
-    expect((fm.description as string).toLowerCase()).toContain("core");
+    expect(fm.description).toBeDefined();
+    expect(fm.description?.toLowerCase() ?? "").toContain("core");
   });
 
   it("shuttle-core.md delegate denied — Task absent from tools", () => {
@@ -323,7 +372,7 @@ describe("ClaudeCodeAdapter — unsupported provider acceleration", () => {
 
     const fm = parseFrontmatter(written[agentKey!]!);
     expect(fm.name).toBe("loom");
-    expect(typeof fm.model).toBe("string");
+    expect(fm.model).toBeDefined();
     expect(fm.fast).toBeUndefined();
     expect(fm.fastMode).toBeUndefined();
     expect(fm.triggers).toBeUndefined();

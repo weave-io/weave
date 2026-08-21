@@ -39,14 +39,14 @@ import type { ModelMatrix } from "../types.js";
 const TEMP_DIR = tmpdir();
 
 /** Write a JSON object to a temp file and return its path. */
-async function writeTempJson(name: string, content: unknown): Promise<string> {
+async function writeTempJson<T>(name: string, content: T): Promise<string> {
   const filePath = resolve(TEMP_DIR, `model-matrix-test-${name}.json`);
   await Bun.write(filePath, JSON.stringify(content));
   return filePath;
 }
 
 /** Minimal valid model matrix with N default models. */
-function makeMatrix(defaultCount: number, totalCount = defaultCount): unknown {
+function makeMatrix(defaultCount: number, totalCount = defaultCount) {
   const models = Array.from({ length: totalCount }, (_, i) => ({
     id: `provider/model-${i}`,
     display_name: `Model ${i}`,

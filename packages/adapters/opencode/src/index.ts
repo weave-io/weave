@@ -9,11 +9,11 @@
  * 1. **OpenCode plugin** — When listed in `opencode.json`'s `plugin` array,
  *    OpenCode loads this package at startup and calls the default-exported
  *    `WeavePlugin` function. The plugin materializes all agents declared in
- *    `.weave/config.weave` into the running OpenCode instance.
+ *    `.weave/config.weave` through OpenCode's config hook.
  *
  * 2. **Harness adapter library** — `OpenCodeAdapter` implements the
  *    `HarnessAdapter` interface and can be used programmatically by any caller
- *    that wants to materialize Weave agents into OpenCode.
+ *    that wants to translate Weave agents into OpenCode configuration.
  *
  * ## Installation as an OpenCode plugin
  *
@@ -31,15 +31,15 @@
  * satisfying OpenCode's plugin loader requirements.
  *
  * Restart OpenCode after adding the plugin. The plugin entry point receives
- * the runtime context, constructs an `OpenCodeAdapter` with the injected SDK
- * client, and materializes all agents declared in `.weave/config.weave`.
+ * the runtime context and materializes all agents declared in
+ * `.weave/config.weave` through the config hook.
  *
  * ## Boundary rule
  *
  * This package is the only consumer of `@opencode-ai/sdk` and
- * `@opencode-ai/plugin`. All SDK type imports flow through `./sdk-types` —
- * never directly from the SDK package. Plugin types are confined to
- * `./plugin.ts`.
+ * `@opencode-ai/plugin`. SDK type imports flow through `./sdk-types` — never
+ * directly from the SDK package in adapter implementation modules. Plugin
+ * types are confined to `./plugin.ts`.
  */
 
 export { OPENCODE_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
@@ -61,31 +61,6 @@ export type {
   OpenCodeModelResolution,
 } from "./model-resolution.js";
 export { resolveModelForAgent } from "./model-resolution.js";
-
-// ---------------------------------------------------------------------------
-// SDK client facade
-// ---------------------------------------------------------------------------
-
-export type {
-  OpenCodeClientError,
-  OpenCodeClientFacade,
-} from "./opencode-client.js";
-export { SdkOpenCodeClient } from "./opencode-client.js";
-
-// ---------------------------------------------------------------------------
-// Reconciliation
-// ---------------------------------------------------------------------------
-
-export type {
-  ReconcileAgentError,
-  ReconcileDecision,
-} from "./reconcile-agent.js";
-export {
-  classifyExistingAgent,
-  reconcileAgent,
-  tagWithOwnership,
-  WEAVE_OWNERSHIP_TAG,
-} from "./reconcile-agent.js";
 
 // ---------------------------------------------------------------------------
 // Workflow runner

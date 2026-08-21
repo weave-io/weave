@@ -58,18 +58,14 @@ import type {
   PiNativeSessionFileStat,
   PiNativeSessionFsError,
   PiNativeSessionFsPort,
-  PiNativeSessionGrantRefusal,
   PiNativeSessionHandle,
   PiNativeSessionHeader,
   PiNativeSessionHostPort,
   PiNativeSessionLock,
   PiNativeSessionRecord,
-  PiNativeSessionStorageUnavailable,
-  PiNativeSessionStorageUnavailableReason,
 } from "./child-native-session-contracts.js";
 import {
   decodeNativeSessionBase64Url,
-  describePiNativeSessionStorageUnavailable,
   effectivePiNativeSessionMaxRangeLength,
   encodeNativeSessionBase64Url,
   fromFsError,
@@ -150,7 +146,6 @@ export type {
   PiNativeSessionStorageUnavailable,
   PiNativeSessionStorageUnavailableReason,
 } from "./child-native-session-contracts.js";
-export type { PiValidatedSessionHeader } from "./native-session-header.js";
 export {
   describePiNativeSessionStorageUnavailable,
   PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
@@ -158,6 +153,7 @@ export {
   PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
   setPiNativeSessionMaxRangeLengthForTests,
 } from "./child-native-session-contracts.js";
+export type { PiValidatedSessionHeader } from "./native-session-header.js";
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -553,11 +549,35 @@ export type PiNativeThreadMetadataInput = Omit<
   "schemaVersion"
 >;
 
-const NativeThreadEntryShapeSchema = z.looseObject({
+const NativeThreadEntryRecordSchema = z.looseObject({
   type: z.string().optional(),
   customType: z.string().optional(),
   data: z.unknown(),
 });
+
+/** JSON values accepted as native session body entries. */
+const NativeSessionEntryValueSchema = z.union([
+  z.looseObject({}),
+  z.array(z.unknown()),
+]);
+
+const NativeSessionDeletionPhaseSchema = z.enum([
+  "intent",
+  "failed",
+  "completed",
+]);
+
+/** Legacy-compatible parser for one append-only deletion record. */
+const NativeSessionDeletionRecordSchema = z
+  .object({
+    version: z.literal(1),
+    ref: z.string(),
+    childId: z.string(),
+    parentSession: z.string().nullable().optional(),
+    deletedAt: z.string(),
+    phase: NativeSessionDeletionPhaseSchema.optional(),
+  })
+  .passthrough();
 
 /**
  * Finds the newest valid thread metadata entry in a native session's entries.
@@ -568,10 +588,12 @@ export function readNativeThreadMetadata(
   entries: readonly unknown[],
 ): PiNativeThreadMetadata | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const shape = NativeThreadEntryShapeSchema.safeParse(entries[index]);
-    if (!shape.success) continue;
-    if (shape.data.customType !== PI_NATIVE_THREAD_ENTRY_TYPE) continue;
-    const parsed = PiNativeThreadMetadataSchema.safeParse(shape.data.data);
+    const entryRecord = NativeThreadEntryRecordSchema.safeParse(entries[index]);
+    if (!entryRecord.success) continue;
+    if (entryRecord.data.customType !== PI_NATIVE_THREAD_ENTRY_TYPE) continue;
+    const parsed = PiNativeThreadMetadataSchema.safeParse(
+      entryRecord.data.data,
+    );
     if (!parsed.success) continue;
     return parsed.data;
   }
@@ -644,8 +666,8 @@ export function decodePiNativeSessionEntryCursor(
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
   }
   const json = Result.fromThrowable(
-    () => JSON.parse(textDecoder.decode(bytes.value)) as unknown,
-    () => undefined,
+    () => JSON.parse(textDecoder.decode(bytes.value)),
+    () => void 0,
   )();
   if (json.isErr()) {
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
@@ -703,16 +725,17 @@ function parseJsonlBodyLine(
   }
   const text = textDecoder.decode(lineBytes);
   const parsed = Result.fromThrowable(
-    () => JSON.parse(text) as unknown,
-    () => undefined,
+    () => JSON.parse(text),
+    () => void 0,
   )();
   if (parsed.isErr()) {
     return { kind: "corrupt", offset, reason: "invalid-json" };
   }
-  if (typeof parsed.value !== "object" || parsed.value === null) {
+  const entry = NativeSessionEntryValueSchema.safeParse(parsed.value);
+  if (!entry.success) {
     return { kind: "corrupt", offset, reason: "not-object" };
   }
-  return { kind: "entry", offset, value: parsed.value };
+  return { kind: "entry", offset, value: entry.data };
 }
 
 /**
@@ -1188,8 +1211,8 @@ function readSessionHeaderLine(
  * requires. Used by every read/reopen path, so a header refused at create can
  * never be accepted later.
  */
-function validateChildSessionHeader(
-  candidate: unknown,
+function validateChildSessionHeader<TCandidate>(
+  candidate: TCandidate,
   expectedParent: string | undefined,
 ): Result<PiValidatedSessionHeader, PiNativeSessionCorruption> {
   const validated = validatePiNativeSessionHeader(candidate);
@@ -1217,8 +1240,8 @@ function validateChildSessionHeader(
  * `header-unusable`. The parent link and cwd must be exactly the ones this
  * store asked the host to create.
  */
-function persistableHostHeader(
-  header: unknown,
+function persistableHostHeader<THeader>(
+  header: THeader,
   input: CreateNativeChildSessionInput,
 ): Result<PiValidatedSessionHeader, "header-unusable"> {
   const validated = validatePiNativeSessionHeader(header);
@@ -1474,7 +1497,7 @@ function readBoundedFileFromDirectory(
     .mapErr((error) => fromFsError(error, ref))
     .andThen((handle) => {
       if (handle === undefined) {
-        return okAsync<Uint8Array | undefined, PiNativeSessionError>(undefined);
+        return okAsync<Uint8Array | undefined, PiNativeSessionError>(void 0);
       }
       return readBoundedFile(handle, ref, maxBytes)
         .map((bytes): Uint8Array | undefined => {
@@ -1508,7 +1531,11 @@ function parseSessionFileContents(
 > {
   const corrupt = (
     reason: PiNativeSessionCorruption,
-  ): PiNativeSessionError => ({ type: "SessionCorrupt", ref, reason });
+  ): PiNativeSessionError => ({
+    type: "SessionCorrupt",
+    ref,
+    reason,
+  });
   if (bytes.length === 0) return err(corrupt("missing-header"));
 
   const maxLine = effectivePiNativeSessionMaxRangeLength();
@@ -1573,11 +1600,13 @@ function resultScanSource(
     bytesRead: state.bytesRead,
     lines: located.map((line) => {
       const parsed = parseJsonlBodyLine(line.offset, line.bytes);
-      return {
+      const scanLine = {
         offset: line.offset,
         endOffset: line.offset + line.bytes.length,
-        ...(parsed.kind === "entry" ? { entry: parsed.value } : {}),
       };
+      return parsed.kind === "entry"
+        ? { ...scanLine, entry: parsed.value }
+        : scanLine;
     }),
   });
   return {
@@ -1752,24 +1781,35 @@ export class PiNativeSessionStore {
             reason: "identity-mismatch",
           });
         }
-        return mintPiChildSessionLaunchGrant(authority, {
-          childId: input.childId,
-          sessionId: fresh.sessionId,
-          ref: fresh.ref,
-          sessionDir: fresh.sessionDir,
-          sessionPath: fresh.sessionPath,
-          activeLeafId: input.activeLeafId,
-          ...(input.checkpointCursor === undefined
-            ? {}
-            : { checkpointCursor: input.checkpointCursor }),
-        }).mapErr((): PiNativeSessionError => {
-          // Every remaining rejection describes launch identity the store
-          // derived itself; it never names a path.
-          return {
-            type: "SessionGrantRefused",
-            reason: "invalid-launch-identity",
-          };
-        });
+        const launchDetails =
+          input.checkpointCursor === undefined
+            ? {
+                childId: input.childId,
+                sessionId: fresh.sessionId,
+                ref: fresh.ref,
+                sessionDir: fresh.sessionDir,
+                sessionPath: fresh.sessionPath,
+                activeLeafId: input.activeLeafId,
+              }
+            : {
+                childId: input.childId,
+                sessionId: fresh.sessionId,
+                ref: fresh.ref,
+                sessionDir: fresh.sessionDir,
+                sessionPath: fresh.sessionPath,
+                activeLeafId: input.activeLeafId,
+                checkpointCursor: input.checkpointCursor,
+              };
+        return mintPiChildSessionLaunchGrant(authority, launchDetails).mapErr(
+          (): PiNativeSessionError => {
+            // Every remaining rejection describes launch identity the store
+            // derived itself; it never names a path.
+            return {
+              type: "SessionGrantRefused",
+              reason: "invalid-launch-identity",
+            };
+          },
+        );
       },
     );
   }
@@ -1895,9 +1935,9 @@ export class PiNativeSessionStore {
     return directory
       .statFile(fileName)
       .mapErr((error) => this.mapCreateFsError(error, ref))
-      .andThen((existing) => {
+      .andThen((existing): ResultAsync<void, PiNativeSessionError> => {
         if (existing !== undefined) {
-          return errAsync<void, PiNativeSessionError>({
+          return errAsync<undefined, PiNativeSessionError>({
             type: "SessionCreateFailed",
             reason: "collision",
           });
@@ -1918,11 +1958,11 @@ export class PiNativeSessionStore {
               .mapErr((error) => this.mapCreateFsError(error, ref))
               .andThen((stat) =>
                 stat === undefined
-                  ? errAsync<void, PiNativeSessionError>({
+                  ? errAsync<undefined, PiNativeSessionError>({
                       type: "SessionCreateFailed",
                       reason: "not-persisted",
                     })
-                  : okAsync<void, PiNativeSessionError>(undefined),
+                  : okAsync<undefined, PiNativeSessionError>(void 0),
               ),
           );
       });
@@ -2397,13 +2437,19 @@ export class PiNativeSessionStore {
       if (encoded.isErr()) return err(encoded.error);
       newerCursor = encoded.value;
     }
-    return ok({
+    const basePage = {
       entries: entriesWithCursors,
-      ...(olderCursor === undefined ? {} : { olderCursor }),
-      ...(newerCursor === undefined ? {} : { newerCursor }),
       bytesRead: state.bytesRead,
       linesScanned: state.linesScanned,
-    });
+    };
+    if (olderCursor === undefined) {
+      return newerCursor === undefined
+        ? ok(basePage)
+        : ok({ ...basePage, newerCursor });
+    }
+    return newerCursor === undefined
+      ? ok({ ...basePage, olderCursor })
+      : ok({ ...basePage, olderCursor, newerCursor });
   }
 
   private pageNewest(
@@ -2658,14 +2704,15 @@ export class PiNativeSessionStore {
             reason: "host-threw",
           }),
         )().andThen((appended) => {
-          if (typeof appended === "string" && appended.length > 0) {
+          const appendedLeafId = z.string().min(1).safeParse(appended);
+          if (appendedLeafId.success) {
             return ok<
               {
                 readonly record: PiNativeSessionRecord;
                 readonly leafId: string;
               },
               PiNativeSessionError
-            >({ record, leafId: appended });
+            >({ record, leafId: appendedLeafId.data });
           }
           // The append gave no usable id, so fall back to the host's optional
           // leaf getter. That getter is host code and may throw, so it is
@@ -2678,7 +2725,7 @@ export class PiNativeSessionStore {
             PiNativeSessionError
           > =
             readLeafId === undefined
-              ? ok(undefined)
+              ? ok(void 0)
               : Result.fromThrowable(
                   readLeafId,
                   (): PiNativeSessionError => ({
@@ -2687,38 +2734,29 @@ export class PiNativeSessionStore {
                     reason: "unreadable",
                   }),
                 )();
-          return fallback.andThen(
-            (
-              leafId: string | null | undefined,
-            ): Result<
-              {
-                readonly record: PiNativeSessionRecord;
-                readonly leafId: string;
-              },
-              PiNativeSessionError
-            > => {
-              if (typeof leafId !== "string" || leafId.length === 0) {
-                return err<
-                  {
-                    readonly record: PiNativeSessionRecord;
-                    readonly leafId: string;
-                  },
-                  PiNativeSessionError
-                >({
-                  type: "SessionCorrupt",
-                  ref: record.ref,
-                  reason: "unreadable",
-                });
-              }
-              return ok<
+          return fallback.andThen((leafId) => {
+            const parsedLeafId = z.string().min(1).safeParse(leafId);
+            if (!parsedLeafId.success) {
+              return err<
                 {
                   readonly record: PiNativeSessionRecord;
                   readonly leafId: string;
                 },
                 PiNativeSessionError
-              >({ record, leafId });
-            },
-          );
+              >({
+                type: "SessionCorrupt",
+                ref: record.ref,
+                reason: "unreadable",
+              });
+            }
+            return ok<
+              {
+                readonly record: PiNativeSessionRecord;
+                readonly leafId: string;
+              },
+              PiNativeSessionError
+            >({ record, leafId: parsedLeafId.data });
+          });
         });
       },
     );
@@ -2971,8 +3009,8 @@ export class PiNativeSessionStore {
       .mapErr((error) => fromFsError(error, ref))
       .andThen((current) =>
         sameFileIdentity(current, authorized)
-          ? okAsync<void, PiNativeSessionError>(undefined)
-          : errAsync<void, PiNativeSessionError>({
+          ? okAsync<undefined, PiNativeSessionError>(void 0)
+          : errAsync<undefined, PiNativeSessionError>({
               type: "SessionCorrupt",
               ref,
               reason: "identity-mismatch",
@@ -2996,8 +3034,8 @@ export class PiNativeSessionStore {
         current.dev === expected.dev &&
         current.ino === expected.ino &&
         current.size >= expected.size
-          ? okAsync<void, PiNativeSessionError>(undefined)
-          : errAsync<void, PiNativeSessionError>({
+          ? okAsync<undefined, PiNativeSessionError>(void 0)
+          : errAsync<undefined, PiNativeSessionError>({
               type: "SessionCorrupt",
               ref,
               reason: "identity-mismatch",
@@ -3037,8 +3075,8 @@ export class PiNativeSessionStore {
     return this.statContainedLeaf(directory, fileName, ref).andThen(
       (current) =>
         sameValidatedLeafIdentity(current, expected)
-          ? okAsync<void, PiNativeSessionError>(undefined)
-          : errAsync<void, PiNativeSessionError>({
+          ? okAsync<undefined, PiNativeSessionError>(void 0)
+          : errAsync<undefined, PiNativeSessionError>({
               type: "SessionCorrupt",
               ref,
               reason: "unreadable",
@@ -3146,7 +3184,7 @@ export class PiNativeSessionStore {
         return step(page.olderCursor, found);
       });
     };
-    return step(undefined, undefined);
+    return step(void 0, void 0);
   }
 
   /**
@@ -3295,7 +3333,11 @@ export class PiNativeSessionStore {
       };
       const corrupt = (
         reason: PiNativeSessionCorruption,
-      ): PiNativeSessionError => ({ type: "SessionCorrupt", ref, reason });
+      ): PiNativeSessionError => ({
+        type: "SessionCorrupt",
+        ref,
+        reason,
+      });
       const escaped: PiNativeSessionError = {
         type: "SessionRootViolation",
         reason: "path-escape",
@@ -3576,11 +3618,11 @@ export class PiNativeSessionStore {
           .mapErr((error) => fromFsError(error, located.verified))
           .andThen((stat) =>
             stat === undefined
-              ? errAsync<void, PiNativeSessionError>({
+              ? errAsync<undefined, PiNativeSessionError>({
                   type: "SessionMissing",
                   ref: located.verified,
                 })
-              : okAsync(undefined),
+              : okAsync<undefined, PiNativeSessionError>(void 0),
           ),
     );
   }
@@ -3614,7 +3656,7 @@ export class PiNativeSessionStore {
             .andThen(() =>
               before === undefined
                 ? directory.sync().mapErr(mapTombstoneWriteError)
-                : okAsync(undefined),
+                : okAsync(void 0),
             ),
         )
         .map(() => tombstone),
@@ -3636,13 +3678,13 @@ export class PiNativeSessionStore {
           .deleteFile(located.fileName)
           .mapErr((error) => mapUnlinkError(error, located.verified)),
     )
-      .map(() => ok<void, PiNativeSessionError>(undefined))
+      .map(() => ok(void 0))
       .orElse((error) => {
         if (error.type === "SessionMissing") {
-          return okAsync(ok<void, PiNativeSessionError>(undefined));
+          return okAsync(ok(void 0));
         }
         if (error.type === "SessionUnlinkFailed") {
-          return okAsync(err<void, PiNativeSessionError>(error));
+          return okAsync(err(error));
         }
         return errAsync(error);
       });
@@ -3726,40 +3768,20 @@ function parseDeletionLedger(
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     const parsed = Result.fromThrowable(
-      () => JSON.parse(line) as unknown,
-      () => undefined,
+      () => JSON.parse(line),
+      () => void 0,
     )();
     if (parsed.isErr()) continue;
-    const value = parsed.value;
-    if (typeof value !== "object" || value === null) continue;
-    const candidate = value as Partial<PiNativeSessionDeletionRecord>;
-    if (
-      candidate.version !== 1 ||
-      typeof candidate.ref !== "string" ||
-      typeof candidate.childId !== "string" ||
-      typeof candidate.deletedAt !== "string"
-    ) {
-      continue;
-    }
-    let phase: PiNativeSessionDeletionPhase | undefined;
-    if (
-      candidate.phase === "intent" ||
-      candidate.phase === "failed" ||
-      candidate.phase === "completed"
-    ) {
-      phase = candidate.phase;
-    } else if (candidate.phase === undefined) {
-      phase = "completed";
-    }
-    if (phase === undefined) continue;
+    const candidate = NativeSessionDeletionRecordSchema.safeParse(parsed.value);
+    if (!candidate.success) continue;
     records.push({
       version: 1,
-      ref: candidate.ref,
-      childId: candidate.childId,
-      parentSession: candidate.parentSession ?? "",
-      deletedAt: candidate.deletedAt,
+      ref: candidate.data.ref,
+      childId: candidate.data.childId,
+      parentSession: candidate.data.parentSession ?? "",
+      deletedAt: candidate.data.deletedAt,
       reason: "explicit-user-deletion",
-      phase,
+      phase: candidate.data.phase ?? "completed",
     });
   }
   return ok(records);

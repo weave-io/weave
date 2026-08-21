@@ -4,12 +4,12 @@ import { createInMemoryRuntimeStore } from "../runtime/memory-store.js";
 
 describe("engine public API", () => {
   it("exports the permission facade without durable repository internals", () => {
-    expect(typeof engine.createPermissionService).toBe("function");
-    expect(typeof engine.PermissionService).toBe("function");
-    expect(typeof engine.PermissionSession).toBe("function");
-    expect(typeof engine.PermissionRegistryBuilder).toBe("function");
-    expect(typeof engine.PermissionRegistryGeneration).toBe("function");
-    expect(typeof engine.verifyPermissionCoverage).toBe("function");
+    expect(engine.createPermissionService).toBeDefined();
+    expect(engine.PermissionService).toBeDefined();
+    expect(engine.PermissionSession).toBeDefined();
+    expect(engine.PermissionRegistryBuilder).toBeDefined();
+    expect(engine.PermissionRegistryGeneration).toBeDefined();
+    expect(engine.verifyPermissionCoverage).toBeDefined();
     expect("InMemoryPermissionApprovalRepository" in engine).toBe(false);
     expect("SqlitePermissionApprovalRepository" in engine).toBe(false);
     expect("createPermissionRegistryBuilderForTesting" in engine).toBe(false);

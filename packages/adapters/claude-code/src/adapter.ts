@@ -137,7 +137,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const markdown = this.translateDescriptor(descriptor);
       this.pendingAgents.push({ name: descriptor.name, markdown });
       log.info({ agent: descriptor.name }, "Queued agent for flush");
-      return okAsync(undefined);
+      return okAsync();
     } catch (e) {
       return errAsync(e instanceof Error ? e : new Error(String(e)));
     }
@@ -227,9 +227,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const pendingNames = new Set(
         this.pendingAgents.map((a) => `${a.name}.md`),
       );
-      const existing = await this.readDir(agentsDir).catch(
-        () => [] as string[],
-      );
+      const existing = await this.readDir(agentsDir).catch(() => []);
       for (const file of existing) {
         if (file.endsWith(".md") && !pendingNames.has(file)) {
           await this.removeFile(join(agentsDir, file));
@@ -272,9 +270,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         // no longer generates (such as the old `goal.md`) are removed by this
         // same stale sweep.
         const commandNames = new Set(["start.md", "start-work.md"]);
-        const existing = await this.readDir(commandsDir).catch(
-          () => [] as string[],
-        );
+        const existing = await this.readDir(commandsDir).catch(() => []);
         for (const file of existing) {
           if (file.endsWith(".md") && !commandNames.has(file)) {
             await this.removeFile(join(commandsDir, file));
@@ -299,9 +295,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const commandsDir = join(this.outDir, "commands");
       const commandsDirExists = await this.exists(commandsDir);
       if (commandsDirExists) {
-        const existing = await this.readDir(commandsDir).catch(
-          () => [] as string[],
-        );
+        const existing = await this.readDir(commandsDir).catch(() => []);
         for (const file of existing) {
           if (file.endsWith(".md")) {
             await this.removeFile(join(commandsDir, file));

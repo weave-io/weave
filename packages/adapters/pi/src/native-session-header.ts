@@ -34,6 +34,7 @@
  */
 
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import type { PiNativeSessionHeader } from "./child-native-session-contracts.js";
 
 /**
@@ -44,6 +45,9 @@ import type { PiNativeSessionHeader } from "./child-native-session-contracts.js"
  * {@link PiValidatedSessionHeader}.
  */
 export type { PiNativeSessionHeader } from "./child-native-session-contracts.js";
+
+/** A field name in the host-owned Pi header contract. */
+type PiNativeSessionHeaderFieldName = keyof PiNativeSessionHeader;
 
 /**
  * A complete, strictly validated Pi v3 session header. Only
@@ -103,6 +107,54 @@ export const MAX_SESSION_HEADER_STRING_LENGTH = 4_096;
 /** Pi `Date.prototype.toISOString()` shape; never synthesized by the adapter. */
 const HOST_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+const BOUNDED_HEADER_STRING = z
+  .string()
+  .min(1)
+  .max(MAX_SESSION_HEADER_STRING_LENGTH)
+  .refine((value) => !value.includes("\0"));
+
+/** Values returned by a descriptor before the header field parser narrows it. */
+type HeaderFieldValue =
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined
+  | object;
+
+/** A raw own data field captured without reading through the host object. */
+interface RawHeaderField {
+  readonly key: PiNativeSessionHeaderFieldName;
+  readonly value: HeaderFieldValue;
+}
+
+interface ValidatedHeaderFields {
+  readonly type: "session";
+  readonly version: 3;
+  readonly id: string;
+  readonly timestamp: string;
+  readonly cwd: string;
+  readonly parentSession: string;
+}
+
+interface MutableHeaderCopy {
+  type: "session";
+  version: 3;
+  id: string;
+  timestamp: string;
+  cwd: string;
+  parentSession: string;
+}
+
+type HeaderField = {
+  [K in PiNativeSessionHeaderFieldName]: {
+    readonly key: K;
+    readonly value: ValidatedHeaderFields[K];
+  };
+}[PiNativeSessionHeaderFieldName];
+
 /**
  * Every reflection this module performs runs through one of these throwing
  * boundaries. A hostile proxy can make `getPrototypeOf`, `ownKeys`,
@@ -110,68 +162,131 @@ const HOST_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
  * validator that reflects directly would propagate that throw out of a
  * `Result`-returning function. Here every trap failure is a typed refusal.
  */
-const reflectPrototypeOf = Result.fromThrowable(
-  (candidate: object): object | null =>
-    Object.getPrototypeOf(candidate) as object | null,
-  (): PiNativeSessionHeaderViolation => "not-plain-object",
-);
-
-const reflectOwnKeys = Result.fromThrowable(
-  (candidate: object): readonly (string | symbol)[] =>
-    Reflect.ownKeys(candidate),
-  (): PiNativeSessionHeaderViolation => "not-plain-object",
-);
-
-const reflectOwnDescriptor = Result.fromThrowable(
-  (candidate: object, key: string): PropertyDescriptor | undefined =>
-    Object.getOwnPropertyDescriptor(candidate, key),
-  (): PiNativeSessionHeaderViolation => "unsafe-descriptor",
-);
-
-const reflectIsArray = Result.fromThrowable(
-  (candidate: object): boolean => Array.isArray(candidate),
-  (): PiNativeSessionHeaderViolation => "not-plain-object",
-);
-
-/**
- * One own field, read from its own data descriptor and never by property
- * access. A caller property is never touched directly, so no `get` trap and
- * no inherited accessor can ever run.
- */
-interface OwnDataField {
-  readonly key: string;
-  readonly value: unknown;
+function reflectPrototypeOf<TObject extends object>(
+  candidate: TObject,
+): Result<object | null, PiNativeSessionHeaderViolation> {
+  return Result.fromThrowable(
+    () => Object.getPrototypeOf(candidate),
+    (): PiNativeSessionHeaderViolation => "not-plain-object",
+  )();
 }
 
-function isBoundedHeaderString(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= MAX_SESSION_HEADER_STRING_LENGTH &&
-    !value.includes("\0")
-  );
+function reflectOwnKeys<TObject extends object>(
+  candidate: TObject,
+): Result<readonly (string | symbol)[], PiNativeSessionHeaderViolation> {
+  return Result.fromThrowable(
+    () => Reflect.ownKeys(candidate),
+    (): PiNativeSessionHeaderViolation => "not-plain-object",
+  )();
+}
+
+function reflectOwnDescriptor<TObject extends object>(
+  candidate: TObject,
+  key: string,
+): Result<PropertyDescriptor | undefined, PiNativeSessionHeaderViolation> {
+  return Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(candidate, key),
+    (): PiNativeSessionHeaderViolation => "unsafe-descriptor",
+  )();
+}
+
+function reflectIsArray<TObject extends object>(
+  candidate: TObject,
+): Result<boolean, PiNativeSessionHeaderViolation> {
+  return Result.fromThrowable(
+    () => Array.isArray(candidate),
+    (): PiNativeSessionHeaderViolation => "not-plain-object",
+  )();
+}
+
+/**
+ * A generic reference guard keeps the unparsed caller boundary intact while
+ * giving the descriptor reflection helpers the object contract they need.
+ */
+function isObjectReference<TValue>(value: TValue): value is TValue & object {
+  return value !== null && Object(value) === value;
+}
+
+/** Own property keys are strings or symbols; this preserves that distinction. */
+function isStringPropertyKey(value: string | symbol): value is string {
+  return String(value) === value;
+}
+
+function isSupportedHeaderFieldName(
+  value: string,
+): value is PiNativeSessionHeaderFieldName {
+  return SUPPORTED_HEADER_FIELDS.has(value);
+}
+
+function boundedHeaderString<TValue>(value: TValue): string | undefined {
+  const parsed = BOUNDED_HEADER_STRING.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** True for Pi's exact `toISOString()` shape and a real calendar instant. */
 export function isHostIsoTimestamp(value: string): boolean {
   if (!HOST_ISO_TIMESTAMP.test(value)) return false;
-  return !Number.isNaN(Date.parse(value));
+  const milliseconds = Date.parse(value);
+  if (Number.isNaN(milliseconds)) return false;
+  return new Date(milliseconds).toISOString() === value;
+}
+
+function parseHeaderField<TValue>(
+  key: PiNativeSessionHeaderFieldName,
+  value: TValue,
+): Result<HeaderField, PiNativeSessionHeaderViolation> {
+  switch (key) {
+    case "type":
+      return value === "session"
+        ? ok({ key: "type", value: "session" })
+        : err("invalid-type");
+    case "version":
+      return value === 3
+        ? ok({ key: "version", value: 3 })
+        : err("unsupported-version");
+    case "id": {
+      const id = boundedHeaderString(value);
+      return id === undefined
+        ? err("invalid-id")
+        : ok({ key: "id", value: id });
+    }
+    case "timestamp": {
+      const timestamp = boundedHeaderString(value);
+      return timestamp === undefined || !isHostIsoTimestamp(timestamp)
+        ? err("invalid-timestamp")
+        : ok({ key: "timestamp", value: timestamp });
+    }
+    case "cwd": {
+      const cwd = boundedHeaderString(value);
+      return cwd === undefined
+        ? err("invalid-cwd")
+        : ok({ key: "cwd", value: cwd });
+    }
+    case "parentSession": {
+      const parentSession = boundedHeaderString(value);
+      return parentSession === undefined
+        ? err("invalid-parent-session")
+        : ok({ key: "parentSession", value: parentSession });
+    }
+    default:
+      return err("unknown-field");
+  }
 }
 
 /**
  * Validates one candidate session header completely and returns a frozen copy
  * in the host's own key order.
  *
- * Accepts `unknown` on purpose: callers receive headers from an injected host
- * port, from `JSON.parse` of on-disk bytes, and from other adapter code, and
- * none of those sources may be trusted to have been checked already.
+ * The generic input boundary intentionally accepts values from an injected
+ * host port, `JSON.parse` of on-disk bytes, and other adapter code. None of
+ * those sources may be trusted to have been checked already, so this module
+ * performs the reference, prototype, descriptor, and field checks itself.
  */
-export function validatePiNativeSessionHeader(
-  candidate: unknown,
+export function validatePiNativeSessionHeader<TCandidate>(
+  candidate: TCandidate,
 ): Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation> {
-  if (typeof candidate !== "object" || candidate === null) {
-    return err("not-plain-object");
-  }
+  if (!isObjectReference(candidate)) return err("not-plain-object");
+
   const array = reflectIsArray(candidate);
   if (array.isErr()) return err(array.error);
   if (array.value) return err("not-plain-object");
@@ -189,54 +304,69 @@ export function validatePiNativeSessionHeader(
   // report different key sets to two separate reflections.
   const ownKeys = reflectOwnKeys(candidate);
   if (ownKeys.isErr()) return err(ownKeys.error);
-  if (ownKeys.value.some((key) => typeof key === "symbol")) {
-    return err("unsafe-descriptor");
-  }
-  const keys = ownKeys.value.filter(
-    (key): key is string => typeof key === "string",
-  );
+  const keys = ownKeys.value.filter(isStringPropertyKey);
+  if (keys.length !== ownKeys.value.length) return err("unsafe-descriptor");
 
   // Values come from the own data descriptors read here, never from property
   // access on the caller's object: no `get` trap and no accessor ever runs.
-  const fields: OwnDataField[] = [];
+  const rawFields: RawHeaderField[] = [];
   for (const key of keys) {
     const descriptor = reflectOwnDescriptor(candidate, key);
     if (descriptor.isErr()) return err(descriptor.error);
     const own = descriptor.value;
     if (own === undefined) return err("unsafe-descriptor");
-    if (!("value" in own)) return err("unsafe-descriptor");
+    if (!Object.hasOwn(own, "value")) return err("unsafe-descriptor");
     if (!own.enumerable) return err("unsafe-descriptor");
-    if (!SUPPORTED_HEADER_FIELDS.has(key)) return err("unknown-field");
-    fields.push({ key, value: own.value });
+    if (!isSupportedHeaderFieldName(key)) return err("unknown-field");
+    rawFields.push({ key, value: own.value });
   }
 
-  const source = new Map<string, unknown>(
-    fields.map((field) => [field.key, field.value]),
-  );
   for (const field of PI_SESSION_HEADER_REQUIRED_FIELDS) {
-    if (!source.has(field)) return err("missing-field");
-    if (source.get(field) === undefined) return err("missing-field");
+    const raw = rawFields.find(
+      (candidateField) => candidateField.key === field,
+    );
+    if (raw === undefined || raw.value === undefined)
+      return err("missing-field");
   }
 
-  const timestamp = source.get("timestamp");
-  if (source.get("type") !== "session") return err("invalid-type");
-  if (source.get("version") !== 3) return err("unsupported-version");
-  if (!isBoundedHeaderString(source.get("id"))) return err("invalid-id");
-  if (!isBoundedHeaderString(timestamp)) return err("invalid-timestamp");
-  if (!isHostIsoTimestamp(timestamp)) return err("invalid-timestamp");
-  if (!isBoundedHeaderString(source.get("cwd"))) return err("invalid-cwd");
-  if (
-    source.has("parentSession") &&
-    !isBoundedHeaderString(source.get("parentSession"))
-  ) {
-    return err("invalid-parent-session");
+  const fields: HeaderField[] = [];
+  for (const raw of rawFields) {
+    const parsed = parseHeaderField(raw.key, raw.value);
+    if (parsed.isErr()) return err(parsed.error);
+    fields.push(parsed.value);
   }
 
   // Copied in the host's own key order so the persisted bytes stay identical
   // to the header Pi generated.
-  const copied: Record<string, unknown> = {};
-  for (const field of fields) copied[field.key] = field.value;
-  return ok(Object.freeze(copied) as unknown as PiValidatedSessionHeader);
+  const copied: Partial<MutableHeaderCopy> = {};
+  for (const field of fields) {
+    switch (field.key) {
+      case "type":
+        copied.type = field.value;
+        break;
+      case "version":
+        copied.version = field.value;
+        break;
+      case "id":
+        copied.id = field.value;
+        break;
+      case "timestamp":
+        copied.timestamp = field.value;
+        break;
+      case "cwd":
+        copied.cwd = field.value;
+        break;
+      case "parentSession":
+        copied.parentSession = field.value;
+        break;
+    }
+  }
+  const frozenCopy = Object.freeze(copied);
+  // SAFETY: the required-field loop and parseHeaderField prove that every
+  // required property exists with its exact validated value; parentSession is
+  // either a validated string or absent. The loop above copies each accepted
+  // field in the host's own key order.
+  return ok(frozenCopy as PiValidatedSessionHeader);
 }
 
 /**

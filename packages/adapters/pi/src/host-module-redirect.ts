@@ -10,7 +10,8 @@
  * opt-in proof record.
  */
 import { isAbsolute } from "node:path";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result, type Result as ResultType } from "neverthrow";
+import { z } from "zod";
 
 /**
  * Same identity as `HOST_PACKAGE_NAME` in `host-compatibility.ts`, kept local
@@ -140,6 +141,159 @@ export type PiHostRedirectDiagnostic =
       readonly specifier?: PiHostModuleSpecifier;
     };
 
+const REDIRECT_INPUT_SCHEMA = z.unknown();
+type RedirectInput = z.input<typeof REDIRECT_INPUT_SCHEMA>;
+
+interface RedirectObjectReference {
+  readonly redirectObjectMarker?: never;
+}
+
+const REDIRECT_OBJECT_SCHEMA = z.custom<RedirectObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      if (value === null || Object(value) !== value) return false;
+      if (Array.isArray(value)) return false;
+      const prototype = Object.getPrototypeOf(value);
+      return prototype === Object.prototype || prototype === null;
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+type RedirectDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: RedirectInput };
+
+function readRedirectData(value: RedirectInput, key: string): RedirectDataRead {
+  const record = REDIRECT_OBJECT_SCHEMA.safeParse(value);
+  if (!record.success) return { kind: "invalid" };
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+type MutableRedirectFacts = {
+  localEntryPath?: string;
+  hostEntryPath?: string;
+};
+
+type MutableRedirectSpecifiers = {
+  -readonly [K in PiHostModuleSpecifier]: MutableRedirectFacts;
+};
+
+function parseRedirectInput(
+  value: RedirectInput,
+): ResultType<PiHostModuleRedirectInput, PiHostRedirectDiagnostic> {
+  const root = readRedirectData(value, "hostPackageRoot");
+  if (root.kind !== "value") return err({ reason: "host-root-unproven" });
+  const hostPackageValue = readRedirectData(value, "hostPackage");
+  if (hostPackageValue.kind !== "value") {
+    return err({
+      reason: "host-package-mismatch",
+      expected: EXPECTED_HOST_PACKAGE_NAME,
+      actual: "malformed",
+    });
+  }
+  const hostPackage = REDIRECT_OBJECT_SCHEMA.safeParse(hostPackageValue.value);
+  if (!hostPackage.success) {
+    return err({
+      reason: "host-package-mismatch",
+      expected: EXPECTED_HOST_PACKAGE_NAME,
+      actual: "malformed",
+    });
+  }
+  const name = readRedirectData(hostPackage.data, "name");
+  const version = readRedirectData(hostPackage.data, "version");
+  if (name.kind !== "value" || version.kind !== "value") {
+    return err({
+      reason: "host-package-mismatch",
+      expected: EXPECTED_HOST_PACKAGE_NAME,
+      actual: "malformed",
+    });
+  }
+  const parsedName = z.string().min(1).safeParse(name.value);
+  const parsedVersion = z.string().min(1).safeParse(version.value);
+  if (!parsedName.success || !parsedVersion.success) {
+    return err({
+      reason: "host-package-mismatch",
+      expected: EXPECTED_HOST_PACKAGE_NAME,
+      actual: "malformed",
+    });
+  }
+  const specifiersValue = readRedirectData(value, "specifiers");
+  const specifiersRecord =
+    specifiersValue.kind === "value"
+      ? REDIRECT_OBJECT_SCHEMA.safeParse(specifiersValue.value)
+      : undefined;
+  const specifiers: MutableRedirectSpecifiers = {
+    "@earendil-works/pi-coding-agent": {},
+    "@earendil-works/pi-ai": {},
+    "@earendil-works/pi-tui": {},
+    [CODEX_PROVIDER_SUBPATH_SPECIFIER]: {},
+  };
+  for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
+    if (specifiersRecord === undefined || !specifiersRecord.success) continue;
+    const factsValue = readRedirectData(specifiersRecord.data, specifier);
+    if (factsValue.kind !== "value") continue;
+    const factsRecord = REDIRECT_OBJECT_SCHEMA.safeParse(factsValue.value);
+    if (!factsRecord.success) continue;
+    const facts: MutableRedirectFacts = {};
+    const local = readRedirectData(factsRecord.data, "localEntryPath");
+    const host = readRedirectData(factsRecord.data, "hostEntryPath");
+    if (local.kind === "value") {
+      const parsedLocal = z.string().safeParse(local.value);
+      if (!parsedLocal.success) {
+        return err({
+          reason: "local-path-unsafe",
+          field: "localEntryPath",
+          specifier,
+        });
+      }
+      facts.localEntryPath = parsedLocal.data;
+    } else if (local.kind === "invalid") {
+      return err({
+        reason: "local-path-unsafe",
+        field: "localEntryPath",
+        specifier,
+      });
+    }
+    if (host.kind === "value") {
+      const parsedHost = z.string().safeParse(host.value);
+      if (!parsedHost.success) {
+        return err({
+          reason: "local-path-unsafe",
+          field: "hostEntryPath",
+          specifier,
+        });
+      }
+      facts.hostEntryPath = parsedHost.data;
+    } else if (host.kind === "invalid") {
+      return err({
+        reason: "local-path-unsafe",
+        field: "hostEntryPath",
+        specifier,
+      });
+    }
+    specifiers[specifier] = facts;
+  }
+  const parsedRoot = z.string().safeParse(root.value);
+  if (!parsedRoot.success) return err({ reason: "host-root-unproven" });
+  return ok({
+    hostPackageRoot: parsedRoot.data,
+    hostPackage: { name: parsedName.data, version: parsedVersion.data },
+    specifiers,
+  });
+}
+
 /**
  * Host specifier the override must load. Bare `pi-ai` maps to the compat
  * entry; every other member — including the codex provider subpath — keeps
@@ -158,19 +312,26 @@ export function hostEntrySpecifierFor(
  * plus an explicit length bound.
  */
 /** Whether a string is one of the closed host-module specifiers. */
+const PI_HOST_MODULE_SPECIFIER_SET: ReadonlySet<string> = new Set(
+  PI_HOST_MODULE_SPECIFIERS,
+);
+
 export function isPiHostModuleSpecifier(
   value: string,
 ): value is PiHostModuleSpecifier {
-  return (PI_HOST_MODULE_SPECIFIERS as readonly string[]).includes(value);
+  return PI_HOST_MODULE_SPECIFIER_SET.has(value);
 }
 
 export function isSafeAbsoluteHostPath(value: string): boolean {
-  if (value.length === 0 || value.length > MAX_HOST_MODULE_PATH_LENGTH) {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return false;
+  const path = parsed.data;
+  if (path.length === 0 || path.length > MAX_HOST_MODULE_PATH_LENGTH) {
     return false;
   }
-  if (value.includes("\0") || value.includes("\\")) return false;
-  if (!isAbsolute(value)) return false;
-  const components = value.split("/");
+  if (path.includes("\0") || path.includes("\\")) return false;
+  if (!isAbsolute(path)) return false;
+  const components = path.split("/");
   return !components.some(
     (component, index) =>
       index > 0 && (component === "." || component === ".."),
@@ -193,7 +354,7 @@ function validateOptionalPath(
   field: "localEntryPath" | "hostEntryPath",
   specifier: PiHostModuleSpecifier,
 ): Result<string | undefined, PiHostRedirectDiagnostic> {
-  if (value === undefined) return ok(undefined);
+  if (value === undefined) return ok(void 0);
   if (!isSafeAbsoluteHostPath(value)) {
     return err({ reason: "local-path-unsafe", field, specifier });
   }
@@ -208,6 +369,7 @@ function skip(
 }
 
 function decideSpecifier(
+  hostPackageRoot: string,
   specifier: PiHostModuleSpecifier,
   facts: PiHostSpecifierFacts,
 ): Result<
@@ -238,6 +400,19 @@ function decideSpecifier(
   if (hostEntryPath === undefined) {
     return ok({ kind: "skip", skip: skip(specifier, "host-root-unproven") });
   }
+  const hostRootPrefix = hostPackageRoot.endsWith("/")
+    ? hostPackageRoot
+    : `${hostPackageRoot}/`;
+  if (
+    hostEntryPath !== hostPackageRoot &&
+    !hostEntryPath.startsWith(hostRootPrefix)
+  ) {
+    return err({
+      reason: "local-path-unsafe",
+      field: "hostEntryPath",
+      specifier,
+    });
+  }
   if (localEntryPath === hostEntryPath) {
     return ok({ kind: "skip", skip: skip(specifier, "already-host") });
   }
@@ -252,6 +427,15 @@ function decideSpecifier(
   });
 }
 
+type MutablePiHostRedirectProofSpecifier = {
+  specifier: PiHostModuleSpecifier;
+  hostSpecifier: string;
+  localEntryPath?: string;
+  hostEntryPath?: string;
+  redirected: boolean;
+  skipReason?: PiHostRedirectReason;
+};
+
 function buildProof(
   input: PiHostModuleRedirectInput,
   redirects: readonly PiHostRedirectTarget[],
@@ -263,30 +447,28 @@ function buildProof(
   const skipBySpecifier = new Map(
     skipped.map((entry) => [entry.specifier, entry]),
   );
+  const specifiers: MutablePiHostRedirectProofSpecifier[] = [];
+  for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
+    const facts = input.specifiers[specifier];
+    const redirect = redirectBySpecifier.get(specifier);
+    const skippedEntry = skipBySpecifier.get(specifier);
+    const entry: MutablePiHostRedirectProofSpecifier = {
+      specifier,
+      hostSpecifier: hostEntrySpecifierFor(specifier),
+      redirected: redirect !== undefined,
+    };
+    if (facts.localEntryPath !== undefined) {
+      entry.localEntryPath = facts.localEntryPath;
+    }
+    const hostEntryPath = redirect?.hostEntryPath ?? facts.hostEntryPath;
+    if (hostEntryPath !== undefined) entry.hostEntryPath = hostEntryPath;
+    if (skippedEntry !== undefined) entry.skipReason = skippedEntry.reason;
+    specifiers.push(entry);
+  }
   return {
     hostRoot: input.hostPackageRoot,
     hostVersion: input.hostPackage.version,
-    specifiers: PI_HOST_MODULE_SPECIFIERS.map((specifier) => {
-      const facts = input.specifiers[specifier];
-      const redirect = redirectBySpecifier.get(specifier);
-      const skippedEntry = skipBySpecifier.get(specifier);
-      return {
-        specifier,
-        hostSpecifier: hostEntrySpecifierFor(specifier),
-        ...(facts.localEntryPath === undefined
-          ? {}
-          : { localEntryPath: facts.localEntryPath }),
-        ...((redirect?.hostEntryPath ?? facts.hostEntryPath)
-          ? {
-              hostEntryPath: redirect?.hostEntryPath ?? facts.hostEntryPath,
-            }
-          : {}),
-        redirected: redirect !== undefined,
-        ...(skippedEntry === undefined
-          ? {}
-          : { skipReason: skippedEntry.reason }),
-      };
-    }),
+    specifiers,
   };
 }
 
@@ -299,17 +481,20 @@ function buildProof(
  */
 export function planHostModuleRedirect(
   input: PiHostModuleRedirectInput,
-): Result<PiHostRedirectPlan, PiHostRedirectDiagnostic> {
-  if (input.hostPackage.name !== EXPECTED_HOST_PACKAGE_NAME) {
+): ResultType<PiHostRedirectPlan, PiHostRedirectDiagnostic> {
+  const parsedInput = parseRedirectInput(input);
+  if (parsedInput.isErr()) return err(parsedInput.error);
+  const candidate = parsedInput.value;
+  if (candidate.hostPackage.name !== EXPECTED_HOST_PACKAGE_NAME) {
     return err({
       reason: "host-package-mismatch",
       expected: EXPECTED_HOST_PACKAGE_NAME,
-      actual: input.hostPackage.name,
+      actual: candidate.hostPackage.name,
     });
   }
 
   const rootResult = validateRequiredPath(
-    input.hostPackageRoot,
+    candidate.hostPackageRoot,
     "hostPackageRoot",
   );
   if (rootResult.isErr()) return err(rootResult.error);
@@ -318,7 +503,11 @@ export function planHostModuleRedirect(
   const skipped: PiHostSkippedSpecifier[] = [];
 
   for (const specifier of PI_HOST_MODULE_SPECIFIERS) {
-    const decision = decideSpecifier(specifier, input.specifiers[specifier]);
+    const decision = decideSpecifier(
+      candidate.hostPackageRoot,
+      specifier,
+      candidate.specifiers[specifier],
+    );
     if (decision.isErr()) return err(decision.error);
     if (decision.value.kind === "redirect") {
       redirects.push(decision.value.target);
@@ -328,10 +517,10 @@ export function planHostModuleRedirect(
   }
 
   return ok({
-    hostVersion: input.hostPackage.version,
+    hostVersion: candidate.hostPackage.version,
     redirects,
     skipped,
-    proof: buildProof(input, redirects, skipped),
+    proof: buildProof(candidate, redirects, skipped),
   });
 }
 

@@ -247,9 +247,7 @@ export class PiSafeInitializer {
               commands,
               candidatePlan: candidate.probeContext,
               hostSurface: normalizedHostSurface,
-              ...(delegationAuthority === undefined
-                ? {}
-                : { delegationAuthority }),
+              delegationAuthority,
             }).andThen((probes) => {
               const healthReport = buildAdapterHealthReport({
                 harness: HOST_PACKAGE_NAME,
@@ -331,18 +329,23 @@ export class PiSafeInitializer {
    * inspectable.
    */
   private readHost(): ResultAsync<HostOutcome, PiAdapterFailure> {
-    return ResultAsync.fromSafePromise(
-      this.deps.hostPackageReader.read().match(
+    return safelyAwaitPortResult(
+      () => this.deps.hostPackageReader.read(),
+      (): PiAdapterFailure =>
+        makeInvariantViolationFailure("host-package-reader-threw"),
+    )
+      .map(
         (info): HostOutcome => ({
           info,
           compatibility: checkHostCompatibility(info),
         }),
-        (failure): HostOutcome => ({
+      )
+      .orElse((failure) =>
+        okAsync<HostOutcome, never>({
           info: undefined,
           compatibility: err(failure),
         }),
-      ),
-    );
+      );
   }
 
   /**
@@ -384,15 +387,17 @@ export class PiSafeInitializer {
             const primary = activation.descriptors.byName.get(
               DEFAULT_PRIMARY_AGENT_NAME,
             );
-            const primaryEligible =
-              primary !== undefined && primary.mode !== "subagent";
+            const eligiblePrimary =
+              primary !== undefined && primary.mode !== "subagent"
+                ? primary
+                : undefined;
             const toolRegistrations =
-              primaryEligible && primary !== undefined
-                ? (this.deps.buildDelegationToolRegistrations?.(
-                    primary as NonNullable<typeof primary>,
+              eligiblePrimary === undefined
+                ? []
+                : (this.deps.buildDelegationToolRegistrations?.(
+                    eligiblePrimary,
                     activation,
-                  ) ?? [])
-                : [];
+                  ) ?? []);
             // `modelRegistry` is an injected port; a throwing
             // `getAvailable()` must not crash preflight - Pi adapter contract's own
             // fail-closed behavior for model resolution is to degrade rather
@@ -400,12 +405,13 @@ export class PiSafeInitializer {
             const availableModels = safelyListAvailableModels(
               modelRegistry,
             ).unwrapOr([]);
-            const modelResolution = primaryEligible
-              ? new PiModelResolver().resolve(
-                  (primary as NonNullable<typeof primary>).models,
-                  availableModels,
-                )
-              : { resolved: false as const };
+            const modelResolution =
+              eligiblePrimary === undefined
+                ? { resolved: false as const }
+                : new PiModelResolver().resolve(
+                    eligiblePrimary.models,
+                    availableModels,
+                  );
 
             // Project-path containment (Pi adapter contract) is only ever
             // computed under confirmed project trust - probing `.weave/runtime`/
@@ -440,7 +446,7 @@ export class PiSafeInitializer {
               probeContext: {
                 configLoaded: true,
                 materializationErrorCount: activation.descriptors.errors.length,
-                primaryDescriptorFound: primaryEligible,
+                primaryDescriptorFound: eligiblePrimary !== undefined,
                 primaryModelDryResolved: modelResolution.resolved,
                 delegationToolPlanned: toolRegistrations.some(
                   (registration) => registration.name === "weave_delegate",

@@ -20,6 +20,7 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import type { DestinationStream } from "pino";
 import {
   cstr,
+  sanitizeCause,
   type LibcSymbols,
   libcPath,
   type NoFollowFfiError,
@@ -251,14 +252,14 @@ class BunNoFollowFileHandle implements RuntimeLogFileHandle {
           ({
             type: "io",
             message: "failed to write log segment",
-            cause: String(cause),
+            cause: sanitizeCause(cause),
           }) as const,
       )(),
     );
   }
 
   close(): ResultAsync<void, RuntimeLogSinkError> {
-    if (this.fd < 0) return okAsync(undefined);
+    if (this.fd < 0) return okAsync(void 0);
     const fd = this.fd;
     this.fd = -1;
     return toResultAsync(
@@ -270,7 +271,7 @@ class BunNoFollowFileHandle implements RuntimeLogFileHandle {
           ({
             type: "io",
             message: "failed to close log segment",
-            cause: String(cause),
+            cause: sanitizeCause(cause),
           }) as const,
       )(),
     );
@@ -351,7 +352,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
             ({
               type: "io",
               message: "failed to open log segment relative to parent handle",
-              cause: String(cause),
+              cause: sanitizeCause(cause),
             }) as const,
         )(),
       ).andThen((handle) =>
@@ -368,7 +369,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
   ): ResultAsync<void, RuntimeLogSinkError> {
     return this.identity()
       .andThen(() => {
-        if (expectedSource === undefined) return okAsync(undefined);
+        if (expectedSource === undefined) return okAsync(void 0);
         return this.verifySourceIdentityViaParent(fromName, expectedSource);
       })
       .andThen(() =>
@@ -388,7 +389,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
             ({
               type: "rotation",
               message: "failed to rename log segment via parent handle",
-              cause: String(cause),
+              cause: sanitizeCause(cause),
             }) as const,
         )(),
       );
@@ -431,7 +432,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
               message: "rotation source identity changed; refusing rename",
             });
           }
-          return ok(undefined);
+          return ok(void 0);
         } finally {
           if (fd >= 0) this.symbols.close(fd);
         }
@@ -440,7 +441,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
         ({
           type: "rotation",
           message: "unexpected failure verifying rotation source identity",
-          cause: String(cause),
+          cause: sanitizeCause(cause),
         }) as const,
     ).andThen((result) => result);
   }
@@ -458,7 +459,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
           ({
             type: "io",
             message: "failed to unlink log segment via parent handle",
-            cause: String(cause),
+            cause: sanitizeCause(cause),
           }) as const,
       )(),
     );
@@ -484,14 +485,14 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
           ({
             type: "io",
             message: "failed to list log directory",
-            cause: String(cause),
+            cause: sanitizeCause(cause),
           }) as const,
       ),
     );
   }
 
   close(): ResultAsync<void, RuntimeLogSinkError> {
-    if (this.closed) return okAsync(undefined);
+    if (this.closed) return okAsync(void 0);
     this.closed = true;
     const fd = this.dirFd;
     this.dirFd = -1;
@@ -505,7 +506,7 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
           ({
             type: "io",
             message: "failed to close log directory handle",
-            cause: String(cause),
+            cause: sanitizeCause(cause),
           }) as const,
       )(),
     );
@@ -570,7 +571,7 @@ export class BunRuntimeLogFileSystem implements RuntimeLogFileSystem {
               type: "initialization" as const,
               message:
                 "failed to acquire no-follow log directory handle (symlink or access denied)",
-              cause: String(cause),
+              cause: sanitizeCause(cause),
             };
           },
         )(),
@@ -587,8 +588,16 @@ export class BunRuntimeLogFileSystem implements RuntimeLogFileSystem {
             );
           })
           .mapErr((error) => {
-            symbols.close(dirFd);
-            library.close();
+            try {
+              symbols.close(dirFd);
+            } catch {
+              // Ignore cleanup failures while preserving the typed identity error.
+            }
+            try {
+              library.close();
+            } catch {
+              // Ignore cleanup failures while preserving the typed identity error.
+            }
             return error;
           }),
       ),
@@ -615,7 +624,7 @@ class MemoryLogFileHandle implements RuntimeLogFileHandle {
   }
 
   close(): ResultAsync<void, RuntimeLogSinkError> {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 
@@ -679,7 +688,7 @@ class MemoryLogDirectoryHandle implements RuntimeLogDirectoryHandle {
 
   close(): ResultAsync<void, RuntimeLogSinkError> {
     this.closed = true;
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   statFile(fileName: string): ResultAsync<FileIdentity, RuntimeLogSinkError> {
@@ -785,7 +794,7 @@ export class MemoryRuntimeLogFileSystem implements RuntimeLogFileSystem {
         },
       });
     }
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   statFile(
@@ -822,7 +831,7 @@ export class MemoryRuntimeLogFileSystem implements RuntimeLogFileSystem {
       size: merged.length,
       mtimeMs: Date.now(),
     };
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   renameFile(
@@ -857,7 +866,7 @@ export class MemoryRuntimeLogFileSystem implements RuntimeLogFileSystem {
       },
     });
     this.files.delete(fromKey);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   unlinkFile(
@@ -865,7 +874,7 @@ export class MemoryRuntimeLogFileSystem implements RuntimeLogFileSystem {
     fileName: string,
   ): ResultAsync<void, RuntimeLogSinkError> {
     this.files.delete(this.fileKey(dirPath, fileName));
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   listFiles(
@@ -988,7 +997,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
         this.initialized = true;
         this.failed = false;
         this.lastError = null;
-        return okAsync(undefined);
+        return okAsync(void 0);
       })
       .mapErr((error) => {
         this.recordFailure(error);
@@ -1003,7 +1012,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
   write(chunk: string | Uint8Array): void {
     if (this.closed) return;
     const bytes =
-      typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+      chunk instanceof Uint8Array ? chunk : new TextEncoder().encode(chunk);
 
     this.chain = this.chain
       .then(async () => {
@@ -1031,7 +1040,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
         ({
           type: "io",
           message: "failed to flush log sink",
-          cause: String(cause),
+          cause: sanitizeCause(cause),
         }) as const,
     );
   }
@@ -1048,12 +1057,12 @@ export class RotatingRuntimeLogSink implements DestinationStream {
     this.closeOperation = this.flush()
       .andThen(() => {
         const handle = this.handle;
-        if (handle === null) return okAsync(undefined);
+        if (handle === null) return okAsync(void 0);
         return handle.close();
       })
       .andThen(() => {
         const parent = this.parent;
-        if (parent === null) return okAsync(undefined);
+        if (parent === null) return okAsync(void 0);
         return parent.close();
       })
       .map(() => {
@@ -1062,7 +1071,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
         this.fileIdentity = null;
         this.parentIdentity = null;
         this.initialized = false;
-        return undefined;
+        return void 0;
       })
       .mapErr((error) => {
         this.recordFailure(error);
@@ -1090,7 +1099,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
         ) {
           return this.rotateAndPrune();
         }
-        return okAsync(undefined);
+        return okAsync(void 0);
       })
       .andThen(() => {
         const handle = this.handle;
@@ -1105,10 +1114,10 @@ export class RotatingRuntimeLogSink implements DestinationStream {
       .andThen(() => {
         this.bytesInSegment += bytes.length;
         const handle = this.handle;
-        if (!handle) return okAsync(undefined);
+        if (!handle) return okAsync(void 0);
         return handle.identity().map((identity) => {
           this.fileIdentity = identity;
-          return undefined;
+          return void 0;
         });
       });
   }
@@ -1142,7 +1151,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
         }
         this.fileIdentity = fileCurrent;
         this.bytesInSegment = fileCurrent.size;
-        return okAsync(undefined);
+        return okAsync(void 0);
       });
     });
   }
@@ -1197,10 +1206,10 @@ export class RotatingRuntimeLogSink implements DestinationStream {
 
       // max_segments includes the active segment.
       const maxRotated = Math.max(0, this.settings.max_segments - 1);
-      if (rotated.length <= maxRotated) return okAsync(undefined);
+      if (rotated.length <= maxRotated) return okAsync(void 0);
 
       const toRemove = rotated.slice(0, rotated.length - maxRotated);
-      let chain: ResultAsync<void, RuntimeLogSinkError> = okAsync(undefined);
+      let chain: ResultAsync<void, RuntimeLogSinkError> = okAsync(void 0);
       for (const name of toRemove) {
         chain = chain.andThen(() => parent.unlinkRelative(name));
       }

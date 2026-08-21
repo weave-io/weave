@@ -71,11 +71,12 @@
  *   caller's sink chose to keep.
  */
 
-import { Result, ResultAsync } from "neverthrow";
+import { err, ok, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
+import { type JsonValue, parseStrictJson } from "../strict-json.js";
 import type {
   CodexFastAttempt,
   CodexFastEvidenceOutcome,
-  CodexFastPayloadDecision,
   CodexFastSnapshot,
 } from "./attempt.js";
 import { createCodexFastAttempt } from "./attempt.js";
@@ -95,6 +96,9 @@ const CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
 /** Nothing longer than this is treated as a credential worth decoding. */
 const MAX_CREDENTIAL_LENGTH = 16_384;
 
+/** Maximum URL text accepted at the local fetch seam. */
+const MAX_FETCH_INPUT_LENGTH = 65_536;
+
 /** The body field the mapping owns. */
 const SERVICE_TIER_FIELD = "service_tier";
 
@@ -104,6 +108,21 @@ const MODEL_FIELD = "model";
 /** The transport the mapping forces, because it is the only provable one. */
 const FORCED_TRANSPORT = "sse";
 
+/** Maximum own fields copied from one host-owned options object. */
+const MAX_HOST_RECORD_KEYS = 512;
+
+/** Maximum request header entries accepted at this seam. */
+const MAX_HEADER_ENTRIES = 256;
+
+/** Maximum request header name length. */
+const MAX_HEADER_NAME_LENGTH = 1_024;
+
+/** Maximum request header value length. */
+const MAX_HEADER_VALUE_LENGTH = 65_536;
+
+/** Maximum own fields inspected while wrapping a provider. */
+const MAX_PROVIDER_KEYS = 512;
+
 /**
  * The only option fields a mapped call replaces. Every other field the caller
  * set is copied through by value and never rewritten.
@@ -112,14 +131,99 @@ const INJECTED_OPTION_KEYS = ["onPayload", "transport", "fetch"] as const;
 
 type InjectedOptionKey = (typeof INJECTED_OPTION_KEYS)[number];
 
+/** A value at a host-owned boundary before this module parses its meaning. */
+const HOST_INPUT_BOUNDARY = z.unknown();
+type HostInput = z.input<typeof HOST_INPUT_BOUNDARY>;
+
+/** An object reference accepted only at a descriptor-safe host seam. */
+interface HostObjectReference {
+  readonly hostObjectMarker?: never;
+}
+
+/** A host record whose fields remain opaque until a field-specific parser. */
+type HostRecord = HostObjectReference;
+
+/** The options object the native host accepts, with its injected fields added. */
+interface MutableHostRecord extends HostRecord, RequestInit {
+  onPayload?: HostInput;
+  transport?: HostInput;
+  fetch?: HostInput;
+}
+
+function isHostRecordValue(value: HostInput): value is HostRecord {
+  if (value === null || Object(value) !== value || Array.isArray(value)) {
+    return false;
+  }
+  return value instanceof Function === false;
+}
+
+const HOST_RECORD_SCHEMA = z.custom<HostRecord>(isHostRecordValue);
+
 /** What one injected field held before this wrapper replaced it. */
-type NativeOptionField = {
-  readonly key: InjectedOptionKey;
-  /** Whether the caller's options carried the field at all. */
-  readonly present: boolean;
-  /** The caller's own value, or `undefined` when the field was absent. */
-  readonly value: unknown;
+type NativeOptionField =
+  | {
+      readonly key: InjectedOptionKey;
+      readonly present: true;
+      /** The caller's own data-property value. */
+      readonly value: HostInput;
+    }
+  | {
+      readonly key: InjectedOptionKey;
+      readonly present: false;
+    };
+
+/** A host provider's stream call, kept opaque at this adapter boundary. */
+type NativeStreamCall = (
+  model: HostInput,
+  context: HostInput,
+  options?: HostInput,
+) => HostInput;
+
+/** Test callability without replacing the host's original function. */
+function isHostCallable(value: HostInput): boolean {
+  return Result.fromThrowable(
+    () => value instanceof Function,
+    (): boolean => false,
+  )().unwrapOr(false);
+}
+
+const NATIVE_STREAM_SCHEMA = z.custom<NativeStreamCall>(
+  (value: HostInput): boolean => isHostCallable(value),
+);
+
+type NativeStreams = {
+  readonly stream: NativeStreamCall;
+  readonly streamSimple: NativeStreamCall;
 };
+
+/** The input accepted by the host's fetch contract. */
+const FETCH_INPUT_SCHEMA = z.union([
+  z.string().max(MAX_FETCH_INPUT_LENGTH),
+  z.instanceof(Request),
+  z.instanceof(URL),
+]);
+type FetchInput = z.infer<typeof FETCH_INPUT_SCHEMA>;
+
+/** The host's fetch init record; fields are parsed at the request seam. */
+const FETCH_INIT_SCHEMA = z.custom<RequestInit>(isHostRecordValue);
+type FetchInit = z.infer<typeof FETCH_INIT_SCHEMA>;
+
+/** Parse a caller hook while keeping its payload opaque to this module. */
+type OnPayload = (payload: HostInput, model: HostInput) => HostInput;
+const ON_PAYLOAD_SCHEMA = z.custom<OnPayload>((value: HostInput): boolean =>
+  isHostCallable(value),
+);
+
+/** Mutable holder for the callback installed before its abandon closure runs. */
+interface OnPayloadHolder {
+  value?: OnPayload;
+}
+
+/** Parse a fetch while preserving the host's original function identity. */
+type FetchLike = (input: FetchInput, init?: FetchInit) => Promise<Response>;
+const FETCH_SCHEMA = z.custom<FetchLike>((value: HostInput): boolean =>
+  isHostCallable(value),
+);
 
 /**
  * The message of the only error this wrapper ever originates.
@@ -146,9 +250,9 @@ function blockedRequestError(): Error {
  */
 export type CodexFastIntent = {
   /** Only the literal `true` counts as intent. */
-  readonly fast: unknown;
+  readonly fast: HostInput;
   /** The owner's resolved model id, which the request model must equal. */
-  readonly modelId: unknown;
+  readonly modelId: HostInput;
 };
 
 export type CodexFastIntentPort = {
@@ -166,17 +270,12 @@ export type CodexFastAttemptSink = {
   readonly record: (snapshot: CodexFastSnapshot) => void;
 };
 
-/** The minimum a provider must expose for this wrapper to override it. */
+/** The minimum provider contract this adapter owns at the host boundary. */
 export type CodexWrappableProvider = {
   readonly id: string;
-  /**
-   * The native signatures are generic over the provider's api union, so the
-   * constraint has to be the loosest callable shape. `never[]` parameters
-   * accept any concrete signature without widening anything to `any`, and
-   * the wrapper only ever calls these with the caller's own arguments.
-   */
-  stream: (...args: never[]) => unknown;
-  streamSimple: (...args: never[]) => unknown;
+  readonly name?: string;
+  readonly stream: (...args: never[]) => HostInput;
+  readonly streamSimple: (...args: never[]) => HostInput;
 };
 
 /** The only way wrapping itself can fail. */
@@ -184,20 +283,13 @@ export type CodexFastWrapError = {
   readonly kind: "provider-not-wrappable";
 };
 
-type NativeStreamCall = (
-  model: unknown,
-  context: unknown,
-  options?: unknown,
-) => unknown;
+/** JSON-shaped records produced by the strict parser. */
+type JsonRecord = { readonly [key: string]: JsonValue };
 
-type FetchLike = (input: unknown, init?: unknown) => Promise<Response>;
-
-/** JSON-shaped record test, used only on values this module parsed itself. */
-function isJsonRecord(value: unknown): value is Record<string, unknown> {
+/** JSON objects only: the credential parser inspects no host object. */
+function isJsonRecord(value: JsonValue): value is JsonRecord {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray(value) === false
+    value !== null && Object(value) === value && Array.isArray(value) === false
   );
 }
 
@@ -206,20 +298,214 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
  * array, a `null`-returning exotic object, or anything with a foreign
  * prototype is not a payload this wrapper will touch.
  */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value) as unknown;
-  return prototype === Object.prototype || prototype === null;
+function isPlainObject(value: HostInput): value is HostRecord {
+  return Result.fromThrowable(
+    () => {
+      const parsed = HOST_RECORD_SCHEMA.safeParse(value);
+      if (!parsed.success) {
+        return false;
+      }
+      const prototype = Object.getPrototypeOf(parsed.data);
+      if (prototype !== Object.prototype && prototype !== null) {
+        return false;
+      }
+      const keys = Reflect.ownKeys(parsed.data);
+      if (keys.length > MAX_HOST_RECORD_KEYS) {
+        return false;
+      }
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(parsed.data, key);
+        if (descriptor === undefined || !("value" in descriptor)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    () => false,
+  )().unwrapOr(false);
 }
 
-/** Read one property of an unknown value without assuming it is safe. */
-function readUnknownProperty(source: unknown, key: string): unknown {
-  if (typeof source !== "object" || source === null) {
-    return undefined;
+/** Read one own data property without invoking an accessor. */
+type HostPropertyReadError = "host-property-unreadable";
+
+type HostPropertyRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "value"; readonly value: HostInput };
+
+function readHostProperty(
+  source: HostInput,
+  key: PropertyKey,
+): HostInput | undefined {
+  const read = Result.fromThrowable(
+    (): HostPropertyRead => {
+      const parsed = HOST_RECORD_SCHEMA.safeParse(source);
+      if (!parsed.success) {
+        return { kind: "missing" };
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(parsed.data, key);
+      if (descriptor === undefined) {
+        return { kind: "missing" };
+      }
+      if (!("value" in descriptor)) {
+        throw new Error("host-property-unreadable");
+      }
+      return { kind: "value", value: descriptor.value };
+    },
+    (): HostPropertyReadError => "host-property-unreadable",
+  )();
+  if (read.isErr()) {
+    throw new Error(read.error);
   }
-  return (source as Record<string, unknown>)[key];
+  if (read.value.kind === "value") {
+    return read.value.value;
+  }
+  return;
+}
+
+interface HeaderEntry {
+  readonly name: string;
+  readonly value: string | null;
+}
+
+type HeaderEntries = readonly HeaderEntry[];
+
+const HEADER_NAME_SCHEMA = z.string().min(1).max(MAX_HEADER_NAME_LENGTH);
+const HEADER_VALUE_SCHEMA = z.string().max(MAX_HEADER_VALUE_LENGTH);
+const HEADER_VALUE_OR_DELETE_SCHEMA = z.union([HEADER_VALUE_SCHEMA, z.null()]);
+type HeaderParseError = "invalid-request-headers";
+
+function parseHeaderPair(value: HostInput): HeaderEntry {
+  if (!Array.isArray(value)) {
+    throw new Error("invalid-request-headers");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    lengthDescriptor === undefined ||
+    !("value" in lengthDescriptor) ||
+    lengthDescriptor.value !== 2
+  ) {
+    throw new Error("invalid-request-headers");
+  }
+  const nameDescriptor = Object.getOwnPropertyDescriptor(value, "0");
+  const valueDescriptor = Object.getOwnPropertyDescriptor(value, "1");
+  if (
+    nameDescriptor === undefined ||
+    !("value" in nameDescriptor) ||
+    valueDescriptor === undefined ||
+    !("value" in valueDescriptor)
+  ) {
+    throw new Error("invalid-request-headers");
+  }
+  const name = HEADER_NAME_SCHEMA.safeParse(nameDescriptor.value);
+  const headerValue = HEADER_VALUE_SCHEMA.safeParse(valueDescriptor.value);
+  if (!name.success || !headerValue.success) {
+    throw new Error("invalid-request-headers");
+  }
+  return { name: name.data, value: headerValue.data };
+}
+
+/** Parse headers by own data descriptors, never by invoking host accessors. */
+function parseHeaderSource(
+  value: HostInput,
+): Result<HeaderEntries, HeaderParseError> {
+  return Result.fromThrowable(
+    (): HeaderEntries => {
+      if (value === undefined) {
+        return [];
+      }
+      if (value instanceof Headers) {
+        const entries: HeaderEntry[] = [];
+        const copied = new Headers(value);
+        copied.forEach((headerValue, name) => {
+          if (entries.length >= MAX_HEADER_ENTRIES) {
+            throw new Error("invalid-request-headers");
+          }
+          const parsedName = HEADER_NAME_SCHEMA.safeParse(name);
+          const parsedValue = HEADER_VALUE_SCHEMA.safeParse(headerValue);
+          if (!parsedName.success || !parsedValue.success) {
+            throw new Error("invalid-request-headers");
+          }
+          entries.push({ name: parsedName.data, value: parsedValue.data });
+        });
+        return entries;
+      }
+      if (Array.isArray(value)) {
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(
+          value,
+          "length",
+        );
+        if (
+          lengthDescriptor === undefined ||
+          !("value" in lengthDescriptor) ||
+          !Number.isSafeInteger(lengthDescriptor.value) ||
+          lengthDescriptor.value < 0 ||
+          lengthDescriptor.value > MAX_HEADER_ENTRIES
+        ) {
+          throw new Error("invalid-request-headers");
+        }
+        const entries: HeaderEntry[] = [];
+        for (let index = 0; index < lengthDescriptor.value; index += 1) {
+          const pairDescriptor = Object.getOwnPropertyDescriptor(
+            value,
+            String(index),
+          );
+          if (pairDescriptor === undefined || !("value" in pairDescriptor)) {
+            throw new Error("invalid-request-headers");
+          }
+          entries.push(parseHeaderPair(pairDescriptor.value));
+        }
+        return entries;
+      }
+      const record = HOST_RECORD_SCHEMA.safeParse(value);
+      if (!record.success) {
+        throw new Error("invalid-request-headers");
+      }
+      const names = Object.keys(record.data);
+      if (names.length > MAX_HEADER_ENTRIES) {
+        throw new Error("invalid-request-headers");
+      }
+      const entries: HeaderEntry[] = [];
+      for (const name of names) {
+        const descriptor = Object.getOwnPropertyDescriptor(record.data, name);
+        if (descriptor === undefined || !("value" in descriptor)) {
+          throw new Error("invalid-request-headers");
+        }
+        const parsedName = HEADER_NAME_SCHEMA.safeParse(name);
+        const parsedValue = HEADER_VALUE_OR_DELETE_SCHEMA.safeParse(
+          descriptor.value,
+        );
+        if (!parsedName.success || !parsedValue.success) {
+          throw new Error("invalid-request-headers");
+        }
+        entries.push({ name: parsedName.data, value: parsedValue.data });
+      }
+      return entries;
+    },
+    (): HeaderParseError => "invalid-request-headers",
+  )();
+}
+
+function createHeaders(
+  entries: HeaderEntries,
+  allowDelete: boolean,
+): Result<Headers, HeaderParseError> {
+  return Result.fromThrowable(
+    (): Headers => {
+      const headers = new Headers();
+      for (const entry of entries) {
+        if (entry.value === null) {
+          if (!allowDelete) {
+            throw new Error("invalid-request-headers");
+          }
+          headers.delete(entry.name);
+          continue;
+        }
+        headers.set(entry.name, entry.value);
+      }
+      return headers;
+    },
+    (): HeaderParseError => "invalid-request-headers",
+  )();
 }
 
 /**
@@ -240,33 +526,36 @@ function readUnknownProperty(source: unknown, key: string): unknown {
  * runs inside the classification boundary, whose failure branch is native
  * passthrough.
  */
-function hasPreexistingRoutingHint(model: unknown, options: unknown): boolean {
-  const headers = new Headers(
-    readUnknownProperty(model, "headers") as HeadersInit | undefined,
+function hasPreexistingRoutingHint(
+  model: HostInput,
+  options: HostInput,
+): Result<boolean, HeaderParseError> {
+  const modelSource = parseHeaderSource(readHostProperty(model, "headers"));
+  if (modelSource.isErr()) {
+    return err(modelSource.error);
+  }
+  const additionalSource = parseHeaderSource(
+    readHostProperty(options, "headers"),
   );
-  const additional = readUnknownProperty(options, "headers");
-  if (additional instanceof Headers) {
-    // The pinned host merges this source with `Object.entries`, which sees
-    // nothing on a `Headers` instance, so a hint held this way would not
-    // reach the wire today. It counts anyway: over-detecting costs one
-    // unmapped call, while under-detecting costs a blocked one.
-    return (
-      headers.has(CODEX_ROUTING_HINT_HEADER) ||
-      additional.has(CODEX_ROUTING_HINT_HEADER)
-    );
+  if (additionalSource.isErr()) {
+    return err(additionalSource.error);
   }
-  if (typeof additional === "object" && additional !== null) {
-    for (const [name, value] of Object.entries(
-      additional as Record<string, unknown>,
-    )) {
-      if (value === null) {
-        headers.delete(name);
-        continue;
-      }
-      headers.set(name, "");
+  const headers = createHeaders(modelSource.value, false);
+  if (headers.isErr()) {
+    return err(headers.error);
+  }
+  // The pinned host merges this source with `Object.entries`, which sees
+  // nothing on a `Headers` instance, so a hint held this way would not
+  // reach the wire today. It counts anyway: over-detecting costs one
+  // unmapped call, while under-detecting costs a blocked one.
+  for (const entry of additionalSource.value) {
+    if (entry.value === null) {
+      headers.value.delete(entry.name);
+      continue;
     }
+    headers.value.set(entry.name, "");
   }
-  return headers.has(CODEX_ROUTING_HINT_HEADER);
+  return ok(headers.value.has(CODEX_ROUTING_HINT_HEADER));
 }
 
 /**
@@ -275,33 +564,31 @@ function hasPreexistingRoutingHint(model: unknown, options: unknown): boolean {
  * checks. Only the boolean leaves this function: neither the token nor the
  * account id is returned, stored, or logged.
  */
-export function hasCodexSubscriptionAccountClaim(apiKey: unknown): boolean {
-  if (typeof apiKey !== "string") {
+export function hasCodexSubscriptionAccountClaim(apiKey: HostInput): boolean {
+  const parsedApiKey = z.string().max(MAX_CREDENTIAL_LENGTH).safeParse(apiKey);
+  if (!parsedApiKey.success || parsedApiKey.data.length === 0) {
     return false;
   }
-  if (apiKey.length === 0 || apiKey.length > MAX_CREDENTIAL_LENGTH) {
-    return false;
-  }
-  const parts = apiKey.split(".");
+  const parts = parsedApiKey.data.split(".");
   if (parts.length !== 3) {
     return false;
   }
-  const segment = parts[1] ?? "";
-  if (segment.length === 0) {
+  const segment = parts[1];
+  if (segment === undefined || segment.length === 0) {
     return false;
   }
   const decoded = Result.fromThrowable(
     () => {
       const normalized = segment.replaceAll("-", "+").replaceAll("_", "/");
       const padding = (4 - (normalized.length % 4)) % 4;
-      return JSON.parse(atob(normalized + "=".repeat(padding))) as unknown;
+      return parseStrictJson(atob(normalized + "=".repeat(padding)));
     },
-    () => undefined,
+    (): void => {},
   )();
-  if (decoded.isErr()) {
+  if (decoded.isErr() || decoded.value.isErr()) {
     return false;
   }
-  const claims = decoded.value;
+  const claims = decoded.value.value;
   if (!isJsonRecord(claims)) {
     return false;
   }
@@ -309,8 +596,8 @@ export function hasCodexSubscriptionAccountClaim(apiKey: unknown): boolean {
   if (!isJsonRecord(auth)) {
     return false;
   }
-  const accountId = auth.chatgpt_account_id;
-  return typeof accountId === "string" && accountId.length > 0;
+  const accountId = z.string().min(1).safeParse(auth.chatgpt_account_id);
+  return accountId.success;
 }
 
 /**
@@ -318,15 +605,57 @@ export function hasCodexSubscriptionAccountClaim(apiKey: unknown): boolean {
  * about to replace, reading the already-copied values by descriptor so a
  * caller accessor is not invoked a second time.
  */
+type HostRecordCopyError = "host-record-unreadable";
+
+const HOST_RECORD_COPY_ERROR: HostRecordCopyError = "host-record-unreadable";
+
+function copyHostRecord(
+  value: HostInput,
+): Result<MutableHostRecord, HostRecordCopyError> {
+  return Result.fromThrowable(
+    (): MutableHostRecord => {
+      if (value === undefined || value === null) {
+        return {};
+      }
+      const parsed = HOST_RECORD_SCHEMA.safeParse(value);
+      if (!parsed.success) {
+        throw new Error(HOST_RECORD_COPY_ERROR);
+      }
+      const copy: MutableHostRecord = {};
+      const keys = Reflect.ownKeys(parsed.data);
+      if (keys.length > MAX_HOST_RECORD_KEYS) {
+        throw new Error(HOST_RECORD_COPY_ERROR);
+      }
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(parsed.data, key);
+        if (descriptor === undefined) {
+          continue;
+        }
+        if (!("value" in descriptor)) {
+          throw new Error(HOST_RECORD_COPY_ERROR);
+        }
+        Object.defineProperty(copy, key, {
+          value: descriptor.value,
+          writable: true,
+          enumerable: descriptor.enumerable,
+          configurable: true,
+        });
+      }
+      return copy;
+    },
+    (): HostRecordCopyError => HOST_RECORD_COPY_ERROR,
+  )();
+}
+
 function captureNativeOptionFields(
-  source: Record<string, unknown>,
+  source: MutableHostRecord,
 ): readonly NativeOptionField[] {
   return INJECTED_OPTION_KEYS.map((key): NativeOptionField => {
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (descriptor === undefined || !("value" in descriptor)) {
-      return { key, present: false, value: undefined };
+      return { key, present: false };
     }
-    return { key, present: true, value: descriptor.value as unknown };
+    return { key, present: true, value: descriptor.value };
   });
 }
 
@@ -334,47 +663,75 @@ function captureNativeOptionFields(
 function nativeFieldValue(
   fields: readonly NativeOptionField[],
   key: InjectedOptionKey,
-): unknown {
-  return fields.find((field) => field.key === key)?.value;
+): HostInput | undefined {
+  const field = fields.find((candidate) => candidate.key === key);
+  if (field?.present === true) {
+    return field.value;
+  }
+  return;
 }
+
+type InstalledOptionFields = {
+  readonly onPayload: OnPayload;
+  readonly transport: typeof FORCED_TRANSPORT;
+  readonly fetch: FetchLike;
+};
 
 /**
  * Put one options view back to what the native path would have seen.
  *
- * The guard is identity, not shape: only an object that still carries *this*
- * call's own `fetch` wrapper is rewritten, and that check reads a descriptor
- * rather than the property, so nothing foreign and nothing trapped is
- * touched. A field the caller never had is deleted rather than set to
- * `undefined`, because the host reads both the same way and deleting is the
- * one that leaves no trace of this wrapper behind.
+ * The guard is identity, not shape: a target is considered this call's view
+ * only while it still carries this call's own fetch wrapper, and each field is
+ * rewritten only while it still carries that field's injected value. A caller
+ * hook may use its receiver to replace or delete one of these fields; leaving
+ * that field alone preserves the native callback semantics. A field the caller
+ * never had is deleted
+ * rather than set to `undefined`, because the host reads both the same way and
+ * deleting is the one that leaves no trace of this wrapper behind.
  */
 function restoreNativeOptionFields(
-  target: unknown,
-  wrapperFetch: FetchLike,
+  target: HostInput,
+  installed: InstalledOptionFields,
   fields: readonly NativeOptionField[],
 ): void {
-  if (typeof target !== "object" || target === null) {
+  const parsed = HOST_RECORD_SCHEMA.safeParse(target);
+  if (!parsed.success) {
     return;
   }
-  const installed = Object.getOwnPropertyDescriptor(target, "fetch");
+  const installedFetch = Object.getOwnPropertyDescriptor(parsed.data, "fetch");
   if (
-    installed === undefined ||
-    !("value" in installed) ||
-    installed.value !== wrapperFetch
+    installedFetch === undefined ||
+    !("value" in installedFetch) ||
+    installedFetch.value !== installed.fetch
   ) {
     return;
   }
   for (const field of fields) {
+    const current = Object.getOwnPropertyDescriptor(parsed.data, field.key);
+    if (current === undefined || !("value" in current)) {
+      continue;
+    }
+    let installedValue: HostInput;
+    if (field.key === "onPayload") {
+      installedValue = installed.onPayload;
+    } else if (field.key === "transport") {
+      installedValue = installed.transport;
+    } else {
+      installedValue = installed.fetch;
+    }
+    if (current.value !== installedValue) {
+      continue;
+    }
     if (field.present) {
-      Object.defineProperty(target, field.key, {
+      Object.defineProperty(parsed.data, field.key, {
         value: field.value,
         writable: true,
-        enumerable: true,
+        enumerable: current.enumerable,
         configurable: true,
       });
       continue;
     }
-    Reflect.deleteProperty(target, field.key);
+    Reflect.deleteProperty(parsed.data, field.key);
   }
 }
 
@@ -385,12 +742,12 @@ function restoreNativeOptionFields(
  */
 const DEGRADED_VERDICT = Object.freeze({
   kind: "wrapper-degraded",
-} as const) as unknown as CodexFastEligibility;
+} as const);
 
 /** One stream call's mutable, request-scoped facts. */
 type CallState = {
   /** The final body's model id, once the payload step proved it. */
-  finalModelId: string | undefined;
+  finalModelId?: string;
   /** Whether that same body ended at `service_tier: "priority"`. */
   tierProven: boolean;
   /**
@@ -401,13 +758,27 @@ type CallState = {
   tierWritten: boolean;
 };
 
-export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
-  native: T,
+export function wrapCodexProviderForFast(
+  native: CodexWrappableProvider,
   intentPort: CodexFastIntentPort,
   attemptSink: CodexFastAttemptSink,
-): Result<T, CodexFastWrapError> {
-  const nativeStream = native.stream as unknown as NativeStreamCall;
-  const nativeStreamSimple = native.streamSimple as unknown as NativeStreamCall;
+): Result<CodexWrappableProvider, CodexFastWrapError> {
+  const parsedStreams = Result.fromThrowable(
+    (): NativeStreams => {
+      const stream = NATIVE_STREAM_SCHEMA.safeParse(native.stream);
+      const streamSimple = NATIVE_STREAM_SCHEMA.safeParse(native.streamSimple);
+      if (!stream.success || !streamSimple.success) {
+        throw new Error("provider-streams-unavailable");
+      }
+      return { stream: stream.data, streamSimple: streamSimple.data };
+    },
+    (): CodexFastWrapError => ({ kind: "provider-not-wrappable" }),
+  )();
+  if (parsedStreams.isErr()) {
+    return err<CodexWrappableProvider, CodexFastWrapError>(parsedStreams.error);
+  }
+  const nativeStream = parsedStreams.value.stream;
+  const nativeStreamSimple = parsedStreams.value.streamSimple;
 
   /** Report a snapshot. A throwing sink can never reach the stream. */
   function emit(attempt: CodexFastAttempt): void {
@@ -418,7 +789,7 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
           attemptSink.record(snapshot);
         }
       },
-      () => undefined,
+      (): void => {},
     )();
   }
 
@@ -430,7 +801,7 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
           attemptSink.record(snapshot);
         }
       },
-      () => undefined,
+      (): void => {},
     )();
   }
 
@@ -453,42 +824,48 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
    * with a mutated body already serialized.
    */
   function classify(
-    model: unknown,
-    options: unknown,
-  ): Result<{ verdict: CodexFastEligibility; modelId: string }, undefined> {
+    model: HostInput,
+    options: HostInput,
+  ): Result<{ verdict: CodexFastEligibility; modelId: string }, void> {
     return Result.fromThrowable(
       () => {
         const intent = intentPort.readIntent();
-        const fast = readUnknownProperty(intent, "fast");
-        const modelId = readUnknownProperty(model, "id");
+        const fast = readHostProperty(intent, "fast");
+        const modelId = readHostProperty(model, "id");
         const input = {
           providerId: native.id,
           fast,
           modelId,
-          ownerModelId: readUnknownProperty(intent, "modelId"),
-          baseUrl: readUnknownProperty(model, "baseUrl"),
+          ownerModelId: readHostProperty(intent, "modelId"),
+          baseUrl: readHostProperty(model, "baseUrl"),
           subscriptionAuthProven:
             fast === true &&
             hasCodexSubscriptionAccountClaim(
-              readUnknownProperty(options, "apiKey"),
+              readHostProperty(options, "apiKey"),
             ),
           collisionObserved: false,
         };
         const verdict = classifyCodexFastEligibility(input);
-        const decided =
-          verdict.kind === "eligible" &&
-          hasPreexistingRoutingHint(model, options)
-            ? classifyCodexFastEligibility({
-                ...input,
-                collisionObserved: true,
-              })
-            : verdict;
+        let decided = verdict;
+        if (verdict.kind === "eligible") {
+          const preflight = hasPreexistingRoutingHint(model, options);
+          if (preflight.isErr()) {
+            throw new Error("codex-fast-header-preflight-failed");
+          }
+          if (preflight.value) {
+            decided = classifyCodexFastEligibility({
+              ...input,
+              collisionObserved: true,
+            });
+          }
+        }
+        const parsedModelId = z.string().safeParse(modelId);
         return {
           verdict: decided,
-          modelId: typeof modelId === "string" ? modelId : "",
+          modelId: parsedModelId.success ? parsedModelId.data : "",
         };
       },
-      () => undefined,
+      (): void => {},
     )();
   }
 
@@ -497,17 +874,21 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
    * through an accessor: every field is examined by descriptor, so a getter
    * trap planted by another extension is detected instead of invoked.
    */
+  type PayloadDecision =
+    | { readonly decision: "collision" }
+    | {
+        readonly decision: "priority-set" | "priority-preserved";
+        readonly modelId: string;
+      };
+
   function decidePayload(
-    payload: unknown,
+    payload: HostInput,
     expectedModelId: string,
-  ): { decision: CodexFastPayloadDecision; modelId: string | undefined } {
+  ): PayloadDecision {
     const decided = Result.fromThrowable(
-      (): {
-        decision: CodexFastPayloadDecision;
-        modelId: string | undefined;
-      } => {
+      (): PayloadDecision => {
         if (!isPlainObject(payload)) {
-          return { decision: "collision", modelId: undefined };
+          return { decision: "collision" };
         }
         const modelDescriptor = Object.getOwnPropertyDescriptor(
           payload,
@@ -520,7 +901,7 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         ) {
           // The hint must echo the model this same body carries. A missing,
           // trapped, or rewritten `model` breaks that correlation.
-          return { decision: "collision", modelId: undefined };
+          return { decision: "collision" };
         }
         const tierDescriptor = Object.getOwnPropertyDescriptor(
           payload,
@@ -531,9 +912,12 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
             "value" in tierDescriptor &&
             tierDescriptor.value === CODEX_PRIORITY_SERVICE_TIER
           ) {
-            return { decision: "priority-preserved", modelId: expectedModelId };
+            return {
+              decision: "priority-preserved",
+              modelId: expectedModelId,
+            };
           }
-          return { decision: "collision", modelId: undefined };
+          return { decision: "collision" };
         }
         Object.defineProperty(payload, SERVICE_TIER_FIELD, {
           value: CODEX_PRIORITY_SERVICE_TIER,
@@ -550,14 +934,14 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
           !("value" in written) ||
           written.value !== CODEX_PRIORITY_SERVICE_TIER
         ) {
-          return { decision: "collision", modelId: undefined };
+          return { decision: "collision" };
         }
         return { decision: "priority-set", modelId: expectedModelId };
       },
-      () => undefined,
+      (): void => {},
     )();
     if (decided.isErr()) {
-      return { decision: "collision", modelId: undefined };
+      return { decision: "collision" };
     }
     return decided.value;
   }
@@ -569,7 +953,7 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
     | { readonly kind: "collision" }
     /** The body is mapped, but the routing pair cannot be written. */
     | { readonly kind: "unavailable" }
-    | { readonly kind: "activated"; readonly init: Record<string, unknown> };
+    | { readonly kind: "activated"; readonly init: MutableHostRecord };
 
   /**
    * Decide the outgoing headers for one attempt.
@@ -587,9 +971,9 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
    * insensitive, so a hint spelled in any casing is still a collision.
    */
   function planHeaders(
-    init: unknown,
+    init: FetchInit | undefined,
     state: CallState,
-  ): Result<HeaderPlan, undefined> {
+  ): Result<HeaderPlan, void> {
     return Result.fromThrowable(
       (): HeaderPlan => {
         if (!state.tierProven || state.finalModelId === undefined) {
@@ -603,8 +987,21 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         if (routing.kind !== "routing") {
           return { kind: "unavailable" };
         }
-        const headerSource = readUnknownProperty(init, "headers");
-        const headers = new Headers(headerSource as HeadersInit | undefined);
+        const copied = copyHostRecord(init);
+        if (copied.isErr()) {
+          return { kind: "unavailable" };
+        }
+        const headerSource = parseHeaderSource(
+          readHostProperty(init, "headers"),
+        );
+        if (headerSource.isErr()) {
+          return { kind: "unavailable" };
+        }
+        const parsedHeaders = createHeaders(headerSource.value, false);
+        if (parsedHeaders.isErr()) {
+          return { kind: "unavailable" };
+        }
+        const headers = parsedHeaders.value;
         if (headers.has(CODEX_ROUTING_HINT_HEADER)) {
           return { kind: "collision" };
         }
@@ -616,28 +1013,38 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         ) {
           return { kind: "unavailable" };
         }
-        const base =
-          typeof init === "object" && init !== null
-            ? { ...(init as Record<string, unknown>) }
-            : {};
-        base.headers = headers;
-        return { kind: "activated", init: base };
+        copied.value.headers = headers;
+        return { kind: "activated", init: copied.value };
       },
-      () => undefined,
+      (): void => {},
     )();
   }
 
   /** Whether a rejection is the caller's abort rather than a transport fault. */
-  function isAbort(error: unknown, init: unknown): boolean {
-    const signal = readUnknownProperty(init, "signal");
-    if (readUnknownProperty(signal, "aborted") === true) {
-      return true;
-    }
-    return readUnknownProperty(error, "name") === "AbortError";
+  function isAbort(error: HostInput, init: FetchInit | undefined): boolean {
+    return Result.fromThrowable(
+      (): boolean => {
+        const signal = z
+          .instanceof(AbortSignal)
+          .safeParse(readHostProperty(init, "signal"));
+        if (signal.success && signal.data.aborted) {
+          return true;
+        }
+        return z
+          .literal("AbortError")
+          .safeParse(readHostProperty(error, "name")).success;
+      },
+      () => false,
+    )().unwrapOr(false);
   }
 
-  function isTimeout(error: unknown): boolean {
-    return readUnknownProperty(error, "name") === "TimeoutError";
+  function isTimeout(error: HostInput): boolean {
+    return Result.fromThrowable(
+      (): boolean =>
+        z.literal("TimeoutError").safeParse(readHostProperty(error, "name"))
+          .success,
+      () => false,
+    )().unwrapOr(false);
   }
 
   /**
@@ -653,47 +1060,49 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
     const record = (outcome: CodexFastEvidenceOutcome): void => {
       attempt.recordEvidence(token, outcome);
     };
-    const body = response.body;
-    if (
-      body === null ||
-      body.locked ||
-      typeof body.pipeThrough !== "function" ||
-      response.status < 200 ||
-      response.status > 299
-    ) {
-      record("inaccessible");
-      emit(attempt);
-      return response;
-    }
-    const sniffer = createCodexServiceTierSniffer({
-      onOutcome: (outcome) => {
-        record(outcome);
-        // Pi's SSE retry loop breaks on the first ok response, so an ok
-        // response is this call's final attempt and its evidence is the one
-        // the terminal snapshot must carry.
-        emitTerminal(attempt);
-      },
-    });
-    if (sniffer.isErr()) {
-      record("inaccessible");
-      emit(attempt);
-      return response;
-    }
-    const wrapped = Result.fromThrowable(
-      () =>
-        new Response(body.pipeThrough(sniffer.value), {
+    const observed = Result.fromThrowable(
+      (): Response => {
+        const body = response.body;
+        if (
+          body === null ||
+          body.locked ||
+          response.status < 200 ||
+          response.status > 299
+        ) {
+          record("inaccessible");
+          emit(attempt);
+          return response;
+        }
+        const sniffer = createCodexServiceTierSniffer({
+          onOutcome: (outcome) => {
+            record(outcome);
+            // Pi's SSE retry loop breaks on the first ok response, so an ok
+            // response is this call's final attempt and its evidence is the
+            // one the terminal snapshot must carry.
+            emitTerminal(attempt);
+          },
+        });
+        if (sniffer.isErr()) {
+          record("inaccessible");
+          emit(attempt);
+          return response;
+        }
+        return new Response(body.pipeThrough(sniffer.value), {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,
-        }),
-      () => undefined,
+        });
+      },
+      (): Response => {
+        record("inaccessible");
+        emit(attempt);
+        return response;
+      },
     )();
-    if (wrapped.isErr()) {
-      record("inaccessible");
-      emit(attempt);
-      return response;
+    if (observed.isErr()) {
+      return observed.error;
     }
-    return wrapped.value;
+    return observed.value;
   }
 
   /** The request-scoped `fetch` an eligible call delegates with. */
@@ -716,14 +1125,24 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
      * tier the *caller* set is not this wrapper's to withhold: that request
      * is byte-for-byte what the native path would have sent.
      */
-    function decline(input: unknown, init: unknown): Promise<Response> {
+    async function decline(
+      input: FetchInput,
+      init?: FetchInit,
+    ): Promise<Response> {
       if (state.tierWritten) {
         throw blockedRequestError();
       }
-      return baseFetch(input, init);
+      const sent = await ResultAsync.fromThrowable(
+        () => baseFetch(input, init),
+        (error: HostInput) => error,
+      )();
+      if (sent.isErr()) {
+        throw sent.error;
+      }
+      return sent.value;
     }
 
-    return async (input: unknown, init?: unknown): Promise<Response> => {
+    return async (input: FetchInput, init?: FetchInit): Promise<Response> => {
       const opened = attempt.beginFetchAttempt();
       if (opened.kind !== "opened") {
         // Either no mapping ever happened on this call, or the call is
@@ -748,14 +1167,20 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         return decline(input, init);
       }
       if (plan.value.kind === "not-mapped") {
-        return baseFetch(input, init);
+        return decline(input, init);
+      }
+      if (plan.value.kind !== "activated") {
+        attempt.degrade();
+        emit(attempt);
+        return decline(input, init);
       }
       attempt.activateHeaders({ originator: true, routingHint: true });
       emit(attempt);
-      const sent = await ResultAsync.fromPromise(
-        baseFetch(input, plan.value.init),
-        (error: unknown) => error,
-      );
+      const activatedPlan = plan.value;
+      const sent = await ResultAsync.fromThrowable(
+        () => baseFetch(input, activatedPlan.init),
+        (error: HostInput) => error,
+      )();
       if (sent.isErr()) {
         if (isAbort(sent.error, init)) {
           attempt.cancel();
@@ -780,32 +1205,32 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
    * `transport` and `fetch` from next.
    */
   function createChainedOnPayload(
-    callerOnPayload: unknown,
+    callerOnPayload: OnPayload | undefined,
     attempt: CodexFastAttempt,
     state: CallState,
     modelId: string,
-    abandon: (receiver: unknown) => void,
-  ): (payload: unknown, model: unknown) => Promise<unknown> {
+    abandon: (receiver: HostInput) => void,
+  ): OnPayload {
     // A method, not an arrow: the host calls the hook as
     // `options?.onPayload?.(body, model)`, so `this` is the options object it
     // is reading from, which on the `streamSimple` path is not the object
     // this wrapper prepared.
     return async function chainedOnPayload(
-      this: unknown,
-      payload: unknown,
-      model: unknown,
-    ): Promise<unknown> {
+      this: HostInput,
+      payload: HostInput,
+      model: HostInput,
+    ): Promise<HostInput> {
       let next = payload;
-      if (typeof callerOnPayload === "function") {
+      if (callerOnPayload !== undefined) {
         // `fromThrowable`, not `fromPromise`: the caller's hook may throw
         // synchronously before any promise exists.
         const called = await ResultAsync.fromThrowable(
-          async (p: unknown, m: unknown): Promise<unknown> =>
-            await (callerOnPayload as (p: unknown, m: unknown) => unknown)(
-              p,
-              m,
-            ),
-          (error: unknown) => error,
+          async (
+            nextPayload: HostInput,
+            nextModel: HostInput,
+          ): Promise<HostInput> =>
+            await callerOnPayload.call(this, nextPayload, nextModel),
+          (error: HostInput) => error,
         )(payload, model);
         if (called.isErr()) {
           // The native path would have failed here too. Abandon the mapping
@@ -815,7 +1240,9 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
           abandon(this);
           throw called.error;
         }
-        next = called.value === undefined ? payload : called.value;
+        if (called.value !== undefined) {
+          next = called.value;
+        }
       }
       const decided = decidePayload(next, modelId);
       attempt.resolvePayload(decided.decision);
@@ -835,9 +1262,35 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
     };
   }
 
+  function parseOnPayload(value: HostInput): OnPayload | undefined {
+    if (value === undefined || value === null) {
+      return;
+    }
+    const parsed = ON_PAYLOAD_SCHEMA.safeParse(value);
+    if (parsed.success) {
+      return parsed.data;
+    }
+    throw new Error("host-on-payload-unavailable");
+  }
+
+  function parseFetch(value: HostInput): FetchLike | undefined {
+    if (value === undefined || value === null) {
+      return;
+    }
+    const parsed = FETCH_SCHEMA.safeParse(value);
+    if (parsed.success) {
+      return parsed.data;
+    }
+    throw new Error("host-fetch-unavailable");
+  }
+
   /** One wrapped entry point. `stream` and `streamSimple` differ only here. */
   function wrapCall(nativeCall: NativeStreamCall): NativeStreamCall {
-    return (model: unknown, context: unknown, options?: unknown): unknown => {
+    return (
+      model: HostInput,
+      context: HostInput,
+      options?: HostInput,
+    ): HostInput => {
       const classified = classify(model, options);
       if (classified.isErr()) {
         emitDegraded();
@@ -852,57 +1305,69 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         emitTerminal(attempt);
         return nativeCall.call(native, model, context, options);
       }
-      const prepared = Result.fromThrowable(
-        (): Record<string, unknown> => {
-          const state: CallState = {
-            finalModelId: undefined,
-            tierProven: false,
-            tierWritten: false,
-          };
-          const source =
-            typeof options === "object" && options !== null
-              ? { ...(options as Record<string, unknown>) }
-              : {};
-          const nativeFields = captureNativeOptionFields(source);
-          const callerFetch = nativeFieldValue(nativeFields, "fetch");
-          const baseFetch: FetchLike =
-            typeof callerFetch === "function"
-              ? (callerFetch as FetchLike)
-              : (input, init) =>
-                  globalThis.fetch(input as RequestInfo, init as RequestInit);
-          const wrapperFetch = createWrapperFetch(baseFetch, attempt, state);
-          const abandon = (receiver: unknown): void => {
-            // Restoring is best effort by construction: a host that read the
-            // transport before the hook, or handed the hook a receiver this
-            // wrapper never prepared, leaves nothing to put back. The fetch
-            // wrapper still declines to add anything to such a call.
-            Result.fromThrowable(
-              () => {
-                restoreNativeOptionFields(source, wrapperFetch, nativeFields);
-                if (receiver !== source) {
-                  restoreNativeOptionFields(
-                    receiver,
-                    wrapperFetch,
-                    nativeFields,
-                  );
-                }
-              },
-              () => undefined,
-            )();
-          };
-          source.onPayload = createChainedOnPayload(
-            nativeFieldValue(nativeFields, "onPayload"),
-            attempt,
-            state,
-            modelId,
-            abandon,
-          );
-          source.transport = FORCED_TRANSPORT;
-          source.fetch = wrapperFetch;
-          return source;
-        },
-        () => undefined,
-      )();
+      const prepared = copyHostRecord(options).andThen((source) =>
+        Result.fromThrowable(
+          (): MutableHostRecord => {
+            const state: CallState = {
+              tierProven: false,
+              tierWritten: false,
+            };
+            const nativeFields = captureNativeOptionFields(source);
+            const callerFetch = nativeFieldValue(nativeFields, "fetch");
+            const baseFetch =
+              callerFetch === undefined || callerFetch === null
+                ? parseFetch(globalThis.fetch)
+                : parseFetch(callerFetch);
+            if (baseFetch === undefined) {
+              throw new Error(HOST_RECORD_COPY_ERROR);
+            }
+            const wrapperFetch = createWrapperFetch(baseFetch, attempt, state);
+            const onPayloadHolder: OnPayloadHolder = {};
+            const abandon = (receiver: HostInput): void => {
+              // Restoring is best effort by construction: a host that read the
+              // transport before the hook, or handed the hook a receiver this
+              // wrapper never prepared, leaves nothing to put back. Each
+              // injected field is restored only if the caller hook left the
+              // wrapper's value in place.
+              const installedOnPayload = onPayloadHolder.value;
+              if (installedOnPayload === undefined) {
+                return;
+              }
+              const installed: InstalledOptionFields = {
+                onPayload: installedOnPayload,
+                transport: FORCED_TRANSPORT,
+                fetch: wrapperFetch,
+              };
+              Result.fromThrowable(
+                () => {
+                  restoreNativeOptionFields(source, installed, nativeFields);
+                  if (receiver !== source) {
+                    restoreNativeOptionFields(
+                      receiver,
+                      installed,
+                      nativeFields,
+                    );
+                  }
+                },
+                (): void => {},
+              )();
+            };
+            const chainedOnPayload = createChainedOnPayload(
+              parseOnPayload(nativeFieldValue(nativeFields, "onPayload")),
+              attempt,
+              state,
+              modelId,
+              abandon,
+            );
+            onPayloadHolder.value = chainedOnPayload;
+            source.onPayload = chainedOnPayload;
+            source.transport = FORCED_TRANSPORT;
+            source.fetch = wrapperFetch;
+            return source;
+          },
+          (): HostRecordCopyError => HOST_RECORD_COPY_ERROR,
+        )(),
+      );
       if (prepared.isErr()) {
         attempt.degrade();
         emitTerminal(attempt);
@@ -913,11 +1378,18 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
   }
 
   return Result.fromThrowable(
-    (): T => {
-      const shell = Object.create(
-        Object.getPrototypeOf(native) as object | null,
-      ) as Record<string | symbol, unknown>;
-      for (const key of Reflect.ownKeys(native)) {
+    (): CodexWrappableProvider => {
+      const shell: CodexWrappableProvider = {
+        id: native.id,
+        stream: wrapCall(nativeStream),
+        streamSimple: wrapCall(nativeStreamSimple),
+      };
+      Object.setPrototypeOf(shell, Object.getPrototypeOf(native));
+      const keys = Reflect.ownKeys(native);
+      if (keys.length > MAX_PROVIDER_KEYS) {
+        throw new Error("provider-keys-unbounded");
+      }
+      for (const key of keys) {
         if (key === "stream" || key === "streamSimple") {
           continue;
         }
@@ -927,19 +1399,7 @@ export function wrapCodexProviderForFast<T extends CodexWrappableProvider>(
         }
         Object.defineProperty(shell, key, descriptor);
       }
-      Object.defineProperty(shell, "stream", {
-        value: wrapCall(nativeStream),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-      Object.defineProperty(shell, "streamSimple", {
-        value: wrapCall(nativeStreamSimple),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-      return shell as unknown as T;
+      return shell;
     },
     (): CodexFastWrapError => ({ kind: "provider-not-wrappable" }),
   )();

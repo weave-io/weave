@@ -1,5 +1,13 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
+import { z } from "zod";
 import {
   BunChangesetFileSystem,
   type ChangesetBump,
@@ -8,14 +16,22 @@ import {
 } from "./changeset-policy.js";
 import type { Clock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
-import { PUBLIC_PACKAGES, type PublicPackageName } from "./constants.js";
+import { PUBLIC_PACKAGE_NAMES, type PublicPackageName } from "./constants.js";
 import {
   type ReleaseInvocation,
   validateReleaseInvocation,
 } from "./input-validation.js";
 import {
+  isJsonObject,
+  isJsonString,
+  type JsonObject,
+  type JsonValue,
+  parseJsonValue,
+} from "./json.js";
+import {
   NightlyVersionSchema,
   ReleaseOperationSchema,
+  type StableTrainRecord,
   StableTrainRecordSchema,
 } from "./model.js";
 import {
@@ -144,6 +160,12 @@ export class NightlyPlanner {
   }
 }
 
+function isPublicPackageName(value: string): value is PublicPackageName {
+  return PUBLIC_PACKAGE_NAMES.some((name) => name === value);
+}
+
+const isStringValue = isJsonString;
+
 function isNightly(invocation: ReleaseInvocation): boolean {
   if (invocation.eventName === "schedule") return true;
   return invocation.operation === "nightly" && invocation.channel === "nightly";
@@ -155,11 +177,10 @@ function collectBumps(
   const bumps = new Map<PublicPackageName, ChangesetBump>();
   for (const changeset of changesets)
     for (const [name, bump] of changeset.releases)
-      if (name in PUBLIC_PACKAGES) {
-        const publicName = name as PublicPackageName;
-        const previous = bumps.get(publicName);
+      if (isPublicPackageName(name)) {
+        const previous = bumps.get(name);
         if (previous === undefined || BUMP_WEIGHT[bump] > BUMP_WEIGHT[previous])
-          bumps.set(publicName, bump);
+          bumps.set(name, bump);
       }
   return bumps;
 }
@@ -228,19 +249,12 @@ export async function runPreflight(
     log.error("missing GitHub token");
     return 1;
   }
-  const main = await fetchJson("/git/ref/heads/main", token);
-  if (
-    main.isErr() ||
-    !isMainRef(main.value) ||
-    environment.RELEASE_SHA !== main.value.object.sha
-  ) {
+  const main = await fetchMainRef(token);
+  if (main.isErr() || environment.RELEASE_SHA !== main.value.object.sha) {
     log.error("workflow SHA is stale relative to main");
     return 1;
   }
-  const checks = await fetchJson(
-    `/commits/${main.value.object.sha}/check-runs`,
-    token,
-  );
+  const checks = await fetchCheckRuns(main.value.object.sha, token);
   if (checks.isErr() || !hasGreenRequiredCheck(checks.value)) {
     log.error(
       { requiredCheck: REQUIRED_MAIN_CHECK },
@@ -299,7 +313,7 @@ export async function runPreflight(
   }
   const plan = await new NightlyPlanner(
     new NpmCliRegistryClient(new BunCommandRunner()),
-    { now: () => serverDate, sleep: () => okAsync(undefined) },
+    { now: () => serverDate, sleep: () => okAsync() },
   ).plan({
     invocation: invocation.value,
     changesets: changesets.value,
@@ -323,23 +337,145 @@ export async function runPreflight(
   return 0;
 }
 
-function parseStableTrain(value: string | undefined) {
+function parseStableTrain(
+  value: string | undefined,
+): StableTrainRecord | undefined {
   if (value === undefined) return undefined;
-  const decoded = Result.fromThrowable(
-    () => JSON.parse(value) as unknown,
-    () => undefined,
-  )();
+  const decoded = parseJsonValue(value);
   if (decoded.isErr()) return undefined;
   const record = StableTrainRecordSchema.safeParse(decoded.value);
   return record.success ? record.data : undefined;
 }
 
 type PreflightResponseError = { type: "GitHubResponse" };
-type MainRef = { object: { sha: string }; date: string };
-function fetchJson(
+type MainRef = {
+  readonly object: { readonly sha: string };
+  readonly date: string;
+};
+type CheckRun = {
+  readonly name?: string;
+  readonly conclusion?: string | null;
+};
+type CheckRunsResponse = {
+  readonly check_runs: readonly CheckRun[];
+  readonly date: string;
+};
+type GitHubJsonResponse = {
+  readonly body: JsonValue;
+  readonly date: string;
+};
+type ProjectedCheckRun = {
+  name?: string;
+  conclusion?: string | null;
+};
+
+const MainRefBodySchema = z
+  .object({
+    object: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }).strict(),
+  })
+  .strict();
+const CheckRunSchema = z
+  .object({
+    name: z.string().max(256).optional(),
+    conclusion: z.string().max(64).nullable().optional(),
+  })
+  .strict();
+const CheckRunsBodySchema = z
+  .object({
+    check_runs: z.array(CheckRunSchema).max(1000),
+  })
+  .strict();
+const ResponseDateSchema = z.string().max(128);
+
+function isSafeJsonObject(value: JsonValue): value is JsonObject {
+  return (
+    isJsonObject(value) &&
+    Object.getPrototypeOf(value) === null &&
+    !Object.hasOwn(value, "__proto__")
+  );
+}
+
+function hasOwnDataProperty(value: JsonObject, key: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return (
+    descriptor !== undefined &&
+    "value" in descriptor &&
+    descriptor.enumerable === true
+  );
+}
+
+function readMainRefResponse(
+  body: JsonValue,
+  responseDate: string,
+): Result<MainRef, PreflightResponseError> {
+  const date = ResponseDateSchema.safeParse(responseDate);
+  if (!date.success) return err({ type: "GitHubResponse" });
+  if (!isSafeJsonObject(body) || !hasOwnDataProperty(body, "object"))
+    return err({ type: "GitHubResponse" });
+  const object = body.object;
+  if (!isSafeJsonObject(object) || !hasOwnDataProperty(object, "sha"))
+    return err({ type: "GitHubResponse" });
+  const sha = object.sha;
+  if (!isJsonString(sha)) return err({ type: "GitHubResponse" });
+  const parsed = MainRefBodySchema.safeParse({ object: { sha } });
+  if (!parsed.success) return err({ type: "GitHubResponse" });
+  return ok({ object: { sha: parsed.data.object.sha }, date: date.data });
+}
+
+function readCheckRunsResponse(
+  body: JsonValue,
+  responseDate: string,
+): Result<CheckRunsResponse, PreflightResponseError> {
+  const date = ResponseDateSchema.safeParse(responseDate);
+  if (!date.success) return err({ type: "GitHubResponse" });
+  if (!isSafeJsonObject(body) || !hasOwnDataProperty(body, "check_runs"))
+    return err({ type: "GitHubResponse" });
+  const checkRuns = body.check_runs;
+  if (!Array.isArray(checkRuns) || checkRuns.length > 1000)
+    return err({ type: "GitHubResponse" });
+  const projectedRuns: ProjectedCheckRun[] = [];
+  for (let index = 0; index < checkRuns.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(checkRuns, `${index}`);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    )
+      return err({ type: "GitHubResponse" });
+    const candidate = checkRuns[index];
+    if (!isSafeJsonObject(candidate)) return err({ type: "GitHubResponse" });
+    const projected: ProjectedCheckRun = {};
+    if (Object.hasOwn(candidate, "name")) {
+      if (
+        !hasOwnDataProperty(candidate, "name") ||
+        !isJsonString(candidate.name)
+      )
+        return err({ type: "GitHubResponse" });
+      projected.name = candidate.name;
+    }
+    if (Object.hasOwn(candidate, "conclusion")) {
+      if (!hasOwnDataProperty(candidate, "conclusion"))
+        return err({ type: "GitHubResponse" });
+      const conclusion = candidate.conclusion;
+      if (conclusion !== null && !isJsonString(conclusion))
+        return err({ type: "GitHubResponse" });
+      projected.conclusion = conclusion;
+    }
+    const parsed = CheckRunSchema.safeParse(projected);
+    if (!parsed.success) return err({ type: "GitHubResponse" });
+    projectedRuns.push(parsed.data);
+  }
+  const parsed = CheckRunsBodySchema.safeParse({
+    check_runs: projectedRuns,
+  });
+  if (!parsed.success) return err({ type: "GitHubResponse" });
+  return ok({ check_runs: parsed.data.check_runs, date: date.data });
+}
+
+function fetchGitHubJson(
   path: string,
   token: string,
-): ResultAsync<unknown, PreflightResponseError> {
+): ResultAsync<GitHubJsonResponse, PreflightResponseError> {
   return ResultAsync.fromPromise(
     fetch(`https://api.github.com/repos/weave-io/weave${path}`, {
       headers: {
@@ -348,49 +484,42 @@ function fetchJson(
       },
     }),
     () => ({ type: "GitHubResponse" as const }),
-  )
-    .andThen((response) =>
-      response.ok
-        ? ResultAsync.fromPromise(response.json(), () => ({
-            type: "GitHubResponse" as const,
-          })).map((body) => ({
-            body,
-            date: response.headers.get("date") ?? "",
-          }))
-        : errAsync({ type: "GitHubResponse" as const }),
-    )
-    .map(({ body, date }) => ({ ...(body as Record<string, unknown>), date }));
+  ).andThen((response) => {
+    if (!response.ok) return errAsync({ type: "GitHubResponse" as const });
+    return ResultAsync.fromPromise(response.text(), () => ({
+      type: "GitHubResponse" as const,
+    })).andThen((text) => {
+      const parsed = parseJsonValue(text);
+      if (parsed.isErr()) return errAsync({ type: "GitHubResponse" as const });
+      return okAsync({
+        body: parsed.value,
+        date: response.headers.get("date") ?? "",
+      });
+    });
+  });
 }
-function isMainRef(value: unknown): value is MainRef {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "date" in value &&
-    typeof value.date === "string" &&
-    "object" in value &&
-    typeof value.object === "object" &&
-    value.object !== null &&
-    "sha" in value.object &&
-    typeof value.object.sha === "string" &&
-    /^[0-9a-f]{40}$/.test(value.object.sha)
+
+function fetchMainRef(
+  token: string,
+): ResultAsync<MainRef, PreflightResponseError> {
+  return fetchGitHubJson("/git/ref/heads/main", token).andThen((response) =>
+    readMainRefResponse(response.body, response.date),
   );
 }
-function hasGreenRequiredCheck(value: unknown): boolean {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("check_runs" in value) ||
-    !Array.isArray(value.check_runs)
-  )
-    return false;
+
+function fetchCheckRuns(
+  sha: string,
+  token: string,
+): ResultAsync<CheckRunsResponse, PreflightResponseError> {
+  return fetchGitHubJson(`/commits/${sha}/check-runs`, token).andThen(
+    (response) => readCheckRunsResponse(response.body, response.date),
+  );
+}
+
+function hasGreenRequiredCheck(value: CheckRunsResponse): boolean {
   return value.check_runs.some(
     (check) =>
-      typeof check === "object" &&
-      check !== null &&
-      "name" in check &&
-      check.name === REQUIRED_MAIN_CHECK &&
-      "conclusion" in check &&
-      check.conclusion === "success",
+      check.name === REQUIRED_MAIN_CHECK && check.conclusion === "success",
   );
 }
 function loadChangesets(): ResultAsync<readonly ParsedChangeset[], unknown> {
@@ -418,14 +547,14 @@ function loadPackageVersions(): ResultAsync<
   Record<PublicPackageName, string>,
   string
 > {
-  const locations: Record<PublicPackageName, string> = {
+  const locations = {
     "@weaveio/weave-cli": "packages/cli/package.json",
     "@weaveio/weave-adapter-opencode":
       "packages/adapters/opencode/package.json",
     "@weaveio/weave-adapter-claude-code":
       "packages/adapters/claude-code/package.json",
     "@weaveio/weave-adapter-pi": "packages/adapters/pi/package.json",
-  };
+  } satisfies Record<PublicPackageName, string>;
   return ResultAsync.fromPromise(
     Promise.all(
       Object.entries(locations).map(
@@ -434,18 +563,31 @@ function loadPackageVersions(): ResultAsync<
     ),
     () => "package manifest read failed",
   ).andThen((entries) => {
-    const versions: Partial<Record<PublicPackageName, string>> = {};
+    const versions = new Map<PublicPackageName, string>();
     for (const [name, manifest] of entries) {
-      if (
-        typeof manifest !== "object" ||
-        manifest === null ||
-        !("version" in manifest) ||
-        typeof manifest.version !== "string"
-      )
+      if (!isJsonObject(manifest) || !isStringValue(manifest.version))
         return errAsync("package manifest has no version");
-      versions[name as PublicPackageName] = manifest.version;
+      if (!isPublicPackageName(name))
+        return errAsync("package manifest has an unknown package");
+      versions.set(name, manifest.version);
     }
-    return okAsync(versions as Record<PublicPackageName, string>);
+    const cli = versions.get("@weaveio/weave-cli");
+    const openCode = versions.get("@weaveio/weave-adapter-opencode");
+    const claude = versions.get("@weaveio/weave-adapter-claude-code");
+    const pi = versions.get("@weaveio/weave-adapter-pi");
+    if (
+      cli === undefined ||
+      openCode === undefined ||
+      claude === undefined ||
+      pi === undefined
+    )
+      return errAsync("package manifest set is incomplete");
+    return okAsync({
+      "@weaveio/weave-cli": cli,
+      "@weaveio/weave-adapter-opencode": openCode,
+      "@weaveio/weave-adapter-claude-code": claude,
+      "@weaveio/weave-adapter-pi": pi,
+    });
   });
 }
 

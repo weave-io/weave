@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
 import { normalizePath } from "./normalize-path.js";
@@ -107,7 +107,7 @@ export function discoverAndParse(
 async function discoverAll(
   scopes: ConfigScope[],
   fileReader: FileReader,
-): Promise<import("neverthrow").Result<DiscoveredConfig[], ConfigLoadError[]>> {
+): Promise<Result<DiscoveredConfig[], ConfigLoadError[]>> {
   const discovered: DiscoveredConfig[] = [];
   const errors: ConfigLoadError[] = [];
 

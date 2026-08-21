@@ -29,7 +29,18 @@ export type ModelIntentParseError = {
 };
 
 function isThinkingLevel(value: string): value is ThinkingLevelDecl {
-  return (THINKING_LEVEL_VALUES as readonly string[]).includes(value);
+  switch (value) {
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+    case "max":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function findLastUnescapedHash(raw: string): number {

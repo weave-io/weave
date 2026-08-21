@@ -39,7 +39,7 @@
  * children keep working with no cache at all.
  */
 
-import { dlopen, ptr, read } from "bun:ffi";
+import { dlopen, type Pointer, ptr, read } from "bun:ffi";
 import { Database } from "bun:sqlite";
 import { platform } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -57,7 +57,9 @@ import {
   enforceDurableChildTitle,
   enforceDurableChildTitleProvenance,
   PI_CHILD_TITLE_PROVENANCE_VALUES,
+  type PiStoredChildTitle,
 } from "./child-title.js";
+import { type JsonValue, parseStrictJson } from "./strict-json.js";
 
 // ---------------------------------------------------------------------------
 // Layout and bounds
@@ -351,6 +353,32 @@ export const PiChildMetadataRecordSchema = z
   })
   .strict();
 export type PiChildMetadataRecord = z.infer<typeof PiChildMetadataRecordSchema>;
+type PiChildMetadataRecordCandidate = {
+  childId: string;
+  threadId: string;
+  nativeSessionId: string;
+  sessionRef: string;
+  originParentSessionId: string;
+  originEntryId: string;
+  workspaceKey: string;
+  title: string;
+  titleProvenance?: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  settledAt?: number;
+  runCount: number;
+  latestRunAction?: string;
+  latestRunAt?: number;
+  latestRunInitiator?: string;
+  latestRunModel?: string;
+  latestRunReasoning?: string;
+  stale: boolean;
+  tombstoned: boolean;
+  cachedAt: number;
+};
+type PiChildMetadataSqlValue = string | number | null;
+type PiChildMetadataDbRow = JsonValue;
 
 /**
  * Validates one cache record. Never throws; failures are values.
@@ -366,18 +394,19 @@ export type PiChildMetadataRecord = z.infer<typeof PiChildMetadataRecordSchema>;
  * title never drifts.
  */
 export function parseChildMetadataRecord(
-  value: unknown,
+  value: JsonValue | PiChildMetadataRecordCandidate,
 ): Result<PiChildMetadataRecord, PiChildMetadataCacheError> {
   const parsed = PiChildMetadataRecordSchema.safeParse(value);
   if (parsed.success) {
     const record = parsed.data;
-    const stored = {
-      title: record.title,
-      threadId: record.threadId,
-      ...(record.titleProvenance === undefined
-        ? {}
-        : { provenance: record.titleProvenance }),
-    };
+    const stored: PiStoredChildTitle =
+      record.titleProvenance === undefined
+        ? { title: record.title, threadId: record.threadId }
+        : {
+            title: record.title,
+            threadId: record.threadId,
+            provenance: record.titleProvenance,
+          };
     const title = enforceDurableChildTitle(stored);
     const titleProvenance = enforceDurableChildTitleProvenance(stored);
     if (title === record.title && titleProvenance === record.titleProvenance) {
@@ -404,7 +433,7 @@ export function childMetadataRecordFromRef(input: {
 }): Result<PiChildMetadataRecord, PiChildMetadataCacheError> {
   const { ref } = input;
   const latest = ref.runs.at(-1);
-  const candidate = {
+  const candidate: PiChildMetadataRecordCandidate = {
     childId: ref.childId,
     threadId: ref.threadId,
     nativeSessionId: ref.nativeSessionId,
@@ -413,33 +442,29 @@ export function childMetadataRecordFromRef(input: {
     originEntryId: ref.originEntryId,
     workspaceKey: input.workspaceKey,
     title: ref.title,
-    ...(ref.titleProvenance === undefined
-      ? {}
-      : { titleProvenance: ref.titleProvenance }),
-    status: input.tombstoned === true ? ("tombstoned" as const) : ref.status,
+    status: input.tombstoned === true ? "tombstoned" : ref.status,
     createdAt: ref.createdAt,
     updatedAt: ref.updatedAt,
-    ...(ref.settledAt === undefined ? {} : { settledAt: ref.settledAt }),
     runCount: childRefTotalRuns(ref),
-    ...(latest === undefined
-      ? {}
-      : {
-          latestRunAction: latest.action,
-          latestRunAt: latest.startedAt,
-          ...(latest.initiator === undefined
-            ? {}
-            : { latestRunInitiator: latest.initiator }),
-          ...(latest.model === undefined
-            ? {}
-            : { latestRunModel: latest.model }),
-          ...(latest.reasoning === undefined
-            ? {}
-            : { latestRunReasoning: latest.reasoning }),
-        }),
     stale: input.stale ?? false,
     tombstoned: input.tombstoned ?? false,
     cachedAt: input.cachedAt,
   };
+  if (ref.titleProvenance !== undefined) {
+    candidate.titleProvenance = ref.titleProvenance;
+  }
+  if (ref.settledAt !== undefined) candidate.settledAt = ref.settledAt;
+  if (latest !== undefined) {
+    candidate.latestRunAction = latest.action;
+    candidate.latestRunAt = latest.startedAt;
+    if (latest.initiator !== undefined) {
+      candidate.latestRunInitiator = latest.initiator;
+    }
+    if (latest.model !== undefined) candidate.latestRunModel = latest.model;
+    if (latest.reasoning !== undefined) {
+      candidate.latestRunReasoning = latest.reasoning;
+    }
+  }
   return parseChildMetadataRecord(candidate);
 }
 
@@ -521,9 +546,15 @@ function decodeCursor(
     return err({ type: "CacheCursorInvalid" });
   }
   const decoded = Result.fromThrowable(
-    () => JSON.parse(textDecoder.decode(decodeBase64Url(cursor))) as unknown,
+    () => decodeBase64Url(cursor),
     (): PiChildMetadataCacheError => ({ type: "CacheCursorInvalid" }),
-  )();
+  )().andThen((bytes) =>
+    parseStrictJson(textDecoder.decode(bytes)).mapErr(
+      (): PiChildMetadataCacheError => ({
+        type: "CacheCursorInvalid",
+      }),
+    ),
+  );
   if (decoded.isErr()) return err(decoded.error);
   const parsed = CursorSchema.safeParse(decoded.value);
   if (!parsed.success) return err({ type: "CacheCursorInvalid" });
@@ -710,84 +741,99 @@ function cstr(value: string): Uint8Array {
   return textEncoder.encode(`${value}\0`);
 }
 
-function libraryPathForPlatform(): string | undefined {
-  if (platform() === "darwin") return "/usr/lib/libSystem.B.dylib";
-  if (platform() === "linux") return "libc.so.6";
-  return undefined;
+interface CacheFfiSymbols {
+  readonly open: (path: Pointer | null, flags: number, mode: number) => number;
+  readonly openat: (
+    directory: number,
+    path: Pointer | null,
+    flags: number,
+    mode: number,
+  ) => number;
+  readonly mkdirat: (
+    directory: number,
+    path: Pointer | null,
+    mode: number,
+  ) => number;
+  readonly fchmod: (fd: number, mode: number) => number;
+  readonly close: (fd: number) => number;
 }
 
-function errnoSymbolForPlatform(): string | undefined {
-  if (platform() === "darwin") return "__error";
-  if (platform() === "linux") return "__errno_location";
-  return undefined;
+interface CacheFfiLibrary {
+  readonly symbols: CacheFfiSymbols;
+  close(): void;
+}
+
+type CacheFfiErrnoReader = () => Pointer | null;
+
+interface CacheFfiDarwinLibrary extends CacheFfiLibrary {
+  readonly symbols: CacheFfiSymbols & { readonly __error: CacheFfiErrnoReader };
+}
+
+interface CacheFfiLinuxLibrary extends CacheFfiLibrary {
+  readonly symbols: CacheFfiSymbols & {
+    readonly __errno_location: CacheFfiErrnoReader;
+  };
+}
+
+function buildCacheLibc(
+  flags: CacheLibcFlags,
+  library: CacheFfiLibrary,
+  readErrnoPointer: CacheFfiErrnoReader,
+): CacheLibc {
+  const { symbols } = library;
+  return {
+    flags,
+    open: (path, openFlags, mode) => symbols.open(ptr(path), openFlags, mode),
+    openat: (directory, path, openFlags, mode) =>
+      symbols.openat(directory, ptr(path), openFlags, mode),
+    mkdirat: (directory, path, mode) =>
+      symbols.mkdirat(directory, ptr(path), mode),
+    fchmod: (fd, mode) => symbols.fchmod(fd, mode),
+    close: (fd) => symbols.close(fd),
+    errno: () => {
+      const pointer = readErrnoPointer();
+      return pointer === null ? -1 : read.i32(pointer, 0);
+    },
+    dispose: () => library.close(),
+  };
 }
 
 function loadCacheLibc(): Result<CacheLibc, PiChildMetadataCacheFsError> {
   const flags = cacheLibcFlags();
-  const libraryPath = libraryPathForPlatform();
-  const errnoName = errnoSymbolForPlatform();
-  if (
-    flags === undefined ||
-    libraryPath === undefined ||
-    errnoName === undefined
-  ) {
-    return err({ type: "unavailable" });
+  if (flags === undefined) return err({ type: "unavailable" });
+  if (platform() === "darwin") {
+    return Result.fromThrowable(
+      () =>
+        dlopen("/usr/lib/libSystem.B.dylib", {
+          open: { args: ["ptr", "i32", "i32"], returns: "i32" },
+          openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
+          mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
+          fchmod: { args: ["i32", "i32"], returns: "i32" },
+          close: { args: ["i32"], returns: "i32" },
+          __error: { args: [], returns: "ptr" },
+        }),
+      (): PiChildMetadataCacheFsError => ({ type: "unavailable" }),
+    )().map((library: CacheFfiDarwinLibrary) =>
+      buildCacheLibc(flags, library, library.symbols.__error),
+    );
   }
-  return Result.fromThrowable(
-    () =>
-      dlopen(libraryPath, {
-        open: { args: ["ptr", "i32", "i32"], returns: "i32" },
-        openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
-        mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
-        fchmod: { args: ["i32", "i32"], returns: "i32" },
-        close: { args: ["i32"], returns: "i32" },
-        [errnoName]: { args: [], returns: "ptr" },
-      }),
-    (): PiChildMetadataCacheFsError => ({ type: "unavailable" }),
-  )().map((library) => {
-    const symbols = library.symbols as unknown as Record<
-      string,
-      (...args: never[]) => number
-    > &
-      Record<string, unknown>;
-    const call = <T>(name: string): T => symbols[name] as unknown as T;
-    return {
-      flags,
-      open: (path: Uint8Array, openFlags: number, mode: number) =>
-        call<(p: unknown, f: number, m: number) => number>("open")(
-          ptr(path),
-          openFlags,
-          mode,
-        ),
-      openat: (
-        dir: number,
-        path: Uint8Array,
-        openFlags: number,
-        mode: number,
-      ) =>
-        call<(d: number, p: unknown, f: number, m: number) => number>("openat")(
-          dir,
-          ptr(path),
-          openFlags,
-          mode,
-        ),
-      mkdirat: (dir: number, path: Uint8Array, mode: number) =>
-        call<(d: number, p: unknown, m: number) => number>("mkdirat")(
-          dir,
-          ptr(path),
-          mode,
-        ),
-      fchmod: (fd: number, mode: number) =>
-        call<(f: number, m: number) => number>("fchmod")(fd, mode),
-      close: (fd: number) => call<(f: number) => number>("close")(fd),
-      errno: () =>
-        read.i32(
-          (symbols[errnoName] as unknown as () => unknown)() as never,
-          0,
-        ),
-      dispose: () => library.close(),
-    } satisfies CacheLibc;
-  });
+  if (platform() === "linux") {
+    return Result.fromThrowable(
+      () =>
+        dlopen("libc.so.6", {
+          open: { args: ["ptr", "i32", "i32"], returns: "i32" },
+          openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
+          mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
+          fchmod: { args: ["i32", "i32"], returns: "i32" },
+          close: { args: ["i32"], returns: "i32" },
+          __errno_location: { args: [], returns: "ptr" },
+        }),
+      (): PiChildMetadataCacheFsError => ({ type: "unavailable" }),
+    )().map((library: CacheFfiLinuxLibrary) =>
+      buildCacheLibc(flags, library, library.symbols.__errno_location),
+    );
+  }
+  return err({ type: "unavailable" });
 }
 
 function absoluteSegments(
@@ -831,7 +877,7 @@ export class BunPiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
   ): ResultAsync<void, PiChildMetadataCacheFsError> {
     return this.withDirectoryChain(path, true, mode, (libc, fd) => {
       libc.close(fd);
-      return ok(undefined);
+      return ok(void 0);
     });
   }
 
@@ -960,18 +1006,18 @@ export class BunPiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
       (): PiChildMetadataCacheFsError => ({ type: "io" }),
     )().andThen((stat) => {
       if (!stat.isFile()) {
-        return errAsync<void, PiChildMetadataCacheFsError>({
+        return errAsync<never, PiChildMetadataCacheFsError>({
           type: "wrong-kind",
           kind: "file",
         });
       }
       if ((stat.mode & 0o7777) !== mode) {
-        return errAsync<void, PiChildMetadataCacheFsError>({
+        return errAsync<never, PiChildMetadataCacheFsError>({
           type: "permissive-mode",
           kind: "file",
         });
       }
-      return okAsync<void, PiChildMetadataCacheFsError>(undefined);
+      return okAsync(void 0);
     });
   }
 
@@ -1047,7 +1093,7 @@ export class FakePiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
   ): ResultAsync<void, PiChildMetadataCacheFsError> {
     this.calls.push(`dir:${path}`);
     return this.failure === undefined
-      ? okAsync(undefined)
+      ? okAsync(void 0)
       : errAsync(this.failure);
   }
 
@@ -1056,7 +1102,7 @@ export class FakePiChildMetadataCacheFs implements PiChildMetadataCacheFsPort {
   ): ResultAsync<void, PiChildMetadataCacheFsError> {
     this.calls.push(`file:${path}`);
     return this.failure === undefined
-      ? okAsync(undefined)
+      ? okAsync(void 0)
       : errAsync(this.failure);
   }
 
@@ -1159,7 +1205,7 @@ export function createChildMetadataBypass(
     list(input) {
       const decoded =
         input.cursor === undefined
-          ? ok(undefined)
+          ? ok(void 0)
           : decodeCursor(input, input.cursor).map((value) => value);
       if (decoded.isErr()) return errAsync(decoded.error);
       const cursor = decoded.value;
@@ -1219,8 +1265,11 @@ function paginate(
 
 /** The narrow slice of `bun:sqlite`'s `Database` this module uses. */
 export interface PiChildMetadataDatabase {
-  run(sql: string, params?: readonly unknown[]): void;
-  all(sql: string, params?: readonly unknown[]): readonly unknown[];
+  run(sql: string, params?: readonly PiChildMetadataSqlValue[]): void;
+  all(
+    sql: string,
+    params?: readonly PiChildMetadataSqlValue[],
+  ): readonly PiChildMetadataDbRow[];
   close(): void;
 }
 
@@ -1238,16 +1287,22 @@ export const openBunChildMetadataDatabase: PiChildMetadataDatabaseOpener = (
   database.exec("PRAGMA foreign_keys=ON;");
   return {
     run(sql, params) {
-      database.run(sql, (params ?? []) as never[]);
+      database.run(sql, params?.slice() ?? []);
     },
     all(sql, params) {
-      return database.query(sql).all(...((params ?? []) as never[]));
+      const bindings = params?.slice() ?? [];
+      return database
+        .query<PiChildMetadataDbRow, PiChildMetadataSqlValue[]>(sql)
+        .all(...bindings);
     },
     close() {
       database.close();
     },
   };
 };
+
+/** Message used when a write is refused on a read-only cache handle. */
+export const READ_ONLY_WRITE_REFUSED = "child metadata cache is read-only";
 
 /**
  * Read-only opener: never creates the file, never creates or migrates a
@@ -1268,16 +1323,16 @@ export const openBunChildMetadataDatabaseReadOnly: PiChildMetadataDatabaseOpener
         throw new Error(READ_ONLY_WRITE_REFUSED);
       },
       all(sql, params) {
-        return database.query(sql).all(...((params ?? []) as never[]));
+        const bindings = params?.slice() ?? [];
+        return database
+          .query<PiChildMetadataDbRow, PiChildMetadataSqlValue[]>(sql)
+          .all(...bindings);
       },
       close() {
         database.close();
       },
     };
   };
-
-/** Message used when a write is refused on a read-only cache handle. */
-export const READ_ONLY_WRITE_REFUSED = "child metadata cache is read-only";
 
 const CREATE_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS cache_meta (
@@ -1364,12 +1419,17 @@ const RowSchema = z.looseObject({
   cached_at: z.number(),
 });
 
-function optional<T>(value: T | null): Record<string, never> | { value: T } {
-  return value === null ? ({} as Record<string, never>) : { value };
+type OptionalRowValue<T> =
+  | { readonly kind: "absent" }
+  | { readonly kind: "present"; readonly value: T };
+
+function optional<T>(value: T | null): OptionalRowValue<T> {
+  if (value === null) return { kind: "absent" };
+  return { kind: "present", value };
 }
 
 function rowToRecord(
-  row: unknown,
+  row: PiChildMetadataDbRow,
 ): Result<PiChildMetadataRecord, PiChildMetadataCacheError> {
   const parsed = RowSchema.safeParse(row);
   if (!parsed.success) {
@@ -1386,7 +1446,7 @@ function rowToRecord(
   const model = optional(value.latest_run_model);
   const reasoning = optional(value.latest_run_reasoning);
   const provenance = optional(value.title_provenance ?? null);
-  return parseChildMetadataRecord({
+  const candidate: PiChildMetadataRecordCandidate = {
     childId: value.child_id,
     threadId: value.thread_id,
     nativeSessionId: value.native_session_id,
@@ -1395,24 +1455,33 @@ function rowToRecord(
     originEntryId: value.origin_entry_id,
     workspaceKey: value.workspace_key,
     title: value.title,
-    ...("value" in provenance ? { titleProvenance: provenance.value } : {}),
     status: value.status,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
-    ...("value" in settled ? { settledAt: settled.value } : {}),
     runCount: value.run_count,
-    ...("value" in action ? { latestRunAction: action.value } : {}),
-    ...("value" in runAt ? { latestRunAt: runAt.value } : {}),
-    ...("value" in initiator ? { latestRunInitiator: initiator.value } : {}),
-    ...("value" in model ? { latestRunModel: model.value } : {}),
-    ...("value" in reasoning ? { latestRunReasoning: reasoning.value } : {}),
     stale: value.stale !== 0,
     tombstoned: value.tombstoned !== 0,
     cachedAt: value.cached_at,
-  });
+  };
+  if (provenance.kind === "present") {
+    candidate.titleProvenance = provenance.value;
+  }
+  if (settled.kind === "present") candidate.settledAt = settled.value;
+  if (action.kind === "present") candidate.latestRunAction = action.value;
+  if (runAt.kind === "present") candidate.latestRunAt = runAt.value;
+  if (initiator.kind === "present") {
+    candidate.latestRunInitiator = initiator.value;
+  }
+  if (model.kind === "present") candidate.latestRunModel = model.value;
+  if (reasoning.kind === "present") {
+    candidate.latestRunReasoning = reasoning.value;
+  }
+  return parseChildMetadataRecord(candidate);
 }
 
-function recordParams(record: PiChildMetadataRecord): readonly unknown[] {
+function recordParams(
+  record: PiChildMetadataRecord,
+): readonly PiChildMetadataSqlValue[] {
   return [
     record.workspaceKey,
     record.childId,
@@ -1705,14 +1774,14 @@ function initializeDatabase(
   if (prepared.isErr()) {
     Result.fromThrowable(
       () => database.close(),
-      () => undefined,
+      () => null,
     )();
     return degraded(options, prepared.error, "corrupt");
   }
   if (prepared.value === "schema-mismatch") {
     Result.fromThrowable(
       () => database.close(),
-      () => undefined,
+      () => null,
     )();
     return degraded(
       options,
@@ -1722,7 +1791,7 @@ function initializeDatabase(
   }
   return {
     mode: "active",
-    cache: new PiChildMetadataCache({
+    cache: createPiChildMetadataCache({
       database,
       authority: options.authority,
       source: options.source,
@@ -1784,7 +1853,7 @@ function initializeDatabaseReadOnly(
   if (prepared.isErr()) {
     Result.fromThrowable(
       () => database.close(),
-      () => undefined,
+      () => null,
     )();
     return degraded(
       options,
@@ -1797,7 +1866,7 @@ function initializeDatabaseReadOnly(
   if (prepared.value === "schema-mismatch") {
     Result.fromThrowable(
       () => database.close(),
-      () => undefined,
+      () => null,
     )();
     return degraded(
       options,
@@ -1807,7 +1876,7 @@ function initializeDatabaseReadOnly(
   }
   return {
     mode: "active",
-    cache: new PiChildMetadataCache({
+    cache: createPiChildMetadataCache({
       database,
       authority: options.authority,
       source: options.source,
@@ -1838,6 +1907,11 @@ export interface PiChildMetadataRebuildReport {
   readonly retainedTombstones: number;
   readonly skippedRefs: number;
 }
+
+type PiChildMetadataCheckedRef = {
+  readonly ref: PiChildRefRecord;
+  readonly state: PiChildRefSourceState;
+};
 
 /**
  * Bounded, scoped, metadata-only discovery cache over the authoritative
@@ -1897,12 +1971,20 @@ export class PiChildMetadataCache {
     workspaceKey: string,
     options: { readonly stale?: boolean } = {},
   ): Result<PiChildMetadataRecord, PiChildMetadataCacheError> {
-    return childMetadataRecordFromRef({
-      ref,
-      workspaceKey,
-      cachedAt: this.now(),
-      ...(options.stale === undefined ? {} : { stale: options.stale }),
-    }).andThen((record) => this.upsert(record).map(() => record));
+    const projected =
+      options.stale === undefined
+        ? childMetadataRecordFromRef({
+            ref,
+            workspaceKey,
+            cachedAt: this.now(),
+          })
+        : childMetadataRecordFromRef({
+            ref,
+            workspaceKey,
+            cachedAt: this.now(),
+            stale: options.stale,
+          });
+    return projected.andThen((record) => this.upsert(record).map(() => record));
   }
 
   /**
@@ -1913,7 +1995,7 @@ export class PiChildMetadataCache {
     input: PiChildMetadataListInput,
   ): Result<PiChildMetadataPage, PiChildMetadataCacheError> {
     const limit = clampLimit(input.limit);
-    const params: unknown[] = [input.workspaceKey];
+    const params: PiChildMetadataSqlValue[] = [input.workspaceKey];
     let sql = `SELECT ${ROW_COLUMNS} FROM children WHERE workspace_key = ?`;
     if (input.parentSessionId !== undefined) {
       sql += " AND origin_parent_session = ?";
@@ -1967,7 +2049,10 @@ export class PiChildMetadataCache {
     input: PiChildMetadataFindByChildIdInput,
   ): Result<readonly PiChildMetadataRecord[], PiChildMetadataCacheError> {
     const limit = clampLimit(input.limit);
-    const params: unknown[] = [input.workspaceKey, input.childId];
+    const params: PiChildMetadataSqlValue[] = [
+      input.workspaceKey,
+      input.childId,
+    ];
     let sql = `SELECT ${ROW_COLUMNS} FROM children WHERE workspace_key = ? AND child_id = ?`;
     if (input.parentSessionId !== undefined) {
       sql += " AND origin_parent_session = ?";
@@ -2139,10 +2224,11 @@ export class PiChildMetadataCache {
               .checkSource(ref.sessionRef, ref.originParentSessionId)
               .match(
                 (state) => ({ ref, state }),
-                (): {
-                  readonly ref: PiChildRefRecord;
-                  readonly state: PiChildRefSourceState;
-                } => ({ ref, state: "unavailable" }),
+                () =>
+                  ({
+                    ref,
+                    state: "unavailable",
+                  }) satisfies PiChildMetadataCheckedRef,
               ),
           ),
         ),
@@ -2166,10 +2252,7 @@ export class PiChildMetadataCache {
   }
 
   private writeRebuild(
-    checked: readonly {
-      readonly ref: PiChildRefRecord;
-      readonly state: PiChildRefSourceState;
-    }[],
+    checked: readonly PiChildMetadataCheckedRef[],
     tombstoned: ReadonlySet<string>,
     scannedRefs: number,
   ): ResultAsync<PiChildMetadataRebuildReport, PiChildMetadataCacheError> {
@@ -2222,7 +2305,7 @@ export class PiChildMetadataCache {
       const row = rows.at(0);
       if (row === undefined) {
         return ok<PiChildMetadataRecord | undefined, PiChildMetadataCacheError>(
-          undefined,
+          void 0,
         );
       }
       return rowToRecord(row);
@@ -2231,8 +2314,8 @@ export class PiChildMetadataCache {
 
   private query(
     sql: string,
-    params: readonly unknown[] = [],
-  ): Result<readonly unknown[], PiChildMetadataCacheError> {
+    params: readonly PiChildMetadataSqlValue[] = [],
+  ): Result<readonly PiChildMetadataDbRow[], PiChildMetadataCacheError> {
     return Result.fromThrowable(
       () => this.database.all(sql, params),
       (): PiChildMetadataCacheError => ({
@@ -2244,7 +2327,7 @@ export class PiChildMetadataCache {
 
   private execute(
     sql: string,
-    params: readonly unknown[],
+    params: readonly PiChildMetadataSqlValue[],
   ): Result<void, PiChildMetadataCacheError> {
     if (this.readOnly) {
       return err({
@@ -2262,4 +2345,10 @@ export class PiChildMetadataCache {
       }),
     )();
   }
+}
+
+function createPiChildMetadataCache(
+  options: PiChildMetadataCacheInternalOptions,
+): PiChildMetadataCache {
+  return new PiChildMetadataCache(options);
 }

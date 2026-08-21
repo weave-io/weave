@@ -4,6 +4,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   BunChangesetFileSystem,
   bumpForChangeKind,
+  type ChangedPathImpact,
   type ChangesetFileSystem,
   type ChangesetPolicyError,
   ChangesetPolicyValidator,
@@ -82,7 +83,9 @@ describe("ChangesetPolicyValidator", () => {
     const result = await validate({ "triggers.md": breakingChangeset });
     expect(result.isOk()).toBe(true);
     if (result.isErr()) return;
-    const changeset = releasing(result.value[0] as ValidatedChangeset);
+    const first = result.value[0];
+    if (first === undefined) throw new Error("missing validated changeset");
+    const changeset = releasing(first);
     expect([...changeset.releases]).toEqual([
       ["@weaveio/weave-cli", "minor"],
       ["@weaveio/weave-adapter-opencode", "minor"],
@@ -370,7 +373,7 @@ describe("deriveChangesetIdentity", () => {
 });
 
 describe("classifyChangedPath", () => {
-  it.each([
+  it.each<[string, ChangedPathImpact]>([
     [
       "packages/cli/src/main.ts",
       { kind: "public", packageName: "@weaveio/weave-cli" },
@@ -389,7 +392,7 @@ describe("classifyChangedPath", () => {
     ["docs/contributing/testing.md", { kind: "none" }],
     ["scripts/release/changeset-policy.ts", { kind: "none" }],
   ])("classifies %s", (path, expected) => {
-    expect(classifyChangedPath(path)).toEqual(expected as never);
+    expect(classifyChangedPath(path)).toEqual(expected);
   });
 
   it("expands a bundled source into every artifact that packs it", () => {

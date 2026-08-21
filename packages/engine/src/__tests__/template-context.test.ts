@@ -199,23 +199,17 @@ describe("buildTemplateContext — agent context", () => {
 
   it("does NOT expose models on agent context", () => {
     const ctx = build();
-    expect(
-      (ctx.agent as unknown as Record<string, unknown>).models,
-    ).toBeUndefined();
+    expect("models" in ctx.agent).toBe(false);
   });
 
   it("does NOT expose temperature on agent context", () => {
     const ctx = build();
-    expect(
-      (ctx.agent as unknown as Record<string, unknown>).temperature,
-    ).toBeUndefined();
+    expect("temperature" in ctx.agent).toBe(false);
   });
 
   it("does NOT expose prompt_file on agent context", () => {
     const ctx = build();
-    expect(
-      (ctx.agent as unknown as Record<string, unknown>).prompt_file,
-    ).toBeUndefined();
+    expect("prompt_file" in ctx.agent).toBe(false);
   });
 });
 
@@ -254,10 +248,7 @@ describe("buildTemplateContext — category context", () => {
         description: "APIs",
       },
     });
-    expect(
-      (ctx.category as unknown as Record<string, unknown> | undefined)
-        ?.patterns,
-    ).toBeUndefined();
+    expect("patterns" in (ctx.category ?? {})).toBe(false);
     expect(Object.keys(ctx.category ?? {}).sort()).toEqual([
       "description",
       "name",
@@ -290,12 +281,8 @@ describe("buildTemplateContext — toolPolicy context", () => {
 
   it("does NOT expose raw tool policy", () => {
     const ctx = build();
-    expect(
-      (ctx.toolPolicy as unknown as Record<string, unknown>).raw,
-    ).toBeUndefined();
-    expect(
-      (ctx.toolPolicy as unknown as Record<string, unknown>).rawToolPolicy,
-    ).toBeUndefined();
+    expect("raw" in ctx.toolPolicy).toBe(false);
+    expect("rawToolPolicy" in ctx.toolPolicy).toBe(false);
   });
 
   it("only exposes effective sub-object under toolPolicy", () => {
@@ -390,11 +377,10 @@ describe("buildTemplateContext — delegation with targets", () => {
         makeTarget("shuttle-backend", undefined, ["REST endpoint changes"]),
       ],
     });
-    const target = ctx.delegation.targets[0] as unknown as Record<
-      string,
-      unknown
-    >;
-    expect(target.domains).toBeUndefined();
+    const target = ctx.delegation.targets[0];
+    expect(target).toBeDefined();
+    if (target === undefined) return;
+    expect("domains" in target).toBe(false);
     expect(target.triggers).toEqual(["REST endpoint changes"]);
     expect(Object.keys(target).sort()).toEqual([
       "isCategory",
@@ -447,33 +433,27 @@ describe("buildTemplateContext — delegation with targets", () => {
 describe("buildTemplateContext — no raw config exposure", () => {
   it("context does not contain models field at top level", () => {
     const ctx = build();
-    expect((ctx as unknown as Record<string, unknown>).models).toBeUndefined();
+    expect("models" in ctx).toBe(false);
   });
 
   it("context does not contain temperature field at top level", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>).temperature,
-    ).toBeUndefined();
+    expect("temperature" in ctx).toBe(false);
   });
 
   it("context does not contain prompt_file field at top level", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>).prompt_file,
-    ).toBeUndefined();
+    expect("prompt_file" in ctx).toBe(false);
   });
 
   it("context does not contain rawToolPolicy field", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>).rawToolPolicy,
-    ).toBeUndefined();
+    expect("rawToolPolicy" in ctx).toBe(false);
   });
 
   it("context does not contain config field", () => {
     const ctx = build();
-    expect((ctx as unknown as Record<string, unknown>).config).toBeUndefined();
+    expect("config" in ctx).toBe(false);
   });
 
   it("top-level context keys are only: agent, toolPolicy, delegation (and optional category, reviewRouting)", () => {
@@ -530,9 +510,7 @@ describe("buildTemplateContext — reviewRouting", () => {
 
   it("omits reviewRouting when not provided", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>).reviewRouting,
-    ).toBeUndefined();
+    expect("reviewRouting" in ctx).toBe(false);
   });
 
   it("passes reviewRouting through when provided", () => {

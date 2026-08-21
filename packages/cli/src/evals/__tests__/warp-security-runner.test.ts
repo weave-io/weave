@@ -17,7 +17,6 @@ import type {
   RawCaseResultArtifact,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 import {
   buildUserMessage,
@@ -30,6 +29,11 @@ import {
 } from "../warp-security-runner.js";
 
 type ResultAsyncRunnerError = ResultAsync<RunnerResult, RunnerError>;
+type WarpTestOptions = WarpSecurityRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
+type WarpTestDependencies = Pick<WarpTestOptions, "modelClient" | "scorer">;
 
 const SCORED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -153,14 +157,19 @@ function makeSecurityScoreRecord(
 
 class InMemoryWarpRunner extends WarpSecurityRunner {
   private readonly _promptProvider: PromptProvider | undefined;
+  private readonly _dependencies: WarpTestDependencies;
 
   constructor(
-    options: WarpSecurityRunnerOptions,
+    options: WarpTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     this._promptProvider = options.promptProvider;
+    this._dependencies = {
+      modelClient: options.modelClient,
+      scorer: options.scorer,
+    };
   }
 
   override run(request: WarpSecurityRunRequest = {}): ResultAsyncRunnerError {
@@ -248,23 +257,22 @@ class InMemoryWarpRunner extends WarpSecurityRunner {
             (acc, { evalCase, modelId }) =>
               acc.andThen((results) =>
                 executeCaseWithStubs(
-                  this,
+                  this._dependencies,
                   evalCase,
                   modelId,
                   rubrics,
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(WARP_SECURITY_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(WARP_SECURITY_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -273,42 +281,34 @@ class InMemoryWarpRunner extends WarpSecurityRunner {
       (acc, { evalCase, modelId }) =>
         acc.andThen((results) =>
           executeCaseWithStubs(
-            this,
+            this._dependencies,
             evalCase,
             modelId,
             rubrics,
             rawArtifacts,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return (executeAll as ResultAsync<CaseResult[], RunnerError>).andThen(
-      (caseResults) =>
-        ResultAsync.fromSafePromise(
-          Promise.resolve(
-            assembleRunnerResult(WARP_SECURITY_SUITE, caseResults),
-          ),
-        ),
+    return executeAll.andThen((caseResults) =>
+      ResultAsync.fromSafePromise(
+        Promise.resolve(assembleRunnerResult(WARP_SECURITY_SUITE, caseResults)),
+      ),
     );
   }
 }
 
 function executeCaseWithStubs(
-  runner: WarpSecurityRunner,
+  dependencies: WarpTestDependencies,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
   rawArtifacts: boolean,
 ): ResultAsync<CaseResult, never> {
-  const anyRunner = runner as unknown as {
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  };
-
   const systemPrompt = "Test Warp system prompt";
   const userMessage = buildUserMessage(evalCase);
-  const modelResultAsync = anyRunner.modelClient.complete({
+  const modelResultAsync = dependencies.modelClient.complete({
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
@@ -338,7 +338,7 @@ function executeCaseWithStubs(
         producedArtifacts: signals.producedArtifacts,
       };
 
-      return anyRunner.scorer
+      return dependencies.scorer
         .score(runOutput, evalCase, rubrics)
         .map((scoreRecord) => ({
           runOutput,
@@ -398,14 +398,8 @@ function executeCaseWithStubs(
         return { summary, rawArtifact };
       },
       (error) => {
-        const errorType =
-          "type" in error
-            ? String((error as { type?: string }).type ?? "UnknownError")
-            : "UnknownError";
-        const rawMessage =
-          "message" in error
-            ? String((error as { message?: string }).message ?? "")
-            : undefined;
+        const errorType = error.type;
+        const rawMessage = error.message;
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -491,19 +485,31 @@ function assembleRunnerResult(
   };
 }
 
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
+
 function buildRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
-
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dim] = score.rationale;
-    }
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
   }
-
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
+  }
   return rationales;
 }
 

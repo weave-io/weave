@@ -19,7 +19,7 @@
  * candidate - ordinary delegation settlements are never parsed this way.
  */
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { err, type Result, ResultAsync } from "neverthrow";
+import { err, errAsync, type Result, ResultAsync } from "neverthrow";
 import {
   makeChildSpawnFailedFailure,
   makeCompletionSignalDuplicateFailure,
@@ -157,7 +157,7 @@ export class TransportDirectDispatchPort implements PiDirectDispatchPort {
       settlement.completionCandidate ?? "",
     );
     return parseStructuredCompletionCandidate(raw, stepName).map(
-      (signal) => signal as PiDirectDispatchCandidate,
+      (signal) => signal,
     );
   }
 }
@@ -179,11 +179,8 @@ export class FakeDirectDispatchPort implements PiDirectDispatchPort {
     this.calls.push(input);
     const next = this.scripted.shift();
     if (next === undefined) {
-      return ResultAsync.fromPromise(
-        Promise.reject(
-          makeChildSpawnFailedFailure(input.stepName, "no-scripted-response"),
-        ),
-        (cause) => cause as PiAdapterFailure,
+      return errAsync<PiDirectDispatchCandidate, PiAdapterFailure>(
+        makeChildSpawnFailedFailure(input.stepName, "no-scripted-response"),
       );
     }
     return ResultAsync.fromSafePromise(Promise.resolve(next)).andThen(

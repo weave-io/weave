@@ -6,7 +6,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import {
+  type AgentConfig,
+  parseConfig,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
 import { composeAgentDescriptor } from "../compose.js";
 import { generateCategoryShuttles } from "../descriptors.js";
 
@@ -29,20 +33,20 @@ function shuttles(source: string) {
 async function descriptor(
   agentName: string,
   source: string,
-  extraAllAgents?: Record<string, import("@weaveio/weave-core").AgentConfig>,
+  extraAllAgents?: Record<string, AgentConfig>,
 ) {
   const config = cfg(source);
   const shuttleMap = generateCategoryShuttles(config);
   if (shuttleMap.isErr()) throw new Error(shuttleMap.error.message);
 
   // Build allAgents: declared agents + generated category shuttles
-  const allAgents: Record<string, import("@weaveio/weave-core").AgentConfig> = {
+  const allAgents = {
     ...config.agents,
     ...Object.fromEntries(
       Object.entries(shuttleMap.value).map(([k, v]) => [k, v.config]),
     ),
-    ...(extraAllAgents ?? {}),
-  };
+    ...extraAllAgents,
+  } satisfies Record<string, AgentConfig>;
 
   const agentConfig = allAgents[agentName];
   if (agentConfig === undefined)

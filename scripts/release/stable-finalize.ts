@@ -30,7 +30,7 @@ if (trainText === undefined) {
 }
 const parsedTrain = Result.fromThrowable(
   () => JSON.parse(trainText),
-  () => undefined,
+  () => {},
 )().andThen(validateStableTrain);
 if (parsedTrain.isErr()) {
   log.error("invalid stable train record");
@@ -45,13 +45,13 @@ const files: FileSystem = {
   exists: () => okAsync(false),
   readBytes: () => okAsync(new Uint8Array()),
   readText: () => okAsync(""),
-  writeText: () => okAsync(undefined),
-  delete: () => okAsync(undefined),
+  writeText: () => okAsync(),
+  delete: () => okAsync(),
 };
 const result = await new ReleaseOrchestrator(
   files,
   new NpmCliRegistryClient(new BunCommandRunner()),
-  { now: () => new Date(), sleep: () => okAsync(undefined) },
+  { now: () => new Date(), sleep: () => okAsync() },
 ).stableFinalize(parsedAuthorization.value, parsedTrain.value);
 if (result.isErr()) {
   log.error({ error: result.error }, "stable finalize verification failed");

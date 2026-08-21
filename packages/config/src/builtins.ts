@@ -1,4 +1,4 @@
-/// <reference path="../../../types/md.d.ts" />
+import "../../../types/md.d.ts";
 
 import type { ConfigError, WeaveConfig } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
@@ -38,7 +38,19 @@ import weftPrompt from "../prompts/weft.md" with { type: "text" };
  * Used by `loader.ts` to inline prompt content into the builtin config
  * before merging, replacing `prompt_file` references with `prompt` values.
  */
-export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
+interface BuiltinPromptContents {
+  readonly [agentName: string]: string;
+  readonly loom: string;
+  readonly tapestry: string;
+  readonly shuttle: string;
+  readonly pattern: string;
+  readonly thread: string;
+  readonly spindle: string;
+  readonly weft: string;
+  readonly warp: string;
+}
+
+export const BUILTIN_PROMPT_CONTENTS: BuiltinPromptContents = {
   loom: loomPrompt,
   tapestry: tapestryPrompt,
   shuttle: shuttlePrompt,

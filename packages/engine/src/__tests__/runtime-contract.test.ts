@@ -46,6 +46,7 @@ import type {
   WorkflowInstanceRepository,
 } from "../runtime/store.js";
 import type {
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -60,6 +61,10 @@ import type {
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationRecordResult,
+  UsageRollup,
+  RetentionPruneStats,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -125,6 +130,18 @@ function makeSessionSnapshot(
     ...overrides,
   };
 }
+
+type StubArtifactRef = {
+  id: ArtifactId;
+  name: string;
+  path: string;
+  revision: number;
+  approvalState: ArtifactApprovalState;
+  mimeType?: string;
+  description?: string;
+  producerAgent?: string;
+  integrity?: ArtifactIntegrityMetadata;
+};
 
 function makeJournalEntry(
   overrides: Partial<RuntimeJournalEntry> = {},
@@ -242,19 +259,17 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
       null;
     const revision = prior ? prior.revision + 1 : 1;
     const artifactId = prior ? prior.id : newStubArtifactId();
-    const ref: ArtifactRef = {
+    const ref: StubArtifactRef = {
       id: artifactId,
       name: artifact.name,
       path: artifact.path,
       revision,
       approvalState: "pending",
-      ...(artifact.producerAgent
-        ? { producerAgent: artifact.producerAgent }
-        : {}),
-      ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      ...(artifact.description ? { description: artifact.description } : {}),
-      ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
     };
+    if (artifact.producerAgent) ref.producerAgent = artifact.producerAgent;
+    if (artifact.mimeType) ref.mimeType = artifact.mimeType;
+    if (artifact.description) ref.description = artifact.description;
+    if (artifact.integrity) ref.integrity = artifact.integrity;
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: [...existing.artifacts, ref],
@@ -269,7 +284,7 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
     approval?: {
-      readonly actor: import("../runtime/types.js").ArtifactApprovalActor;
+      readonly actor: ArtifactApprovalActor;
       readonly decidedAt: string;
     },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
@@ -286,7 +301,7 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
       }
     }
     if (artifactIndex === -1) {
-      return errAsync(notFoundError("ArtifactRef", artifactId as string));
+      return errAsync(notFoundError("ArtifactRef", artifactId));
     }
     const updatedArtifacts = existing.artifacts.map((a, i) => {
       if (i !== artifactIndex) return a;
@@ -465,7 +480,7 @@ class StubExecutionLeaseRepository implements ExecutionLeaseRepository {
     if (this.activeLease?.id === id) {
       this.activeLease = null;
     }
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   /** Test helper: seed an expired lease. */
@@ -615,35 +630,26 @@ class StubRuntimeJournalRepository implements RuntimeJournalRepository {
 
 class StubUsageRepository implements UsageRepository {
   recordObservation(
-    observation: import("../runtime/types.js").UsageObservation,
-  ): ResultAsync<
-    import("../runtime/types.js").UsageObservationRecordResult,
-    RuntimeStoreError
-  > {
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError> {
     return okAsync({ kind: "inserted", observation });
   }
   findObservationById(): ResultAsync<
-    import("../runtime/types.js").UsageObservation | null,
+    UsageObservation | null,
     RuntimeStoreError
   > {
     return okAsync(null);
   }
   listObservations(): ResultAsync<
-    readonly import("../runtime/types.js").UsageObservation[],
+    readonly UsageObservation[],
     RuntimeStoreError
   > {
     return okAsync([]);
   }
-  listRollups(): ResultAsync<
-    readonly import("../runtime/types.js").UsageRollup[],
-    RuntimeStoreError
-  > {
+  listRollups(): ResultAsync<readonly UsageRollup[], RuntimeStoreError> {
     return okAsync([]);
   }
-  pruneDetails(): ResultAsync<
-    import("../runtime/types.js").RetentionPruneStats,
-    RuntimeStoreError
-  > {
+  pruneDetails(): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
     return okAsync({ removedByAge: 0, removedByCount: 0 });
   }
 }
@@ -667,7 +673,7 @@ class StubAdapterPreferenceRepository implements AdapterPreferenceRepository {
     return okAsync([]);
   }
   remove() {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 
@@ -694,7 +700,7 @@ class StubRuntimeStore implements RuntimeStore {
   }
 
   close(): ResultAsync<void, RuntimeStoreError> {
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 
@@ -785,33 +791,28 @@ describe("JournalSeverity", () => {
 describe("Branded ID types", () => {
   it("createWorkflowInstanceId creates a branded WorkflowInstanceId", () => {
     const id = createWorkflowInstanceId("wfi-test");
-    // Branded types are strings at runtime
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("wfi-test");
+    // Branded IDs retain their source value at runtime.
+    expect(String(id)).toBe("wfi-test");
   });
 
   it("createExecutionLeaseId creates a branded ExecutionLeaseId", () => {
     const id = createExecutionLeaseId("lease-test");
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("lease-test");
+    expect(String(id)).toBe("lease-test");
   });
 
   it("createSessionSnapshotId creates a branded SessionSnapshotId", () => {
     const id = createSessionSnapshotId("snap-test");
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("snap-test");
+    expect(String(id)).toBe("snap-test");
   });
 
   it("createRuntimeJournalEntryId creates a branded RuntimeJournalEntryId", () => {
     const id = createRuntimeJournalEntryId("entry-test");
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("entry-test");
+    expect(String(id)).toBe("entry-test");
   });
 
   it("createOwnerId creates a branded OwnerId", () => {
     const id = createOwnerId("owner-test");
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("owner-test");
+    expect(String(id)).toBe("owner-test");
   });
 });
 
@@ -1014,8 +1015,8 @@ describe("ExecutionLease acquire / heartbeat / release", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("owner-001");
-    expect(lease.workflowInstanceId as string).toBe("wfi-001");
+    expect(String(lease.ownerId)).toBe("owner-001");
+    expect(String(lease.workflowInstanceId)).toBe("wfi-001");
   });
 
   it("acquire fails with conflict when an unexpired lease exists", async () => {
@@ -1052,7 +1053,7 @@ describe("ExecutionLease acquire / heartbeat / release", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("new-owner");
+    expect(String(lease.ownerId)).toBe("new-owner");
   });
 
   it("findActive returns null when no lease exists", async () => {
@@ -1428,7 +1429,7 @@ describe("WorkflowInstance CRUD", () => {
     await repo.update(a.id, { status: "running" });
     const running = (await repo.list({ status: "running" }))._unsafeUnwrap();
     expect(running).toHaveLength(1);
-    expect(running[0].id as string).toBe(a.id as string);
+    expect(running[0].id).toBe(a.id);
   });
 
   it("addArtifact appends an artifact reference with identity and revision", async () => {
@@ -1446,7 +1447,7 @@ describe("WorkflowInstance CRUD", () => {
     const art = updated.artifacts[0];
     expect(art.name).toBe("plan");
     expect(art.path).toBe(".weave/plans/g.md");
-    expect(typeof art.id).toBe("string");
+    expect(art.id.length).toBeGreaterThan(0);
     expect(art.revision).toBe(1);
     expect(art.approvalState).toBe("pending");
   });
@@ -1599,11 +1600,12 @@ describe("execution lifecycle contract — ExecutionAuthorizationSource contract
     const userResult = validateAuthorizationSource("user", "resumeExecution");
     expect(userResult.isOk()).toBe(true);
 
-    for (const source of [
+    const forbiddenResumeSources: readonly ExecutionAuthorizationSource[] = [
       "agent",
       "hook",
       "event",
-    ] as ExecutionAuthorizationSource[]) {
+    ];
+    for (const source of forbiddenResumeSources) {
       const result = validateAuthorizationSource(source, "resumeExecution");
       expect(result.isErr()).toBe(true);
       if (!result.isErr()) continue;
@@ -1727,8 +1729,7 @@ describe("ArtifactApprovalState values", () => {
 describe("ArtifactId branded type", () => {
   it("createArtifactId creates a branded ArtifactId", () => {
     const id = createArtifactId("art-test");
-    expect(typeof id).toBe("string");
-    expect(id as string).toBe("art-test");
+    expect(String(id)).toBe("art-test");
   });
 
   it("ArtifactRef.id is a stable branded ArtifactId", () => {
@@ -1740,7 +1741,7 @@ describe("ArtifactId branded type", () => {
       revision: 1,
       approvalState: "pending",
     };
-    expect(ref.id as string).toBe("stable-art-id");
+    expect(String(ref.id)).toBe("stable-art-id");
   });
 });
 
@@ -1801,7 +1802,7 @@ describe("ArtifactRef monotonic revision", () => {
 
     const planArtifacts = updated.artifacts.filter((a) => a.name === "plan");
     // Both revisions share the same stable ArtifactId
-    expect(planArtifacts[0].id as string).toBe(planArtifacts[1].id as string);
+    expect(planArtifacts[0].id).toBe(planArtifacts[1].id);
   });
 
   it("different artifact names get independent ArtifactIds", async () => {
@@ -1825,7 +1826,7 @@ describe("ArtifactRef monotonic revision", () => {
     const outputArt = updated.artifacts.find((a) => a.name === "output");
     expect(planArt).toBeDefined();
     expect(outputArt).toBeDefined();
-    expect(planArt?.id as string).not.toBe(outputArt?.id as string);
+    expect(planArt?.id).not.toBe(outputArt?.id);
   });
 });
 
@@ -2029,7 +2030,11 @@ describe("Reconciliation contract — closed reason set (execution lifecycle con
   });
 
   it("each reason has exactly one authorized source (bijective mapping)", () => {
-    const authorizedPairs: Array<[string, string]> = [
+    type ReconciliationReason = (typeof RECONCILIATION_REASONS)[number];
+    const authorizedPairs: Array<[
+      ReconciliationReason,
+      ReconciliationAuthorizationSource,
+    ]> = [
       ["execution-mismatch", "runtime"],
       ["user-revision-request", "user"],
       ["review-rejection", "review-gate"],
@@ -2037,10 +2042,7 @@ describe("Reconciliation contract — closed reason set (execution lifecycle con
     ];
 
     for (const [reason, source] of authorizedPairs) {
-      const result = validateReconciliationSource(
-        reason as Parameters<typeof validateReconciliationSource>[0],
-        source as ReconciliationAuthorizationSource,
-      );
+      const result = validateReconciliationSource(reason, source);
       expect(result.isOk()).toBe(true);
     }
   });
@@ -2052,15 +2054,18 @@ describe("Reconciliation contract — closed reason set (execution lifecycle con
       "review-gate",
       "security-gate",
     ];
-    const authorizedMap: Record<string, string> = {
-      "execution-mismatch": "runtime",
-      "user-revision-request": "user",
-      "review-rejection": "review-gate",
-      "security-rejection": "security-gate",
-    };
+    const authorizedMap = new Map<
+      (typeof RECONCILIATION_REASONS)[number],
+      ReconciliationAuthorizationSource
+    >([
+      ["execution-mismatch", "runtime"],
+      ["user-revision-request", "user"],
+      ["review-rejection", "review-gate"],
+      ["security-rejection", "security-gate"],
+    ]);
 
     for (const reason of RECONCILIATION_REASONS) {
-      const authorized = authorizedMap[reason];
+      const authorized = authorizedMap.get(reason);
       for (const source of allSources) {
         if (source === authorized) continue;
         const result = validateReconciliationSource(reason, source);
@@ -2129,17 +2134,18 @@ describe("Reconciliation contract — WorkflowInstance and ExecutionLease invari
     expect("goal" in input).toBe(false);
     expect("slug" in input).toBe(false);
     expect("workflowName" in input).toBe(false);
-    expect(input.workflowInstanceId as string).toBe("existing-wf-001");
+    expect(String(input.workflowInstanceId)).toBe("existing-wf-001");
   });
 
   it("reconciliation fail-closed effect is pause-execution (not complete-execution)", () => {
     // Structural: the fail-closed effect must be pause-execution, not complete-execution.
     // This preserves resumability — the workflow is not terminated.
-    const failClosedEffect: {
+    type FailClosedEffect = {
       kind: "pause-execution";
       workflowInstanceId: WorkflowInstanceId;
       reason?: string;
-    } = {
+    };
+    const failClosedEffect: FailClosedEffect = {
       kind: "pause-execution",
       workflowInstanceId: createWorkflowInstanceId("wf-fail-closed"),
       reason: "Reconciliation: no upstream handler declared — failing closed",
@@ -2346,7 +2352,7 @@ describe("Reconciliation contract — immutable completed plan tasks (execution 
     // The planStateProvider is used to check whether the triggering step's plan
     // is already complete. If complete, reconciliation is rejected with a
     // policy_decision error — completed Plan Markdown tasks are immutable.
-    type ReconcileInputShape = {
+    type ReconcileInputContract = {
       workflowInstanceId: WorkflowInstanceId;
       leaseId: ExecutionLeaseId;
       reason: string;
@@ -2356,7 +2362,7 @@ describe("Reconciliation contract — immutable completed plan tasks (execution 
       };
     };
 
-    const inputWithProvider: ReconcileInputShape = {
+    const inputWithProvider: ReconcileInputContract = {
       workflowInstanceId: createWorkflowInstanceId("wf-001"),
       leaseId: createExecutionLeaseId("lease-001"),
       reason: "user-revision-request",
@@ -2367,7 +2373,7 @@ describe("Reconciliation contract — immutable completed plan tasks (execution 
     };
     expect(inputWithProvider.planStateProvider).toBeDefined();
 
-    const inputWithoutProvider: ReconcileInputShape = {
+    const inputWithoutProvider: ReconcileInputContract = {
       workflowInstanceId: createWorkflowInstanceId("wf-002"),
       leaseId: createExecutionLeaseId("lease-002"),
       reason: "user-revision-request",

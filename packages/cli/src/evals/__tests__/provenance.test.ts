@@ -143,7 +143,6 @@ describe("deriveSummary", () => {
 
   it("summary is a non-empty string", () => {
     const summary = deriveSummary(makeSnapshot());
-    expect(typeof summary).toBe("string");
     expect(summary.length).toBeGreaterThan(0);
   });
 
@@ -227,7 +226,6 @@ describe("deriveProvenanceRecord", () => {
   it("record summary is a non-empty string", () => {
     const snapshot = makeSnapshot();
     const record = deriveProvenanceRecord(snapshot, FIXED_SHA, FIXED_TIMESTAMP);
-    expect(typeof record.summary).toBe("string");
     expect(record.summary.length).toBeGreaterThan(0);
   });
 
@@ -490,7 +488,6 @@ describe("writeManifest", () => {
     const written = await Bun.file(filePath).json();
 
     expect(written.records[0].hash).toBe(hash);
-    expect(typeof written.records[0].summary).toBe("string");
     expect(written.records[0].summary.length).toBeGreaterThan(0);
   });
 

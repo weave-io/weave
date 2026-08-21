@@ -26,7 +26,6 @@
  * @see packages/engine/src/plan-state-provider.ts
  */
 
-import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
@@ -187,7 +186,7 @@ export function startPlan(
       }
 
       const detail =
-        "reason" in providerError && typeof providerError.reason === "string"
+        "reason" in providerError && providerError.reason !== undefined
           ? providerError.reason
           : providerError.type;
       log.warn(
@@ -217,20 +216,13 @@ export function startPlan(
           "start-plan: plan exists — starting workflow lifecycle",
         );
 
-        // Cast workflows from the opaque `Record<string, unknown>` declared in
-        // StartPlanInput to the concrete `Record<string, WorkflowConfig>`
-        // required by runWorkflowLifecycle. The runner validates workflow
-        // existence before accessing any config fields, so an invalid entry
-        // produces a typed `workflow_not_found` error rather than a runtime crash.
-        const typedWorkflows = workflows as Record<string, WorkflowConfig>;
-
         return runWorkflowLifecycle({
           workflowName,
           goal,
           slug,
           ownerId,
           store,
-          workflows: typedWorkflows,
+          workflows,
           projectEffect,
           planStateProvider,
           now,

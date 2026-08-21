@@ -47,11 +47,10 @@ export interface ParsedFrame {
   readonly json: JsonValue;
 }
 
+const NO_PARSED_FRAME: ParsedFrame | undefined = undefined;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
-function decodeUtf8Strict(
-  bytes: Uint8Array,
-): ResultType<string, FramingError> {
+function decodeUtf8Strict(bytes: Uint8Array): ResultType<string, FramingError> {
   return Result.fromThrowable(
     () => utf8Decoder.decode(bytes),
     (): FramingError => ({ type: "InvalidUtf8" }),
@@ -99,10 +98,8 @@ export class PiLineFramer {
     return this.poisoned !== undefined;
   }
 
-  private appendSegment(
-    segment: Uint8Array,
-  ): ResultType<void, FramingError> {
-    if (segment.byteLength === 0) return ok(undefined);
+  private appendSegment(segment: Uint8Array): ResultType<void, FramingError> {
+    if (segment.byteLength === 0) return ok();
     const nextByteLength = this.pendingByteLength + segment.byteLength;
     if (nextByteLength > MAX_CONTENT_BYTES) {
       return err({
@@ -112,7 +109,7 @@ export class PiLineFramer {
     }
     this.pendingSegments.push(segment);
     this.pendingByteLength = nextByteLength;
-    return ok(undefined);
+    return ok();
   }
 
   private flushLine(): ResultType<ParsedFrame | undefined, FramingError> {
@@ -129,7 +126,7 @@ export class PiLineFramer {
     if (bytes.length > 0 && bytes[bytes.length - 1] === 0x0d) {
       bytes = bytes.subarray(0, -1);
     }
-    if (bytes.length === 0) return ok(undefined);
+    if (bytes.length === 0) return ok(NO_PARSED_FRAME);
     const decoded = decodeUtf8Strict(bytes);
     if (decoded.isErr()) return err(decoded.error);
     const parsed = parseStrictJson(decoded.value);

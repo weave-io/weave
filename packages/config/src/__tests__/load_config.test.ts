@@ -111,7 +111,7 @@ describe("loadConfig", () => {
     // The project override only sets temperature — the builtin inline prompt
     // should be preserved via merge.
     expect(loom?.prompt).toBeDefined();
-    expect(typeof loom?.prompt).toBe("string");
+    expect(loom?.prompt).toBeString();
     expect((loom?.prompt ?? "").length).toBeGreaterThan(0);
     // prompt_file should NOT be present — builtins now use inline prompt
     expect(loom?.prompt_file).toBeUndefined();

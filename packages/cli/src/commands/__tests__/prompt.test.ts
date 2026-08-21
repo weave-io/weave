@@ -5,10 +5,19 @@ import { errAsync, okAsync } from "neverthrow";
 import type { ParsedArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { ThemeManager } from "../../theme/colors.js";
-import { runPrompt } from "../prompt.js";
+import { type PromptContext, runPrompt } from "../prompt.js";
 
 const themeManager = new ThemeManager({ isTty: () => false });
 const theme = themeManager.getTheme(false);
+
+interface PromptAgentListJson {
+  readonly agents: readonly { readonly name: string }[];
+}
+
+interface PromptInspectJson {
+  readonly composedPrompt: string;
+  readonly name: string;
+}
 
 const testConfig: WeaveConfig = {
   agents: {
@@ -64,17 +73,17 @@ function context(
   cwd?: string,
 ) {
   const terminal = new BufferTerminal();
-  return {
+  const ctx: PromptContext = {
     terminal,
-    ctx: {
-      terminal,
-      theme,
-      flags: flags(overrides),
-      rest,
-      configLoader,
-      ...(cwd !== undefined ? { cwd } : {}),
-    },
+    theme,
+    flags: flags(overrides),
+    rest,
+    configLoader,
   };
+  if (cwd !== undefined) {
+    ctx.cwd = cwd;
+  }
+  return { terminal, ctx };
 }
 
 describe("prompt command", () => {
@@ -110,9 +119,7 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(0);
-    const parsed = JSON.parse(terminal.out.join("\n")) as {
-      agents: Array<{ name: string }>;
-    };
+    const parsed: PromptAgentListJson = JSON.parse(terminal.out.join("\n"));
     expect(Array.isArray(parsed.agents)).toBe(true);
     expect(parsed.agents.map((agent) => agent.name)).toContain("test-agent");
   });
@@ -139,10 +146,7 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(0);
-    const parsed = JSON.parse(terminal.out.join("\n")) as {
-      composedPrompt: string;
-      name: string;
-    };
+    const parsed: PromptInspectJson = JSON.parse(terminal.out.join("\n"));
     expect(parsed.name).toBe("test-agent");
     expect(parsed.composedPrompt).toBe("You are test-agent.");
   });
@@ -236,9 +240,7 @@ describe("prompt command", () => {
       const result = await runPrompt(ctx);
 
       expect(result._unsafeUnwrap()).toBe(0);
-      const parsed = JSON.parse(terminal.out.join("\n")) as {
-        agents: Array<{ name: string }>;
-      };
+      const parsed: PromptAgentListJson = JSON.parse(terminal.out.join("\n"));
       const names = parsed.agents.map((a) => a.name);
       expect(names).toContain("weft-openai-gpt-5");
       expect(names).toContain("weft-anthropic-claude-4");
@@ -565,7 +567,8 @@ describe("prompt command", () => {
   describe("self-modify subcommand", () => {
     it("Should_succeed_without_calling_configLoader", async () => {
       // configLoader always fails — self-modify must not call it
-      const failingLoader = () => errAsync([] as ConfigLoadError[]);
+      const failingLoader: NonNullable<PromptContext["configLoader"]> = () =>
+        errAsync<WeaveConfig, ConfigLoadError[]>([]);
       const { terminal, ctx } = context(
         { promptSubcommand: "self-modify" },
         failingLoader,

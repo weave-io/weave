@@ -141,14 +141,18 @@ export interface ActivePlanReadPort {
   >;
 }
 
-const SAFE_MESSAGES: Readonly<Record<ActivePlanErrorReason, string>> = {
+type ActivePlanSafeMessages = {
+  readonly [reason in ActivePlanErrorReason]: string;
+};
+
+const SAFE_MESSAGES = {
   "recovery-unreadable":
     "Weave could not read its recovery state. Use /weave:status for details.",
   "workflow-unreadable":
     "Weave could not read the active workflow. Use /weave:status for details.",
   "plan-unreadable":
     "Weave could not read the active plan. Use /weave:plan for details.",
-};
+} satisfies ActivePlanSafeMessages;
 
 function fail(reason: ActivePlanErrorReason): ActivePlanUiError {
   return { reason, safeMessage: SAFE_MESSAGES[reason] };
@@ -158,6 +162,8 @@ const EMPTY = (reason: ActivePlanEmptyReason): ActivePlanView => ({
   kind: "empty",
   reason,
 });
+
+function noActivePlanTask(): undefined {}
 
 /**
  * Resolves the one workflow identity the whole UI should agree on.
@@ -211,7 +217,7 @@ export function resolveActivePlanView(
   port: ActivePlanReadPort,
 ): ResultAsync<ActivePlanView, ActivePlanUiError> {
   return resolveActivePlanIdentity(port).andThen((resolved) => {
-    if (typeof resolved === "string") return okAsync(EMPTY(resolved));
+    if (resolved instanceof Object === false) return okAsync(EMPTY(resolved));
     // A foreground plan has no workflow instance to inspect, by construction.
     // The plan file in THIS project root is the whole of its state, and a plan
     // with nothing left to do clears the rail exactly as a settled workflow
@@ -230,7 +236,7 @@ export function resolveActivePlanView(
             if ("kind" in snapshot) return snapshot;
             const activeTask = selectActivePlanTask(snapshot).match(
               (task) => task,
-              () => undefined,
+              noActivePlanTask,
             );
             if (activeTask === undefined || snapshot.complete) {
               return EMPTY("foreground-plan-complete");
@@ -261,7 +267,7 @@ export function resolveActivePlanView(
           .map((snapshot): ActivePlanView => {
             const activeTask = selectActivePlanTask(snapshot).match(
               (task) => task,
-              () => undefined,
+              noActivePlanTask,
             );
             return {
               kind: "active",

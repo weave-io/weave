@@ -32,6 +32,11 @@
  * results and never throw.
  */
 
+import {
+  copySafeGraph,
+  type SafeGraphCopyBudget,
+  type SafeGraphValue,
+} from "@weaveio/weave-core";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
@@ -42,11 +47,13 @@ import {
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
 import type { PiChildSessionStorageAuthority } from "./child-session-storage-authority.js";
+import type { PiStoredChildTitle } from "./child-title.js";
 import {
   enforceDurableChildTitle,
   enforceDurableChildTitleProvenance,
   PI_CHILD_TITLE_PROVENANCE_VALUES,
 } from "./child-title.js";
+import { type JsonValue, parseStrictJson } from "./strict-json.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -129,6 +136,20 @@ export const PI_CHILD_REF_BOUNDS = Object.freeze({
 });
 
 const textEncoder = new TextEncoder();
+
+/**
+ * One ref envelope is small metadata, not an arbitrary JSON document. Copying
+ * through this budget before Zod validation keeps reflection and allocation
+ * bounded even when a host supplies a hostile graph.
+ */
+const PI_CHILD_REF_GRAPH_BUDGET = {
+  maxDepth: 16,
+  maxNodes: 2_048,
+  maxProperties: 4_096,
+  maxPropertiesPerObject: 128,
+  maxArrayLength: PI_CHILD_REF_BOUNDS.maxRuns,
+  maxStringLength: 64 * 1_024,
+} satisfies SafeGraphCopyBudget;
 
 const boundedString = (maxCharacters: number) =>
   z
@@ -292,10 +313,12 @@ export const PiChildRefEnvelopeSchema = z
 export type PiChildRefEnvelope = z.infer<typeof PiChildRefEnvelopeSchema>;
 
 /**
- * Tolerant shape of one parent session entry as read back from the host.
- * Unrelated entries simply fail this shape and are skipped without an issue.
+ * Tolerant carrier of one parent session entry as read back from the host.
+ * Unrelated entries simply fail this carrier and are skipped without an issue.
+ * The payload is copied again after the carrier is parsed, so its type comes
+ * from the descriptor-safe graph boundary rather than a schema assertion.
  */
-const ParentEntryShapeSchema = z.looseObject({
+const ParentEntryCarrierSchema = z.looseObject({
   customType: z.string().max(512).optional(),
   type: z.string().max(512).optional(),
   data: z.unknown(),
@@ -390,7 +413,7 @@ export interface PiChildRefScan {
 
 /** Append boundary: exactly Pi's `appendEntry(customType, data): void`. */
 export interface PiChildRefAppendPort {
-  appendEntry(customType: string, data: unknown): void;
+  appendEntry(customType: string, data: PiChildRefEnvelope): void;
 }
 
 /** Read boundary: Pi's `get_entries` / native equivalent. */
@@ -488,13 +511,17 @@ function issuePaths(error: z.ZodError): readonly string[] {
  * for records that are already proven.
  */
 function withEnforcedTitle(record: PiChildRefRecord): PiChildRefRecord {
-  const stored = {
+  let stored: PiStoredChildTitle = {
     title: record.title,
     threadId: record.threadId,
-    ...(record.titleProvenance === undefined
-      ? {}
-      : { provenance: record.titleProvenance }),
   };
+  if (record.titleProvenance !== undefined) {
+    stored = {
+      title: record.title,
+      threadId: record.threadId,
+      provenance: record.titleProvenance,
+    };
+  }
   const title = enforceDurableChildTitle(stored);
   const titleProvenance = enforceDurableChildTitleProvenance(stored);
   if (title === record.title && titleProvenance === record.titleProvenance) {
@@ -503,20 +530,39 @@ function withEnforcedTitle(record: PiChildRefRecord): PiChildRefRecord {
   return { ...record, title, titleProvenance };
 }
 
-/** Validates one ref record. Never throws; validation failures are values. */
-export function parseChildRefRecord(
-  value: unknown,
-): Result<PiChildRefRecord, PiChildRefError> {
-  const parsed = PiChildRefRecordSchema.safeParse(value);
-  if (parsed.success) return ok(withEnforcedTitle(parsed.data));
-  return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
+function invalidRefInput(): PiChildRefError {
+  return { type: "ChildRefInvalid", issues: ["unsafe-input"] };
 }
 
-/** Validates one parent custom-entry envelope. Never throws. */
-export function parseChildRefEnvelope(
-  value: unknown,
+function mutationGranted(): true {
+  return true;
+}
+
+/**
+ * Copies a caller or host value before any schema reads it. The copy rejects
+ * accessors, symbols, aliases, cycles, unexpected prototypes, and oversized
+ * graphs without invoking a caller property getter.
+ */
+function copyRefInput<T>(value: T): Result<SafeGraphValue, PiChildRefError> {
+  return copySafeGraph(value, PI_CHILD_REF_GRAPH_BUDGET).mapErr(
+    (): PiChildRefError => invalidRefInput(),
+  );
+}
+
+function parseRefRecordSnapshot(
+  snapshot: SafeGraphValue,
+): Result<PiChildRefRecord, PiChildRefError> {
+  const parsed = PiChildRefRecordSchema.safeParse(snapshot);
+  if (!parsed.success) {
+    return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
+  }
+  return ok(withEnforcedTitle(parsed.data));
+}
+
+function parseRefEnvelopeSnapshot(
+  snapshot: SafeGraphValue,
 ): Result<PiChildRefEnvelope, PiChildRefError> {
-  const parsed = PiChildRefEnvelopeSchema.safeParse(value);
+  const parsed = PiChildRefEnvelopeSchema.safeParse(snapshot);
   if (!parsed.success) {
     return err({ type: "ChildRefInvalid", issues: issuePaths(parsed.error) });
   }
@@ -526,18 +572,33 @@ export function parseChildRefEnvelope(
   );
 }
 
+/** Validates one ref record. Never throws; validation failures are values. */
+export function parseChildRefRecord<T>(
+  value: T,
+): Result<PiChildRefRecord, PiChildRefError> {
+  return copyRefInput(value).andThen(parseRefRecordSnapshot);
+}
+
+/** Validates one parent custom-entry envelope. Never throws. */
+export function parseChildRefEnvelope<T>(
+  value: T,
+): Result<PiChildRefEnvelope, PiChildRefError> {
+  return copyRefInput(value).andThen(parseRefEnvelopeSnapshot);
+}
+
 /**
- * Extracts the envelope payload of one host entry.
- *
- * `undefined` means "not one of ours" (unrelated entry, skipped silently);
- * a value means "claims to be ours" and must then validate.
+ * Extracts the envelope payload of one host entry after a descriptor-safe
+ * graph snapshot. A returned value claims to be ours and must then validate.
  */
-function candidatePayload(entry: unknown): unknown | undefined {
-  const shape = ParentEntryShapeSchema.safeParse(entry);
-  if (!shape.success) return undefined;
-  const marker = shape.data.customType ?? shape.data.type;
+function candidatePayload<T>(entry: T): SafeGraphValue | undefined {
+  const copied = copySafeGraph(entry, PI_CHILD_REF_GRAPH_BUDGET);
+  if (copied.isErr()) return undefined;
+  const carrier = ParentEntryCarrierSchema.safeParse(copied.value);
+  if (!carrier.success) return undefined;
+  const marker = carrier.data.customType ?? carrier.data.type;
   if (marker !== PI_CHILD_REF_ENTRY_TYPE) return undefined;
-  return shape.data.data;
+  const payload = copySafeGraph(carrier.data.data, PI_CHILD_REF_GRAPH_BUDGET);
+  return payload.isOk() ? payload.value : undefined;
 }
 
 /** Internal shape produced by the synchronous parent-entry scan. */
@@ -552,6 +613,11 @@ interface PiChildRefEntryScan {
     readonly conflictingChildren: number;
     readonly duplicateEntries: number;
   };
+}
+
+interface PiChildRefAuthorityObservation {
+  readonly record: PiChildRefRecord;
+  readonly state: PiChildRefSourceState;
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +679,35 @@ export interface AppendChildRefLifecycleInput {
   readonly settledAt?: number;
 }
 
+/** Mutable owner used to add optional fields without omission spreads. */
+interface MutableChildRefRun {
+  run: number;
+  action: PiChildRefRunAction;
+  startedAt: number;
+  priorOutcome?: PiChildRefStatus;
+  initiator?: string;
+  model?: string;
+  reasoning?: string;
+}
+
+/** Mutable owner used to build a ref before the schema boundary. */
+interface MutableChildRefRecord {
+  childId: string;
+  threadId: string;
+  nativeSessionId: string;
+  sessionRef: string;
+  originParentSessionId: string;
+  originEntryId: string;
+  title: string;
+  titleProvenance?: string;
+  status: PiChildRefStatus;
+  createdAt: number;
+  updatedAt: number;
+  settledAt?: number;
+  runs: MutableChildRefRun[];
+  totalRuns?: number;
+}
+
 /**
  * Writes and reads bounded, metadata-only child refs in the live parent
  * session. Refs are observations: nothing here can create, repair, or mutate
@@ -663,11 +758,26 @@ export class PiChildSessionRefStore {
       return errAsync({ type: "ChildRefParentUnavailable" });
     }
     const at = this.now();
-    const runs =
-      input.run === undefined
-        ? []
-        : [{ ...input.run, run: 1, startedAt: input.run.startedAt }];
-    const candidate = {
+    const runs: MutableChildRefRun[] = [];
+    if (input.run !== undefined) {
+      const firstRun: MutableChildRefRun = {
+        run: 1,
+        action: input.run.action,
+        startedAt: input.run.startedAt,
+      };
+      if (input.run.priorOutcome !== undefined) {
+        firstRun.priorOutcome = input.run.priorOutcome;
+      }
+      if (input.run.initiator !== undefined) {
+        firstRun.initiator = input.run.initiator;
+      }
+      if (input.run.model !== undefined) firstRun.model = input.run.model;
+      if (input.run.reasoning !== undefined) {
+        firstRun.reasoning = input.run.reasoning;
+      }
+      runs.push(firstRun);
+    }
+    const candidate: MutableChildRefRecord = {
       childId: input.childId,
       threadId: input.threadId ?? input.childId,
       nativeSessionId: input.nativeSessionId,
@@ -675,15 +785,15 @@ export class PiChildSessionRefStore {
       originParentSessionId: this.parentSessionId,
       originEntryId: this.newEntryId(),
       title: input.title,
-      ...(input.titleProvenance === undefined
-        ? {}
-        : { titleProvenance: input.titleProvenance }),
       status: input.status ?? "queued",
       createdAt: at,
       updatedAt: at,
       runs,
       totalRuns: runs.length,
     };
+    if (input.titleProvenance !== undefined) {
+      candidate.titleProvenance = input.titleProvenance;
+    }
     return parseChildRefRecord(candidate).asyncAndThen((record) =>
       this.write("new-child", record).map(() => record),
     );
@@ -715,22 +825,18 @@ export class PiChildSessionRefStore {
           issues: ["totalRuns"],
         });
       }
-      const run: PiChildRefRun = {
+      const run: MutableChildRefRun = {
         run: nextRun,
         action: input.action,
         startedAt: at,
-        ...(input.priorOutcome === undefined
-          ? {}
-          : { priorOutcome: input.priorOutcome }),
-        ...(input.initiator === undefined
-          ? {}
-          : { initiator: input.initiator }),
-        ...(input.model === undefined ? {} : { model: input.model }),
-        ...(input.reasoning === undefined
-          ? {}
-          : { reasoning: input.reasoning }),
       };
-      const candidate = {
+      if (input.priorOutcome !== undefined) {
+        run.priorOutcome = input.priorOutcome;
+      }
+      if (input.initiator !== undefined) run.initiator = input.initiator;
+      if (input.model !== undefined) run.model = input.model;
+      if (input.reasoning !== undefined) run.reasoning = input.reasoning;
+      const candidate: MutableChildRefRecord = {
         ...record,
         status: input.status ?? "running",
         updatedAt: at,
@@ -764,19 +870,19 @@ export class PiChildSessionRefStore {
       // A replacement title carries its own provenance; the previous marker is
       // dropped so a caller cannot relabel arbitrary text as trusted by reusing
       // the record's existing marker.
-      const titleProvenance =
-        input.title === undefined
-          ? record.titleProvenance
-          : input.titleProvenance;
-      const { titleProvenance: _previous, ...carried } = record;
-      const candidate = {
-        ...carried,
+      const candidate: MutableChildRefRecord = {
+        ...record,
         title: input.title ?? record.title,
-        ...(titleProvenance === undefined ? {} : { titleProvenance }),
         status: input.status,
         updatedAt: at,
-        ...(settledAt === undefined ? {} : { settledAt }),
       };
+      if (input.title !== undefined) {
+        delete candidate.titleProvenance;
+        if (input.titleProvenance !== undefined) {
+          candidate.titleProvenance = input.titleProvenance;
+        }
+      }
+      if (settledAt !== undefined) candidate.settledAt = settledAt;
       return parseChildRefRecord(candidate).asyncAndThen((next) =>
         this.write("lifecycle", next).map(() => next),
       );
@@ -809,7 +915,7 @@ export class PiChildSessionRefStore {
    * treated as unavailable: this boundary never converts a defect into a
    * permitted write.
    */
-  private requireMutationAuthority(): Result<void, PiChildRefError> {
+  private requireMutationAuthority(): Result<true, PiChildRefError> {
     const asked = Result.fromThrowable(
       () => this.storage.requireNativeSessionAuthority(),
       (): PiChildRefError => ({
@@ -818,7 +924,7 @@ export class PiChildSessionRefStore {
       }),
     )();
     if (asked.isErr()) return err(asked.error);
-    return asked.value.mapErr(
+    return asked.value.map(mutationGranted).mapErr(
       (failure): PiChildRefError => ({
         type: "ChildRefStorageUnavailable",
         reason: failure.reason,
@@ -873,7 +979,7 @@ export class PiChildSessionRefStore {
   private write(
     kind: PiChildRefEntryKind,
     record: PiChildRefRecord,
-  ): ResultAsync<void, PiChildRefError> {
+  ): ResultAsync<true, PiChildRefError> {
     // Re-asked here so the host `appendEntry` boundary itself is authorized,
     // independently of whichever public method routed here.
     const authorized = this.requireMutationAuthority();
@@ -882,7 +988,7 @@ export class PiChildSessionRefStore {
       .checkSource(record.sessionRef, this.parentSessionId)
       .andThen((state) => {
         if (state !== "available") {
-          return errAsync<void, PiChildRefError>({
+          return errAsync<true, PiChildRefError>({
             type: "ChildRefSourceUnusable",
             childId: record.childId,
             state,
@@ -890,7 +996,7 @@ export class PiChildSessionRefStore {
         }
         const sequence = this.nextSequence(record.childId);
         if (sequence.isErr())
-          return errAsync<void, PiChildRefError>(sequence.error);
+          return errAsync<true, PiChildRefError>(sequence.error);
         const envelope: PiChildRefEnvelope = {
           schemaVersion: PI_CHILD_REF_SCHEMA_VERSION,
           entryType: PI_CHILD_REF_ENTRY_TYPE,
@@ -910,7 +1016,9 @@ export class PiChildSessionRefStore {
             reason: "host-threw",
           }),
         )();
-        return written.isOk() ? okAsync(undefined) : errAsync(written.error);
+        return written.isOk()
+          ? okAsync(mutationGranted())
+          : errAsync(written.error);
       });
   }
 
@@ -940,7 +1048,7 @@ export class PiChildSessionRefStore {
       const payload = candidatePayload(entry);
       if (payload === undefined) continue;
       candidateEntries += 1;
-      const parsed = parseChildRefEnvelope(payload);
+      const parsed = parseRefEnvelopeSnapshot(payload);
       if (parsed.isErr()) {
         malformedEntries += 1;
         pushIssue(issues, {
@@ -1035,11 +1143,11 @@ export class PiChildSessionRefStore {
           this.authority
             .checkSource(record.sessionRef, record.originParentSessionId)
             .match(
-              (state) => ({ record, state }),
-              (): {
-                readonly record: PiChildRefRecord;
-                readonly state: PiChildRefSourceState;
-              } => ({ record, state: "unavailable" }),
+              (state): PiChildRefAuthorityObservation => ({ record, state }),
+              (): PiChildRefAuthorityObservation => ({
+                record,
+                state: "unavailable",
+              }),
             ),
         ),
       ),
@@ -1048,10 +1156,7 @@ export class PiChildSessionRefStore {
 
   private collect(
     scan: PiChildRefEntryScan,
-    checked: readonly {
-      readonly record: PiChildRefRecord;
-      readonly state: PiChildRefSourceState;
-    }[],
+    checked: readonly PiChildRefAuthorityObservation[],
   ): PiChildRefScan {
     const issues = [...scan.issues];
     const refs: PiChildRefRecord[] = [];
@@ -1149,22 +1254,23 @@ export function serializeChildRefEnvelope(
   return JSON.stringify(envelope);
 }
 
+const JsonObjectSchema = z.record(z.string(), z.json());
+
 /** True when a serialized ref carries no transcript-like field name. */
 export function hasNoTranscriptFields(serialized: string): boolean {
-  const parsed = Result.fromThrowable(
-    () => JSON.parse(serialized) as unknown,
-    () => undefined,
-  )();
+  const parsed = parseStrictJson(serialized);
   if (parsed.isErr()) return false;
-  const stack: unknown[] = [parsed.value];
+  const stack: JsonValue[] = [parsed.value];
   while (stack.length > 0) {
     const value = stack.pop();
+    if (value === undefined) continue;
     if (Array.isArray(value)) {
       stack.push(...value);
       continue;
     }
-    if (typeof value !== "object" || value === null) continue;
-    for (const [key, child] of Object.entries(value)) {
+    const record = JsonObjectSchema.safeParse(value);
+    if (!record.success) continue;
+    for (const [key, child] of Object.entries(record.data)) {
       if (PI_CHILD_REF_FORBIDDEN_FIELDS.includes(key)) return false;
       stack.push(child);
     }

@@ -40,6 +40,23 @@ const child = (
   stale: overrides.stale ?? false,
 });
 
+interface TestListPage {
+  children: PiAdapterChildListItem[];
+  nextCursor?: string;
+}
+
+interface TestShowPage {
+  child: PiAdapterChildListItem;
+  entries: { index: number; id: string; type: string }[];
+  nextCursor?: string;
+  diagnostics?: {
+    nativeSessionId: string;
+    originParentSessionId: string;
+    sessionHeader: "verified";
+    sessionHealth: "available";
+  };
+}
+
 function makeChildrenPort(options: {
   readonly rows?: PiAdapterChildListItem[];
   readonly entryCount?: number;
@@ -54,12 +71,11 @@ function makeChildrenPort(options: {
   return {
     list() {
       const page = rows.slice(0, PI_ADAPTER_COMMAND_BOUNDS.listPageSize);
-      return okAsync({
-        children: page,
-        ...(rows.length > PI_ADAPTER_COMMAND_BOUNDS.listPageSize
-          ? { nextCursor: "list-cursor" }
-          : {}),
-      });
+      const result: TestListPage = { children: page };
+      if (rows.length > PI_ADAPTER_COMMAND_BOUNDS.listPageSize) {
+        result.nextCursor = "list-cursor";
+      }
+      return okAsync(result);
     },
     show(input) {
       const found = rows.find((row) => {
@@ -79,23 +95,22 @@ function makeChildrenPort(options: {
           entries.length - PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize,
         ),
       );
-      return okAsync({
+      const result: TestShowPage = {
         child: found,
         entries: page,
-        ...(entries.length > PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize
-          ? { nextCursor: "show-cursor" }
-          : {}),
-        ...(input.diagnostic === true
-          ? {
-              diagnostics: {
-                nativeSessionId: `native-${found.childId}`,
-                originParentSessionId: found.originParentSessionId,
-                sessionHeader: "verified" as const,
-                sessionHealth: "available" as const,
-              },
-            }
-          : {}),
-      });
+      };
+      if (entries.length > PI_ADAPTER_COMMAND_BOUNDS.showEntryPageSize) {
+        result.nextCursor = "show-cursor";
+      }
+      if (input.diagnostic === true) {
+        result.diagnostics = {
+          nativeSessionId: `native-${found.childId}`,
+          originParentSessionId: found.originParentSessionId,
+          sessionHeader: "verified",
+          sessionHealth: "available",
+        };
+      }
+      return okAsync(result);
     },
     result(input) {
       const found = rows.find((row) => row.childId === input.childId);
@@ -157,10 +172,15 @@ function makeChildrenPort(options: {
   };
 }
 
+interface AdapterTestContext {
+  readonly terminal: BufferTerminal;
+  readonly ctx: AdapterCommandContext;
+}
+
 function makeCtx(
   overrides: Partial<AdapterCommandContext> &
     Pick<AdapterCommandContext, "target">,
-): { terminal: BufferTerminal; ctx: AdapterCommandContext } {
+): AdapterTestContext {
   const terminal = new BufferTerminal();
   const ctx: AdapterCommandContext = {
     terminal,
@@ -496,9 +516,7 @@ describe("runAdapter", () => {
     });
     await runAdapter(ctx);
     const out = terminal.out.join("\n");
-    const body = JSON.parse(out) as {
-      diagnostics?: Record<string, unknown>;
-    };
+    const body = JSON.parse(out);
     expect(body.diagnostics).toEqual({
       nativeSessionId: "native-child-1",
       originParentSessionId: "parent-1",
@@ -576,9 +594,7 @@ describe("runAdapter", () => {
       registry,
     });
     await runAdapter(listed.ctx);
-    const listBody = JSON.parse(listed.terminal.out.join("\n")) as {
-      children: PiAdapterChildListItem[];
-    };
+    const listBody = JSON.parse(listed.terminal.out.join("\n"));
     expect(listBody.children[0]?.tombstoned).toBe(true);
     expect(listBody.children[0]?.status).toBe("tombstoned");
   });

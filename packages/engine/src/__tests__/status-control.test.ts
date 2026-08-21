@@ -47,9 +47,9 @@ import { describe, expect, it } from "bun:test";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
-import type { ExecutionLeaseId, WorkflowInstanceId } from "../runtime/types.js";
 import {
   createExecutionLeaseId,
+  createOwnerId,
   createWorkflowInstanceId,
 } from "../runtime/types.js";
 import {
@@ -73,7 +73,48 @@ import {
 
 const noopProjectEffect = (
   _effect: DispatchAgentEffect,
-): ResultAsync<void, WorkflowRunnerError> => okAsync(undefined);
+): ResultAsync<void, WorkflowRunnerError> => okAsync();
+
+function abortInputWithMissingSignal(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AbortExecutionInput {
+  const input: AbortExecutionInput = {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    signal: "cancel",
+    store,
+  };
+  Object.defineProperty(input, "signal", { value: "" });
+  return input;
+}
+
+function advanceInputWithMissingCompletionSignal(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AdvanceStepInput {
+  const input: AdvanceStepInput = {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    stepName: "execute",
+    completionSignal: { outcome: "success" },
+    store,
+  };
+  Object.defineProperty(input, "completionSignal", { value: null });
+  return input;
+}
+
+function advanceInputWithInvalidOutcome(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AdvanceStepInput {
+  const completionSignal = { outcome: "success" as const };
+  Object.defineProperty(completionSignal, "outcome", { value: "" });
+  return {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    stepName: "execute",
+    completionSignal,
+    store,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Fixture workflow registry
@@ -131,7 +172,7 @@ describe("inspectStatus — validation", () => {
   it("returns command_validation when workflowInstanceId is empty", async () => {
     const store = createInMemoryRuntimeStore();
     const input: InspectStatusInput = {
-      workflowInstanceId: "" as WorkflowInstanceId,
+      workflowInstanceId: createWorkflowInstanceId(""),
       store,
     };
 
@@ -205,9 +246,9 @@ describe("inspectStatus — successful inspection", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.createdAt).toBe("string");
+      expect(result.value.createdAt).toBeDefined();
       expect(result.value.createdAt.length).toBeGreaterThan(0);
-      expect(typeof result.value.updatedAt).toBe("string");
+      expect(result.value.updatedAt).toBeDefined();
       expect(result.value.updatedAt.length).toBeGreaterThan(0);
     }
   });
@@ -268,7 +309,7 @@ describe("abortExecution — validation", () => {
   it("returns command_validation when workflowInstanceId is empty", async () => {
     const store = createInMemoryRuntimeStore();
     const input: AbortExecutionInput = {
-      workflowInstanceId: "" as WorkflowInstanceId,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId: createExecutionLeaseId("some-lease"),
       signal: "cancel",
       store,
@@ -289,7 +330,7 @@ describe("abortExecution — validation", () => {
     const store = createInMemoryRuntimeStore();
     const input: AbortExecutionInput = {
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ExecutionLeaseId,
+      leaseId: createExecutionLeaseId(""),
       signal: "cancel",
       store,
     };
@@ -307,12 +348,7 @@ describe("abortExecution — validation", () => {
 
   it("returns command_validation when signal is missing", async () => {
     const store = createInMemoryRuntimeStore();
-    const input = {
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      signal: "" as "cancel" | "pause",
-      store,
-    };
+    const input = abortInputWithMissingSignal(store);
 
     const result = await abortExecution(input);
 
@@ -397,7 +433,7 @@ describe("abortExecution — cancel signal", () => {
     // Acquire a lease
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -438,7 +474,7 @@ describe("abortExecution — cancel signal", () => {
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -475,7 +511,7 @@ describe("abortExecution — pause signal", () => {
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -515,7 +551,7 @@ describe("abortExecution — pause signal", () => {
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -553,7 +589,7 @@ describe("abortExecution — lease mismatch", () => {
     // Acquire the real lease
     await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
 
@@ -586,7 +622,7 @@ describe("advanceStep — validation", () => {
   it("returns command_validation when workflowInstanceId is empty", async () => {
     const store = createInMemoryRuntimeStore();
     const input: AdvanceStepInput = {
-      workflowInstanceId: "" as WorkflowInstanceId,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId: createExecutionLeaseId("some-lease"),
       stepName: "execute",
       completionSignal: { outcome: "success" },
@@ -608,7 +644,7 @@ describe("advanceStep — validation", () => {
     const store = createInMemoryRuntimeStore();
     const input: AdvanceStepInput = {
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ExecutionLeaseId,
+      leaseId: createExecutionLeaseId(""),
       stepName: "execute",
       completionSignal: { outcome: "success" },
       store,
@@ -648,13 +684,7 @@ describe("advanceStep — validation", () => {
 
   it("returns command_validation when completionSignal is missing", async () => {
     const store = createInMemoryRuntimeStore();
-    const input = {
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: null as unknown as AdvanceStepInput["completionSignal"],
-      store,
-    };
+    const input = advanceInputWithMissingCompletionSignal(store);
 
     const result = await advanceStep(input);
 
@@ -669,15 +699,7 @@ describe("advanceStep — validation", () => {
 
   it("returns command_validation when completionSignal.outcome is missing", async () => {
     const store = createInMemoryRuntimeStore();
-    const input = {
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: {
-        outcome: "" as "success" | "blocked" | "failed" | "paused",
-      },
-      store,
-    };
+    const input = advanceInputWithInvalidOutcome(store);
 
     const result = await advanceStep(input);
 
@@ -731,7 +753,7 @@ describe("advanceStep — lease mismatch", () => {
     // Acquire the real lease
     await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
 
@@ -775,7 +797,7 @@ describe("advanceStep — successful advance", () => {
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -809,7 +831,7 @@ describe("advanceStep — successful advance", () => {
     const leaseId = createExecutionLeaseId("some-lease");
 
     const missingInstance = await advanceStep({
-      workflowInstanceId: "" as WorkflowInstanceId,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId,
       stepName: "execute",
       completionSignal: { outcome: "success" },
@@ -822,7 +844,7 @@ describe("advanceStep — successful advance", () => {
 
     const missingLease = await advanceStep({
       workflowInstanceId: instanceId,
-      leaseId: "" as ExecutionLeaseId,
+      leaseId: createExecutionLeaseId(""),
       stepName: "execute",
       completionSignal: { outcome: "success" },
       store,
@@ -844,13 +866,9 @@ describe("advanceStep — successful advance", () => {
       expect(missingStep.error.type).toBe("command_validation");
     }
 
-    const missingSignal = await advanceStep({
-      workflowInstanceId: instanceId,
-      leaseId,
-      stepName: "execute",
-      completionSignal: null as unknown as AdvanceStepInput["completionSignal"],
-      store,
-    });
+    const missingSignal = await advanceStep(
+      advanceInputWithMissingCompletionSignal(store),
+    );
     expect(missingSignal.isErr()).toBe(true);
     if (missingSignal.isErr()) {
       expect(missingSignal.error.type).toBe("command_validation");
@@ -877,7 +895,7 @@ describe("advanceStep — blocked step advancement", () => {
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "owner-test" as import("../runtime/types.js").OwnerId,
+      ownerId: createOwnerId("owner-test"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);

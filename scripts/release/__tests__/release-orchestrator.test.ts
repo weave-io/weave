@@ -9,11 +9,25 @@ import { BunCommandRunner } from "../command-runner.js";
 import type { PublicPackageName } from "../constants.js";
 import type { FileSystem } from "../filesystem.js";
 import type { GitHubClient } from "../github-client.js";
-import type { ArtifactManifest, StableTrainRecord } from "../model.js";
+import type {
+  ArtifactBindingRecord,
+  ArtifactManifest,
+  StableTrainRecord,
+} from "../model.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { scanCredentialSources } from "../package-policy.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
-import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
+
+function trainDigest(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
 
 describe("release command allowlist", () => {
   test("rejects shell injection before spawning", async () => {
@@ -76,14 +90,14 @@ test("orchestrates publication with injected filesystem and registry", async () 
     exists: () => okAsync(false),
     readBytes: () => okAsync(bytes),
     readText: () => okAsync(""),
-    writeText: () => okAsync(undefined),
-    delete: () => okAsync(undefined),
+    writeText: () => okAsync(),
+    delete: () => okAsync(),
   };
   const calls: string[] = [];
   const npm: NpmRegistryClient = {
     publish: (_path, tag) => {
       calls.push(`publish:${tag}`);
-      return okAsync(undefined);
+      return okAsync();
     },
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
@@ -91,12 +105,12 @@ test("orchestrates publication with injected filesystem and registry", async () 
     distTagLs: () => okAsync({}),
     verifyPublished: () => {
       calls.push("verify");
-      return okAsync(undefined);
+      return okAsync();
     },
   };
   const result = await new ReleaseOrchestrator(files, npm, {
     now: () => new Date(),
-    sleep: () => okAsync(undefined),
+    sleep: () => okAsync(),
   } satisfies Clock).publish({
     invocation: {
       repository: "weave-io/weave",
@@ -196,32 +210,29 @@ test("credential sources are rejected before any registry use", () => {
 test("binding mismatches block publication before npm", async () => {
   const verification = bindingVerification();
   for (const field of ["runAttempt", "packages", "manifestDigest"] as const) {
-    const record = { ...(verification.record as Record<string, unknown>) };
-    if (field === "runAttempt") record[field] = 2;
-    else if (field === "packages") record[field] = [];
-    else record[field] = `sha256:${"0".repeat(64)}`;
+    const record = alteredBindingRecord(verification.record, field);
     let published = false;
     const npm: NpmRegistryClient = {
       publish: () => {
         published = true;
-        return okAsync(undefined);
+        return okAsync();
       },
       viewVersion: () => okAsync(""),
       listVersions: () => okAsync([]),
       viewDistTags: () => okAsync({}),
       distTagLs: () => okAsync({}),
-      verifyPublished: () => okAsync(undefined),
+      verifyPublished: () => okAsync(),
     };
     const files: FileSystem = {
       exists: () => okAsync(false),
       readBytes: () => okAsync(archive()),
       readText: () => okAsync(""),
-      writeText: () => okAsync(undefined),
-      delete: () => okAsync(undefined),
+      writeText: () => okAsync(),
+      delete: () => okAsync(),
     };
     const result = await new ReleaseOrchestrator(files, npm, {
       now: () => new Date(),
-      sleep: () => okAsync(undefined),
+      sleep: () => okAsync(),
     }).publish({
       invocation: {
         repository: "weave-io/weave",
@@ -250,8 +261,8 @@ test("propagates registry publication failure without retrying", async () => {
     exists: () => okAsync(false),
     readBytes: () => okAsync(archive()),
     readText: () => okAsync(""),
-    writeText: () => okAsync(undefined),
-    delete: () => okAsync(undefined),
+    writeText: () => okAsync(),
+    delete: () => okAsync(),
   };
   const npm: NpmRegistryClient = {
     publish: () =>
@@ -264,11 +275,11 @@ test("propagates registry publication failure without retrying", async () => {
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     distTagLs: () => okAsync({}),
-    verifyPublished: () => okAsync(undefined),
+    verifyPublished: () => okAsync(),
   };
   const result = await new ReleaseOrchestrator(files, npm, {
     now: () => new Date(),
-    sleep: () => okAsync(undefined),
+    sleep: () => okAsync(),
   }).publish({
     invocation: {
       repository: "weave-io/weave",
@@ -288,20 +299,20 @@ test("routes stable cut planning without performing a ref mutation", async () =>
     exists: () => okAsync(false),
     readBytes: () => okAsync(new Uint8Array()),
     readText: () => okAsync(""),
-    writeText: () => okAsync(undefined),
-    delete: () => okAsync(undefined),
+    writeText: () => okAsync(),
+    delete: () => okAsync(),
   };
   const npm: NpmRegistryClient = {
-    publish: () => okAsync(undefined),
+    publish: () => okAsync(),
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     distTagLs: () => okAsync({}),
-    verifyPublished: () => okAsync(undefined),
+    verifyPublished: () => okAsync(),
   };
   const orchestrator = new ReleaseOrchestrator(files, npm, {
     now: () => new Date("2026-07-19T00:00:00.000Z"),
-    sleep: () => okAsync(undefined),
+    sleep: () => okAsync(),
   });
   const result = await orchestrator.planStableCut({
     mainHeadSha: "a".repeat(40),
@@ -353,23 +364,23 @@ describe("manual stable promotion", () => {
 
   function promotionOrchestrator(tags: Record<string, Record<string, string>>) {
     const npm: NpmRegistryClient = {
-      publish: () => okAsync(undefined),
+      publish: () => okAsync(),
       viewVersion: () => okAsync(""),
       listVersions: () => okAsync([]),
       viewDistTags: () => okAsync({}),
       distTagLs: (packageName) => okAsync(tags[packageName] ?? {}),
-      verifyPublished: () => okAsync(undefined),
+      verifyPublished: () => okAsync(),
     };
     const files: FileSystem = {
       exists: () => okAsync(false),
       readBytes: () => okAsync(new Uint8Array()),
       readText: () => okAsync(""),
-      writeText: () => okAsync(undefined),
-      delete: () => okAsync(undefined),
+      writeText: () => okAsync(),
+      delete: () => okAsync(),
     };
     return new ReleaseOrchestrator(files, npm, {
       now: () => new Date(),
-      sleep: () => okAsync(undefined),
+      sleep: () => okAsync(),
     });
   }
 
@@ -599,10 +610,27 @@ function stableTrain(
     artifactManifestDigest: `sha256:${"b".repeat(64)}`,
     artifactIds: packages.map((_, index) => index + 1),
   };
-  return {
+  const checked = validateStableTrain({
     ...content,
-    recordDigest: trainRecordDigest(content),
-  } as StableTrainRecord;
+    recordDigest: trainDigest(content),
+  });
+  if (checked.isErr()) throw new Error(JSON.stringify(checked.error));
+  return checked.value;
+}
+
+interface BindingVerificationFixture {
+  readonly record: ArtifactBindingRecord;
+  readonly context: BindingVerificationContext;
+  readonly github: GitHubClient;
+}
+
+function alteredBindingRecord(
+  record: ArtifactBindingRecord,
+  field: "runAttempt" | "packages" | "manifestDigest",
+): ArtifactBindingRecord {
+  if (field === "runAttempt") return { ...record, runAttempt: 2 };
+  if (field === "packages") return { ...record, packages: [] };
+  return { ...record, manifestDigest: `sha256:${"0".repeat(64)}` };
 }
 
 function archive(): Uint8Array {
@@ -615,11 +643,7 @@ function archive(): Uint8Array {
   return Bun.gzipSync(tar);
 }
 
-function bindingVerification(): {
-  record: unknown;
-  context: BindingVerificationContext;
-  github: GitHubClient;
-} {
+function bindingVerification(): BindingVerificationFixture {
   const bytes = archive();
   const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
   const manifest: ArtifactManifest = {
@@ -700,8 +724,8 @@ function bindingVerification(): {
     getArtifact: (id) =>
       okAsync(metadata(id, id === 1 ? "release-payload" : "release-control")),
     downloadArtifact: () => okAsync(artifactBytes),
-    createRelease: () => okAsync(undefined),
-    createTag: () => okAsync(undefined),
+    createRelease: () => okAsync(),
+    createTag: () => okAsync(),
   };
   return {
     record: record.value,

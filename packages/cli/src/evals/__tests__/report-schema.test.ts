@@ -59,15 +59,157 @@ import {
 // Fixture builders
 // ---------------------------------------------------------------------------
 
-function makeValidBoundedExplanation(overrides: Record<string, unknown> = {}) {
+type ExplanationFixture = {
+  text: string;
+  source: string;
+};
+
+type PublicCaseEntryFixture = {
+  caseId: string;
+  modelId: string;
+  suite: string;
+  scoreBucket: string;
+  passed: boolean;
+  required: boolean;
+  dryRun: boolean;
+  scoredAt: string;
+  explanation?: ExplanationFixture;
+};
+
+type SuiteSummaryEntryFixture = {
+  schemaVersion: number;
+  suite: string;
+  assembledAt: string;
+  gitSha: string;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  suiteGreen: boolean;
+  cases: PublicCaseEntryFixture[];
+  explanation?: ExplanationFixture;
+};
+
+type PublicReportBundleFixture = {
+  schemaVersion: number;
+  assembledAt: string;
+  gitSha: string;
+  dryRun: boolean;
+  runSummary: {
+    totalCases: number;
+    passedCases: number;
+    failedCases: number;
+    allSuitesGreen: boolean;
+    suites: string[];
+  };
+  suiteSummaries: SuiteSummaryEntryFixture[];
+};
+
+type DashboardEntryFixture = {
+  runId: string;
+  assembledAt: string;
+  gitSha: string;
+  dryRun: boolean;
+  allSuitesGreen: boolean;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  suites: string[];
+  bundleReportPath: string;
+};
+
+type DashboardManifestFixture = {
+  schemaVersion: number;
+  updatedAt: string;
+  totalRuns: number;
+  runs: DashboardEntryFixture[];
+};
+
+type SuiteHistoryPointFixture = {
+  assembledAt: string;
+  gitSha: string;
+  runId: string;
+  totalCases: number;
+  passedCases: number;
+  suiteGreen: boolean;
+  passRate: number | null;
+};
+
+type SuiteHistoryManifestFixture = {
+  schemaVersion: number;
+  suite: string;
+  updatedAt: string;
+  history: SuiteHistoryPointFixture[];
+};
+
+type ModelComparisonEntryFixture = {
+  modelId: string;
+  displayName: string;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  passRate: number | null;
+  perSuitePassRates: Record<string, number>;
+  overallBucket: string;
+  explanation?: ExplanationFixture;
+};
+
+type ModelComparisonManifestFixture = {
+  schemaVersion: number;
+  runId: string;
+  assembledAt: string;
+  gitSha: string;
+  dryRun: boolean;
+  models: ModelComparisonEntryFixture[];
+};
+
+type ScenarioRunFixture = {
+  runId: string;
+  assembledAt: string;
+  status: string;
+  passed: boolean;
+  totalModels: number;
+  passedModels: number;
+  failedModels: number;
+  skippedModels: number;
+};
+
+type ScenarioHistoryEntryFixture = {
+  caseId: string;
+  title: string;
+  description?: string;
+  lastRuns: ScenarioRunFixture[];
+};
+
+type ScenarioIndexFixture = {
+  schemaVersion: number;
+  suite: string;
+  updatedAt: string;
+  scenarios: ScenarioHistoryEntryFixture[];
+};
+
+function requireForbiddenPattern(name: string) {
+  const pattern = FORBIDDEN_EXPLANATION_PATTERNS.find(
+    (entry) => entry.name === name,
+  );
+  if (pattern === undefined) {
+    throw new Error(`Missing forbidden explanation pattern: ${name}`);
+  }
+  return pattern;
+}
+
+function makeValidBoundedExplanation(
+  overrides: Partial<ExplanationFixture> = {},
+) {
   return {
     text: "Routing matched the expected agent.",
     source: "score_bucket_label",
     ...overrides,
-  };
+  } satisfies ExplanationFixture;
 }
 
-function makeValidPublicCaseEntry(overrides: Record<string, unknown> = {}) {
+function makeValidPublicCaseEntry(
+  overrides: Partial<PublicCaseEntryFixture> = {},
+) {
   return {
     caseId: "route-to-shuttle",
     modelId: "anthropic/claude-sonnet-4.5",
@@ -78,10 +220,12 @@ function makeValidPublicCaseEntry(overrides: Record<string, unknown> = {}) {
     dryRun: false,
     scoredAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
-  };
+  } satisfies PublicCaseEntryFixture;
 }
 
-function makeValidSuiteSummaryEntry(overrides: Record<string, unknown> = {}) {
+function makeValidSuiteSummaryEntry(
+  overrides: Partial<SuiteSummaryEntryFixture> = {},
+) {
   return {
     schemaVersion: SUITE_SUMMARY_SCHEMA_VERSION,
     suite: "loom-routing",
@@ -93,10 +237,12 @@ function makeValidSuiteSummaryEntry(overrides: Record<string, unknown> = {}) {
     suiteGreen: false,
     cases: [makeValidPublicCaseEntry()],
     ...overrides,
-  };
+  } satisfies SuiteSummaryEntryFixture;
 }
 
-function makeValidPublicReportBundle(overrides: Record<string, unknown> = {}) {
+function makeValidPublicReportBundle(
+  overrides: Partial<PublicReportBundleFixture> = {},
+) {
   return {
     schemaVersion: REPORT_BUNDLE_SCHEMA_VERSION,
     assembledAt: "2026-01-01T00:00:00.000Z",
@@ -111,10 +257,12 @@ function makeValidPublicReportBundle(overrides: Record<string, unknown> = {}) {
     },
     suiteSummaries: [makeValidSuiteSummaryEntry()],
     ...overrides,
-  };
+  } satisfies PublicReportBundleFixture;
 }
 
-function makeValidDashboardEntry(overrides: Record<string, unknown> = {}) {
+function makeValidDashboardEntry(
+  overrides: Partial<DashboardEntryFixture> = {},
+) {
   return {
     runId: "abc1234-2026-01-01",
     assembledAt: "2026-01-01T00:00:00.000Z",
@@ -127,21 +275,23 @@ function makeValidDashboardEntry(overrides: Record<string, unknown> = {}) {
     suites: ["loom-routing"],
     bundleReportPath: "runs/v1/abc1234-2026-01-01-001/public-report.json",
     ...overrides,
-  };
+  } satisfies DashboardEntryFixture;
 }
 
-function makeValidDashboardManifest(overrides: Record<string, unknown> = {}) {
+function makeValidDashboardManifest(
+  overrides: Partial<DashboardManifestFixture> = {},
+) {
   return {
     schemaVersion: DASHBOARD_MANIFEST_SCHEMA_VERSION,
     updatedAt: "2026-01-01T00:00:00.000Z",
     totalRuns: 1,
     runs: [makeValidDashboardEntry()],
     ...overrides,
-  };
+  } satisfies DashboardManifestFixture;
 }
 
 function makeValidSuiteHistoryManifest(
-  overrides: Record<string, unknown> = {},
+  overrides: Partial<SuiteHistoryManifestFixture> = {},
 ) {
   return {
     schemaVersion: SUITE_HISTORY_SCHEMA_VERSION,
@@ -159,11 +309,11 @@ function makeValidSuiteHistoryManifest(
       },
     ],
     ...overrides,
-  };
+  } satisfies SuiteHistoryManifestFixture;
 }
 
 function makeValidModelComparisonManifest(
-  overrides: Record<string, unknown> = {},
+  overrides: Partial<ModelComparisonManifestFixture> = {},
 ) {
   return {
     schemaVersion: MODEL_COMPARISON_SCHEMA_VERSION,
@@ -184,7 +334,7 @@ function makeValidModelComparisonManifest(
       },
     ],
     ...overrides,
-  };
+  } satisfies ModelComparisonManifestFixture;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,125 +378,91 @@ describe("FORBIDDEN_EXPLANATION_PATTERNS", () => {
   });
 
   it("chain_of_thought_xml matches <thinking>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "chain_of_thought_xml",
-    );
+    const entry = requireForbiddenPattern("chain_of_thought_xml");
     expect(entry).toBeDefined();
-    expect(entry!.pattern.test("<thinking>")).toBe(true);
+    expect(entry.pattern.test("<thinking>")).toBe(true);
   });
 
   it("chain_of_thought_xml matches <cot>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "chain_of_thought_xml",
-    );
-    expect(entry!.pattern.test("<cot>")).toBe(true);
+    const entry = requireForbiddenPattern("chain_of_thought_xml");
+    expect(entry.pattern.test("<cot>")).toBe(true);
   });
 
   it("chain_of_thought_xml matches <reasoning>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "chain_of_thought_xml",
-    );
-    expect(entry!.pattern.test("<reasoning>")).toBe(true);
+    const entry = requireForbiddenPattern("chain_of_thought_xml");
+    expect(entry.pattern.test("<reasoning>")).toBe(true);
   });
 
   it("chain_of_thought_xml matches <scratchpad>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "chain_of_thought_xml",
-    );
-    expect(entry!.pattern.test("<scratchpad>")).toBe(true);
+    const entry = requireForbiddenPattern("chain_of_thought_xml");
+    expect(entry.pattern.test("<scratchpad>")).toBe(true);
   });
 
   it("transcript_role_marker matches 'User:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "transcript_role_marker",
-    );
-    expect(entry!.pattern.test("\nUser: some input")).toBe(true);
+    const entry = requireForbiddenPattern("transcript_role_marker");
+    expect(entry.pattern.test("\nUser: some input")).toBe(true);
   });
 
   it("transcript_role_marker matches 'Assistant:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "transcript_role_marker",
-    );
-    expect(entry!.pattern.test("\nAssistant: response")).toBe(true);
+    const entry = requireForbiddenPattern("transcript_role_marker");
+    expect(entry.pattern.test("\nAssistant: response")).toBe(true);
   });
 
   it("transcript_role_marker matches 'Human:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "transcript_role_marker",
-    );
-    expect(entry!.pattern.test("\nHuman: some message")).toBe(true);
+    const entry = requireForbiddenPattern("transcript_role_marker");
+    expect(entry.pattern.test("\nHuman: some message")).toBe(true);
   });
 
   it("transcript_role_marker matches 'System:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "transcript_role_marker",
-    );
-    expect(entry!.pattern.test("\nSystem: prompt")).toBe(true);
+    const entry = requireForbiddenPattern("transcript_role_marker");
+    expect(entry.pattern.test("\nSystem: prompt")).toBe(true);
   });
 
   it("prompt_delimiter matches <system>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "prompt_delimiter",
-    );
-    expect(entry!.pattern.test("<system>")).toBe(true);
+    const entry = requireForbiddenPattern("prompt_delimiter");
+    expect(entry.pattern.test("<system>")).toBe(true);
   });
 
   it("prompt_delimiter matches <prompt>", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "prompt_delimiter",
-    );
-    expect(entry!.pattern.test("<prompt>")).toBe(true);
+    const entry = requireForbiddenPattern("prompt_delimiter");
+    expect(entry.pattern.test("<prompt>")).toBe(true);
   });
 
   it("raw_rationale_marker matches 'rationale:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "raw_rationale_marker",
-    );
-    expect(entry!.pattern.test("rationale: the model did X")).toBe(true);
+    const entry = requireForbiddenPattern("raw_rationale_marker");
+    expect(entry.pattern.test("rationale: the model did X")).toBe(true);
   });
 
   it("raw_score_marker matches 'score: 0.8'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "raw_score_marker",
-    );
-    expect(entry!.pattern.test("score: 0.8")).toBe(true);
+    const entry = requireForbiddenPattern("raw_score_marker");
+    expect(entry.pattern.test("score: 0.8")).toBe(true);
   });
 
   it("justification_marker matches 'justification:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "justification_marker",
-    );
-    expect(entry!.pattern.test("justification: because...")).toBe(true);
+    const entry = requireForbiddenPattern("justification_marker");
+    expect(entry.pattern.test("justification: because...")).toBe(true);
   });
 
   it("justification_marker matches 'explanation:'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "justification_marker",
-    );
-    expect(entry!.pattern.test("explanation: the thing")).toBe(true);
+    const entry = requireForbiddenPattern("justification_marker");
+    expect(entry.pattern.test("explanation: the thing")).toBe(true);
   });
 
   it("secret_token_pattern matches 'sk-xxxxxxxxxxxx'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "secret_token_pattern",
-    );
-    expect(entry!.pattern.test("key: sk-abcdefghijklmno")).toBe(true);
+    const entry = requireForbiddenPattern("secret_token_pattern");
+    expect(entry.pattern.test("key: sk-abcdefghijklmno")).toBe(true);
   });
 
   it("secret_token_pattern matches 'Bearer xxxxxxxxxxxxx'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "secret_token_pattern",
-    );
-    expect(entry!.pattern.test("Authorization: Bearer abcdefghijk1234")).toBe(
+    const entry = requireForbiddenPattern("secret_token_pattern");
+    expect(entry.pattern.test("Authorization: Bearer abcdefghijk1234")).toBe(
       true,
     );
   });
 
   it("secret_token_pattern matches 'ghp_xxxxxxxxxxxxx'", () => {
-    const entry = FORBIDDEN_EXPLANATION_PATTERNS.find(
-      (p) => p.name === "secret_token_pattern",
-    );
-    expect(entry!.pattern.test("token: ghp_abcdefghijklmno")).toBe(true);
+    const entry = requireForbiddenPattern("secret_token_pattern");
+    expect(entry.pattern.test("token: ghp_abcdefghijklmno")).toBe(true);
   });
 });
 
@@ -468,7 +584,10 @@ describe("BoundedExplanationSchema", () => {
       makeValidBoundedExplanation({ text }),
     );
     expect(result.success).toBe(false);
-    const error = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const error = result.error.issues[0];
     expect(error?.message).toContain(String(EXPLANATION_MAX_CHARS));
   });
 
@@ -525,7 +644,10 @@ describe("BoundedExplanationSchema", () => {
       }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues.find((i) =>
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues.find((i) =>
       i.message.includes("chain_of_thought_xml"),
     );
     expect(issue).toBeDefined();
@@ -559,7 +681,10 @@ describe("BoundedExplanationSchema", () => {
       }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues.find((i) =>
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues.find((i) =>
       i.message.includes("transcript_role_marker"),
     );
     expect(issue).toBeDefined();
@@ -573,7 +698,10 @@ describe("BoundedExplanationSchema", () => {
       }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues.find((i) =>
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues.find((i) =>
       i.message.includes("raw_rationale_marker"),
     );
     expect(issue).toBeDefined();
@@ -810,8 +938,7 @@ describe("PublicCaseEntrySchema", () => {
   });
 
   it("case entry without explanation field is valid", () => {
-    const entry = makeValidPublicCaseEntry();
-    delete (entry as Record<string, unknown>).explanation;
+    const { explanation: _explanation, ...entry } = makeValidPublicCaseEntry();
     expect(PublicCaseEntrySchema.safeParse(entry).success).toBe(true);
   });
 });
@@ -829,8 +956,8 @@ describe("SuiteSummaryEntrySchema", () => {
   });
 
   it("requires schemaVersion field", () => {
-    const entry = makeValidSuiteSummaryEntry();
-    delete (entry as Record<string, unknown>).schemaVersion;
+    const { schemaVersion: _schemaVersion, ...entry } =
+      makeValidSuiteSummaryEntry();
     const result = SuiteSummaryEntrySchema.safeParse(entry);
     expect(result.success).toBe(false);
   });
@@ -840,7 +967,10 @@ describe("SuiteSummaryEntrySchema", () => {
       makeValidSuiteSummaryEntry({ schemaVersion: 99 }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues[0];
     expect(issue?.message).toContain(String(SUITE_SUMMARY_SCHEMA_VERSION));
   });
 
@@ -903,8 +1033,8 @@ describe("SuiteSummaryEntrySchema", () => {
   });
 
   it("accepts a SuiteSummaryEntry without an explanation field (field is optional)", () => {
-    const entry = makeValidSuiteSummaryEntry();
-    delete (entry as Record<string, unknown>).explanation;
+    const { explanation: _explanation, ...entry } =
+      makeValidSuiteSummaryEntry();
     expect(SuiteSummaryEntrySchema.safeParse(entry).success).toBe(true);
   });
 
@@ -970,8 +1100,8 @@ describe("PublicReportBundleSchema", () => {
   });
 
   it("requires schemaVersion field", () => {
-    const bundle = makeValidPublicReportBundle();
-    delete (bundle as Record<string, unknown>).schemaVersion;
+    const { schemaVersion: _schemaVersion, ...bundle } =
+      makeValidPublicReportBundle();
     const result = PublicReportBundleSchema.safeParse(bundle);
     expect(result.success).toBe(false);
   });
@@ -981,7 +1111,10 @@ describe("PublicReportBundleSchema", () => {
       makeValidPublicReportBundle({ schemaVersion: 42 }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues[0];
     expect(issue?.message).toContain(String(REPORT_BUNDLE_SCHEMA_VERSION));
   });
 
@@ -1062,8 +1195,8 @@ describe("DashboardManifestSchema", () => {
   });
 
   it("requires schemaVersion field", () => {
-    const manifest = makeValidDashboardManifest();
-    delete (manifest as Record<string, unknown>).schemaVersion;
+    const { schemaVersion: _schemaVersion, ...manifest } =
+      makeValidDashboardManifest();
     const result = DashboardManifestSchema.safeParse(manifest);
     expect(result.success).toBe(false);
   });
@@ -1073,7 +1206,10 @@ describe("DashboardManifestSchema", () => {
       makeValidDashboardManifest({ schemaVersion: 99 }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues[0];
     expect(issue?.message).toContain(String(DASHBOARD_MANIFEST_SCHEMA_VERSION));
   });
 
@@ -1143,8 +1279,8 @@ describe("SuiteHistoryManifestSchema", () => {
   });
 
   it("requires schemaVersion field", () => {
-    const manifest = makeValidSuiteHistoryManifest();
-    delete (manifest as Record<string, unknown>).schemaVersion;
+    const { schemaVersion: _schemaVersion, ...manifest } =
+      makeValidSuiteHistoryManifest();
     const result = SuiteHistoryManifestSchema.safeParse(manifest);
     expect(result.success).toBe(false);
   });
@@ -1154,7 +1290,10 @@ describe("SuiteHistoryManifestSchema", () => {
       makeValidSuiteHistoryManifest({ schemaVersion: 99 }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues[0];
     expect(issue?.message).toContain(String(SUITE_HISTORY_SCHEMA_VERSION));
   });
 
@@ -1236,8 +1375,8 @@ describe("ModelComparisonManifestSchema", () => {
   });
 
   it("requires schemaVersion field", () => {
-    const manifest = makeValidModelComparisonManifest();
-    delete (manifest as Record<string, unknown>).schemaVersion;
+    const { schemaVersion: _schemaVersion, ...manifest } =
+      makeValidModelComparisonManifest();
     const result = ModelComparisonManifestSchema.safeParse(manifest);
     expect(result.success).toBe(false);
   });
@@ -1247,7 +1386,10 @@ describe("ModelComparisonManifestSchema", () => {
       makeValidModelComparisonManifest({ schemaVersion: 99 }),
     );
     expect(result.success).toBe(false);
-    const issue = result.error!.issues[0];
+    if (result.success) {
+      throw new Error("Expected schema validation to fail");
+    }
+    const issue = result.error.issues[0];
     expect(issue?.message).toContain(String(MODEL_COMPARISON_SCHEMA_VERSION));
   });
 
@@ -1715,7 +1857,9 @@ describe("BoundedExplanation rejects raw text explanation inputs", () => {
 // ---------------------------------------------------------------------------
 
 describe("ScenarioRunHistoryEntrySchema", () => {
-  function makeValidRunHistoryEntry(overrides: Record<string, unknown> = {}) {
+  function makeValidRunHistoryEntry(
+    overrides: Partial<ScenarioRunFixture> & { extraField?: string } = {},
+  ) {
     return {
       runId: "abc1234-2026-01-15-001",
       assembledAt: "2026-01-15T12:00:00.000Z",
@@ -1809,7 +1953,11 @@ describe("ScenarioRunHistoryEntrySchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("ScenarioHistoryEntrySchema", () => {
-  function makeValidHistoryEntry(overrides: Record<string, unknown> = {}) {
+  function makeValidHistoryEntry(
+    overrides: Partial<ScenarioHistoryEntryFixture> & {
+      sensitiveField?: string;
+    } = {},
+  ) {
     return {
       caseId: "route-to-shuttle",
       title: "route-to-shuttle",
@@ -1881,7 +2029,11 @@ describe("ScenarioHistoryEntrySchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("ScenarioHistoryIndexSchema", () => {
-  function makeValidScenarioIndex(overrides: Record<string, unknown> = {}) {
+  function makeValidScenarioIndex(
+    overrides: Partial<ScenarioIndexFixture> & {
+      unexpectedKey?: string;
+    } = {},
+  ) {
     return {
       schemaVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
       suite: "loom-routing",
@@ -1932,10 +2084,7 @@ describe("ScenarioHistoryIndexSchema", () => {
   });
 
   it("rejects missing schemaVersion", () => {
-    const { schemaVersion: _, ...rest } = makeValidScenarioIndex() as Record<
-      string,
-      unknown
-    >;
+    const { schemaVersion: _schemaVersion, ...rest } = makeValidScenarioIndex();
     const result = ScenarioHistoryIndexSchema.safeParse(rest);
     expect(result.success).toBe(false);
   });

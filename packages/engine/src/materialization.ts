@@ -193,20 +193,16 @@ export function materializeAgents(
   ).map(([agentName, agentConfig]) => ({
     agentName,
     agentConfig,
-    entrySource: { source: "explicit" } as EntrySource,
+    entrySource: { source: "explicit" } satisfies EntrySource,
   }));
 
-  const generatedEntries = filterDisabled(
-    Object.entries(generatedShuttles).map(
-      ([agentName, generated]) =>
-        [agentName, generated.config] as [string, AgentConfig],
-    ),
-    disabled,
-  ).map(([agentName, agentConfig]) => ({
-    agentName,
-    agentConfig,
-    entrySource: { source: "category-shuttle" } as EntrySource,
-  }));
+  const generatedEntries = Object.entries(generatedShuttles)
+    .filter(([agentName]) => !disabled.includes(agentName))
+    .map(([agentName, generated]) => ({
+      agentName,
+      agentConfig: generated.config,
+      entrySource: { source: "category-shuttle" } satisfies EntrySource,
+    }));
 
   const reviewVariantEntries = Object.entries(generatedReviewVariants)
     .filter(([agentName]) => !disabled.includes(agentName))
@@ -217,7 +213,7 @@ export function materializeAgents(
         source: "review-variant",
         sourceAgentName: generated.sourceAgentName,
         reviewModel: generated.reviewModel,
-      } as EntrySource,
+      } satisfies EntrySource,
     }));
 
   const allTypedEntries = [
@@ -232,30 +228,20 @@ export function materializeAgents(
 
   const allAgents = Object.fromEntries(allEntries);
 
-  // Build lightweight MaterializedAgent-shaped objects for review variants so
-  // primary-mode agents can receive reviewRouting context during composition.
-  // These are pre-built before the main composition loop (review variants are
-  // generated before composition) so they are available for all primary agents.
-  const prebuiltReviewVariants: MaterializedAgent[] = reviewVariantEntries.map(
-    ({ agentName: rvName, agentConfig: _rvConfig, entrySource: rvSource }) => {
-      const rv = rvSource as {
-        source: "review-variant";
-        sourceAgentName: string;
-        reviewModel: string;
-      };
-      return {
-        agentName: rvName,
-        // descriptor is a placeholder — only agentName/source/reviewMeta are
-        // used by buildReviewRoutingContext; the real descriptor is composed later.
-        descriptor: null as unknown as import("./compose.js").AgentDescriptor,
-        source: "review-variant" as const,
-        reviewMeta: {
-          sourceAgentName: rv.sourceAgentName,
-          reviewModel: rv.reviewModel,
-        },
-      };
-    },
-  );
+  type ReviewRoutingInput = Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >;
+
+  const prebuiltReviewVariants: ReviewRoutingInput[] =
+    reviewVariantEntries.map(({ agentName, entrySource }) => ({
+      agentName,
+      source: "review-variant",
+      reviewMeta: {
+        sourceAgentName: entrySource.sourceAgentName,
+        reviewModel: entrySource.reviewModel,
+      },
+    }));
 
   const compositionPromises = allTypedEntries.map(
     ({ agentName, agentConfig, entrySource }) => {

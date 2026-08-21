@@ -13,6 +13,7 @@ import type {
   PermissionError,
 } from "../permissions/types.js";
 import { createInMemoryRuntimeStore } from "../runtime/memory-store.js";
+import type { RuntimeStore } from "../runtime/store.js";
 import { getPermissionApprovalRepository } from "../runtime/permission-repository.js";
 import { BunSqliteDialect } from "../runtime/sqlite/kysely-bun-sqlite.js";
 import { CURRENT_SCHEMA_VERSION } from "../runtime/sqlite/migrations.js";
@@ -44,10 +45,14 @@ const record = (
   state: "active",
   ...changes,
 });
-function ok<T>(result: { isOk(): boolean; value?: T }): T {
+function ok<T, E>(result: Result<T, E>): T {
   expect(result.isOk()).toBe(true);
-  if (!result.isOk()) throw new Error("expected success");
-  return result.value as T;
+  return result.match(
+    (value) => value,
+    () => {
+      throw new Error("expected success");
+    },
+  );
 }
 function temp(): string {
   const path = join(tmpdir(), `weave-permissions-${crypto.randomUUID()}`);
@@ -67,7 +72,7 @@ function sqlite(clock = 10) {
     clock: () => new Date(clock),
   });
 }
-function permissionRepository(store: object): PermissionApprovalRepository {
+function permissionRepository(store: RuntimeStore): PermissionApprovalRepository {
   return getPermissionApprovalRepository(store)._unsafeUnwrap();
 }
 function repos(): Array<[string, () => PermissionApprovalRepository]> {
@@ -113,9 +118,17 @@ for (const [name, make] of repos())
       ok(await repo.saveMany([record("x", { expiresAt: 11 })]));
       expect((await repo.match(identity, 10)).isOk()).toBe(true);
       expect((await repo.match(identity, 11))._unsafeUnwrap()).toBeUndefined();
-      for (const key of Object.keys(identity) as Array<
-        keyof GrantIdentityEnvelope
-      >)
+      const identityKeys: readonly (keyof GrantIdentityEnvelope)[] = [
+        "projectIdentity",
+        "agentName",
+        "registrationOwner",
+        "toolIdentity",
+        "registrationRevision",
+        "policyFingerprint",
+        "requestSchemaVersion",
+        "requestDigest",
+      ];
+      for (const key of identityKeys)
         expect(
           (
             await repo.match(
@@ -238,6 +251,7 @@ describe("sqlite permission persistence and schema", () => {
     ok(await permissionRepository(store).saveMany([record()]));
     await store.close();
     const db = new Database(join(dir, "runtime", "weave.db"));
+    // SAFETY: PRAGMA table_info returns rows with a stable string `name` column.
     const columns = (
       db.prepare("PRAGMA table_info(permission_grants)").all() as Array<{
         name: string;
@@ -849,7 +863,12 @@ describe("sqlite permission persistence and schema", () => {
     const store = sqlite();
     const repo = permissionRepository(store);
     const injected = await Promise.all([
-      repo.saveMany([record("bad", { scope: "once" as "durable" })]),
+      repo.saveMany([
+        record("bad", {
+          // SAFETY: This hostile fixture bypasses the static scope union to test validation.
+          scope: "once" as "durable",
+        }),
+      ]),
       repo.saveMany([
         record("good", {
           identity: { ...identity, requestDigest: "good-digest" },
@@ -1099,9 +1118,9 @@ describe("permission repository wall-clock high-water", () => {
     ).toEqual([]);
     const store = sqlite();
     const repo = permissionRepository(store);
-    expect(Object.keys(repo as object)).not.toContain("wallHighWater");
+    expect(Object.keys(repo)).not.toContain("wallHighWater");
     expect(
-      Object.getOwnPropertyNames(repo as object).filter((key) =>
+      Object.getOwnPropertyNames(repo).filter((key) =>
         key.toLowerCase().includes("highwater"),
       ),
     ).toEqual([]);
@@ -1114,17 +1133,17 @@ describe("permission repository wall-clock high-water", () => {
     for (const backend of ["memory", "sqlite"] as const) {
       let now = 10;
       const clock = () => now;
-      const store =
-        backend === "sqlite"
-          ? createSqliteRuntimeStore({
-              dbPath: join(dir, `runtime-hw-revoke-${backend}`, "weave.db"),
-              clock: () => new Date(now),
-            })
-          : null;
-      const repo =
-        backend === "memory"
-          ? new InMemoryPermissionApprovalRepository({}, clock)
-          : permissionRepository(store as NonNullable<typeof store>);
+      let store: RuntimeStore | undefined;
+      let repo: PermissionApprovalRepository;
+      if (backend === "memory") {
+        repo = new InMemoryPermissionApprovalRepository({}, clock);
+      } else {
+        store = createSqliteRuntimeStore({
+          dbPath: join(dir, `runtime-hw-revoke-${backend}`, "weave.db"),
+          clock: () => new Date(now),
+        });
+        repo = permissionRepository(store);
+      }
 
       ok(
         await repo.saveMany([
@@ -1268,7 +1287,7 @@ describe("permission repository wall-clock high-water", () => {
       const results = await Promise.all(
         stores.map((store, index) => {
           const repo = permissionRepository(store);
-          const ts = mixed[index] as number;
+          const ts = mixed[index];
           const lane = index % 3;
           inFlight += 1;
           peakInFlight = Math.max(peakInFlight, inFlight);
@@ -1344,12 +1363,17 @@ describe("permission repository wall-clock high-water", () => {
 describe("permission validation and atomic batches", () => {
   it("rejects invalid records without writing", async () => {
     const repo = new InMemoryPermissionApprovalRepository();
+    const extra = record("extra");
+    Object.defineProperty(extra, "extra", {
+      configurable: true,
+      enumerable: true,
+      value: true,
+      writable: true,
+    });
     const invalid = [
       record("", {}),
       record("bad", { display: { summary: "\uD800" } }),
-      record("extra", {
-        ...({ extra: true } as unknown as DurablePermissionGrantRecord),
-      }),
+      extra,
     ];
     for (const value of invalid)
       expect((await repo.saveMany([value])).isErr()).toBe(true);
@@ -1362,7 +1386,10 @@ describe("permission validation and atomic batches", () => {
         (
           await repo.saveMany([
             record("valid"),
-            record("invalid", { scope: "once" as "durable" }),
+            record("invalid", {
+              // SAFETY: This hostile fixture bypasses the static scope union to test validation.
+              scope: "once" as "durable",
+            }),
           ])
         ).isErr(),
       ).toBe(true);
@@ -1403,7 +1430,7 @@ describe("permission validation and atomic batches", () => {
           throw new Error("TOP_SECRET_save");
         },
       });
-      const save = await repo.saveMany([hostileRecord as never]);
+      const save = await repo.saveMany([hostileRecord]);
       expect(save.isErr()).toBe(true);
       expect(save._unsafeUnwrapErr().type).toBe("invalid_output");
       expect(JSON.stringify(save._unsafeUnwrapErr())).not.toContain(
@@ -1418,7 +1445,7 @@ describe("permission validation and atomic batches", () => {
           throw new Error("TOP_SECRET_match");
         },
       });
-      const match = await repo.match(hostileIdentity as never, 2);
+      const match = await repo.match(hostileIdentity, 2);
       expect(match._unsafeUnwrapErr().type).toBe("invalid_output");
       expect(ok(await repo.match(identity, 2))?.grantId).toBe("kept");
       expect(ok(await repo.list("project"))).toHaveLength(1);

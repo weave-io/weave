@@ -9,10 +9,11 @@
  * fake used by tests.
  */
 
-import { dlopen, ptr, read } from "bun:ffi";
+import { dlopen, type Pointer, ptr, read } from "bun:ffi";
 import { platform } from "node:os";
 import { isAbsolute } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
   type PiNativeSessionDirectory,
@@ -96,33 +97,60 @@ function validateRange(
   ) {
     return err({ type: "invalid-range" });
   }
-  return ok(undefined);
+  return ok(void 0);
 }
 
-function isFsError(value: unknown): value is PiNativeSessionFsError {
-  if (typeof value !== "object" || value === null || !("type" in value)) {
-    return false;
-  }
-  const type = (value as { type?: unknown }).type;
-  return (
-    type === "relative-xdg-data-home" ||
-    type === "empty-home" ||
-    type === "unsafe-path" ||
-    type === "unavailable" ||
-    type === "missing" ||
-    type === "symlink-rejected" ||
-    type === "identity-changed" ||
-    type === "invalid-range" ||
-    type === "permissive-mode" ||
-    type === "foreign-owner" ||
-    type === "wrong-kind" ||
-    type === "already-exists" ||
-    type === "io"
-  );
+const nativeSessionFsErrorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("relative-xdg-data-home") }).strict(),
+  z.object({ type: z.literal("empty-home") }).strict(),
+  z.object({ type: z.literal("unsafe-path") }).strict(),
+  z
+    .object({
+      type: z.literal("unavailable"),
+      operation: z.enum(["open", "read", "write", "delete", "quarantine"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("missing") }).strict(),
+  z.object({ type: z.literal("symlink-rejected") }).strict(),
+  z.object({ type: z.literal("identity-changed") }).strict(),
+  z.object({ type: z.literal("invalid-range") }).strict(),
+  z
+    .object({
+      type: z.literal("permissive-mode"),
+      kind: z.enum(["directory", "file"]),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("foreign-owner"),
+      kind: z.enum(["directory", "file"]),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("wrong-kind"),
+      kind: z.enum(["directory", "file"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("already-exists") }).strict(),
+  z.object({ type: z.literal("io") }).strict(),
+]);
+
+type ParsedNativeSessionFsError = z.infer<typeof nativeSessionFsErrorSchema>;
+
+function parseNativeSessionFsError(
+  cause: unknown,
+): ParsedNativeSessionFsError | null {
+  const parsed = Result.fromThrowable(
+    () => nativeSessionFsErrorSchema.safeParse(cause),
+    () => "unparseable-native-session-error",
+  )();
+  if (parsed.isErr() || !parsed.value.success) return null;
+  return parsed.value.data;
 }
 
-function mapThrownError(value: unknown): PiNativeSessionFsError {
-  return isFsError(value) ? value : { type: "io" };
+function mapThrownError(cause: unknown): PiNativeSessionFsError {
+  return parseNativeSessionFsError(cause) ?? { type: "io" };
 }
 
 function fsErrAsync<T = never>(
@@ -132,7 +160,7 @@ function fsErrAsync<T = never>(
 }
 
 function fsVoidAsync(): ResultAsync<void, PiNativeSessionFsError> {
-  return okAsync<void, PiNativeSessionFsError>(undefined);
+  return okAsync(void 0);
 }
 
 async function unwrapResult<T, E>(result: ResultAsync<T, E>): Promise<T> {
@@ -151,6 +179,8 @@ interface NativeFlags {
   readonly O_DIRECTORY: number;
   readonly O_NOFOLLOW: number;
   readonly O_CLOEXEC: number;
+  /** Prevent opening a FIFO or other blocking special file. */
+  readonly O_NONBLOCK: number;
   readonly AT_FDCWD: number;
 }
 
@@ -166,6 +196,7 @@ interface NativeLibc {
   readonly mkdirat: (dir: number, path: Uint8Array, mode: number) => number;
   readonly close: (fd: number) => number;
   readonly fchmod: (fd: number, mode: number) => number;
+  readonly umask: (mask: number) => number;
   readonly write: (fd: number, bytes: Uint8Array, count: number) => number;
   readonly pread: (
     fd: number,
@@ -188,10 +219,47 @@ interface NativeLibc {
   readonly dispose: () => void;
 }
 
+interface NativeFfiSymbols {
+  readonly open: (path: Pointer, flags: number, mode: number) => number;
+  readonly openat: (
+    dir: number,
+    path: Pointer,
+    flags: number,
+    mode: number,
+  ) => number;
+  readonly mkdirat: (dir: number, path: Pointer, mode: number) => number;
+  readonly close: (fd: number) => number;
+  readonly fchmod: (fd: number, mode: number) => number;
+  readonly umask: (mask: number) => number;
+  readonly write: (fd: number, bytes: Pointer, count: number) => number;
+  readonly pread: (
+    fd: number,
+    bytes: Pointer,
+    count: number,
+    offset: bigint | number,
+  ) => number;
+  readonly fsync: (fd: number) => number;
+  readonly flock: (fd: number, operation: number) => number;
+  readonly renameat: (
+    oldDir: number,
+    oldName: Pointer,
+    newDir: number,
+    newName: Pointer,
+  ) => number;
+  readonly unlinkat: (dir: number, name: Pointer, flags: number) => number;
+  readonly geteuid: () => number;
+}
+
+interface NativeFfiLibrary {
+  readonly symbols: NativeFfiSymbols;
+  readonly close: () => void;
+}
+
 const ERRNO_ENOENT = 2;
 const ERRNO_EAGAIN_LINUX = 11;
 const ERRNO_EWOULDBLOCK_DARWIN = 35;
 const ERRNO_EEXIST = 17;
+const ERRNO_EISDIR = 21;
 const FLOCK_EXCLUSIVE = 2;
 const FLOCK_NONBLOCKING = 4;
 const FLOCK_UNLOCK = 8;
@@ -208,6 +276,7 @@ function nativeFlags(): NativeFlags | undefined {
       O_DIRECTORY: 0x100000,
       O_NOFOLLOW: 0x100,
       O_CLOEXEC: 0x1000000,
+      O_NONBLOCK: 0x4,
       AT_FDCWD: -2,
     };
   }
@@ -222,20 +291,107 @@ function nativeFlags(): NativeFlags | undefined {
       O_DIRECTORY: 0x10000,
       O_NOFOLLOW: 0x20000,
       O_CLOEXEC: 0x80000,
+      O_NONBLOCK: 0x800,
       AT_FDCWD: -100,
     };
   }
   return undefined;
 }
 
+const NATIVE_FFI_DEFINITIONS = {
+  open: { args: ["ptr", "i32", "i32"], returns: "i32" },
+  openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
+  mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
+  close: { args: ["i32"], returns: "i32" },
+  fchmod: { args: ["i32", "i32"], returns: "i32" },
+  umask: { args: ["u32"], returns: "u32" },
+  write: { args: ["i32", "ptr", "i32"], returns: "i32" },
+  // off_t is 64-bit on Darwin/Linux; count/return stay i32 like write().
+  pread: { args: ["i32", "ptr", "i32", "i64"], returns: "i32" },
+  fsync: { args: ["i32"], returns: "i32" },
+  flock: { args: ["i32", "i32"], returns: "i32" },
+  renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
+  unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
+  geteuid: { args: [], returns: "u32" },
+} as const;
+
+type ErrnoSymbolName = "__error" | "__errno_location";
+
+function makeNativeLibc(
+  flags: NativeFlags,
+  library: NativeFfiLibrary,
+  errnoAccessor: () => Pointer | null,
+): NativeLibc {
+  const { symbols } = library;
+  return {
+    flags,
+    open: (path, openFlags, mode) => symbols.open(ptr(path), openFlags, mode),
+    openat: (dir, path, openFlags, mode) =>
+      symbols.openat(dir, ptr(path), openFlags, mode),
+    mkdirat: (dir, path, mode) => symbols.mkdirat(dir, ptr(path), mode),
+    close: (fd) => symbols.close(fd),
+    fchmod: (fd, mode) => symbols.fchmod(fd, mode),
+    umask: (mask) => symbols.umask(mask),
+    write: (fd, bytes, count) => symbols.write(fd, ptr(bytes), count),
+    pread: (fd, bytes, count, offset) =>
+      symbols.pread(fd, ptr(bytes), count, BigInt(offset)),
+    fsync: (fd) => symbols.fsync(fd),
+    flock: (fd, operation) => symbols.flock(fd, operation),
+    renameat: (oldDir, oldName, newDir, newName) =>
+      symbols.renameat(oldDir, ptr(oldName), newDir, ptr(newName)),
+    unlinkat: (dir, name, unlinkFlags) =>
+      symbols.unlinkat(dir, ptr(name), unlinkFlags),
+    geteuid: () => symbols.geteuid(),
+    errno: () => {
+      const pointer = errnoAccessor();
+      return pointer === null ? -1 : read.i32(pointer, 0);
+    },
+    dispose: () => library.close(),
+  };
+}
+
+function openNativeLibrary(
+  flags: NativeFlags,
+  libraryPath: string,
+  errnoName: ErrnoSymbolName,
+): NativeLibc {
+  if (errnoName === "__error") {
+    const library = dlopen(libraryPath, {
+      ...NATIVE_FFI_DEFINITIONS,
+      __error: { args: [], returns: "ptr" },
+    });
+    return makeNativeLibc(flags, library, library.symbols.__error);
+  }
+  const library = dlopen(libraryPath, {
+    ...NATIVE_FFI_DEFINITIONS,
+    __errno_location: { args: [], returns: "ptr" },
+  });
+  return makeNativeLibc(flags, library, library.symbols.__errno_location);
+}
+
+/**
+ * Keeps the requested private mode intact until the descriptor can be checked
+ * and chmoded. The native callback is synchronous, so the process mask is
+ * restored before control returns to the event loop.
+ */
+function withRestrictiveCreateMask<T>(libc: NativeLibc, operation: () => T): T {
+  const previousMask = libc.umask(0);
+  try {
+    return operation();
+  } finally {
+    libc.umask(previousMask);
+  }
+}
+
 function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
   const flags = nativeFlags();
+  const currentPlatform = platform();
   let libraryPath: string | undefined;
-  let errnoName: string | undefined;
-  if (platform() === "darwin") {
+  let errnoName: ErrnoSymbolName | undefined;
+  if (currentPlatform === "darwin") {
     libraryPath = "/usr/lib/libSystem.B.dylib";
     errnoName = "__error";
-  } else if (platform() === "linux") {
+  } else if (currentPlatform === "linux") {
     libraryPath = "libc.so.6";
     errnoName = "__errno_location";
   }
@@ -246,91 +402,10 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
   ) {
     return err({ type: "unavailable", operation: "open" });
   }
-
   return Result.fromThrowable(
-    () =>
-      dlopen(libraryPath, {
-        open: { args: ["ptr", "i32", "i32"], returns: "i32" },
-        openat: { args: ["i32", "ptr", "i32", "i32"], returns: "i32" },
-        mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
-        close: { args: ["i32"], returns: "i32" },
-        fchmod: { args: ["i32", "i32"], returns: "i32" },
-        write: { args: ["i32", "ptr", "i32"], returns: "i32" },
-        // off_t is 64-bit on Darwin/Linux; count/return stay i32 like write().
-        pread: { args: ["i32", "ptr", "i32", "i64"], returns: "i32" },
-        fsync: { args: ["i32"], returns: "i32" },
-        flock: { args: ["i32", "i32"], returns: "i32" },
-        renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
-        unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
-        geteuid: { args: [], returns: "u32" },
-        [errnoName]: { args: [], returns: "ptr" },
-      }),
+    () => openNativeLibrary(flags, libraryPath, errnoName),
     () => ({ type: "unavailable", operation: "open" }) as const,
-  )().map((library) => {
-    const symbols = library.symbols as unknown as {
-      open: (path: unknown, flags: number, mode: number) => number;
-      openat: (
-        dir: number,
-        path: unknown,
-        flags: number,
-        mode: number,
-      ) => number;
-      mkdirat: (dir: number, path: unknown, mode: number) => number;
-      close: (fd: number) => number;
-      fchmod: (fd: number, mode: number) => number;
-      write: (fd: number, bytes: unknown, count: number) => number;
-      pread: (
-        fd: number,
-        bytes: unknown,
-        count: number,
-        offset: bigint | number,
-      ) => number;
-      fsync: (fd: number) => number;
-      flock: (fd: number, operation: number) => number;
-      renameat: (
-        oldDir: number,
-        oldName: unknown,
-        newDir: number,
-        newName: unknown,
-      ) => number;
-      unlinkat: (dir: number, name: unknown, flags: number) => number;
-      geteuid: () => number;
-      [key: string]: unknown;
-    };
-    return {
-      flags,
-      open: (path: Uint8Array, openFlags: number, mode: number) =>
-        symbols.open(ptr(path), openFlags, mode),
-      openat: (
-        dir: number,
-        path: Uint8Array,
-        openFlags: number,
-        mode: number,
-      ) => symbols.openat(dir, ptr(path), openFlags, mode),
-      mkdirat: (dir: number, path: Uint8Array, mode: number) =>
-        symbols.mkdirat(dir, ptr(path), mode),
-      close: (fd: number) => symbols.close(fd),
-      fchmod: (fd: number, mode: number) => symbols.fchmod(fd, mode),
-      write: (fd: number, bytes: Uint8Array, count: number) =>
-        symbols.write(fd, ptr(bytes), count),
-      pread: (fd: number, bytes: Uint8Array, count: number, offset: number) =>
-        symbols.pread(fd, ptr(bytes), count, BigInt(offset)),
-      fsync: (fd: number) => symbols.fsync(fd),
-      flock: (fd: number, operation: number) => symbols.flock(fd, operation),
-      renameat: (
-        oldDir: number,
-        oldName: Uint8Array,
-        newDir: number,
-        newName: Uint8Array,
-      ) => symbols.renameat(oldDir, ptr(oldName), newDir, ptr(newName)),
-      unlinkat: (dir: number, name: Uint8Array, unlinkFlags: number) =>
-        symbols.unlinkat(dir, ptr(name), unlinkFlags),
-      geteuid: () => symbols.geteuid(),
-      errno: () =>
-        read.i32((symbols[errnoName] as () => unknown)() as never, 0),
-      dispose: () => library.close(),
-    } satisfies NativeLibc;
-  });
+  )();
 }
 
 function cstr(value: string): Uint8Array {
@@ -370,10 +445,7 @@ function statFd(
         kind,
       });
     }
-    if (
-      kind === "file" &&
-      (stat as unknown as { nlink?: unknown }).nlink !== 1
-    ) {
+    if (kind === "file" && stat.nlink !== 1) {
       return errAsync<NodeIdentity, PiNativeSessionFsError>({
         type: "identity-changed",
       });
@@ -410,7 +482,7 @@ function statFileFd(
         kind: "file",
       });
     }
-    if ((stat as unknown as { nlink?: unknown }).nlink !== 1) {
+    if (stat.nlink !== 1) {
       return errAsync<FileNodeIdentity, PiNativeSessionFsError>({
         type: "identity-changed",
       });
@@ -532,28 +604,26 @@ function verifyAdapterOwnedDirectoryFd(
     () => ({ type: "io" }) as const,
   )().andThen((stat) => {
     if (!stat.isDirectory()) {
-      return errAsync<void, PiNativeSessionFsError>({
+      return fsErrAsync({
         type: "wrong-kind",
         kind: "directory",
       });
     }
-    const owner = (stat as unknown as { uid?: unknown }).uid;
-    if (typeof owner === "number" && Number.isInteger(owner)) {
-      const euid = libc.geteuid();
-      if (Number.isInteger(euid) && euid >= 0 && owner !== euid) {
-        return errAsync<void, PiNativeSessionFsError>({
-          type: "foreign-owner",
-          kind: "directory",
-        });
-      }
+    const owner = stat.uid;
+    const euid = libc.geteuid();
+    if (Number.isInteger(owner) && Number.isInteger(euid) && owner !== euid) {
+      return fsErrAsync({
+        type: "foreign-owner",
+        kind: "directory",
+      });
     }
     if ((stat.mode & 0o7777) !== PI_NATIVE_SESSION_DIRECTORY_MODE) {
-      return errAsync<void, PiNativeSessionFsError>({
+      return fsErrAsync({
         type: "permissive-mode",
         kind: "directory",
       });
     }
-    return okAsync<void, PiNativeSessionFsError>(undefined);
+    return fsVoidAsync();
   });
 }
 
@@ -602,24 +672,24 @@ function openDirectoryChain(
           0,
         );
         if (next < 0 && create && libc.errno() === ERRNO_ENOENT) {
-          const mkdirResult = libc.mkdirat(current, cstr(segment), mode);
-          if (mkdirResult !== 0) {
-            const mkdirError = libc.errno();
-            if (mkdirError !== ERRNO_EEXIST) {
-              throw { type: "io" };
+          next = withRestrictiveCreateMask(libc, () => {
+            const mkdirResult = libc.mkdirat(current, cstr(segment), mode);
+            if (mkdirResult !== 0) {
+              const mkdirError = libc.errno();
+              if (mkdirError !== ERRNO_EEXIST) throw { type: "io" };
+            } else {
+              created = true;
             }
-          } else {
-            created = true;
-          }
-          next = libc.openat(
-            current,
-            cstr(segment),
-            libc.flags.O_RDONLY |
-              libc.flags.O_DIRECTORY |
-              libc.flags.O_NOFOLLOW |
-              libc.flags.O_CLOEXEC,
-            0,
-          );
+            return libc.openat(
+              current,
+              cstr(segment),
+              libc.flags.O_RDONLY |
+                libc.flags.O_DIRECTORY |
+                libc.flags.O_NOFOLLOW |
+                libc.flags.O_CLOEXEC,
+              0,
+            );
+          });
         }
         if (next < 0) {
           throw {
@@ -666,7 +736,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     const bound = this.fileBounds.get(name);
     if (identity === undefined) {
       return bound === undefined
-        ? ok(undefined)
+        ? ok(void 0)
         : err({ type: "identity-changed" });
     }
     if (bound !== undefined && !sameIdentity(bound, identity)) {
@@ -717,12 +787,13 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
       cstr(name),
       this.libc.flags.O_RDONLY |
         this.libc.flags.O_NOFOLLOW |
-        this.libc.flags.O_CLOEXEC,
+        this.libc.flags.O_CLOEXEC |
+        this.libc.flags.O_NONBLOCK,
       0,
     );
     if (fd < 0) {
       return this.libc.errno() === ERRNO_ENOENT
-        ? okAsync<NodeIdentity | undefined, PiNativeSessionFsError>(undefined)
+        ? okAsync<NodeIdentity | undefined, PiNativeSessionFsError>(void 0)
         : errAsync({ type: "symlink-rejected" });
     }
     return statFd(fd, "file", 0o600)
@@ -766,15 +837,13 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         cstr(checked.value),
         this.libc.flags.O_RDONLY |
           this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
+          this.libc.flags.O_CLOEXEC |
+          this.libc.flags.O_NONBLOCK,
         0,
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          const checkedMissing = this.checkFileIdentity(
-            checked.value,
-            undefined,
-          );
+          const checkedMissing = this.checkFileIdentity(checked.value, void 0);
           return checkedMissing.isErr()
             ? errAsync<
                 PiNativeSessionFileHandle | undefined,
@@ -783,7 +852,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
             : okAsync<
                 PiNativeSessionFileHandle | undefined,
                 PiNativeSessionFsError
-              >(undefined);
+              >(void 0);
         }
         return fsErrAsync<PiNativeSessionFileHandle | undefined>({
           type: "symlink-rejected",
@@ -853,10 +922,8 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         current !== undefined &&
         sameIdentity(current, openedIdentity) &&
         current.mode === openedIdentity.mode
-          ? okAsync<void, PiNativeSessionFsError>(undefined)
-          : errAsync<void, PiNativeSessionFsError>({
-              type: "identity-changed",
-            }),
+          ? fsVoidAsync()
+          : fsErrAsync({ type: "identity-changed" }),
       );
     return {
       identity: opened,
@@ -922,15 +989,13 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         cstr(checked.value),
         this.libc.flags.O_RDONLY |
           this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
+          this.libc.flags.O_CLOEXEC |
+          this.libc.flags.O_NONBLOCK,
         0,
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          const checkedMissing = this.checkFileIdentity(
-            checked.value,
-            undefined,
-          );
+          const checkedMissing = this.checkFileIdentity(checked.value, void 0);
           return checkedMissing.isErr()
             ? errAsync<
                 PiNativeSessionFileStat | undefined,
@@ -939,7 +1004,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
             : okAsync<
                 PiNativeSessionFileStat | undefined,
                 PiNativeSessionFsError
-              >(undefined);
+              >(void 0);
         }
         return fsErrAsync<PiNativeSessionFileStat | undefined>({
           type: "symlink-rejected",
@@ -987,15 +1052,13 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         cstr(checked.value),
         this.libc.flags.O_RDONLY |
           this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
+          this.libc.flags.O_CLOEXEC |
+          this.libc.flags.O_NONBLOCK,
         0,
       );
       if (file < 0) {
         if (this.libc.errno() === ERRNO_ENOENT) {
-          const checkedMissing = this.checkFileIdentity(
-            checked.value,
-            undefined,
-          );
+          const checkedMissing = this.checkFileIdentity(checked.value, void 0);
           return checkedMissing.isErr()
             ? errAsync<
                 PiNativeSessionFileRange | undefined,
@@ -1004,7 +1067,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
             : okAsync<
                 PiNativeSessionFileRange | undefined,
                 PiNativeSessionFsError
-              >(undefined);
+              >(void 0);
         }
         return fsErrAsync<PiNativeSessionFileRange | undefined>({
           type: "symlink-rejected",
@@ -1053,23 +1116,30 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         this.libc.flags.O_RDWR |
           this.libc.flags.O_APPEND |
           this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
+          this.libc.flags.O_CLOEXEC |
+          this.libc.flags.O_NONBLOCK,
         0,
       );
       let created = false;
       if (fd < 0) {
-        if (this.libc.errno() !== ERRNO_ENOENT)
-          throw { type: "symlink-rejected" };
-        fd = this.libc.openat(
-          this.fd,
-          cstr(name),
-          this.libc.flags.O_RDWR |
-            this.libc.flags.O_CREAT |
-            this.libc.flags.O_EXCL |
-            this.libc.flags.O_APPEND |
-            this.libc.flags.O_NOFOLLOW |
-            this.libc.flags.O_CLOEXEC,
-          0,
+        const openError = this.libc.errno();
+        if (openError === ERRNO_EISDIR) {
+          throw { type: "wrong-kind", kind: "file" };
+        }
+        if (openError !== ERRNO_ENOENT) throw { type: "symlink-rejected" };
+        fd = withRestrictiveCreateMask(this.libc, () =>
+          this.libc.openat(
+            this.fd,
+            cstr(name),
+            this.libc.flags.O_RDWR |
+              this.libc.flags.O_CREAT |
+              this.libc.flags.O_EXCL |
+              this.libc.flags.O_APPEND |
+              this.libc.flags.O_NOFOLLOW |
+              this.libc.flags.O_CLOEXEC |
+              this.libc.flags.O_NONBLOCK,
+            0o600,
+          ),
         );
         if (fd < 0) throw { type: "io" };
         created = true;
@@ -1108,7 +1178,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
         if (!closed) this.libc.close(fd);
         if (created && !closed) this.libc.unlinkat(this.fd, cstr(name), 0);
       }
-    }, mapThrownError)().map(() => undefined);
+    }, mapThrownError)().andThen(() => fsVoidAsync());
   }
 
   appendFile(
@@ -1146,15 +1216,18 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     bytes: Uint8Array,
   ): ResultAsync<void, PiNativeSessionFsError> {
     return ResultAsync.fromThrowable(async () => {
-      const fd = this.libc.openat(
-        this.fd,
-        cstr(name),
-        this.libc.flags.O_RDWR |
-          this.libc.flags.O_CREAT |
-          this.libc.flags.O_EXCL |
-          this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
-        0o600,
+      const fd = withRestrictiveCreateMask(this.libc, () =>
+        this.libc.openat(
+          this.fd,
+          cstr(name),
+          this.libc.flags.O_RDWR |
+            this.libc.flags.O_CREAT |
+            this.libc.flags.O_EXCL |
+            this.libc.flags.O_NOFOLLOW |
+            this.libc.flags.O_CLOEXEC |
+            this.libc.flags.O_NONBLOCK,
+          0o600,
+        ),
       );
       if (fd < 0) {
         if (this.libc.errno() === ERRNO_EEXIST) {
@@ -1196,7 +1269,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
           this.libc.unlinkat(this.fd, cstr(name), 0);
         }
       }
-    }, mapThrownError)().map(() => undefined);
+    }, mapThrownError)().andThen(() => fsVoidAsync());
   }
 
   deleteFile(name: string): ResultAsync<void, PiNativeSessionFsError> {
@@ -1210,14 +1283,14 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
           .andThen(() => this.targetIdentity(checked.value))
           .andThen((current) => {
             if (current === undefined || !sameIdentity(target, current)) {
-              return fsErrAsync<void>({ type: "identity-changed" });
+              return fsErrAsync({ type: "identity-changed" });
             }
             const result = this.libc.unlinkat(this.fd, cstr(checked.value), 0);
             if (result === 0 || this.libc.errno() === ERRNO_ENOENT) {
               this.fileBounds.delete(checked.value);
               return fsVoidAsync();
             }
-            return fsErrAsync<void>({ type: "io" });
+            return fsErrAsync({ type: "io" });
           });
       });
   }
@@ -1226,7 +1299,7 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     return this.identity().andThen(() =>
       this.libc.fsync(this.fd) === 0
         ? fsVoidAsync()
-        : fsErrAsync<void>({ type: "io" }),
+        : fsErrAsync({ type: "io" }),
     );
   }
 
@@ -1236,16 +1309,23 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     const safe = this.name(name);
     if (safe.isErr()) return fsErrAsync(safe.error);
     return this.identity().andThen(() => {
-      const fd = this.libc.openat(
-        this.fd,
-        cstr(safe.value),
-        this.libc.flags.O_RDWR |
-          this.libc.flags.O_CREAT |
-          this.libc.flags.O_NOFOLLOW |
-          this.libc.flags.O_CLOEXEC,
-        0o600,
+      const fd = withRestrictiveCreateMask(this.libc, () =>
+        this.libc.openat(
+          this.fd,
+          cstr(safe.value),
+          this.libc.flags.O_RDWR |
+            this.libc.flags.O_CREAT |
+            this.libc.flags.O_NOFOLLOW |
+            this.libc.flags.O_CLOEXEC |
+            this.libc.flags.O_NONBLOCK,
+          0o600,
+        ),
       );
-      if (fd < 0) return fsErrAsync({ type: "io" });
+      if (fd < 0) {
+        return this.libc.errno() === ERRNO_EISDIR
+          ? fsErrAsync({ type: "wrong-kind", kind: "file" })
+          : fsErrAsync({ type: "io" });
+      }
       if (this.libc.fchmod(fd, 0o600) !== 0) {
         this.libc.close(fd);
         return fsErrAsync({ type: "io" });
@@ -1489,7 +1569,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     if (data === undefined) return errAsync({ type: "missing" });
     if (data.symlink) return errAsync({ type: "symlink-rejected" });
     const bound = data.identity;
-    const fs = this;
+    const memoryFs = (): MemoryPiNativeSessionFs => this;
     const fileBounds = new Map<string, NodeIdentity>();
     let closed = false;
 
@@ -1500,7 +1580,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       const known = fileBounds.get(name);
       if (identity === undefined) {
         return known === undefined
-          ? ok(undefined)
+          ? ok(void 0)
           : err({ type: "identity-changed" });
       }
       if (known !== undefined && !sameIdentity(known, identity)) {
@@ -1523,11 +1603,14 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       path,
       identity(): ResultAsync<NodeIdentity, PiNativeSessionFsError> {
         if (closed) return errAsync({ type: "unavailable", operation: "open" });
-        const current = fs.directories.get(path);
+        const current = memoryFs().directories.get(path);
         if (current === undefined || current.symlink) {
           return errAsync({ type: "symlink-rejected" });
         }
-        if (fs.replaced.has(path) || !sameIdentity(current.identity, bound)) {
+        if (
+          memoryFs().replaced.has(path) ||
+          !sameIdentity(current.identity, bound)
+        ) {
           return errAsync({ type: "identity-changed" });
         }
         if (current.identity.mode !== 0o700) {
@@ -1547,9 +1630,9 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           PiNativeSessionFsError
         > => this.identity();
         return directoryIdentity().andThen(() => {
-          const file = fs.directories.get(path)?.files.get(name);
+          const file = memoryFs().directories.get(path)?.files.get(name);
           if (file === undefined) {
-            const checkedMissing = checkFileIdentity(name, undefined);
+            const checkedMissing = checkFileIdentity(name, void 0);
             return checkedMissing.isErr()
               ? errAsync<
                   PiNativeSessionFileHandle | undefined,
@@ -1558,7 +1641,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
               : okAsync<
                   PiNativeSessionFileHandle | undefined,
                   PiNativeSessionFsError
-                >(undefined);
+                >(void 0);
           }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
@@ -1568,7 +1651,7 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           // Name resolution ends here. The handle keeps the resolved node and
           // the leaf name it came from, so later reads both read the resolved
           // node and re-check that the name still points at it.
-          fs.applyPostValidationSwap(path, name);
+          memoryFs().applyPostValidationSwap(path, name);
           let fileClosed = false;
           /**
            * Mirrors the production no-follow, directory-relative leaf probe:
@@ -1576,13 +1659,13 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
            * unrenamed, not a symlink, not hardlinked, same mode.
            */
           const verifyLeaf = (): Result<void, PiNativeSessionFsError> => {
-            const current = fs.directories.get(path)?.files.get(name);
+            const current = memoryFs().directories.get(path)?.files.get(name);
             if (current === undefined) return err({ type: "identity-changed" });
             const validated = validateMemoryFile(current);
             if (validated.isErr()) return err(validated.error);
             return sameIdentity(current.identity, file.identity) &&
               current.mode === file.mode
-              ? ok(undefined)
+              ? ok(void 0)
               : err({ type: "identity-changed" });
           };
           const handleForFile: PiNativeSessionFileHandle = {
@@ -1627,10 +1710,14 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                 }
                 // One content read per check pair. A forced short cap defers
                 // mutations/swaps so the next readRange re-checks before bytes.
-                const shortCap = fs.takeForcedShortCap(path, name, offset);
+                const shortCap = memoryFs().takeForcedShortCap(
+                  path,
+                  name,
+                  offset,
+                );
                 if (shortCap === undefined) {
-                  fs.applyMidReadLeafSwap(path, name);
-                  fs.applyMidReadMutation(path, name, file);
+                  memoryFs().applyMidReadLeafSwap(path, name);
+                  memoryFs().applyMidReadMutation(path, name, file);
                 }
                 if (!sameFileStat(memoryFileStat(file), opened)) {
                   return fsErrAsync<PiNativeSessionFileRange>({
@@ -1673,24 +1760,24 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       > {
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
         return this.identity().andThen(() => {
-          const file = fs.directories.get(path)?.files.get(name);
+          const file = memoryFs().directories.get(path)?.files.get(name);
           if (file === undefined) {
-            const checkedMissing = checkFileIdentity(name, undefined);
+            const checkedMissing = checkFileIdentity(name, void 0);
             return checkedMissing.isErr()
               ? errAsync<
                   PiNativeSessionFileStat | undefined,
                   PiNativeSessionFsError
                 >(checkedMissing.error)
-              : okAsync<PiNativeSessionFileStat | undefined>(undefined);
+              : okAsync<PiNativeSessionFileStat | undefined>(void 0);
           }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
           const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
           const identity = memoryFileStat(file);
-          fs.applyPostValidationSwap(path, name);
+          memoryFs().applyPostValidationSwap(path, name);
           return this.identity().andThen(() => {
-            const current = fs.directories.get(path)?.files.get(name);
+            const current = memoryFs().directories.get(path)?.files.get(name);
             return current !== undefined &&
               sameIdentity(current.identity, file.identity) &&
               current.bytes.length === identity.size
@@ -1715,30 +1802,30 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         if (range.isErr()) return errAsync(range.error);
         if (!safeName(name)) return errAsync({ type: "unsafe-path" });
         return this.identity().andThen(() => {
-          const file = fs.directories.get(path)?.files.get(name);
+          const file = memoryFs().directories.get(path)?.files.get(name);
           if (file === undefined) {
-            const checkedMissing = checkFileIdentity(name, undefined);
+            const checkedMissing = checkFileIdentity(name, void 0);
             return checkedMissing.isErr()
               ? errAsync<
                   PiNativeSessionFileRange | undefined,
                   PiNativeSessionFsError
                 >(checkedMissing.error)
-              : okAsync<PiNativeSessionFileRange | undefined>(undefined);
+              : okAsync<PiNativeSessionFileRange | undefined>(void 0);
           }
           const checked = validateMemoryFile(file);
           if (checked.isErr()) return errAsync(checked.error);
           const before = memoryFileStat(file);
           const boundFile = checkFileIdentity(name, file.identity);
           if (boundFile.isErr()) return errAsync(boundFile.error);
-          fs.applyPostValidationSwap(path, name);
+          memoryFs().applyPostValidationSwap(path, name);
 
-          fs.applyMidReadMutation(path, name, file);
+          memoryFs().applyMidReadMutation(path, name, file);
 
           const start = Math.min(offset, file.bytes.length);
           const end = Math.min(offset + length, file.bytes.length);
           const bytes = file.bytes.slice(start, end);
 
-          const current = fs.directories.get(path)?.files.get(name);
+          const current = memoryFs().directories.get(path)?.files.get(name);
           if (
             current === undefined ||
             !sameIdentity(current.identity, file.identity) ||
@@ -1756,19 +1843,19 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
         });
       },
       appendFile(name, bytes, mode) {
-        if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
+        if (!safeName(name)) return fsErrAsync({ type: "unsafe-path" });
         if (mode !== 0o600) {
-          return fsErrAsync<void>({
+          return fsErrAsync({
             type: "permissive-mode",
             kind: "file",
           });
         }
-        const forced = fs.takeAppendFailure(path, name);
-        if (forced !== undefined) return fsErrAsync<void>(forced);
+        const forced = memoryFs().takeAppendFailure(path, name);
+        if (forced !== undefined) return fsErrAsync(forced);
         return this.identity().andThen(() => {
-          const current = fs.directories.get(path);
+          const current = memoryFs().directories.get(path);
           if (current === undefined) {
-            return fsErrAsync<void>({
+            return fsErrAsync({
               type: "unavailable",
               operation: "write",
             });
@@ -1796,45 +1883,45 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
             existing.bytes = next;
             existing.mtimeMs = nextMemoryMtime();
           }
-          return this.identity().map<void>(() => undefined);
+          return this.identity().andThen(() => fsVoidAsync());
         });
       },
       sync() {
-        const failure = fs.syncFailures.shift();
+        const failure = memoryFs().syncFailures.shift();
         if (failure !== undefined) return fsErrAsync(failure);
-        return this.identity().map<void>(() => undefined);
+        return this.identity().andThen(() => fsVoidAsync());
       },
       tryExclusiveLock(name) {
         if (!safeName(name)) return fsErrAsync({ type: "unsafe-path" });
         const lockKey = `${path}/${name}`;
-        if (fs.heldLocks.has(lockKey)) {
+        if (memoryFs().heldLocks.has(lockKey)) {
           return fsErrAsync({ type: "already-exists" });
         }
-        fs.heldLocks.add(lockKey);
+        memoryFs().heldLocks.add(lockKey);
         return okAsync({
           release: () => {
-            fs.heldLocks.delete(lockKey);
+            memoryFs().heldLocks.delete(lockKey);
           },
         });
       },
       createExclusiveFile(name, bytes, mode) {
-        if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
+        if (!safeName(name)) return fsErrAsync({ type: "unsafe-path" });
         if (mode !== 0o600) {
-          return fsErrAsync<void>({
+          return fsErrAsync({
             type: "permissive-mode",
             kind: "file",
           });
         }
         return this.identity().andThen(() => {
-          const key = fs.midReadKey(path, name);
-          const forced = fs.exclusiveCreateFailures.get(key);
+          const key = memoryFs().midReadKey(path, name);
+          const forced = memoryFs().exclusiveCreateFailures.get(key);
           if (forced !== undefined) {
-            fs.exclusiveCreateFailures.delete(key);
-            return fsErrAsync<void>(forced);
+            memoryFs().exclusiveCreateFailures.delete(key);
+            return fsErrAsync(forced);
           }
-          const current = fs.directories.get(path);
+          const current = memoryFs().directories.get(path);
           if (current === undefined) {
-            return fsErrAsync<void>({
+            return fsErrAsync({
               type: "unavailable",
               operation: "write",
             });
@@ -1842,9 +1929,9 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           const existing = current.files.get(name);
           if (existing !== undefined) {
             if (existing.symlink) {
-              return fsErrAsync<void>({ type: "symlink-rejected" });
+              return fsErrAsync({ type: "symlink-rejected" });
             }
-            return fsErrAsync<void>({ type: "already-exists" });
+            return fsErrAsync({ type: "already-exists" });
           }
           const created: MemoryFileData = {
             identity: nextMemoryIdentity(0o600),
@@ -1856,17 +1943,17 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           };
           current.files.set(name, created);
           fileBounds.set(name, created.identity);
-          return this.identity().map<void>(() => undefined);
+          return this.identity().andThen(() => fsVoidAsync());
         });
       },
       deleteFile(name) {
-        if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
-        const forced = fs.takeDeleteFailure(path, name);
-        if (forced !== undefined) return fsErrAsync<void>(forced);
+        if (!safeName(name)) return fsErrAsync({ type: "unsafe-path" });
+        const forced = memoryFs().takeDeleteFailure(path, name);
+        if (forced !== undefined) return fsErrAsync(forced);
         return this.identity().andThen(() => {
-          const current = fs.directories.get(path);
+          const current = memoryFs().directories.get(path);
           if (current === undefined) {
-            return fsErrAsync<void>({
+            return fsErrAsync({
               type: "unavailable",
               operation: "delete",
             });

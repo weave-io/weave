@@ -42,7 +42,8 @@ const MARKER_INTERRUPTED = "interrupted";
 const MARKER_TERMINAL = "terminal";
 
 function renderWidth(width: number | undefined): number {
-  if (width === undefined || !Number.isFinite(width)) return DEFAULT_RENDER_WIDTH;
+  if (width === undefined || !Number.isFinite(width))
+    return DEFAULT_RENDER_WIDTH;
   return Math.max(1, Math.min(MAX_RENDER_WIDTH, Math.floor(width)));
 }
 
@@ -157,10 +158,15 @@ function getNodeMetadata(
     return nodeMetadata.get(nodeId);
   }
 
-  return (nodeMetadata as Readonly<Record<string, ChildTreeRenderNodeMetadata>>)[nodeId];
+  for (const [key, metadata] of Object.entries(nodeMetadata)) {
+    if (key === nodeId) return metadata;
+  }
+  return undefined;
 }
 
-function buildMarkers(meta: ChildTreeRenderNodeMetadata | undefined): readonly string[] {
+function buildMarkers(
+  meta: ChildTreeRenderNodeMetadata | undefined,
+): readonly string[] {
   const markers: string[] = [];
   if (meta === undefined) return markers;
   if (meta.trimmed === true) markers.push(MARKER_TRIMMED);
@@ -185,7 +191,10 @@ export function renderChildTreeLines(
     const meta = getNodeMetadata(options.nodeMetadata, node.id);
 
     const safeName = sanitizeText(node.name);
-    const safeTool = node.currentTool !== undefined ? sanitizeText(node.currentTool) : undefined;
+    const safeTool =
+      node.currentTool !== undefined
+        ? sanitizeText(node.currentTool)
+        : undefined;
     const markers = buildMarkers(meta);
 
     const statusParts: string[] = [`[${node.status}]`];

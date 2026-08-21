@@ -6,7 +6,6 @@ import {
   utf8Bytes,
 } from "./canonical.js";
 import type {
-  JsonValue,
   PermissionError,
   PermissionRegistration,
   PermissionRegistrationContext,
@@ -44,7 +43,19 @@ const keys = [
 const generationToken = Symbol("PermissionRegistryGeneration");
 const generationBrand = new WeakSet<object>();
 
+type ObjectLike<T> = T & object;
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type MutableSafeRegistration = {
+  toolIdentity: string;
+  owner: string;
+  revision: string;
+  summary: string;
+  details?: string;
+  resolver: PermissionResolver;
+};
+type MutableDisplayInput = { summary: string; details?: string };
 type RegistryGenerationState = {
+  readonly generation: PermissionRegistryGeneration;
   readonly registrations: ReadonlyMap<string, SafeRegistration>;
   readonly identity: string;
   readonly id: string;
@@ -105,7 +116,7 @@ function reserveGenerationId(
     )();
     if (generated.isErr()) return err(generated.error);
     const id = generated.value;
-    if (typeof id !== "string" || id.length === 0 || hasLoneSurrogate(id))
+    if (id.length === 0 || hasLoneSurrogate(id))
       return err(invalidRegistry("unable to create registry generation"));
     if (issuedGenerationIds.has(id)) continue;
     issuedGenerationIds.add(id);
@@ -119,7 +130,7 @@ const compareCodeUnits = (a: string, b: string): number => {
   if (a > b) return 1;
   return 0;
 };
-const hasLoneSurrogate = (value: string): boolean => {
+function hasLoneSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
@@ -132,93 +143,143 @@ const hasLoneSurrogate = (value: string): boolean => {
     if (code >= 0xdc00 && code <= 0xdfff) return true;
   }
   return false;
-};
+}
 
 type SafeRegistration = Readonly<PermissionRegistration>;
 type Metadata = Omit<PermissionRegistration, "resolver">;
 
-function readOwnData(
-  value: object,
+const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
+  value !== null && value !== undefined && Object(value) === value;
+
+const primitiveTag = <T>(value: T): string => {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Object(value) === value) return "object";
+  const tagged = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Object]",
+  )();
+  return tagged.isOk() ? tagged.value : "[object Object]";
+};
+
+const isCallable = <T>(value: T): value is T & PermissionResolver => {
+  const source = Result.fromThrowable(
+    () => Function.prototype.toString.call(value),
+    () => "",
+  )();
+  return source.isOk() && !source.value.trimStart().startsWith("class ");
+};
+
+const parseText = <T>(
+  value: T,
+  max: number,
+  name: string,
+): Result<string, PermissionError> => {
+  if (primitiveTag(value) !== "[object String]")
+    return err(invalid(`${name} must be a nonempty string`));
+  const text = String(value);
+  if (text.length === 0 || hasLoneSurrogate(text))
+    return err(invalid(`${name} must be a nonempty string`));
+  if (utf8Bytes(text, max).isErr())
+    return err(invalid(`${name} exceeds ${max} UTF-8 bytes`));
+  return ok(text);
+};
+
+function readOwnData<T>(
+  value: T,
   allowed: readonly string[],
-): Result<Record<string, PropertyDescriptor>, PermissionError> {
-  const allowedSet = new Set(allowed);
-  const descriptors: Record<string, PropertyDescriptor> = Object.create(null);
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string" || !allowedSet.has(key))
-      return err(invalid("registration has unexpected metadata"));
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable)
-      return err(invalid("registration contains an accessor or hidden field"));
-    descriptors[key] = descriptor;
-  }
-  return ok(descriptors);
+): Result<SnapshotFields, PermissionError> {
+  return Result.fromThrowable(
+    () => {
+      if (!isObjectLike(value))
+        return err(invalid("registration must be an object"));
+      if (Object.getPrototypeOf(value) !== Object.prototype)
+        return err(invalid("registration has an unsafe prototype"));
+      const allowedSet = new Set(allowed);
+      const descriptors = new Map<string, PropertyDescriptor>();
+      for (const key of Reflect.ownKeys(value)) {
+        if (Object.prototype.toString.call(key) !== "[object String]")
+          return err(invalid("registration has unexpected metadata"));
+        const text = String(key);
+        if (!allowedSet.has(text))
+          return err(invalid("registration has unexpected metadata"));
+        const descriptor = Object.getOwnPropertyDescriptor(value, text);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          !descriptor.enumerable
+        )
+          return err(
+            invalid("registration contains an accessor or hidden field"),
+          );
+        descriptors.set(text, descriptor);
+      }
+      return ok(descriptors);
+    },
+    () => invalid("invalid registration"),
+  )().andThen((result) => result);
 }
 
-function validateRegistrationUnsafe(
-  value: unknown,
+function validateRegistrationUnsafe<T>(
+  value: T,
 ): Result<SafeRegistration, PermissionError> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return err(invalid("registration must be an object"));
-  const object = value as object;
-  if (Object.getPrototypeOf(object) !== Object.prototype)
-    return err(invalid("registration has an unsafe prototype"));
-  const fields = readOwnData(object, keys);
+  const fields = readOwnData(value, keys);
   if (fields.isErr()) return err(fields.error);
   const requiredKeys = keys.filter((key) => key !== "details");
-  if (
-    requiredKeys.some((key) => !fields.value[key]) ||
-    fields.value.resolver?.value === undefined
-  )
-    return err(invalid("registration is missing required fields"));
-  const resolver = fields.value.resolver.value;
-  if (typeof resolver !== "function")
+  for (const key of requiredKeys) {
+    if (!fields.value.has(key))
+      return err(invalid("registration is missing required fields"));
+  }
+  const resolverValue = fields.value.get("resolver")?.value;
+  if (resolverValue === undefined || !isCallable(resolverValue))
     return err(invalid("resolver must be a function"));
-  const toolIdentity = fields.value.toolIdentity.value;
-  const owner = fields.value.owner.value;
-  const revision = fields.value.revision.value;
-  if (
-    typeof toolIdentity !== "string" ||
-    typeof owner !== "string" ||
-    typeof revision !== "string" ||
-    toolIdentity.length === 0 ||
-    owner.length === 0 ||
-    revision.length === 0
-  )
+  const toolIdentity = parseText(
+    fields.value.get("toolIdentity")?.value,
+    256,
+    "tool identity",
+  );
+  const owner = parseText(fields.value.get("owner")?.value, 128, "owner");
+  const revision = parseText(
+    fields.value.get("revision")?.value,
+    64,
+    "semantic revision",
+  );
+  if (toolIdentity.isErr() || owner.isErr() || revision.isErr())
     return err(
       invalid("registration identity fields must be nonempty strings"),
     );
-  const identityFields: readonly [string, number, string][] = [
-    [toolIdentity, 256, "tool identity"],
-    [owner, 128, "owner"],
-    [revision, 64, "semantic revision"],
-  ];
-  for (const [field, max, name] of identityFields) {
-    if (hasLoneSurrogate(field))
-      return err(invalid(`${name} contains a lone surrogate`));
-    if (utf8Bytes(field, max).isErr())
-      return err(invalid(`${name} exceeds ${max} UTF-8 bytes`));
-  }
-  const display = sanitizePermissionDisplay({
-    summary: fields.value.summary?.value,
-    ...(fields.value.details ? { details: fields.value.details.value } : {}),
+
+  const displayInput: MutableDisplayInput = {
+    summary: toolIdentity.value,
+  };
+  const summary = sanitizePermissionDisplay({
+    summary: fields.value.get("summary")?.value,
   });
-  if (display.isErr()) return err(invalid("invalid registration display"));
-  return ok(
-    Object.freeze({
-      toolIdentity,
-      owner,
-      revision,
-      summary: display.value.summary,
-      ...(display.value.details === undefined
-        ? {}
-        : { details: display.value.details }),
-      resolver: resolver as PermissionResolver,
-    }),
-  );
+  if (summary.isErr()) return err(invalid("invalid registration display"));
+  displayInput.summary = summary.value.summary;
+  const detailsDescriptor = fields.value.get("details");
+  if (detailsDescriptor !== undefined) {
+    const details = sanitizePermissionDisplay({
+      summary: displayInput.summary,
+      details: detailsDescriptor.value,
+    });
+    if (details.isErr()) return err(invalid("invalid registration display"));
+    if (details.value.details !== undefined)
+      displayInput.details = details.value.details;
+  }
+  const safe: MutableSafeRegistration = {
+    toolIdentity: toolIdentity.value,
+    owner: owner.value,
+    revision: revision.value,
+    summary: displayInput.summary,
+    resolver: resolverValue,
+  };
+  if (displayInput.details !== undefined) safe.details = displayInput.details;
+  return ok(Object.freeze(safe));
 }
 
-function validateRegistration(
-  value: unknown,
+function validateRegistration<T>(
+  value: T,
 ): Result<SafeRegistration, PermissionError> {
   return Result.fromThrowable(
     () => validateRegistrationUnsafe(value),
@@ -242,10 +303,10 @@ function inventoryFromState(
   return Object.freeze(result);
 }
 
-function requireGenerationState(
-  value: object,
+function requireGenerationState<T>(
+  value: T,
 ): Result<RegistryGenerationState, PermissionError> {
-  if (!generationBrand.has(value))
+  if (!isObjectLike(value) || !generationBrand.has(value))
     return err(invalidRegistry("invalid registry generation"));
   const state = generationState.get(value);
   if (!state) return err(invalidRegistry("invalid registry generation"));
@@ -305,7 +366,7 @@ export class PermissionRegistryBuilder {
           });
         }
         this.#registrations.set(checked.value.toolIdentity, checked.value);
-        return ok(undefined);
+        return ok(void 0);
       },
       () => invalid("invalid registration"),
     )().andThen((result) => result);
@@ -386,6 +447,7 @@ export class PermissionRegistryGeneration {
     generationState.set(
       this,
       Object.freeze({
+        generation: this,
         registrations,
         identity,
         id,
@@ -435,8 +497,8 @@ Object.freeze(PermissionRegistryBuilder);
  * Internal non-virtual registration lookup for authorization and permit
  * revalidation. Backed by module-private WeakMap state, not instance methods.
  */
-export function lookupRegistryRegistration(
-  generation: PermissionRegistryGeneration,
+export function lookupRegistryRegistration<T>(
+  generation: T,
   toolIdentity: string,
 ): Result<PermissionRegistration | undefined, PermissionError> {
   return requireGenerationState(generation).map((state) =>
@@ -448,8 +510,8 @@ export function lookupRegistryRegistration(
  * Internal non-virtual inventory snapshot for coverage verification and other
  * authoritative engine paths.
  */
-export function readRegistryInventory(
-  generation: PermissionRegistryGeneration,
+export function readRegistryInventory<T>(
+  generation: T,
 ): Result<readonly PermissionRegistrationMetadata[], PermissionError> {
   return requireGenerationState(generation).map(inventoryFromState);
 }
@@ -458,8 +520,8 @@ export function readRegistryInventory(
  * Internal non-virtual generation id/identity for authorization, permit
  * revalidation, replacement, and coverage verification.
  */
-export function readRegistryGenerationMeta(
-  generation: PermissionRegistryGeneration,
+export function readRegistryGenerationMeta<T>(
+  generation: T,
 ): Result<{ readonly identity: string; readonly id: string }, PermissionError> {
   return requireGenerationState(generation).map((state) =>
     Object.freeze({ identity: state.identity, id: state.id }),
@@ -467,59 +529,59 @@ export function readRegistryGenerationMeta(
 }
 
 /** Internal brand guard used by permission and execution-lifecycle code. */
-export function validatePermissionRegistryGeneration(
-  value: unknown,
+export function validatePermissionRegistryGeneration<T>(
+  value: T,
 ): Result<PermissionRegistryGeneration, PermissionError> {
-  if (typeof value !== "object" || value === null)
-    return err(invalidRegistry("invalid registry generation"));
   const state = requireGenerationState(value);
   if (state.isErr()) return err(state.error);
-  return ok(value as PermissionRegistryGeneration);
+  if (!isObjectLike(value))
+    return err(invalidRegistry("invalid registry generation"));
+  return ok(state.value.generation);
 }
 
 const contextKeys = ["toolIdentity", "owner", "revision"] as const;
-function safeContext(
-  value: PermissionRegistrationContext,
+function safeContext<T>(
+  value: T,
 ): Result<PermissionRegistrationContext, PermissionError> {
   return Result.fromThrowable(
     () => {
-      if (
-        !value ||
-        typeof value !== "object" ||
-        Array.isArray(value) ||
-        Object.getPrototypeOf(value) !== Object.prototype
-      )
+      const fields = readOwnData(value, contextKeys);
+      if (fields.isErr()) return err(invalid("invalid resolver context"));
+      const toolIdentity = parseText(
+        fields.value.get("toolIdentity")?.value,
+        256,
+        "tool identity",
+      );
+      const owner = parseText(fields.value.get("owner")?.value, 128, "owner");
+      const revision = parseText(
+        fields.value.get("revision")?.value,
+        64,
+        "revision",
+      );
+      if (toolIdentity.isErr() || owner.isErr() || revision.isErr())
         return err(invalid("invalid resolver context"));
-      const fields = readOwnData(value as object, contextKeys);
-      if (fields.isErr() || contextKeys.some((key) => !fields.value[key]))
-        return err(invalid("invalid resolver context"));
-      const values: Record<string, string> = Object.create(null);
-      for (const key of contextKeys) {
-        let maxBytes = 256;
-        if (key === "revision") maxBytes = 64;
-        if (key === "owner") maxBytes = 128;
-        const field = fields.value[key].value;
-        if (
-          typeof field !== "string" ||
-          hasLoneSurrogate(field) ||
-          utf8Bytes(field, maxBytes).isErr()
-        )
-          return err(invalid("invalid resolver context"));
-        values[key] = field;
-      }
       return ok(
-        Object.freeze(values) as unknown as PermissionRegistrationContext,
+        Object.freeze({
+          toolIdentity: toolIdentity.value,
+          owner: owner.value,
+          revision: revision.value,
+        }),
       );
     },
     () => invalid("invalid resolver context"),
   )().andThen((result) => result);
 }
 
-export function invokePermissionResolver(
-  resolver: PermissionResolver,
-  call: JsonValue,
-  context: PermissionRegistrationContext,
+export function invokePermissionResolver<T, U, V>(
+  resolver: T,
+  call: U,
+  context: V,
 ): Result<readonly PermissionRequest[], PermissionError> {
+  if (!isCallable(resolver))
+    return err({
+      type: "invalid_output",
+      message: "permission resolver is not callable",
+    });
   const safeCall = cloneAndFreezeJson(call);
   if (safeCall.isErr()) return err(safeCall.error);
   const checkedContext = safeContext(context);

@@ -1,0 +1,5 @@
+{
+  "name": "@weaveio/oxlint-tools",
+  "private": true,
+  "type": "module"
+}

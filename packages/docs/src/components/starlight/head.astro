@@ -26,7 +26,8 @@ const { head } = Astro.locals.starlightRoute;
 const headTags = head.filter((entry) => {
   if (entry.tag !== 'link') return true;
   const rel = entry.attrs?.rel;
-  return typeof rel === 'string' ? !rel.includes('icon') : true;
+  if (rel === undefined || rel === true || rel === false) return true;
+  return !rel.includes('icon');
 });
 ---
 

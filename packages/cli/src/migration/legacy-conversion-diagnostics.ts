@@ -9,8 +9,13 @@
 
 import {
   isDangerousDslName,
-  isDslIdentifierShape,
+  isDslIdentifierSyntax,
 } from "./legacy-dsl-identifiers.js";
+import {
+  isLegacyString,
+  type LegacyInputValue,
+  legacyValueKind,
+} from "./legacy-graph-copy.js";
 import type { ConversionWarning } from "./types.js";
 
 export const MAX_CONVERSION_WARNINGS = 32;
@@ -127,26 +132,33 @@ export type PrimitiveTypeCategory =
   | "other";
 
 /** Classify a value as a fixed primitive type category. Never returns source text. */
-export function primitiveCategory(value: unknown): PrimitiveTypeCategory {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  if (typeof value === "number") {
+export function primitiveCategory(
+  value: LegacyInputValue,
+): PrimitiveTypeCategory {
+  const kind = legacyValueKind(value);
+  if (kind === "null") return "null";
+  if (kind === "array") return "array";
+  if (kind === "number")
     return Number.isFinite(value) ? "number" : "non_finite_number";
+  if (kind === "string") {
+    return isLegacyString(value) && value.trim().length === 0
+      ? "empty_string"
+      : "string";
   }
-  if (typeof value === "string") {
-    return value.trim().length === 0 ? "empty_string" : "string";
-  }
-  if (typeof value === "boolean") return "boolean";
-  if (typeof value === "undefined") return "undefined";
-  if (typeof value === "function") return "function";
-  if (typeof value === "bigint") return "bigint";
-  if (typeof value === "symbol") return "symbol";
-  if (typeof value === "object") return "object";
+  if (kind === "boolean") return "boolean";
+  if (kind === "undefined") return "undefined";
+  if (kind === "callable") return "function";
+  if (kind === "bigint") return "bigint";
+  if (kind === "symbol") return "symbol";
+  if (kind === "object") return "object";
   return "other";
 }
 
 /** Append a fixed type category to a vocabulary reason. */
-export function reasonWithType(reason: string, value: unknown): string {
+export function reasonWithType(
+  reason: string,
+  value: LegacyInputValue,
+): string {
   const category = primitiveCategory(value);
   if (!TYPE_CATEGORIES.has(category)) return reason;
   return `${reason} (type: ${category})`;
@@ -154,7 +166,7 @@ export function reasonWithType(reason: string, value: unknown): string {
 
 function pathSegment(key: string): string {
   if (key.startsWith("<") && key.endsWith(">")) return key;
-  if (isDangerousDslName(key) || !isDslIdentifierShape(key)) return PATH_ENTRY;
+  if (isDangerousDslName(key) || !isDslIdentifierSyntax(key)) return PATH_ENTRY;
   return key;
 }
 
@@ -162,11 +174,15 @@ function pathSegment(key: string): string {
  * Build a bounded diagnostic path from vocabulary keys, indices, and sanitized
  * source keys. Invalid or dangerous keys become `<entry>`.
  */
+function isPathIndex(part: string | number): part is number {
+  return Number.isInteger(part);
+}
+
 export function joinPath(parts: Array<string | number>): string {
   const segments: string[] = [];
   for (const part of parts) {
     if (part === "") continue;
-    if (typeof part === "number") {
+    if (isPathIndex(part)) {
       if (!Number.isSafeInteger(part) || part < 0) {
         segments.push(PATH_ENTRY);
         continue;

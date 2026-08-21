@@ -101,6 +101,14 @@ export const PUBLIC_PACKAGES = {
 
 export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 
+/** The publishable catalog in its canonical declaration order. */
+export const PUBLIC_PACKAGE_NAMES = [
+  "@weaveio/weave-cli",
+  "@weaveio/weave-adapter-opencode",
+  "@weaveio/weave-adapter-claude-code",
+  "@weaveio/weave-adapter-pi",
+] as const satisfies readonly PublicPackageName[];
+
 /** Third-party packages that are intentionally resolved by a packed artifact. */
 export const PUBLIC_RUNTIME_EXTERNALS = [
   "@clack/prompts",

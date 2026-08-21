@@ -9,8 +9,9 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  createExecutionLeaseId,
   createInMemoryRuntimeStore,
-  type createWorkflowInstanceId,
+  createWorkflowInstanceId,
   dispatchStep,
   startExecution,
   type WorkflowExecutionContext,
@@ -39,6 +40,11 @@ workflow simple-flow {
   }
 }
 `);
+
+const simpleFlow = SIMPLE_WORKFLOW.workflows["simple-flow"];
+if (simpleFlow === undefined) {
+  throw new Error("simple-flow fixture is missing");
+}
 
 async function createRunningInstance(workflowName = "simple-flow") {
   const store = createInMemoryRuntimeStore();
@@ -90,10 +96,8 @@ describe("dispatchStep — legacy (no context)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await dispatchStep(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
-        leaseId: "lease-001" as ReturnType<
-          typeof import("@weaveio/weave-engine").createExecutionLeaseId
-        >,
+        workflowInstanceId: createWorkflowInstanceId(""),
+        leaseId: createExecutionLeaseId("lease-001"),
       },
       store,
     );
@@ -112,7 +116,7 @@ describe("dispatchStep — configured (with context)", () => {
       workflowName: "simple-flow",
       goal: "test goal",
       slug: "test-goal",
-      workflows: { "simple-flow": SIMPLE_WORKFLOW.workflows["simple-flow"]! },
+      workflows: { "simple-flow": simpleFlow },
     };
 
     const result = await dispatchStep(
@@ -146,7 +150,7 @@ describe("dispatchStep — configured (with context)", () => {
       workflowName: "simple-flow",
       goal: "test goal",
       slug: "test-goal",
-      workflows: { "simple-flow": SIMPLE_WORKFLOW.workflows["simple-flow"]! },
+      workflows: { "simple-flow": simpleFlow },
     };
 
     const result = await dispatchStep(
@@ -173,9 +177,7 @@ describe("dispatchStep — configured (with context)", () => {
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId: "wrong-lease-id" as ReturnType<
-          typeof import("@weaveio/weave-engine").createExecutionLeaseId
-        >,
+        leaseId: createExecutionLeaseId("wrong-lease-id"),
         stepName: "plan",
       },
       store,

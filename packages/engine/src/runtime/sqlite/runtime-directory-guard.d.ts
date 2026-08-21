@@ -50,7 +50,7 @@
  *
  * @see docs/adapters/pi.md
  */
-import { ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import { type FdIdentity } from "../nofollow-ffi.js";
 export type RuntimeDirectoryGuardError = {
     readonly type: "unavailable";

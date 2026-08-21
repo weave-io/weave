@@ -28,6 +28,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { basename, dirname, join, relative } from "node:path";
+import type { RawFileWriter } from "../raw-artifacts.js";
 import {
   isoToFilesafeDatetime,
   MemoryFileWriter,
@@ -398,8 +399,10 @@ describe("RawArtifactsWriter (enabled)", () => {
 
     const filePath = result._unsafeUnwrap();
     const rawContent = mem.getContent(filePath);
-    expect(rawContent).toBeDefined();
-    const parsed = JSON.parse(rawContent!);
+    if (rawContent === undefined) {
+      throw new Error("raw case artifact was not written");
+    }
+    const parsed = JSON.parse(rawContent);
     expect(parsed.caseId).toBe("route-to-shuttle");
     expect(parsed.modelId).toBe("anthropic/claude-sonnet-4.5");
   });
@@ -480,10 +483,12 @@ describe("RawArtifactsWriter (enabled)", () => {
 
     const filePath = result._unsafeUnwrap();
     const rawContent = mem.getContent(filePath);
-    expect(rawContent).toBeDefined();
-    const parsed = JSON.parse(rawContent!);
+    if (rawContent === undefined) {
+      throw new Error("raw prompt artifact was not written");
+    }
+    const parsed = JSON.parse(rawContent);
     expect(parsed.agentName).toBe("tapestry");
-    expect(typeof parsed.composedPrompt).toBe("string");
+    expect(parsed.composedPrompt).toBe("You are Loom, the main orchestrator.");
   });
 
   it("writeCaseResultArtifacts writes all artifacts in batch", async () => {
@@ -509,8 +514,8 @@ describe("RawArtifactsWriter (enabled)", () => {
   it("writeCaseResultArtifacts continues on individual write failures", async () => {
     // Simulate a write failure for one artifact by injecting a throwing writer
     let callCount = 0;
-    const failOnSecond: import("../raw-artifacts.js").RawFileWriter = {
-      write(path: string, content: string): Promise<void> {
+    const failOnSecond: RawFileWriter = {
+      write(_path: string, _content: string): Promise<void> {
         callCount++;
         if (callCount === 2) {
           return Promise.reject(new Error("Simulated write failure"));

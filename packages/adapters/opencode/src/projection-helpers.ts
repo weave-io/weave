@@ -23,6 +23,7 @@
 
 import type {
   DispatchAgentEffect,
+  ExecutionStartedData,
   WorkflowRunnerError,
 } from "@weaveio/weave-engine";
 import { logger } from "@weaveio/weave-engine";
@@ -88,10 +89,9 @@ export function buildProjectEffect(
  * @param data - Execution data with a `workflowInstanceId` and `effects` array.
  * @returns A normalized `RunWorkflowResult`.
  */
-export function deriveRunWorkflowResult(data: {
-  readonly workflowInstanceId: string;
-  readonly effects: readonly { readonly kind: string }[];
-}): RunWorkflowResult {
+export function deriveRunWorkflowResult(
+  data: Pick<ExecutionStartedData, "workflowInstanceId" | "effects">,
+): RunWorkflowResult {
   const hasPause = data.effects.some((e) => e.kind === "pause-execution");
   const stepsDispatched = data.effects.filter(
     (e) => e.kind === "dispatch-agent",
@@ -99,7 +99,7 @@ export function deriveRunWorkflowResult(data: {
 
   return {
     workflowInstanceId: data.workflowInstanceId,
-    appliedEffects: data.effects as RunWorkflowResult["appliedEffects"],
+    appliedEffects: data.effects,
     status: hasPause ? "paused" : "completed",
     stepsDispatched,
   };

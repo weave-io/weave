@@ -62,7 +62,8 @@
  */
 
 import { join } from "node:path";
-import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import { RUNS_SUBDIR } from "./artifact-bundle.js";
 import { TARGET_RUNS_PREFIX } from "./github-contents-publisher.js";
 import {
@@ -78,6 +79,7 @@ import {
   type ModelComparisonManifest,
   type PublicReportBundle,
   PublicReportBundleSchema,
+  REPORT_BUNDLE_SCHEMA_VERSION,
   SCENARIO_HISTORY_MAX_RUNS,
   SCENARIO_HISTORY_SCHEMA_VERSION,
   type ScenarioHistoryEntry,
@@ -85,6 +87,7 @@ import {
   ScenarioHistoryIndexSchema,
   type ScenarioRunHistoryEntry,
   type ScenarioRunStatus,
+  SUITE_HISTORY_SCHEMA_VERSION,
   type SuiteHistoryManifest,
   SuiteHistoryManifestSchema,
 } from "./report-schema.js";
@@ -140,6 +143,64 @@ export const LAST_N_RUNS_FILE = "last-N-runs.json";
 export const SCENARIO_HISTORY_FILE_PREFIX = "scenario-history-";
 
 // ---------------------------------------------------------------------------
+// Stored report contracts
+// ---------------------------------------------------------------------------
+
+type StoredJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | StoredJsonValue[]
+  | StoredJsonObject;
+
+interface StoredJsonObject {
+  readonly [key: string]: StoredJsonValue;
+}
+
+const SchemaVersionEnvelopeSchema = z.object({
+  schemaVersion: z.number(),
+});
+
+export const LatestRunSnapshotSchema = z
+  .object({
+    schemaVersion: z.number(),
+    updatedAt: z.string(),
+    runId: z.string(),
+    assembledAt: z.string(),
+    gitSha: z.string(),
+    dryRun: z.boolean(),
+    allSuitesGreen: z.boolean(),
+    totalCases: z.number(),
+    passedCases: z.number(),
+    failedCases: z.number(),
+    suites: z.array(z.string()),
+  })
+  .strict();
+
+const LastNRunEntrySchema = z.object({
+  runId: z.string(),
+  assembledAt: z.string(),
+  gitSha: z.string(),
+  dryRun: z.boolean(),
+  allSuitesGreen: z.boolean(),
+  totalCases: z.number(),
+  passedCases: z.number(),
+  failedCases: z.number(),
+  suites: z.array(z.string()),
+});
+
+export const LastNRunsIndexSchema = z
+  .object({
+    schemaVersion: z.number(),
+    updatedAt: z.string(),
+    maxRuns: z.number(),
+    count: z.number(),
+    runs: z.array(LastNRunEntrySchema),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Freshness metadata helpers
 // ---------------------------------------------------------------------------
 
@@ -154,56 +215,14 @@ export const SCENARIO_HISTORY_FILE_PREFIX = "scenario-history-";
  * `updatedAt` enables staleness detection (compare against a known freshness
  * threshold).
  */
-export interface LatestRunSnapshot {
-  /** Schema version for staleness/compatibility detection. */
-  schemaVersion: number;
-  /** ISO 8601 timestamp when this snapshot was last updated. */
-  updatedAt: string;
-  /** The most recent run ID. */
-  runId: string;
-  /** ISO 8601 assembly timestamp of the most recent run. */
-  assembledAt: string;
-  /** Git SHA for the most recent run. */
-  gitSha: string;
-  /** Whether the most recent run was a dry-run. */
-  dryRun: boolean;
-  /** Whether all required cases passed in the most recent run. */
-  allSuitesGreen: boolean;
-  /** Total cases in the most recent run. */
-  totalCases: number;
-  /** Passing cases in the most recent run. */
-  passedCases: number;
-  /** Failing cases in the most recent run. */
-  failedCases: number;
-  /** Suite names included in the most recent run. */
-  suites: string[];
-}
+export type LatestRunSnapshot = z.infer<typeof LatestRunSnapshotSchema>;
 
 /**
  * A run entry in the last-N-runs index.
  *
  * Lightweight record for each of the last N runs. No case-level detail.
  */
-export interface LastNRunEntry {
-  /** The run ID. */
-  runId: string;
-  /** ISO 8601 assembly timestamp. */
-  assembledAt: string;
-  /** Git SHA for this run. */
-  gitSha: string;
-  /** Whether this was a dry-run. */
-  dryRun: boolean;
-  /** Whether all required cases passed. */
-  allSuitesGreen: boolean;
-  /** Total cases in this run. */
-  totalCases: number;
-  /** Passing cases in this run. */
-  passedCases: number;
-  /** Failing cases in this run. */
-  failedCases: number;
-  /** Suite names in this run. */
-  suites: string[];
-}
+export type LastNRunEntry = z.infer<typeof LastNRunEntrySchema>;
 
 /**
  * The last-N-runs index.
@@ -213,18 +232,7 @@ export interface LastNRunEntry {
  *
  * Website consumers MUST reject `schemaVersion` values they do not recognise.
  */
-export interface LastNRunsIndex {
-  /** Schema version for staleness/compatibility detection. */
-  schemaVersion: number;
-  /** ISO 8601 timestamp when this index was last updated. */
-  updatedAt: string;
-  /** Maximum number of runs tracked (N). */
-  maxRuns: number;
-  /** Total number of runs in the index (may be less than maxRuns initially). */
-  count: number;
-  /** Run entries, newest-first. */
-  runs: LastNRunEntry[];
-}
+export type LastNRunsIndex = z.infer<typeof LastNRunsIndexSchema>;
 
 // ---------------------------------------------------------------------------
 // Dashboard index generation errors
@@ -294,6 +302,14 @@ export interface RunDescriptor {
  * All fields are plain objects (no `Result` wrapping) — generation either
  * succeeds for all indexes or returns a typed error describing the failure.
  */
+type DashboardIndexArtifact =
+  | DashboardManifest
+  | SuiteHistoryManifest
+  | ModelComparisonManifest
+  | LatestRunSnapshot
+  | LastNRunsIndex
+  | ScenarioHistoryIndex;
+
 export interface GeneratedIndexes {
   /** Top-level dashboard manifest. */
   dashboardManifest: DashboardManifest;
@@ -396,7 +412,6 @@ export function buildLastNRuns(
  */
 function deriveScenarioRunStatus(
   passedModels: number,
-  failedModels: number,
   totalModels: number,
 ): ScenarioRunStatus {
   if (totalModels === 0) return "skip";
@@ -426,10 +441,12 @@ export function buildScenarioHistories(
     for (const suiteSummary of bundle.suiteSummaries) {
       const suite = suiteSummary.suite;
 
-      if (!suiteMap.has(suite)) {
-        suiteMap.set(suite, new Map());
+      const existingCaseMap = suiteMap.get(suite);
+      const caseMap =
+        existingCaseMap ?? new Map<string, ScenarioHistoryEntry>();
+      if (existingCaseMap === undefined) {
+        suiteMap.set(suite, caseMap);
       }
-      const caseMap = suiteMap.get(suite)!;
 
       // Group entries by caseId
       const caseGroups = new Map<string, typeof suiteSummary.cases>();
@@ -457,11 +474,7 @@ export function buildScenarioHistories(
         }
 
         const totalModels = passedModels + failedModels;
-        const status = deriveScenarioRunStatus(
-          passedModels,
-          failedModels,
-          totalModels,
-        );
+        const status = deriveScenarioRunStatus(passedModels, totalModels);
 
         const runEntry: ScenarioRunHistoryEntry = {
           runId,
@@ -737,15 +750,10 @@ export function generateDashboardIndexes(
  * @returns `ok(DashboardManifest)` when compatible; `err(DashboardIndexError)` when not.
  */
 export function validateDashboardManifestCompatibility(
-  raw: unknown,
+  raw: StoredJsonValue,
 ): Result<DashboardManifest, DashboardIndexError> {
-  // Quick schema-version check before full parse
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    !("schemaVersion" in raw) ||
-    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
-  ) {
+  const version = SchemaVersionEnvelopeSchema.safeParse(raw);
+  if (!version.success) {
     return err({
       type: "SchemaVersionMismatch",
       path: DASHBOARD_MANIFEST_FILE,
@@ -755,7 +763,7 @@ export function validateDashboardManifestCompatibility(
     });
   }
 
-  const found = (raw as Record<string, unknown>).schemaVersion as number;
+  const found = version.data.schemaVersion;
   if (found !== DASHBOARD_MANIFEST_SCHEMA_VERSION) {
     return err({
       type: "SchemaVersionMismatch",
@@ -790,36 +798,31 @@ export function validateDashboardManifestCompatibility(
  * @returns `ok(SuiteHistoryManifest)` when compatible; `err(DashboardIndexError)` when not.
  */
 export function validateSuiteHistoryCompatibility(
-  raw: unknown,
+  raw: StoredJsonValue,
   suiteName: string,
 ): Result<SuiteHistoryManifest, DashboardIndexError> {
   const filePath = `${SUITE_HISTORY_FILE_PREFIX}${suiteName}.json`;
-
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    !("schemaVersion" in raw) ||
-    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
-  ) {
+  const version = SchemaVersionEnvelopeSchema.safeParse(raw);
+  if (!version.success) {
     return err({
       type: "SchemaVersionMismatch",
       path: filePath,
       foundVersion: -1,
-      expectedVersion: 1,
+      expectedVersion: SUITE_HISTORY_SCHEMA_VERSION,
       message: `Suite history manifest for "${suiteName}" is missing a numeric schemaVersion field.`,
     });
   }
 
-  const found = (raw as Record<string, unknown>).schemaVersion as number;
-  if (found !== 1) {
+  const found = version.data.schemaVersion;
+  if (found !== SUITE_HISTORY_SCHEMA_VERSION) {
     return err({
       type: "SchemaVersionMismatch",
       path: filePath,
       foundVersion: found,
-      expectedVersion: 1,
+      expectedVersion: SUITE_HISTORY_SCHEMA_VERSION,
       message:
         `Suite history manifest for "${suiteName}" has schemaVersion ${found}, ` +
-        `expected 1. The index must be regenerated.`,
+        `expected ${SUITE_HISTORY_SCHEMA_VERSION}. The index must be regenerated.`,
     });
   }
 
@@ -842,14 +845,10 @@ export function validateSuiteHistoryCompatibility(
  * @returns `ok(LatestRunSnapshot)` when compatible; `err(DashboardIndexError)` when not.
  */
 export function validateLatestSnapshotCompatibility(
-  raw: unknown,
+  raw: StoredJsonValue,
 ): Result<LatestRunSnapshot, DashboardIndexError> {
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    !("schemaVersion" in raw) ||
-    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
-  ) {
+  const version = SchemaVersionEnvelopeSchema.safeParse(raw);
+  if (!version.success) {
     return err({
       type: "SchemaVersionMismatch",
       path: LATEST_SNAPSHOT_FILE,
@@ -859,7 +858,7 @@ export function validateLatestSnapshotCompatibility(
     });
   }
 
-  const found = (raw as Record<string, unknown>).schemaVersion as number;
+  const found = version.data.schemaVersion;
   if (found !== LATEST_SNAPSHOT_SCHEMA_VERSION) {
     return err({
       type: "SchemaVersionMismatch",
@@ -873,19 +872,8 @@ export function validateLatestSnapshotCompatibility(
     });
   }
 
-  // Validate required fields
-  const r = raw as Record<string, unknown>;
-  if (
-    typeof r.runId !== "string" ||
-    typeof r.assembledAt !== "string" ||
-    typeof r.gitSha !== "string" ||
-    typeof r.dryRun !== "boolean" ||
-    typeof r.allSuitesGreen !== "boolean" ||
-    typeof r.totalCases !== "number" ||
-    typeof r.passedCases !== "number" ||
-    typeof r.failedCases !== "number" ||
-    !Array.isArray(r.suites)
-  ) {
+  const parsed = LatestRunSnapshotSchema.safeParse(raw);
+  if (!parsed.success) {
     return err({
       type: "IndexParseError",
       path: LATEST_SNAPSHOT_FILE,
@@ -893,7 +881,7 @@ export function validateLatestSnapshotCompatibility(
     });
   }
 
-  return ok(raw as LatestRunSnapshot);
+  return ok(parsed.data);
 }
 
 /**
@@ -907,36 +895,31 @@ export function validateLatestSnapshotCompatibility(
  * @returns `ok(PublicReportBundle)` when compatible; `err(DashboardIndexError)` when not.
  */
 export function validatePublicReportBundleCompatibility(
-  raw: unknown,
+  raw: StoredJsonValue,
   runId: string,
 ): Result<PublicReportBundle, DashboardIndexError> {
   const filePath = `${RUNS_SUBDIR}/${runId}/public-report.json`;
-
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    !("schemaVersion" in raw) ||
-    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
-  ) {
+  const version = SchemaVersionEnvelopeSchema.safeParse(raw);
+  if (!version.success) {
     return err({
       type: "SchemaVersionMismatch",
       path: filePath,
       foundVersion: -1,
-      expectedVersion: 1,
+      expectedVersion: REPORT_BUNDLE_SCHEMA_VERSION,
       message: `public-report.json for run "${runId}" is missing a numeric schemaVersion field.`,
     });
   }
 
-  const found = (raw as Record<string, unknown>).schemaVersion as number;
-  if (found !== 1) {
+  const found = version.data.schemaVersion;
+  if (found !== REPORT_BUNDLE_SCHEMA_VERSION) {
     return err({
       type: "SchemaVersionMismatch",
       path: filePath,
       foundVersion: found,
-      expectedVersion: 1,
+      expectedVersion: REPORT_BUNDLE_SCHEMA_VERSION,
       message:
         `public-report.json for run "${runId}" has schemaVersion ${found}, ` +
-        `expected 1. This run artifact cannot be consumed.`,
+        `expected ${REPORT_BUNDLE_SCHEMA_VERSION}. This run artifact cannot be consumed.`,
     });
   }
 
@@ -960,17 +943,12 @@ export function validatePublicReportBundleCompatibility(
  * @returns `ok(ScenarioHistoryIndex)` when compatible; `err(DashboardIndexError)` when not.
  */
 export function validateScenarioHistoryCompatibility(
-  raw: unknown,
+  raw: StoredJsonValue,
   suiteName: string,
 ): Result<ScenarioHistoryIndex, DashboardIndexError> {
   const filePath = `${SCENARIO_HISTORY_FILE_PREFIX}${suiteName}.json`;
-
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    !("schemaVersion" in raw) ||
-    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
-  ) {
+  const version = SchemaVersionEnvelopeSchema.safeParse(raw);
+  if (!version.success) {
     return err({
       type: "SchemaVersionMismatch",
       path: filePath,
@@ -980,7 +958,7 @@ export function validateScenarioHistoryCompatibility(
     });
   }
 
-  const found = (raw as Record<string, unknown>).schemaVersion as number;
+  const found = version.data.schemaVersion;
   if (found !== SCENARIO_HISTORY_SCHEMA_VERSION) {
     return err({
       type: "SchemaVersionMismatch",
@@ -1078,9 +1056,9 @@ export class DashboardIndexWriter {
       }),
     ).andThen((runs) => {
       if (runs.length === 0) {
-        return ResultAsync.fromSafePromise(
-          Promise.resolve({ filesWritten: [] as string[] }),
-        );
+        return okAsync<{ filesWritten: string[] }, DashboardIndexError>({
+          filesWritten: [],
+        });
       }
 
       const generateResult = generateDashboardIndexes(runs, updatedAt, lastN);
@@ -1166,15 +1144,24 @@ export class DashboardIndexWriter {
     filePath: string,
     runId: string,
   ): Promise<PublicReportBundle | null> {
-    try {
-      const text = await Bun.file(filePath).text();
-      const raw: unknown = JSON.parse(text);
-      const result = validatePublicReportBundleCompatibility(raw, runId);
-      if (result.isErr()) return null;
-      return result.value;
-    } catch {
-      return null;
-    }
+    const textResult = await ResultAsync.fromThrowable(
+      () => Bun.file(filePath).text(),
+      () => null,
+    )();
+    if (textResult.isErr()) return null;
+
+    const jsonResult = Result.fromThrowable(
+      () => JSON.parse(textResult.value),
+      () => null,
+    )();
+    if (jsonResult.isErr()) return null;
+
+    const result = validatePublicReportBundleCompatibility(
+      jsonResult.value,
+      runId,
+    );
+    if (result.isErr()) return null;
+    return result.value;
   }
 
   // ---------------------------------------------------------------------------
@@ -1188,14 +1175,15 @@ export class DashboardIndexWriter {
     const filesWritten: string[] = [];
 
     const writeJson = (
-      obj: unknown,
+      obj: DashboardIndexArtifact,
       fileName: string,
-    ): ResultAsync<void, DashboardIndexError> => {
+    ): ResultAsync<null, DashboardIndexError> => {
       const filePath = join(this.bundleRoot, fileName);
       const json = JSON.stringify(obj, null, 2);
       return ResultAsync.fromPromise(
         Bun.write(filePath, json).then(() => {
           filesWritten.push(fileName);
+          return null;
         }),
         (cause): DashboardIndexError => ({
           type: "IndexWriteError",
@@ -1214,9 +1202,7 @@ export class DashboardIndexWriter {
             acc.andThen(() =>
               writeJson(history, `${SUITE_HISTORY_FILE_PREFIX}${suite}.json`),
             ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
+          okAsync<null, DashboardIndexError>(null),
         );
       })
       .andThen(() => {
@@ -1229,9 +1215,7 @@ export class DashboardIndexWriter {
                 `${MODEL_COMPARISON_FILE_PREFIX}${runId}.json`,
               ),
             ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
+          okAsync<null, DashboardIndexError>(null),
         );
       })
       .andThen(() => writeJson(indexes.latestSnapshot, LATEST_SNAPSHOT_FILE))
@@ -1246,9 +1230,7 @@ export class DashboardIndexWriter {
                 `${SCENARIO_HISTORY_FILE_PREFIX}${suite}.json`,
               ),
             ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
+          okAsync<null, DashboardIndexError>(null),
         );
       })
       .map(() => ({ filesWritten }));

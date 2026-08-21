@@ -331,13 +331,18 @@ const PLAN_PATH_MENTION_RE = /\.?weave[\\/]+plans[\\/]+/giu;
 export function parseForegroundPlanRequest(
   text: string,
 ): Result<string, ForegroundPlanRequestRejection> {
-  if (typeof text !== "string") return err("no-plan-path");
-  if (text.length > MAX_FOREGROUND_PLAN_REQUEST_LENGTH) {
+  // Keep this boundary total at runtime as well as at the TypeScript boundary:
+  // Pi event payloads are host data, and a malformed non-string must be a typed
+  // rejection rather than a property access or string-coercion throw.
+  const parsedText = z.string().safeParse(text);
+  if (!parsedText.success) return err("no-plan-path");
+  const requestText = parsedText.data;
+  if (requestText.length > MAX_FOREGROUND_PLAN_REQUEST_LENGTH) {
     return err("input-too-long");
   }
 
-  const mentions = countMatches(text, PLAN_PATH_MENTION_RE);
-  const matches = collectPlanPathMatches(text);
+  const mentions = countMatches(requestText, PLAN_PATH_MENTION_RE);
+  const matches = collectPlanPathMatches(requestText);
   // Every plan-ish mention must be one this parser accepted. One it did not is
   // not "prose that named nothing": it is a path whose meaning it refuses to
   // guess, and it disqualifies the message rather than the path.
@@ -351,7 +356,7 @@ export function parseForegroundPlanRequest(
   }
   if (!isSafeForegroundPlanName(first.name)) return err("unsafe-plan-path");
 
-  if (!isExecutionRequest(text, matches)) {
+  if (!isExecutionRequest(requestText, matches)) {
     return err("no-execution-intent");
   }
   return ok(first.name);
@@ -591,13 +596,20 @@ function countMatches(text: string, pattern: RegExp): number {
   return count;
 }
 
+/** Input boundary for values that arrive from Pi session entries or callers. */
+const ForegroundPlanInputBoundary = z.unknown();
+type ForegroundPlanInput = z.input<typeof ForegroundPlanInputBoundary>;
+
 /** True when a name is a plan basename this module will display or record. */
-export function isSafeForegroundPlanName(value: unknown): value is string {
+export function isSafeForegroundPlanName(
+  value: ForegroundPlanInput,
+): value is string {
+  const parsed = z.string().safeParse(value);
+  if (!parsed.success) return false;
   return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= MAX_FOREGROUND_PLAN_NAME_LENGTH &&
-    SAFE_PLAN_NAME_RE.test(value)
+    parsed.data.length > 0 &&
+    parsed.data.length <= MAX_FOREGROUND_PLAN_NAME_LENGTH &&
+    SAFE_PLAN_NAME_RE.test(parsed.data)
   );
 }
 
@@ -648,11 +660,19 @@ const ForegroundPlanSessionEntrySchema = z
  */
 const MAX_FOREGROUND_PLAN_ENTRY_FIELDS = 8;
 
+interface ForegroundPlanSessionEntryProjection {
+  readonly type: ForegroundPlanInput | undefined;
+  readonly customType: ForegroundPlanInput | undefined;
+  readonly data: ForegroundPlanInput | undefined;
+}
+
+function noForegroundPlanValue(): undefined {}
+
 /** `Object.getOwnPropertyDescriptor` as a value: a proxy trap can throw. */
 const ownDescriptor = Result.fromThrowable(
-  (target: object, key: string): PropertyDescriptor | undefined =>
-    Object.getOwnPropertyDescriptor(target, key),
-  () => undefined,
+  (target: ForegroundPlanInput, key: string): PropertyDescriptor | undefined =>
+    Object.getOwnPropertyDescriptor(new Object(target), key),
+  noForegroundPlanValue,
 );
 
 /**
@@ -663,8 +683,10 @@ const ownDescriptor = Result.fromThrowable(
  * entry's own statement either, so a prototype-polluted payload states
  * nothing.
  */
-function ownValue(target: unknown, key: string): unknown {
-  if (typeof target !== "object" || target === null) return undefined;
+function ownValue(
+  target: ForegroundPlanInput,
+  key: string,
+): ForegroundPlanInput | undefined {
   const descriptor = ownDescriptor(target, key);
   if (descriptor.isErr()) return undefined;
   const found = descriptor.value;
@@ -680,7 +702,9 @@ function ownValue(target: unknown, key: string): unknown {
  * getter runs, no proxy trap fires inside the schema, and no field the schema
  * does not name survives the copy.
  */
-function materializeEntry(entry: unknown): unknown {
+function materializeEntry(
+  entry: ForegroundPlanInput,
+): ForegroundPlanSessionEntryProjection | undefined {
   if (!isPlainObject(entry)) return undefined;
   return {
     type: ownValue(entry, "type"),
@@ -694,35 +718,35 @@ function materializeEntry(entry: unknown): unknown {
 }
 
 /** Faithful bounded copy of the recorded payload, extra fields included. */
-function materializePayload(data: unknown): unknown {
+function materializePayload(data: ForegroundPlanInput): ForegroundPlanInput {
   if (!isPlainObject(data)) return data;
   const keys = Result.fromThrowable(
-    () => Object.keys(data),
-    () => undefined,
-  )().match(
-    (value) => value,
-    () => undefined,
-  );
+    () => Object.keys(new Object(data)),
+    noForegroundPlanValue,
+  )().match((value) => value, noForegroundPlanValue);
   if (keys === undefined || keys.length > MAX_FOREGROUND_PLAN_ENTRY_FIELDS) {
     return undefined;
   }
-  const copy: Record<string, unknown> = {};
+  const copy = new Map<string, ForegroundPlanInput>();
   for (const key of keys) {
     // `__proto__` and friends are never copied by assignment: they would
     // mutate the copy's own authority rather than describe the payload.
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       return undefined;
     }
-    copy[key] = ownValue(data, key);
+    copy.set(key, ownValue(data, key));
   }
-  return copy;
+  return Object.fromEntries(copy);
 }
 
 /** A non-array object, decided without letting a revoked proxy throw. */
-function isPlainObject(value: unknown): value is object {
-  if (typeof value !== "object" || value === null) return false;
+function isPlainObject(value: ForegroundPlanInput): boolean {
   return Result.fromThrowable(
-    () => !Array.isArray(value),
+    // `Object(value) === value` distinguishes objects from primitives without
+    // reading Symbol.toStringTag or any other user accessor. The old boundary
+    // accepted every non-array object, including null-prototype records; keep
+    // that contract while still treating revoked proxies as unreadable.
+    () => Object(value) === value && !Array.isArray(value),
     () => false,
   )().match(
     (plain) => plain,
@@ -744,7 +768,7 @@ function isPlainObject(value: unknown): value is object {
  * the name is in THIS project root's plan catalog before adopting it.
  */
 export function readForegroundPlanEntry(
-  entries: readonly unknown[],
+  entries: readonly ForegroundPlanInput[],
 ): string | undefined {
   // The COMPLETE scan is guarded, not one step of it. The list is host data
   // that may be a proxy, and every step can throw: `Array.isArray` on a
@@ -753,11 +777,8 @@ export function readForegroundPlanEntry(
   // cannot be read states no selection, which is exactly `undefined`.
   return Result.fromThrowable(
     () => scanForegroundPlanEntries(entries),
-    () => undefined,
-  )().match(
-    (planName) => planName,
-    () => undefined,
-  );
+    noForegroundPlanValue,
+  )().match((planName) => planName, noForegroundPlanValue);
 }
 
 /**
@@ -767,9 +788,17 @@ export function readForegroundPlanEntry(
  * descriptor: `length` included, so a `get` trap on the list never runs and a
  * getter never decides how far the scan goes.
  */
-function scanForegroundPlanEntries(entries: unknown): string | undefined {
-  if (typeof entries !== "object" || entries === null) return undefined;
-  if (!Array.isArray(entries)) return undefined;
+function scanForegroundPlanEntries(
+  entries: readonly ForegroundPlanInput[],
+): string | undefined {
+  const isArray = Result.fromThrowable(
+    () => Array.isArray(entries),
+    () => false,
+  )().match(
+    (value) => value,
+    () => false,
+  );
+  if (!isArray) return undefined;
   const size = ownArrayLength(entries);
   if (size === undefined) return undefined;
   const start = Math.max(0, size - MAX_FOREGROUND_PLAN_ENTRY_SCAN);
@@ -790,16 +819,18 @@ function scanForegroundPlanEntries(entries: unknown): string | undefined {
  * not a length this scan will trust, and the list is then read as stating
  * nothing rather than scanned to a fabricated bound.
  */
-function ownArrayLength(list: object): number | undefined {
+function ownArrayLength(
+  list: readonly ForegroundPlanInput[],
+): number | undefined {
   const descriptor = ownDescriptor(list, "length");
   if (descriptor.isErr()) return undefined;
   const found = descriptor.value;
   if (found === undefined || !("value" in found)) return undefined;
   if (found.enumerable === true) return undefined;
-  const size = found.value;
-  if (typeof size !== "number") return undefined;
-  if (!Number.isSafeInteger(size) || size < 0) return undefined;
-  return size;
+  const parsed = z.number().safeParse(found.value);
+  if (!parsed.success) return undefined;
+  if (!Number.isSafeInteger(parsed.data) || parsed.data < 0) return undefined;
+  return parsed.data;
 }
 
 /**

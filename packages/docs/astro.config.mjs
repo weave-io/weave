@@ -81,29 +81,29 @@ export default defineConfig({
 
       // --- Component overrides (Starlight 0.40 keys) ------------------------
       components: {
-        Head: './src/components/starlight/Head.astro',
-        ThemeProvider: './src/components/starlight/ThemeProvider.astro',
-        PageFrame: './src/components/starlight/PageFrame.astro',
-        Header: './src/components/starlight/Header.astro',
-        Sidebar: './src/components/starlight/Sidebar.astro',
-        MobileMenuToggle: './src/components/starlight/MobileMenuToggle.astro',
-        TwoColumnContent: './src/components/starlight/TwoColumnContent.astro',
-        PageSidebar: './src/components/starlight/PageSidebar.astro',
-        TableOfContents: './src/components/starlight/TableOfContents.astro',
-        ContentPanel: './src/components/starlight/ContentPanel.astro',
+        Head: './src/components/starlight/head.astro',
+        ThemeProvider: './src/components/starlight/theme-provider.astro',
+        PageFrame: './src/components/starlight/page-frame.astro',
+        Header: './src/components/starlight/header.astro',
+        Sidebar: './src/components/starlight/sidebar.astro',
+        MobileMenuToggle: './src/components/starlight/mobile-menu-toggle.astro',
+        TwoColumnContent: './src/components/starlight/two-column-content.astro',
+        PageSidebar: './src/components/starlight/page-sidebar.astro',
+        TableOfContents: './src/components/starlight/table-of-contents.astro',
+        ContentPanel: './src/components/starlight/content-panel.astro',
         // Hero override — the docs index (`docs/index.mdx`) sets `hero`
         // frontmatter so Starlight's Page.astro suppresses the auto PageTitle
         // (`.prose h1#_top`) and renders this component instead. It emits the
         // prototype `.home-hero` block (docs-home.html) as the first child of
         // `.docs-main`. Inert on every route that does not set `hero`.
-        Hero: './src/components/docs/DocsHomeHero.astro',
-        PageTitle: './src/components/starlight/PageTitle.astro',
-        MarkdownContent: './src/components/starlight/MarkdownContent.astro',
-        Footer: './src/components/starlight/Footer.astro',
-        Search: './src/components/starlight/Search.astro',
-        ThemeSelect: './src/components/starlight/ThemeSelect.astro',
-        SocialIcons: './src/components/starlight/SocialIcons.astro',
-        LanguageSelect: './src/components/starlight/LanguageSelect.astro',
+        Hero: './src/components/docs/docs-home-hero.astro',
+        PageTitle: './src/components/starlight/page-title.astro',
+        MarkdownContent: './src/components/starlight/markdown-content.astro',
+        Footer: './src/components/starlight/footer.astro',
+        Search: './src/components/starlight/search.astro',
+        ThemeSelect: './src/components/starlight/theme-select.astro',
+        SocialIcons: './src/components/starlight/social-icons.astro',
+        LanguageSelect: './src/components/starlight/language-select.astro',
       },
 
       social: [

@@ -18,19 +18,19 @@ import type { MigrationPlan, MigrationScope } from "./types.js";
  * Canonical legacy source paths, keyed by scope.
  * These are relative to the scope root (home or cwd).
  */
-export const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string> = {
+export const LEGACY_SOURCE_RELATIVE = {
   global: ".config/opencode/weave-opencode.jsonc",
   local: ".opencode/weave-opencode.jsonc",
-};
+} satisfies Record<MigrationScope, string>;
 
 /**
  * Canonical migration destination directory names, keyed by scope.
  * Migration ALWAYS writes to these paths — --install-dir is ignored.
  */
-export const CANONICAL_WEAVE_DIR: Record<MigrationScope, string> = {
+export const CANONICAL_WEAVE_DIR = {
   global: ".weave",
   local: ".weave",
-};
+} satisfies Record<MigrationScope, string>;
 
 // ---------------------------------------------------------------------------
 // Plan builder

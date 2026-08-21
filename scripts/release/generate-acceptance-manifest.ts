@@ -12,6 +12,7 @@ import {
   ACCEPTANCE_MANIFEST_REQUIREMENTS,
   PACKED_PROOF_REGISTRY,
 } from "./acceptance-manifest-data.js";
+import { isJsonObject, isJsonString, parseJsonValue } from "./json.js";
 import { PackagePolicyValidator } from "./package-policy.js";
 import {
   BunPackageCommandRunner,
@@ -74,13 +75,33 @@ async function generateAcceptanceManifestUnsafe(
   Result<GeneratedAcceptanceManifestResult, GenerateAcceptanceManifestError>
 > {
   const packageJsonResult = await ResultAsync.fromPromise(
-    Bun.file(`${root}/packages/adapters/pi/package.json`).json() as Promise<{
-      version: string;
-    }>,
+    Bun.file(`${root}/packages/adapters/pi/package.json`).text(),
     (cause): GenerateAcceptanceManifestError => ({
       type: "PackageJsonReadFailed",
       cause: String(cause),
     }),
+  ).andThen((contents) =>
+    parseJsonValue(contents)
+      .mapErr(
+        (cause): GenerateAcceptanceManifestError => ({
+          type: "PackageJsonReadFailed",
+          cause: cause.message,
+        }),
+      )
+      .andThen((value) => {
+        if (!isJsonObject(value) || !isJsonString(value.version))
+          return err<
+            { readonly version: string },
+            GenerateAcceptanceManifestError
+          >({
+            type: "PackageJsonReadFailed",
+            cause: "package manifest has no string version",
+          });
+        return ok<
+          { readonly version: string },
+          GenerateAcceptanceManifestError
+        >({ version: value.version });
+      }),
   );
   if (packageJsonResult.isErr()) return err(packageJsonResult.error);
   const packageJson = packageJsonResult.value;
@@ -109,10 +130,7 @@ async function generateAcceptanceManifestUnsafe(
       cause: String(cause),
     }),
   );
-  await ResultAsync.fromPromise(
-    Bun.$`rm -rf ${scratchRoot}`.quiet(),
-    () => undefined,
-  );
+  await ResultAsync.fromPromise(Bun.$`rm -rf ${scratchRoot}`.quiet(), () => {});
   if (tarballBytesResult.isErr()) return err(tarballBytesResult.error);
   const sha256 = new Bun.CryptoHasher("sha256")
     .update(new Uint8Array(tarballBytesResult.value))

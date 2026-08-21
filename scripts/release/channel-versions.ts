@@ -10,7 +10,7 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   ResultAsync,
   type ResultAsync as ResultAsyncType,
 } from "neverthrow";
@@ -45,6 +45,11 @@ export const ChannelVersionSchema = z.string().regex(CHANNEL_VERSION);
 export const ShortShaSchema = z.string().regex(SHORT_SHA);
 
 export type Channel = "next" | "nightly";
+type ChannelDiffValue =
+  | readonly string[]
+  | Result<readonly string[], unknown>
+  | PromiseLike<readonly string[]>
+  | ResultAsyncType<readonly string[], unknown>;
 
 export type ChannelVersionError =
   | { type: "InvalidSourceSha"; sourceSha: string }
@@ -141,23 +146,20 @@ export function computeWouldBeNextStableVersions(
       type: "InvalidChangesetInput",
       reason: "a consumed changeset was modified after ledger consumption",
     });
-  const versions = { ...input.packageVersions } as Record<
-    PublicPackageName,
-    string
-  >;
+  const versions = { ...input.packageVersions };
   const catalog = publishablePackageNames();
   for (const packageName of catalog) {
     if (versions[packageName] === undefined)
       return err({ type: "InvalidPackageVersionMap", packageName });
   }
   for (const packageName of Object.keys(versions)) {
-    if (!catalog.includes(packageName as PublicPackageName))
+    if (!catalog.some((catalogPackage) => catalogPackage === packageName))
       return err({ type: "InvalidPackageVersionMap", packageName });
   }
-  for (const [packageName, version] of Object.entries(versions) as [
-    PublicPackageName,
-    string,
-  ][]) {
+  for (const packageName of catalog) {
+    const version = versions[packageName];
+    if (version === undefined)
+      return err({ type: "InvalidPackageVersionMap", packageName });
     if (!STABLE_VERSION.test(version))
       return err({ type: "InvalidStableVersion", packageName, version });
   }
@@ -381,7 +383,7 @@ function checkCollision(
   packageName: PublicPackageName,
   version: string,
 ): ResultAsync<void, ChannelVersionError> {
-  if (registry === undefined) return okAsync(undefined);
+  if (registry === undefined) return okAsync();
   return registry
     .listVersions(packageName)
     .mapErr((error) => ({
@@ -393,7 +395,7 @@ function checkCollision(
     .andThen((versions) =>
       versions.includes(version)
         ? errAsync({ type: "RegistryCollision" as const, packageName, version })
-        : okAsync(undefined),
+        : okAsync(),
     );
 }
 
@@ -402,7 +404,7 @@ function latestNightlySourceSha(
 ): ResultAsync<string | null, ChannelVersionError> {
   const packages = publishablePackageNames();
   let found: { date: string; version: string; sha: string } | undefined;
-  let result: ResultAsync<void, ChannelVersionError> = okAsync(undefined);
+  let result: ResultAsync<void, ChannelVersionError> = okAsync();
   for (const packageName of packages)
     result = result.andThen(() =>
       registry
@@ -433,7 +435,7 @@ function latestNightlySourceSha(
             )
               found = { date, version, sha };
           }
-          return okAsync(undefined);
+          return okAsync();
         }),
     );
   return result.map(() => found?.sha ?? null);
@@ -448,6 +450,7 @@ function readChangedPaths(
     "changedPathsSince" in reader
       ? reader.changedPathsSince(fromSha, toSha)
       : reader(fromSha, toSha);
+  if (Array.isArray(value)) return okAsync(value);
   if (value instanceof ResultAsync) {
     return value.mapErr((error) => ({
       type: "GitDiffFailed" as const,
@@ -474,30 +477,37 @@ function readChangedPaths(
       toSha,
       message: String(error),
     }));
-  return okAsync(value);
+  return errAsync({
+    type: "GitDiffFailed" as const,
+    fromSha,
+    toSha,
+    message: "changed-path reader returned an unsupported value",
+  });
+}
+
+function isObjectLike<T>(value: T): value is T & object {
+  return value !== null && value !== undefined && Object(value) === value;
+}
+
+function isCallable<T>(value: T): boolean {
+  return Result.fromThrowable(
+    () => Function.prototype.toString.call(value),
+    () => false,
+  )().isOk();
 }
 
 function isResultLike(
-  value: unknown,
+  value: ChannelDiffValue,
 ): value is Result<readonly string[], unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "isErr" in value &&
-    "match" in value &&
-    typeof value.match === "function"
-  );
+  if (!isObjectLike(value)) return false;
+  return "match" in value && isCallable(value.match);
 }
 
 function isPromiseLike(
-  value: unknown,
+  value: ChannelDiffValue,
 ): value is PromiseLike<readonly string[]> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "then" in value &&
-    typeof value.then === "function"
-  );
+  if (!isObjectLike(value)) return false;
+  return "then" in value && isCallable(value.then);
 }
 
 function normalizeSha12(sourceSha: string): string | null {

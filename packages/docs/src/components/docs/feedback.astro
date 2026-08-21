@@ -36,8 +36,8 @@ const id = `feedback-${Math.random().toString(36).slice(2, 8)}`;
   (function () {
     const fb = document.getElementById(id);
     if (!fb) return;
-    fb.querySelectorAll('[data-fb]').forEach(function (b) {
-      b.addEventListener('click', function () {
+    fb.querySelectorAll('[data-fb]').forEach((button) => {
+      button.addEventListener('click', () => {
         fb.classList.add('done');
       });
     });

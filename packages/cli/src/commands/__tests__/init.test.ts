@@ -363,7 +363,7 @@ describe("runInit — explicit migrate mode (weave init migrate)", () => {
       "/project",
       "/home/user",
     );
-    const { terminal, ctx } = initContext({
+    const { ctx } = initContext({
       fs,
       overrides: { initSubmode: "migrate", scope: "local", yes: true },
     });

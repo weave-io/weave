@@ -1,170 +1,82 @@
 # ADR 0003: OpenCode Adapter Materialization Shape
 
-**Status**: Accepted  
-**Date**: 2026-05-26  
+**Status**: Accepted (amended)
+**Date**: 2026-05-26
 **Related**: [Adapter Boundary](../architecture/adapter-boundary.md) · [Adapter Capabilities](../reference/adapter-capabilities.md) · [OpenCode Adapter](../adapters/opencode.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md)
-
----
 
 ## Context
 
-Weave's `@weaveio/weave-adapter-opencode` package needed to evolve from a translation-only stub (that populated an in-memory map but made no SDK calls) into a real first-slice materialization path that registers Weave-authored agents into a running OpenCode instance.
+Weave's OpenCode adapter loads normalized `.weave` configuration and projects it into OpenCode's configuration. OpenCode calls a plugin's `config` hook while it assembles that configuration. The hook is the reliable boundary for startup materialization and for `opencode debug config`.
 
-Four design questions had to be answered before implementation could proceed:
+An earlier design also wrapped the OpenCode SDK and attempted to list, create, and update agents after startup. OpenCode exposes no trusted Weave ownership authority for an existing agent. A description marker or copied metadata cannot authorize an overwrite. The SDK path therefore added a second, non-authoritative materialization path and could not safely distinguish a user entry from a Weave entry. The adapter does not need that path: the config hook already receives the config that OpenCode will use.
 
-1. **How does the adapter reach the OpenCode runtime?** OpenCode exposes a plugin API (`@opencode-ai/plugin`) and an SDK client (`@opencode-ai/sdk`). The adapter could either embed its own SDK client construction or accept an injected client from the plugin host.
+The adapter must also keep abstract Weave policy separate from OpenCode names. OpenCode's permission schema has named rules for `read`, `glob`, `grep`, `list`, and `task`; the legacy boolean `tools` map cannot represent `ask`.
 
-2. **Where does model discovery live?** The engine owns the abstract `resolveAdapterModelIntent()` helper, but only the adapter knows which models are available in the current OpenCode instance.
-
-3. **Where does skill discovery live?** The engine owns skill matching/filtering, but only the OpenCode harness knows which skills are installed and where they live.
-
-4. **How does the adapter write agents safely?** OpenCode has no separate create/update agent endpoint — both operations are expressed as a `config.update()` patch. The adapter must distinguish Weave-managed agents from manually created ones to avoid silent overwrites.
-
-The reference implementation in `~/projects/opencode-weave` (the legacy alpha) showed the plugin install/runtime story: users add the package to `opencode.json`'s `plugin` array, OpenCode loads it at startup, and the plugin entry point receives a runtime context with an SDK client already constructed.
-
----
+The config-hook argument is a trusted harness boundary, not a general JavaScript object-sanitization API. OpenCode has already parsed user JSON/JSONC into ordinary configuration records before it calls the hook. The adapter relies on that contract and does not attempt to identify arbitrary proxies, reflection traps, or other values supplied outside the OpenCode contract.
 
 ## Decision
 
-### 1. SDK-first, plugin/runtime-first entry path
+### 1. Config-hook-only materialization
 
-`@weaveio/weave-adapter-opencode` is an **OpenCode plugin**. Users install it by adding the package to the `plugin` array in their `opencode.json` config. OpenCode loads the plugin at startup and calls the default-exported `WeavePlugin` function with a runtime context that includes a pre-constructed SDK client.
+`@weaveio/weave-adapter-opencode` is an OpenCode plugin. The plugin:
 
-The package exports a `WeavePlugin` function (and a `server` alias for `PluginModule` compatibility) that:
+1. loads Weave config from `input.directory`;
+2. materializes normalized descriptors through the engine;
+3. resolves and translates each descriptor without SDK calls;
+4. returns a `config` hook that projects the translated entries into `cfg.agent` and registers the real Weave slash commands.
 
-1. Loads the Weave config from `input.directory` via `loadConfig()`.
-2. Calls `materializeAgents()` to compose all agent descriptors.
-3. Translates each descriptor into an `OpenCodeAgentConfig` via `translateAgent()` and collects the results into a `translatedMap`.
-4. Returns a `Hooks` object **immediately** — without blocking on any SDK or DB calls.
+The plugin has no event hook for agent materialization. It does not call an SDK client or a persistence API. This makes `opencode debug config` and a live startup use the same path.
 
-The `Hooks` object contains two hooks:
+Install the plugin through the `./server` subpath or the package's documented plugin entry. The plugin subpath exports only callable values so OpenCode's legacy loader can load it.
 
-- **`config` hook** — injects translated agent configs (tagged with `[weave-managed]`) into `cfg.agent` at startup so that `opencode debug config` reflects all Weave-managed agents. This is pure computation (no SDK calls).
-- **`event` hook** — defers SDK-backed reconciliation (`adapter.init()` + `spawnSubagent()`) to the first `session.created` event. This ensures `opencode debug config` never hangs waiting for the OpenCode runtime store. Reconciliation runs exactly once per plugin activation.
+### 2. Trusted-boundary same-name handling
 
-Both paths are required for full materialization.
+The config hook treats every existing own `cfg.agent[name]` entry as user-owned. It skips that name without reading, merging, tagging, or replacing the value. This preserves the entry's exact object identity and shape. The same rule applies to `cfg.command[name]`.
 
-> **Why deferred?** `opencode debug config` calls the plugin function and exercises only the `config` hook. The previous design called `adapter.init()` and `spawnSubagent()` eagerly before returning `Hooks`, which blocked `debug config` because the runtime SDK path (`client.app.agents()` / DB) is not available in that context.
+The hook does not inspect descriptions, `options`, or other metadata. A copied Weave-looking marker never grants overwrite authority. If this invocation inserts `loom`, it sets `default_agent` to `loom`; a pre-existing `loom` entry is unchanged and does not cause that selection.
 
-> **Why tag in the config hook?** The `config` hook injects agents into `cfg.agent`. When OpenCode's runtime picks up those agents and they appear in `client.listAgents()`, the deferred `reconcileAgent` call must classify them as `"update"` (Weave-managed) rather than `"collision"` (foreign). Applying `tagWithOwnership()` in the config hook ensures the `[weave-managed]` marker is present before the reconciler ever sees the agent, eliminating startup collision spam.
+Agent materialization and primary-agent selection are degraded because the config hook does not establish durable ownership across processes. Users can rename a Weave agent or remove a conflicting OpenCode entry before startup. Delegated-specialist readiness has the same limitation.
 
-```jsonc
-// opencode.json — direct plugin installation
-{
-  "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
-}
-```
+Command registration uses the trusted parsed-record contract. The hook registers the prompt-based `start-work` and `weave:start` templates only when this invocation inserts `tapestry`. A pre-existing, missing, skipped, or failed Tapestry descriptor cannot become a command target. After Tapestry is inserted, each command name is checked independently: an existing command object remains unchanged, including nested fields, while an absent name receives the Weave-owned prompt command. A collision for one name does not prevent registration of the other absent name. The implementation makes no partial-write rollback or cross-process durable-ownership claim.
 
-> **Important**: Use the `@weaveio/weave-adapter-opencode/plugin` subpath export, not the bare package name.
-> The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
-> type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export
-> is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and
-> is the correct entry point for OpenCode.
+The command templates are prompt-only. They require the user to provide a plan argument or ask the user to select one when it is absent. Tapestry must validate a named plan through the repository tools and files available in the session. `.weave/state.json`, if present, is ordinary repository data; it is not system-authorized state and does not prove plan selection, authentication, creation, or resumption. The plugin does not invent or wire a runtime handler.
 
-No user-authored wrapper script is required. The `./plugin` bundle is the plugin entry point.
+### 3. Translation-only adapter boundary
 
-The `OpenCodeAdapterOptions.client` field is the primary injection point for the SDK client. When omitted, the adapter operates in translation-only mode (no SDK calls), which is useful for config-write-only scenarios and tests that only need translated config snapshots.
+`OpenCodeAdapter` translates descriptors for explicit runtime command projections and keeps an in-memory `translatedAgents` snapshot for those callers. `spawnSubagent()` does not register or update a live OpenCode resource. `OpenCodeAdapterOptions` contains project, model-context, and harness-skill inputs only; it has no client option.
 
-### 2. Injected client, adapter-owned SDK facade
+OpenCode SDK types used by the adapter remain local to `sdk-types.ts`. The removed SDK facade and reconciliation modules were not needed by the live plugin path. Their former package-root exports are removed as a breaking public-surface change and are covered by a changeset.
 
-All SDK calls flow through the narrow `OpenCodeClientFacade` interface defined in `opencode-client.ts`. This interface exposes only three methods:
+### 4. Exact permission projection
 
-- `listAgents()` — wraps `client.app.agents()`
-- `createAgent(name, config)` — wraps `client.config.update({ agent: { [name]: config } })`
-- `updateAgent(name, config)` — wraps `client.config.update({ agent: { [name]: config } })`
+`tool-policy-mapping.ts` is the only place that maps abstract Weave capabilities to OpenCode permission names:
 
-The facade is the **only** place in the adapter that imports SDK types. All other adapter modules import SDK types through `./sdk-types.ts` (re-exports only). This isolates SDK API surface changes to a single file.
+- `read` maps to `permission.read`;
+- `read` also maps to `permission.glob`, `permission.grep`, and `permission.list`;
+- `write` maps to `permission.edit`;
+- `execute` maps to `permission.bash`;
+- `delegate` maps to `permission.task`;
+- `network` maps to `permission.webfetch`.
 
-`SdkOpenCodeClient` is the production implementation of `OpenCodeClientFacade`. Tests use in-memory mock implementations that satisfy the interface without a live OpenCode process.
-
-### 3. Adapter-owned model resolution with engine helper
-
-Model discovery is adapter-owned. The adapter gathers `OpenCodeModelContext` (available models, UI-selected model, system default) from the OpenCode runtime and passes it to the engine's pure `resolveAdapterModelIntent()` helper. The engine never queries harness state directly.
-
-`model-resolution.ts` adds one adapter-local rule on top of the engine helper: **fail-fast for explicit subagent model intent**. When an agent's `mode` is `"subagent"` and `models` is non-empty, the first declared model must be present in `availableModels`. If it is not, `resolveModelForAgent()` returns `err(ModelNotAvailableError)` rather than falling back silently.
-
-This rule is intentionally strict for subagents: they are typically invoked programmatically with a specific model in mind, and silent fallback would produce unexpected behavior that is hard to debug.
-
-### 4. Harness-owned skill discovery, adapter-forwarded
-
-Skill discovery is harness-owned. The OpenCode SDK/runtime knows which skills are installed and where their files live. The adapter's role is to:
-
-1. Accept the harness-provided `SkillInfo[]` list via `OpenCodeAdapterOptions.availableSkills`.
-2. Return it from `loadAvailableSkills()` without any filesystem scanning.
-3. Let the engine's `resolveSkillsForAgent()` match declared skill names against the list and emit warnings for unresolved names.
-
-`skill-discovery.ts` provides two compatibility helpers:
-- `buildSkillInfoList(names)` — wraps harness-provided skill names as `SkillInfo[]`.
-- `validateDeclaredSkills(declared, available, disabled)` — reports missing names to callers that need a strict validation result. Adapter activation must convert this diagnostic into warnings rather than fail an agent.
-
-The module contains no filesystem I/O. When no skills are injected, `loadAvailableSkills()` returns `[]`; each declared skill is reported as unavailable and agent activation continues without it.
-
-### 5. Ownership-safe upsert via `[weave-managed]` tag
-
-OpenCode has no separate create/update agent endpoint. Both operations write through `client.config.update()` by patching the `agent` map. The adapter must distinguish Weave-managed agents from manually created ones.
-
-The reconciliation flow in `reconcile-agent.ts` is:
-
-```text
-1. listAgents()       — fetch current agent list from OpenCode
-2. find by name       — look for an agent whose name matches descriptor.name
-3. ownership check    — if found, verify description contains [weave-managed]
-4. create or update   — call createAgent() for new agents, updateAgent() for existing Weave-managed agents
-5. collision error    — return CollisionError when a same-named foreign agent is found
-```
-
-`descriptor.name` is the **Canonical Agent Name** — the stable harness-neutral internal id used for all matching and durable identity checks. `displayName`, `description`, and other presentation fields are mutable display metadata, not identity.
-
-The `[weave-managed]` ownership tag is embedded in the agent's `description` field. It is:
-- Human-readable and visible in the OpenCode UI.
-- Idempotent — appended only when not already present.
-- Sufficient to distinguish Weave-managed agents without a separate metadata store.
-
-**First-slice constraints (non-goals):**
-- No automatic delete, prune, or forced takeover of foreign agents.
-- No workflow-lifecycle expansion beyond the existing `run-workflow.ts` helper.
-- No engine API drift — the adapter boundary rules in `adapter-boundary.md` are unchanged.
-
----
+Each read field preserves `allow`, `deny`, and `ask` exactly. The adapter never omits `ask` and never uses the boolean `tools` map for read policy. Delegation uses `task`, not `doom_loop`.
 
 ## Consequences
 
-### What changes
-
-- `@weaveio/weave-adapter-opencode` is now a real first-slice materialization path, not a translation-only stub.
-- `spawnSubagent(descriptor)` performs the full `list → reconcile → create/update` flow when a client is injected.
-- `WeavePlugin` now returns a `Hooks` object **immediately** with a `config` hook (injects ownership-tagged agent configs into `cfg.agent`) and an `event` hook (defers SDK reconciliation to `session.created`). This makes agents visible to `opencode debug config` at startup without blocking on SDK/DB calls.
-- The `config` hook applies `tagWithOwnership()` before injecting agents so that deferred reconciliation classifies them as `"update"` rather than `"collision"`, eliminating startup collision spam.
-- `createWeavePlugin(options?)` is exported as a factory for creating plugin instances with custom `fileReader` and `clientFacade` options (primarily for testing).
-- `translatedAgents` is retained as a read-only secondary artifact for test inspection and transitional compatibility; it is not the source of truth.
-- `loadAvailableSkills()` returns the harness-injected skill list without filesystem scanning.
-- Model resolution fails fast for explicit subagent model intent that cannot be satisfied.
-
-### What is now possible
-
-- Users can install `@weaveio/weave-adapter-opencode` as an OpenCode plugin and have their `.weave/config.weave` agents materialized into OpenCode at startup.
-- Weave-managed agents are protected from accidental overwrite by the `[weave-managed]` ownership check.
-- The adapter can be tested end-to-end with mocked clients — no live OpenCode process required.
-- Future slices can add prune/delete reconciliation, workflow-lifecycle expansion, and richer model context without changing the core injection and ownership patterns established here.
-
-### Trade-offs accepted
-
-- **`[weave-managed]` tag in description is visible to users.** This is intentional — it signals ownership clearly. The alternative (a hidden metadata field) would require OpenCode to support custom agent metadata, which it does not in the current SDK version.
-- **Translation-only mode when no client is injected.** This preserves backward compatibility for callers that construct the adapter without a client. The warning log makes the mode explicit.
-- **Fail-fast only for subagent mode.** Primary and `all` mode agents fall through to the engine's standard resolution chain. This is a deliberate asymmetry: subagents are invoked programmatically and need predictable model behavior; primary agents are user-facing and benefit from flexible fallback.
-- **No prune/delete in first slice.** Removing Weave-managed agents that are no longer in config requires careful UX design (confirmation prompts, dry-run mode) and is deferred to a future slice.
-
----
+- Startup config materialization is deterministic and has one live path.
+- Existing same-name entries cannot be overwritten, even when their metadata looks like Weave metadata.
+- Loom becomes the default only when this hook inserted Loom itself.
+- SDK list/create/update calls, the no-op event path, and their facade types are gone.
+- Agent materialization, primary-agent selection, and delegated-specialist execution remain degraded because the trusted config hook does not prove durable ownership across processes; exact permission mapping remains native.
+- The plugin's only live slash commands are prompt-based `start-work` and `weave:start`; `/weave:run` is not registered.
+- The prompt commands require explicit plan input or user selection and repository-file validation. They do not treat `.weave/state.json` as system-authorized state or claim to create/resume work.
+- `RuntimeCommandProjection` remains an adapter-library surface for explicit callers, not a live OpenCode command handler. Passive events do not start workflow execution, and command-entrypoint readiness remains degraded until a live runtime delivery path exists.
 
 ## References
 
-- [`packages/adapters/opencode/src/index.ts`](../../packages/adapters/opencode/src/index.ts) — Package barrel: re-exports all public API including `WeavePlugin`, `OpenCodeAdapter`, and helpers.
-- [`packages/adapters/opencode/src/plugin.ts`](../../packages/adapters/opencode/src/plugin.ts) — `WeavePlugin` OpenCode plugin entry point; default export loaded by OpenCode at startup.
-- [`packages/adapters/opencode/src/adapter.ts`](../../packages/adapters/opencode/src/adapter.ts) — `OpenCodeAdapter` class with injected client and constructor options.
-- [`packages/adapters/opencode/src/opencode-client.ts`](../../packages/adapters/opencode/src/opencode-client.ts) — `OpenCodeClientFacade` interface and `SdkOpenCodeClient` implementation.
-- [`packages/adapters/opencode/src/reconcile-agent.ts`](../../packages/adapters/opencode/src/reconcile-agent.ts) — Ownership-safe upsert reconciliation logic.
-- [`packages/adapters/opencode/src/model-resolution.ts`](../../packages/adapters/opencode/src/model-resolution.ts) — Adapter-local model resolution with fail-fast rule.
-- [`packages/adapters/opencode/src/skill-discovery.ts`](../../packages/adapters/opencode/src/skill-discovery.ts) — Harness-injection-based skill validation helpers.
-- [`packages/adapters/opencode/src/sdk-types.ts`](../../packages/adapters/opencode/src/sdk-types.ts) — Sole SDK import surface for the adapter.
-- [OpenCode Adapter](../adapters/opencode.md) — Current implementation contract.
-- [Adapter Boundary](../architecture/adapter-boundary.md) — Ownership rules that this ADR must not violate.
+- [`packages/adapters/opencode/src/plugin.ts`](../../packages/adapters/opencode/src/plugin.ts) — config-hook plugin entry point.
+- [`packages/adapters/opencode/src/adapter.ts`](../../packages/adapters/opencode/src/adapter.ts) — translation-only adapter.
+- [`packages/adapters/opencode/src/sdk-types.ts`](../../packages/adapters/opencode/src/sdk-types.ts) — local SDK type boundary.
+- [`packages/adapters/opencode/src/tool-policy-mapping.ts`](../../packages/adapters/opencode/src/tool-policy-mapping.ts) — exact permission mapping.
+- [`packages/adapters/opencode/src/translate-agent.ts`](../../packages/adapters/opencode/src/translate-agent.ts) — descriptor translation.
+- [OpenCode Adapter](../adapters/opencode.md) — current runtime contract.
+- [Adapter Boundary](../architecture/adapter-boundary.md) — ownership rules.

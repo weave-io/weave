@@ -12,6 +12,9 @@
  * opaque child/thread identifier used purely as a uniqueness suffix.
  */
 
+import { z } from "zod";
+import type { JsonValue } from "./strict-json.js";
+
 // A regex literal would carry control characters, which the repo lint forbids;
 // the patterns are built from named `String.raw` sources instead.
 const ANSI_ESCAPE_SOURCE = String.raw`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)?)`;
@@ -134,8 +137,13 @@ export const PI_CHILD_TITLE_PROVENANCE_VALUES = Object.freeze([
 ] as const);
 
 /** One accepted durable title-provenance marker. */
+const PiChildTitleProvenanceSchema = z.enum(PI_CHILD_TITLE_PROVENANCE_VALUES);
+
 export type PiChildTitleProvenance =
   (typeof PI_CHILD_TITLE_PROVENANCE_VALUES)[number];
+
+/** Values accepted at the untrusted provenance boundary. */
+type PiChildTitleProvenanceCandidate = JsonValue | undefined;
 
 /**
  * Marker stamped on every durable child title written from this version.
@@ -156,12 +164,9 @@ export const PI_CHILD_TITLE_PROVENANCE: PiChildTitleProvenance =
  * trusted. Pure; never throws.
  */
 export function isTrustedChildTitleProvenance(
-  value: unknown,
+  value: PiChildTitleProvenanceCandidate,
 ): value is PiChildTitleProvenance {
-  if (typeof value !== "string") return false;
-  return (PI_CHILD_TITLE_PROVENANCE_VALUES as readonly string[]).includes(
-    value,
-  );
+  return PiChildTitleProvenanceSchema.safeParse(value).success;
 }
 
 /**
@@ -200,7 +205,7 @@ export interface PiStoredChildTitle {
 export function isProvenDurableChildTitle(stored: PiStoredChildTitle): boolean {
   if (!isTrustedChildTitleProvenance(stored.provenance)) return false;
   const { title } = stored;
-  if (typeof title !== "string" || title.length === 0) return false;
+  if (title.length === 0) return false;
   return title.length <= PI_CHILD_TITLE_BOUNDS.maxTitleLength;
 }
 
@@ -235,7 +240,8 @@ export function enforceDurableChildTitleProvenance(
   stored: PiStoredChildTitle,
 ): PiChildTitleProvenance {
   if (isProvenDurableChildTitle(stored)) {
-    return stored.provenance as PiChildTitleProvenance;
+    const parsed = PiChildTitleProvenanceSchema.safeParse(stored.provenance);
+    return parsed.success ? parsed.data : PI_CHILD_TITLE_PROVENANCE;
   }
   return PI_CHILD_TITLE_PROVENANCE;
 }

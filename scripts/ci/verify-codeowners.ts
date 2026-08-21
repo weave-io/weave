@@ -195,7 +195,7 @@ export function verifyCodeowners(
       }
     }
     if (errors.length > 0) return err(errors);
-    return ok(undefined);
+    return ok();
   });
 }
 

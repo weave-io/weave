@@ -1,3 +1,4 @@
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { err, errAsync, ok, type ResultAsync } from "neverthrow";
 import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "./builtins.js";
 import {
@@ -42,10 +43,8 @@ const log = logger.child({ module: "loader" });
  *          `BUILTIN_PROMPT_CONTENTS`. Agents without a matching entry are left
  *          unchanged (they will fail at compose time if they have no prompt).
  */
-function inlineBuiltinPrompts(
-  config: import("@weaveio/weave-core").WeaveConfig,
-): import("@weaveio/weave-core").WeaveConfig {
-  const inlinedAgents: import("@weaveio/weave-core").WeaveConfig["agents"] = {};
+function inlineBuiltinPrompts(config: WeaveConfig): WeaveConfig {
+  const inlinedAgents: WeaveConfig["agents"] = {};
 
   for (const [name, agent] of Object.entries(config.agents)) {
     const embeddedContent = BUILTIN_PROMPT_CONTENTS[name];
@@ -101,11 +100,11 @@ function inlineBuiltinPrompts(
 export function loadConfig(
   projectRoot?: string,
   fileReader: FileReader = bunFileReader,
-): ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]> {
+): ResultAsync<WeaveConfig, ConfigLoadError[]> {
   // Step 1: Builtins
   const builtinResult = getBuiltinConfig();
   if (builtinResult.isErr()) {
-    return errAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
+    return errAsync<WeaveConfig, ConfigLoadError[]>([
       { type: "BuiltinParseError", errors: builtinResult.error },
     ]);
   }
@@ -131,7 +130,7 @@ export function loadConfig(
       ...resolvedDiscovered,
     );
     if (mergeResult.isErr()) {
-      return err<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
+      return err<WeaveConfig, ConfigLoadError[]>([
         { type: "MergeError", errors: mergeResult.error },
       ]);
     }

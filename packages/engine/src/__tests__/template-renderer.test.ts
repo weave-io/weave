@@ -384,11 +384,12 @@ describe("renderTemplate — unsafe paths", () => {
 describe("renderTemplate — function values", () => {
   it("rejects a function value at the top level", () => {
     const lambda = (): string => "lambda";
-    const error = renderErr(
-      "{{name}}",
-      { name: lambda as unknown as string },
-      allowed("name"),
-    );
+    const context: TemplateContext = {};
+    Object.defineProperty(context, "name", {
+      value: lambda,
+      enumerable: true,
+    });
+    const error = renderErr("{{name}}", context, allowed("name"));
     expect(error.type).toBe("FunctionValue");
     if (error.type === "FunctionValue") {
       expect(error.path).toBe("name");
@@ -397,9 +398,14 @@ describe("renderTemplate — function values", () => {
 
   it("rejects a function value nested in an object", () => {
     const lambda = (): string => "lambda";
+    const agent: TemplateContext = {};
+    Object.defineProperty(agent, "name", {
+      value: lambda,
+      enumerable: true,
+    });
     const error = renderErr(
       "{{agent.name}}",
-      { agent: { name: lambda as unknown as string } },
+      { agent },
       // "agent.name" must be in allowedPaths for strict full-path validation
       allowed("agent.name"),
     );
@@ -411,9 +417,14 @@ describe("renderTemplate — function values", () => {
 
   it("rejects a function value inside an array", () => {
     const lambda = (): string => "lambda";
+    const items: string[] = [];
+    Object.defineProperty(items, 0, {
+      value: lambda,
+      enumerable: true,
+    });
     const error = renderErr(
       "{{#items}}{{.}}{{/items}}",
-      { items: [lambda as unknown as string] },
+      { items },
       allowed("items"),
     );
     expect(error.type).toBe("FunctionValue");

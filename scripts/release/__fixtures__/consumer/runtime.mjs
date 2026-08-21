@@ -6,8 +6,8 @@ const plugin = await import("@weaveio/weave-adapter-opencode/plugin");
 const server = await import("@weaveio/weave-adapter-opencode/server");
 const claude = await import("@weaveio/weave-adapter-claude-code");
 
-assert.equal(typeof cli.parseArgs, "function");
-assert.equal(typeof openCode.OpenCodeAdapter, "function");
-assert.equal(typeof plugin.default, "function");
-assert.equal(typeof server.default, "function");
-assert.equal(typeof claude.ClaudeCodeAdapter, "function");
+assert.equal(cli.parseArgs instanceof Function, true);
+assert.equal(openCode.OpenCodeAdapter instanceof Function, true);
+assert.equal(plugin.default instanceof Function, true);
+assert.equal(server.default instanceof Function, true);
+assert.equal(claude.ClaudeCodeAdapter instanceof Function, true);

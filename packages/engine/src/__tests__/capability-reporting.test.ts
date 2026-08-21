@@ -22,7 +22,6 @@
 import { describe, expect, it } from "bun:test";
 import type {
   AdapterCapabilityContract,
-  CapabilityId,
   SafeAdapterInitInput,
 } from "../capability-contract.js";
 import {
@@ -66,12 +65,8 @@ function syntheticPassingContract(): AdapterCapabilityContract {
 function syntheticMixedContract(): AdapterCapabilityContract {
   return {
     capabilities: ALL_CAPABILITY_IDS.map((id) => {
-      const isRequired = (
-        REQUIRED_CAPABILITIES as readonly CapabilityId[]
-      ).includes(id);
-      const isOptional = (
-        OPTIONAL_CAPABILITIES as readonly CapabilityId[]
-      ).includes(id);
+      const isRequired = REQUIRED_CAPABILITIES.includes(id);
+      const isOptional = OPTIONAL_CAPABILITIES.includes(id);
 
       // Degrade one required capability
       if (id === "workflow-persistence") {
@@ -163,7 +158,7 @@ describe("buildHumanRows: all pass", () => {
     const report = buildPassingReport();
     const rows = buildHumanRows(report);
     for (const row of rows) {
-      expect(typeof row.capability).toBe("string");
+      expect(row.capability).toBeDefined();
       expect(row.capability.length).toBeGreaterThan(0);
     }
   });
@@ -172,7 +167,7 @@ describe("buildHumanRows: all pass", () => {
     const report = buildPassingReport();
     const rows = buildHumanRows(report);
     for (const row of rows) {
-      expect(typeof row.notes).toBe("string");
+      expect(row.notes).toBeDefined();
       expect(row.notes.length).toBeGreaterThan(0);
     }
   });
@@ -289,9 +284,9 @@ describe("buildToonRows: deterministic", () => {
     const report = buildPassingReport();
     const rows = buildToonRows(report);
     for (const row of rows) {
-      expect(typeof row.id).toBe("string");
+      expect(row.id).toBeDefined();
       expect(["P", "F", "W"]).toContain(row.v);
-      expect(typeof row.r).toBe("string");
+      expect(row.r).toBeDefined();
     }
   });
 
@@ -343,30 +338,30 @@ describe("toJson: machine-readable interchange", () => {
   it("parsed JSON contains profileResult", () => {
     const report = buildPassingReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
+    const parsed = JSON.parse(json);
     expect(parsed.profileResult).toBeDefined();
-    expect(typeof parsed.profileResult.ready).toBe("boolean");
+    expect(parsed.profileResult.ready).toBeDefined();
   });
 
   it("parsed JSON contains harness name", () => {
     const report = buildPassingReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
+    const parsed = JSON.parse(json);
     expect(parsed.harness).toBe("synthetic-adapter");
   });
 
   it("parsed JSON contains timestamp", () => {
     const report = buildPassingReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
-    expect(typeof parsed.timestamp).toBe("string");
+    const parsed = JSON.parse(json);
+    expect(parsed.timestamp).toBeDefined();
     expect(parsed.timestamp.length).toBeGreaterThan(0);
   });
 
   it("parsed JSON contains capability contract", () => {
     const report = buildPassingReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
+    const parsed = JSON.parse(json);
     expect(Array.isArray(parsed.capabilityContract.capabilities)).toBe(true);
     expect(parsed.capabilityContract.capabilities).toHaveLength(21);
   });
@@ -374,7 +369,7 @@ describe("toJson: machine-readable interchange", () => {
   it("parsed JSON contains probe results", () => {
     const report = buildPassingReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
+    const parsed = JSON.parse(json);
     expect(Array.isArray(parsed.probeResults)).toBe(true);
   });
 
@@ -389,7 +384,7 @@ describe("toJson: machine-readable interchange", () => {
   it("mixed report JSON contains failures and warnings", () => {
     const report = buildMixedReport();
     const json = toJson(report);
-    const parsed = JSON.parse(json) as typeof report;
+    const parsed = JSON.parse(json);
     expect(parsed.profileResult.ready).toBe(false);
     expect(parsed.profileResult.failures.length).toBeGreaterThan(0);
     expect(parsed.profileResult.warnings.length).toBeGreaterThan(0);

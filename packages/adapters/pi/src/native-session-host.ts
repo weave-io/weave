@@ -11,6 +11,8 @@
  * the port the store validates against.
  */
 
+import { Result } from "neverthrow";
+import { z } from "zod";
 import type {
   PiNativeSessionHandle,
   PiNativeSessionHostPort,
@@ -50,23 +52,58 @@ export interface PiSessionManagerInstance {
   getEntries(): readonly unknown[];
   isPersisted(): boolean;
   getLeafId(): string | null;
-  appendCustomEntry(customType: string, data?: unknown): string;
+  appendCustomEntry<TData>(customType: string, data?: TData): string;
+}
+
+type StaticConstructorName = "create" | "open";
+const CALLABLE_STATIC_MEMBER_SCHEMA = z.instanceof(Function);
+
+/** Keep the host value opaque until the static API parser accepts it. */
+function isObjectReference<TValue>(value: TValue): value is TValue & object {
+  return value !== null && Object(value) === value;
+}
+
+/**
+ * Reads one public static constructor without invoking a host getter.
+ *
+ * Pi's `SessionManager` is a class whose static methods are own data
+ * properties. Requiring that shape prevents inherited prototype pollution and
+ * accessor-backed look-alikes from claiming a native-session capability.
+ * Reflection and callable parsing are both bounded by a typed failure result,
+ * so a hostile proxy or revoked callable reports `false` instead of throwing.
+ */
+function hasCallableStaticMember<TCandidate extends object>(
+  candidate: TCandidate,
+  key: StaticConstructorName,
+): boolean {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(candidate, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return false;
+  const member = descriptor.value;
+  if (!Object.hasOwn(member, "value")) return false;
+
+  const parsed = Result.fromThrowable(
+    () => CALLABLE_STATIC_MEMBER_SCHEMA.safeParse(member.value),
+    (): undefined => undefined,
+  )();
+  return parsed.isOk() && parsed.value.success;
 }
 
 /** True when a value exposes Pi's static `create` / `open` constructors. */
-export function isPiSessionManagerStatic(
-  value: unknown,
-): value is PiSessionManagerStatic {
-  if (
-    typeof value !== "function" &&
-    (typeof value !== "object" || value === null)
-  ) {
-    return false;
-  }
-  const candidate = value as { create?: unknown; open?: unknown };
+export function isPiSessionManagerStatic<TCandidate>(
+  value: TCandidate,
+): value is TCandidate & PiSessionManagerStatic {
+  if (!isObjectReference(value)) return false;
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(value),
+    (): object | null => null,
+  )();
+  if (prototype.isErr()) return false;
   return (
-    typeof candidate.create === "function" &&
-    typeof candidate.open === "function"
+    hasCallableStaticMember(value, "create") &&
+    hasCallableStaticMember(value, "open")
   );
 }
 
@@ -82,7 +119,9 @@ export function isPiSessionManagerStatic(
  * Pi's v3 contract. Key order is taken from the host object itself so the
  * persisted bytes stay identical to the header Pi generated.
  */
-function copyHostHeader(candidate: unknown): PiNativeSessionHeader | null {
+function copyHostHeader<TCandidate>(
+  candidate: TCandidate,
+): PiNativeSessionHeader | null {
   return validatePiNativeSessionHeader(candidate).unwrapOr(null);
 }
 
@@ -99,7 +138,7 @@ export function adaptPiSessionManagerHandle(
     getEntries: () => manager.getEntries(),
     isPersisted: () => manager.isPersisted(),
     getLeafId: () => manager.getLeafId(),
-    appendCustomEntry: (customType, data) =>
+    appendCustomEntry: <TData>(customType: string, data?: TData) =>
       manager.appendCustomEntry(customType, data),
   };
 }

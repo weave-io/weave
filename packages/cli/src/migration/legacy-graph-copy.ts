@@ -24,6 +24,46 @@ export const MAX_LEGACY_OBJECT_KEYS = 512;
 /** Raw JSONC source length bound applied before parse/visit. */
 export const MAX_LEGACY_SOURCE_LENGTH = 256 * 1024;
 
+/** Values that may arrive at the crafted-object conversion seam. */
+export type LegacyInputValue =
+  | LegacyInputRecord
+  | LegacyInputValue[]
+  | LegacyInputCallable
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined;
+
+/** A record accepted at the crafted-object conversion seam. */
+export interface LegacyInputRecord {
+  readonly [key: string]: LegacyInputValue;
+}
+
+/** A callable accepted at the crafted-object conversion seam. */
+export type LegacyInputCallable = (
+  ...args: readonly LegacyInputValue[]
+) => LegacyInputValue;
+
+/** Values returned after descriptor-safe graph copying. */
+export type LegacyGraphValue =
+  | LegacyGraphObject
+  | LegacyGraphValue[]
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined;
+
+/** A copied record with a null prototype and recursively copied values. */
+export interface LegacyGraphObject {
+  readonly [key: string]: LegacyGraphValue;
+}
+
 export type LegacyGraphCopyError =
   | {
       type: "UnsafeGraph";
@@ -38,6 +78,19 @@ type CopyBudget = {
   nodes: number;
 };
 
+type LegacyValueKind =
+  | "null"
+  | "undefined"
+  | "string"
+  | "number"
+  | "boolean"
+  | "bigint"
+  | "symbol"
+  | "object"
+  | "array"
+  | "callable"
+  | "other";
+
 function unsafeGraphError(): LegacyGraphCopyError {
   return { type: "UnsafeGraph", message: UNSAFE_LEGACY_GRAPH_MESSAGE };
 }
@@ -46,10 +99,76 @@ function graphTooLargeError(): LegacyGraphCopyError {
   return { type: "GraphTooLarge", message: LEGACY_GRAPH_TOO_LARGE_MESSAGE };
 }
 
+/** Classify a crafted value without using an unchecked representation check. */
+export function legacyValueKind(value: LegacyInputValue): LegacyValueKind {
+  if (value === null) return "null";
+  if (Object(value) === value) {
+    if (Array.isArray(value)) return "array";
+    const callable = Result.fromThrowable(
+      () => Function.prototype.toString.call(value),
+      () => "not-callable",
+    )();
+    return callable.isOk() ? "callable" : "object";
+  }
+
+  const tag = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Other]",
+  )();
+  if (tag.isErr()) return "other";
+  switch (tag.value) {
+    case "[object Undefined]":
+      return "undefined";
+    case "[object String]":
+      return "string";
+    case "[object Number]":
+      return "number";
+    case "[object Boolean]":
+      return "boolean";
+    case "[object BigInt]":
+      return "bigint";
+    case "[object Symbol]":
+      return "symbol";
+    default:
+      return "other";
+  }
+}
+
+export const isLegacyString = (value: LegacyInputValue): value is string =>
+  legacyValueKind(value) === "string";
+
+export const isLegacyNumber = (value: LegacyInputValue): value is number =>
+  legacyValueKind(value) === "number";
+
+export const isLegacyBoolean = (value: LegacyInputValue): value is boolean =>
+  legacyValueKind(value) === "boolean";
+
+export const isLegacyUndefined = (
+  value: LegacyInputValue,
+): value is undefined => legacyValueKind(value) === "undefined";
+
+export const isLegacyBigInt = (value: LegacyInputValue): value is bigint =>
+  legacyValueKind(value) === "bigint";
+
+export const isLegacySymbol = (value: LegacyInputValue): value is symbol =>
+  legacyValueKind(value) === "symbol";
+
+export const isLegacyRecord = (
+  value: LegacyInputValue,
+): value is LegacyInputRecord => legacyValueKind(value) === "object";
+
+export const isLegacyGraphRecord = (
+  value: LegacyInputValue,
+): value is LegacyGraphObject => legacyValueKind(value) === "object";
+
+function isStringPropertyKey(key: PropertyKey): key is string {
+  return Object.prototype.toString.call(key) === "[object String]";
+}
+
 function defineOwn(
-  target: Record<string, unknown>,
+  target: LegacyGraphObject,
   key: string,
-  value: unknown,
+  value: LegacyGraphValue,
 ): void {
   Object.defineProperty(target, key, {
     value,
@@ -64,20 +183,20 @@ function consumeNode(budget: CopyBudget): Result<void, LegacyGraphCopyError> {
   if (budget.nodes > MAX_LEGACY_GRAPH_NODES) {
     return err(graphTooLargeError());
   }
-  return ok(undefined);
+  return ok();
 }
 
 function copyArray(
-  source: unknown[],
+  source: LegacyInputValue[],
   active: WeakSet<object>,
   budget: CopyBudget,
   depth: number,
-): Result<unknown[], LegacyGraphCopyError> {
+): Result<LegacyGraphValue[], LegacyGraphCopyError> {
   const lengthDescriptor = Object.getOwnPropertyDescriptor(source, "length");
   if (
     lengthDescriptor === undefined ||
     !("value" in lengthDescriptor) ||
-    typeof lengthDescriptor.value !== "number" ||
+    !isLegacyNumber(lengthDescriptor.value) ||
     !Number.isSafeInteger(lengthDescriptor.value) ||
     lengthDescriptor.value < 0 ||
     lengthDescriptor.enumerable !== false ||
@@ -91,7 +210,7 @@ function copyArray(
   const ownKeys = Reflect.ownKeys(source);
   if (ownKeys.length !== length + 1) return err(unsafeGraphError());
 
-  const copy: unknown[] = [];
+  const copy: LegacyGraphValue[] = [];
   for (let index = 0; index < length; index += 1) {
     const key = String(index);
     if (ownKeys[index] !== key) return err(unsafeGraphError());
@@ -114,18 +233,18 @@ function copyArray(
 }
 
 function copyRecord(
-  source: object,
+  source: LegacyInputRecord,
   active: WeakSet<object>,
   budget: CopyBudget,
   depth: number,
-): Result<Record<string, unknown>, LegacyGraphCopyError> {
+): Result<LegacyGraphObject, LegacyGraphCopyError> {
   const ownKeys = Reflect.ownKeys(source);
   if (ownKeys.length > MAX_LEGACY_OBJECT_KEYS) {
     return err(graphTooLargeError());
   }
-  const copy = Object.create(null) as Record<string, unknown>;
+  const copy: LegacyGraphObject = Object.create(null);
   for (const key of ownKeys) {
-    if (typeof key === "symbol") return err(unsafeGraphError());
+    if (!isStringPropertyKey(key)) return err(unsafeGraphError());
     if (key.length > MAX_LEGACY_STRING_LENGTH) {
       return err(graphTooLargeError());
     }
@@ -147,51 +266,63 @@ function copyRecord(
 }
 
 function copyGraph(
-  value: unknown,
+  value: LegacyInputValue,
   active: WeakSet<object>,
   budget: CopyBudget,
   depth: number,
-): Result<unknown, LegacyGraphCopyError> {
+): Result<LegacyGraphValue, LegacyGraphCopyError> {
   if (depth > MAX_LEGACY_GRAPH_DEPTH) return err(graphTooLargeError());
   const consumed = consumeNode(budget);
   if (consumed.isErr()) return err(consumed.error);
 
-  if (typeof value === "function") return err(unsafeGraphError());
-  if (typeof value === "string") {
+  const kind = legacyValueKind(value);
+  if (kind === "callable" || kind === "other") return err(unsafeGraphError());
+  if (isLegacyString(value)) {
     if (value.length > MAX_LEGACY_STRING_LENGTH) {
       return err(graphTooLargeError());
     }
     return ok(value);
   }
-  if (value === null || typeof value !== "object") return ok(value);
-  if (active.has(value)) return err(unsafeGraphError());
+  if (value === null) return ok(null);
+  if (isLegacyUndefined(value)) return ok(value);
+  if (isLegacyNumber(value)) return ok(value);
+  if (isLegacyBoolean(value)) return ok(value);
+  if (isLegacyBigInt(value)) return ok(value);
+  if (isLegacySymbol(value)) return ok(value);
 
-  const isArray = Array.isArray(value);
-  const prototype = Object.getPrototypeOf(value);
-  if (
-    isArray
-      ? prototype !== Array.prototype
-      : prototype !== Object.prototype && prototype !== null
-  ) {
-    return err(unsafeGraphError());
+  if (kind === "array") {
+    if (!Array.isArray(value)) return err(unsafeGraphError());
+    if (active.has(value)) return err(unsafeGraphError());
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Array.prototype) return err(unsafeGraphError());
+    active.add(value);
+    const copied = copyArray(value, active, budget, depth);
+    active.delete(value);
+    return copied;
   }
 
+  if (!isLegacyRecord(value)) return err(unsafeGraphError());
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return err(unsafeGraphError());
+  }
+  if (active.has(value)) return err(unsafeGraphError());
+
   active.add(value);
-  const copied = isArray
-    ? copyArray(value, active, budget, depth)
-    : copyRecord(value, active, budget, depth);
+  const copied = copyRecord(value, active, budget, depth);
   active.delete(value);
   return copied;
 }
 
 const safelyCopyLegacyGraph = Result.fromThrowable(
-  (value: unknown) => copyGraph(value, new WeakSet<object>(), { nodes: 0 }, 0),
+  (value: LegacyInputValue): Result<LegacyGraphValue, LegacyGraphCopyError> =>
+    copyGraph(value, new WeakSet<object>(), { nodes: 0 }, 0),
   (): LegacyGraphCopyError => unsafeGraphError(),
 );
 
 /** Copy a descriptor-safe, size-bounded legacy JSONC graph. */
 export function copyLegacyGraph(
-  value: unknown,
-): Result<unknown, LegacyGraphCopyError> {
+  value: LegacyInputValue,
+): Result<LegacyGraphValue, LegacyGraphCopyError> {
   return safelyCopyLegacyGraph(value).andThen((result) => result);
 }

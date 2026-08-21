@@ -256,7 +256,6 @@ interface OpenEvalsResult {
 type OpenEvalsEvaluator = (params: {
   outputs: string;
   reference_outputs?: string;
-  [key: string]: unknown;
 }) => Promise<OpenEvalsResult>;
 
 /**
@@ -396,7 +395,10 @@ export class RealLangChainJudge implements LangChainJudge {
   ) {
     this._moduleLoader =
       moduleLoader ??
-      (() => import("openevals/llm") as Promise<OpenEvalsLlmModule>);
+      (async () => {
+        const { createLLMAsJudge } = await import("openevals/llm");
+        return { createLLMAsJudge };
+      });
   }
 
   /**
@@ -486,8 +488,10 @@ export class RealLangChainJudge implements LangChainJudge {
       ).andThen((result): ResultAsync<JudgeOutput, ScoringError> => {
         // openevals returns score as number | boolean; normalise to number
         let rawScore: number;
-        if (typeof result.score === "boolean") {
-          rawScore = result.score ? 1.0 : 0.0;
+        if (result.score === true) {
+          rawScore = 1.0;
+        } else if (result.score === false) {
+          rawScore = 0.0;
         } else {
           rawScore = result.score;
         }
@@ -597,30 +601,6 @@ function clampScore(score: number): number {
 }
 
 /**
- * Build the rubric description string for the routing correctness dimension.
- *
- * The description is injected into the judge prompt as context for what
- * "correct routing" means for this specific case.
- */
-function buildRoutingRubric(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "agent_routing") {
-    return `Not applicable for case kind "${evalCase.expected_outcome.kind}". Routing is not assessed.`;
-  }
-  const via =
-    evalCase.expected_outcome.via.length > 0
-      ? ` via [${evalCase.expected_outcome.via.join(" → ")}]`
-      : " directly";
-  const alternates =
-    evalCase.accepted_alternates.length > 0
-      ? ` Accepted alternates: [${evalCase.accepted_alternates.join(", ")}].`
-      : "";
-  return (
-    `The model should route to agent "${evalCase.expected_outcome.target_agent}"${via}.` +
-    alternates
-  );
-}
-
-/**
  * Build the rubric description for the delegation correctness dimension.
  */
 function buildDelegationRubric(evalCase: EvalCase): string {
@@ -653,34 +633,7 @@ function buildRationaleRubric(evalCase: EvalCase, rubric: EvalRubric): string {
     rubric.scoring.notes !== undefined && rubric.scoring.notes.trim() !== ""
       ? ` Reviewer notes: ${rubric.scoring.notes}`
       : "";
-  return (
-    `Evaluate the quality of the model's rationale for case: ${evalCase.description}.` +
-    ` A high-quality rationale is coherent, directly relevant to the task, and sufficiently detailed.${notes}`
-  );
-}
-
-/**
- * Serialise a model run output's routing signal as a string for the judge.
- */
-function serialiseRoutingSignal(run: ModelRunOutput): string {
-  if (run.routedAgents.length === 0) {
-    return "(no agent routing expressed)";
-  }
-  return `Routed to: [${run.routedAgents.join(", ")}]`;
-}
-
-/**
- * Serialise the routing reference (expected outcome) as a string.
- */
-function serialiseRoutingReference(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "agent_routing") {
-    return "(routing not applicable)";
-  }
-  const via =
-    evalCase.expected_outcome.via.length > 0
-      ? ` via [${evalCase.expected_outcome.via.join(" → ")}]`
-      : " directly";
-  return `Expected: "${evalCase.expected_outcome.target_agent}"${via}`;
+  return `Evaluate the quality of the model's rationale for case: ${evalCase.description}. A high-quality rationale is coherent, directly relevant to the task, and sufficiently detailed.${notes}`;
 }
 
 /**
@@ -1046,13 +999,27 @@ export function buildPublicExplanation(
   const scoreBucket = computeScoreBucket(scoreRecord.weightedTotal, dryRun);
 
   // Collect applicable dimension names (identifiers only — no rationale text)
-  const applicableDimensions = (
-    Object.entries(scoreRecord.dimensions) as Array<
-      [ScoringDimension, DimensionScore]
-    >
-  )
-    .filter(([, dim]) => dim.applicable)
-    .map(([name]) => name);
+  const dimensionEntries = [
+    {
+      name: "routingCorrectness",
+      score: scoreRecord.dimensions.routingCorrectness,
+    },
+    {
+      name: "delegationCorrectness",
+      score: scoreRecord.dimensions.delegationCorrectness,
+    },
+    {
+      name: "executionCompleteness",
+      score: scoreRecord.dimensions.executionCompleteness,
+    },
+    {
+      name: "rationaleQuality",
+      score: scoreRecord.dimensions.rationaleQuality,
+    },
+  ] satisfies Array<{ name: ScoringDimension; score: DimensionScore }>;
+  const applicableDimensions = dimensionEntries
+    .filter(({ score }) => score.applicable)
+    .map(({ name }) => name);
 
   const outcomeKind = evalCase.expected_outcome.kind;
 
@@ -1397,12 +1364,12 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
             );
           }
 
-          const dimensions: Record<ScoringDimension, DimensionScore> = {
+          const dimensions = {
             routingCorrectness: routingResult.value,
             delegationCorrectness: delegationResult.value,
             executionCompleteness: executionResult.value,
             rationaleQuality: rationaleResult.value,
-          };
+          } satisfies Record<ScoringDimension, DimensionScore>;
 
           const weightedTotal = computeWeightedTotal(
             dimensions,

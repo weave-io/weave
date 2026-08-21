@@ -15,6 +15,15 @@ const TRUNCATION_SUFFIX = "... [truncated]";
 
 export const CONFIG_ERROR_COLLECTION_LIMIT = COLLECTION_LIMIT;
 
+function appendOwn<T>(target: T[], value: T): void {
+  Object.defineProperty(target, String(target.length), {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function truncate(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`;
@@ -81,10 +90,14 @@ function stringSize(error: ConfigError): number {
 export function boundConfigErrors<T extends ConfigError>(
   errors: readonly T[],
   truncationMarker: () => T,
-): T[] {
+): T[];
+export function boundConfigErrors(
+  errors: readonly ConfigError[],
+  truncationMarker: () => ConfigError,
+): ConfigError[] {
   let fieldWasTruncated = false;
   const sanitized = errors.map((error) => {
-    const bounded = boundStringFields(error) as T;
+    const bounded = boundStringFields(error);
     fieldWasTruncated ||= stringSize(bounded) !== stringSize(error);
     return bounded;
   });
@@ -100,7 +113,7 @@ export function boundConfigErrors<T extends ConfigError>(
     return sanitized;
   }
 
-  const bounded: T[] = [];
+  const bounded: ConfigError[] = [];
   let size = 0;
   for (const error of sanitized) {
     if (bounded.length >= MAX_CONFIG_ERROR_ISSUES - 1) break;
@@ -111,9 +124,9 @@ export function boundConfigErrors<T extends ConfigError>(
     ) {
       break;
     }
-    bounded.push(error);
+    appendOwn(bounded, error);
     size += nextSize;
   }
-  bounded.push(truncationMarker());
+  appendOwn(bounded, truncationMarker());
   return bounded;
 }

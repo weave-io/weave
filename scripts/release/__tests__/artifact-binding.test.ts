@@ -95,10 +95,10 @@ class MockGitHub implements GitHubClient {
     return okAsync(bytes);
   }
   createRelease() {
-    return okAsync(undefined);
+    return okAsync();
   }
   createTag() {
-    return okAsync(undefined);
+    return okAsync();
   }
 }
 function context(): BindingVerificationContext {

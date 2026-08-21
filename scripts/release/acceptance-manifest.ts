@@ -165,6 +165,9 @@ export const AcceptanceManifestSchema = z
   })
   .strict();
 export type AcceptanceManifest = z.infer<typeof AcceptanceManifestSchema>;
+type AcceptanceManifestInput = Parameters<
+  typeof AcceptanceManifestSchema.safeParse
+>[0];
 
 export type AcceptanceManifestError =
   | { type: "SchemaInvalid"; issues: readonly string[] }
@@ -178,7 +181,7 @@ export type AcceptanceManifestError =
  * duplicate a mandatory `PI-*` row even if the schema regex checks pass.
  */
 export function validateAcceptanceManifestStructure(
-  candidate: unknown,
+  candidate: AcceptanceManifestInput,
 ): Result<AcceptanceManifest, AcceptanceManifestError[]> {
   const parsed = AcceptanceManifestSchema.safeParse(candidate);
   if (!parsed.success)
@@ -200,9 +203,9 @@ export function validateAcceptanceManifestStructure(
   }
   for (const id of REQUIREMENT_IDS)
     if (!seen.has(id)) errors.push({ type: "MissingRequirementId", id });
+  const requiredIds = new Set<string>(REQUIREMENT_IDS);
   for (const id of seen)
-    if (!(REQUIREMENT_IDS as readonly string[]).includes(id))
-      errors.push({ type: "OrphanRequirementId", id });
+    if (!requiredIds.has(id)) errors.push({ type: "OrphanRequirementId", id });
 
   if (errors.length > 0) return err(errors);
   return ok(parsed.data);
@@ -250,9 +253,11 @@ export const HOST_BOUNDARY_TOKENS = [
   HOST_VERSION_FLOOR,
 ] as const;
 
-export const CLOSED_SET_REQUIREMENTS: Partial<
-  Record<RequirementId, ClosedSetSpec>
-> = {
+export interface ClosedSetRequirementRegistry {
+  readonly [requirementId: string]: ClosedSetSpec | undefined;
+}
+
+export const CLOSED_SET_REQUIREMENTS: ClosedSetRequirementRegistry = {
   "PI-CAP": {
     description: "20 capability IDs (Pi adapter contract)",
     members: ALL_CAPABILITY_IDS,
@@ -296,28 +301,35 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
       ...PiAdapterFailureRecoverySchema.options,
     ],
   },
-};
+} satisfies Partial<Record<RequirementId, ClosedSetSpec>>;
+
+export interface EvidenceReadError {
+  readonly type: "ReadFailed";
+}
 
 export interface EvidenceFileReader {
-  read(path: string): Promise<Result<string, { type: "ReadFailed" }>>;
+  read(path: string): Promise<Result<string, EvidenceReadError>>;
 }
 
 /** Reads evidence files from the real repository tree, relative to `root`. */
 export class BunEvidenceFileReader implements EvidenceFileReader {
   constructor(private readonly root: string) {}
 
-  async read(path: string): Promise<Result<string, { type: "ReadFailed" }>> {
+  async read(path: string): Promise<Result<string, EvidenceReadError>> {
     const fullPath = `${this.root}/${path}`;
     const file = Bun.file(fullPath);
     const exists = await ResultAsync.fromPromise(
       file.exists(),
-      (): { type: "ReadFailed" } => ({ type: "ReadFailed" }),
+      (): EvidenceReadError => ({ type: "ReadFailed" }),
     );
     if (exists.isErr()) return err(exists.error);
     if (!exists.value) return err({ type: "ReadFailed" });
-    return ResultAsync.fromPromise(file.text(), (): { type: "ReadFailed" } => ({
-      type: "ReadFailed",
-    }));
+    return ResultAsync.fromPromise(
+      file.text(),
+      (): EvidenceReadError => ({
+        type: "ReadFailed",
+      }),
+    );
   }
 }
 

@@ -35,7 +35,7 @@
  * safe, it fails closed.
  */
 
-import { dlopen, ptr } from "bun:ffi";
+import { dlopen, type Pointer, ptr } from "bun:ffi";
 import { platform } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
@@ -65,6 +65,21 @@ function cstr(value: string): Uint8Array {
   return textEncoder.encode(`${value}\0`);
 }
 
+interface TrustedRootNativeSymbols {
+  readonly realpath: (path: Pointer, resolved: Pointer) => Pointer | null;
+  readonly readlink: (
+    path: Pointer,
+    buffer: Pointer,
+    size: number | bigint,
+  ) => bigint;
+  readonly getuid: () => number;
+}
+
+interface TrustedRootNativeLibrary {
+  readonly symbols: TrustedRootNativeSymbols;
+  readonly close: () => void;
+}
+
 interface TrustedRootLibc {
   /** True when `resolved` was filled with a canonical absolute path. */
   readonly realpath: (path: Uint8Array, resolved: Uint8Array) => boolean;
@@ -74,56 +89,54 @@ interface TrustedRootLibc {
   readonly dispose: () => void;
 }
 
-function libcPath(): string | undefined {
-  const os = platform();
-  if (os === "darwin") return "/usr/lib/libSystem.B.dylib";
-  if (os === "linux") return "libc.so.6";
-  return undefined;
+const TRUSTED_ROOT_SYMBOL_DEFINITIONS = {
+  realpath: { args: ["ptr", "ptr"], returns: "ptr" },
+  readlink: { args: ["ptr", "ptr", "u64"], returns: "i64" },
+  getuid: { args: [], returns: "u32" },
+} as const;
+
+function makeTrustedRootLibc(
+  library: TrustedRootNativeLibrary,
+): TrustedRootLibc {
+  const { symbols } = library;
+  return {
+    realpath: (path, resolved) => {
+      // `realpath(3)` returns a non-null pointer only after filling the output
+      // buffer. The decoded buffer is validated as an absolute path below.
+      const returned = symbols.realpath(ptr(path), ptr(resolved));
+      return returned !== null && returned !== 0;
+    },
+    isSymlink: (path) => {
+      // `readlink(2)` succeeds only for a symlink itself. A negative ssize_t
+      // means the component is absent or is not a symlink.
+      const buffer = new Uint8Array(PATH_MAX);
+      const written = symbols.readlink(ptr(path), ptr(buffer), PATH_MAX);
+      return written >= 0n;
+    },
+    getuid: () => symbols.getuid(),
+    dispose: () => library.close(),
+  };
 }
 
 function loadTrustedRootLibc(): Result<
   TrustedRootLibc,
   PiTrustedDataRootViolation
 > {
-  const libraryPath = libcPath();
-  if (libraryPath === undefined) return err("data-root-unavailable");
-  return Result.fromThrowable(
-    () =>
-      dlopen(libraryPath, {
-        realpath: { args: ["ptr", "ptr"], returns: "ptr" },
-        readlink: { args: ["ptr", "ptr", "u64"], returns: "i64" },
-        getuid: { args: [], returns: "u32" },
-      }),
-    (): PiTrustedDataRootViolation => "data-root-unavailable",
-  )().map((library) => {
-    const symbols = library.symbols as unknown as {
-      realpath: (path: unknown, resolved: unknown) => unknown;
-      readlink: (
-        path: unknown,
-        buffer: unknown,
-        size: number,
-      ) => bigint | number;
-      getuid: () => number;
-    };
-    return {
-      realpath: (path: Uint8Array, resolved: Uint8Array) => {
-        // A null/zero return means the path could not be resolved: missing
-        // component, symlink loop, dangling link, or denied traversal.
-        const returned = symbols.realpath(ptr(path), ptr(resolved));
-        return returned !== null && returned !== undefined && returned !== 0;
-      },
-      isSymlink: (path: Uint8Array) => {
-        // `readlink` only succeeds on a symlink itself, so it separates a
-        // component that does not exist from one that is a dangling or
-        // looping link. Links below the trusted base are never followed.
-        const buffer = new Uint8Array(PATH_MAX);
-        const written = symbols.readlink(ptr(path), ptr(buffer), PATH_MAX);
-        return BigInt(written) >= 0n;
-      },
-      getuid: () => symbols.getuid(),
-      dispose: () => library.close(),
-    } satisfies TrustedRootLibc;
-  });
+  const os = platform();
+  if (os === "darwin") {
+    return Result.fromThrowable(
+      () =>
+        dlopen("/usr/lib/libSystem.B.dylib", TRUSTED_ROOT_SYMBOL_DEFINITIONS),
+      (): PiTrustedDataRootViolation => "data-root-unavailable",
+    )().map((library) => makeTrustedRootLibc(library));
+  }
+  if (os === "linux") {
+    return Result.fromThrowable(
+      () => dlopen("libc.so.6", TRUSTED_ROOT_SYMBOL_DEFINITIONS),
+      (): PiTrustedDataRootViolation => "data-root-unavailable",
+    )().map((library) => makeTrustedRootLibc(library));
+  }
+  return err("data-root-unavailable");
 }
 
 function decodeResolved(buffer: Uint8Array): string | undefined {
@@ -185,7 +198,7 @@ function resolveExistingAncestor(
 function rejectSymlinkedMissingComponents(
   libc: TrustedRootLibc,
   resolved: ResolvedBase,
-): Result<void, PiTrustedDataRootViolation> {
+): Result<true, PiTrustedDataRootViolation> {
   let current = resolved.canonical;
   for (const segment of resolved.missing) {
     current = join(current, segment);
@@ -193,29 +206,29 @@ function rejectSymlinkedMissingComponents(
       return err("unresolvable-data-root");
     }
   }
-  return ok(undefined);
+  return ok(true);
 }
 
 function verifyTrustedDirectory(
   libc: TrustedRootLibc,
   canonical: string,
-): ResultAsync<void, PiTrustedDataRootViolation> {
+): ResultAsync<true, PiTrustedDataRootViolation> {
   return ResultAsync.fromThrowable(
     () => Bun.file(canonical).stat(),
     (): PiTrustedDataRootViolation => "unresolvable-data-root",
   )().andThen((stat) => {
     if (!stat.isDirectory()) {
-      return errAsync<void, PiTrustedDataRootViolation>(
+      return errAsync<true, PiTrustedDataRootViolation>(
         "non-directory-data-root",
       );
     }
     if (stat.uid !== libc.getuid()) {
-      return errAsync<void, PiTrustedDataRootViolation>("foreign-data-root");
+      return errAsync<true, PiTrustedDataRootViolation>("foreign-data-root");
     }
     if ((stat.mode & 0o022) !== 0) {
-      return errAsync<void, PiTrustedDataRootViolation>("writable-data-root");
+      return errAsync<true, PiTrustedDataRootViolation>("writable-data-root");
     }
-    return okAsync<void, PiTrustedDataRootViolation>(undefined);
+    return okAsync<true, PiTrustedDataRootViolation>(true);
   });
 }
 

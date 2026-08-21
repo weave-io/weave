@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   AdapterCapabilityContractSchema,
   OPTIONAL_CAPABILITIES,
-  type ProviderFastActivationStatus,
+  ProviderFastActivationStatusSchema,
   REQUIRED_CAPABILITIES,
   readinessForProviderFastStatus,
 } from "@weaveio/weave-engine";
@@ -14,6 +14,56 @@ describe("OpenCode adapter capability contract", () => {
       OPENCODE_ADAPTER_CAPABILITY_CONTRACT,
     );
     expect(parsed.success).toBe(true);
+  });
+
+  it("declares only prompt plan-entry commands as degraded", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "command-entrypoints",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("/weave:start");
+    expect(capability?.notes).toContain("/start-work");
+    expect(capability?.notes).toContain("trusted config hook");
+    expect(capability?.notes).toContain(
+      "does not prove durable ownership across processes",
+    );
+    expect(capability?.notes).toContain("does not register /weave:run");
+    expect(capability?.notes).toContain("RuntimeCommandProjection");
+  });
+
+  it("declares agent materialization as degraded without proven update authority", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "agent-materialization",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("same-name resources");
+    expect(capability?.notes).toContain("trusted config hook");
+    expect(capability?.notes).toContain(
+      "does not prove durable ownership across processes",
+    );
+    expect(capability?.remediationHint).toContain("conflicting OpenCode entry");
+  });
+
+  it("declares delegation as degraded when same-name ownership is unproven", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "delegated-specialist-execution",
+    );
+
+    expect(capability?.readiness).toBe("degraded");
+    expect(capability?.notes).toContain("same-name materialization");
+  });
+
+  it("declares task permission mapping without the doom_loop false claim", () => {
+    const capability = OPENCODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "tool-policy-mapping",
+    );
+
+    expect(capability?.readiness).toBe("native");
+    expect(capability?.notes).toContain("task permission");
+    expect(capability?.notes).toContain("glob");
+    expect(capability?.notes).toContain("explicit OpenCode permission");
   });
 
   it("declares model-thinking-activation as degraded with an explicit SDK gap", () => {
@@ -64,10 +114,13 @@ describe("OpenCode adapter capability contract", () => {
 
     expect(OPTIONAL_CAPABILITIES).toContain("provider-fast-activation");
     expect(REQUIRED_CAPABILITIES).not.toContain("provider-fast-activation");
-    expect(
-      readinessForProviderFastStatus(
-        capability?.runtimeStatus as ProviderFastActivationStatus,
-      ),
-    ).toBe("unsupported");
+    const runtimeStatus = ProviderFastActivationStatusSchema.safeParse(
+      capability?.runtimeStatus,
+    );
+    expect(runtimeStatus.success).toBe(true);
+    if (!runtimeStatus.success) return;
+    expect(readinessForProviderFastStatus(runtimeStatus.data)).toBe(
+      "unsupported",
+    );
   });
 });

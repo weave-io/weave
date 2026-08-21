@@ -6,7 +6,6 @@ import {
   createPermissionService,
   PermissionRegistryBuilder,
 } from "../index.js";
-import type { PermissionOutcome } from "../permissions/types.js";
 import { createInMemoryRuntimeStore } from "../runtime/memory-store.js";
 import { createSqliteRuntimeStore } from "../runtime/sqlite/store.js";
 import type { RuntimeStore } from "../runtime/store.js";
@@ -50,6 +49,8 @@ const call = (generation: string) => ({
   approvalUiAvailable: true,
 });
 
+const generation = registry();
+
 async function activate(store: RuntimeStore) {
   const service = createPermissionService(store);
   const result = service.activate({
@@ -62,8 +63,6 @@ async function activate(store: RuntimeStore) {
   return (await result)._unsafeUnwrap();
 }
 
-const generation = registry();
-
 const tempDirs: string[] = [];
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -75,12 +74,11 @@ describe("PermissionService", () => {
   it("owns repository activation and preserves durable grants across sessions", async () => {
     const store = createInMemoryRuntimeStore();
     const first = await activate(store);
-    const pending = (
+    const pendingOutcome = (
       await first.authorizeCall(call(generation.id))
-    )._unsafeUnwrap() as Extract<
-      PermissionOutcome,
-      { kind: "approval_required" }
-    >;
+    )._unsafeUnwrap();
+    if (pendingOutcome.kind !== "approval_required") throw new Error("fixture");
+    const pending = pendingOutcome;
     const authorized = await first.answerChallenge(
       {
         challenge: pending.challenge,
@@ -134,7 +132,7 @@ describe("PermissionService", () => {
         return "project";
       },
     });
-    const getterResult = await service.activate(withGetter as never);
+    const getterResult = await service.activate(withGetter);
     expect(getterResult.isErr()).toBe(true);
     expect(getterResult._unsafeUnwrapErr().type).toBe("invalid_output");
     expect(projectGets).toBe(0);
@@ -151,13 +149,13 @@ describe("PermissionService", () => {
         requestSchemaVersion: "1",
       },
       {
-        get(target, prop, receiver) {
+        get() {
           getTrapHits += 1;
-          return Reflect.get(target, prop, receiver);
+          return void 0;
         },
       },
     );
-    const transparentResult = await service.activate(transparent as never);
+    const transparentResult = await service.activate(transparent);
     expect(transparentResult.isOk()).toBe(true);
     expect(getTrapHits).toBe(0);
 
@@ -184,7 +182,7 @@ describe("PermissionService", () => {
       },
     );
     const settled = await Promise.allSettled([
-      Promise.resolve(service.activate(hostile as never)),
+      Promise.resolve(service.activate(hostile)),
     ]);
     expect(settled[0]?.status).toBe("fulfilled");
     if (settled[0]?.status !== "fulfilled") throw new Error("fixture");
@@ -199,15 +197,77 @@ describe("PermissionService", () => {
       requestSchemaVersion: "1",
       repository: { forged: true },
     };
-    expect((await service.activate(extra as never)).isErr()).toBe(true);
+    expect((await service.activate(extra)).isErr()).toBe(true);
 
     const omitted = {
       project: "project",
       controllerSession: "controller",
       registry: generation,
       policies: { agent: policy },
+      requestSchemaVersion: "1",
     };
-    expect((await service.activate(omitted as never)).isErr()).toBe(true);
+    Object.defineProperty(omitted, "requestSchemaVersion", {
+      value: null,
+    });
+    expect((await service.activate(omitted)).isErr()).toBe(true);
+
+    const boxed = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(boxed, "project", {
+      value: Reflect.construct(String, ["project"]),
+    });
+    expect((await service.activate(boxed)).isErr()).toBe(true);
+
+    let tagReads = 0;
+    const tagged = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(tagged, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    expect((await service.activate(tagged)).isErr()).toBe(true);
+    expect(tagReads).toBe(0);
+
+    const spoofedValue = {};
+    Object.defineProperty(spoofedValue, Symbol.toStringTag, {
+      configurable: true,
+      get: () => {
+        tagReads += 1;
+        return "String";
+      },
+    });
+    const spoofed = {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    };
+    Object.defineProperty(spoofed, "project", { value: spoofedValue });
+    expect((await service.activate(spoofed)).isErr()).toBe(true);
+    expect(tagReads).toBe(0);
+
+    const callable = Object.assign(() => null, {
+      project: "project",
+      controllerSession: "controller",
+      registry: generation,
+      policies: { agent: policy },
+      requestSchemaVersion: "1",
+    });
+    expect((await service.activate(callable)).isErr()).toBe(true);
 
     // One-shot data-descriptor capture: mutating the input object after the
     // snapshot begins cannot change the values the session binds.

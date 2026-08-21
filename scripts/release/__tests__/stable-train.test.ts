@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 import { STABLE_TRAIN_STATES, STABLE_TRAIN_TRANSITIONS } from "../constants.js";
+import type { StableTrainRecord } from "../model.js";
+import type { StableTrainContent } from "../stable-train.js";
 import {
   assertCurrentArtifactIdentity,
   bindStableTrain,
@@ -13,6 +15,21 @@ import {
   validateStableTrain,
 } from "../stable-train.js";
 
+function digestContent(content: StableTrainContent): string {
+  const result = trainRecordDigest(content);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function checkedRecord(content: StableTrainContent): StableTrainRecord {
+  const result = validateStableTrain({
+    ...content,
+    recordDigest: digestContent(content),
+  });
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const content = {
   schemaVersion: 1 as const,
   trainRef: "release/20260719-abcdef123456",
@@ -23,7 +40,7 @@ const content = {
   packages: ["@weaveio/weave-cli"],
   versions: { "@weaveio/weave-cli": "1.2.3" },
 };
-const record = { ...content, recordDigest: trainRecordDigest(content) };
+const record = checkedRecord(content);
 
 describe("stable train records", () => {
   it.each([
@@ -56,14 +73,11 @@ describe("stable train records", () => {
     for (const from of STABLE_TRAIN_STATES)
       for (const to of STABLE_TRAIN_STATES) {
         const stateful = { ...content, state: from };
-        const statefulRecord = {
-          ...stateful,
-          recordDigest: trainRecordDigest(stateful),
-        } as never;
+        const statefulRecord = checkedRecord(stateful);
         const result = transitionStableTrain(statefulRecord, to);
-        const legal = (
-          STABLE_TRAIN_TRANSITIONS[from] as readonly string[]
-        ).includes(to);
+        const legal = STABLE_TRAIN_TRANSITIONS[from].some(
+          (candidate) => candidate === to,
+        );
         expect(result.isOk(), `${from} -> ${to}`).toBe(legal);
         if (result.isErr()) expect(result.error.type).toBe("InvalidTransition");
       }
@@ -105,13 +119,14 @@ describe("stable train records", () => {
   it("rejects expired, non-main, and non-green stable fixes and invalidates artifacts", () => {
     const clock = {
       now: () => new Date("2026-07-20T00:00:00.000Z"),
-      sleep: () => okAsync(undefined),
+      sleep: () => okAsync(),
     };
-    const withArtifacts = {
-      ...record,
+    const { recordDigest: _recordDigest, ...recordContent } = record;
+    const withArtifacts = checkedRecord({
+      ...recordContent,
       artifactIds: [10],
       artifactManifestDigest: `sha256:${"c".repeat(64)}`,
-    } as never;
+    });
     expect(
       planStableFix({
         record: withArtifacts,
@@ -137,18 +152,19 @@ describe("stable train records", () => {
     expect(fixed.isOk()).toBe(true);
     if (fixed.isOk()) expect(fixed.value.record.artifactIds).toBeUndefined();
     expect(
-      guardTrainExpiry(record as never, {
+      guardTrainExpiry(record, {
         now: () => new Date("2026-07-26T00:00:00.000Z"),
-        sleep: () => okAsync(undefined),
+        sleep: () => okAsync(),
       }).isErr(),
     ).toBe(true);
   });
   it("rejects stale artifact identities from rebuilds and rerun attempts", () => {
-    const bound = {
-      ...record,
+    const { recordDigest: _recordDigest, ...recordContent } = record;
+    const bound = checkedRecord({
+      ...recordContent,
       artifactIds: [17],
       artifactManifestDigest: `sha256:${"c".repeat(64)}`,
-    } as never;
+    });
     expect(
       assertCurrentArtifactIdentity(
         bound,
@@ -169,7 +185,7 @@ describe("stable train records", () => {
       expectedHeadSha: "d".repeat(40),
       clock: {
         now: () => new Date("2026-07-20T00:00:00.000Z"),
-        sleep: () => okAsync(undefined),
+        sleep: () => okAsync(),
       },
     });
     expect(rebuilt.isOk()).toBe(true);
@@ -183,17 +199,13 @@ describe("stable train records", () => {
     ).toBe(true);
   });
   it("progresses cut through built and bound once, preserving immutable train intent", () => {
-    const bound = bindStableTrain(
-      record as never,
-      `sha256:${"d".repeat(64)}`,
-      [17, 18],
-    );
+    const bound = bindStableTrain(record, `sha256:${"d".repeat(64)}`, [17, 18]);
     expect(bound.isOk()).toBe(true);
     if (bound.isErr()) return;
     expect(bound.value.state).toBe("bound");
     expect(bound.value.artifactIds).toEqual([17, 18]);
     const { recordDigest: _digest, ...boundContent } = bound.value;
-    expect(bound.value.recordDigest).toBe(trainRecordDigest(boundContent));
+    expect(bound.value.recordDigest).toBe(digestContent(boundContent));
     expect(
       bindStableTrain(bound.value, `sha256:${"e".repeat(64)}`, [19]).isErr(),
     ).toBe(true);
@@ -201,13 +213,12 @@ describe("stable train records", () => {
   });
   it("skips partial-publish reserved versions on a fresh main cut", () => {
     const partial = { ...content, state: "partial" as const };
-    const partialRecord = {
-      ...partial,
-      recordDigest: trainRecordDigest(partial),
-    } as never;
+    const partialRecord = checkedRecord(partial);
     const recovery = partialPublishRecoveryMetadata(partialRecord);
-    expect(recovery.metadataDigest).toMatch(/^sha256:/);
-    expect(recovery.recovery).toBe("fresh-main-cut");
+    expect(recovery.isOk()).toBe(true);
+    if (recovery.isErr()) return;
+    expect(recovery.value.metadataDigest).toMatch(/^sha256:/);
+    expect(recovery.value.recovery).toBe("fresh-main-cut");
     const plan = planStableCut({
       mainHeadSha: "b".repeat(40),
       serverCutAt: new Date("2026-07-20T00:00:00.000Z"),

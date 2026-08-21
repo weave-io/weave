@@ -115,6 +115,16 @@ function makePublicReportBundle(
 // MARKDOWN_INJECTION_PATTERNS — pattern coverage
 // ---------------------------------------------------------------------------
 
+function requireMarkdownPattern(name: string) {
+  const entry = MARKDOWN_INJECTION_PATTERNS.find(
+    (pattern) => pattern.name === name,
+  );
+  if (entry === undefined) {
+    throw new Error(`Missing Markdown injection pattern: ${name}`);
+  }
+  return entry;
+}
+
 describe("MARKDOWN_INJECTION_PATTERNS", () => {
   it("includes a pattern for script_tag", () => {
     const names = MARKDOWN_INJECTION_PATTERNS.map((p) => p.name);
@@ -157,112 +167,82 @@ describe("MARKDOWN_INJECTION_PATTERNS", () => {
   });
 
   it("script_tag matches '<script>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "script_tag",
-    );
-    expect(entry!.pattern.test("<script>alert(1)</script>")).toBe(true);
+    const entry = requireMarkdownPattern("script_tag");
+    expect(entry.pattern.test("<script>alert(1)</script>")).toBe(true);
   });
 
   it("script_tag matches '<SCRIPT>' (case-insensitive)", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "script_tag",
-    );
-    expect(entry!.pattern.test("<SCRIPT>alert(1)</SCRIPT>")).toBe(true);
+    const entry = requireMarkdownPattern("script_tag");
+    expect(entry.pattern.test("<SCRIPT>alert(1)</SCRIPT>")).toBe(true);
   });
 
   it("script_tag matches '<script src=...'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "script_tag",
-    );
-    expect(entry!.pattern.test('<script src="evil.js">')).toBe(true);
+    const entry = requireMarkdownPattern("script_tag");
+    expect(entry.pattern.test('<script src="evil.js">')).toBe(true);
   });
 
   it("style_tag matches '<style>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "style_tag",
-    );
-    expect(entry!.pattern.test("<style>body{}</style>")).toBe(true);
+    const entry = requireMarkdownPattern("style_tag");
+    expect(entry.pattern.test("<style>body{}</style>")).toBe(true);
   });
 
   it("iframe_tag matches '<iframe>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "iframe_tag",
-    );
-    expect(entry!.pattern.test("<iframe src='evil.html'></iframe>")).toBe(true);
+    const entry = requireMarkdownPattern("iframe_tag");
+    expect(entry.pattern.test("<iframe src='evil.html'></iframe>")).toBe(true);
   });
 
   it("inline_event_handler matches 'onclick='", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "inline_event_handler",
-    );
-    expect(entry!.pattern.test('img onclick="evil()"')).toBe(true);
+    const entry = requireMarkdownPattern("inline_event_handler");
+    expect(entry.pattern.test('img onclick="evil()"')).toBe(true);
   });
 
   it("inline_event_handler matches 'onerror='", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "inline_event_handler",
-    );
-    expect(entry!.pattern.test('<img src=x onerror="alert(1)">')).toBe(true);
+    const entry = requireMarkdownPattern("inline_event_handler");
+    expect(entry.pattern.test('<img src=x onerror="alert(1)">')).toBe(true);
   });
 
   it("inline_event_handler matches 'onload='", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "inline_event_handler",
-    );
-    expect(entry!.pattern.test('<body onload="evil()">')).toBe(true);
+    const entry = requireMarkdownPattern("inline_event_handler");
+    expect(entry.pattern.test('<body onload="evil()">')).toBe(true);
   });
 
   it("javascript_uri matches 'javascript:alert(1)'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "javascript_uri",
-    );
-    expect(entry!.pattern.test("javascript:alert(1)")).toBe(true);
+    const entry = requireMarkdownPattern("javascript_uri");
+    expect(entry.pattern.test("javascript:alert(1)")).toBe(true);
   });
 
   it("javascript_uri matches 'JAVASCRIPT:...' (case-insensitive)", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "javascript_uri",
-    );
-    expect(entry!.pattern.test("JAVASCRIPT:void(0)")).toBe(true);
+    const entry = requireMarkdownPattern("javascript_uri");
+    expect(entry.pattern.test("JAVASCRIPT:void(0)")).toBe(true);
   });
 
   it("data_uri matches 'data:text/html,...'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "data_uri",
+    const entry = requireMarkdownPattern("data_uri");
+    expect(entry.pattern.test("data:text/html,<script>alert(1)</script>")).toBe(
+      true,
     );
-    expect(
-      entry!.pattern.test("data:text/html,<script>alert(1)</script>"),
-    ).toBe(true);
   });
 
   it("data_uri matches 'data:image/svg+xml,...'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "data_uri",
+    const entry = requireMarkdownPattern("data_uri");
+    expect(entry.pattern.test("data:image/svg+xml,<svg onload=alert(1)>")).toBe(
+      true,
     );
-    expect(
-      entry!.pattern.test("data:image/svg+xml,<svg onload=alert(1)>"),
-    ).toBe(true);
   });
 
   it("object_embed_tag matches '<object>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "object_embed_tag",
-    );
-    expect(entry!.pattern.test("<object data='evil.swf'>")).toBe(true);
+    const entry = requireMarkdownPattern("object_embed_tag");
+    expect(entry.pattern.test("<object data='evil.swf'>")).toBe(true);
   });
 
   it("object_embed_tag matches '<embed>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "object_embed_tag",
-    );
-    expect(entry!.pattern.test("<embed src='evil.swf'>")).toBe(true);
+    const entry = requireMarkdownPattern("object_embed_tag");
+    expect(entry.pattern.test("<embed src='evil.swf'>")).toBe(true);
   });
 
   it("form_tag matches '<form>'", () => {
-    const entry = MARKDOWN_INJECTION_PATTERNS.find(
-      (p) => p.name === "form_tag",
-    );
-    expect(entry!.pattern.test('<form action="https://evil.com/steal">')).toBe(
+    const entry = requireMarkdownPattern("form_tag");
+    expect(entry.pattern.test('<form action="https://evil.com/steal">')).toBe(
       true,
     );
   });
@@ -1049,8 +1029,8 @@ describe("public-report.md XSS policy: download-only artifact", () => {
   it("Markdown output is a plain-text string (no DOM/HTML structure)", () => {
     const bundle = makePublicReportBundle();
     const md = renderPublicReportBundle(bundle);
-    // Output is a string, not a DOM node or HTML document
-    expect(typeof md).toBe("string");
+    // Output is a non-empty Markdown document, not a DOM node or HTML document.
+    expect(md.length).toBeGreaterThan(0);
     // Does not start with DOCTYPE, <html>, or <head>
     expect(md.trimStart()).not.toMatch(/^<!DOCTYPE/i);
     expect(md.trimStart()).not.toMatch(/^<html/i);

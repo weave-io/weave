@@ -20,26 +20,6 @@
  */
 const { sidebar } = Astro.locals.starlightRoute;
 
-// Local structural mirror of Starlight's `SidebarEntry` (link | group) so we
-// don't import from a hashed, install-specific node_modules path. `Astro.locals
-// .starlightRoute.sidebar` already carries the fully-typed value; these
-// interfaces only describe the fields we read.
-interface SidebarLinkEntry {
-  type: 'link';
-  href: string;
-  label: string;
-  isCurrent: boolean;
-}
-
-interface SidebarGroupEntry {
-  type: 'group';
-  label: string;
-  badge?: { text: string } | undefined;
-  entries: SidebarEntry[];
-}
-
-type SidebarEntry = SidebarLinkEntry | SidebarGroupEntry;
-
 interface NavLink {
   href: string;
   label: string;
@@ -52,7 +32,7 @@ interface NavGroup {
   links: NavLink[];
 }
 
-function collectLinks(entries: SidebarEntry[], into: NavLink[]): void {
+function collectLinks(entries: typeof sidebar, into: NavLink[]): void {
   for (const entry of entries) {
     if (entry.type === 'link') {
       into.push({ href: entry.href, label: entry.label, isCurrent: entry.isCurrent });
@@ -62,7 +42,7 @@ function collectLinks(entries: SidebarEntry[], into: NavLink[]): void {
   }
 }
 
-function toGroups(entries: SidebarEntry[]): NavGroup[] {
+function toGroups(entries: typeof sidebar): NavGroup[] {
   const groups: NavGroup[] = [];
   const looseLinks: NavLink[] = [];
 
@@ -87,7 +67,7 @@ function toGroups(entries: SidebarEntry[]): NavGroup[] {
   return groups;
 }
 
-const groups = toGroups(sidebar as unknown as SidebarEntry[]);
+const groups = toGroups(sidebar);
 ---
 
 {

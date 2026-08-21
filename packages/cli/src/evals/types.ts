@@ -19,6 +19,7 @@
  *     validated separately so runners can load them independently.
  */
 
+import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -942,9 +943,7 @@ export interface PromptProvider {
    * @returns `ResultAsync<string, ProvenanceError>` — the composed prompt text,
    *          or a typed error when composition fails.
    */
-  getPrompt(
-    agentName: string,
-  ): import("neverthrow").ResultAsync<string, ProvenanceError>;
+  getPrompt(agentName: string): ResultAsync<string, ProvenanceError>;
 }
 
 // ---------------------------------------------------------------------------

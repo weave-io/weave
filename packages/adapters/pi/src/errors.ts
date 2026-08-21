@@ -635,9 +635,20 @@ export interface PiChildResponseMissingCorrelation {
   readonly runNumber?: number;
 }
 
+interface PiChildResponseMissingCorrelationData {
+  [key: string]: string | number | boolean;
+  reason: PiChildResponseMissingReason;
+  childId: string;
+}
+
 /** Keeps correlated identifiers short; they are IDs, never payloads. */
 const MAX_CORRELATION_ID_LENGTH = 128;
 const MAX_CORRELATION_RUN_NUMBER = 1_000_000;
+const ChildResponseRunNumberSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_CORRELATION_RUN_NUMBER);
 
 const boundedCorrelationId = (value: string | undefined): string | undefined =>
   value === undefined || value.length === 0
@@ -660,13 +671,19 @@ export function makeChildResponseMissingFailure(
   const parentId = boundedCorrelationId(correlation.parentId);
   const correlationId = boundedCorrelationId(correlation.correlationId);
   const runId = boundedCorrelationId(correlation.runId);
-  const runNumber =
-    typeof correlation.runNumber === "number" &&
-    Number.isSafeInteger(correlation.runNumber) &&
-    correlation.runNumber >= 0 &&
-    correlation.runNumber <= MAX_CORRELATION_RUN_NUMBER
-      ? correlation.runNumber
-      : undefined;
+  const runNumberResult = ChildResponseRunNumberSchema.safeParse(
+    correlation.runNumber,
+  );
+  const runNumber = runNumberResult.success ? runNumberResult.data : undefined;
+  const correlationData: PiChildResponseMissingCorrelationData = {
+    reason: correlation.reason,
+    childId: boundedCorrelationId(childId) ?? "",
+  };
+  if (parentId !== undefined) correlationData.parentId = parentId;
+  if (correlationId !== undefined)
+    correlationData.correlationId = correlationId;
+  if (runId !== undefined) correlationData.runId = runId;
+  if (runNumber !== undefined) correlationData.runNumber = runNumber;
   return {
     code: "ChildResponseMissing",
     phase: "completion",
@@ -676,14 +693,7 @@ export function makeChildResponseMissingFailure(
     recovery: "retry",
     safeMessage:
       "The delegated child finished without a terminal assistant response.",
-    correlation: {
-      reason: correlation.reason,
-      childId: boundedCorrelationId(childId) ?? "",
-      ...(parentId === undefined ? {} : { parentId }),
-      ...(correlationId === undefined ? {} : { correlationId }),
-      ...(runId === undefined ? {} : { runId }),
-      ...(runNumber === undefined ? {} : { runNumber }),
-    },
+    correlation: correlationData,
   };
 }
 
@@ -1471,7 +1481,7 @@ export function mapPlanStateErrorToPiFailure(
       const unreachable: never = error;
       return makePlanReadFailedFailure(
         "unknown",
-        `unrecognized-plan-error-${String((unreachable as { type?: string }).type)}`,
+        `unrecognized-plan-error-${String(unreachable)}`,
       );
     }
   }

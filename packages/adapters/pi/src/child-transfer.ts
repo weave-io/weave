@@ -27,6 +27,7 @@
  * decoded back to text.
  */
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import { PI_TRANSPORT_LIMITS } from "./errors.js";
 
 /** The closed set of reasons a transfer chunk can be refused. */
@@ -81,6 +82,7 @@ function resolveLimits(overrides?: Partial<TransferLimits>): TransferLimits {
 
 /** Printable ASCII, 1..256 chars — the same shape the envelope's identifier schema accepts. */
 const TRANSFER_ID_PATTERN = /^[\x20-\x7e]{1,256}$/;
+const TRANSFER_ID_SCHEMA = z.string().regex(TRANSFER_ID_PATTERN);
 
 function encodeBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -108,6 +110,8 @@ function decodeBase64(data: string): Result<Uint8Array, TransferRejection> {
 function reject(reason: TransferRejectionReason): TransferRejection {
   return { type: "ChunkRejected", reason };
 }
+
+const NO_COMPLETED_TRANSFER: string | undefined = void 0;
 
 /**
  * Splits `payload` into acknowledged-transfer chunks, refusing up front any
@@ -173,12 +177,11 @@ export class ChunkTransferAssembler {
   }
 
   accept(chunk: TransferChunk): Result<string | undefined, TransferRejection> {
-    if (
-      typeof chunk.transferId !== "string" ||
-      !TRANSFER_ID_PATTERN.test(chunk.transferId)
-    ) {
+    const parsedTransferId = TRANSFER_ID_SCHEMA.safeParse(chunk.transferId);
+    if (!parsedTransferId.success) {
       return err(reject("invalid-transfer-id"));
     }
+    const transferId = parsedTransferId.data;
     if (
       !Number.isInteger(chunk.total) ||
       chunk.total < 1 ||
@@ -200,7 +203,7 @@ export class ChunkTransferAssembler {
       return err(reject("chunk-too-large"));
     }
 
-    let transfer = this.transfers.get(chunk.transferId);
+    let transfer = this.transfers.get(transferId);
     if (transfer === undefined) {
       // A new transfer past the concurrency cap is refused outright. Evicting
       // an in-flight transfer instead would let a peer silently destroy
@@ -209,7 +212,7 @@ export class ChunkTransferAssembler {
         return err(reject("too-many-transfers"));
       }
       transfer = { total: chunk.total, chunks: new Map(), byteLength: 0 };
-      this.transfers.set(chunk.transferId, transfer);
+      this.transfers.set(transferId, transfer);
     }
     if (transfer.total !== chunk.total) return err(reject("total-mismatch"));
     if (transfer.chunks.has(chunk.index)) return err(reject("duplicate-index"));
@@ -223,7 +226,8 @@ export class ChunkTransferAssembler {
 
     transfer.chunks.set(chunk.index, decoded.value);
     transfer.byteLength = projected;
-    if (transfer.chunks.size !== transfer.total) return ok(undefined);
+    if (transfer.chunks.size !== transfer.total)
+      return ok(NO_COMPLETED_TRANSFER);
 
     const bytes = new Uint8Array(transfer.byteLength);
     let offset = 0;
@@ -233,7 +237,7 @@ export class ChunkTransferAssembler {
       bytes.set(part, offset);
       offset += part.byteLength;
     }
-    this.transfers.delete(chunk.transferId);
+    this.transfers.delete(transferId);
     return ok(new TextDecoder().decode(bytes));
   }
 

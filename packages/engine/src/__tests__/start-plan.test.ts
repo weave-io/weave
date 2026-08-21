@@ -187,7 +187,7 @@ const SIMPLE_WORKFLOWS: StartPlanInput["workflows"] = {
 
 const noopProjectEffect = (
   _effect: DispatchAgentEffect,
-): ResultAsync<void, WorkflowRunnerError> => okAsync(undefined);
+): ResultAsync<void, WorkflowRunnerError> => okAsync();
 
 // ---------------------------------------------------------------------------
 // Shared base input factory
@@ -596,9 +596,9 @@ describe("startPlan — successful execution", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
+      expect(result.value.workflowInstanceId).toBeDefined();
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
-      expect(typeof result.value.leaseId).toBe("string");
+      expect(result.value.leaseId).toBeDefined();
       expect(result.value.leaseId.length).toBeGreaterThan(0);
     }
   });

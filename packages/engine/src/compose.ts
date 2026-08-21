@@ -21,6 +21,7 @@ import {
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
   type ReviewRoutingContext,
+  toRendererTemplateContext,
 } from "./template-context.js";
 import {
   type RendererError,
@@ -396,23 +397,17 @@ function loadAppendSource(
 /**
  * Render a template source string with the given context.
  * Returns Result<string, ComposeError>.
- *
- * AgentPromptTemplateContext is cast to TemplateContext because it satisfies
- * the structural requirements but lacks the index signature. The cast is safe
- * because all values in AgentPromptTemplateContext are TemplateContextValue-compatible.
  */
 function renderPromptTemplate(
   source: string,
-  context: AgentPromptTemplateContext,
+  context: TemplateContext,
   agentName: string,
   sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file",
   promptFilePath?: string,
 ): Result<string, ComposeError> {
-  const renderResult = renderTemplate(
-    source,
-    context as unknown as TemplateContext,
-    { allowedPaths: ALLOWED_TEMPLATE_PATHS },
-  );
+  const renderResult = renderTemplate(source, context, {
+    allowedPaths: ALLOWED_TEMPLATE_PATHS,
+  });
 
   if (renderResult.isErr()) {
     return err(
@@ -597,7 +592,9 @@ function findScalarCollision(
   // Collect all (index, value) pairs where the field is defined
   const defined: Array<{ index: number; value: string }> = [];
   for (let i = 0; i < configs.length; i++) {
-    const value = extract(configs[i] as WeaveConfig);
+    const config = configs[i];
+    if (config === undefined) continue;
+    const value = extract(config);
     if (value !== undefined) {
       defined.push({ index: i, value });
     }
@@ -607,11 +604,9 @@ function findScalarCollision(
   if (defined.length < 2) return undefined;
 
   // The winner is the last (highest-priority) entry; the loser is the one before it
-  const winner = defined[defined.length - 1] as {
-    index: number;
-    value: string;
-  };
-  const loser = defined[defined.length - 2] as { index: number; value: string };
+  const winner = defined.at(-1);
+  const loser = defined.at(-2);
+  if (winner === undefined || loser === undefined) return undefined;
 
   return {
     losingValue: loser.value,
@@ -654,7 +649,10 @@ function loadAppendSourceFromInput(
   }
 
   if (input.prompt_append_file === undefined) {
-    return okAsync(undefined);
+    return okAsync<
+      { content: string; fromFile: boolean } | undefined,
+      ComposeError
+    >(void 0);
   }
 
   const appendFilePath = input.prompt_append_file;
@@ -713,11 +711,12 @@ export function composeWorkflowStepPrompt(
 ): ResultAsync<WorkflowStepComposedPrompt, ComposeError> {
   const contextLabel = `workflow-step:${stepName}`;
   const reader = promptFileReader ?? defaultPromptFileReader;
+  const rendererContext = toRendererTemplateContext(templateContext);
 
   // Render the step's primary prompt as a template
   const renderedPrimaryResult = renderPromptTemplate(
     step.prompt,
-    templateContext,
+    rendererContext,
     contextLabel,
     "prompt",
   );
@@ -773,7 +772,7 @@ export function composeWorkflowStepPrompt(
 
       const renderedAppendResult = renderPromptTemplate(
         appendSource.content,
-        templateContext,
+        rendererContext,
         contextLabel,
         appendSourceKind,
         appendFilePath,
@@ -797,30 +796,30 @@ export function composeWorkflowStepPrompt(
  * Returns `undefined` when no matching groups exist.
  */
 export function buildReviewRoutingContext(
-  reviewVariants: MaterializedAgent[],
+  reviewVariants: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
   delegationTargetNames: string[],
 ): ReviewRoutingContext | undefined {
   const delegationSet = new Set(delegationTargetNames);
 
-  // Filter to review-variant agents only
-  const variants = reviewVariants.filter((a) => a.source === "review-variant");
-
-  // Group by sourceAgentName
   const groups = new Map<string, Array<{ name: string; model: string }>>();
-  for (const variant of variants) {
-    const sourceAgentName = variant.reviewMeta?.sourceAgentName;
-    if (sourceAgentName === undefined) continue;
-    if (!delegationSet.has(sourceAgentName)) continue;
+  for (const variant of reviewVariants) {
+    if (variant.source !== "review-variant") continue;
+    const reviewMeta = variant.reviewMeta;
+    if (reviewMeta === undefined) continue;
+    if (!delegationSet.has(reviewMeta.sourceAgentName)) continue;
 
-    const existing = groups.get(sourceAgentName);
+    const existing = groups.get(reviewMeta.sourceAgentName);
     const entry = {
       name: variant.agentName,
-      model: variant.reviewMeta?.reviewModel ?? "",
+      model: reviewMeta.reviewModel,
     };
     if (existing !== undefined) {
       existing.push(entry);
     } else {
-      groups.set(sourceAgentName, [entry]);
+      groups.set(reviewMeta.sourceAgentName, [entry]);
     }
   }
 
@@ -848,7 +847,10 @@ export function composeAgentDescriptor(
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
-  materializedReviewVariants?: MaterializedAgent[],
+  materializedReviewVariants?: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
   promptFileReader?: PromptFileReader,
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const reader = promptFileReader ?? defaultPromptFileReader;
@@ -890,6 +892,7 @@ export function composeAgentDescriptor(
   }
 
   const templateContext = contextResult.value;
+  const rendererContext = toRendererTemplateContext(templateContext);
   const promptFilePath = agentConfig.prompt_file;
   const primarySourceKind: "prompt" | "prompt_file" =
     agentConfig.prompt !== undefined ? "prompt" : "prompt_file";
@@ -899,7 +902,7 @@ export function composeAgentDescriptor(
       (promptSource): Result<string, ComposeError> =>
         renderPromptTemplate(
           promptSource,
-          templateContext,
+          rendererContext,
           agentName,
           primarySourceKind,
           promptFilePath,
@@ -920,7 +923,7 @@ export function composeAgentDescriptor(
 
             const renderedAppendResult = renderPromptTemplate(
               appendSource.content,
-              templateContext,
+              rendererContext,
               agentName,
               appendSourceKind,
               appendFilePath,

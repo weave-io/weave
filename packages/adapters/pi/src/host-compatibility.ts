@@ -4,8 +4,9 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   type ResultAsync,
+  type Result as ResultType,
 } from "neverthrow";
 import { z } from "zod";
 import {
@@ -30,6 +31,64 @@ export const HostPackageInfoSchema = z.object({
 });
 export type HostPackageInfo = z.infer<typeof HostPackageInfoSchema>;
 
+const HOST_COMPATIBILITY_INPUT_SCHEMA = z.unknown();
+type HostCompatibilityInput = z.input<typeof HOST_COMPATIBILITY_INPUT_SCHEMA>;
+
+interface HostCompatibilityObjectReference {
+  readonly hostCompatibilityObjectMarker?: never;
+}
+
+const HOST_COMPATIBILITY_OBJECT_SCHEMA =
+  z.custom<HostCompatibilityObjectReference>((value) => {
+    const checked = Result.fromThrowable(
+      (): boolean => {
+        if (value === null || Object(value) !== value) return false;
+        if (Array.isArray(value)) return false;
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      },
+      (): boolean => false,
+    )();
+    return checked.isOk() && checked.value;
+  });
+
+type HostCompatibilityDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: HostCompatibilityInput };
+
+function readHostCompatibilityData(
+  value: HostCompatibilityInput,
+  key: string,
+): HostCompatibilityDataRead {
+  const record = HOST_COMPATIBILITY_OBJECT_SCHEMA.safeParse(value);
+  if (!record.success) return { kind: "invalid" };
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function parseHostPackageInfo(
+  value: HostCompatibilityInput,
+): ResultType<HostPackageInfo, void> {
+  const name = readHostCompatibilityData(value, "name");
+  const version = readHostCompatibilityData(value, "version");
+  if (name.kind !== "value" || version.kind !== "value") {
+    return err(void 0);
+  }
+  const parsedName = z.string().min(1).safeParse(name.value);
+  const parsedVersion = z.string().min(1).safeParse(version.value);
+  if (!parsedName.success || !parsedVersion.success) return err(void 0);
+  return ok({ name: parsedName.data, version: parsedVersion.data });
+}
+
 interface ParsedVersion {
   readonly major: number;
   readonly minor: number;
@@ -40,9 +99,9 @@ interface ParsedVersion {
 const SEMVER_PATTERN =
   /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
-export function parseSemver(version: string): Result<ParsedVersion, void> {
+export function parseSemver(version: string): ResultType<ParsedVersion, void> {
   const match = SEMVER_PATTERN.exec(version);
-  if (match === null) return err(undefined);
+  if (match === null) return err(void 0);
   const [, major, minor, patch, prerelease] = match;
   return ok({
     major: Number(major),
@@ -79,22 +138,26 @@ export function isSupportedHostVersion(version: string): boolean {
  */
 export function checkHostCompatibility(
   info: HostPackageInfo | undefined,
-): Result<HostPackageInfo, PiAdapterFailure> {
+): ResultType<HostPackageInfo, PiAdapterFailure> {
   if (info === undefined) {
     return err(makeHostIdentityUnknownFailure("missing-host-package-info"));
   }
-  if (info.name !== HOST_PACKAGE_NAME) {
+  const parsed = parseHostPackageInfo(info);
+  if (parsed.isErr()) {
+    return err(makeHostIdentityUnknownFailure("host-package-malformed"));
+  }
+  if (parsed.value.name !== HOST_PACKAGE_NAME) {
     return err(makeHostIdentityUnknownFailure("unexpected-package-name"));
   }
-  if (!isSupportedHostVersion(info.version)) {
+  if (!isSupportedHostVersion(parsed.value.version)) {
     return err(
       makeHostVersionUnsupportedFailure(
-        info.version,
+        parsed.value.version,
         "outside-supported-range",
       ),
     );
   }
-  return ok(info);
+  return ok(parsed.value);
 }
 
 /**
@@ -242,7 +305,7 @@ export function hostRuntimeHealthLineFromOutcome(
   outcome:
     | {
         readonly hostVersion?: string;
-        readonly redirected: readonly unknown[];
+        readonly redirected: readonly string[];
       }
     | undefined,
 ): string {

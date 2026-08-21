@@ -46,6 +46,10 @@ import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
+import {
+  validateDashboardManifestCompatibility,
+  validateLatestSnapshotCompatibility,
+} from "../dashboard-indexes.js";
 import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
@@ -57,8 +61,7 @@ import {
   type EvalOrchestratorOptions,
   type EvalRunMetadata,
   getEvalCoveredPromptAgents,
-  type RepeatabilityDiagnosticsError,
-  type RepeatabilityRunSnapshot,
+  type RepeatabilityDiagnosticsArtifact,
   type SnapshotProvider,
 } from "../runner.js";
 import type {
@@ -194,6 +197,29 @@ function makeOptions(
     env: { OPENROUTER_API_KEY: FAKE_API_KEY },
     ...overrides,
   };
+}
+
+class TestEvalOrchestrator extends EvalOrchestrator {
+  buildSnapshotForTest(
+    metadata: EvalRunMetadata,
+    runnerResults: RunnerResult[],
+    bundleDir: string,
+    runId: string,
+  ) {
+    return this.buildRepeatabilityRunSnapshot(
+      metadata,
+      runnerResults,
+      bundleDir,
+      runId,
+    );
+  }
+
+  writeArtifactForTest(
+    filePath: string,
+    artifact: RepeatabilityDiagnosticsArtifact,
+  ) {
+    return this.writeRepeatabilityDiagnosticsArtifact(filePath, artifact);
+  }
 }
 
 async function writeInvalidDryRunFixtureRoot(): Promise<string> {
@@ -581,7 +607,6 @@ describe("EvalOrchestrator — run summary structure", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       const { metadata } = result.value;
-      expect(typeof metadata.bunVersion).toBe("string");
       expect(metadata.bunVersion.length).toBeGreaterThan(0);
       expect(metadata.repoSha).toBe(FAKE_GIT_SHA);
     }
@@ -698,7 +723,6 @@ describe("EvalOrchestrator — run summary structure", () => {
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.bundleDir).toBe("string");
       expect(result.value.bundleDir.length).toBeGreaterThan(0);
     }
   });
@@ -1697,16 +1721,16 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     expect(run1Dir).not.toBe(run2Dir);
 
     // Run 1's score file preserves the first assembledAt (not overwritten)
-    const scoreFile1Content = (await Bun.file(
+    const scoreFile1Content = await Bun.file(
       `${run1Dir}/score-loom-routing.json`,
-    ).json()) as { assembledAt: string };
-    expect(scoreFile1Content.assembledAt).toBe(assembledDate1);
+    ).json();
+    expect(scoreFile1Content).toMatchObject({ assembledAt: assembledDate1 });
 
     // Run 2's score file has the second assembledAt in its own dir
-    const scoreFile2Content = (await Bun.file(
+    const scoreFile2Content = await Bun.file(
       `${run2Dir}/score-loom-routing.json`,
-    ).json()) as { assembledAt: string };
-    expect(scoreFile2Content.assembledAt).toBe(assembledDate2);
+    ).json();
+    expect(scoreFile2Content).toMatchObject({ assembledAt: assembledDate2 });
   });
 
   it("writes repeatability diagnostics for live runs and accumulates comparable exact-filter reruns", async () => {
@@ -1789,31 +1813,24 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       run2.value.runId,
     ]);
 
-    const artifact2 = (await Bun.file(diag2.filePath).json()) as {
-      comparableRunCount: number;
-      comparableRunIds: string[];
+    const artifact2 = await Bun.file(diag2.filePath).json();
+    expect(artifact2).toMatchObject({
+      comparableRunCount: 2,
+      comparableRunIds: [run1.value.runId, run2.value.runId],
       driftSummary: {
-        models: Array<{ classification: string; comparableRunCount: number }>;
-        caseModels: Array<{
-          classification: string;
-          comparableRunCount: number;
-        }>;
-      };
-    };
-    expect(artifact2.comparableRunCount).toBe(2);
-    expect(artifact2.comparableRunIds).toEqual([
-      run1.value.runId,
-      run2.value.runId,
-    ]);
-    expect(artifact2.driftSummary.models).toHaveLength(1);
-    expect(artifact2.driftSummary.models[0]).toMatchObject({
-      classification: "consistent",
-      comparableRunCount: 2,
-    });
-    expect(artifact2.driftSummary.caseModels).toHaveLength(1);
-    expect(artifact2.driftSummary.caseModels[0]).toMatchObject({
-      classification: "consistent-pass",
-      comparableRunCount: 2,
+        models: [
+          {
+            classification: "consistent",
+            comparableRunCount: 2,
+          },
+        ],
+        caseModels: [
+          {
+            classification: "consistent-pass",
+            comparableRunCount: 2,
+          },
+        ],
+      },
     });
   });
 
@@ -1879,7 +1896,6 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
   });
 
   it("groups repeatability snapshots by summary.modelId within each suite", () => {
-    const orchestrator = new EvalOrchestrator(makeOptions());
     const metadata: EvalRunMetadata = {
       bunVersion: "1.2.20",
       repoSha: FAKE_GIT_SHA,
@@ -1929,21 +1945,9 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       },
     ];
 
-    const snapshot = (
-      orchestrator as unknown as {
-        buildRepeatabilityRunSnapshot: (
-          metadata: EvalRunMetadata,
-          runnerResults: RunnerResult[],
-          bundleDir: string,
-          runId: string,
-        ) => RepeatabilityRunSnapshot;
-      }
-    ).buildRepeatabilityRunSnapshot(
-      metadata,
-      runnerResults,
-      "/tmp/bundle",
-      "run-1",
-    );
+    const snapshot = new TestEvalOrchestrator(
+      makeOptions(),
+    ).buildSnapshotForTest(metadata, runnerResults, "/tmp/bundle", "run-1");
 
     expect(snapshot.suites).toHaveLength(1);
     expect(snapshot.suites[0]?.models).toEqual([
@@ -2123,32 +2127,13 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
   });
 
   it("returns a typed write error when repeatability diagnostics cannot be written", async () => {
-    const orchestrator = new EvalOrchestrator(makeOptions());
     const directoryPath = join(TEMP_DIR, `repeatability-write-error-${uid()}`);
 
     await Bun.write(join(directoryPath, ".keep"), "");
 
-    const result = await (
-      orchestrator as unknown as {
-        writeRepeatabilityDiagnosticsArtifact: (
-          filePath: string,
-          artifact: {
-            schemaVersion: 1;
-            generatedAt: string;
-            comparisonKey: {
-              agentFilter: string | null;
-              modelFilter: string | null;
-              caseFilter: string | null;
-              suites: string[];
-            };
-            currentRun: RepeatabilityRunSnapshot;
-            comparableRunIds: string[];
-            comparableRunCount: number;
-            driftSummary: { models: []; caseModels: [] };
-          },
-        ) => ResultAsync<void, RepeatabilityDiagnosticsError>;
-      }
-    ).writeRepeatabilityDiagnosticsArtifact(directoryPath, {
+    const result = await new TestEvalOrchestrator(
+      makeOptions(),
+    ).writeArtifactForTest(directoryPath, {
       schemaVersion: 1,
       generatedAt: FIXED_TIMESTAMP,
       comparisonKey: {
@@ -2232,21 +2217,23 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
     expect(result.value.runId).not.toBeNull();
 
     // dashboard-manifest.json must exist at bundleRoot (not inside runs/)
-    const manifestContent = (await Bun.file(
+    const manifestContent = await Bun.file(
       `${bundleRoot}/dashboard-manifest.json`,
-    ).json()) as { totalRuns: number; schemaVersion: number };
-    expect(typeof manifestContent.totalRuns).toBe("number");
-    expect(manifestContent.totalRuns).toBeGreaterThan(0);
-    expect(typeof manifestContent.schemaVersion).toBe("number");
+    ).json();
+    const manifestResult =
+      validateDashboardManifestCompatibility(manifestContent);
+    expect(manifestResult.isOk()).toBe(true);
+    if (manifestResult.isErr()) return;
+    expect(manifestResult.value.totalRuns).toBeGreaterThan(0);
 
     // latest.json must also exist at bundleRoot
-    const latestContent = (await Bun.file(
-      `${bundleRoot}/latest.json`,
-    ).json()) as { runId: string };
-    expect(typeof latestContent.runId).toBe("string");
+    const latestContent = await Bun.file(`${bundleRoot}/latest.json`).json();
+    const latestResult = validateLatestSnapshotCompatibility(latestContent);
+    expect(latestResult.isOk()).toBe(true);
+    if (latestResult.isErr()) return;
     expect(result.value.runId).not.toBeNull();
     if (result.value.runId === null) return;
-    expect(latestContent.runId).toBe(result.value.runId);
+    expect(latestResult.value.runId).toBe(result.value.runId);
   });
 
   it("dry-run orchestrator run does NOT write dashboard index files", async () => {

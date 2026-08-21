@@ -1,4 +1,4 @@
-import type { WeaveConfig } from "@weaveio/weave-core";
+import { AdapterSettingsSchema, type WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -53,30 +53,31 @@ const PiChildLifecycleSettingsSchema = z
   })
   .strict();
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const PiAdapterSettingsObjectSchema = z
+  .object({ child_lifecycle: z.json().optional() })
+  .passthrough();
+const IssuePathPartSchema = z.union([z.string(), z.number()]);
+
+function normalizeIssuePathPart(part: PropertyKey): string | number {
+  const parsed = IssuePathPartSchema.safeParse(part);
+  return parsed.success ? parsed.data : String(part);
+}
 
 function issueFromZod(issue: z.core.$ZodIssue): PiChildLifecycleSettingsIssue {
   return Object.freeze({
     code: issue.code,
-    path: Object.freeze(
-      issue.path.map((part) =>
-        typeof part === "symbol" ? part.toString() : part,
-      ),
-    ),
+    path: Object.freeze(issue.path.map(normalizeIssuePathPart)),
     message: issue.message,
   });
 }
 
 export function resolvePiChildLifecycleSettings(
   config: WeaveConfig,
-): Result<
-  PiChildLifecycleSettings,
-  readonly PiChildLifecycleSettingsIssue[]
-> {
+): Result<PiChildLifecycleSettings, readonly PiChildLifecycleSettingsIssue[]> {
   const adapters = config.settings?.adapters;
   if (adapters === undefined) return ok(DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS);
-  if (!isRecord(adapters)) {
+  const parsedAdapters = AdapterSettingsSchema.safeParse(adapters);
+  if (!parsedAdapters.success) {
     return err([
       {
         code: "invalid_type",
@@ -85,9 +86,10 @@ export function resolvePiChildLifecycleSettings(
       },
     ]);
   }
-  const pi = adapters.pi;
+  const pi = parsedAdapters.data.pi;
   if (pi === undefined) return ok(DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS);
-  if (!isRecord(pi)) {
+  const parsedPi = PiAdapterSettingsObjectSchema.safeParse(pi);
+  if (!parsedPi.success) {
     return err([
       {
         code: "invalid_type",
@@ -96,7 +98,7 @@ export function resolvePiChildLifecycleSettings(
       },
     ]);
   }
-  const value = pi.child_lifecycle;
+  const value = parsedPi.data.child_lifecycle;
   if (value === undefined) return ok(DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS);
   const parsed = PiChildLifecycleSettingsSchema.safeParse(value);
   if (!parsed.success) {
@@ -110,9 +112,7 @@ export function resolvePiChildLifecycleSettings(
               "adapters",
               "pi",
               "child_lifecycle",
-              ...issue.path.map((part) =>
-                typeof part === "symbol" ? part.toString() : part,
-              ),
+              ...issue.path.map(normalizeIssuePathPart),
             ]),
           }),
         ),

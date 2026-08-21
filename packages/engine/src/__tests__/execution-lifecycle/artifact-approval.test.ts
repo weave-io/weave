@@ -129,7 +129,7 @@ describe("approveArtifact", () => {
     );
     expect(updated?.approvalState).toBe("approved");
     expect(updated?.approvalActor).toEqual(userActor());
-    expect(typeof updated?.approvalDecidedAt).toBe("string");
+    expect(updated?.approvalDecidedAt).toBeDefined();
   });
 
   it("approves an artifact with an authorized gate agent actor", async () => {
@@ -237,17 +237,16 @@ describe("approveArtifact", () => {
   it("returns validation error when actor is missing", async () => {
     const { store, instanceId, leaseId } = await createRunningInstance();
 
-    const result = await approveArtifact(
-      {
-        workflowInstanceId: instanceId,
-        leaseId,
-        artifactId: createArtifactId("art-001"),
-        approvalState: "approved",
-        actor: undefined as never,
-        expectedRevision: 1,
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: instanceId,
+      leaseId,
+      artifactId: createArtifactId("art-001"),
+      approvalState: "approved" as const,
+      actor: userActor(),
+      expectedRevision: 1,
+    };
+    Object.defineProperty(input, "actor", { value: undefined });
+    const result = await approveArtifact(input, store);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -260,9 +259,7 @@ describe("approveArtifact", () => {
   it("rejects accessor and extra actor fields without invoking getters", async () => {
     const { store, instanceId, leaseId } = await createRunningInstance();
     let getterHits = 0;
-    const accessorActor = {
-      provenance: { command: "/weave:artifact" },
-    } as Record<string, unknown>;
+    const accessorActor = userActor();
     Object.defineProperty(accessorActor, "kind", {
       enumerable: true,
       get: () => {
@@ -277,7 +274,7 @@ describe("approveArtifact", () => {
         leaseId,
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        actor: accessorActor as never,
+        actor: accessorActor,
         expectedRevision: 1,
       },
       store,
@@ -285,17 +282,18 @@ describe("approveArtifact", () => {
     expect(accessor.isErr()).toBe(true);
     expect(getterHits).toBe(0);
 
+    const extraActor = userActor();
+    Object.defineProperty(extraActor, "injected", {
+      enumerable: true,
+      value: true,
+    });
     const extra = await approveArtifact(
       {
         workflowInstanceId: instanceId,
         leaseId,
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        actor: {
-          kind: "user",
-          provenance: { command: "/weave:artifact" },
-          injected: true,
-        } as never,
+        actor: extraActor,
         expectedRevision: 1,
       },
       store,

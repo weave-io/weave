@@ -23,14 +23,14 @@ export type PlanActiveTaskError = {
   readonly kind: "NoActivePlanTask";
 };
 
-function selectNode(nodes: readonly PlanTaskNode[]): PlanTaskNode {
+function selectNode(nodes: readonly PlanTaskNode[]): PlanTaskNode | undefined {
   const inProgress = nodes.find((node) => node.state === "in_progress");
   if (inProgress !== undefined) return inProgress;
 
   const pending = nodes.find((node) => node.state === "pending");
   if (pending !== undefined) return pending;
 
-  return nodes[nodes.length - 1] as PlanTaskNode;
+  return nodes.at(-1);
 }
 
 /** Select the task that is active according to the plan's ordered state. */
@@ -42,9 +42,15 @@ export function selectActivePlanTask(
   }
 
   const parent = selectNode(snapshot.parents);
+  if (parent === undefined) {
+    return err({ kind: "NoActivePlanTask" });
+  }
   const parentIndex = snapshot.parents.indexOf(parent);
   const isChild = parent.children.length > 0;
   const task = isChild ? selectNode(parent.children) : parent;
+  if (task === undefined) {
+    return err({ kind: "NoActivePlanTask" });
+  }
 
   return ok({
     parentIndex,

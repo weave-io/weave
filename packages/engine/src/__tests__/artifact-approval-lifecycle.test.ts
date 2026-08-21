@@ -108,6 +108,21 @@ workflow simple-flow {
 }
 `);
 
+const APPROVAL_TEST_WORKFLOW = {
+  name: "approval-test",
+  description: "Minimal workflow for approval tests",
+  version: 1,
+  steps: [
+    {
+      name: "Do work",
+      type: "gate" as const,
+      agent: "shuttle",
+      prompt: "Do the work",
+      completion: { method: "review_verdict" as const },
+    },
+  ],
+} satisfies WorkflowExecutionContext["workflows"][string];
+
 /** Build a WorkflowExecutionContext from a parsed config. */
 function makeContext(
   config: ReturnType<typeof cfg>,
@@ -198,7 +213,7 @@ describe("approveArtifact — input validation", () => {
     const store = createInMemoryRuntimeStore();
     const result = await approveArtifact(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
@@ -216,7 +231,7 @@ describe("approveArtifact — input validation", () => {
     const result = await approveArtifact(
       {
         workflowInstanceId: createWorkflowInstanceId("wf-001"),
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
         actor: userActor(),
@@ -234,7 +249,7 @@ describe("approveArtifact — input validation", () => {
       {
         workflowInstanceId: createWorkflowInstanceId("wf-001"),
         leaseId: createExecutionLeaseId("lease-001"),
-        artifactId: "" as ReturnType<typeof createArtifactId>,
+        artifactId: createArtifactId(""),
         approvalState: "approved",
         actor: userActor(),
         expectedRevision: 1,
@@ -249,17 +264,16 @@ describe("approveArtifact — input validation", () => {
     // actor is required — omitting it returns a validation error
     // (fail-closed: cannot bypass self-approval prohibition by omission).
     const store = createInMemoryRuntimeStore();
-    const result = await approveArtifact(
-      {
-        workflowInstanceId: createWorkflowInstanceId("wf-001"),
-        leaseId: createExecutionLeaseId("lease-001"),
-        artifactId: createArtifactId("art-001"),
-        approvalState: "approved",
-        actor: undefined as never,
-        expectedRevision: 1,
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: createWorkflowInstanceId("wf-001"),
+      leaseId: createExecutionLeaseId("lease-001"),
+      artifactId: createArtifactId("art-001"),
+      approvalState: "approved" as const,
+      actor: userActor(),
+      expectedRevision: 1,
+    };
+    Object.defineProperty(input, "actor", { value: undefined });
+    const result = await approveArtifact(input, store);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("validation");
@@ -342,23 +356,7 @@ describe("approveArtifact — self-approval prohibition", () => {
           workflowName: "approval-test",
           goal: "test goal",
           slug: "test-goal",
-          workflows: {
-            "approval-test": {
-              name: "approval-test",
-              description: "Minimal workflow for approval tests",
-              version: 1,
-              steps: [
-                {
-                  id: "work",
-                  name: "Do work",
-                  type: "gate",
-                  agent: "shuttle",
-                  prompt: "Do the work",
-                  completion: { method: "review_verdict" },
-                },
-              ],
-            } as never,
-          },
+          workflows: { "approval-test": APPROVAL_TEST_WORKFLOW },
         },
       },
       store,
@@ -422,17 +420,16 @@ describe("approveArtifact — self-approval prohibition", () => {
     const artifactId = withArtifact.artifacts[0].id;
 
     // Empty actor — must be rejected
-    const result = await approveArtifact(
-      {
-        workflowInstanceId: instanceId,
-        leaseId,
-        artifactId,
-        approvalState: "approved",
-        actor: undefined as never,
-        expectedRevision: 1,
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: instanceId,
+      leaseId,
+      artifactId,
+      approvalState: "approved" as const,
+      actor: userActor(),
+      expectedRevision: 1,
+    };
+    Object.defineProperty(input, "actor", { value: undefined });
+    const result = await approveArtifact(input, store);
 
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
@@ -472,23 +469,7 @@ describe("approveArtifact — self-approval prohibition", () => {
           workflowName: "approval-test",
           goal: "test goal",
           slug: "test-goal",
-          workflows: {
-            "approval-test": {
-              name: "approval-test",
-              description: "Minimal workflow for approval tests",
-              version: 1,
-              steps: [
-                {
-                  id: "work",
-                  name: "Do work",
-                  type: "gate",
-                  agent: "shuttle",
-                  prompt: "Do the work",
-                  completion: { method: "review_verdict" },
-                },
-              ],
-            } as never,
-          },
+          workflows: { "approval-test": APPROVAL_TEST_WORKFLOW },
         },
       },
       store,
@@ -809,9 +790,10 @@ describe("approval invalidation — new revision resets approvalState", () => {
     const planArtifactsV2 = v2.artifacts.filter((a) => a.name === "plan_path");
     const v2Artifact = planArtifactsV2.at(-1);
     expect(v2Artifact).toBeDefined();
+    if (v2Artifact === undefined) throw new Error("v2 artifact is missing");
     await store.instances.updateArtifactApproval(
       instanceId,
-      v2Artifact!.id,
+      v2Artifact.id,
       "approved",
     );
 
@@ -1014,10 +996,13 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
     const attempt2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
     expect(attempt1).toBeDefined();
     expect(attempt2).toBeDefined();
-    expect(attempt1!.consumedArtifacts[0].revision).toBe(1);
-    expect(attempt2!.consumedArtifacts[0].revision).toBe(1); // pinned to same revision
-    expect(attempt2!.consumedArtifacts[0].artifactId).toBe(
-      attempt1!.consumedArtifacts[0].artifactId,
+    if (attempt1 === undefined || attempt2 === undefined) {
+      throw new Error("retry attempts are missing");
+    }
+    expect(attempt1.consumedArtifacts[0].revision).toBe(1);
+    expect(attempt2.consumedArtifacts[0].revision).toBe(1); // pinned to same revision
+    expect(attempt2.consumedArtifacts[0].artifactId).toBe(
+      attempt1.consumedArtifacts[0].artifactId,
     );
   });
 
@@ -1058,15 +1043,16 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
     const planArtifactsV2b = v2.artifacts.filter((a) => a.name === "plan_path");
     const v2Artifact = planArtifactsV2b.at(-1);
     expect(v2Artifact).toBeDefined();
+    if (v2Artifact === undefined) throw new Error("v2 artifact is missing");
     await store.instances.updateArtifactApproval(
       instanceId,
-      v2Artifact!.id,
+      v2Artifact.id,
       "approved",
     );
 
     // Explicit pin to v2 — overrides default retry reuse
     const explicitPin: ConsumedArtifactRecord = {
-      artifactId: v2Artifact!.id,
+      artifactId: v2Artifact.id,
       name: "plan_path",
       revision: 2,
     };
@@ -1089,7 +1075,8 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
     )._unsafeUnwrap();
     const attempt2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
     expect(attempt2).toBeDefined();
-    expect(attempt2!.consumedArtifacts[0].revision).toBe(2); // explicitly pinned to v2
+    if (attempt2 === undefined) throw new Error("second attempt is missing");
+    expect(attempt2.consumedArtifacts[0].revision).toBe(2); // explicitly pinned to v2
   });
 
   it("first dispatch (no prior attempt) uses current latest revisions", async () => {
@@ -1161,7 +1148,7 @@ describe("approveArtifact — metadata sanitization", () => {
         approvalState: "approved",
         actor: userActor(),
         expectedRevision: 1,
-        metadata: { token: "secret-value" } as Record<string, string>,
+        metadata: { token: "secret-value" },
       },
       store,
     );

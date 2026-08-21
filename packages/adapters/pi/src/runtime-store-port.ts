@@ -11,8 +11,9 @@ import { join } from "node:path";
 import {
   createSqliteRuntimeStore,
   type RuntimeStore,
+  type RuntimeStoreError,
 } from "@weaveio/weave-engine";
-import { ResultAsync } from "neverthrow";
+import { errAsync, ResultAsync } from "neverthrow";
 import {
   makeRuntimeStoreMigrationFailedFailure,
   makeRuntimeStoreOpenFailedFailure,
@@ -30,24 +31,14 @@ export interface PiRuntimeStoreFactory {
 }
 
 /** Distinguishes a fresh-open failure (unopenable file/directory) from a schema-migration failure using the RuntimeStoreError's closed `type` field - never inspecting raw messages. */
-function classifyStoreOpenFailure(cause: unknown): "migration" | "open" {
-  if (
-    typeof cause === "object" &&
-    cause !== null &&
-    "type" in cause &&
-    (cause as { type?: unknown }).type === "migration_version"
-  ) {
-    return "migration";
-  }
-  return "open";
+function classifyStoreOpenFailure(
+  cause: RuntimeStoreError,
+): "migration" | "open" {
+  return cause.type === "migration_version" ? "migration" : "open";
 }
 
-function safeStoreErrorReason(cause: unknown): string {
-  if (typeof cause === "object" && cause !== null && "type" in cause) {
-    const typed = cause as { type?: unknown };
-    return typeof typed.type === "string" ? typed.type : "runtime-store-error";
-  }
-  return "runtime-store-error";
+function safeStoreErrorReason(cause: RuntimeStoreError): string {
+  return cause.type;
 }
 
 export class SqliteRuntimeStoreFactory implements PiRuntimeStoreFactory {
@@ -80,9 +71,6 @@ export class FailingRuntimeStoreFactory implements PiRuntimeStoreFactory {
   constructor(private readonly failure: PiAdapterFailure) {}
 
   open(_projectRoot: string): ResultAsync<RuntimeStore, PiAdapterFailure> {
-    return ResultAsync.fromPromise(
-      Promise.reject(this.failure),
-      (cause) => cause as PiAdapterFailure,
-    );
+    return errAsync(this.failure);
   }
 }

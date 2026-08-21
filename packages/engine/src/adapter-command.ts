@@ -7,7 +7,14 @@
  * appear here — see `docs/architecture/adapter-boundary.md` and Spec 33 §15.2.
  */
 
-import { err, errAsync, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  Result,
+  type ResultAsync,
+} from "neverthrow";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +39,29 @@ export const AdapterCommandRequestSchema = z
   .strict();
 
 export type AdapterCommandRequest = z.infer<typeof AdapterCommandRequestSchema>;
+
+/** A record value accepted at the opaque envelope boundary before parsing. */
+interface AdapterCommandInputRecord {
+  readonly [key: string]: AdapterCommandInput;
+}
+
+/** A callable value accepted at the opaque envelope boundary before parsing. */
+type AdapterCommandInputCallable = (
+  ...args: readonly AdapterCommandInput[]
+) => AdapterCommandInput;
+
+/** Runtime candidates accepted at the opaque envelope boundary before parsing. */
+export type AdapterCommandInput =
+  | AdapterCommandInputRecord
+  | readonly AdapterCommandInput[]
+  | AdapterCommandInputCallable
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined;
 
 /** Opaque success envelope. Result bytes are adapter-owned JSON text. */
 export const AdapterCommandResultSchema = z
@@ -99,21 +129,132 @@ export function createAdapterCommandRegistry(
 // Validation + dispatch
 // ---------------------------------------------------------------------------
 
+const invalidEnvelope = (issues: readonly string[]): AdapterCommandError => ({
+  type: "InvalidEnvelope",
+  issues,
+});
+
+function snapshotAdapterCommandRequest(
+  value: AdapterCommandInput,
+): Result<ReadonlyMap<string, PropertyDescriptor>, AdapterCommandError> {
+  const reflected = Result.fromThrowable(
+    () => {
+      const objectValue = new Object(value);
+      if (value === null || objectValue !== value)
+        return err(invalidEnvelope(["(root): expected a plain object"]));
+
+      const callable = Result.fromThrowable(
+        () => Function.prototype.toString.call(objectValue),
+        () => "not-callable",
+      )();
+      if (callable.isOk())
+        return err(
+          invalidEnvelope(["(root): expected a non-callable object"]),
+        );
+
+      const prototype = Object.getPrototypeOf(objectValue);
+      if (prototype !== Object.prototype && prototype !== null)
+        return err(invalidEnvelope(["(root): expected a plain object"]));
+
+      const keys = Reflect.ownKeys(objectValue);
+      if (keys.length !== 3)
+        return err(
+          invalidEnvelope(["(root): expected exactly three envelope fields"]),
+        );
+
+      const allowed = new Set(["adapter", "command", "payloadJson"]);
+      const fields = new Map<string, PropertyDescriptor>();
+      for (const key of keys) {
+        const parsedKey = z.string().safeParse(key);
+        if (!parsedKey.success || !allowed.has(parsedKey.data))
+          return err(
+            invalidEnvelope([
+              "(root): envelope fields must be named string fields",
+            ]),
+          );
+        const descriptor = Object.getOwnPropertyDescriptor(
+          objectValue,
+          parsedKey.data,
+        );
+        if (
+          descriptor === undefined ||
+          descriptor.enumerable !== true ||
+          !("value" in descriptor)
+        )
+          return err(
+            invalidEnvelope([
+              `${parsedKey.data}: expected an own data property`,
+            ]),
+          );
+        fields.set(parsedKey.data, descriptor);
+      }
+      if (fields.size !== 3)
+        return err(invalidEnvelope(["(root): envelope fields must be unique"]));
+      return ok(fields);
+    },
+    () => invalidEnvelope(["(root): unable to inspect envelope"]),
+  )();
+  return reflected.andThen((result) => result);
+}
+
 /** Validates envelope shape only. Never inspects payload semantics. */
 export function parseAdapterCommandRequest(
-  value: unknown,
+  value: AdapterCommandInput,
 ): Result<AdapterCommandRequest, AdapterCommandError> {
-  const parsed = AdapterCommandRequestSchema.safeParse(value);
-  if (!parsed.success) {
-    return err({
-      type: "InvalidEnvelope",
-      issues: parsed.error.issues.map((issue) => {
-        const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  const snapshot = snapshotAdapterCommandRequest(value);
+  if (snapshot.isErr()) return err(snapshot.error);
+
+  const parsed = Result.fromThrowable(
+    () => ({
+      adapter: opaqueNameSchema.safeParse(
+        snapshot.value.get("adapter")?.value,
+      ),
+      command: opaqueNameSchema.safeParse(
+        snapshot.value.get("command")?.value,
+      ),
+      payloadJson: payloadJsonSchema.safeParse(
+        snapshot.value.get("payloadJson")?.value,
+      ),
+    }),
+    () => invalidEnvelope(["(root): unable to parse envelope"]),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+
+  const { adapter, command, payloadJson } = parsed.value;
+  const issues: string[] = [];
+  if (!adapter.success) {
+    issues.push(
+      ...adapter.error.issues.map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "adapter";
         return `${path}: ${issue.message}`;
       }),
-    });
+    );
   }
-  return ok(parsed.data);
+  if (!command.success) {
+    issues.push(
+      ...command.error.issues.map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "command";
+        return `${path}: ${issue.message}`;
+      }),
+    );
+  }
+  if (!payloadJson.success) {
+    issues.push(
+      ...payloadJson.error.issues.map((issue) => {
+        const path =
+          issue.path.length > 0 ? issue.path.join(".") : "payloadJson";
+        return `${path}: ${issue.message}`;
+      }),
+    );
+  }
+  if (!adapter.success || !command.success || !payloadJson.success)
+    return err(invalidEnvelope(issues));
+
+  return ok({
+    adapter: adapter.data,
+    command: command.data,
+    payloadJson: payloadJson.data,
+  });
 }
 
 /**
@@ -122,7 +263,7 @@ export function parseAdapterCommandRequest(
  */
 export function dispatchAdapterCommand(
   registry: AdapterCommandRegistry,
-  request: unknown,
+  request: AdapterCommandInput,
 ): ResultAsync<AdapterCommandResult, AdapterCommandError> {
   const envelope = parseAdapterCommandRequest(request);
   if (envelope.isErr()) return errAsync(envelope.error);
@@ -137,23 +278,25 @@ export function dispatchAdapterCommand(
     return errAsync({ type: "CommandNotRegistered", adapter, command });
   }
 
-  return handler(payloadJson).mapErr(
-    (failure): AdapterCommandError => ({
-      type: "HandlerFailed",
-      adapter,
-      command,
-      message: failure.message,
-    }),
-  ).andThen((resultJson) => {
-    const result = AdapterCommandResultSchema.safeParse({ resultJson });
-    if (!result.success) {
-      return errAsync<AdapterCommandResult, AdapterCommandError>({
+  return handler(payloadJson)
+    .mapErr(
+      (failure): AdapterCommandError => ({
         type: "HandlerFailed",
         adapter,
         command,
-        message: "handler returned an invalid opaque result envelope",
-      });
-    }
-    return okAsync(result.data);
-  });
+        message: failure.message,
+      }),
+    )
+    .andThen((resultJson) => {
+      const result = AdapterCommandResultSchema.safeParse({ resultJson });
+      if (!result.success) {
+        return errAsync<AdapterCommandResult, AdapterCommandError>({
+          type: "HandlerFailed",
+          adapter,
+          command,
+          message: "handler returned an invalid opaque result envelope",
+        });
+      }
+      return okAsync(result.data);
+    });
 }

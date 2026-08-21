@@ -49,16 +49,59 @@ function uid(): string {
   return String(Date.now()) + String(++_counter);
 }
 
-async function writeTempJson(name: string, content: unknown): Promise<string> {
+async function writeTempJson<T>(name: string, content: T): Promise<string> {
   const filePath = resolve(TEMP_DIR, `case-loader-test-${name}-${uid()}.json`);
   await Bun.write(filePath, JSON.stringify(content));
   return filePath;
 }
 
+type FixtureExpectedOutcome = {
+  kind: string;
+  target?: string;
+  target_agent?: string;
+  via?: string[];
+  description?: string;
+  required_artifacts?: string[];
+  chain?: string[];
+  tool_name?: string;
+  payload_contains?: { target?: string };
+};
+
+type FixtureTranscriptExpectation = {
+  check: string;
+  role?: string;
+  contains?: string;
+  tool_name?: string;
+  agent_name?: string;
+};
+
+type CaseFixtureFile = {
+  id?: string;
+  description?: string;
+  suite?: string;
+  allowed_agents?: string[];
+  allowed_models?: string[];
+  expected_outcome?: FixtureExpectedOutcome;
+  accepted_alternates?: string[];
+  transcript_expectations?: FixtureTranscriptExpectation[];
+  tags?: string[];
+  no_id?: boolean;
+};
+
+type RubricFixtureFile = {
+  case_id?: string;
+  suite?: string;
+  scoring?: {
+    outcome_weight: number;
+    per_expectation_weight?: number;
+    required?: boolean;
+    notes?: string;
+  };
+  no_case_id?: boolean;
+};
+
 /** Create a minimal valid case fixture object. */
-function makeCase(
-  overrides: Partial<Record<string, unknown>> = {},
-): Record<string, unknown> {
+function makeCase(overrides: Partial<CaseFixtureFile> = {}) {
   return {
     id: "test-case-01",
     description: "A test eval case",
@@ -74,13 +117,11 @@ function makeCase(
     transcript_expectations: [],
     tags: [],
     ...overrides,
-  };
+  } satisfies CaseFixtureFile;
 }
 
 /** Create a minimal valid rubric fixture object. */
-function makeRubric(
-  overrides: Partial<Record<string, unknown>> = {},
-): Record<string, unknown> {
+function makeRubric(overrides: Partial<RubricFixtureFile> = {}) {
   return {
     case_id: "test-case-01",
     suite: "loom-routing",
@@ -90,18 +131,18 @@ function makeRubric(
       required: true,
     },
     ...overrides,
-  };
+  } satisfies RubricFixtureFile;
 }
 
 /** Write a suite of case files and return the evalsRoot temp path. */
 async function writeSuiteCases(
   suite: string,
-  cases: Record<string, unknown>[],
+  cases: CaseFixtureFile[],
 ): Promise<string> {
   const evalsRoot = resolve(TEMP_DIR, `evals-root-${uid()}`);
   const casesDir = resolve(evalsRoot, "cases", suite);
   for (const c of cases) {
-    const id = String(c.id ?? uid());
+    const id = c.id ?? uid();
     await Bun.write(resolve(casesDir, `${id}.json`), JSON.stringify(c));
   }
   return evalsRoot;
@@ -110,13 +151,13 @@ async function writeSuiteCases(
 /** Write a suite of rubric files and return the evalsRoot temp path. */
 async function writeSuiteRubrics(
   suite: string,
-  rubrics: Record<string, unknown>[],
+  rubrics: RubricFixtureFile[],
   evalsRoot?: string,
 ): Promise<string> {
   const root = evalsRoot ?? resolve(TEMP_DIR, `evals-root-${uid()}`);
   const rubricsDir = resolve(root, "rubrics", suite);
   for (const r of rubrics) {
-    const id = String(r.case_id ?? uid());
+    const id = r.case_id ?? uid();
     await Bun.write(resolve(rubricsDir, `${id}.json`), JSON.stringify(r));
   }
   return root;

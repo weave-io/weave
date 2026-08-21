@@ -74,10 +74,16 @@ const PI_NATIVE_RESULT_DIGEST_SCHEMA = z.string().regex(/^[0-9a-f]{64}$/);
  * on weaker evidence.
  */
 export const PI_NATIVE_RESULT_SCHEMA_VERSION = 2;
-const NativeCustomEntryShapeSchema = z.looseObject({
-  customType: z.string().optional(),
+const NativeCustomEntryEnvelopeSchema = z.looseObject({
+  customType: z.string(),
   data: z.unknown(),
 });
+const NativeSessionEntryInputBoundary = z.unknown();
+type NativeSessionEntryInput = z.input<typeof NativeSessionEntryInputBoundary>;
+interface NativeCustomEntryEnvelope {
+  readonly customType: string;
+  readonly data: unknown;
+}
 export const PiNativeResultChunkSchema = z
   .object({
     schemaVersion: z.literal(PI_NATIVE_RESULT_SCHEMA_VERSION),
@@ -398,8 +404,8 @@ function decodeResultGroupCursor(
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
   }
   const json = Result.fromThrowable(
-    () => JSON.parse(textDecoder.decode(bytes.value)) as unknown,
-    () => undefined,
+    () => JSON.parse(textDecoder.decode(bytes.value)),
+    () => void 0,
   )();
   if (json.isErr()) {
     return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
@@ -451,12 +457,14 @@ function sha256Hex(bytes: Uint8Array): string {
 }
 
 function parseNativeCustomEntry(
-  entry: unknown,
-): { readonly customType: string; readonly data: unknown } | undefined {
-  const shape = NativeCustomEntryShapeSchema.safeParse(entry);
-  if (!shape.success) return undefined;
-  if (typeof shape.data.customType !== "string") return undefined;
-  return { customType: shape.data.customType, data: shape.data.data };
+  entry: NativeSessionEntryInput,
+): NativeCustomEntryEnvelope | undefined {
+  const envelope = NativeCustomEntryEnvelopeSchema.safeParse(entry);
+  if (!envelope.success) return undefined;
+  return {
+    customType: envelope.data.customType,
+    data: envelope.data.data,
+  };
 }
 
 function utf8ByteLength(value: string): number {
@@ -465,7 +473,7 @@ function utf8ByteLength(value: string): number {
 
 /** Parses one result-chunk custom entry, or `undefined` when it is not one. */
 function parseResultChunkEntry(
-  entry: unknown,
+  entry: NativeSessionEntryInput,
 ): PiNativeResultChunk | undefined {
   const custom = parseNativeCustomEntry(entry);
   if (custom?.customType !== PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE)
@@ -476,7 +484,7 @@ function parseResultChunkEntry(
 
 /** Parses one result-commit custom entry, or `undefined` when it is not one. */
 function parseResultCommitEntry(
-  entry: unknown,
+  entry: NativeSessionEntryInput,
 ): PiNativeResultCommit | undefined {
   const custom = parseNativeCustomEntry(entry);
   if (custom?.customType !== PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE)
@@ -546,7 +554,7 @@ function requireResultAppendIdentity(
   ) {
     return err({ type: "SessionCorrupt", ref, reason: "identity-mismatch" });
   }
-  return ok(undefined);
+  return ok(void 0);
 }
 
 /** Re-reads the live handle's header and proves it is still the same session. */
@@ -576,7 +584,7 @@ function requireLiveSessionIdentity(
       reason: "identity-mismatch",
     });
   }
-  return okAsync(undefined);
+  return okAsync(void 0);
 }
 
 /**
@@ -757,12 +765,12 @@ function commitIdentityMatches(
   );
 }
 
+type NativeResultEntryData = PiNativeResultChunk | PiNativeResultCommit;
+type NativeResultAppend = (type: string, data: NativeResultEntryData) => string;
+
 function resultAppendSurface(
   handle: PiNativeSessionHandle,
-): Result<
-  (type: string, data: Record<string, unknown>) => unknown,
-  PiNativeSessionError
-> {
+): Result<NativeResultAppend, PiNativeSessionError> {
   const append = handle.appendCustomEntry?.bind(handle);
   if (append === undefined) {
     return err({ type: "SessionCreateFailed", reason: "host-threw" });
@@ -801,7 +809,7 @@ function appendResultChunkEntries(
       type: "SessionCreateFailed",
       reason: "host-threw",
     }),
-  )().asyncAndThen(() => okAsync<void, PiNativeSessionError>(undefined));
+  )().asyncAndThen(() => okAsync(void 0));
 }
 
 /** Appends the commit entry that makes an already-written group acceptable. */
@@ -826,7 +834,7 @@ function appendResultCommitEntry(
       type: "SessionCreateFailed",
       reason: "host-threw",
     }),
-  )().asyncAndThen(() => okAsync<void, PiNativeSessionError>(undefined));
+  )().asyncAndThen(() => okAsync(void 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,7 +1129,7 @@ function findResultGroupAnchor(
         return step(oldestOffset, commit);
       });
   };
-  return step(source.size, undefined);
+  return step(source.size, void 0);
 }
 
 /**
@@ -1160,7 +1168,7 @@ function streamResultGroup(
   });
 
   const consume = (
-    value: unknown,
+    value: NativeSessionEntryInput,
   ): "continue" | "done" | PiNativeResultGroupIncompleteReason => {
     const chunk = parseResultChunkEntry(value);
     if (chunk !== undefined && chunk.resultId === commit.resultId) {
@@ -1229,20 +1237,23 @@ function streamResultGroup(
     if (content.startChunkIndex >= commit.total && commit.total > 0) {
       return incomplete("out-of-order");
     }
-    return {
+    const complete: Extract<
+      PiNativeResultGroupRead,
+      { readonly status: "complete" }
+    > = {
       status: "complete",
       summary,
       content: state.windowParts.join(""),
       contentByteOffset: state.windowByteOffset,
-      ...(state.nextCursorIndex === undefined
-        ? {}
-        : {
-            nextCursor: encodeResultGroupCursor(
-              expected,
-              commit,
-              state.nextCursorIndex,
-            ),
-          }),
+    };
+    if (state.nextCursorIndex === undefined) return complete;
+    return {
+      ...complete,
+      nextCursor: encodeResultGroupCursor(
+        expected,
+        commit,
+        state.nextCursorIndex,
+      ),
     };
   };
 

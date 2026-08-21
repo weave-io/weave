@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { isJsonObject, parseJsonValue } from "../json.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { TarInspector } from "../tar-inspector.js";
@@ -63,10 +64,15 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
       const manifestEntry = inspected.value.find(
         (entry) => entry.path === "package/package.json",
       );
-      expect(manifestEntry).toBeDefined();
-      const manifest = JSON.parse(
-        new TextDecoder().decode(manifestEntry?.contents),
-      ) as Record<string, unknown>;
+      if (manifestEntry === undefined)
+        throw new Error("packed manifest entry is missing");
+      const parsedManifest = parseJsonValue(
+        new TextDecoder().decode(manifestEntry.contents),
+      );
+      if (parsedManifest.isErr()) throw new Error(parsedManifest.error.message);
+      if (!isJsonObject(parsedManifest.value))
+        throw new Error("packed manifest is not an object");
+      const manifest = parsedManifest.value;
 
       expect(manifest.name).toBe("@weaveio/weave-adapter-pi");
       expect(manifest.scripts).toBeUndefined();

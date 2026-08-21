@@ -14,6 +14,7 @@
  * no longer be the one that forgets a cap.
  */
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 import {
   ChunkTransferAssembler,
   encodeTransferChunks,
@@ -21,7 +22,7 @@ import {
   type TransferRejectionReason,
 } from "./child-transfer.js";
 import { PI_TRANSPORT_LIMITS } from "./errors.js";
-import { parseStrictJson, type JsonValue } from "./strict-json.js";
+import { parseStrictJson } from "./strict-json.js";
 
 export const PROMPT_CHUNK_COMMAND = "/weave:__prompt_chunk__";
 /** Largest native Pi record Weave will emit for a prompt. Not the transfer cap. */
@@ -38,6 +39,16 @@ export type PromptChunkError =
 export type PromptTransferNackReason =
   | TransferRejectionReason
   | "malformed-chunk";
+
+const PromptChunkSchema = z
+  .object({
+    type: z.literal("weave-prompt-chunk"),
+    transferId: z.string().min(1).max(256),
+    index: z.number().int().min(0),
+    total: z.number().int().min(1).max(PI_TRANSPORT_LIMITS.transferMaxChunks),
+    data: z.string(),
+  })
+  .strict();
 
 export function promptTransferNackReason(
   error: PromptChunkError,
@@ -95,33 +106,18 @@ export function encodePromptChunks(
   return encoded.isOk() ? encoded.value : [];
 }
 
-export function parsePromptChunk(raw: string): Result<PromptChunk, PromptChunkError> {
+export function parsePromptChunk(
+  raw: string,
+): Result<PromptChunk, PromptChunkError> {
   const parsed = parseStrictJson(raw);
-  if (
-    parsed.isErr() ||
-    typeof parsed.value !== "object" ||
-    parsed.value === null
-  ) {
+  if (parsed.isErr()) {
     return err({ type: "InvalidChunk", reason: "not an object" });
   }
-  const value = parsed.value as Record<string, JsonValue>;
-  if (
-    value.type !== "weave-prompt-chunk" ||
-    typeof value.transferId !== "string" ||
-    value.transferId.length < 1 ||
-    typeof value.index !== "number" ||
-    !Number.isInteger(value.index) ||
-    typeof value.total !== "number" ||
-    !Number.isInteger(value.total) ||
-    value.total < 1 ||
-    value.total > PI_TRANSPORT_LIMITS.transferMaxChunks ||
-    value.index < 0 ||
-    value.index >= value.total ||
-    typeof value.data !== "string"
-  ) {
+  const validated = PromptChunkSchema.safeParse(parsed.value);
+  if (!validated.success || validated.data.index >= validated.data.total) {
     return err({ type: "InvalidChunk", reason: "invalid fields" });
   }
-  return ok(value as unknown as PromptChunk);
+  return ok(validated.data);
 }
 
 /**

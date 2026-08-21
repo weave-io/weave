@@ -33,6 +33,7 @@ import type {
   StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
+  WorkflowInstanceStatus,
 } from "../runtime/types.js";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
 
@@ -501,7 +502,7 @@ export interface InspectExecutionInput {
 
 export interface InspectExecutionOutput {
   readonly workflowInstanceId: WorkflowInstanceId;
-  readonly status: import("../runtime/types.js").WorkflowInstanceStatus;
+  readonly status: WorkflowInstanceStatus;
   readonly currentStepName?: string;
   readonly workflowName: string;
   readonly goal: string;

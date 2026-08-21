@@ -103,7 +103,6 @@ class BunSqliteConnection implements DatabaseConnection {
   }
 
   // bun:sqlite does not support streaming; return an empty async iterable.
-  // eslint-disable-next-line require-yield
   async *streamQuery<R>(
     _compiledQuery: CompiledQuery,
     _chunkSize: number,
@@ -306,8 +305,8 @@ class BunSqliteMemoryConnection implements DatabaseConnection {
     // The tail always recovers (success or failure) so one failed statement
     // never poisons every later statement queued on this connection.
     this.queueTail = started.then(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     );
     return started;
   }
@@ -378,7 +377,6 @@ class BunSqliteMemoryConnection implements DatabaseConnection {
     return result;
   }
 
-  // eslint-disable-next-line require-yield
   async *streamQuery<R>(
     _compiledQuery: CompiledQuery,
     _chunkSize: number,

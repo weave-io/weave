@@ -39,13 +39,11 @@ import {
 const VALID_API_KEY = "sk-or-v1-test1234567890abcdef";
 
 /** Build a minimal valid env map. */
-function validEnv(
-  overrides: Record<string, string | undefined> = {},
-): Record<string, string | undefined> {
+function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
     [OPENROUTER_API_KEY_ENV_VAR]: VALID_API_KEY,
     ...overrides,
-  };
+  } satisfies Record<string, string | undefined>;
 }
 
 // ---------------------------------------------------------------------------

@@ -157,29 +157,33 @@ export async function run(
           flags.content === true ||
           flags.contentCursor !== undefined)
       ) {
-        resolved = {
-          ...resolved,
-          ...(flags.cursor === undefined ? {} : { cursor: flags.cursor }),
-          ...(flags.content === true ? { content: true } : {}),
-          ...(flags.contentCursor === undefined
-            ? {}
-            : { contentCursor: flags.contentCursor }),
-          ...(flags.parentSession === undefined
-            ? {}
-            : { parentSessionId: flags.parentSession }),
-        };
+        const next = { ...resolved };
+        if (flags.cursor !== undefined) {
+          next.cursor = flags.cursor;
+        }
+        if (flags.content === true) {
+          next.content = true;
+        }
+        if (flags.contentCursor !== undefined) {
+          next.contentCursor = flags.contentCursor;
+        }
+        if (flags.parentSession !== undefined) {
+          next.parentSessionId = flags.parentSession;
+        }
+        resolved = next;
       }
       if (
         resolved.action === "children.result" &&
         (flags.cursor !== undefined || flags.parentSession !== undefined)
       ) {
-        resolved = {
-          ...resolved,
-          ...(flags.cursor === undefined ? {} : { cursor: flags.cursor }),
-          ...(flags.parentSession === undefined
-            ? {}
-            : { parentSessionId: flags.parentSession }),
-        };
+        const next = { ...resolved };
+        if (flags.cursor !== undefined) {
+          next.cursor = flags.cursor;
+        }
+        if (flags.parentSession !== undefined) {
+          next.parentSessionId = flags.parentSession;
+        }
+        resolved = next;
       }
       if (
         resolved.action === "children.delete" &&

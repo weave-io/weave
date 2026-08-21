@@ -27,10 +27,17 @@ import type {
   RawCaseResultArtifact,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
 } from "../types.js";
 
 type ResultAsyncRunnerError = ResultAsync<RunnerResult, RunnerError>;
+type PatternTestOptions = PatternPlanningRunnerOptions & {
+  modelClient: StubModelClient;
+  scorer: StubAgentEvalsScorer;
+};
+type PatternTestDependencies = Pick<
+  PatternTestOptions,
+  "modelClient" | "scorer"
+>;
 
 const SCORED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -125,14 +132,19 @@ function makePlanningScoreRecord(
 
 class InMemoryPatternRunner extends PatternPlanningRunner {
   private readonly _promptProvider: PromptProvider | undefined;
+  private readonly _dependencies: PatternTestDependencies;
 
   constructor(
-    options: PatternPlanningRunnerOptions,
+    options: PatternTestOptions,
     private readonly cases: EvalCase[],
     private readonly rubrics: EvalRubric[],
   ) {
     super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
     this._promptProvider = options.promptProvider;
+    this._dependencies = {
+      modelClient: options.modelClient,
+      scorer: options.scorer,
+    };
   }
 
   override run(
@@ -224,23 +236,22 @@ class InMemoryPatternRunner extends PatternPlanningRunner {
             (acc, { evalCase, modelId }) =>
               acc.andThen((results) =>
                 executeCaseWithStubs(
-                  this,
+                  this._dependencies,
                   evalCase,
                   modelId,
                   rubrics,
                   rawArtifacts,
                 ).map((result) => [...results, result]),
               ),
-            ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+            ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
           );
 
-          return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-            (caseResults) =>
-              ResultAsync.fromSafePromise(
-                Promise.resolve(
-                  assembleRunnerResult(PATTERN_PLANNING_SUITE, caseResults),
-                ),
+          return executeAll.andThen((caseResults) =>
+            ResultAsync.fromSafePromise(
+              Promise.resolve(
+                assembleRunnerResult(PATTERN_PLANNING_SUITE, caseResults),
               ),
+            ),
           );
         });
     }
@@ -249,42 +260,36 @@ class InMemoryPatternRunner extends PatternPlanningRunner {
       (acc, { evalCase, modelId }) =>
         acc.andThen((results) =>
           executeCaseWithStubs(
-            this,
+            this._dependencies,
             evalCase,
             modelId,
             rubrics,
             rawArtifacts,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return (executeAll as ResultAsync<CaseResult[], RunnerError>).andThen(
-      (caseResults) =>
-        ResultAsync.fromSafePromise(
-          Promise.resolve(
-            assembleRunnerResult(PATTERN_PLANNING_SUITE, caseResults),
-          ),
+    return executeAll.andThen((caseResults) =>
+      ResultAsync.fromSafePromise(
+        Promise.resolve(
+          assembleRunnerResult(PATTERN_PLANNING_SUITE, caseResults),
         ),
+      ),
     );
   }
 }
 
 function executeCaseWithStubs(
-  runner: PatternPlanningRunner,
+  dependencies: PatternTestDependencies,
   evalCase: EvalCase,
   modelId: string,
   rubrics: EvalRubric[],
   rawArtifacts: boolean,
 ): ResultAsync<CaseResult, never> {
-  const anyRunner = runner as unknown as {
-    modelClient: StubModelClient;
-    scorer: StubAgentEvalsScorer;
-  };
-
   const systemPrompt = "Test Pattern system prompt";
   const userMessage = buildUserMessage(evalCase);
-  const modelResultAsync = anyRunner.modelClient.complete({
+  const modelResultAsync = dependencies.modelClient.complete({
     model: modelId,
     messages: [
       { role: "system", content: systemPrompt },
@@ -303,7 +308,7 @@ function executeCaseWithStubs(
       );
       const signals = extractPlanningSignals(response.content);
 
-      return anyRunner.scorer
+      return dependencies.scorer
         .score(runOutput, evalCase, rubrics)
         .map((scoreRecord) => ({
           runOutput,
@@ -368,14 +373,8 @@ function executeCaseWithStubs(
         return { summary, rawArtifact };
       },
       (error) => {
-        const errorType =
-          "type" in error
-            ? String((error as { type?: string }).type ?? "UnknownError")
-            : "UnknownError";
-        const rawMessage =
-          "message" in error
-            ? String((error as { message?: string }).message ?? "")
-            : undefined;
+        const errorType = error.type;
+        const rawMessage = error.message;
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -419,16 +418,28 @@ function executeCaseWithStubs(
   );
 }
 
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
+
 function buildRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const out: Partial<Record<ScoringDimension, string>> = {};
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      out[dim] = score.rationale;
-    }
+): DimensionRationales {
+  const out: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    out.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    out.delegationCorrectness = dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    out.executionCompleteness = dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    out.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
   return out;
 }

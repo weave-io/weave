@@ -136,7 +136,7 @@ function checkCompletedPlanImmutability(
   const method = triggeringStep.completion.method;
 
   if (method !== "plan_complete" && method !== "plan_created") {
-    return okAsync(undefined);
+    return okAsync<undefined, LifecycleError>(void 0);
   }
 
   const planNameResult = renderPlanName(
@@ -172,7 +172,7 @@ function checkCompletedPlanImmutability(
         );
       }
       const detail =
-        "reason" in providerErr && typeof providerErr.reason === "string"
+        "reason" in providerErr && providerErr.reason !== undefined
           ? providerErr.reason
           : providerErr.type;
       return lifecyclePersistenceError(
@@ -181,7 +181,9 @@ function checkCompletedPlanImmutability(
       );
     })
     .andThen((complete) => {
-      if (!complete) return okAsync(undefined);
+      if (!complete) {
+        return okAsync<undefined, LifecycleError>(void 0);
+      }
       const planPath = `.weave/plans/${planName}.md`;
       return errAsync(
         lifecyclePolicyDecisionError(
@@ -206,6 +208,14 @@ function checkCompletedPlanImmutability(
  * - When no handler is found: updates instance to `paused` and returns a
  *   `pause-execution` effect (fail-closed).
  */
+function buildReconcileOutput(
+  base: Omit<ReconcileExecutionOutput, "gateReRunStepName">,
+  gateReRunStepName: string | undefined,
+): ReconcileExecutionOutput {
+  if (gateReRunStepName === undefined) return base;
+  return { ...base, gateReRunStepName };
+}
+
 function dispatchHandlerOrPause(
   store: RuntimeStore,
   workflowInstanceId: WorkflowInstanceId,
@@ -227,17 +237,20 @@ function dispatchHandlerOrPause(
       .update(workflowInstanceId, { status: "paused" })
       .mapErr((storeError): LifecycleError => mapStoreError(storeError))
       .map(
-        (): ReconcileExecutionOutput => ({
-          handlerFound: false,
-          ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
-          effects: [
+        (): ReconcileExecutionOutput =>
+          buildReconcileOutput(
             {
-              kind: "pause-execution",
-              workflowInstanceId,
-              reason: `Reconciliation (${reconciliationReason}): no upstream handler declared — failing closed`,
+              handlerFound: false,
+              effects: [
+                {
+                  kind: "pause-execution",
+                  workflowInstanceId,
+                  reason: `Reconciliation (${reconciliationReason}): no upstream handler declared — failing closed`,
+                },
+              ],
             },
-          ],
-        }),
+            gateReRunStepName,
+          ),
       );
   }
 
@@ -265,13 +278,17 @@ function dispatchHandlerOrPause(
         handlerStep,
         promptMetadata,
       );
-      return okAsync<ReconcileExecutionOutput, LifecycleError>({
-        handlerStepName: handlerStep.name,
-        handlerFound: true,
-        ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
-        effects: [{ kind: "dispatch-agent", runAgent }],
-        stepPromptText,
-      });
+      return okAsync<ReconcileExecutionOutput, LifecycleError>(
+        buildReconcileOutput(
+          {
+            handlerStepName: handlerStep.name,
+            handlerFound: true,
+            effects: [{ kind: "dispatch-agent", runAgent }],
+            stepPromptText,
+          },
+          gateReRunStepName,
+        ),
+      );
     });
 }
 
@@ -338,7 +355,7 @@ export function reconcileExecution(
         input.leaseId,
       );
       if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
-      return okAsync(undefined);
+      return okAsync();
     })
     .andThen(() =>
       store.instances
@@ -349,7 +366,7 @@ export function reconcileExecution(
             return errAsync(
               lifecycleNotFoundError(
                 "WorkflowInstance",
-                input.workflowInstanceId as string,
+                input.workflowInstanceId,
               ),
             );
           }
@@ -368,19 +385,20 @@ export function reconcileExecution(
               .update(input.workflowInstanceId, { status: "paused" })
               .mapErr((storeError): LifecycleError => mapStoreError(storeError))
               .map(
-                (): ReconcileExecutionOutput => ({
-                  handlerFound: false,
-                  ...(gateReRunStepName !== undefined
-                    ? { gateReRunStepName }
-                    : {}),
-                  effects: [
+                (): ReconcileExecutionOutput =>
+                  buildReconcileOutput(
                     {
-                      kind: "pause-execution",
-                      workflowInstanceId: input.workflowInstanceId,
-                      reason: `Reconciliation (${input.reason}): no workflow context provided — failing closed`,
+                      handlerFound: false,
+                      effects: [
+                        {
+                          kind: "pause-execution",
+                          workflowInstanceId: input.workflowInstanceId,
+                          reason: `Reconciliation (${input.reason}): no workflow context provided — failing closed`,
+                        },
+                      ],
                     },
-                  ],
-                }),
+                    gateReRunStepName,
+                  ),
               );
           }
 

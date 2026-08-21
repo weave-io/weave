@@ -13,11 +13,22 @@ import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { archive, digest } from "../release-fixtures.js";
-import { trainRecordDigest } from "../stable-train.js";
+import {
+  type StableTrainContent,
+  trainRecordDigest,
+  validateStableTrain,
+} from "../stable-train.js";
 import { TarInspector } from "../tar-inspector.js";
 import { writeArtifactManifest } from "../write-artifact-manifest.js";
 
 const sha = "abcdef123456".padEnd(40, "a");
+
+function digestTrain(value: StableTrainContent): string {
+  const result = trainRecordDigest(value);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
 const invocation = validateReleaseInvocation({
   repository: "weave-io/weave",
   workflowPath: ".github/workflows/publish.yml",
@@ -28,7 +39,7 @@ if (invocation.isErr()) throw new Error("fixture invocation is invalid");
 
 class Registry implements NpmRegistryClient {
   publish(): ResultAsync<void, RegistryError> {
-    return okAsync(undefined);
+    return okAsync();
   }
   viewVersion(): ResultAsync<string, RegistryError> {
     return okAsync("");
@@ -40,7 +51,7 @@ class Registry implements NpmRegistryClient {
     return okAsync({});
   }
   verifyPublished(): ResultAsync<void, RegistryError> {
-    return okAsync(undefined);
+    return okAsync();
   }
   listVersions(): ResultAsync<readonly string[], RegistryError> {
     return okAsync(["1.9.0"]);
@@ -49,7 +60,7 @@ class Registry implements NpmRegistryClient {
 
 const clock: Clock = {
   now: () => new Date("2026-07-19T12:00:00.000Z"),
-  sleep: () => okAsync(undefined),
+  sleep: () => okAsync(),
 };
 
 test("nightly payload layout executes plan, subset pack, and control manifest validation", async () => {
@@ -176,7 +187,7 @@ test("stable CLI-only payload layout packs the train-authoritative set", async (
   };
   const train = {
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
+    recordDigest: digestTrain(trainContent),
   };
   const reset = Bun.spawn(["rm", "-rf", join(root, ".release")]);
   expect(await reset.exited).toBe(0);
@@ -215,7 +226,10 @@ test("stable CLI-only payload layout packs the train-authoritative set", async (
     expect(validated.value.releaseSubjectSha).toBe(train.subjectSha);
     expect(validated.value.packages).toEqual([...train.packages]);
     expect(validated.value.versions).toEqual(train.versions);
-    expect(validated.value.stableTrain).toEqual(train);
+    expect(validated.value.stableTrain).toEqual({
+      ...train,
+      packages: [...train.packages],
+    });
     expect(validated.value.artifacts).toEqual([
       {
         filename,
@@ -255,8 +269,8 @@ test("stable manifests embed a validated train and nightly manifests omit it", a
   const stage = join(root, ".release", run, "staging", "cli");
   const tarballs = join(root, ".release", run, "tarballs");
   const tarball = archive();
-  const trainContent = {
-    schemaVersion: 1 as const,
+  const trainContent: StableTrainContent = {
+    schemaVersion: 1,
     trainRef: "release/20260719-aaaaaaaaaaaa",
     subjectSha: "a".repeat(40),
     cutAt: "2026-07-19T00:00:00.000Z",
@@ -265,15 +279,25 @@ test("stable manifests embed a validated train and nightly manifests omit it", a
     packages: ["@weaveio/weave-cli"],
     versions: { "@weaveio/weave-cli": version },
   };
-  const train = {
+  const trainResult = validateStableTrain({
     ...trainContent,
-    recordDigest: trainRecordDigest(trainContent),
-  };
+    recordDigest: digestTrain(trainContent),
+  });
+  if (trainResult.isErr()) throw new Error(JSON.stringify(trainResult.error));
+  const train = trainResult.value;
   const reset = Bun.spawn(["rm", "-rf", join(root, ".release")]);
   expect(await reset.exited).toBe(0);
   await Bun.write(
     join(stage, "package.json"),
-    JSON.stringify({ name: "@weaveio/weave-cli", version }),
+    JSON.stringify({
+      name: "@weaveio/weave-cli",
+      version,
+      description: "Weave CLI",
+      main: "./dist/index.js",
+      types: "./dist/index.d.ts",
+      publishConfig: { access: "public" },
+      dependencies: { neverthrow: "^8.2.0" },
+    }),
   );
   await Bun.write(join(tarballs, `weaveio-weave-cli-${version}.tgz`), tarball);
   const stable = await writeArtifactManifest(
@@ -282,10 +306,15 @@ test("stable manifests embed a validated train and nightly manifests omit it", a
     JSON.stringify(train),
   );
   expect(stable.isOk()).toBe(true);
-  const manifest = (await Bun.file(
-    join(root, ".release", "manifest.json"),
-  ).json()) as { stableTrain?: unknown };
-  expect(manifest.stableTrain).toEqual(train);
+  const manifest = validateArtifactManifest(
+    await Bun.file(join(root, ".release", "manifest.json")).json(),
+  );
+  expect(manifest.isOk()).toBe(true);
+  if (manifest.isErr()) throw new Error(JSON.stringify(manifest.error));
+  expect(manifest.value.stableTrain).toEqual({
+    ...train,
+    packages: [...train.packages],
+  });
   const invalid = await writeArtifactManifest(
     "stable-cut",
     "a".repeat(40),

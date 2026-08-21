@@ -112,5 +112,5 @@ export function inspectLegacyJsonc(
   if (warnings.length > 0) {
     return err({ type: "UnsafeStructure", warnings });
   }
-  return ok(undefined);
+  return ok();
 }

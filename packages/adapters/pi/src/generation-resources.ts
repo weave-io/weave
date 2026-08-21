@@ -7,9 +7,10 @@
  * API.
  */
 import type { RuntimeStore } from "@weaveio/weave-engine";
-import { okAsync, Result, ResultAsync } from "neverthrow";
+import { Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { PiTelemetry } from "./telemetry.js";
-import type { PiSessionContext } from "./types.js";
+import type { PiSessionContext, PiSessionManagerPort } from "./types.js";
 
 /**
  * The generation-owned model-fallback coordinator, seen only through its
@@ -72,8 +73,8 @@ export class PiGenerationResourceOwner {
   adoptRuntimeStore(store: RuntimeStore): void {
     if (this.disposed) {
       void store.close().match(
-        () => undefined,
-        () => undefined,
+        () => {},
+        () => {},
       );
       return;
     }
@@ -83,8 +84,8 @@ export class PiGenerationResourceOwner {
   adoptTelemetry(telemetry: PiTelemetry): void {
     if (this.disposed) {
       void telemetry.shutdown().match(
-        () => undefined,
-        () => undefined,
+        () => {},
+        () => {},
       );
       return;
     }
@@ -109,14 +110,14 @@ export class PiGenerationResourceOwner {
   }
 
   dispose(): ResultAsync<void, never> {
-    if (this.disposed) return okAsync(undefined);
+    if (this.disposed) return ResultAsync.fromSafePromise(Promise.resolve());
     this.disposed = true;
     Result.fromThrowable(
       () => this.onDispose?.(),
-      () => undefined,
+      () => {},
     )().match(
-      () => undefined,
-      () => undefined,
+      () => {},
+      () => {},
     );
     const failover = this.modelFailover;
     this.modelFailover = undefined;
@@ -136,10 +137,8 @@ export class PiGenerationResourceOwner {
         if (telemetry !== undefined) await telemetry.shutdown();
         if (runtimeStore !== undefined) await runtimeStore.close();
       },
-      () => undefined,
-    )()
-      .map(() => undefined)
-      .orElse(() => okAsync(undefined));
+      () => {},
+    )().orElse(() => ResultAsync.fromSafePromise(Promise.resolve()));
   }
 }
 
@@ -179,6 +178,32 @@ export function createGenerationSessionCtxCell(): PiGenerationSessionCtxCell {
   };
 }
 
+type PiSessionEntriesReader = (
+  this: PiSessionManagerPort,
+) => readonly unknown[];
+
+const PI_SESSION_ENTRIES_READER_SCHEMA = z.custom<PiSessionEntriesReader>(
+  (value) => value instanceof Function,
+);
+
+function findSessionEntriesReader(
+  manager: PiSessionManagerPort,
+): PiSessionEntriesReader | undefined {
+  let current: PiSessionManagerPort | object | null = manager;
+  while (current !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, "getEntries");
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) return undefined;
+      const parsed = PI_SESSION_ENTRIES_READER_SCHEMA.safeParse(
+        descriptor.value,
+      );
+      return parsed.success ? parsed.data : undefined;
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return undefined;
+}
+
 /**
  * Reads Pi's parent session entries from a context, fail-closed.
  *
@@ -191,16 +216,25 @@ export function readSessionManagerEntries(
   ctx: PiSessionContext | undefined,
   report: (degradation: PiChildRefEntryReadDegradation) => void,
 ): readonly unknown[] {
-  const manager = ctx?.sessionManager as
-    | { getEntries?: () => readonly unknown[] }
-    | undefined;
-  if (manager === undefined || typeof manager.getEntries !== "function") {
+  const manager = ctx?.sessionManager;
+  if (manager === undefined) {
+    report("no-session-manager");
+    return [];
+  }
+  const reader = Result.fromThrowable(
+    () => findSessionEntriesReader(manager),
+    () => false,
+  )().match(
+    (candidate) => candidate,
+    () => void 0,
+  );
+  if (reader === undefined) {
     report("no-session-manager");
     return [];
   }
   return Result.fromThrowable(
-    () => manager.getEntries?.() ?? [],
-    () => undefined,
+    () => reader.call(manager),
+    () => false,
   )().match(
     (entries) => entries,
     () => {

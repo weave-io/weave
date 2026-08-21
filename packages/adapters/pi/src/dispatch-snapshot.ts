@@ -88,11 +88,13 @@ export interface PiDispatchSnapshot {
  * against it fails closed with `invalid-delegation-target` rather than
  * reaching a spawn, and every budget falls back to the transport's default.
  */
+function noDispatchResolution(): undefined {}
+
 export const EMPTY_PI_DISPATCH_SNAPSHOT: PiDispatchSnapshot = Object.freeze({
   catalog: undefined,
   budgets: Object.freeze({}),
-  resolveDelegationTarget: () => undefined,
-  resolveAgentRole: () => undefined,
+  resolveDelegationTarget: noDispatchResolution,
+  resolveAgentRole: noDispatchResolution,
   buildBootstrap: () => null,
 });
 

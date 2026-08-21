@@ -156,9 +156,15 @@ function mapCommandError(error: CommandOperationError): RunWorkflowError {
   // command_validation (other fields), command_unsupported, command_degraded —
   // wrap as a LifecycleError with a policy_decision cause.
   let message = "Unknown command operation error";
-  if ("message" in error && typeof error.message === "string") {
+  if (
+    error.type === "command_validation" ||
+    error.type === "command_not_found"
+  ) {
     message = error.message;
-  } else if ("reason" in error && typeof error.reason === "string") {
+  } else if (
+    error.type === "command_unsupported" ||
+    error.type === "command_degraded"
+  ) {
     message = error.reason;
   }
 

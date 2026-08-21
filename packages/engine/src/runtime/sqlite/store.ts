@@ -1547,9 +1547,13 @@ function rowToNormalizedUsage(
       );
     }
     const normalized: NormalizedUsage = checked.data;
+    const { workflowInstanceId, ...rest } = normalized;
     return ok<NormalizedUsageObservation, RuntimeStoreError>({
-      ...normalized,
+      ...rest,
       id: createUsageObservationId(normalized.id),
+      ...(workflowInstanceId === undefined
+        ? {}
+        : { workflowInstanceId: createWorkflowInstanceId(workflowInstanceId) }),
     });
   });
 }

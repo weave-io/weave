@@ -28,6 +28,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import {
   composeAgentSnapshots,
   composeSnapshot,
@@ -93,11 +94,9 @@ function makeInlineAgentConfig(prompt: string) {
  * Build a minimal WeaveConfig for testing with inline prompts.
  * This avoids filesystem reads while exercising the snapshot pipeline.
  */
-function makeMinimalConfig(
-  agents: Record<string, ReturnType<typeof makeInlineAgentConfig>>,
-): import("@weaveio/weave-core").WeaveConfig {
+function makeMinimalConfig(agents: WeaveConfig["agents"]): WeaveConfig {
   return {
-    agents: agents as import("@weaveio/weave-core").WeaveConfig["agents"],
+    agents,
     categories: {},
     workflows: {},
     disabled: { agents: [], hooks: [], skills: [] },
@@ -201,11 +200,11 @@ describe("composeSnapshot — snapshot structure", () => {
 
     const { snapshot } = result._unsafeUnwrap();
     expect(snapshot.agentName).toBe("tapestry");
-    expect(typeof snapshot.hash).toBe("string");
+    expect(snapshot.hash.length).toBe(64);
     expect(snapshot.hash).toHaveLength(64);
-    expect(typeof snapshot.byteLength).toBe("number");
+    expect(Number.isFinite(snapshot.byteLength)).toBe(true);
     expect(snapshot.byteLength).toBeGreaterThan(0);
-    expect(typeof snapshot.charLength).toBe("number");
+    expect(Number.isFinite(snapshot.charLength)).toBe(true);
     expect(snapshot.charLength).toBeGreaterThan(0);
     expect(Array.isArray(snapshot.sources)).toBe(true);
     expect(snapshot.sources.length).toBeGreaterThan(0);
@@ -240,7 +239,6 @@ describe("composeSnapshot — snapshot structure", () => {
 
     const { rawArtifact } = result._unsafeUnwrap();
     expect(rawArtifact.agentName).toBe("my-agent");
-    expect(typeof rawArtifact.composedPrompt).toBe("string");
     expect(rawArtifact.composedPrompt.length).toBeGreaterThan(0);
   });
 
@@ -327,11 +325,9 @@ describe("composeSnapshot — source descriptors", () => {
   });
 
   it("sources array has two entries for agent with primary and append", async () => {
-    const config = makeMinimalConfig(
-      {} as Record<string, ReturnType<typeof makeInlineAgentConfig>>,
-    );
+    const config = makeMinimalConfig({});
     // Build the config with an agent that has both prompt and prompt_append
-    const configWithAppend: import("@weaveio/weave-core").WeaveConfig = {
+    const configWithAppend: WeaveConfig = {
       ...config,
       agents: {
         "appended-agent": {
@@ -391,8 +387,8 @@ describe("composeSnapshot — error paths", () => {
     // Must not throw — result must be err
     expect(result.isErr()).toBe(true);
     const e = result._unsafeUnwrapErr();
-    expect(typeof e.type).toBe("string");
-    expect(typeof e.message).toBe("string");
+    expect(e.type.length).toBeGreaterThan(0);
+    expect(e.message.length).toBeGreaterThan(0);
   });
 });
 
@@ -675,7 +671,7 @@ describe("SHA-256 hash stability contract", () => {
     }
     // (If composition fails on empty prompt, that's fine — we just ensure
     // no exception is thrown and result is typed.)
-    expect(typeof result1.isOk()).toBe("boolean");
+    expect([true, false]).toContain(result1.isOk());
     // SHA-256 of the known constant, for documentation:
     expect(EMPTY_SHA256).toHaveLength(64);
   });

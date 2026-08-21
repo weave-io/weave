@@ -10,9 +10,57 @@ import type {
 } from "./types.js";
 
 type Operation = "save" | "list" | "match" | "revoke";
-export type PermissionRepositoryFailurePlan = Partial<
-  Record<Operation, boolean | (() => boolean)>
->;
+export type PermissionRepositoryFailurePlan = {
+  readonly save?: boolean | (() => boolean);
+  readonly list?: boolean | (() => boolean);
+  readonly match?: boolean | (() => boolean);
+  readonly revoke?: boolean | (() => boolean);
+};
+type ObjectLike<T> = T & object;
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type HydratedDisplay<T> = { summary: T; details?: T };
+type HydratedRecord<T> = {
+  grantId: T;
+  identity: {
+    projectIdentity: T;
+    agentName: T;
+    registrationOwner: T;
+    toolIdentity: T;
+    registrationRevision: T;
+    policyFingerprint: T;
+    requestSchemaVersion: T;
+    requestDigest: T;
+  };
+  scope: T;
+  display: HydratedDisplay<T>;
+  createdAt: T;
+  expiresAt?: T;
+  revokedAt?: T;
+  state: T;
+};
+
+type MutablePermissionGrantSummary = {
+  project: string;
+  grantId: string;
+  agentName: string;
+  toolIdentity: string;
+  scope: "durable";
+  display: PermissionGrantSummary["display"];
+  createdAt: number;
+  expiresAt?: number;
+  revokedAt?: number;
+  state: "active" | "revoked";
+};
+type MutableDurableGrantRecord = {
+  grantId: string;
+  identity: GrantIdentityEnvelope;
+  scope: "durable";
+  display: DurablePermissionGrantRecord["display"];
+  createdAt: number;
+  expiresAt?: number;
+  revokedAt?: number;
+  state: "active" | "revoked";
+};
 
 const failure = (): PermissionError => ({ type: "repository_failure" });
 const invalid = (message: string): PermissionError => ({
@@ -40,11 +88,6 @@ const RECORD_FIELDS = [
   "revokedAt",
   "state",
 ] as const;
-const compareCodeUnits = (a: string, b: string): number => {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-};
 const STORAGE_ROW_FIELDS = [
   "grant_id",
   "project_identity",
@@ -63,67 +106,147 @@ const STORAGE_ROW_FIELDS = [
   "state",
 ] as const;
 
-const readOwnData = (
-  value: object,
+const compareCodeUnits = (a: string, b: string): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+
+const primitiveTag = <T>(value: T): string => {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Object(value) === value) return "object";
+  const tagged = Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Object]",
+  )();
+  return tagged.isOk() ? tagged.value : "[object Object]";
+};
+
+const isObjectLike = <T>(value: T): value is ObjectLike<T> =>
+  value !== null && value !== undefined && Object(value) === value;
+
+const parseText = <T>(
+  value: T,
+  maxBytes: number,
+): Result<string, PermissionError> => {
+  if (primitiveTag(value) !== "[object String]")
+    return err(invalid("invalid text field"));
+  const text = String(value);
+  if (
+    text.length === 0 ||
+    encoder.encode(text).byteLength > maxBytes ||
+    /[\uD800-\uDFFF]/u.test(text)
+  )
+    return err(invalid("invalid text field"));
+  return ok(text);
+};
+
+const parseTimestamp = <T>(value: T): Result<number, PermissionError> => {
+  if (primitiveTag(value) !== "[object Number]")
+    return err(invalid("invalid timestamp"));
+  const timestamp = Number(value);
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0)
+    return err(invalid("invalid timestamp"));
+  return ok(timestamp);
+};
+
+function readOwnData<T>(
+  value: T,
   allowed: readonly string[],
-): Result<Record<string, PropertyDescriptor>, PermissionError> =>
-  Result.fromThrowable(
+): Result<SnapshotFields, PermissionError> {
+  return Result.fromThrowable(
     () => {
+      if (!isObjectLike(value) || Array.isArray(value))
+        return err(invalid("invalid repository object"));
       if (Object.getPrototypeOf(value) !== Object.prototype)
         return err(invalid("object has an unsafe prototype"));
       const allowedSet = new Set(allowed);
-      const fields: Record<string, PropertyDescriptor> = Object.create(null);
+      const fields = new Map<string, PropertyDescriptor>();
       for (const key of Reflect.ownKeys(value)) {
-        if (typeof key !== "string" || !allowedSet.has(key))
+        if (Object.prototype.toString.call(key) !== "[object String]")
           return err(invalid("object has unexpected fields"));
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable)
+        const text = String(key);
+        if (!allowedSet.has(text))
+          return err(invalid("object has unexpected fields"));
+        const descriptor = Object.getOwnPropertyDescriptor(value, text);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          !descriptor.enumerable
+        )
           return err(invalid("object contains an accessor or hidden field"));
-        fields[key] = descriptor;
+        fields.set(text, descriptor);
       }
       return ok(fields);
     },
     () => invalid("invalid repository object"),
   )().andThen((result) => result);
+}
 
-const scalar = (value: unknown, maxBytes: number): value is string =>
-  typeof value === "string" &&
-  value.length > 0 &&
-  encoder.encode(value).byteLength <= maxBytes &&
-  !/[\uD800-\uDFFF]/u.test(value);
-const timestamp = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
-function validateGrantIdentityUnsafe(
-  value: unknown,
+function validateGrantIdentityUnsafe<T>(
+  value: T,
 ): Result<GrantIdentityEnvelope, PermissionError> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return err(invalid("invalid grant identity envelope"));
-  const fields = readOwnData(value as object, IDENTITY_FIELDS);
-  if (fields.isErr()) return err(fields.error);
-  if (IDENTITY_FIELDS.some((field) => !fields.value[field]))
-    return err(invalid("invalid grant identity envelope"));
-  const values = IDENTITY_FIELDS.map((field) => fields.value[field].value);
-  const limits = [256, 256, 128, 256, 64, 256, 64, 256];
-  if (values.some((field, index) => !scalar(field, limits[index])))
+  const fields = readOwnData(value, IDENTITY_FIELDS);
+  if (fields.isErr()) return err(invalid("invalid grant identity envelope"));
+  for (const field of IDENTITY_FIELDS) {
+    if (!fields.value.has(field))
+      return err(invalid("invalid grant identity envelope"));
+  }
+  const projectIdentity = parseText(
+    fields.value.get("projectIdentity")?.value,
+    256,
+  );
+  const agentName = parseText(fields.value.get("agentName")?.value, 256);
+  const registrationOwner = parseText(
+    fields.value.get("registrationOwner")?.value,
+    128,
+  );
+  const toolIdentity = parseText(fields.value.get("toolIdentity")?.value, 256);
+  const registrationRevision = parseText(
+    fields.value.get("registrationRevision")?.value,
+    64,
+  );
+  const policyFingerprint = parseText(
+    fields.value.get("policyFingerprint")?.value,
+    256,
+  );
+  const requestSchemaVersion = parseText(
+    fields.value.get("requestSchemaVersion")?.value,
+    64,
+  );
+  const requestDigest = parseText(
+    fields.value.get("requestDigest")?.value,
+    256,
+  );
+  if (
+    projectIdentity.isErr() ||
+    agentName.isErr() ||
+    registrationOwner.isErr() ||
+    toolIdentity.isErr() ||
+    registrationRevision.isErr() ||
+    policyFingerprint.isErr() ||
+    requestSchemaVersion.isErr() ||
+    requestDigest.isErr()
+  )
     return err(invalid("invalid grant identity envelope"));
   return ok(
     Object.freeze({
-      projectIdentity: values[0] as string,
-      agentName: values[1] as string,
-      registrationOwner: values[2] as string,
-      toolIdentity: values[3] as string,
-      registrationRevision: values[4] as string,
-      policyFingerprint: values[5] as string,
-      requestSchemaVersion: values[6] as string,
-      requestDigest: values[7] as string,
+      projectIdentity: projectIdentity.value,
+      agentName: agentName.value,
+      registrationOwner: registrationOwner.value,
+      toolIdentity: toolIdentity.value,
+      registrationRevision: registrationRevision.value,
+      policyFingerprint: policyFingerprint.value,
+      requestSchemaVersion: requestSchemaVersion.value,
+      requestDigest: requestDigest.value,
     }),
   );
 }
 
-/** Result-returning strict identity validation for repository and hydration boundaries. */
-export function validateGrantIdentityResult(
-  value: unknown,
+/** Result-returning strict identity validation for repository boundaries. */
+export function validateGrantIdentityResult<T>(
+  value: T,
 ): Result<GrantIdentityEnvelope, PermissionError> {
   return Result.fromThrowable(
     () => validateGrantIdentityUnsafe(value),
@@ -131,70 +254,80 @@ export function validateGrantIdentityResult(
   )().andThen((result) => result);
 }
 
-/** Compatibility type guard. It is deliberately trap-safe; use the Result form for errors. */
-export function validateGrantIdentity(
-  value: unknown,
-): value is GrantIdentityEnvelope {
+/** Compatibility type guard backed by the Result validator. */
+export function validateGrantIdentity<T>(
+  value: T,
+): value is T & GrantIdentityEnvelope {
   return validateGrantIdentityResult(value).isOk();
 }
 
-function validateDurableGrantRecordUnsafe(
-  value: unknown,
+function validateDurableGrantRecordUnsafe<T>(
+  value: T,
 ): Result<DurablePermissionGrantRecord, PermissionError> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return err(invalid("invalid durable grant record"));
-  const fields = readOwnData(value as object, RECORD_FIELDS);
-  if (fields.isErr()) return err(fields.error);
-  const requiredRecordFields = [
+  const fields = readOwnData(value, RECORD_FIELDS);
+  if (fields.isErr()) return err(invalid("invalid durable grant record"));
+  for (const field of [
     "grantId",
     "identity",
     "scope",
     "display",
     "createdAt",
     "state",
-  ];
-  if (requiredRecordFields.some((field) => !fields.value[field]))
-    return err(invalid("invalid durable grant record"));
-  const identity = validateGrantIdentityResult(fields.value.identity.value);
+  ] as const) {
+    if (!fields.value.has(field))
+      return err(invalid("invalid durable grant record"));
+  }
+  const identity = validateGrantIdentityResult(
+    fields.value.get("identity")?.value,
+  );
   if (identity.isErr()) return err(invalid("invalid durable grant record"));
-  const display = sanitizePermissionDisplay(fields.value.display.value);
+  const display = sanitizePermissionDisplay(fields.value.get("display")?.value);
   if (display.isErr()) return err(invalid("invalid durable grant display"));
-  const grantId = fields.value.grantId.value;
-  const scope = fields.value.scope.value;
-  const createdAt = fields.value.createdAt.value;
-  const expiresAt = fields.value.expiresAt?.value;
-  const revokedAt = fields.value.revokedAt?.value;
-  const state = fields.value.state.value;
+  const grantId = parseText(fields.value.get("grantId")?.value, 256);
+  const createdAt = parseTimestamp(fields.value.get("createdAt")?.value);
+  const expiresDescriptor = fields.value.get("expiresAt");
+  const revokedDescriptor = fields.value.get("revokedAt");
+  const expiresAt = expiresDescriptor
+    ? parseTimestamp(expiresDescriptor.value)
+    : ok<number | undefined>(void 0);
+  const revokedAt = revokedDescriptor
+    ? parseTimestamp(revokedDescriptor.value)
+    : ok<number | undefined>(void 0);
+  const scope = fields.value.get("scope")?.value;
+  const state = fields.value.get("state")?.value;
   if (
-    !scalar(grantId, 256) ||
+    grantId.isErr() ||
+    createdAt.isErr() ||
+    expiresAt.isErr() ||
+    revokedAt.isErr() ||
     scope !== "durable" ||
-    !timestamp(createdAt) ||
-    (expiresAt !== undefined &&
-      (!timestamp(expiresAt) || expiresAt <= createdAt)) ||
-    (revokedAt !== undefined &&
-      (!timestamp(revokedAt) || revokedAt < createdAt)) ||
     (state !== "active" && state !== "revoked") ||
-    (state === "active" && revokedAt !== undefined) ||
-    (state === "revoked" && revokedAt === undefined)
+    (expiresAt.value !== undefined && expiresAt.value <= createdAt.value) ||
+    (revokedAt.value !== undefined && revokedAt.value < createdAt.value) ||
+    (state === "active" && revokedAt.value !== undefined) ||
+    (state === "revoked" && revokedAt.value === undefined)
   )
     return err(invalid("invalid durable grant record"));
-  return ok(
-    Object.freeze({
-      grantId,
-      identity: identity.value,
-      scope: "durable" as const,
-      display: display.value,
-      createdAt,
-      ...(expiresAt === undefined ? {} : { expiresAt }),
-      ...(revokedAt === undefined ? {} : { revokedAt }),
-      state,
-    }),
-  );
+
+  const base: MutableDurableGrantRecord = {
+    grantId: grantId.value,
+    identity: identity.value,
+    scope: "durable",
+    display: display.value,
+    createdAt: createdAt.value,
+    state,
+  };
+  let safe = base;
+  if (expiresAt.value !== undefined)
+    safe = Object.assign(safe, { expiresAt: expiresAt.value });
+  if (revokedAt.value !== undefined)
+    safe = Object.assign(safe, { revokedAt: revokedAt.value });
+  return ok(Object.freeze(safe));
 }
 
-/** Result-returning strict record validation used before every repository mutation. */
-export function validateDurableGrantRecordResult(
-  value: unknown,
+/** Result-returning strict record validation used before repository mutation. */
+export function validateDurableGrantRecordResult<T>(
+  value: T,
 ): Result<DurablePermissionGrantRecord, PermissionError> {
   return Result.fromThrowable(
     () => validateDurableGrantRecordUnsafe(value),
@@ -202,112 +335,111 @@ export function validateDurableGrantRecordResult(
   )().andThen((result) => result);
 }
 
-/** Compatibility type guard. It never inspects a getter or lets a proxy escape. */
-export function validateDurableGrantRecord(
-  value: unknown,
-): value is DurablePermissionGrantRecord {
+/** Compatibility type guard backed by the Result validator. */
+export function validateDurableGrantRecord<T>(
+  value: T,
+): value is T & DurablePermissionGrantRecord {
   return validateDurableGrantRecordResult(value).isOk();
 }
 
-export function hydrateDurableGrant(
-  row: unknown,
+const optionalHydrated = <T>(
+  summary: T,
+  details: T | null,
+): HydratedDisplay<T> => {
+  const display: HydratedDisplay<T> = { summary };
+  if (details !== null) display.details = details;
+  return display;
+};
+
+export function hydrateDurableGrant<T>(
+  row: T,
 ): Result<DurablePermissionGrantRecord, PermissionError> {
   return Result.fromThrowable(
     () => {
-      if (!row || typeof row !== "object" || Array.isArray(row))
-        return err(invalid("invalid permission grant row"));
-      const fields = readOwnData(row as object, STORAGE_ROW_FIELDS);
+      const fields = readOwnData(row, STORAGE_ROW_FIELDS);
       if (fields.isErr()) return err(invalid("invalid permission grant row"));
-      if (STORAGE_ROW_FIELDS.some((field) => !fields.value[field]))
-        return err(invalid("invalid permission grant row"));
-      const value = (field: (typeof STORAGE_ROW_FIELDS)[number]): unknown =>
-        fields.value[field].value;
-      const record = {
-        grantId: value("grant_id"),
+      for (const field of STORAGE_ROW_FIELDS) {
+        if (!fields.value.has(field))
+          return err(invalid("invalid permission grant row"));
+      }
+      const descriptor = (field: (typeof STORAGE_ROW_FIELDS)[number]) =>
+        fields.value.get(field);
+      const display = optionalHydrated(
+        descriptor("display_summary")?.value,
+        descriptor("display_details")?.value,
+      );
+      const hydrated: HydratedRecord<PropertyDescriptor["value"]> = {
+        grantId: descriptor("grant_id")?.value,
         identity: {
-          projectIdentity: value("project_identity"),
-          agentName: value("agent_name"),
-          registrationOwner: value("registration_owner"),
-          toolIdentity: value("tool_identity"),
-          registrationRevision: value("registration_revision"),
-          policyFingerprint: value("policy_fingerprint"),
-          requestSchemaVersion: value("request_schema_version"),
-          requestDigest: value("request_digest"),
+          projectIdentity: descriptor("project_identity")?.value,
+          agentName: descriptor("agent_name")?.value,
+          registrationOwner: descriptor("registration_owner")?.value,
+          toolIdentity: descriptor("tool_identity")?.value,
+          registrationRevision: descriptor("registration_revision")?.value,
+          policyFingerprint: descriptor("policy_fingerprint")?.value,
+          requestSchemaVersion: descriptor("request_schema_version")?.value,
+          requestDigest: descriptor("request_digest")?.value,
         },
         scope: "durable",
-        display: {
-          summary: value("display_summary"),
-          ...(value("display_details") === null
-            ? {}
-            : { details: value("display_details") }),
-        },
-        createdAt: value("created_at"),
-        ...(value("expires_at") === null
-          ? {}
-          : { expiresAt: value("expires_at") }),
-        ...(value("revoked_at") === null
-          ? {}
-          : { revokedAt: value("revoked_at") }),
-        state: value("state"),
+        display,
+        createdAt: descriptor("created_at")?.value,
+        state: descriptor("state")?.value,
       };
-      return validateDurableGrantRecordResult(record);
+      const expires = descriptor("expires_at")?.value;
+      const revoked = descriptor("revoked_at")?.value;
+      let withOptional = hydrated;
+      if (expires !== null)
+        withOptional = Object.assign(withOptional, { expiresAt: expires });
+      if (revoked !== null)
+        withOptional = Object.assign(withOptional, { revokedAt: revoked });
+      return validateDurableGrantRecordResult(withOptional);
     },
     () => invalid("invalid permission grant row"),
   )().andThen((result) => result);
 }
 
-/**
- * Stable structural identity digest. Field order is fixed by IDENTITY_FIELDS,
- * so object insertion order cannot change the key, and the digest never exposes
- * raw identity fields or returns a fabricated empty fallback.
- */
-export function grantIdentityKey(
-  identity: GrantIdentityEnvelope,
+/** Stable structural identity digest with fixed field order. */
+export function grantIdentityKey<T>(
+  identity: T,
 ): Result<string, PermissionError> {
   return validateGrantIdentityResult(identity).andThen((safe) =>
     permissionDigest(IDENTITY_FIELDS.map((field) => safe[field])),
   );
 }
 
-export function grantIdentitiesEqual(
-  a: GrantIdentityEnvelope,
-  b: GrantIdentityEnvelope,
+export function grantIdentitiesEqual<T, U>(
+  a: T,
+  b: U,
 ): Result<boolean, PermissionError> {
   return grantIdentityKey(a).andThen((left) =>
     grantIdentityKey(b).map((right) => left === right),
   );
 }
 
-const frozen = <T extends object>(value: T): Readonly<T> =>
-  Object.freeze(value);
-
-export function cloneDurableGrant(
-  record: DurablePermissionGrantRecord,
+export function cloneDurableGrant<T>(
+  record: T,
 ): Result<DurablePermissionGrantRecord, PermissionError> {
   return validateDurableGrantRecordResult(record);
 }
 
-export function summarizeDurableGrant(
-  record: DurablePermissionGrantRecord,
+export function summarizeDurableGrant<T>(
+  record: T,
 ): Result<PermissionGrantSummary, PermissionError> {
-  return validateDurableGrantRecordResult(record).map((checked) =>
-    frozen({
+  return validateDurableGrantRecordResult(record).map((checked) => {
+    const summary: MutablePermissionGrantSummary = {
       project: checked.identity.projectIdentity,
       grantId: checked.grantId,
       agentName: checked.identity.agentName,
       toolIdentity: checked.identity.toolIdentity,
-      scope: "durable" as const,
-      display: frozen({ ...checked.display }),
+      scope: "durable",
+      display: Object.freeze({ ...checked.display }),
       createdAt: checked.createdAt,
-      ...(checked.expiresAt === undefined
-        ? {}
-        : { expiresAt: checked.expiresAt }),
-      ...(checked.revokedAt === undefined
-        ? {}
-        : { revokedAt: checked.revokedAt }),
       state: checked.state,
-    }),
-  );
+    };
+    if (checked.expiresAt !== undefined) summary.expiresAt = checked.expiresAt;
+    if (checked.revokedAt !== undefined) summary.revokedAt = checked.revokedAt;
+    return Object.freeze(summary);
+  });
 }
 
 export class InMemoryPermissionApprovalRepository
@@ -315,11 +447,6 @@ export class InMemoryPermissionApprovalRepository
 {
   private records = new Map<string, DurablePermissionGrantRecord>();
   private tail: Promise<void> = Promise.resolve();
-  /**
-   * Engine-internal nondecreasing wall-clock high-water. Not public. Once a
-   * durable expiry boundary is observed, rollback of the source clock cannot
-   * resurrect matching authority.
-   */
   #wallHighWater = 0;
   constructor(
     private readonly plan: PermissionRepositoryFailurePlan = {},
@@ -327,12 +454,10 @@ export class InMemoryPermissionApprovalRepository
   ) {}
   private shouldFail(operation: Operation): boolean {
     const value = this.plan[operation];
-    return typeof value === "function" ? value() : value === true;
+    if (value === true) return true;
+    if (value === false || value === undefined) return false;
+    return value();
   }
-  /**
-   * Observe a validated wall timestamp and advance the high-water mark.
-   * Throwing clocks map to `repository_failure`. Never extends TTL backward.
-   */
   private observeWallNow(
     now: number | undefined,
   ): Result<number, PermissionError> {
@@ -344,11 +469,10 @@ export class InMemoryPermissionApprovalRepository
           )()
         : ok(now);
     if (supplied.isErr()) return err(supplied.error);
-    if (!timestamp(supplied.value)) return err(failure());
+    const checked = parseTimestamp(supplied.value);
+    if (checked.isErr()) return err(failure());
     const effective =
-      supplied.value > this.#wallHighWater
-        ? supplied.value
-        : this.#wallHighWater;
+      checked.value > this.#wallHighWater ? checked.value : this.#wallHighWater;
     this.#wallHighWater = effective;
     return ok(effective);
   }
@@ -366,19 +490,18 @@ export class InMemoryPermissionApprovalRepository
       )().andThen((value) => value),
     );
     this.tail = result.then(
-      () => undefined,
-      () => undefined,
+      () => void 0,
+      () => void 0,
     );
     return ResultAsync.fromPromise(result, () => failure()).andThen(
       (value) => value,
     );
   }
-  saveMany(
-    records: readonly DurablePermissionGrantRecord[],
+  saveMany<T>(
+    records: readonly T[],
   ): ResultAsync<readonly DurablePermissionGrantRecord[], PermissionError> {
     return this.run("save", () => {
-      // Advance high-water even when save does not consume a caller `now`.
-      const observed = this.observeWallNow(undefined);
+      const observed = this.observeWallNow(void 0);
       if (observed.isErr()) return err(observed.error);
       if (!Array.isArray(records) || records.length === 0)
         return err(invalid("saveMany requires at least one record"));
@@ -414,7 +537,7 @@ export class InMemoryPermissionApprovalRepository
         next.set(record.grantId, record);
       }
       this.records = next;
-      return ok(frozen(copies));
+      return ok(Object.freeze(copies));
     });
   }
   list(
@@ -422,16 +545,18 @@ export class InMemoryPermissionApprovalRepository
     now?: number,
   ): ResultAsync<readonly PermissionGrantSummary[], PermissionError> {
     return this.run("list", () => {
-      if (!scalar(project, 256))
+      const checkedProject = parseText(project, 256);
+      if (checkedProject.isErr())
         return err(invalid("invalid repository list input"));
-      if (now !== undefined && !timestamp(now))
+      if (now !== undefined && parseTimestamp(now).isErr())
         return err(invalid("invalid repository list input"));
       const observed = this.observeWallNow(now);
       if (observed.isErr()) return err(observed.error);
-      // Listing is not expiry-filtered; high-water still advances.
       void observed.value;
       const sorted = [...this.records.values()]
-        .filter((r) => r.identity.projectIdentity === project)
+        .filter(
+          (record) => record.identity.projectIdentity === checkedProject.value,
+        )
         .sort((a, b) => compareCodeUnits(a.grantId, b.grantId));
       const summaries: PermissionGrantSummary[] = [];
       for (const record of sorted) {
@@ -439,18 +564,18 @@ export class InMemoryPermissionApprovalRepository
         if (summary.isErr()) return err(failure());
         summaries.push(summary.value);
       }
-      return ok(frozen(summaries));
+      return ok(Object.freeze(summaries));
     });
   }
-  match(
-    identity: GrantIdentityEnvelope,
+  match<T>(
+    identity: T,
     now?: number,
   ): ResultAsync<PermissionGrantSummary | undefined, PermissionError> {
     return this.run("match", () => {
       const checked = validateGrantIdentityResult(identity);
       if (checked.isErr())
         return err(invalid("invalid grant identity envelope"));
-      if (now !== undefined && !timestamp(now))
+      if (now !== undefined && parseTimestamp(now).isErr())
         return err(invalid("invalid grant identity envelope"));
       const observed = this.observeWallNow(now);
       if (observed.isErr()) return err(observed.error);
@@ -470,38 +595,36 @@ export class InMemoryPermissionApprovalRepository
         if (summary.isErr()) return err(failure());
         return ok(summary.value);
       }
-      return ok(undefined);
+      return ok(void 0);
     });
   }
   revoke(project: string, grantId: string): ResultAsync<void, PermissionError> {
     return this.run("revoke", () => {
-      if (!scalar(project, 256) || !scalar(grantId, 256))
+      const checkedProject = parseText(project, 256);
+      const checkedGrantId = parseText(grantId, 256);
+      if (checkedProject.isErr() || checkedGrantId.isErr())
         return err(invalid("invalid revoke input"));
-      const record = this.records.get(grantId);
-      // Unknown/wrong-project never observes wall high-water — random revoke
-      // attempts must not let callers poison the mark.
-      if (!record || record.identity.projectIdentity !== project)
+      const record = this.records.get(checkedGrantId.value);
+      if (!record || record.identity.projectIdentity !== checkedProject.value)
         return err({
           type: "unknown_grant" as const,
           message: "grant not found",
         });
-      // Observe BEFORE the already-revoked early return so idempotent revokes
-      // still advance high-water and cannot resurrect later expiries after
-      // wall rollback.
-      const observed = this.observeWallNow(undefined);
+      const observed = this.observeWallNow(void 0);
       if (observed.isErr()) return err(observed.error);
-      if (record.state === "revoked") return ok(undefined);
+      if (record.state === "revoked") return ok(void 0);
       const revokedAt = observed.value;
       if (revokedAt < record.createdAt)
         return err(invalid("invalid revoke timestamp"));
-      const cloned = cloneDurableGrant({
+      const replacement: MutableDurableGrantRecord = {
         ...record,
         state: "revoked",
         revokedAt,
-      });
+      };
+      const cloned = cloneDurableGrant(replacement);
       if (cloned.isErr()) return err(failure());
-      this.records.set(grantId, cloned.value);
-      return ok(undefined);
+      this.records.set(checkedGrantId.value, cloned.value);
+      return ok(void 0);
     });
   }
 }

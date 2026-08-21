@@ -34,6 +34,7 @@
  */
 
 import { Result } from "neverthrow";
+import { type JsonValue, parseStrictJson } from "../strict-json.js";
 import type { CodexFastEvidenceOutcome } from "./attempt.js";
 import { CODEX_PRIORITY_SERVICE_TIER } from "./routing.js";
 
@@ -54,6 +55,7 @@ export const CODEX_EVIDENCE_EVENT_COMPLETED = "response.completed";
 
 /** The SSE terminator this transport uses for a finished stream. */
 const SSE_DONE_PAYLOAD = "[DONE]";
+const IGNORED_SCAN_FAILURE = "ignored-scan-failure" as const;
 
 /** The only construction failure: the host has no usable `TransformStream`. */
 export type CodexEvidenceSnifferError = {
@@ -71,26 +73,29 @@ export type CodexEvidenceSnifferInput = {
   readonly budgetBytes?: number;
 };
 
+type JsonObject = { readonly [key: string]: JsonValue };
+
 /** JSON objects only: the sniffer inspects nothing it did not parse itself. */
-function isJsonRecord(value: unknown): value is Record<string, unknown> {
+function isJsonRecord(value: JsonValue): value is JsonObject {
+  return Object(value) === value && Array.isArray(value) === false;
+}
+
+/** Parse a primitive string without invoking a caller-owned coercion hook. */
+function isStringInput<T>(value: T): value is T & string {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray(value) === false
+    Object(value) !== value &&
+    Object.prototype.toString.call(value) === "[object String]"
   );
 }
 
 type TierReading = {
   /** Whether a `service_tier` key existed at all. */
   readonly present: boolean;
-  /** Its value when that value is a string; `undefined` otherwise. */
-  readonly tier: string | undefined;
+  /** Its value when that value is a string. */
+  readonly tier?: string;
 };
 
-const TIER_ABSENT: TierReading = Object.freeze({
-  present: false,
-  tier: undefined,
-} as const);
+const TIER_ABSENT: TierReading = Object.freeze({ present: false });
 
 /**
  * Read `service_tier` from an event. The Codex responses stream nests the
@@ -98,21 +103,21 @@ const TIER_ABSENT: TierReading = Object.freeze({
  * both have been observed on this transport and neither costs anything to
  * check.
  */
-function readServiceTier(event: Record<string, unknown>): TierReading {
+function readServiceTier(event: JsonObject): TierReading {
   const nested = event.response;
   if (isJsonRecord(nested) && "service_tier" in nested) {
     const value = nested.service_tier;
-    return Object.freeze({
-      present: true,
-      tier: typeof value === "string" ? value : undefined,
-    } as const);
+    if (isStringInput(value)) {
+      return Object.freeze({ present: true, tier: value });
+    }
+    return Object.freeze({ present: true });
   }
   if ("service_tier" in event) {
     const value = event.service_tier;
-    return Object.freeze({
-      present: true,
-      tier: typeof value === "string" ? value : undefined,
-    } as const);
+    if (isStringInput(value)) {
+      return Object.freeze({ present: true, tier: value });
+    }
+    return Object.freeze({ present: true });
   }
   return TIER_ABSENT;
 }
@@ -140,11 +145,12 @@ function readServiceTier(event: Record<string, unknown>): TierReading {
 export function createCodexServiceTierSniffer(
   input: CodexEvidenceSnifferInput,
 ): Result<TransformStream<Uint8Array, Uint8Array>, CodexEvidenceSnifferError> {
+  const requestedBudget = input.budgetBytes;
   const budget =
-    typeof input.budgetBytes === "number" &&
-    Number.isInteger(input.budgetBytes) &&
-    input.budgetBytes >= 0
-      ? Math.min(input.budgetBytes, CODEX_EVIDENCE_SCAN_BUDGET_BYTES)
+    requestedBudget !== undefined &&
+    Number.isInteger(requestedBudget) &&
+    requestedBudget >= 0
+      ? Math.min(requestedBudget, CODEX_EVIDENCE_SCAN_BUDGET_BYTES)
       : CODEX_EVIDENCE_SCAN_BUDGET_BYTES;
 
   let scanning = budget > 0;
@@ -172,11 +178,11 @@ export function createCodexServiceTierSniffer(
       () => {
         input.onOutcome(outcome);
       },
-      () => undefined,
+      () => IGNORED_SCAN_FAILURE,
     )();
   }
 
-  function inspect(event: unknown): void {
+  function inspect(event: JsonValue): void {
     if (!isJsonRecord(event)) {
       pending = "ambiguous";
       return;
@@ -222,10 +228,7 @@ export function createCodexServiceTierSniffer(
     if (data.length === 0 || data === SSE_DONE_PAYLOAD) {
       return;
     }
-    const parsed = Result.fromThrowable(
-      () => JSON.parse(data) as unknown,
-      () => undefined,
-    )();
+    const parsed = parseStrictJson(data);
     if (parsed.isErr()) {
       // Unparseable framing is inconclusive, never fatal.
       pending = "ambiguous";
@@ -264,7 +267,7 @@ export function createCodexServiceTierSniffer(
     }
   }
 
-  const safeScan = Result.fromThrowable(scan, () => undefined);
+  const safeScan = Result.fromThrowable(scan, () => IGNORED_SCAN_FAILURE);
 
   return Result.fromThrowable(
     () =>

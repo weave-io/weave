@@ -57,11 +57,19 @@ export function runBuildBind(
       actual: plan.releasedSha ?? "",
     });
   if (plan.binding === null) return err({ type: "BindingMissing" });
-  return ok({
-    releasedSha: parsed.data.releasedSha,
-    planDigest: releasePlanDigest(plan),
-    binding: plan.binding,
-  });
+  const binding = plan.binding;
+  return releasePlanDigest(plan)
+    .mapErr(
+      (error): BuildBindError => ({
+        type: "InvalidBuildBindInput",
+        issues: [error.type],
+      }),
+    )
+    .map((planDigest) => ({
+      releasedSha: parsed.data.releasedSha,
+      planDigest,
+      binding,
+    }));
 }
 
 export interface BuildBindFileResult extends BuildBindResult {

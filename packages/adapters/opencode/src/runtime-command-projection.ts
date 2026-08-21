@@ -1,8 +1,12 @@
 /**
  * Runtime Command Projection — OpenCode adapter-owned command handlers and renderers.
  *
- * This module is the OpenCode adapter's projection layer for the six runtime
- * command operations defined in the shared engine:
+ * This module is the OpenCode adapter's library projection layer for the six
+ * runtime command operations defined in the shared engine. The plugin config
+ * hook does not wire these handlers into live OpenCode slash commands; it
+ * registers only the prompt-based `/weave:start` and `/start-work` templates.
+ *
+ * The six library operations are:
  *
  * | Command              | Engine operation      | OpenCode label            |
  * |----------------------|-----------------------|---------------------------|
@@ -22,6 +26,7 @@
  * - Native slash/TUI affordances that are not yet implemented in this slice
  *   are documented as degraded equivalents (see `DEGRADED_AFFORDANCES`).
  * - `/start-work` is out of scope for this module.
+ * - `RuntimeCommandProjection` is not a live command registration surface.
  *
  * ## Rendered result shapes
  *
@@ -38,7 +43,6 @@
  */
 
 import type {
-  AbortExecutionInput,
   AdapterHealthReport,
   AdvanceStepInput,
   CommandOperationError,
@@ -46,14 +50,18 @@ import type {
   ExecutionStartedData,
   ExecutionStatusData,
   PlanStateProvider,
+  RunNamedWorkflowInput,
   RuntimeHealthData,
   RuntimeStore,
+  StartPlanInput,
   StepAdvancedData,
 } from "@weaveio/weave-engine";
 import {
   abortExecution,
   advanceStep,
   buildAdapterHealthReport,
+  createExecutionLeaseId,
+  createWorkflowInstanceId,
   inspectStatus,
   logger,
   runNamedWorkflow,
@@ -186,8 +194,8 @@ export interface StartPlanProjectionInput {
   readonly store: RuntimeStore;
   /** Provider for plan file existence checks. */
   readonly planStateProvider: PlanStateProvider;
-  /** Workflow registry — maps workflow names to workflow configs. */
-  readonly workflows: Record<string, unknown>;
+  /** Normalized workflow registry — maps workflow names to workflow configs. */
+  readonly workflows: StartPlanInput["workflows"];
   /** OpenCode adapter instance — `spawnSubagent` is called for each DispatchAgentEffect. */
   readonly adapter: OpenCodeAdapter;
   /** Optional ISO-8601 timestamp override (for testing). */
@@ -211,8 +219,8 @@ export interface RunWorkflowProjectionInput {
   readonly ownerId: string;
   /** Runtime store for persisting the workflow instance and lease. */
   readonly store: RuntimeStore;
-  /** Workflow registry — maps workflow names to workflow configs. */
-  readonly workflows: Record<string, unknown>;
+  /** Normalized workflow registry — maps workflow names to workflow configs. */
+  readonly workflows: RunNamedWorkflowInput["workflows"];
   /** OpenCode adapter instance — `spawnSubagent` is called for each DispatchAgentEffect. */
   readonly adapter: OpenCodeAdapter;
   /** Optional plan state provider for plan_created/plan_complete steps. */
@@ -502,9 +510,7 @@ export class RuntimeCommandProjection {
     );
 
     const result = await inspectStatus({
-      workflowInstanceId: input.workflowInstanceId as Parameters<
-        typeof inspectStatus
-      >[0]["workflowInstanceId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
       store: input.store,
     });
 
@@ -557,9 +563,8 @@ export class RuntimeCommandProjection {
     );
 
     const result = await abortExecution({
-      workflowInstanceId:
-        input.workflowInstanceId as AbortExecutionInput["workflowInstanceId"],
-      leaseId: input.leaseId as AbortExecutionInput["leaseId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
+      leaseId: createExecutionLeaseId(input.leaseId),
       signal: input.signal,
       store: input.store,
     });
@@ -614,9 +619,8 @@ export class RuntimeCommandProjection {
     );
 
     const result = await advanceStep({
-      workflowInstanceId:
-        input.workflowInstanceId as AdvanceStepInput["workflowInstanceId"],
-      leaseId: input.leaseId as AdvanceStepInput["leaseId"],
+      workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
+      leaseId: createExecutionLeaseId(input.leaseId),
       stepName: input.stepName,
       completionSignal: input.completionSignal,
       store: input.store,
@@ -724,10 +728,12 @@ export class RuntimeCommandProjection {
  * boilerplate. Production callers should build a full capability contract
  * using `buildAdapterHealthReport` from `@weaveio/weave-engine`.
  *
- * The report declares `command-entrypoints` as `emulated` (OpenCode exposes
- * slash commands as the explicit delivery path) and all other required
- * capabilities as `native` or `emulated` based on the adapter's known
- * implementation state.
+ * The report declares `command-entrypoints` as `degraded` by default. The
+ * trusted config hook exposes only prompt-based `/weave:start` and
+ * `/start-work` after this invocation inserts Tapestry; it does not prove
+ * durable ownership across processes, and it does not register `/weave:run` or
+ * deliver a live `RuntimeCommandProjection` handler. Callers may pass an explicit
+ * readiness override only when they have a separate, current proof.
  *
  * @param overrides - Optional capability overrides for testing.
  * @returns A normalized `AdapterHealthReport`.
@@ -754,21 +760,25 @@ export function buildOpenCodeHealthReport(overrides?: {
         },
         {
           id: "agent-materialization",
-          description: "Materialize agents into OpenCode via SDK",
-          readiness: "native",
-          notes: "OpenCodeAdapter.spawnSubagent calls reconcileAgent via SDK",
+          description:
+            "Materialize agents into OpenCode through the config hook",
+          readiness: "degraded",
+          notes:
+            "The config hook injects translated agents in declaration order and skips every existing same-name cfg.agent entry without changing it; it does not persist agent configuration through an SDK.",
         },
         {
           id: "primary-agent-selection",
           description: "Select primary agent (Loom) for user-facing sessions",
-          readiness: "native",
-          notes: "Plugin registers Loom as the primary agent via OpenCode SDK",
+          readiness: "degraded",
+          notes:
+            "The config hook selects Loom as the default only when it safely injects Loom; an existing Loom entry remains unchanged and can keep another default.",
         },
         {
           id: "delegated-specialist-execution",
           description: "Delegate to specialist agents (Shuttle, Weft, Warp)",
-          readiness: "native",
-          notes: "spawnSubagent materializes specialist agents on demand",
+          readiness: "degraded",
+          notes:
+            "Specialist agents are available when the config hook injects them, but a same-name OpenCode entry is preserved and can block the intended specialist projection.",
         },
         {
           id: "prompt-composition",
@@ -780,7 +790,8 @@ export function buildOpenCodeHealthReport(overrides?: {
           id: "tool-policy-mapping",
           description: "Map Weave tool policies to OpenCode permissions",
           readiness: "native",
-          notes: "tool-policy-mapping.ts translates allow/deny/ask to OpenCode",
+          notes:
+            "Read, glob, grep, and list use explicit OpenCode permission rules for allow, deny, and ask; delegation uses task with the same values. Read ask is never omitted or represented by the boolean tools map.",
         },
         {
           id: "workflow-persistence",
@@ -804,9 +815,9 @@ export function buildOpenCodeHealthReport(overrides?: {
         {
           id: "command-entrypoints",
           description: "Expose explicit user-authorized execution triggers",
-          readiness: overrides?.commandEntrypointsReadiness ?? "emulated",
+          readiness: overrides?.commandEntrypointsReadiness ?? "degraded",
           notes:
-            "OpenCode slash commands (/weave:start, /weave:run) are the explicit delivery path",
+            "The trusted config hook registers only prompt-based /weave:start and /start-work after this invocation inserts Tapestry; it does not prove durable ownership across processes, and /weave:run and RuntimeCommandProjection are not live plugin entrypoints.",
         },
         {
           id: "event-logging",

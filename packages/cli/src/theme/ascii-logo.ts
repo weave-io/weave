@@ -59,11 +59,13 @@ function colorizeLine(line: string, offset: number): string {
     .join("");
 }
 
-function rainbowColor(index: number): {
-  red: number;
-  green: number;
-  blue: number;
-} {
+interface RainbowColor {
+  readonly red: number;
+  readonly green: number;
+  readonly blue: number;
+}
+
+function rainbowColor(index: number): RainbowColor {
   return {
     red: rainbowChannel(index, 0),
     green: rainbowChannel(index, (2 * Math.PI) / 3),

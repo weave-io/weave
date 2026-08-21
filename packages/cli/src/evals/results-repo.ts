@@ -42,7 +42,7 @@
  * `publish()` calls and returns configurable responses without network access.
  */
 
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { EVAL_RESULTS_REPO_TOKEN_ENV_VAR } from "./artifact-bundle.js";
 import { assertJsonPublishSafe } from "./sanitizer.js";
 import type {
@@ -178,11 +178,11 @@ export function validatePublishToken(
  */
 export function validateRepoConfig(
   config: ResultsRepoConfig,
-): ResultAsync<undefined, ResultsRepoError> {
+): ResultAsync<null, ResultsRepoError> {
   if (!config.repoUrl.startsWith("https://")) {
     return new ResultAsync(
       Promise.resolve(
-        err<undefined, ResultsRepoError>({
+        err<null, ResultsRepoError>({
           type: "RepoConfigInvalid",
           message:
             `ResultsRepoConfig.repoUrl must start with "https://". ` +
@@ -192,7 +192,7 @@ export function validateRepoConfig(
       ),
     );
   }
-  return ResultAsync.fromSafePromise(Promise.resolve(undefined));
+  return okAsync<null, ResultsRepoError>(null);
 }
 
 /**
@@ -208,12 +208,12 @@ export function validateRepoConfig(
  */
 export function enforcePublishPolicy(
   bundle: EvalBundle,
-): ResultAsync<undefined, ResultsRepoError> {
+): ResultAsync<null, ResultsRepoError> {
   // Check 1: dry-run bundles must not be published externally
   if (bundle.dryRun) {
     return new ResultAsync(
       Promise.resolve(
-        err<undefined, ResultsRepoError>({
+        err<null, ResultsRepoError>({
           type: "DryRunPublishBlocked",
           message:
             "Dry-run bundles must not be published to external repositories. " +
@@ -227,7 +227,7 @@ export function enforcePublishPolicy(
   if (bundle.scoreFiles.length === 0) {
     return new ResultAsync(
       Promise.resolve(
-        err<undefined, ResultsRepoError>({
+        err<null, ResultsRepoError>({
           type: "NoScoreFilesToPublish",
           message:
             "Bundle has no score files. A publishable bundle must contain at least one score file. " +
@@ -244,7 +244,7 @@ export function enforcePublishPolicy(
     const safetyError = jsonSafetyResult.error;
     return new ResultAsync(
       Promise.resolve(
-        err<undefined, ResultsRepoError>({
+        err<null, ResultsRepoError>({
           type: "UnsanitizedBundleBlocked",
           message: safetyError.message,
           field: "field" in safetyError ? safetyError.field : "unknown",
@@ -253,7 +253,7 @@ export function enforcePublishPolicy(
     );
   }
 
-  return ResultAsync.fromSafePromise(Promise.resolve(undefined));
+  return okAsync<null, ResultsRepoError>(null);
 }
 
 // ---------------------------------------------------------------------------

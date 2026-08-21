@@ -35,7 +35,8 @@
  * never exported from the package entry point.
  */
 
-import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
+import { err, ok, okAsync, Result, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import {
   PI_NATIVE_SESSION_LAYOUT,
@@ -52,7 +53,6 @@ import {
   createPiChildSessionLaunchAuthority,
   type PiChildSessionLaunchAuthority,
 } from "./child-session-launch.js";
-import { isPiSessionManagerStatic } from "./native-session-host.js";
 
 /**
  * The closed, path-free set of reasons delegation readiness may report
@@ -131,10 +131,14 @@ function mintRootProof(
  * Reads a minted proof. An unrecognized object - including a caller-built
  * `{ status: "resolved" }` - reads as `unavailable`, never as resolved.
  */
-function readRootProof(proof: PiChildSessionRootProof | undefined): {
+interface RootProofState {
   readonly status: PiChildSessionRootProof["status"];
   readonly root?: string;
-} {
+}
+
+function readRootProof(
+  proof: PiChildSessionRootProof | undefined,
+): RootProofState {
   if (proof === undefined || !ROOT_PROOFS.has(proof)) {
     return { status: "unavailable" };
   }
@@ -143,6 +147,48 @@ function readRootProof(proof: PiChildSessionRootProof | undefined): {
     return { status: proof.status === "unsafe" ? "unsafe" : "unavailable" };
   }
   return { status: "resolved", root };
+}
+
+/**
+ * Reads a data member without invoking host getters or proxy `get`.
+ *
+ * Pi's process port is a class instance, so its public `spawn` method lives on
+ * the instance prototype rather than as an own field. Walk trusted prototype
+ * descriptors for that case, but stop before the shared built-in prototypes so
+ * a polluted `Object.prototype` cannot manufacture a capability.
+ */
+function hasCallableMember<T>(candidate: T, key: string): boolean {
+  const descriptor = Result.fromThrowable(
+    () => {
+      let current: object | null = new Object(candidate);
+      while (
+        current !== null &&
+        current !== Object.prototype &&
+        current !== Function.prototype
+      ) {
+        const member = Object.getOwnPropertyDescriptor(current, key);
+        if (member !== undefined) return member;
+        current = Object.getPrototypeOf(current);
+      }
+      return;
+    },
+    (): undefined => undefined,
+  )();
+  if (descriptor.isErr()) return false;
+  const member = descriptor.value;
+  if (member === undefined || !("value" in member)) return false;
+  const callable = Result.fromThrowable(
+    () => z.function().safeParse(member.value),
+    (): false => false,
+  )();
+  return callable.isOk() && callable.value.success;
+}
+
+function hasSessionManagerApi<T>(candidate: T): boolean {
+  return (
+    hasCallableMember(candidate, "create") &&
+    hasCallableMember(candidate, "open")
+  );
 }
 
 function unavailable(
@@ -237,10 +283,9 @@ export interface PiChildSessionStorageAuthorityInput {
 export function createPiChildSessionStorageAuthority(
   input: PiChildSessionStorageAuthorityInput = {},
 ): PiChildSessionStorageAuthority {
-  const apiAvailable = isPiSessionManagerStatic(input.SessionManager);
+  const apiAvailable = hasSessionManagerApi(input.SessionManager);
   const rootResolution = readRootProof(input.sessionRoot);
-  const spawn = (input.processLaunch as { spawn?: unknown } | undefined)?.spawn;
-  const processAvailable = typeof spawn === "function";
+  const processAvailable = hasCallableMember(input.processLaunch, "spawn");
   const launchAuthority =
     rootResolution.status === "resolved" && rootResolution.root !== undefined
       ? createPiChildSessionLaunchAuthority({
@@ -270,7 +315,7 @@ export function createPiChildSessionStorageAuthority(
       PiNativeSessionStorageUnavailable
     > {
       const reason = storageReason();
-      return reason === undefined ? ok(undefined) : err(unavailable(reason));
+      return reason === undefined ? ok() : err(unavailable(reason));
     },
     requireSessionRoot(): Result<string, PiNativeSessionStorageUnavailable> {
       const reason = storageReason();
@@ -328,6 +373,29 @@ export function describeChildSessionStorageUnavailable(
  * never fails: an unusable root is itself the answer, and the raw violation
  * (which can name a host path) never leaves this call.
  */
+interface RootPathResolution {
+  readonly kind: "path";
+  readonly root: string;
+}
+
+interface RootProofResolution {
+  readonly kind: "proof";
+  readonly proof: PiChildSessionRootProof;
+}
+
+type RootResolution = RootPathResolution | RootProofResolution;
+
+function rootProofResolution(error: PiNativeSessionError): RootProofResolution {
+  return {
+    kind: "proof",
+    proof: mintRootProof(
+      classifyRootViolation(
+        error.type === "SessionRootViolation" ? error.reason : undefined,
+      ),
+    ),
+  };
+}
+
 export function provePiChildSessionRoot(
   input: PiNativeSessionRootInput & {
     readonly fs: PiNativeSessionFsPort;
@@ -341,40 +409,43 @@ export function provePiChildSessionRoot(
     readonly root?: string;
   },
 ): ResultAsync<PiChildSessionRootProof, never> {
-  const resolved =
+  const resolved: ResultAsync<RootResolution, never> =
     input.root === undefined
       ? resolvePiNativeSessionRoot(input)
-      : okAsync<string, PiNativeSessionError>(input.root);
-  return resolved
-    .orElse((error) =>
-      okAsync(
-        mintRootProof(
-          classifyRootViolation(
-            error.type === "SessionRootViolation" ? error.reason : undefined,
-          ),
-        ),
-      ),
-    )
-    .andThen((resolved) => {
-      if (typeof resolved !== "string") return okAsync(resolved);
-      return input.fs
-        .openDirectory(resolved, true)
-        .andThen((directory) =>
-          // One descriptor-relative probe of the ledger the store itself
-          // uses. It costs nothing when absent, and it forces the port's
-          // held-descriptor identity, symlink, kind, and mode checks to run
-          // now rather than at the first launch.
-          directory
-            .statFile(PI_NATIVE_SESSION_LAYOUT.tombstoneFile)
-            .map(() => {
-              directory.close();
-              return mintRootProof("resolved", resolved);
-            })
-            .mapErr((error) => {
-              directory.close();
-              return error;
+          .map(
+            (root): RootPathResolution => ({
+              kind: "path",
+              root,
             }),
-        )
-        .orElse((error) => okAsync(mintRootProof(classifyRootFsError(error))));
-    });
+          )
+          .orElse((error) =>
+            okAsync<RootResolution, never>(rootProofResolution(error)),
+          )
+      : okAsync<RootResolution, never>({
+          kind: "path",
+          root: input.root,
+        });
+
+  return resolved.andThen((candidate) => {
+    if (candidate.kind === "proof") return okAsync(candidate.proof);
+    return input.fs
+      .openDirectory(candidate.root, true)
+      .andThen((directory) =>
+        // One descriptor-relative probe of the ledger the store itself
+        // uses. It costs nothing when absent, and it forces the port's
+        // held-descriptor identity, symlink, kind, and mode checks to run
+        // now rather than at the first launch.
+        directory
+          .statFile(PI_NATIVE_SESSION_LAYOUT.tombstoneFile)
+          .map(() => {
+            directory.close();
+            return mintRootProof("resolved", candidate.root);
+          })
+          .mapErr((error) => {
+            directory.close();
+            return error;
+          }),
+      )
+      .orElse((error) => okAsync(mintRootProof(classifyRootFsError(error))));
+  });
 }

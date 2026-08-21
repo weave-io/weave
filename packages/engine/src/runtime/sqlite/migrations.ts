@@ -604,7 +604,7 @@ function validateMigrationDefinitions(): Result<void, RuntimeStoreError> {
     }
     previousVersion = migration.version;
   }
-  return ok(undefined);
+  return ok();
 }
 
 function parseSchemaVersion(value: string): Result<number, RuntimeStoreError> {
@@ -655,7 +655,7 @@ function validateAppliedMigrations(
       return err(initializationError("Invalid schema_migrations ledger"));
     }
   }
-  return ok(undefined);
+  return ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -910,7 +910,7 @@ function verifyNoDatabaseTriggers(
     return err(initializationError("Invalid runtime store schema", read.error));
   }
   if (read.value !== null) return failure;
-  return ok(undefined);
+  return ok();
 }
 
 /**
@@ -1181,7 +1181,7 @@ function verifyBootstrapSchemas(db: Database): Result<void, RuntimeStoreError> {
     return failure;
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 /**
@@ -1450,7 +1450,7 @@ function verifyPermissionGrantsSchema(
 
   if (rollbackProbe.isErr()) return failure;
   if (probe.isErr()) return failure;
-  return ok(undefined);
+  return ok();
 }
 
 function verifyAdapterPreferencesIndexAllowlist(
@@ -1498,7 +1498,7 @@ function verifyAdapterPreferencesSchema(
     return failure;
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -1566,7 +1566,7 @@ function verifyNoForeignKeyViolations(
       initializationError("Migration introduced a foreign key violation"),
     );
   }
-  return ok(undefined);
+  return ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -1688,7 +1688,7 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
       if (preferences.isErr()) return err(preferences.error);
     }
     if (storedVersion >= 3) return verifyPermissionGrantsSchema(db);
-    return ok(undefined);
+    return ok();
   }
 
   // Migration v5 recreates `session_snapshots` to change `lease_id`'s
@@ -1767,7 +1767,7 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
     if (preferences.isErr()) return err(preferences.error);
   }
   if (effectiveVersion >= 3) return verifyPermissionGrantsSchema(db);
-  return ok(undefined);
+  return ok();
 }
 
 /**

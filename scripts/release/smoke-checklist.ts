@@ -13,6 +13,10 @@ import { err, ok, type Result, ResultAsync } from "neverthrow";
 export const SMOKE_CHECKLIST_RESULTS = ["Pending", "Pass", "Fail"] as const;
 export type SmokeChecklistResult = (typeof SMOKE_CHECKLIST_RESULTS)[number];
 
+function isSmokeChecklistResult(value: string): value is SmokeChecklistResult {
+  return SMOKE_CHECKLIST_RESULTS.some((result) => result === value);
+}
+
 export interface SmokeChecklistItem {
   readonly id: string;
   readonly area: string;
@@ -66,11 +70,11 @@ export function parseSmokeChecklist(
       return err({ type: "MalformedRow", line });
     }
     if (seen.has(id)) return err({ type: "DuplicateItemId", id });
-    if (!(SMOKE_CHECKLIST_RESULTS as readonly string[]).includes(result)) {
+    if (!isSmokeChecklistResult(result)) {
       return err({ type: "InvalidResult", id, result });
     }
     seen.add(id);
-    items.push({ id, area, check, result: result as SmokeChecklistResult });
+    items.push({ id, area, check, result });
   }
   if (items.length === 0) return err({ type: "NoItems" });
 

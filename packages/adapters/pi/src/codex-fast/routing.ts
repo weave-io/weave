@@ -114,21 +114,34 @@ export const CODEX_INELIGIBLE_REASONS = Object.freeze([
 export type CodexIneligibleReason = (typeof CODEX_INELIGIBLE_REASONS)[number];
 
 /**
+ * A primitive string parser for values arriving at the pure routing boundary.
+ * Boxed strings and objects with a custom `toString` never enter the matcher.
+ */
+function isStringInput<T>(value: T): value is T & string {
+  return (
+    Object(value) !== value &&
+    Object.prototype.toString.call(value) === "[object String]"
+  );
+}
+
+/**
  * Test one model id against the header-safety rule. A non-string is unsafe.
  * A fresh `RegExp` per call keeps this free of shared matcher state.
  */
-export function isSafeCodexModelId(modelId: unknown): modelId is string {
-  if (typeof modelId !== "string") {
+export function isSafeCodexModelId<TModelId>(
+  modelId: TModelId,
+): modelId is TModelId & string {
+  if (!isStringInput(modelId)) {
     return false;
   }
   return new RegExp(CODEX_SAFE_MODEL_ID_PATTERN_SOURCE).test(modelId);
 }
 
 /** Find the allowlist entry for an exact model id, or `undefined`. */
-export function findCodexFastAllowlistEntry(
-  modelId: unknown,
+export function findCodexFastAllowlistEntry<TModelId>(
+  modelId: TModelId,
 ): CodexFastAllowlistEntry | undefined {
-  if (typeof modelId !== "string") {
+  if (!isStringInput(modelId)) {
     return undefined;
   }
   return CODEX_FAST_MODEL_ALLOWLIST.find((entry) => entry.modelId === modelId);
@@ -239,7 +252,7 @@ function ineligible(reason: CodexIneligibleReason): CodexFastEligibility {
 }
 
 /** Absence is the spec-authorized alternative to the exact first-party URL. */
-function isFirstPartyTransport(baseUrl: unknown): boolean {
+function isFirstPartyTransport<TBaseUrl>(baseUrl: TBaseUrl): boolean {
   if (baseUrl === undefined || baseUrl === null) {
     return true;
   }

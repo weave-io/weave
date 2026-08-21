@@ -173,9 +173,7 @@ describe("getBuiltinConfig", () => {
   it("(g11) builtin config has no default_workflow selector — settings has no default_workflow field", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     // settings should not have a default_workflow field
-    expect(
-      (config.settings as Record<string, unknown>)["default_workflow"],
-    ).toBeUndefined();
+    expect(Object.hasOwn(config.settings, "default_workflow")).toBe(false);
   });
 
   it("(g12) plan-and-execute remains available as an explicit named workflow", () => {
@@ -295,7 +293,7 @@ describe("getBuiltinConfig", () => {
       const triggers = agent?.triggers ?? [];
       expect(triggers.length).toBeGreaterThan(0);
       for (const trigger of triggers) {
-        expect(typeof trigger).toBe("string");
+        expect(trigger).toBeString();
         expect(trigger.trim().length).toBeGreaterThan(0);
       }
     }

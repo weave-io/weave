@@ -18,7 +18,6 @@ import { mapConflictToLeaseConflict, mapStoreError } from "./lease.js";
 import { sanitizeMetadata } from "./metadata.js";
 import type {
   ExecutionAuthorizationSource,
-  LifecycleEffect,
   LifecycleError,
   StartExecutionInput,
   StartExecutionOutput,
@@ -185,6 +184,6 @@ export function startExecution(
     .map((lease) => ({
       workflowInstanceId: lease.workflowInstanceId,
       leaseId: lease.id,
-      effects: [] as LifecycleEffect[],
+      effects: [],
     }));
 }

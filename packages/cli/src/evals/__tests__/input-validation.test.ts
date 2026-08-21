@@ -8,10 +8,8 @@ import {
 import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
 // Helper: build a clean non-CI env map
-function env(
-  overrides: Record<string, string | undefined> = {},
-): Record<string, string | undefined> {
-  return { ...overrides };
+function env(overrides: Record<string, string | undefined> = {}) {
+  return { ...overrides } satisfies Record<string, string | undefined>;
 }
 
 // Helper: build inputs with no-CI env as default
@@ -548,57 +546,23 @@ describe("KNOWN_EVAL_AGENTS — exported constants", () => {
     ).length;
     expect(tapestryCount).toBe(1);
     // Both suite IDs must be individually present.
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "tapestry-execution" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "tapestry-category-routing" as Parameters<
-          (typeof KNOWN_EVAL_AGENTS)["has"]
-        >[0],
-      ),
-    ).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("tapestry-execution")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("tapestry-category-routing")).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS contains shuttle and shuttle-execution", () => {
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "shuttle" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "shuttle-execution" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("shuttle")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("shuttle-execution")).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS contains spindle and spindle-tools", () => {
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "spindle" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "spindle-tools" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("spindle")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("spindle-tools")).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS contains warp and warp-security", () => {
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "warp" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
-    expect(
-      KNOWN_EVAL_AGENTS.has(
-        "warp-security" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
-      ),
-    ).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("warp")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("warp-security")).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS_SORTED is sorted alphabetically", () => {
