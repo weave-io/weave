@@ -12,6 +12,7 @@ import {
 import {
   type HostCapabilityGapDiagnostic,
   type HostCapabilityGapMode,
+  isSupportedHostVersion,
   UNKNOWN_HOST_VERSION,
 } from "./host-compatibility.js";
 import {
@@ -19,34 +20,332 @@ import {
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceId,
 } from "./host-compatibility-matrix.js";
-import type { PiCommandInfo, PiExtensionApi, PiUiPort } from "./types.js";
+import type {
+  PiCommandInfo,
+  PiExtensionApi,
+  PiSourceInfo,
+  PiUiPort,
+} from "./types.js";
 
-const PiSourceInfoSchema = z.object({
-  path: z.string(),
-  source: z.string(),
-  scope: z.enum(["user", "project", "temporary"]),
-  origin: z.enum(["package", "top-level"]),
-  baseDir: z.string().optional(),
+const HOST_OBSERVED_VALUE_SCHEMA = z.unknown();
+export type PiHostObservedValue = z.input<typeof HOST_OBSERVED_VALUE_SCHEMA>;
+
+interface PiHostObjectReference {
+  readonly piHostObjectMarker?: never;
+}
+
+const PI_HOST_OBJECT_SCHEMA = z.custom<PiHostObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      if (value === null || Object(value) !== value) return false;
+      if (Array.isArray(value)) return false;
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype === Object.prototype || prototype === null) return true;
+
+      // Bun may expose `import * as ...` through a module wrapper prototype.
+      // Accept that exact namespace shape without accepting arbitrary classes.
+      if (Object.getPrototypeOf(prototype) !== null) return false;
+      const esModule = Object.getOwnPropertyDescriptor(prototype, "__esModule");
+      if (esModule === undefined) return false;
+      const tag = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+      return "value" in (tag ?? {}) && tag?.value === "Module";
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
 });
-const PiCommandInfoSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  source: z.enum(["extension", "prompt", "skill"]),
-  sourceInfo: PiSourceInfoSchema,
+
+const PI_HOST_REFERENCE_SCHEMA = z.custom<PiHostObjectReference>((value) =>
+  Result.fromThrowable(
+    (): boolean =>
+      value !== null && Object(value) === value && !Array.isArray(value),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+export type PiHostCallable = (
+  ...args: readonly PiHostObservedValue[]
+) => PiHostObservedValue;
+
+const PI_HOST_CALLABLE_SCHEMA = z.custom<PiHostCallable>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => value instanceof Function,
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
 });
+
+/** Root exports are opaque at the import seam; known members are parsed before use. */
+export interface PiHostRootExports {
+  readonly VERSION?: PiHostObservedValue;
+  readonly SessionManager?: PiHostObservedValue;
+  readonly SettingsManager?: PiHostObservedValue;
+  readonly DefaultPackageManager?: PiHostObservedValue;
+  readonly getAgentDir?: PiHostObservedValue;
+  readonly AssistantMessageComponent?: PiHostObservedValue;
+  readonly ToolExecutionComponent?: PiHostObservedValue;
+  readonly Markdown?: PiHostObservedValue;
+  readonly Image?: PiHostObservedValue;
+  readonly FooterComponent?: PiHostObservedValue;
+  readonly BorderedLoader?: PiHostObservedValue;
+  readonly CustomEditor?: PiHostObservedValue;
+}
+
+type HostDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: PiHostObservedValue };
+
+function readHostData(value: PiHostObservedValue, key: string): HostDataRead {
+  const record = PI_HOST_OBJECT_SCHEMA.safeParse(value);
+  if (!record.success) return { kind: "invalid" };
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function hostReference(
+  value: PiHostObservedValue,
+): PiHostObjectReference | undefined {
+  const parsed = PI_HOST_REFERENCE_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function readHostMember(value: PiHostObservedValue, key: string): HostDataRead {
+  let current = hostReference(value);
+  const seen = new Set<PiHostObjectReference>();
+  for (let depth = 0; current !== undefined && depth < 16; depth += 1) {
+    if (seen.has(current)) return { kind: "invalid" };
+    seen.add(current);
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(current, key),
+      (): PropertyDescriptor | undefined => undefined,
+    )();
+    if (descriptor.isErr()) return { kind: "invalid" };
+    if (descriptor.value !== undefined) {
+      if (!("value" in descriptor.value)) return { kind: "invalid" };
+      return { kind: "value", value: descriptor.value.value };
+    }
+    const prototype = Result.fromThrowable(
+      () => Object.getPrototypeOf(current),
+      (): object | null => null,
+    )();
+    if (prototype.isErr() || prototype.value === null) {
+      return prototype.isErr() ? { kind: "invalid" } : { kind: "missing" };
+    }
+    const parsedPrototype = PI_HOST_REFERENCE_SCHEMA.safeParse(prototype.value);
+    if (!parsedPrototype.success) return { kind: "invalid" };
+    current = parsedPrototype.data;
+  }
+  return current === undefined ? { kind: "missing" } : { kind: "invalid" };
+}
+
+function readHostFunction(
+  value: PiHostObservedValue,
+  key: string,
+): PiHostCallable | undefined {
+  const member = readHostMember(value, key);
+  if (member.kind !== "value") return undefined;
+  const parsed = PI_HOST_CALLABLE_SCHEMA.safeParse(member.value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function callHostFunction(
+  target: PiHostObservedValue,
+  call: PiHostCallable,
+  args: readonly PiHostObservedValue[],
+): PiHostObservedValue {
+  return Result.fromThrowable(
+    () => call.apply(target, [...args]),
+    (): PiHostObservedValue => void 0,
+  )().unwrapOr(void 0);
+}
+
+function readHostArray(
+  value: PiHostObservedValue,
+): readonly PiHostObservedValue[] | undefined {
+  const arrayResult = Result.fromThrowable(
+    () => Array.isArray(value),
+    (): boolean => false,
+  )();
+  if (arrayResult.isErr() || !arrayResult.value) return undefined;
+  const lengthDescriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(value, "length"),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (lengthDescriptor.isErr() || lengthDescriptor.value === undefined) {
+    return undefined;
+  }
+  if (
+    !("value" in lengthDescriptor.value) ||
+    lengthDescriptor.value.enumerable === true
+  ) {
+    return undefined;
+  }
+  const parsedLength = z
+    .number()
+    .int()
+    .min(0)
+    .max(4096)
+    .safeParse(lengthDescriptor.value.value);
+  if (!parsedLength.success || !Number.isSafeInteger(parsedLength.data)) {
+    return undefined;
+  }
+  const values: PiHostObservedValue[] = [];
+  for (let index = 0; index < parsedLength.data; index += 1) {
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(value, String(index)),
+      (): PropertyDescriptor | undefined => undefined,
+    )();
+    if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+    if (
+      !("value" in descriptor.value) ||
+      descriptor.value.enumerable !== true
+    ) {
+      return undefined;
+    }
+    values.push(descriptor.value.value);
+  }
+  return values;
+}
+
+function parseHostText(value: PiHostObservedValue): string | undefined {
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+type MutableHostSourceInfo = {
+  path: string;
+  source: string;
+  scope: PiSourceInfo["scope"];
+  origin: PiSourceInfo["origin"];
+  baseDir?: string;
+};
+
+type MutablePiCommandInfo = {
+  name: string;
+  source: PiCommandInfo["source"];
+  sourceInfo: PiSourceInfo;
+  description?: string;
+};
+
+function parseHostSourceInfo(
+  value: PiHostObservedValue,
+): PiSourceInfo | undefined {
+  const path = readHostData(value, "path");
+  const source = readHostData(value, "source");
+  const scope = readHostData(value, "scope");
+  const origin = readHostData(value, "origin");
+  if (
+    path.kind !== "value" ||
+    source.kind !== "value" ||
+    scope.kind !== "value" ||
+    origin.kind !== "value"
+  ) {
+    return undefined;
+  }
+  const parsedPath = z.string().safeParse(path.value);
+  const parsedSource = z.string().safeParse(source.value);
+  const parsedScope = z
+    .enum(["user", "project", "temporary"])
+    .safeParse(scope.value);
+  const parsedOrigin = z.enum(["package", "top-level"]).safeParse(origin.value);
+  if (
+    !parsedPath.success ||
+    !parsedSource.success ||
+    !parsedScope.success ||
+    !parsedOrigin.success
+  ) {
+    return undefined;
+  }
+  const result: MutableHostSourceInfo = {
+    path: parsedPath.data,
+    source: parsedSource.data,
+    scope: parsedScope.data,
+    origin: parsedOrigin.data,
+  };
+  const baseDir = readHostData(value, "baseDir");
+  if (baseDir.kind === "invalid") return undefined;
+  if (baseDir.kind === "value") {
+    const parsedBaseDir = z.string().safeParse(baseDir.value);
+    if (!parsedBaseDir.success) return undefined;
+    result.baseDir = parsedBaseDir.data;
+  }
+  return result;
+}
+
+function parseHostCommand(
+  value: PiHostObservedValue,
+): PiCommandInfo | undefined {
+  const name = readHostData(value, "name");
+  const source = readHostData(value, "source");
+  const sourceInfo = readHostData(value, "sourceInfo");
+  if (
+    name.kind !== "value" ||
+    source.kind !== "value" ||
+    sourceInfo.kind !== "value"
+  ) {
+    return undefined;
+  }
+  const parsedName = z.string().min(1).safeParse(name.value);
+  const parsedSource = z
+    .enum(["extension", "prompt", "skill"])
+    .safeParse(source.value);
+  const parsedSourceInfo = parseHostSourceInfo(sourceInfo.value);
+  if (
+    !parsedName.success ||
+    !parsedSource.success ||
+    parsedSourceInfo === undefined
+  ) {
+    return undefined;
+  }
+  const command: MutablePiCommandInfo = {
+    name: parsedName.data,
+    source: parsedSource.data,
+    sourceInfo: parsedSourceInfo,
+  };
+  const description = readHostData(value, "description");
+  if (description.kind === "invalid") return undefined;
+  if (description.kind === "value") {
+    const parsedDescription = z.string().safeParse(description.value);
+    if (!parsedDescription.success) return undefined;
+    command.description = parsedDescription.data;
+  }
+  return command;
+}
 
 export function readValidatedCommands(
   api: Pick<PiExtensionApi, "getCommands">,
 ): Result<PiCommandInfo[], PiAdapterFailure> {
+  const getCommands = readHostFunction(api, "getCommands");
+  if (getCommands === undefined) {
+    return err(makeInvariantViolationFailure("getCommands-malformed"));
+  }
   const raw = Result.fromThrowable(
-    () => api.getCommands(),
+    () => callHostFunction(api, getCommands, []),
     () => makeInvariantViolationFailure("getCommands-threw"),
   )();
   if (raw.isErr()) return err(raw.error);
-  const parsed = z.array(PiCommandInfoSchema).safeParse(raw.value);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(makeInvariantViolationFailure("getCommands-malformed"));
+  const values = readHostArray(raw.value);
+  if (values === undefined) {
+    return err(makeInvariantViolationFailure("getCommands-malformed"));
+  }
+  const commands: PiCommandInfo[] = [];
+  for (const value of values) {
+    const command = parseHostCommand(value);
+    if (command === undefined) {
+      return err(makeInvariantViolationFailure("getCommands-malformed"));
+    }
+    commands.push(command);
+  }
+  return ok(commands);
 }
 
 export {
@@ -78,7 +377,7 @@ export interface PiHostSurfaceReadInput {
   readonly api: PiExtensionApi;
   readonly ui: PiUiPort;
   /** Public root exports imported by the extension loader. Never package.json. */
-  readonly rootExports?: Readonly<Record<string, unknown>>;
+  readonly rootExports?: PiHostRootExports;
 }
 export type PiHostSurfaceReadError =
   | { readonly type: "ReaderThrew" }
@@ -87,16 +386,25 @@ export type PiHostSurfaceReadError =
 export interface PiHostSurfaceReader {
   read(
     input: PiHostSurfaceReadInput,
-  ): ResultAsync<readonly unknown[], PiHostSurfaceReadError>;
+  ): ResultAsync<readonly PiHostObservedValue[], PiHostSurfaceReadError>;
 }
 
 const MAX_DETAILS = 120;
-const safeDetails = (value: unknown): string =>
-  typeof value === "string" &&
-  /^[\x20-\x7e]*$/.test(value) &&
-  value.length <= MAX_DETAILS
-    ? value
+
+function safeDetails(value: PiHostObservedValue): string {
+  const text = parseHostText(value);
+  return text !== undefined &&
+    /^[\x20-\x7e]*$/.test(text) &&
+    text.length <= MAX_DETAILS
+    ? text
     : "surface-invalid";
+}
+
+function surfaceIdFor(value: string): PiHostSurfaceId | undefined {
+  for (const id of PI_HOST_SURFACE_IDS) if (id === value) return id;
+  return undefined;
+}
+
 const required = (id: PiHostSurfaceId): boolean =>
   PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
     ?.required === true;
@@ -112,33 +420,38 @@ const fallback = (id: PiHostSurfaceId): boolean =>
   PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
     ?.fallback === "pi-default";
 
-export function readHostSurfaceReport(
-  raw: readonly unknown[],
+function buildHostSurfaceReport(
+  raw: readonly PiHostObservedValue[],
 ): PiHostSurfaceReport {
   const byId = new Map<string, PiHostSurfaceProbe[]>();
   for (const item of raw) {
-    if (typeof item !== "object" || item === null) continue;
-    const value = item as Record<string, unknown>;
-    if (
-      typeof value.surfaceId !== "string" ||
-      !PI_HOST_SURFACE_IDS.includes(value.surfaceId as PiHostSurfaceId)
-    )
+    const surfaceIdValue = readHostData(item, "surfaceId");
+    const statusValue = readHostData(item, "status");
+    const detailsValue = readHostData(item, "details");
+    if (surfaceIdValue.kind !== "value" || statusValue.kind !== "value")
       continue;
-    const status =
-      value.status === "native" ||
-      value.status === "fallback" ||
-      value.status === "unavailable"
-        ? value.status
+    const surfaceText = parseHostText(surfaceIdValue.value);
+    const surfaceId =
+      surfaceText === undefined ? undefined : surfaceIdFor(surfaceText);
+    if (surfaceId === undefined) continue;
+    const statusText = parseHostText(statusValue.value);
+    const status: PiHostSurfaceStatus =
+      statusText === "native" ||
+      statusText === "fallback" ||
+      statusText === "unavailable"
+        ? statusText
         : "unavailable";
-    const bucket = byId.get(value.surfaceId) ?? [];
+    const bucket = byId.get(surfaceId) ?? [];
     bucket.push(
       Object.freeze({
-        surfaceId: value.surfaceId as PiHostSurfaceId,
+        surfaceId,
         status,
-        details: safeDetails(value.details),
+        details: safeDetails(
+          detailsValue.kind === "value" ? detailsValue.value : void 0,
+        ),
       }),
     );
-    byId.set(value.surfaceId, bucket);
+    byId.set(surfaceId, bucket);
   }
   const makeProbe = (
     surfaceId: PiHostSurfaceId,
@@ -216,6 +529,16 @@ export function readHostSurfaceReport(
   });
 }
 
+export function readHostSurfaceReport(
+  raw: readonly PiHostObservedValue[],
+): PiHostSurfaceReport {
+  const result = Result.fromThrowable(
+    () => buildHostSurfaceReport(raw),
+    () => void 0,
+  )();
+  return result.isOk() ? result.value : buildHostSurfaceReport([]);
+}
+
 /**
  * The trust boundary for host probes. A reader is extension-provided code, so
  * its synchronous throws, rejected results, typed errors, and malformed values
@@ -226,17 +549,8 @@ export function safeReadHostSurfaceReport(
   input: PiHostSurfaceReadInput,
 ): ResultAsync<PiHostSurfaceReport, never> {
   const read = ResultAsync.fromThrowable(
-    async (): Promise<readonly unknown[]> => {
-      const candidate = (await reader.read(input)) as unknown;
-      if (
-        typeof candidate !== "object" ||
-        candidate === null ||
-        !("isErr" in candidate) ||
-        typeof candidate.isErr !== "function" ||
-        !("value" in candidate)
-      ) {
-        throw new Error("host-surface-reader-malformed-result");
-      }
+    async (): Promise<readonly PiHostObservedValue[]> => {
+      const candidate = await reader.read(input);
       if (candidate.isErr()) throw new Error("host-surface-reader-error");
       if (!Array.isArray(candidate.value))
         throw new Error("host-surface-reader-malformed-value");
@@ -256,7 +570,7 @@ export function safeReadHostSurfaceReport(
           : errAsync(normalized.error);
       },
     )
-    .orElse(() => okAsync(emptyHostSurfaceReport()));
+    .orElse(() => okAsync(readHostSurfaceReport([])));
 }
 
 export const emptyHostSurfaceReport = (): PiHostSurfaceReport =>
@@ -273,9 +587,10 @@ export function buildHostSurfaceGapDiagnostics(
   report: PiHostSurfaceReport,
   hostVersion: string = UNKNOWN_HOST_VERSION,
 ): readonly HostCapabilityGapDiagnostic[] {
+  const parsedHostVersion = parseHostText(hostVersion);
   const version =
-    typeof hostVersion === "string" && hostVersion.trim().length > 0
-      ? hostVersion
+    parsedHostVersion !== undefined && parsedHostVersion.trim().length > 0
+      ? parsedHostVersion
       : UNKNOWN_HOST_VERSION;
   const describe = (
     surfaceId: PiHostSurfaceId,
@@ -325,11 +640,7 @@ export function selectsCustomEditorFallback(
   return report.overlayFallbackGaps.length > 0;
 }
 
-function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): {
-  readonly surfaceId: PiHostSurfaceId;
-  readonly status: PiHostSurfaceStatus;
-  readonly details: string;
-} {
+function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): PiHostSurfaceProbe {
   if (fallback(surfaceId)) {
     return {
       surfaceId,
@@ -355,23 +666,14 @@ function defaultSurfaceProbe(surfaceId: PiHostSurfaceId): {
 export const defaultHostSurfaceReport = (): PiHostSurfaceReport =>
   readHostSurfaceReport(PI_HOST_SURFACE_IDS.map(defaultSurfaceProbe));
 
-function hostVersionIsValid(
-  rootExports: Readonly<Record<string, unknown>>,
-): boolean {
-  const version = rootExports.VERSION;
-  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version))
+function hostVersionIsValid(rootExports: PiHostRootExports): boolean {
+  const versionValue = readHostData(rootExports, "VERSION");
+  if (versionValue.kind !== "value") return false;
+  const version = parseHostText(versionValue.value);
+  if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
     return false;
-  const [major, minor, patch] = version.split(".").map(Number);
-  const [floorMajor, floorMinor, floorPatch] =
-    PI_HOST_COMPATIBILITY_MATRIX.floorVersion.split(".").map(Number);
-  return (
-    Number.isInteger(major) &&
-    Number.isInteger(minor) &&
-    Number.isInteger(patch) &&
-    (major > floorMajor ||
-      (major === floorMajor &&
-        (minor > floorMinor || (minor === floorMinor && patch >= floorPatch))))
-  );
+  }
+  return isSupportedHostVersion(version);
 }
 
 /**
@@ -411,8 +713,6 @@ export interface PiHostProbePort {
   hasSupportedVersion(): boolean;
 }
 
-const isFn = (value: unknown): boolean => typeof value === "function";
-
 /**
  * Reads only concrete public surfaces of the installed host. Strictly
  * side-effect free: it inspects constructors and prototypes and never invokes
@@ -421,24 +721,35 @@ const isFn = (value: unknown): boolean => typeof value === "function";
 export function createDefaultPiHostProbePort(
   input: PiHostSurfaceReadInput,
 ): PiHostProbePort {
-  const root = input.rootExports ?? {};
-  const sessionManager = root.SessionManager;
+  const root = input.rootExports;
+  const sessionManagerValue =
+    root === undefined
+      ? { kind: "missing" as const }
+      : readHostData(root, "SessionManager");
+  const sessionManager =
+    sessionManagerValue.kind === "value"
+      ? sessionManagerValue.value
+      : undefined;
   const statik = (name: string): boolean =>
-    isFn(sessionManager) &&
-    isFn((sessionManager as unknown as Record<string, unknown>)[name]);
+    sessionManager !== undefined &&
+    readHostFunction(sessionManager, name) !== undefined;
   const instanceMethod = (name: string): boolean => {
-    if (!isFn(sessionManager)) return false;
-    const proto = (sessionManager as { prototype?: unknown }).prototype;
-    if (typeof proto !== "object" || proto === null) return false;
-    return isFn((proto as Record<string, unknown>)[name]);
+    if (sessionManager === undefined) return false;
+    const prototypeValue = readHostMember(sessionManager, "prototype");
+    if (prototypeValue.kind !== "value") return false;
+    const prototype = hostReference(prototypeValue.value);
+    return (
+      prototype !== undefined && readHostFunction(prototype, name) !== undefined
+    );
   };
-  const versionValid = hostVersionIsValid(root);
+  const versionValid = root !== undefined && hostVersionIsValid(root);
   return Object.freeze({
     hasSessionCreate: () => statik("create"),
     hasSessionOpen: () => statik("open"),
     hasSessionGetEntries: () => instanceMethod("getEntries"),
     hasSessionGetTree: () => instanceMethod("getTree"),
-    hasAppendEntry: () => isFn(input.api.appendEntry),
+    hasAppendEntry: () =>
+      readHostFunction(input.api, "appendEntry") !== undefined,
     hasCustomSessionDirectoryContract: () =>
       statik("create") &&
       statik("open") &&
@@ -446,9 +757,9 @@ export function createDefaultPiHostProbePort(
       instanceMethod("usesDefaultSessionDir") &&
       versionValid,
     hasOverlayLifecycle: () =>
-      isFn(input.ui.custom) &&
-      isFn(input.ui.setEditorComponent) &&
-      isFn(input.ui.getEditorComponent),
+      readHostFunction(input.ui, "custom") !== undefined &&
+      readHostFunction(input.ui, "setEditorComponent") !== undefined &&
+      readHostFunction(input.ui, "getEditorComponent") !== undefined,
     hasSupportedVersion: () => versionValid,
   });
 }
@@ -475,13 +786,22 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
 
   read(
     input: PiHostSurfaceReadInput,
-  ): ResultAsync<readonly unknown[], PiHostSurfaceReadError> {
+  ): ResultAsync<readonly PiHostObservedValue[], PiHostSurfaceReadError> {
     return ResultAsync.fromThrowable(
       async () => {
-        const root = input.rootExports ?? {};
+        const root = input.rootExports;
         const port = this.probePortFactory(input);
         const versionValid = port.hasSupportedVersion();
-        const has = (name: string): boolean => typeof root[name] === "function";
+        const has = (name: string): boolean => {
+          if (root === undefined) return false;
+          const value = readHostData(root, name);
+          return (
+            value.kind === "value" &&
+            PI_HOST_CALLABLE_SCHEMA.safeParse(value.value).success
+          );
+        };
+        const uiHas = (name: string): boolean =>
+          readHostFunction(input.ui, name) !== undefined;
         const native = (
           id: PiHostSurfaceId,
           supported: boolean,
@@ -515,11 +835,10 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
           native("image-rendering", has("Image")),
           native("usage-rendering", has("FooterComponent")),
           native("queue-rendering", has("BorderedLoader")),
-          native("status-rendering", typeof input.ui.setStatus === "function"),
+          native("status-rendering", uiHas("setStatus")),
           native(
             "editor-composition",
-            typeof input.ui.setEditorComponent === "function" &&
-              has("CustomEditor"),
+            uiHas("setEditorComponent") && has("CustomEditor"),
           ),
           native("rpc-steer", versionValid && matrixNative("rpc-steer")),
           native(

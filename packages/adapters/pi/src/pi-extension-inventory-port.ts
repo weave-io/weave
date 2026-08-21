@@ -31,6 +31,7 @@
 import { join } from "node:path";
 import type { RuntimeStore } from "@weaveio/weave-engine";
 import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   CHILD_EXTENSION_SELECTION_KEY,
   type ChildExtensionPlan,
@@ -40,9 +41,16 @@ import {
   PI_PREFERENCE_NAMESPACE,
   resolveChildExtensionPlan,
 } from "./child-extension-selection.js";
+import type {
+  PiHostObservedValue,
+  PiHostRootExports,
+} from "./host-inventory.js";
 import { getPiExtensionEntryPath } from "./host-module-loader.js";
 import {
+  type CollectPiExtensionInventoryOptions,
   collectPiExtensionInventory,
+  MAX_PI_EXTENSION_CONFIGURED_PACKAGES,
+  MAX_PI_EXTENSION_LOADED_SOURCES,
   type PiExtensionInventory,
   type PiExtensionInventoryConfiguredPackage,
   type PiExtensionInventoryDegradation,
@@ -53,10 +61,18 @@ import {
   type PiExtensionInventoryToolInfo,
   WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
 } from "./pi-extension-inventory.js";
-import type { PiCommandInfo, PiToolInfo, PiTrustState } from "./types.js";
+import type {
+  PiCommandInfo,
+  PiResourceOrigin,
+  PiResourceScope,
+  PiSourceInfo,
+  PiToolInfo,
+  PiTrustState,
+} from "./types.js";
 
 /** Bound on names read from one directory before the listing is cut short. */
 const MAX_SCANNED_DIRECTORY_NAMES = 256;
+const FILESYSTEM_ERROR_CODE_SCHEMA = z.enum(["ENOENT", "ENOTDIR"]);
 
 /**
  * The host accessors this port needs. Each is optional, and each is a plain
@@ -65,9 +81,9 @@ const MAX_SCANNED_DIRECTORY_NAMES = 256;
  */
 export interface BunPiExtensionInventoryHost {
   /** `pi.getCommands()`. */
-  readonly commands?: () => readonly PiCommandInfo[];
+  readonly commands?: () => readonly PiCommandInfo[] | undefined;
   /** `pi.getAllTools()`, projected to provenance only. */
-  readonly tools?: () => readonly PiExtensionInventoryToolInfo[];
+  readonly tools?: () => readonly PiExtensionInventoryToolInfo[] | undefined;
   /**
    * `PackageManager.listConfiguredPackages()`. `undefined` means the host
    * answered with something this adapter cannot read, which is a failure,
@@ -88,26 +104,43 @@ export interface BunPiExtensionInventoryHost {
   readonly agentDirectory?: () => string;
 }
 
-function callHost<T>(
-  call: () => T,
-): ResultAsync<T, PiExtensionInventoryPortError> {
-  return ResultAsync.fromPromise(
-    Promise.resolve().then(call),
-    (): PiExtensionInventoryPortError => ({ type: "PortThrew" }),
-  );
-}
-
 /** ENOENT is an ordinary answer: the directory simply does not exist. */
 function classifyFilesystemError(
-  cause: unknown,
+  cause: PiHostObservedValue,
 ): PiExtensionInventoryPortError {
-  const code =
-    typeof cause === "object" && cause !== null && "code" in cause
-      ? (cause as { readonly code?: unknown }).code
-      : undefined;
-  return code === "ENOENT" || code === "ENOTDIR"
-    ? { type: "NotFound" }
-    : { type: "HostCallFailed" };
+  const code = readOwnDataProperty(cause, "code");
+  if (code.kind === "value") {
+    const parsed = FILESYSTEM_ERROR_CODE_SCHEMA.safeParse(code.value);
+    if (parsed.success) return { type: "NotFound" };
+  }
+  return { type: "HostCallFailed" };
+}
+
+function parseHostResult<T>(
+  result: Result<PiHostObservedValue, void>,
+  parse: (value: PiHostObservedValue) => T | undefined,
+): T | undefined {
+  if (result.isErr()) return void 0;
+  const parsed = Result.fromThrowable(
+    () => parse(result.value),
+    (): void => void 0,
+  )();
+  return parsed.isOk() ? parsed.value : void 0;
+}
+
+function toPortHostResult<T>(
+  result: Result<PiHostObservedValue, void>,
+  parse: (value: PiHostObservedValue) => T | undefined,
+  malformed: PiExtensionInventoryPortError,
+): ResultAsync<T, PiExtensionInventoryPortError> {
+  if (result.isErr()) {
+    return errAsync<T, PiExtensionInventoryPortError>({ type: "PortThrew" });
+  }
+  const parsed = parseHostResult(result, parse);
+  if (parsed === undefined) {
+    return errAsync<T, PiExtensionInventoryPortError>(malformed);
+  }
+  return okAsync<T, PiExtensionInventoryPortError>(parsed);
 }
 
 /**
@@ -137,8 +170,8 @@ async function listDirectoryEntries(
   for (const name of names) {
     const stat = await Bun.file(join(path, name))
       .stat()
-      .catch(() => undefined);
-    if (stat === undefined) continue;
+      .catch(() => void 0);
+    if (stat === void 0) continue;
     entries.push({ name, kind: stat.isDirectory() ? "directory" : "file" });
   }
   return entries;
@@ -157,40 +190,51 @@ export function createBunPiExtensionInventoryPort(
     },
     readJson(path) {
       return ResultAsync.fromPromise(
-        Bun.file(path).json() as Promise<unknown>,
+        Bun.file(path).json(),
         classifyFilesystemError,
       );
     },
   };
-  const {
-    commands,
-    tools,
-    configuredPackages,
-    installedPackagePath,
-    agentDirectory,
-  } = host;
-  if (commands !== undefined) port.commands = () => callHost(commands);
-  if (tools !== undefined) port.tools = () => callHost(tools);
-  if (configuredPackages !== undefined) {
+  const commands = readHostFunction(host, "commands");
+  if (commands !== void 0) {
+    port.commands = () =>
+      toPortHostResult(callHostFunction(host, commands, []), parsePiCommands, {
+        type: "HostCallFailed",
+      });
+  }
+  const tools = readHostFunction(host, "tools");
+  if (tools !== void 0) {
+    port.tools = () =>
+      toPortHostResult(callHostFunction(host, tools, []), parsePiTools, {
+        type: "HostCallFailed",
+      });
+  }
+  const configuredPackages = readHostFunction(host, "configuredPackages");
+  if (configuredPackages !== void 0) {
     port.configuredPackages = () =>
-      callHost(configuredPackages).andThen((value) =>
-        value === undefined
-          ? errAsync<never, PiExtensionInventoryPortError>({
-              type: "HostCallFailed",
-            })
-          : okAsync(value),
+      toPortHostResult(
+        callHostFunction(host, configuredPackages, []),
+        projectConfiguredPackages,
+        { type: "HostCallFailed" },
       );
   }
-  if (installedPackagePath !== undefined) {
+  const installedPackagePath = readHostFunction(host, "installedPackagePath");
+  if (installedPackagePath !== void 0) {
     port.installedPackagePath = (source, scope) =>
-      callHost(() => installedPackagePath(source, scope)).andThen((value) =>
-        value === undefined
-          ? errAsync<never, PiExtensionInventoryPortError>({ type: "NotFound" })
-          : okAsync(value),
+      toPortHostResult(
+        callHostFunction(host, installedPackagePath, [source, scope]),
+        parseHostText,
+        { type: "NotFound" },
       );
   }
-  if (agentDirectory !== undefined) {
-    port.agentDirectory = () => callHost(agentDirectory);
+  const agentDirectory = readHostFunction(host, "agentDirectory");
+  if (agentDirectory !== void 0) {
+    port.agentDirectory = () =>
+      toPortHostResult(
+        callHostFunction(host, agentDirectory, []),
+        parseHostText,
+        { type: "HostCallFailed" },
+      );
   }
   return port;
 }
@@ -203,15 +247,102 @@ export function createBunPiExtensionInventoryPort(
 const PI_SETTINGS_MANAGER_EXPORT = "SettingsManager";
 const PI_PACKAGE_MANAGER_EXPORT = "DefaultPackageManager";
 const PI_AGENT_DIRECTORY_EXPORT = "getAgentDir";
+type PiRootExportName =
+  | typeof PI_SETTINGS_MANAGER_EXPORT
+  | typeof PI_PACKAGE_MANAGER_EXPORT
+  | typeof PI_AGENT_DIRECTORY_EXPORT;
 
-/**
- * The two read-only `PackageManager` members this adapter is allowed to use.
- * Naming only these keeps `resolve`, `install`, `update`, `remove`, and every
- * settings mutation unreachable from this module by construction.
- */
+const HOST_TEXT_SCHEMA = z.string();
+const MAX_HOST_ARRAY_ITEMS = 4_096;
+const MAX_HOST_MEMBER_DEPTH = 16;
+
+interface HostObjectReference {
+  readonly inventoryHostObjectMarker?: never;
+}
+
+interface HostArrayReference extends ReadonlyArray<PiHostObservedValue> {
+  readonly inventoryHostArrayMarker?: never;
+}
+
+interface MutableBunPiExtensionInventoryHost {
+  commands?: () => readonly PiCommandInfo[] | undefined;
+  tools?: () => readonly PiExtensionInventoryToolInfo[] | undefined;
+  configuredPackages?: () =>
+    | readonly PiExtensionInventoryConfiguredPackage[]
+    | undefined;
+  installedPackagePath?: (
+    source: string,
+    scope: "user" | "project",
+  ) => string | undefined;
+  agentDirectory?: () => string;
+}
+
+const HOST_REFERENCE_SCHEMA = z.custom<HostObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean =>
+      value !== null && Object(value) === value && !Array.isArray(value),
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+const HOST_PLAIN_OBJECT_SCHEMA = z.custom<HostObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      if (
+        value === null ||
+        Object(value) !== value ||
+        Array.isArray(value) ||
+        value instanceof Function
+      ) {
+        return false;
+      }
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype === Object.prototype || prototype === null) return true;
+
+      // Bun represents an `import * as ...` namespace with a small wrapper
+      // prototype (`__esModule`) instead of the spec's null prototype. Accept
+      // that wrapper shape without reading its accessor or any host property.
+      if (Object.getPrototypeOf(prototype) !== null) return false;
+      const esModule = Object.getOwnPropertyDescriptor(prototype, "__esModule");
+      if (esModule === undefined) return false;
+      if ("value" in esModule && esModule.value !== true) return false;
+      const tag = Object.getOwnPropertyDescriptor(value, Symbol.toStringTag);
+      return "value" in (tag ?? {}) && tag?.value === "Module";
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+const HOST_INSTANCE_SCHEMA = z.custom<HostObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+const HOST_ARRAY_SCHEMA = z.custom<HostArrayReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => Array.isArray(value),
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
 export interface PiReadOnlyPackageManager {
-  listConfiguredPackages(): unknown;
-  getInstalledPath(source: string, scope: "user" | "project"): unknown;
+  listConfiguredPackages():
+    | readonly PiExtensionInventoryConfiguredPackage[]
+    | undefined;
+  getInstalledPath(
+    source: string,
+    scope: "user" | "project",
+  ): string | undefined;
 }
 
 /** The extension-API members the inventory reads. Both are optional. */
@@ -224,54 +355,407 @@ export interface PiExtensionInventoryHostInput {
   /** The extension API object Pi handed this extension. */
   readonly api: PiInventoryExtensionApi;
   /** Pi's public root exports (`import * as ...`), read only. */
-  readonly rootExports?: Readonly<Record<string, unknown>>;
+  readonly rootExports?: PiHostRootExports;
   /** Absolute project root; scopes settings and project package lookups. */
   readonly cwd: string;
   /** Project trust exactly as this generation proved it. */
   readonly trust: PiTrustState;
 }
 
-type HostFunction = (...args: readonly unknown[]) => unknown;
+type HostFunction = (
+  ...args: readonly PiHostObservedValue[]
+) => PiHostObservedValue;
 
-/** Reads one callable member from an object or class, prototype included. */
+type HostDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: PiHostObservedValue };
+
+/** Reads one own data descriptor without invoking a getter. */
+function readDataDescriptor(
+  target: HostObjectReference,
+  name: string,
+): HostDataRead {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(target, name),
+    (): PropertyDescriptor | undefined => void 0,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === void 0) return { kind: "missing" };
+  if (!("value" in descriptor.value)) return { kind: "invalid" };
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function readOwnDataProperty(
+  value: PiHostObservedValue,
+  name: string,
+): HostDataRead {
+  const reference = HOST_REFERENCE_SCHEMA.safeParse(value);
+  if (!reference.success) return { kind: "invalid" };
+  return readDataDescriptor(reference.data, name);
+}
+
+function readEnumerableDataDescriptor(
+  target: HostObjectReference,
+  name: string,
+): HostDataRead {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(target, name),
+    (): PropertyDescriptor | undefined => void 0,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === void 0) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function readPlainDataProperty(
+  value: PiHostObservedValue,
+  name: string,
+): HostDataRead {
+  const record = HOST_PLAIN_OBJECT_SCHEMA.safeParse(value);
+  if (!record.success) return { kind: "invalid" };
+  return readEnumerableDataDescriptor(record.data, name);
+}
+
+/** Reads an own or prototype data member, bounded to Pi's class hierarchy. */
+function readHostMember(
+  value: PiHostObservedValue,
+  name: string,
+): HostDataRead {
+  const first = HOST_REFERENCE_SCHEMA.safeParse(value);
+  if (!first.success) return { kind: "invalid" };
+  let current: HostObjectReference | undefined = first.data;
+  const seen = new Set<HostObjectReference>();
+  for (
+    let depth = 0;
+    current !== undefined && depth < MAX_HOST_MEMBER_DEPTH;
+    depth += 1
+  ) {
+    if (seen.has(current)) return { kind: "invalid" };
+    seen.add(current);
+    const own = readDataDescriptor(current, name);
+    if (own.kind !== "missing") return own;
+    const prototype = Result.fromThrowable(
+      () => Object.getPrototypeOf(current),
+      (): object | null => null,
+    )();
+    if (prototype.isErr()) return { kind: "invalid" };
+    if (prototype.value === null || prototype.value === Object.prototype) {
+      return { kind: "missing" };
+    }
+    const parsedPrototype = HOST_REFERENCE_SCHEMA.safeParse(prototype.value);
+    if (!parsedPrototype.success) return { kind: "invalid" };
+    current = parsedPrototype.data;
+  }
+  return current === undefined ? { kind: "missing" } : { kind: "invalid" };
+}
+
+const HOST_CALLABLE_SCHEMA = z.custom<HostFunction>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => value instanceof Function,
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
 function readHostFunction(
-  target: unknown,
+  target: PiHostObservedValue,
   name: string,
 ): HostFunction | undefined {
-  if (target === null) return undefined;
-  if (typeof target !== "object" && typeof target !== "function") {
-    return undefined;
-  }
-  const value = (target as Record<string, unknown>)[name];
-  return typeof value === "function" ? (value as HostFunction) : undefined;
+  const member = readHostMember(target, name);
+  if (member.kind !== "value") return void 0;
+  const callable = HOST_CALLABLE_SCHEMA.safeParse(member.value);
+  return callable.success ? callable.data : void 0;
+}
+
+function readOwnHostFunction(
+  target: PiHostObservedValue,
+  name: string,
+): HostFunction | undefined {
+  const member = readOwnDataProperty(target, name);
+  if (member.kind !== "value") return void 0;
+  const callable = HOST_CALLABLE_SCHEMA.safeParse(member.value);
+  return callable.success ? callable.data : void 0;
 }
 
 /** Calls a host function once, defensively, and keeps a throw off the stack. */
 function callHostFunction(
-  target: unknown,
+  target: PiHostObservedValue,
   call: HostFunction,
-  args: readonly unknown[],
-): unknown {
+  args: readonly PiHostObservedValue[],
+): Result<PiHostObservedValue, void> {
   return Result.fromThrowable(
     () => call.apply(target, [...args]),
-    () => undefined,
-  )().unwrapOr(undefined);
+    (): void => void 0,
+  )();
 }
 
-/**
- * Reads `getAgentDir()` once. The value is needed eagerly for the package
- * manager, so a host that lacks the export or answers with a non-string is
- * reported as an absent surface rather than a failing one.
- */
-function readAgentDirectory(
-  rootExports: Readonly<Record<string, unknown>> | undefined,
-): string | undefined {
-  if (rootExports === undefined) return undefined;
-  const getAgentDir = readHostFunction(rootExports, PI_AGENT_DIRECTORY_EXPORT);
-  if (getAgentDir === undefined) return undefined;
-  const value = callHostFunction(rootExports, getAgentDir, []);
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+function parseHostText(value: PiHostObservedValue): string | undefined {
+  const parsed = HOST_TEXT_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : void 0;
 }
+
+function readHostArray(
+  value: PiHostObservedValue,
+  maxItems: number,
+): readonly PiHostObservedValue[] | undefined {
+  const array = HOST_ARRAY_SCHEMA.safeParse(value);
+  if (!array.success) return void 0;
+  const lengthDescriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(array.data, "length"),
+    (): PropertyDescriptor | undefined => void 0,
+  )();
+  if (lengthDescriptor.isErr() || lengthDescriptor.value === void 0) {
+    return void 0;
+  }
+  if (
+    !("value" in lengthDescriptor.value) ||
+    lengthDescriptor.value.enumerable === true
+  ) {
+    return void 0;
+  }
+  const parsedLength = z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_HOST_ARRAY_ITEMS)
+    .safeParse(lengthDescriptor.value.value);
+  if (!parsedLength.success) return void 0;
+  const values: PiHostObservedValue[] = [];
+  const limit = Math.min(parsedLength.data, maxItems);
+  for (let index = 0; index < limit; index += 1) {
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(array.data, String(index)),
+      (): PropertyDescriptor | undefined => void 0,
+    )();
+    if (descriptor.isErr() || descriptor.value === void 0) return void 0;
+    if (
+      !("value" in descriptor.value) ||
+      descriptor.value.enumerable !== true
+    ) {
+      return void 0;
+    }
+    values.push(descriptor.value.value);
+  }
+  return values;
+}
+
+interface MutablePiSourceInfo {
+  path: string;
+  source: string;
+  scope: PiResourceScope;
+  origin: PiResourceOrigin;
+  baseDir?: string;
+}
+
+const PI_RESOURCE_SCOPE_SCHEMA = z.enum(["user", "project", "temporary"]);
+const PI_RESOURCE_ORIGIN_SCHEMA = z.enum(["package", "top-level"]);
+const PI_COMMAND_SOURCE_SCHEMA = z.enum(["extension", "prompt", "skill"]);
+
+function parsePiSourceInfo(
+  value: PiHostObservedValue,
+): PiSourceInfo | undefined {
+  const path = readPlainDataProperty(value, "path");
+  const source = readPlainDataProperty(value, "source");
+  const scope = readPlainDataProperty(value, "scope");
+  const origin = readPlainDataProperty(value, "origin");
+  if (
+    path.kind !== "value" ||
+    source.kind !== "value" ||
+    scope.kind !== "value" ||
+    origin.kind !== "value"
+  ) {
+    return void 0;
+  }
+  const parsedPath = HOST_TEXT_SCHEMA.safeParse(path.value);
+  const parsedSource = HOST_TEXT_SCHEMA.safeParse(source.value);
+  const parsedScope = PI_RESOURCE_SCOPE_SCHEMA.safeParse(scope.value);
+  const parsedOrigin = PI_RESOURCE_ORIGIN_SCHEMA.safeParse(origin.value);
+  if (
+    !parsedPath.success ||
+    !parsedSource.success ||
+    !parsedScope.success ||
+    !parsedOrigin.success
+  ) {
+    return void 0;
+  }
+  const result: MutablePiSourceInfo = {
+    path: parsedPath.data,
+    source: parsedSource.data,
+    scope: parsedScope.data,
+    origin: parsedOrigin.data,
+  };
+  const baseDir = readPlainDataProperty(value, "baseDir");
+  if (baseDir.kind === "invalid") return void 0;
+  if (baseDir.kind === "value" && baseDir.value !== void 0) {
+    const parsedBaseDir = HOST_TEXT_SCHEMA.safeParse(baseDir.value);
+    if (!parsedBaseDir.success) return void 0;
+    result.baseDir = parsedBaseDir.data;
+  }
+  return result;
+}
+
+function parsePiCommand(value: PiHostObservedValue): PiCommandInfo | undefined {
+  const name = readPlainDataProperty(value, "name");
+  const source = readPlainDataProperty(value, "source");
+  const sourceInfo = readPlainDataProperty(value, "sourceInfo");
+  if (
+    name.kind !== "value" ||
+    source.kind !== "value" ||
+    sourceInfo.kind !== "value"
+  ) {
+    return void 0;
+  }
+  const parsedName = HOST_TEXT_SCHEMA.min(1).safeParse(name.value);
+  const parsedSource = PI_COMMAND_SOURCE_SCHEMA.safeParse(source.value);
+  const parsedSourceInfo = parsePiSourceInfo(sourceInfo.value);
+  if (
+    !parsedName.success ||
+    !parsedSource.success ||
+    parsedSourceInfo === undefined
+  ) {
+    return void 0;
+  }
+  const command: MutablePiCommandInfo = {
+    name: parsedName.data,
+    source: parsedSource.data,
+    sourceInfo: parsedSourceInfo,
+  };
+  const description = readPlainDataProperty(value, "description");
+  if (description.kind === "invalid") return void 0;
+  if (description.kind === "value" && description.value !== void 0) {
+    const parsedDescription = HOST_TEXT_SCHEMA.safeParse(description.value);
+    if (!parsedDescription.success) return void 0;
+    command.description = parsedDescription.data;
+  }
+  return command;
+}
+
+interface MutablePiCommandInfo {
+  name: string;
+  source: PiCommandInfo["source"];
+  sourceInfo: PiSourceInfo;
+  description?: string;
+}
+
+interface MutablePiToolInfo {
+  name: string;
+  sourceInfo?: PiSourceInfo;
+}
+
+interface MutableConfiguredPackage {
+  source: string;
+  scope: "user" | "project";
+  installedPath?: string;
+}
+
+function parsePiTool(
+  value: PiHostObservedValue,
+): PiExtensionInventoryToolInfo | undefined {
+  const name = readPlainDataProperty(value, "name");
+  if (name.kind !== "value") return void 0;
+  const parsedName = HOST_TEXT_SCHEMA.min(1).safeParse(name.value);
+  if (!parsedName.success) return void 0;
+  const tool: MutablePiToolInfo = {
+    name: parsedName.data,
+  };
+  const sourceInfo = readPlainDataProperty(value, "sourceInfo");
+  if (sourceInfo.kind === "invalid") return void 0;
+  if (sourceInfo.kind === "value" && sourceInfo.value !== void 0) {
+    const parsedSourceInfo = parsePiSourceInfo(sourceInfo.value);
+    if (parsedSourceInfo === undefined) return void 0;
+    tool.sourceInfo = parsedSourceInfo;
+  }
+  return tool;
+}
+
+function parsePiCommands(
+  value: PiHostObservedValue,
+): readonly PiCommandInfo[] | undefined {
+  const values = readHostArray(value, MAX_PI_EXTENSION_LOADED_SOURCES + 1);
+  if (values === undefined) return void 0;
+  const commands: PiCommandInfo[] = [];
+  for (const item of values) {
+    const command = parsePiCommand(item);
+    if (command === undefined) return void 0;
+    commands.push(command);
+  }
+  return commands;
+}
+
+function parsePiTools(
+  value: PiHostObservedValue,
+): readonly PiExtensionInventoryToolInfo[] | undefined {
+  const values = readHostArray(value, MAX_PI_EXTENSION_LOADED_SOURCES + 1);
+  if (values === undefined) return void 0;
+  const tools: PiExtensionInventoryToolInfo[] = [];
+  for (const item of values) {
+    const tool = parsePiTool(item);
+    if (tool === undefined) return void 0;
+    tools.push(tool);
+  }
+  return tools;
+}
+
+function readPiRootExport(
+  rootExports: PiHostRootExports | undefined,
+  name: PiRootExportName,
+): PiHostObservedValue | undefined {
+  if (rootExports === undefined) return void 0;
+  const root = HOST_PLAIN_OBJECT_SCHEMA.safeParse(rootExports);
+  if (!root.success) return void 0;
+  const member = readEnumerableDataDescriptor(root.data, name);
+  return member.kind === "value" ? member.value : void 0;
+}
+
+/** Reads `getAgentDir()` once from Pi's exact root export. */
+function readAgentDirectory(
+  rootExports: PiHostRootExports | undefined,
+): string | undefined {
+  const exported = readPiRootExport(rootExports, PI_AGENT_DIRECTORY_EXPORT);
+  if (exported === undefined) return void 0;
+  const callable = HOST_CALLABLE_SCHEMA.safeParse(exported);
+  if (!callable.success) return void 0;
+  const value = callHostFunction(rootExports, callable.data, []);
+  if (value.isErr()) return void 0;
+  const parsed = parseHostText(value.value);
+  return parsed !== undefined && parsed.length > 0 ? parsed : void 0;
+}
+
+interface PiPackageManagerOptions {
+  readonly cwd: string;
+  readonly agentDir: string;
+  readonly settingsManager: PiHostObservedValue;
+}
+
+interface PiPackageManagerInstance {
+  listConfiguredPackages(): PiHostObservedValue;
+  getInstalledPath(
+    source: string,
+    scope: "user" | "project",
+  ): PiHostObservedValue;
+}
+
+type PiPackageManagerConstructor = new (
+  options: PiPackageManagerOptions,
+) => PiPackageManagerInstance;
+
+const PI_PACKAGE_MANAGER_CONSTRUCTOR_SCHEMA =
+  z.custom<PiPackageManagerConstructor>((value) => {
+    const checked = Result.fromThrowable(
+      (): boolean => {
+        if (!(value instanceof Function)) return false;
+        const prototype = Object.getOwnPropertyDescriptor(value, "prototype");
+        if (prototype === undefined || !("value" in prototype)) return false;
+        return HOST_INSTANCE_SCHEMA.safeParse(prototype.value).success;
+      },
+      (): boolean => false,
+    )();
+    return checked.isOk() && checked.value;
+  });
 
 /**
  * Builds Pi's own package manager for read-only questions.
@@ -283,76 +767,91 @@ function readAgentDirectory(
  * as trusted here.
  */
 export function createPiReadOnlyPackageManager(input: {
-  readonly rootExports?: Readonly<Record<string, unknown>>;
+  readonly rootExports?: PiHostRootExports;
   readonly cwd: string;
   readonly agentDir: string;
   readonly trust: PiTrustState;
 }): PiReadOnlyPackageManager | undefined {
-  const rootExports = input.rootExports;
-  if (rootExports === undefined) return undefined;
-  const settingsManagerClass = rootExports[PI_SETTINGS_MANAGER_EXPORT];
-  const create = readHostFunction(settingsManagerClass, "create");
-  const packageManagerClass = rootExports[PI_PACKAGE_MANAGER_EXPORT];
-  if (create === undefined || typeof packageManagerClass !== "function") {
-    return undefined;
+  const settingsManagerValue = readPiRootExport(
+    input.rootExports,
+    PI_SETTINGS_MANAGER_EXPORT,
+  );
+  const packageManagerValue = readPiRootExport(
+    input.rootExports,
+    PI_PACKAGE_MANAGER_EXPORT,
+  );
+  if (settingsManagerValue === undefined || packageManagerValue === undefined) {
+    return void 0;
   }
-
-  const settingsManager = callHostFunction(settingsManagerClass, create, [
+  const create = readOwnHostFunction(settingsManagerValue, "create");
+  if (create === undefined) return void 0;
+  const settingsManagerResult = callHostFunction(settingsManagerValue, create, [
     input.cwd,
     input.agentDir,
     { projectTrusted: input.trust === "trusted" },
   ]);
-  if (settingsManager === undefined || settingsManager === null) {
-    return undefined;
-  }
+  if (settingsManagerResult.isErr()) return void 0;
+  const settingsManager = HOST_INSTANCE_SCHEMA.safeParse(
+    settingsManagerResult.value,
+  );
+  if (!settingsManager.success) return void 0;
 
+  const packageManagerConstructor =
+    PI_PACKAGE_MANAGER_CONSTRUCTOR_SCHEMA.safeParse(packageManagerValue);
+  if (!packageManagerConstructor.success) return void 0;
+  const options: PiPackageManagerOptions = {
+    cwd: input.cwd,
+    agentDir: input.agentDir,
+    settingsManager: settingsManager.data,
+  };
   const constructed = Result.fromThrowable(
-    () =>
-      Reflect.construct(
-        packageManagerClass as new (
-          options: unknown,
-        ) => unknown,
-        [
-          {
-            cwd: input.cwd,
-            agentDir: input.agentDir,
-            settingsManager,
-          },
-        ],
-      ) as unknown,
-    () => undefined,
+    () => new packageManagerConstructor.data(options),
+    (): void => void 0,
   )();
-  if (constructed.isErr()) return undefined;
+  if (constructed.isErr()) return void 0;
   const manager = constructed.value;
   const list = readHostFunction(manager, "listConfiguredPackages");
   const installedPath = readHostFunction(manager, "getInstalledPath");
-  if (list === undefined || installedPath === undefined) return undefined;
+  if (list === undefined || installedPath === undefined) return void 0;
   return {
-    listConfiguredPackages: () => list.call(manager),
+    listConfiguredPackages: () =>
+      parseHostResult(
+        callHostFunction(manager, list, []),
+        projectConfiguredPackages,
+      ),
     getInstalledPath: (source, scope) =>
-      installedPath.call(manager, source, scope),
+      parseHostResult(
+        callHostFunction(manager, installedPath, [source, scope]),
+        parseHostText,
+      ),
   };
 }
 
 /** Projects Pi's `ConfiguredPackage[]`; `undefined` marks an unreadable answer. */
 export function projectConfiguredPackages(
-  value: unknown,
+  value: PiHostObservedValue,
 ): readonly PiExtensionInventoryConfiguredPackage[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+  const values = readHostArray(value, MAX_PI_EXTENSION_CONFIGURED_PACKAGES + 1);
+  if (values === undefined) return void 0;
   const packages: PiExtensionInventoryConfiguredPackage[] = [];
-  for (const item of value) {
-    if (typeof item !== "object" || item === null) continue;
-    const record = item as Record<string, unknown>;
-    const source = record.source;
-    const scope = record.scope;
-    if (typeof source !== "string") continue;
-    if (scope !== "user" && scope !== "project") continue;
-    const installedPath = record.installedPath;
-    packages.push({
-      source,
-      scope,
-      ...(typeof installedPath === "string" ? { installedPath } : {}),
-    });
+  for (const item of values) {
+    const source = readPlainDataProperty(item, "source");
+    const scope = readPlainDataProperty(item, "scope");
+    if (source.kind !== "value" || scope.kind !== "value") continue;
+    const parsedSource = HOST_TEXT_SCHEMA.safeParse(source.value);
+    const parsedScope = z.enum(["user", "project"]).safeParse(scope.value);
+    if (!parsedSource.success || !parsedScope.success) continue;
+    const packageEntry: MutableConfiguredPackage = {
+      source: parsedSource.data,
+      scope: parsedScope.data,
+    };
+    const installedPath = readPlainDataProperty(item, "installedPath");
+    if (installedPath.kind === "invalid") continue;
+    if (installedPath.kind === "value") {
+      const parsedPath = HOST_TEXT_SCHEMA.safeParse(installedPath.value);
+      if (parsedPath.success) packageEntry.installedPath = parsedPath.data;
+    }
+    packages.push(packageEntry);
   }
   return packages;
 }
@@ -365,27 +864,21 @@ export function projectConfiguredPackages(
 export function createPiExtensionInventoryHost(
   input: PiExtensionInventoryHostInput,
 ): BunPiExtensionInventoryHost {
-  const host: {
-    commands?: () => readonly PiCommandInfo[];
-    tools?: () => readonly PiExtensionInventoryToolInfo[];
-    configuredPackages?: () =>
-      | readonly PiExtensionInventoryConfiguredPackage[]
-      | undefined;
-    installedPackagePath?: (
-      source: string,
-      scope: "user" | "project",
-    ) => string | undefined;
-    agentDirectory?: () => string;
-  } = {};
-
+  const host: MutableBunPiExtensionInventoryHost = {};
   const api = input.api;
-  const getCommands = api.getCommands;
-  if (typeof getCommands === "function") {
-    host.commands = () => getCommands.call(api);
+  const getCommands = readHostFunction(api, "getCommands");
+  if (getCommands !== undefined) {
+    host.commands = () => {
+      const result = callHostFunction(api, getCommands, []);
+      return parseHostResult(result, parsePiCommands);
+    };
   }
-  const getAllTools = api.getAllTools;
-  if (typeof getAllTools === "function") {
-    host.tools = () => getAllTools.call(api);
+  const getAllTools = readHostFunction(api, "getAllTools");
+  if (getAllTools !== undefined) {
+    host.tools = () => {
+      const result = callHostFunction(api, getAllTools, []);
+      return parseHostResult(result, parsePiTools);
+    };
   }
 
   const agentDir = readAgentDirectory(input.rootExports);
@@ -395,20 +888,15 @@ export function createPiExtensionInventoryHost(
     agentDir === undefined
       ? undefined
       : createPiReadOnlyPackageManager({
-          ...(input.rootExports === undefined
-            ? {}
-            : { rootExports: input.rootExports }),
+          rootExports: input.rootExports,
           cwd: input.cwd,
           agentDir,
           trust: input.trust,
         });
   if (packageManager !== undefined) {
-    host.configuredPackages = () =>
-      projectConfiguredPackages(packageManager.listConfiguredPackages());
-    host.installedPackagePath = (source, scope) => {
-      const path = packageManager.getInstalledPath(source, scope);
-      return typeof path === "string" ? path : undefined;
-    };
+    host.configuredPackages = () => packageManager.listConfiguredPackages();
+    host.installedPackagePath = (source, scope) =>
+      packageManager.getInstalledPath(source, scope);
   }
 
   return host;
@@ -437,12 +925,42 @@ export const identifyExtensionFile: PiExtensionFileIdentifier = async (
 ) => {
   const stat = await Bun.file(path)
     .stat()
-    .catch(() => undefined);
-  if (stat === undefined) return undefined;
+    .catch(() => void 0);
+  if (stat === undefined) return void 0;
   const { dev, ino } = stat;
-  if (!Number.isFinite(dev) || !Number.isFinite(ino)) return undefined;
+  if (!Number.isFinite(dev) || !Number.isFinite(ino)) return void 0;
   return `${dev}:${ino}`;
 };
+
+/** Calls the injected identity seam without allowing a sync throw to escape. */
+async function identifySafely(
+  identify: PiExtensionFileIdentifier,
+  path: string,
+): Promise<string | undefined> {
+  const result = await ResultAsync.fromThrowable(
+    () => identify(path),
+    (): void => void 0,
+  )();
+  return result.match(
+    (identity) => identity,
+    () => void 0,
+  );
+}
+
+function parseHostStringArray(
+  value: PiHostObservedValue,
+  maxItems: number,
+): readonly string[] | undefined {
+  const values = readHostArray(value, maxItems);
+  if (values === undefined) return void 0;
+  const strings: string[] = [];
+  for (const item of values) {
+    const parsed = HOST_TEXT_SCHEMA.safeParse(item);
+    if (!parsed.success) return void 0;
+    strings.push(parsed.data);
+  }
+  return strings;
+}
 
 /**
  * Resolves the loader's own entry path *as the host reports it*.
@@ -460,11 +978,16 @@ export async function resolveOwnExtensionEntryPath(input: {
   readonly identify: PiExtensionFileIdentifier;
 }): Promise<string | undefined> {
   const recorded = input.recordedEntryPath;
-  if (recorded === undefined) return undefined;
-  if (!isSafeChildExtensionPath(recorded)) return undefined;
+  if (recorded === undefined) return void 0;
+  if (!isSafeChildExtensionPath(recorded)) return void 0;
 
+  const parsedCandidates = parseHostStringArray(
+    input.candidatePaths,
+    MAX_OWN_ENTRY_IDENTITY_PROBES,
+  );
+  const candidatePaths = parsedCandidates === undefined ? [] : parsedCandidates;
   const candidates: string[] = [];
-  for (const path of input.candidatePaths) {
+  for (const path of candidatePaths) {
     if (path === recorded) return recorded;
     if (!isSafeChildExtensionPath(path)) continue;
     if (candidates.includes(path)) continue;
@@ -473,10 +996,10 @@ export async function resolveOwnExtensionEntryPath(input: {
   }
   if (candidates.length === 0) return recorded;
 
-  const ownIdentity = await input.identify(recorded).catch(() => undefined);
+  const ownIdentity = await identifySafely(input.identify, recorded);
   if (ownIdentity === undefined) return recorded;
   for (const candidate of candidates) {
-    const identity = await input.identify(candidate).catch(() => undefined);
+    const identity = await identifySafely(input.identify, candidate);
     if (identity !== undefined && identity === ownIdentity) return candidate;
   }
   return recorded;
@@ -484,27 +1007,35 @@ export async function resolveOwnExtensionEntryPath(input: {
 
 function hostCandidatePaths(host: BunPiExtensionInventoryHost): string[] {
   const paths: string[] = [];
-  const commands = host.commands;
+  const commands = readHostFunction(host, "commands");
   if (commands !== undefined) {
-    const value = callHostFunction(host, commands, []);
-    if (Array.isArray(value)) {
-      for (const command of value as readonly PiCommandInfo[]) {
-        const path = command?.sourceInfo?.path;
-        if (typeof path === "string") paths.push(path);
+    const result = callHostFunction(host, commands, []);
+    const parsed = parseHostResult(result, parsePiCommands);
+    if (parsed !== undefined) {
+      for (const command of parsed) {
+        if (command.source === "extension") {
+          paths.push(command.sourceInfo.path);
+        }
       }
     }
   }
-  const tools = host.tools;
+  const tools = readHostFunction(host, "tools");
   if (tools !== undefined) {
-    const value = callHostFunction(host, tools, []);
-    if (Array.isArray(value)) {
-      for (const tool of value as readonly PiExtensionInventoryToolInfo[]) {
-        const path = tool?.sourceInfo?.path;
-        if (typeof path === "string") paths.push(path);
+    const result = callHostFunction(host, tools, []);
+    const parsed = parseHostResult(result, parsePiTools);
+    if (parsed !== undefined) {
+      for (const tool of parsed) {
+        if (tool.sourceInfo !== undefined) paths.push(tool.sourceInfo.path);
       }
     }
   }
   return paths;
+}
+
+interface OwnEntryPathInput {
+  candidatePaths: readonly string[];
+  identify: PiExtensionFileIdentifier;
+  recordedEntryPath?: string;
 }
 
 export interface CollectPiExtensionInventoryFromHostInput
@@ -525,6 +1056,22 @@ export interface CollectPiExtensionInventoryFromHostInput
  * exactly `1`; with ordinary provenance enforcement the adapter proves itself
  * from `sourceInfo` alone and no path comparison is needed.
  */
+type MutableCollectPiExtensionInventoryOptions = {
+  trust: PiTrustState;
+  cwd: string;
+  ownEntryPath?: string;
+  env?: Readonly<Record<string, string | undefined>>;
+};
+
+function readEnvironmentValue(
+  env: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string | undefined {
+  const value = readOwnDataProperty(env, name);
+  if (value.kind !== "value") return void 0;
+  return parseHostText(value.value);
+}
+
 export function collectPiExtensionInventoryFromHost(
   input: CollectPiExtensionInventoryFromHostInput,
 ): ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation> {
@@ -532,26 +1079,39 @@ export function collectPiExtensionInventoryFromHost(
   const port = createBunPiExtensionInventoryPort(host);
   const env = input.env ?? Bun.env;
   const recordedEntryPath = input.ownEntryPath ?? getPiExtensionEntryPath();
-  const overrideActive =
-    env[WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV] === "1";
-  const ownEntryPath = overrideActive
-    ? ResultAsync.fromSafePromise(
-        resolveOwnExtensionEntryPath({
-          ...(recordedEntryPath === undefined ? {} : { recordedEntryPath }),
-          candidatePaths: hostCandidatePaths(host),
-          identify: input.identify ?? identifyExtensionFile,
-        }).catch(() => recordedEntryPath),
-      )
-    : okAsync(recordedEntryPath);
+  const overrideValue = readEnvironmentValue(
+    env,
+    WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
+  );
+  const overrideActive = overrideValue === "1";
+  let ownEntryPath: ResultAsync<string | undefined, never>;
+  if (overrideActive) {
+    const ownEntryInput: OwnEntryPathInput = {
+      candidatePaths: hostCandidatePaths(host),
+      identify: input.identify ?? identifyExtensionFile,
+    };
+    if (recordedEntryPath !== undefined) {
+      ownEntryInput.recordedEntryPath = recordedEntryPath;
+    }
+    ownEntryPath = ResultAsync.fromSafePromise(
+      resolveOwnExtensionEntryPath(ownEntryInput).catch(
+        () => recordedEntryPath,
+      ),
+    );
+  } else {
+    ownEntryPath = okAsync(recordedEntryPath);
+  }
 
-  return ownEntryPath.andThen((entryPath) =>
-    collectPiExtensionInventory(port, {
+  return ownEntryPath.andThen((entryPath) => {
+    const options: MutableCollectPiExtensionInventoryOptions = {
       trust: input.trust,
       cwd: input.cwd,
-      ...(entryPath === undefined ? {} : { ownEntryPath: entryPath }),
-      ...(input.env === undefined ? {} : { env: input.env }),
-    }),
-  );
+    };
+    if (entryPath !== undefined) options.ownEntryPath = entryPath;
+    if (input.env !== undefined) options.env = input.env;
+    const collectedOptions: CollectPiExtensionInventoryOptions = options;
+    return collectPiExtensionInventory(port, collectedOptions);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -585,9 +1145,22 @@ export interface ChildExtensionArgsResolution {
   readonly diagnostics?: ChildExtensionArgsDiagnostics;
 }
 
+const EMPTY_CHILD_EXTENSION_ARGS: readonly string[] = Object.freeze([]);
 const INHERIT_ALL: ChildExtensionArgsResolution = Object.freeze({
-  args: Object.freeze([]) as readonly string[],
+  args: EMPTY_CHILD_EXTENSION_ARGS,
 });
+
+function fallbackResolution(
+  fallback: ChildExtensionArgsFallbackReason,
+): ChildExtensionArgsResolution {
+  return { args: [], diagnostics: { fallback } };
+}
+
+function decodeResolution(
+  decode: ChildExtensionSelectionDecodeReason,
+): ChildExtensionArgsResolution {
+  return { args: [], diagnostics: { decode } };
+}
 
 /** `--no-extensions -e <weave> -e <selected>…`, or nothing for inherit-all. */
 export function renderChildExtensionArgs(
@@ -617,6 +1190,13 @@ interface GatheredInventory {
   readonly reasons?: readonly PiExtensionInventoryDegradationReason[];
 }
 
+interface MutableChildExtensionArgsDiagnostics {
+  decode?: ChildExtensionSelectionDecodeReason;
+  inventoryDegraded?: readonly PiExtensionInventoryDegradationReason[];
+  droppedEntries?: number;
+  fallback?: ChildExtensionArgsFallbackReason;
+}
+
 /**
  * Resolves this generation's child-extension argv exactly once.
  *
@@ -632,24 +1212,18 @@ export function resolveChildExtensionSpawnArgs(
   return input.store.preferences
     .get(PI_PREFERENCE_NAMESPACE, CHILD_EXTENSION_SELECTION_KEY)
     .map((stored): string | null | undefined => stored?.valueJson ?? null)
-    .orElse(() => okAsync(undefined))
+    .orElse(() => okAsync(void 0))
     .andThen((valueJson) => {
       if (valueJson === undefined) {
-        return okAsync({
-          args: [],
-          diagnostics: { fallback: "preference-read-failed" as const },
-        });
+        return okAsync(fallbackResolution("preference-read-failed"));
       }
       const decoded = decodeChildExtensionSelection(valueJson);
       // Undecodable text always decodes to the inherit-all default, so a
       // decode diagnostic and an explicit record are mutually exclusive.
       if (decoded.record.mode === "inherit-all") {
         const decode = decoded.diagnostic?.reason;
-        return okAsync(
-          decode === undefined
-            ? INHERIT_ALL
-            : { args: [], diagnostics: { decode } },
-        );
+        if (decode === undefined) return okAsync(INHERIT_ALL);
+        return okAsync(decodeResolution(decode));
       }
       const record = decoded.record;
       return ResultAsync.fromSafePromise(
@@ -661,10 +1235,10 @@ export function resolveChildExtensionSpawnArgs(
           }),
         ),
       ).map((gathered) => {
-        const degraded =
-          gathered.reasons === undefined
-            ? {}
-            : { inventoryDegraded: gathered.reasons };
+        const degraded: MutableChildExtensionArgsDiagnostics = {};
+        if (gathered.reasons !== undefined) {
+          degraded.inventoryDegraded = gathered.reasons;
+        }
         // The Weave adapter is never persisted in the record: it is derived
         // here from live evidence, so a stale stored path can neither disable
         // nor misdirect the adapter in a child.
@@ -672,13 +1246,11 @@ export function resolveChildExtensionSpawnArgs(
           (entry) => entry.mandatory && isSafeChildExtensionPath(entry.path),
         );
         if (weaveEntry === undefined) {
-          return {
-            args: [],
-            diagnostics: {
-              ...degraded,
-              fallback: "weave-entry-unresolved" as const,
-            },
+          const diagnostics: MutableChildExtensionArgsDiagnostics = {
+            ...degraded,
           };
+          diagnostics.fallback = "weave-entry-unresolved";
+          return { args: [], diagnostics };
         }
         const plan = resolveChildExtensionPlan({
           record,
@@ -686,14 +1258,13 @@ export function resolveChildExtensionSpawnArgs(
           weaveEntry: { id: weaveEntry.id, path: weaveEntry.path },
         });
         const droppedEntries = plan.diagnostics.length;
-        const diagnostics: ChildExtensionArgsDiagnostics = {
+        const diagnostics: MutableChildExtensionArgsDiagnostics = {
           ...degraded,
-          ...(droppedEntries === 0 ? {} : { droppedEntries }),
         };
+        if (droppedEntries !== 0) diagnostics.droppedEntries = droppedEntries;
         const args = renderChildExtensionArgs(plan);
-        return Object.keys(diagnostics).length === 0
-          ? { args }
-          : { args, diagnostics };
+        if (Object.keys(diagnostics).length === 0) return { args };
+        return { args, diagnostics };
       });
     });
 }

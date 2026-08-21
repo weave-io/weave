@@ -764,7 +764,7 @@ describe("post-recovery hook feature detection", () => {
       },
     );
 
-    const cases: unknown[] = [
+    const cases = [
       {},
       { features: undefined },
       hookHost(null),

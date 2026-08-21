@@ -2,8 +2,162 @@ import {
   parseModelIntentEntry,
   type ThinkingLevelDecl,
 } from "@weaveio/weave-engine";
-import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { PiModelInfo as PiCatalogModelInfo } from "./types.js";
+
+const PI_MODEL_INPUT_SCHEMA = z.unknown();
+type PiModelObservedInput = z.input<typeof PI_MODEL_INPUT_SCHEMA>;
+
+interface PiModelObjectReference {
+  readonly piModelObjectMarker?: never;
+}
+
+const PI_MODEL_OBJECT_SCHEMA = z.custom<PiModelObjectReference>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+type PiModelRead =
+  | { readonly state: "missing" }
+  | { readonly state: "invalid" }
+  | { readonly state: "data"; readonly value: PiModelObservedInput };
+
+function readPiModelData(
+  model: PiModelObjectReference,
+  key: PropertyKey,
+): PiModelRead {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(model, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { state: "invalid" };
+  if (descriptor.value === undefined) return { state: "missing" };
+  if (descriptor.value.enumerable !== true || !("value" in descriptor.value)) {
+    return { state: "invalid" };
+  }
+  return { state: "data", value: descriptor.value.value };
+}
+
+function parseModelObject(
+  value: PiModelObservedInput,
+): PiModelObjectReference | undefined {
+  const parsed = PI_MODEL_OBJECT_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function requiredModelText(read: PiModelRead): string | undefined {
+  if (read.state !== "data") return undefined;
+  const parsed = z.string().safeParse(read.value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function optionalModelText(read: PiModelRead): string | undefined {
+  if (read.state !== "data") return undefined;
+  const parsed = z.string().safeParse(read.value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function optionalModelNumber(read: PiModelRead): number | undefined {
+  if (read.state !== "data") return undefined;
+  const parsed = z.number().safeParse(read.value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** The descriptor-safe facts used by Pi model resolution and session copies. */
+export interface PiModelObservation {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+  readonly api?: string;
+  readonly baseUrl?: string;
+  readonly contextWindow?: number;
+}
+
+interface PiMutableModelObservation {
+  provider: string;
+  id: string;
+  name?: string;
+  api?: string;
+  baseUrl?: string;
+  contextWindow?: number;
+}
+
+export type PiModelObservationError = {
+  readonly type: "ModelObservationMalformed";
+};
+
+/**
+ * Read only the bounded, adapter-owned model facts from a host catalog entry.
+ * Accessors, proxies, arrays, and callables fail closed without invoking a
+ * property getter or retaining host-owned payload data.
+ */
+export function observePiModel(
+  model: PiModelInfo,
+): Result<PiModelObservation, PiModelObservationError> {
+  const parsedModel = parseModelObject(model);
+  if (parsedModel === undefined) {
+    return err({ type: "ModelObservationMalformed" });
+  }
+
+  const providerRead = readPiModelData(parsedModel, "provider");
+  const idRead = readPiModelData(parsedModel, "id");
+  const provider = requiredModelText(providerRead);
+  const id = requiredModelText(idRead);
+  if (provider === undefined || id === undefined) {
+    return err({ type: "ModelObservationMalformed" });
+  }
+  if (providerRead.state === "invalid" || idRead.state === "invalid") {
+    return err({ type: "ModelObservationMalformed" });
+  }
+
+  const nameRead = readPiModelData(parsedModel, "name");
+  const apiRead = readPiModelData(parsedModel, "api");
+  const baseUrlRead = readPiModelData(parsedModel, "baseUrl");
+  const contextWindowRead = readPiModelData(parsedModel, "contextWindow");
+  if (
+    nameRead.state === "invalid" ||
+    apiRead.state === "invalid" ||
+    baseUrlRead.state === "invalid" ||
+    contextWindowRead.state === "invalid"
+  ) {
+    return err({ type: "ModelObservationMalformed" });
+  }
+
+  const observed: PiMutableModelObservation = { provider, id };
+  const name = optionalModelText(nameRead);
+  if (name !== undefined) observed.name = name;
+  const api = optionalModelText(apiRead);
+  if (api !== undefined) observed.api = api;
+  const baseUrl = optionalModelText(baseUrlRead);
+  if (baseUrl !== undefined) observed.baseUrl = baseUrl;
+  const contextWindow = optionalModelNumber(contextWindowRead);
+  if (contextWindow !== undefined) observed.contextWindow = contextWindow;
+  return ok(observed);
+}
+
+interface PiCatalogModelEntry {
+  readonly source: PiModelInfo;
+  readonly facts: PiModelObservation;
+}
+
+function observeCatalog(
+  availableModels: readonly PiModelInfo[],
+): readonly PiCatalogModelEntry[] {
+  const entries: PiCatalogModelEntry[] = [];
+  for (const model of availableModels) {
+    const observed = observePiModel(model);
+    if (observed.isErr()) continue;
+    entries.push({ source: model, facts: observed.value });
+  }
+  return entries;
+}
 
 /**
  * Authenticated Pi catalog model plus the optional host context-window fact
@@ -74,9 +228,13 @@ export type PiOrderedModelResolution = Extract<
 /** Candidate-list bound shared by ordered runtime model selection. */
 export const MAX_PI_ORDERED_MODEL_CANDIDATES = 64;
 
-function thinkingFields(level: ThinkingLevelDecl | undefined): {
+interface PiThinkingFields {
   readonly thinkingLevel?: ThinkingLevelDecl;
-} {
+}
+
+function thinkingFields(
+  level: ThinkingLevelDecl | undefined,
+): PiThinkingFields {
   if (level === undefined) return {};
   return { thinkingLevel: level };
 }
@@ -97,49 +255,57 @@ export class PiModelResolver {
     modelIntent: readonly string[],
     availableModels: readonly PiModelInfo[],
   ): PiModelResolution {
+    const catalog = observeCatalog(availableModels);
     for (const entry of modelIntent) {
       const parsed = parseModelIntentEntry(entry);
       const baseModel = parsed.isOk() ? parsed.value.baseModel : entry;
       const thinkingLevel = parsed.isOk()
         ? parsed.value.thinkingLevel
         : undefined;
-      const canonical = availableModels.find(
-        (model) => `${model.provider}/${model.id}` === baseModel,
+      const canonical = catalog.find(
+        (candidate) =>
+          `${candidate.facts.provider}/${candidate.facts.id}` === baseModel,
       );
       if (canonical !== undefined) {
         return {
           resolved: true,
-          model: canonical,
+          model: canonical.source,
           intentEntry: entry,
           source: "canonical",
           ...thinkingFields(thinkingLevel),
         };
       }
 
-      const bareIdMatches = availableModels.filter(
-        (model) => model.id === baseModel,
+      const bareIdMatches = catalog.filter(
+        (candidate) => candidate.facts.id === baseModel,
       );
       if (bareIdMatches.length === 1) {
-        return {
-          resolved: true,
-          model: bareIdMatches[0] as PiModelInfo,
-          intentEntry: entry,
-          source: "bare-id",
-          ...thinkingFields(thinkingLevel),
-        };
+        const [match] = bareIdMatches;
+        if (match !== undefined) {
+          return {
+            resolved: true,
+            model: match.source,
+            intentEntry: entry,
+            source: "bare-id",
+            ...thinkingFields(thinkingLevel),
+          };
+        }
       }
 
-      const nameMatches = availableModels.filter(
-        (model) => model.name === baseModel,
+      const nameMatches = catalog.filter(
+        (candidate) => candidate.facts.name === baseModel,
       );
       if (nameMatches.length === 1) {
-        return {
-          resolved: true,
-          model: nameMatches[0] as PiModelInfo,
-          intentEntry: entry,
-          source: "human-name",
-          ...thinkingFields(thinkingLevel),
-        };
+        const [match] = nameMatches;
+        if (match !== undefined) {
+          return {
+            resolved: true,
+            model: match.source,
+            intentEntry: entry,
+            source: "human-name",
+            ...thinkingFields(thinkingLevel),
+          };
+        }
       }
     }
 
@@ -185,13 +351,21 @@ export class PiModelResolver {
     identity: Pick<PiModelInfo, "provider" | "id">,
     availableModels: readonly PiModelInfo[],
   ): Result<PiModelInfo, PiModelIdentityResolutionError> {
-    const matches = availableModels.filter(
-      (model) =>
-        model.provider === identity.provider && model.id === identity.id,
+    const identityFacts = observePiModel(identity);
+    if (identityFacts.isErr()) {
+      return err({ type: "ModelIdentityUnavailable" });
+    }
+    const matches = observeCatalog(availableModels).filter(
+      (candidate) =>
+        candidate.facts.provider === identityFacts.value.provider &&
+        candidate.facts.id === identityFacts.value.id,
     );
     if (matches.length === 0) return err({ type: "ModelIdentityUnavailable" });
     if (matches.length > 1) return err({ type: "ModelIdentityAmbiguous" });
-    return ok(matches[0] as PiModelInfo);
+    const [match] = matches;
+    return match === undefined
+      ? err({ type: "ModelIdentityUnavailable" })
+      : ok(match.source);
   }
 }
 

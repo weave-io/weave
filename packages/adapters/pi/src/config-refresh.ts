@@ -85,6 +85,7 @@
 import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
 import type { AgentDescriptor, PromptFileReader } from "@weaveio/weave-engine";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { PiCatalogCell } from "./catalog-cell.js";
 import {
   buildDescriptorCatalog,
@@ -107,6 +108,7 @@ import {
   type PiConfigSourceFsPort,
   type PiConfigSourceIdentity,
   type PiConfigSourceManifest,
+  type PiConfigSourcePaths,
   type PiConfigSourceRefresh,
   refreshConfigSourceManifest,
   resolvePiConfigSourcePaths,
@@ -520,8 +522,9 @@ function mapActivationFailure(
     };
   }
 
-  const reason = failure.correlation?.reason;
-  if (typeof reason === "string") {
+  const parsedReason = z.string().safeParse(failure.correlation?.reason);
+  if (parsedReason.success) {
+    const reason = parsedReason.data;
     if (reason.startsWith(LIFECYCLE_INVALID_PREFIX)) {
       return {
         type: "LifecycleSettingsInvalid",
@@ -590,10 +593,7 @@ function rematerialize(
 // Internals: next manifest and content cache
 // ---------------------------------------------------------------------------
 
-function configPathsOf(manifest: PiConfigSourceManifest): {
-  readonly globalConfigPath: string;
-  readonly projectConfigPath: string | undefined;
-} {
+function configPathsOf(manifest: PiConfigSourceManifest): PiConfigSourcePaths {
   const global = manifest.files.find((file) => file.kind === "global-config");
   const project = manifest.files.find((file) => file.kind === "project-config");
   if (global !== undefined) {
@@ -698,7 +698,7 @@ function failOnRecordedFailure(
   attempt: RefreshAttempt,
 ): ResultAsync<undefined, PiConfigRefreshFailure> {
   const failure = attempt.firstFailure();
-  return failure === undefined ? okAsync(undefined) : errAsync(failure);
+  return failure === undefined ? okAsync(void 0) : errAsync(failure);
 }
 
 // ---------------------------------------------------------------------------
@@ -1184,18 +1184,22 @@ export function createPiConfigRefreshCoordinator(
   deps: PiConfigRefreshCoordinatorDeps,
 ): PiConfigRefreshCoordinator {
   const minIntervalMs = deps.minIntervalMs ?? 0;
-  const buildDeps: PiConfigRefreshDeps = {
-    fs: deps.fs,
-    ...(deps.onHashComputation === undefined
-      ? {}
-      : { onHashComputation: deps.onHashComputation }),
-    ...(deps.configLoader === undefined
-      ? {}
-      : { configLoader: deps.configLoader }),
-    ...(deps.materializer === undefined
-      ? {}
-      : { materializer: deps.materializer }),
-  };
+  interface PiConfigRefreshBuildDeps {
+    fs: PiConfigSourceFsPort;
+    onHashComputation?: () => void;
+    configLoader?: PiConfigLoaderPort;
+    materializer?: PiMaterializerPort;
+  }
+  const buildDeps: PiConfigRefreshBuildDeps = { fs: deps.fs };
+  if (deps.onHashComputation !== undefined) {
+    buildDeps.onHashComputation = deps.onHashComputation;
+  }
+  if (deps.configLoader !== undefined) {
+    buildDeps.configLoader = deps.configLoader;
+  }
+  if (deps.materializer !== undefined) {
+    buildDeps.materializer = deps.materializer;
+  }
 
   let disposed = false;
   let inFlight: Promise<void> | undefined;

@@ -37,7 +37,8 @@
  * logged, entry ids may not.
  */
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   childExtensionEntryId,
   isSafeChildExtensionPath,
@@ -165,7 +166,9 @@ export interface PiExtensionInventoryPort {
     PiExtensionInventoryPortError
   >;
   /** Reads and parses one JSON file. */
-  readJson?(path: string): ResultAsync<unknown, PiExtensionInventoryPortError>;
+  readJson?(
+    path: string,
+  ): ResultAsync<PiExtensionObservedValue, PiExtensionInventoryPortError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +268,7 @@ export interface CollectPiExtensionInventoryOptions {
 }
 
 const EMPTY_INVENTORY: PiExtensionInventory = Object.freeze({
-  entries: Object.freeze([]) as readonly PiExtensionInventoryEntry[],
+  entries: Object.freeze([]),
   truncated: false,
   projectScanned: false,
 });
@@ -274,16 +277,235 @@ const EMPTY_INVENTORY: PiExtensionInventory = Object.freeze({
 // Helpers
 // ---------------------------------------------------------------------------
 
-const encoder = new TextEncoder();
+const PI_EXTENSION_OBSERVED_VALUE_SCHEMA = z.unknown();
+type PiExtensionObservedValue = z.input<
+  typeof PI_EXTENSION_OBSERVED_VALUE_SCHEMA
+>;
 
+const encoder = new TextEncoder();
 const CONTROL_CHARACTER_SOURCE = String.raw`[\u0000-\u001f\u007f]`;
 const CONTROL_CHARACTER_PATTERN = new RegExp(CONTROL_CHARACTER_SOURCE);
+const PI_EXTENSION_TEXT_SCHEMA = z
+  .string()
+  .refine(
+    (value) =>
+      !CONTROL_CHARACTER_PATTERN.test(value) &&
+      encoder.encode(value).byteLength <= MAX_CHILD_EXTENSION_FIELD_BYTES,
+    "bounded text field",
+  );
+const PI_EXTENSION_SCOPE_SCHEMA = z.enum(["user", "project", "temporary"]);
+const PI_EXTENSION_ORIGIN_SCHEMA = z.enum(["package", "top-level"]);
+const PI_EXTENSION_COMMAND_SOURCE_SCHEMA = z.enum([
+  "extension",
+  "prompt",
+  "skill",
+]);
+const PI_EXTENSION_DIRECTORY_KIND_SCHEMA = z.enum([
+  "file",
+  "directory",
+  "symlink",
+  "other",
+]);
+const PI_EXTENSION_PACKAGE_SCOPE_SCHEMA = z.enum(["user", "project"]);
+const PI_EXTENSION_MANIFEST_ENTRY_SCHEMA = z.string();
 
-/** Non-empty, control-free, and within the persisted per-field byte bound. */
-function isUsableTextField(value: unknown): value is string {
-  if (typeof value !== "string" || value.length === 0) return false;
+const PI_EXTENSION_SOURCE_INFO_SCHEMA = z.strictObject({
+  path: PI_EXTENSION_TEXT_SCHEMA,
+  source: PI_EXTENSION_TEXT_SCHEMA,
+  scope: PI_EXTENSION_SCOPE_SCHEMA,
+  origin: PI_EXTENSION_ORIGIN_SCHEMA,
+  baseDir: PI_EXTENSION_TEXT_SCHEMA.optional(),
+});
+
+const PI_EXTENSION_COMMAND_SCHEMA = z.strictObject({
+  name: PI_EXTENSION_TEXT_SCHEMA.min(1),
+  source: PI_EXTENSION_COMMAND_SOURCE_SCHEMA,
+  sourceInfo: PI_EXTENSION_SOURCE_INFO_SCHEMA,
+  description: PI_EXTENSION_TEXT_SCHEMA.optional(),
+});
+
+const PI_EXTENSION_TOOL_SCHEMA = z.strictObject({
+  name: PI_EXTENSION_TEXT_SCHEMA.min(1),
+  sourceInfo: PI_EXTENSION_SOURCE_INFO_SCHEMA.optional(),
+});
+
+const PI_EXTENSION_CONFIGURED_PACKAGE_SCHEMA = z.strictObject({
+  source: PI_EXTENSION_TEXT_SCHEMA,
+  scope: PI_EXTENSION_PACKAGE_SCOPE_SCHEMA,
+  installedPath: PI_EXTENSION_TEXT_SCHEMA.optional(),
+});
+
+const PI_EXTENSION_DIRECTORY_ENTRY_SCHEMA = z.strictObject({
+  name: PI_EXTENSION_TEXT_SCHEMA,
+  kind: PI_EXTENSION_DIRECTORY_KIND_SCHEMA,
+});
+
+interface PiExtensionObjectReference {
+  readonly piExtensionObjectMarker?: never;
+}
+
+interface PiExtensionArrayReference
+  extends ReadonlyArray<PiExtensionObservedValue> {
+  readonly piExtensionArrayMarker?: never;
+}
+
+/** A hostile value is usable only when it has a plain, non-callable shape. */
+const PI_EXTENSION_PLAIN_OBJECT_SCHEMA = z.custom<PiExtensionObjectReference>(
+  (value) => {
+    const checked = Result.fromThrowable(
+      (): boolean => {
+        if (
+          value === null ||
+          Object(value) !== value ||
+          Array.isArray(value) ||
+          value instanceof Function
+        ) {
+          return false;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      },
+      (): boolean => false,
+    )();
+    return checked.isOk() && checked.value;
+  },
+);
+
+/** Arrays are copied through descriptors before any item parser sees them. */
+const PI_EXTENSION_ARRAY_SCHEMA = z.custom<PiExtensionArrayReference>(
+  (value) => {
+    const checked = Result.fromThrowable(
+      (): boolean =>
+        Array.isArray(value) &&
+        Object.getPrototypeOf(value) === Array.prototype,
+      (): boolean => false,
+    )();
+    return checked.isOk() && checked.value;
+  },
+);
+
+const MAX_PI_EXTENSION_OBSERVED_ARRAY_ITEMS = 4_096;
+
+type PiExtensionDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: PiExtensionObservedValue };
+
+interface PiExtensionSourceInfoCandidate {
+  path: PiExtensionObservedValue;
+  source: PiExtensionObservedValue;
+  scope: PiExtensionObservedValue;
+  origin: PiExtensionObservedValue;
+  baseDir?: PiExtensionObservedValue;
+}
+
+interface PiExtensionCommandCandidate {
+  name: PiExtensionObservedValue;
+  source: PiExtensionObservedValue;
+  sourceInfo: PiSourceInfo;
+  description?: PiExtensionObservedValue;
+}
+
+interface PiExtensionToolCandidate {
+  name: PiExtensionObservedValue;
+  sourceInfo?: PiSourceInfo;
+}
+
+interface PiExtensionConfiguredPackageCandidate {
+  source: PiExtensionObservedValue;
+  scope: PiExtensionObservedValue;
+  installedPath?: PiExtensionObservedValue;
+}
+
+/**
+ * Reads one own enumerable data property without invoking an accessor. The
+ * plain-object schema and descriptor check are both required: either one
+ * alone would leave a host object with a surprising prototype or getter.
+ */
+function readOwnDataProperty(
+  value: PiExtensionObservedValue,
+  key: string,
+): PiExtensionDataRead {
+  const object = PI_EXTENSION_PLAIN_OBJECT_SCHEMA.safeParse(value);
+  if (!object.success) return { kind: "invalid" };
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(object.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+interface BoundedObservedArray {
+  readonly values: readonly PiExtensionObservedValue[];
+  readonly truncated: boolean;
+}
+
+/**
+ * Validates an array's own length and indexed descriptors, then copies at most
+ * the requested bound. Sparse arrays, accessors, revoked proxies, and exotic
+ * array prototypes all fail closed.
+ */
+function readBoundedObservedArray(
+  value: PiExtensionObservedValue,
+  maxItems: number,
+): BoundedObservedArray | undefined {
+  const array = PI_EXTENSION_ARRAY_SCHEMA.safeParse(value);
+  if (!array.success) return undefined;
+  const lengthDescriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(array.data, "length"),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (lengthDescriptor.isErr() || lengthDescriptor.value === undefined) {
+    return undefined;
+  }
+  if (
+    !("value" in lengthDescriptor.value) ||
+    lengthDescriptor.value.enumerable !== false
+  ) {
+    return undefined;
+  }
+  const parsedLength = z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_PI_EXTENSION_OBSERVED_ARRAY_ITEMS)
+    .safeParse(lengthDescriptor.value.value);
+  if (!parsedLength.success) return undefined;
+
+  const length = parsedLength.data;
+  const count = Math.min(length, maxItems);
+  const values: PiExtensionObservedValue[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(array.data, String(index)),
+      (): PropertyDescriptor | undefined => undefined,
+    )();
+    if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+    if (
+      !("value" in descriptor.value) ||
+      descriptor.value.enumerable !== true
+    ) {
+      return undefined;
+    }
+    values.push(descriptor.value.value);
+  }
+  return { values, truncated: length > maxItems };
+}
+
+function isUsableTextField(value: string): boolean {
+  if (value.length === 0) return false;
   if (CONTROL_CHARACTER_PATTERN.test(value)) return false;
   return encoder.encode(value).byteLength <= MAX_CHILD_EXTENSION_FIELD_BYTES;
+}
+
+function parseHostText(value: PiExtensionObservedValue): string | undefined {
+  const parsed = PI_EXTENSION_TEXT_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -307,8 +529,25 @@ function isContainedIn(root: string, candidate: string): boolean {
 
 function isExtensionFileName(name: string): boolean {
   if (!isUsableTextField(name)) return false;
-  if (name.includes("/") || name === "." || name === "..") return false;
+  if (
+    name.includes("/") ||
+    name.includes("\\") ||
+    name === "." ||
+    name === ".."
+  ) {
+    return false;
+  }
   return EXTENSION_FILE_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
+function isExtensionDirectoryName(name: string): boolean {
+  return (
+    isUsableTextField(name) &&
+    !name.includes("/") &&
+    !name.includes("\\") &&
+    name !== "." &&
+    name !== ".."
+  );
 }
 
 /** A symlink is a file candidate by name and a directory candidate otherwise. */
@@ -320,25 +559,138 @@ function isDirectoryLike(entry: PiExtensionInventoryDirectoryEntry): boolean {
   return entry.kind === "directory" || entry.kind === "symlink";
 }
 
-/** Own-property read: a manifest carrying `__proto__` cannot fake a field. */
-function readOwnProperty(value: unknown, key: string): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
-  if (!Object.hasOwn(value, key)) return undefined;
-  return (value as Record<string, unknown>)[key];
+function parseSourceInfo(
+  value: PiExtensionObservedValue,
+): PiSourceInfo | undefined {
+  const path = readOwnDataProperty(value, "path");
+  const source = readOwnDataProperty(value, "source");
+  const scope = readOwnDataProperty(value, "scope");
+  const origin = readOwnDataProperty(value, "origin");
+  if (
+    path.kind !== "value" ||
+    source.kind !== "value" ||
+    scope.kind !== "value" ||
+    origin.kind !== "value"
+  ) {
+    return undefined;
+  }
+  const baseDir = readOwnDataProperty(value, "baseDir");
+  if (baseDir.kind === "invalid") return undefined;
+  const candidate: PiExtensionSourceInfoCandidate = {
+    path: path.value,
+    source: source.value,
+    scope: scope.value,
+    origin: origin.value,
+  };
+  if (baseDir.kind === "value" && baseDir.value !== undefined) {
+    candidate.baseDir = baseDir.value;
+  }
+  const parsed = PI_EXTENSION_SOURCE_INFO_SCHEMA.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
 }
 
-function isUsableSourceInfo(value: unknown): value is PiSourceInfo {
-  if (typeof value !== "object" || value === null) return false;
-  const origin = readOwnProperty(value, "origin");
-  const source = readOwnProperty(value, "source");
-  const path = readOwnProperty(value, "path");
-  const scope = readOwnProperty(value, "scope");
-  return (
-    typeof origin === "string" &&
-    typeof source === "string" &&
-    typeof path === "string" &&
-    typeof scope === "string"
-  );
+function parseCommandInfo(
+  value: PiExtensionObservedValue,
+): PiCommandInfo | undefined {
+  const name = readOwnDataProperty(value, "name");
+  const source = readOwnDataProperty(value, "source");
+  const sourceInfo = readOwnDataProperty(value, "sourceInfo");
+  if (
+    name.kind !== "value" ||
+    source.kind !== "value" ||
+    sourceInfo.kind !== "value"
+  ) {
+    return undefined;
+  }
+  const description = readOwnDataProperty(value, "description");
+  if (description.kind === "invalid") return undefined;
+  const parsedSourceInfo = parseSourceInfo(sourceInfo.value);
+  if (parsedSourceInfo === undefined) return undefined;
+  const candidate: PiExtensionCommandCandidate = {
+    name: name.value,
+    source: source.value,
+    sourceInfo: parsedSourceInfo,
+  };
+  if (description.kind === "value" && description.value !== undefined) {
+    candidate.description = description.value;
+  }
+  const parsed = PI_EXTENSION_COMMAND_SCHEMA.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parseToolInfo(
+  value: PiExtensionObservedValue,
+): PiExtensionInventoryToolInfo | undefined {
+  const name = readOwnDataProperty(value, "name");
+  if (name.kind !== "value") return undefined;
+  const sourceInfo = readOwnDataProperty(value, "sourceInfo");
+  if (sourceInfo.kind === "invalid") return undefined;
+  const parsedSourceInfo =
+    sourceInfo.kind === "value" && sourceInfo.value !== undefined
+      ? parseSourceInfo(sourceInfo.value)
+      : undefined;
+  if (sourceInfo.kind === "value" && parsedSourceInfo === undefined) {
+    return undefined;
+  }
+  const candidate: PiExtensionToolCandidate = { name: name.value };
+  if (parsedSourceInfo !== undefined) {
+    candidate.sourceInfo = parsedSourceInfo;
+  }
+  const parsed = PI_EXTENSION_TOOL_SCHEMA.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parseConfiguredPackage(
+  value: PiExtensionObservedValue,
+): PiExtensionInventoryConfiguredPackage | undefined {
+  const source = readOwnDataProperty(value, "source");
+  const scope = readOwnDataProperty(value, "scope");
+  if (source.kind !== "value" || scope.kind !== "value") return undefined;
+  const installedPath = readOwnDataProperty(value, "installedPath");
+  if (installedPath.kind === "invalid") return undefined;
+  const candidate: PiExtensionConfiguredPackageCandidate = {
+    source: source.value,
+    scope: scope.value,
+  };
+  if (installedPath.kind === "value" && installedPath.value !== undefined) {
+    candidate.installedPath = installedPath.value;
+  }
+  const parsed = PI_EXTENSION_CONFIGURED_PACKAGE_SCHEMA.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parseDirectoryEntry(
+  value: PiExtensionObservedValue,
+): PiExtensionInventoryDirectoryEntry | undefined {
+  const name = readOwnDataProperty(value, "name");
+  const kind = readOwnDataProperty(value, "kind");
+  if (name.kind !== "value" || kind.kind !== "value") return undefined;
+  const parsed = PI_EXTENSION_DIRECTORY_ENTRY_SCHEMA.safeParse({
+    name: name.value,
+    kind: kind.value,
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
+interface BoundedParsedValues<T> {
+  readonly values: readonly T[];
+  readonly truncated: boolean;
+}
+
+function parseBoundedValues<T>(
+  value: PiExtensionObservedValue,
+  maxItems: number,
+  parse: (item: PiExtensionObservedValue) => T | undefined,
+): BoundedParsedValues<T> | undefined {
+  const observed = readBoundedObservedArray(value, maxItems);
+  if (observed === undefined) return undefined;
+  const values: T[] = [];
+  for (const item of observed.values) {
+    const parsed = parse(item);
+    if (parsed === undefined) return undefined;
+    values.push(parsed);
+  }
+  return { values, truncated: observed.truncated };
 }
 
 function callPort<T>(
@@ -445,7 +797,17 @@ class PiExtensionInventoryCollector {
       this.reasons.add("commands-failed");
       return;
     }
-    for (const command of this.boundedSources(result.value)) {
+    const parsed = parseBoundedValues(
+      result.value,
+      MAX_PI_EXTENSION_LOADED_SOURCES,
+      parseCommandInfo,
+    );
+    if (parsed === undefined) {
+      this.reasons.add("commands-failed");
+      return;
+    }
+    if (parsed.truncated) this.truncated = true;
+    for (const command of parsed.values) {
       // Prompts and skills are not extensions; only an extension-registered
       // command proves an extension is loaded.
       if (command.source !== "extension") continue;
@@ -464,15 +826,19 @@ class PiExtensionInventoryCollector {
       this.reasons.add("tools-failed");
       return;
     }
-    for (const tool of this.boundedSources(result.value)) {
+    const parsed = parseBoundedValues(
+      result.value,
+      MAX_PI_EXTENSION_LOADED_SOURCES,
+      parseToolInfo,
+    );
+    if (parsed === undefined) {
+      this.reasons.add("tools-failed");
+      return;
+    }
+    if (parsed.truncated) this.truncated = true;
+    for (const tool of parsed.values) {
       this.addLoadedSourceInfo(tool.sourceInfo);
     }
-  }
-
-  private boundedSources<T>(values: readonly T[]): readonly T[] {
-    if (values.length <= MAX_PI_EXTENSION_LOADED_SOURCES) return values;
-    this.truncated = true;
-    return values.slice(0, MAX_PI_EXTENSION_LOADED_SOURCES);
   }
 
   /**
@@ -480,8 +846,8 @@ class PiExtensionInventoryCollector {
    * can never be handed to a child, so an identity that cannot be derived is
    * skipped silently rather than reported as degradation.
    */
-  private addLoadedSourceInfo(sourceInfo: unknown): void {
-    if (!isUsableSourceInfo(sourceInfo)) return;
+  private addLoadedSourceInfo(sourceInfo: PiSourceInfo | undefined): void {
+    if (sourceInfo === undefined) return;
     const identity = childExtensionEntryId(sourceInfo);
     if (identity.isErr()) return;
     const isPackage = sourceInfo.origin === "package";
@@ -496,7 +862,7 @@ class PiExtensionInventoryCollector {
         : "local",
       path,
       origin: isPackage ? "package" : "top-level",
-      scope: normalizeScope(sourceInfo.scope),
+      scope: sourceInfo.scope,
       evidence: "loaded",
       proven: true,
       pathAuthority:
@@ -518,13 +884,17 @@ class PiExtensionInventoryCollector {
       this.reasons.add("configured-packages-failed");
       return;
     }
-    const packages = result.value;
-    const bounded =
-      packages.length <= MAX_PI_EXTENSION_CONFIGURED_PACKAGES
-        ? packages
-        : packages.slice(0, MAX_PI_EXTENSION_CONFIGURED_PACKAGES);
-    if (bounded.length < packages.length) this.truncated = true;
-    for (const configured of bounded) {
+    const parsed = parseBoundedValues(
+      result.value,
+      MAX_PI_EXTENSION_CONFIGURED_PACKAGES,
+      parseConfiguredPackage,
+    );
+    if (parsed === undefined) {
+      this.reasons.add("configured-packages-failed");
+      return;
+    }
+    if (parsed.truncated) this.truncated = true;
+    for (const configured of parsed.values) {
       await this.collectConfiguredPackage(configured);
     }
   }
@@ -601,28 +971,36 @@ class PiExtensionInventoryCollector {
       }
       return undefined;
     }
-    return isSafeChildExtensionPath(result.value) ? result.value : undefined;
+    const installedPath = parseHostText(result.value);
+    return installedPath !== undefined &&
+      isSafeChildExtensionPath(installedPath)
+      ? installedPath
+      : undefined;
   }
 
   // -- evidence: discovered files ------------------------------------------
 
   private async scanUserExtensions(): Promise<void> {
-    const agentDirectory = this.port.agentDirectory?.bind(this.port);
-    if (agentDirectory === undefined) {
+    const agentDirectoryPort = this.port.agentDirectory?.bind(this.port);
+    if (agentDirectoryPort === undefined) {
       this.reasons.add("agent-directory-unavailable");
       return;
     }
-    const result = await callPort(agentDirectory);
+    const result = await callPort(agentDirectoryPort);
     if (result.isErr()) {
       this.reasons.add("agent-directory-failed");
       return;
     }
-    if (!isSafeChildExtensionPath(result.value)) {
+    const agentDirectory = parseHostText(result.value);
+    if (
+      agentDirectory === undefined ||
+      !isSafeChildExtensionPath(agentDirectory)
+    ) {
       this.reasons.add("agent-directory-unsafe");
       return;
     }
     await this.scanExtensionsDirectory(
-      join(result.value, PI_EXTENSIONS_DIRECTORY),
+      join(agentDirectory, PI_EXTENSIONS_DIRECTORY),
       "user",
     );
   }
@@ -659,8 +1037,7 @@ class PiExtensionInventoryCollector {
         this.addDiscoveredFile(join(directory, item.name), scope);
         continue;
       }
-      if (isDirectoryLike(item) && isUsableTextField(item.name)) {
-        if (item.name === "." || item.name === "..") continue;
+      if (isDirectoryLike(item) && isExtensionDirectoryName(item.name)) {
         await this.scanExtensionDirectory(join(directory, item.name), scope);
       }
     }
@@ -731,10 +1108,17 @@ class PiExtensionInventoryCollector {
       }
       return undefined;
     }
-    const items = result.value;
-    if (items.length <= MAX_PI_EXTENSION_DIRECTORY_ENTRIES) return items;
-    this.truncated = true;
-    return items.slice(0, MAX_PI_EXTENSION_DIRECTORY_ENTRIES);
+    const parsed = parseBoundedValues(
+      result.value,
+      MAX_PI_EXTENSION_DIRECTORY_ENTRIES,
+      parseDirectoryEntry,
+    );
+    if (parsed === undefined) {
+      this.reasons.add("directory-listing-failed");
+      return undefined;
+    }
+    if (parsed.truncated) this.truncated = true;
+    return parsed.values;
   }
 
   /**
@@ -765,25 +1149,40 @@ class PiExtensionInventoryCollector {
 
   private readDeclaredExtensions(
     directory: string,
-    manifest: unknown,
+    manifest: PiExtensionObservedValue,
   ): ManifestOutcome {
-    const pi = readOwnProperty(manifest, "pi");
-    if (pi === undefined) return { kind: "none" };
-    const declared = readOwnProperty(pi, "extensions");
-    if (declared === undefined) return { kind: "none" };
-    if (!Array.isArray(declared)) {
+    const pi = readOwnDataProperty(manifest, "pi");
+    if (pi.kind !== "value") {
+      if (pi.kind === "missing") return { kind: "none" };
       this.reasons.add("package-manifest-invalid");
       return { kind: "unknown" };
     }
-    const bounded =
-      declared.length <= MAX_PI_EXTENSION_MANIFEST_ENTRIES
-        ? declared
-        : declared.slice(0, MAX_PI_EXTENSION_MANIFEST_ENTRIES);
-    if (bounded.length < declared.length) this.truncated = true;
+    if (pi.value === undefined) return { kind: "none" };
+    const declared = readOwnDataProperty(pi.value, "extensions");
+    if (declared.kind !== "value") {
+      if (declared.kind === "missing") return { kind: "none" };
+      this.reasons.add("package-manifest-invalid");
+      return { kind: "unknown" };
+    }
+    if (declared.value === undefined) return { kind: "none" };
+    const bounded = readBoundedObservedArray(
+      declared.value,
+      MAX_PI_EXTENSION_MANIFEST_ENTRIES,
+    );
+    if (bounded === undefined) {
+      this.reasons.add("package-manifest-invalid");
+      return { kind: "unknown" };
+    }
+    if (bounded.truncated) this.truncated = true;
 
     const paths: string[] = [];
-    for (const value of bounded) {
-      const resolved = this.resolveDeclaredEntry(directory, value);
+    for (const value of bounded.values) {
+      const parsedEntry = PI_EXTENSION_MANIFEST_ENTRY_SCHEMA.safeParse(value);
+      if (!parsedEntry.success) {
+        this.reasons.add("package-manifest-invalid");
+        continue;
+      }
+      const resolved = this.resolveDeclaredEntry(directory, parsedEntry.data);
       if (resolved === undefined) continue;
       paths.push(resolved);
     }
@@ -793,7 +1192,7 @@ class PiExtensionInventoryCollector {
 
   private resolveDeclaredEntry(
     directory: string,
-    value: unknown,
+    value: string,
   ): string | undefined {
     if (!isUsableTextField(value) || !isLexicalRelativePath(value)) {
       this.reasons.add("package-manifest-invalid");
@@ -901,12 +1300,6 @@ function compareEntries(
   return left.id < right.id ? -1 : 1;
 }
 
-function normalizeScope(scope: string): PiResourceScope {
-  if (scope === "user") return "user";
-  if (scope === "project") return "project";
-  return "temporary";
-}
-
 /**
  * A package shows its npm name, a file shows its basename. Both fall back to
  * a value already proven to satisfy the persisted field bounds.
@@ -930,7 +1323,11 @@ function resolveOverrideEntryPath(
   options: CollectPiExtensionInventoryOptions,
 ): string | undefined {
   const env = options.env ?? Bun.env;
-  if (env[WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV] !== "1") {
+  const override = readOwnDataProperty(
+    env,
+    WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV,
+  );
+  if (override.kind !== "value" || parseHostText(override.value) !== "1") {
     return undefined;
   }
   const ownEntryPath = options.ownEntryPath;

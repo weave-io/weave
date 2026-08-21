@@ -4,6 +4,7 @@ import type {
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
 import { Result } from "neverthrow";
+import { z } from "zod";
 import type { PiChildSessionReadinessReason } from "./child-session-storage-authority.js";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
 import {
@@ -105,6 +106,29 @@ export const AGENT_RECOVERY_EXHAUSTED_UNSUPPORTED =
 
 const AGENT_RECOVERY_EXHAUSTED_KEY = "agent_recovery_exhausted";
 
+const PI_FEATURE_PROBE_OBJECT_SCHEMA = z.custom<object>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+const PI_FEATURE_PROBE_INPUT_SCHEMA = z.union([
+  PI_FEATURE_PROBE_OBJECT_SCHEMA,
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.bigint(),
+  z.symbol(),
+  z.null(),
+  z.undefined(),
+]);
+type PiFeatureProbeInput = z.input<typeof PI_FEATURE_PROBE_INPUT_SCHEMA>;
+type PiFeatureProbeObject = z.output<typeof PI_FEATURE_PROBE_OBJECT_SCHEMA>;
+
 export type AgentRecoveryExhaustedProbeError = {
   readonly type: "FeatureProbeThrew";
 };
@@ -115,23 +139,29 @@ export type AgentRecoveryExhaustedProbeError = {
  * Throwing accessors, proxies, absence, and non-true values are unsupported.
  */
 export function probeAgentRecoveryExhaustedFeature(
-  host: unknown,
+  host: PiFeatureProbeInput,
 ): Result<boolean, AgentRecoveryExhaustedProbeError> {
   return Result.fromThrowable(
-    (): boolean => readAgentRecoveryExhaustedFlag(host),
+    (): boolean => {
+      const parsedHost = PI_FEATURE_PROBE_OBJECT_SCHEMA.safeParse(host);
+      return parsedHost.success
+        ? readAgentRecoveryExhaustedFlag(parsedHost.data)
+        : false;
+    },
     (): AgentRecoveryExhaustedProbeError => ({ type: "FeatureProbeThrew" }),
   )();
 }
 
-function readAgentRecoveryExhaustedFlag(host: unknown): boolean {
-  if (typeof host !== "object" || host === null) return false;
+function readAgentRecoveryExhaustedFlag(host: PiFeatureProbeObject): boolean {
   const featuresDescriptor = Object.getOwnPropertyDescriptor(host, "features");
   if (featuresDescriptor === undefined || !("value" in featuresDescriptor))
     return false;
-  const features = featuresDescriptor.value;
-  if (typeof features !== "object" || features === null) return false;
+  const parsedFeatures = PI_FEATURE_PROBE_OBJECT_SCHEMA.safeParse(
+    featuresDescriptor.value,
+  );
+  if (!parsedFeatures.success) return false;
   const flagDescriptor = Object.getOwnPropertyDescriptor(
-    features,
+    parsedFeatures.data,
     AGENT_RECOVERY_EXHAUSTED_KEY,
   );
   if (flagDescriptor === undefined || !("value" in flagDescriptor))
@@ -570,11 +600,6 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
   }
 }
 
-const VALID_PROBE_STATUSES: ReadonlySet<string> = new Set([
-  "ok",
-  "degraded",
-  "unavailable",
-]);
 const KNOWN_CAPABILITY_IDS: ReadonlySet<string> = new Set(ALL_CAPABILITY_IDS);
 
 /** Bound on a sanitized probe `details` string (Pi adapter contract: no raw payloads in diagnostics). */
@@ -582,17 +607,134 @@ const MAX_SAFE_DETAILS_LENGTH = 200;
 /** Printable ASCII only — matches the plain-punctuation, no-secrets diagnostics contract. */
 const SAFE_DETAILS_PATTERN = /^[\x20-\x7E]*$/;
 
-function isSafeDetails(details: unknown): details is string | undefined {
-  if (details === undefined) return true;
-  if (typeof details !== "string") return false;
-  if (details.length > MAX_SAFE_DETAILS_LENGTH) return false;
-  return SAFE_DETAILS_PATTERN.test(details);
+interface ParsedProbeStringField {
+  readonly kind: "valid" | "invalid";
+  readonly value?: string;
 }
 
-interface RawProbeCandidate {
-  readonly capabilityId?: unknown;
-  readonly probeStatus?: unknown;
-  readonly details?: unknown;
+const PROBE_STRING_FIELD_SCHEMA = z
+  .unknown()
+  .transform((value): ParsedProbeStringField => {
+    const parsed = z.string().safeParse(value);
+    return parsed.success
+      ? { kind: "valid", value: parsed.data }
+      : { kind: "invalid" };
+  });
+const SAFE_DETAILS_FIELD_SCHEMA = z
+  .unknown()
+  .transform((value): ParsedProbeStringField => {
+    const parsed = z
+      .string()
+      .max(MAX_SAFE_DETAILS_LENGTH)
+      .regex(SAFE_DETAILS_PATTERN)
+      .safeParse(value);
+    return parsed.success
+      ? { kind: "valid", value: parsed.data }
+      : { kind: "invalid" };
+  });
+interface ParsedRawProbeCandidate {
+  readonly capabilityId?: ParsedProbeStringField;
+  readonly probeStatus?: ParsedProbeStringField;
+  readonly details?: ParsedProbeStringField;
+}
+
+interface MutableParsedRawProbeCandidate {
+  capabilityId?: ParsedProbeStringField;
+  probeStatus?: ParsedProbeStringField;
+  details?: ParsedProbeStringField;
+}
+
+const PROBE_OBSERVED_VALUE_SCHEMA = z.unknown();
+type ProbeObservedValue = z.input<typeof PROBE_OBSERVED_VALUE_SCHEMA>;
+interface ProbeCandidateObject {
+  readonly probeCandidateObjectMarker?: never;
+}
+const PROBE_CANDIDATE_OBJECT_SCHEMA = z.custom<ProbeCandidateObject>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+type ProbeCandidateDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: ProbeObservedValue };
+
+function readProbeCandidateData(
+  candidate: ProbeCandidateObject,
+  key: string,
+): ProbeCandidateDataRead {
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(candidate, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function parseProbeStringField(
+  value: ProbeObservedValue,
+): ParsedProbeStringField {
+  const parsed = PROBE_STRING_FIELD_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : { kind: "invalid" };
+}
+
+function parseProbeDetailsField(
+  value: ProbeObservedValue,
+): ParsedProbeStringField {
+  const parsed = SAFE_DETAILS_FIELD_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : { kind: "invalid" };
+}
+
+function parseProbeCandidate(
+  candidate: ProbeObservedValue,
+): ParsedRawProbeCandidate | undefined {
+  const parsedCandidate = PROBE_CANDIDATE_OBJECT_SCHEMA.safeParse(candidate);
+  if (!parsedCandidate.success) return undefined;
+  const capabilityId = readProbeCandidateData(
+    parsedCandidate.data,
+    "capabilityId",
+  );
+  const probeStatus = readProbeCandidateData(
+    parsedCandidate.data,
+    "probeStatus",
+  );
+  const details = readProbeCandidateData(parsedCandidate.data, "details");
+  const parsed: MutableParsedRawProbeCandidate = {};
+  if (capabilityId.kind === "invalid") {
+    parsed.capabilityId = { kind: "invalid" };
+  } else if (capabilityId.kind === "value") {
+    parsed.capabilityId = parseProbeStringField(capabilityId.value);
+  }
+  if (probeStatus.kind === "invalid") {
+    parsed.probeStatus = { kind: "invalid" };
+  } else if (probeStatus.kind === "value") {
+    parsed.probeStatus = parseProbeStringField(probeStatus.value);
+  }
+  if (details.kind === "invalid") {
+    parsed.details = { kind: "invalid" };
+  } else if (details.kind === "value") {
+    parsed.details = parseProbeDetailsField(details.value);
+  }
+  return parsed;
+}
+
+function parseProbeStatus(
+  value: string,
+): CapabilityProbeResult["probeStatus"] | undefined {
+  if (value === "ok") return "ok";
+  if (value === "degraded") return "degraded";
+  if (value === "unavailable") return "unavailable";
+  return undefined;
 }
 
 /**
@@ -607,15 +749,17 @@ interface RawProbeCandidate {
 export function sanitizeCapabilityProbeResults(
   raw: readonly unknown[],
 ): CapabilityProbeResult[] {
-  const byId = new Map<string, RawProbeCandidate[]>();
+  const byId = new Map<string, ParsedRawProbeCandidate[]>();
   for (const candidate of raw) {
-    if (typeof candidate !== "object" || candidate === null) continue;
-    const entry = candidate as RawProbeCandidate;
-    if (typeof entry.capabilityId !== "string") continue;
-    if (!KNOWN_CAPABILITY_IDS.has(entry.capabilityId)) continue;
-    const bucket = byId.get(entry.capabilityId) ?? [];
-    bucket.push(entry);
-    byId.set(entry.capabilityId, bucket);
+    const parsedCandidate = parseProbeCandidate(candidate);
+    if (parsedCandidate === undefined) continue;
+    const candidateId = parsedCandidate.capabilityId;
+    if (candidateId?.kind !== "valid" || candidateId.value === undefined)
+      continue;
+    if (!KNOWN_CAPABILITY_IDS.has(candidateId.value)) continue;
+    const bucket = byId.get(candidateId.value) ?? [];
+    bucket.push(parsedCandidate);
+    byId.set(candidateId.value, bucket);
   }
 
   return ALL_CAPABILITY_IDS.map((id): CapabilityProbeResult => {
@@ -635,28 +779,33 @@ export function sanitizeCapabilityProbeResults(
       };
     }
     const [single] = bucket;
-    if (
-      single === undefined ||
-      typeof single.probeStatus !== "string" ||
-      !VALID_PROBE_STATUSES.has(single.probeStatus)
-    ) {
+    const statusValue = single?.probeStatus;
+    const status =
+      statusValue?.kind === "valid" && statusValue.value !== undefined
+        ? parseProbeStatus(statusValue.value)
+        : undefined;
+    if (status === undefined) {
       return {
         capabilityId: id,
         probeStatus: "unavailable",
         details: "probe-malformed-status",
       };
     }
-    if (!isSafeDetails(single.details)) {
+    if (single?.details?.kind === "invalid") {
       return {
         capabilityId: id,
         probeStatus: "unavailable",
         details: "probe-unsafe-details",
       };
     }
-    return {
+    const sanitized: CapabilityProbeResult = {
       capabilityId: id,
-      probeStatus: single.probeStatus as "ok" | "degraded" | "unavailable",
-      ...(single.details !== undefined ? { details: single.details } : {}),
+      probeStatus: status,
     };
+    const details = single?.details;
+    if (details?.kind === "valid" && details.value !== undefined) {
+      return { ...sanitized, details: details.value };
+    }
+    return sanitized;
   });
 }

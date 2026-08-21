@@ -1,4 +1,5 @@
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
 import {
   fingerprintPiAssistantMessage,
   isPiModelFailoverMarker,
@@ -6,6 +7,7 @@ import {
   PI_MODEL_FAILOVER_MARKER_CONTENT,
   PI_MODEL_FAILOVER_MARKER_TYPE,
   type PiAssistantFingerprint,
+  type PiFailoverObservedValue,
   parsePiAssistantFingerprint,
   parsePiModelFailoverMarkerDetails,
   readPiOwnEnumerableData,
@@ -15,7 +17,7 @@ import {
 export const MAX_PI_FAILOVER_CONTEXT_MESSAGES = 256;
 
 export interface PiFailoverContextRepairInput {
-  readonly messages: readonly unknown[];
+  readonly messages: readonly PiFailoverObservedValue[];
   /** Preferred public field. */
   readonly token?: string;
   /** Compatibility spelling used by coordinator seams. */
@@ -41,17 +43,76 @@ export type PiFailoverContextRepairError =
 const arrayIsArray = Array.isArray;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnPropertyFn = Object.prototype.hasOwnProperty;
+const PI_CONTEXT_INPUT_SCHEMA = z.unknown();
+type PiContextObservedValue = z.input<typeof PI_CONTEXT_INPUT_SCHEMA>;
+
+interface PiContextObject {
+  readonly piContextObjectMarker?: never;
+}
+
+const PI_CONTEXT_OBJECT_SCHEMA = z.custom<PiContextObject>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null &&
+      Object(value) === value &&
+      !Array.isArray(value) &&
+      !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+interface NormalizedContextRepairInput {
+  readonly messages: readonly PiFailoverObservedValue[];
+  readonly token: PiContextObservedValue;
+  readonly fingerprint: PiContextObservedValue;
+}
+
+function isObservedMessageArray(
+  value: PiContextObservedValue,
+): value is readonly PiFailoverObservedValue[] {
+  return Result.fromThrowable(
+    () => arrayIsArray(value),
+    (): boolean => false,
+  )().unwrapOr(false);
+}
 
 function failure(
   type: PiFailoverContextRepairError["type"],
 ): Result<never, PiFailoverContextRepairError> {
-  return err({ type } as PiFailoverContextRepairError);
+  switch (type) {
+    case "ContextMessagesMalformed":
+      return err({ type: "ContextMessagesMalformed" });
+    case "ContextMessagesTooLarge":
+      return err({ type: "ContextMessagesTooLarge" });
+    case "ExpectedTokenMalformed":
+      return err({ type: "ExpectedTokenMalformed" });
+    case "RetainedFingerprintMalformed":
+      return err({ type: "RetainedFingerprintMalformed" });
+    case "MarkerMissing":
+      return err({ type: "MarkerMissing" });
+    case "MarkerDuplicate":
+      return err({ type: "MarkerDuplicate" });
+    case "MarkerMalformed":
+      return err({ type: "MarkerMalformed" });
+    case "MarkerMisplaced":
+      return err({ type: "MarkerMisplaced" });
+    case "FailedAssistantMalformed":
+      return err({ type: "FailedAssistantMalformed" });
+    case "FailedAssistantMismatch":
+      return err({ type: "FailedAssistantMismatch" });
+  }
 }
 
 function readArrayValues(
-  messages: readonly unknown[],
-): Result<readonly unknown[], PiFailoverContextRepairError> {
-  if (!arrayIsArray(messages)) return failure("ContextMessagesMalformed");
+  messages: readonly PiFailoverObservedValue[],
+): Result<readonly PiFailoverObservedValue[], PiFailoverContextRepairError> {
+  const isArray = Result.fromThrowable(
+    () => arrayIsArray(messages),
+    (): boolean => false,
+  )();
+  if (isArray.isErr() || !isArray.value) {
+    return failure("ContextMessagesMalformed");
+  }
 
   const length = Result.fromThrowable(
     () => {
@@ -59,33 +120,39 @@ function readArrayValues(
       if (
         descriptor === undefined ||
         descriptor.enumerable !== false ||
-        !hasOwnPropertyFn.call(descriptor, "value") ||
-        typeof descriptor.value !== "number" ||
-        !Number.isSafeInteger(descriptor.value) ||
-        descriptor.value < 0
+        !hasOwnPropertyFn.call(descriptor, "value")
       ) {
-        return undefined;
+        return null;
       }
-      return descriptor.value;
+      const parsedLength = z.number().safeParse(descriptor.value);
+      if (
+        !parsedLength.success ||
+        !Number.isSafeInteger(parsedLength.data) ||
+        parsedLength.data < 0
+      ) {
+        return null;
+      }
+      return parsedLength.data;
     },
-    (): undefined => undefined,
+    (): null => null,
   )();
-  if (length.isErr() || length.value === undefined) {
+  if (length.isErr() || length.value === null) {
     return failure("ContextMessagesMalformed");
   }
   if (length.value > MAX_PI_FAILOVER_CONTEXT_MESSAGES) {
     return failure("ContextMessagesTooLarge");
   }
 
-  const values: unknown[] = [];
+  const values: PiFailoverObservedValue[] = [];
   for (let index = 0; index < length.value; index += 1) {
     const descriptor = Result.fromThrowable(
       () => getOwnPropertyDescriptor(messages, String(index)),
-      (): PropertyDescriptor | undefined => undefined,
+      (): null => null,
     )();
     if (
       descriptor.isErr() ||
       descriptor.value === undefined ||
+      descriptor.value === null ||
       descriptor.value.enumerable !== true ||
       !hasOwnPropertyFn.call(descriptor.value, "value")
     ) {
@@ -97,37 +164,71 @@ function readArrayValues(
 }
 
 function normalizeInput(
-  inputOrMessages: PiFailoverContextRepairInput | readonly unknown[],
+  inputOrMessages:
+    | PiFailoverContextRepairInput
+    | readonly PiFailoverObservedValue[],
   token?: string,
   fingerprint?: PiAssistantFingerprint,
-): PiFailoverContextRepairInput | undefined {
-  if (arrayIsArray(inputOrMessages)) {
-    if (token === undefined || fingerprint === undefined) return undefined;
+): NormalizedContextRepairInput | null {
+  if (isObservedMessageArray(inputOrMessages)) {
+    if (token === undefined || fingerprint === undefined) return null;
     return { messages: inputOrMessages, token, fingerprint };
   }
-  if (inputOrMessages === null || typeof inputOrMessages !== "object") {
-    return undefined;
-  }
-  const input = inputOrMessages as PiFailoverContextRepairInput;
-  const resolvedToken = input.token ?? input.markerToken;
-  const resolvedFingerprint =
-    input.fingerprint ?? input.failedAssistantFingerprint;
+
+  const parsedInput = PI_CONTEXT_OBJECT_SCHEMA.safeParse(inputOrMessages);
+  if (!parsedInput.success) return null;
+  const messages = readPiOwnEnumerableData(parsedInput.data, "messages");
+  const tokenValue = readPiOwnEnumerableData(parsedInput.data, "token");
+  const markerToken = readPiOwnEnumerableData(parsedInput.data, "markerToken");
+  const fingerprintValue = readPiOwnEnumerableData(
+    parsedInput.data,
+    "fingerprint",
+  );
+  const failedFingerprint = readPiOwnEnumerableData(
+    parsedInput.data,
+    "failedAssistantFingerprint",
+  );
+  if (messages.state !== "data") return null;
+  if (!isObservedMessageArray(messages.value)) return null;
+
+  let resolvedToken: PiContextObservedValue | null = null;
   if (
-    !arrayIsArray(input.messages) ||
-    resolvedToken === undefined ||
-    resolvedFingerprint === undefined
+    tokenValue.state === "data" &&
+    tokenValue.value !== null &&
+    tokenValue.value !== undefined
   ) {
-    return undefined;
+    resolvedToken = tokenValue.value;
+  } else if (
+    markerToken.state === "data" &&
+    markerToken.value !== null &&
+    markerToken.value !== undefined
+  ) {
+    resolvedToken = markerToken.value;
   }
+  let resolvedFingerprint: PiContextObservedValue | null = null;
+  if (
+    fingerprintValue.state === "data" &&
+    fingerprintValue.value !== null &&
+    fingerprintValue.value !== undefined
+  ) {
+    resolvedFingerprint = fingerprintValue.value;
+  } else if (
+    failedFingerprint.state === "data" &&
+    failedFingerprint.value !== null &&
+    failedFingerprint.value !== undefined
+  ) {
+    resolvedFingerprint = failedFingerprint.value;
+  }
+  if (resolvedToken === null || resolvedFingerprint === null) return null;
   return {
-    messages: input.messages,
+    messages: messages.value,
     token: resolvedToken,
     fingerprint: resolvedFingerprint,
   };
 }
 
 function markerType(
-  value: unknown,
+  value: PiFailoverObservedValue,
 ):
   | { readonly kind: "unrelated" }
   | { readonly kind: "candidate"; readonly malformed: boolean } {
@@ -143,7 +244,7 @@ function markerType(
 }
 
 function validateMarker(
-  value: unknown,
+  value: PiFailoverObservedValue,
   expectedToken: string,
 ): Result<true, PiFailoverContextRepairError> {
   if (!isPiModelFailoverMarker(value)) {
@@ -175,26 +276,28 @@ function validateMarker(
  */
 export function repairPiFailoverContext(
   input: PiFailoverContextRepairInput,
-): Result<readonly unknown[], PiFailoverContextRepairError>;
+): Result<readonly PiFailoverObservedValue[], PiFailoverContextRepairError>;
 export function repairPiFailoverContext(
-  messages: readonly unknown[],
+  messages: readonly PiFailoverObservedValue[],
   token: string,
   fingerprint: PiAssistantFingerprint,
-): Result<readonly unknown[], PiFailoverContextRepairError>;
+): Result<readonly PiFailoverObservedValue[], PiFailoverContextRepairError>;
 export function repairPiFailoverContext(
-  inputOrMessages: PiFailoverContextRepairInput | readonly unknown[],
+  inputOrMessages:
+    | PiFailoverContextRepairInput
+    | readonly PiFailoverObservedValue[],
   token?: string,
   fingerprint?: PiAssistantFingerprint,
-): Result<readonly unknown[], PiFailoverContextRepairError> {
+): Result<readonly PiFailoverObservedValue[], PiFailoverContextRepairError> {
   const normalized = Result.fromThrowable(
     () => normalizeInput(inputOrMessages, token, fingerprint),
-    (): undefined => undefined,
+    (): null => null,
   )();
-  if (normalized.isErr() || normalized.value === undefined) {
+  if (normalized.isErr() || normalized.value === null) {
     return failure("ContextMessagesMalformed");
   }
   const input = normalized.value;
-  if (typeof input.token !== "string" || !isPiUuidV4(input.token)) {
+  if (!isPiUuidV4(input.token)) {
     return failure("ExpectedTokenMalformed");
   }
 

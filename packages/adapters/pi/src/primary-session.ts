@@ -11,6 +11,7 @@ import {
   Result,
   type ResultAsync,
 } from "neverthrow";
+import { z } from "zod";
 import {
   makePersistentParentSessionRequiredFailure,
   type PiAdapterFailure,
@@ -20,7 +21,7 @@ import type {
   PiModelApplyPort,
   PiThinkingApplyPort,
 } from "./model-resolution.js";
-import { PiModelActivator } from "./model-resolution.js";
+import { observePiModel, PiModelActivator } from "./model-resolution.js";
 import type { PiSkillCatalog } from "./skill-catalog.js";
 import type {
   PiAdapterLogger,
@@ -31,6 +32,116 @@ import type {
 
 const WEAVE_BLOCK_START = "weave:agent:start";
 const WEAVE_BLOCK_END = "weave:agent:end";
+const PI_SESSION_INPUT_SCHEMA = z.unknown();
+type PiSessionObservedValue = z.input<typeof PI_SESSION_INPUT_SCHEMA>;
+const hasOwnPropertyFn = Object.prototype.hasOwnProperty;
+const OMIT_NESTED_VALUE = Symbol("omit-nested-value");
+
+interface PiSessionInspectableObject {
+  readonly piSessionObjectMarker?: never;
+}
+
+const PI_SESSION_OBJECT_SCHEMA = z.custom<PiSessionInspectableObject>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null && Object(value) === value && !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+const PI_SESSION_STRING_SCHEMA = z.string();
+const PI_SESSION_BOOLEAN_SCHEMA = z.boolean();
+const PI_SESSION_NUMBER_SCHEMA = z.number();
+
+function parseSessionObject(
+  value: PiSessionObservedValue,
+): PiSessionInspectableObject | undefined {
+  const parsed = PI_SESSION_OBJECT_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function readOwnDataProperty(
+  value: PiSessionInspectableObject,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  const result = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(value, key),
+    (): null => null,
+  )();
+  if (result.isErr() || result.value === undefined) return undefined;
+  if (!hasOwnPropertyFn.call(result.value, "value")) return undefined;
+  return result.value;
+}
+
+type PiSkillMetadataPrimitive = string | number | boolean | null;
+interface PiSkillMetadataObject {
+  [key: string]: PiSkillMetadataValue;
+}
+type PiSkillMetadataValue =
+  | PiSkillMetadataPrimitive
+  | PiSkillMetadataValue[]
+  | PiSkillMetadataObject;
+
+type PiNestedCopyResult = PiSkillMetadataValue | typeof OMIT_NESTED_VALUE;
+
+interface PiCopiedSkillInfo {
+  name: string;
+  metadata?: PiSkillMetadataValue;
+}
+
+interface PiMutableModelInfo {
+  provider: string;
+  id: string;
+  name?: string;
+  api?: string;
+}
+
+interface PiMutableRawToolPolicy {
+  read?: NonNullable<AgentDescriptor["rawToolPolicy"]>["read"];
+  write?: NonNullable<AgentDescriptor["rawToolPolicy"]>["write"];
+  execute?: NonNullable<AgentDescriptor["rawToolPolicy"]>["execute"];
+  delegate?: NonNullable<AgentDescriptor["rawToolPolicy"]>["delegate"];
+  network?: NonNullable<AgentDescriptor["rawToolPolicy"]>["network"];
+}
+
+interface PiMutableDelegationTarget {
+  name: string;
+  description?: string;
+  triggers: string[];
+  isCategory: boolean;
+}
+
+interface PiMutableActivePrimary {
+  descriptor: AgentDescriptor;
+  promptBlock: string;
+  modelActivation: PiPrimaryModelActivationOutcome;
+  resolvedSkills: readonly ResolvedSkill[];
+  temperatureDegraded: boolean;
+  fast?: PiPrimaryFastIntent;
+  generation: number;
+}
+
+interface PiMutableRequestSnapshot {
+  generation: number;
+  primaryName: string;
+  modelIntent: readonly string[];
+  selectedModel: PiModelInfo | undefined;
+  fast?: PiPrimaryFastIntent;
+}
+
+type PiAppliedModelActivation = Extract<
+  PiModelActivationOutcome,
+  { readonly status: "applied" }
+>;
+
+interface PiMutableAppliedActivation {
+  status: "applied";
+  model: PiModelInfo;
+  intentEntry: string;
+  source: PiAppliedModelActivation["source"];
+  thinkingLevel?: PiAppliedModelActivation["thinkingLevel"];
+  thinkingApplied?: boolean;
+}
 
 /**
  * Renders the single delimited Weave block required by the Pi adapter contract: the
@@ -188,23 +299,40 @@ const MAX_PARENT_SESSION_ID_LENGTH = 256;
 /**
  * Reads the persisted header id of the file the host is actually serving.
  *
- * Returns `undefined` when the host exposes no header, the header is absent,
- * or the header id is not a bounded non-empty string. It never invents an
+ * Returns `null` when the host exposes no header, the header is absent, or
+ * the header id is not a bounded non-empty string. It never invents an
  * identity and never accepts an arbitrary prior origin: exactly one id, taken
  * from this session's own header, is eligible.
  */
 function readPersistedHeaderSessionId(
   probe: PiParentSessionProbePort,
-): string | undefined {
-  if (typeof probe.getHeader !== "function") return undefined;
-  const header = probe.getHeader();
-  if (header === null || typeof header !== "object") return undefined;
-  const id = (header as { readonly id?: unknown }).id;
-  if (typeof id !== "string") return undefined;
-  if (id.length === 0 || id.length > MAX_PARENT_SESSION_ID_LENGTH) {
-    return undefined;
+): Result<string | null, "header-probe-failed"> {
+  if (probe.getHeader === undefined) return ok(null);
+  const header = Result.fromThrowable(
+    () => probe.getHeader?.(),
+    (): "header-probe-failed" => "header-probe-failed",
+  )();
+  if (header.isErr()) return err("header-probe-failed");
+  const headerObject = parseSessionObject(header.value);
+  if (headerObject === undefined) return ok(null);
+  const idDescriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(headerObject, "id"),
+    (): "header-probe-failed" => "header-probe-failed",
+  )();
+  if (idDescriptor.isErr()) return err("header-probe-failed");
+  if (idDescriptor.value === undefined) return ok(null);
+  if (!hasOwnPropertyFn.call(idDescriptor.value, "value")) {
+    return err("header-probe-failed");
   }
-  return id;
+  const parsedId = PI_SESSION_STRING_SCHEMA.safeParse(idDescriptor.value.value);
+  if (!parsedId.success) return ok(null);
+  if (
+    parsedId.data.length === 0 ||
+    parsedId.data.length > MAX_PARENT_SESSION_ID_LENGTH
+  ) {
+    return ok(null);
+  }
+  return ok(parsedId.data);
 }
 
 const probeParentSessionSafely = Result.fromThrowable(
@@ -215,12 +343,16 @@ const probeParentSessionSafely = Result.fromThrowable(
         reason: "host-reports-not-persisted",
       };
     }
-    const sessionFile = probe.getSessionFile();
-    if (sessionFile === undefined || sessionFile.length === 0) {
+    const sessionFile = PI_SESSION_STRING_SCHEMA.safeParse(
+      probe.getSessionFile(),
+    );
+    if (!sessionFile.success || sessionFile.data.length === 0) {
       return { persistence: "ephemeral", reason: "no-session-file" };
     }
-    const runtimeSessionId = probe.getSessionId();
-    if (typeof runtimeSessionId !== "string" || runtimeSessionId.length === 0) {
+    const runtimeSessionId = PI_SESSION_STRING_SCHEMA.safeParse(
+      probe.getSessionId(),
+    );
+    if (!runtimeSessionId.success || runtimeSessionId.data.length === 0) {
       return { persistence: "ephemeral", reason: "no-session-file" };
     }
     // Prefer the identity persisted in the session file's own header. On a
@@ -228,23 +360,26 @@ const probeParentSessionSafely = Result.fromThrowable(
     // freshly minted value, and using it as origin authority would
     // origin-mismatch every historical ref this session itself wrote.
     const headerSessionId = readPersistedHeaderSessionId(probe);
-    return headerSessionId === undefined
+    if (headerSessionId.isErr()) {
+      return { persistence: "unknown", reason: "probe-failed" };
+    }
+    return headerSessionId.value === null
       ? {
           persistence: "persistent",
-          sessionId: runtimeSessionId,
-          runtimeSessionId,
+          sessionId: runtimeSessionId.data,
+          runtimeSessionId: runtimeSessionId.data,
           identitySource: "runtime",
-          sessionFile,
+          sessionFile: sessionFile.data,
         }
       : {
           persistence: "persistent",
-          sessionId: headerSessionId,
-          runtimeSessionId,
+          sessionId: headerSessionId.value,
+          runtimeSessionId: runtimeSessionId.data,
           identitySource: "session-header",
-          sessionFile,
+          sessionFile: sessionFile.data,
         };
   },
-  () => undefined,
+  (): null => null,
 );
 
 /**
@@ -607,7 +742,7 @@ export class PiPrimarySession {
       const committedResolvedSkills = copyResolvedSkills(resolvedSkills);
       const committedModelActivation =
         copyPrimaryModelActivationOutcome(modelActivation);
-      const activePrimary: PiActivePrimary = Object.freeze({
+      const activePrimary: PiMutableActivePrimary = {
         descriptor: committedDescriptor,
         promptBlock: renderWeavePromptBlock(
           committedDescriptor,
@@ -617,13 +752,14 @@ export class PiPrimarySession {
         resolvedSkills: committedResolvedSkills,
         temperatureDegraded: temperatureDeclared,
         generation: this.activationGeneration + 1,
-        ...(committedDescriptor.fast === true ? { fast: true as const } : {}),
-      });
+      };
+      if (committedDescriptor.fast === true) activePrimary.fast = true;
+      const committedPrimary = Object.freeze(activePrimary);
 
       this.previousDescriptorName = this.current?.descriptor.name;
-      this.activationGeneration = activePrimary.generation;
-      this.current = activePrimary;
-      return copyActivePrimary(activePrimary);
+      this.activationGeneration = committedPrimary.generation;
+      this.current = committedPrimary;
+      return copyActivePrimary(committedPrimary);
     });
   }
 
@@ -674,12 +810,18 @@ const MAX_MODEL_API_LENGTH = 128;
  * models without `api` keep activating.
  */
 function copyOptionalBoundedApi(
-  api: unknown,
-): { readonly api: string } | Record<string, never> {
-  if (typeof api !== "string") return {};
-  if (api.length === 0 || api.length > MAX_MODEL_API_LENGTH) return {};
-  if (api.trim().length === 0) return {};
-  return { api };
+  api: PiSessionObservedValue,
+): string | undefined {
+  const parsedApi = PI_SESSION_STRING_SCHEMA.safeParse(api);
+  if (!parsedApi.success) return undefined;
+  if (
+    parsedApi.data.length === 0 ||
+    parsedApi.data.length > MAX_MODEL_API_LENGTH ||
+    parsedApi.data.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return parsedApi.data;
 }
 
 /**
@@ -688,13 +830,17 @@ function copyOptionalBoundedApi(
  * TypeScript fields are readonly. Host `api` is copied exactly when valid
  * and never inferred from provider or model ids.
  */
-function copyModelInfo(model: PiModelInfo): PiModelInfo {
-  return {
-    provider: model.provider,
-    id: model.id,
-    ...(model.name === undefined ? {} : { name: model.name }),
-    ...copyOptionalBoundedApi(model.api),
+function copyModelInfo(model: PiModelInfo): PiModelInfo | undefined {
+  const observed = observePiModel(model);
+  if (observed.isErr()) return undefined;
+  const copy: PiMutableModelInfo = {
+    provider: observed.value.provider,
+    id: observed.value.id,
   };
+  if (observed.value.name !== undefined) copy.name = observed.value.name;
+  const api = copyOptionalBoundedApi(observed.value.api);
+  if (api !== undefined) copy.api = api;
+  return copy;
 }
 
 function copyOptionalModelInfo(
@@ -719,13 +865,13 @@ function copyRawToolPolicy(
   policy: AgentDescriptor["rawToolPolicy"],
 ): AgentDescriptor["rawToolPolicy"] {
   if (policy === undefined) return undefined;
-  return {
-    ...(policy.read === undefined ? {} : { read: policy.read }),
-    ...(policy.write === undefined ? {} : { write: policy.write }),
-    ...(policy.execute === undefined ? {} : { execute: policy.execute }),
-    ...(policy.delegate === undefined ? {} : { delegate: policy.delegate }),
-    ...(policy.network === undefined ? {} : { network: policy.network }),
-  };
+  const copy: PiMutableRawToolPolicy = {};
+  if (policy.read !== undefined) copy.read = policy.read;
+  if (policy.write !== undefined) copy.write = policy.write;
+  if (policy.execute !== undefined) copy.execute = policy.execute;
+  if (policy.delegate !== undefined) copy.delegate = policy.delegate;
+  if (policy.network !== undefined) copy.network = policy.network;
+  return copy;
 }
 
 function copyCategory(
@@ -739,102 +885,96 @@ function copyCategory(
 function copyDelegationTarget(
   target: AgentDescriptor["delegationTargets"][number],
 ): AgentDescriptor["delegationTargets"][number] {
-  return {
+  const copy: PiMutableDelegationTarget = {
     name: target.name,
-    ...(target.description === undefined
-      ? {}
-      : { description: target.description }),
     triggers: [...target.triggers],
     isCategory: target.isCategory,
   };
+  if (target.description !== undefined) copy.description = target.description;
+  return copy;
 }
 
 const MAX_SKILL_METADATA_DEPTH = 8;
 const MAX_SKILL_METADATA_NODES = 128;
 const MAX_SKILL_METADATA_PROPERTIES = 64;
-const OMIT_NESTED_VALUE = Symbol("omit-nested-value");
-
-type NestedCopyResult = unknown | typeof OMIT_NESTED_VALUE;
 
 interface NestedCopyContext {
-  readonly ancestors: WeakSet<object>;
+  readonly ancestors: WeakSet<PiSessionInspectableObject>;
   nodes: number;
 }
 
-function readOwnDataProperty(
-  value: object,
-  key: PropertyKey,
-): PropertyDescriptor | undefined {
-  const result = Result.fromThrowable(
-    () => Object.getOwnPropertyDescriptor(value, key),
-    () => undefined,
-  )();
-  if (result.isErr() || result.value === undefined) return undefined;
-  return "value" in result.value ? result.value : undefined;
-}
-
 function copyNestedValue(
-  value: unknown,
-): { readonly value: unknown } | undefined {
-  const copied = copyNestedValueAt(value, 0, {
-    ancestors: new WeakSet<object>(),
-    nodes: 0,
-  });
-  return copied === OMIT_NESTED_VALUE ? undefined : { value: copied };
+  value: PiSessionObservedValue,
+): { readonly value: PiSkillMetadataValue } | undefined {
+  const copied = Result.fromThrowable(
+    () =>
+      copyNestedValueAt(value, 0, {
+        ancestors: new WeakSet<PiSessionInspectableObject>(),
+        nodes: 0,
+      }),
+    (): "copy-failed" => "copy-failed",
+  )();
+  if (copied.isErr() || copied.value === OMIT_NESTED_VALUE) return undefined;
+  return { value: copied.value };
 }
 
 function copyNestedValueAt(
-  value: unknown,
+  value: PiSessionObservedValue,
   depth: number,
   context: NestedCopyContext,
-): NestedCopyResult {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "undefined"
-  ) {
-    return value;
-  }
-  if (typeof value !== "object") return OMIT_NESTED_VALUE;
+): PiNestedCopyResult {
+  const parsedString = PI_SESSION_STRING_SCHEMA.safeParse(value);
+  if (parsedString.success) return parsedString.data;
+  const parsedNumber = PI_SESSION_NUMBER_SCHEMA.safeParse(value);
+  if (parsedNumber.success) return parsedNumber.data;
+  const parsedBoolean = PI_SESSION_BOOLEAN_SCHEMA.safeParse(value);
+  if (parsedBoolean.success) return parsedBoolean.data;
+  if (value === null) return null;
+  if (value === undefined) return OMIT_NESTED_VALUE;
+
+  const object = parseSessionObject(value);
+  if (object === undefined) return OMIT_NESTED_VALUE;
   if (depth >= MAX_SKILL_METADATA_DEPTH) return OMIT_NESTED_VALUE;
   if (context.nodes >= MAX_SKILL_METADATA_NODES) return OMIT_NESTED_VALUE;
-  if (context.ancestors.has(value)) return OMIT_NESTED_VALUE;
+  if (context.ancestors.has(object)) return OMIT_NESTED_VALUE;
 
   context.nodes += 1;
-  context.ancestors.add(value);
+  context.ancestors.add(object);
   try {
-    if (Array.isArray(value)) {
-      return copyNestedArray(value, depth, context);
-    }
+    const isArray = Result.fromThrowable(
+      () => Array.isArray(object),
+      (): boolean => false,
+    )().unwrapOr(false);
+    if (isArray) return copyNestedArray(object, depth, context);
 
     const prototype = Result.fromThrowable(
-      () => Object.getPrototypeOf(value),
-      () => undefined,
-    )().unwrapOr(undefined);
-    if (prototype !== Object.prototype && prototype !== null) {
+      () => Object.getPrototypeOf(object),
+      (): "unreadable" => "unreadable",
+    )();
+    if (prototype.isErr()) return OMIT_NESTED_VALUE;
+    if (prototype.value !== Object.prototype && prototype.value !== null) {
       return OMIT_NESTED_VALUE;
     }
 
     const keys = Result.fromThrowable(
-      () => Reflect.ownKeys(value),
-      () => undefined,
-    )().unwrapOr(undefined);
-    if (keys === undefined) return OMIT_NESTED_VALUE;
+      () => Reflect.ownKeys(object),
+      (): "unreadable" => "unreadable",
+    )();
+    if (keys.isErr()) return OMIT_NESTED_VALUE;
 
-    const copy: Record<string, unknown> = {};
+    const copy: PiSkillMetadataObject = {};
     let inspectedProperties = 0;
-    for (const key of keys) {
+    for (const key of keys.value) {
       if (inspectedProperties >= MAX_SKILL_METADATA_PROPERTIES) break;
       inspectedProperties += 1;
-      if (typeof key !== "string") continue;
+      const parsedKey = PI_SESSION_STRING_SCHEMA.safeParse(key);
+      if (!parsedKey.success) continue;
 
-      const property = readOwnDataProperty(value, key);
+      const property = readOwnDataProperty(object, parsedKey.data);
       if (property === undefined || !property.enumerable) continue;
       const child = copyNestedValueAt(property.value, depth + 1, context);
       if (child === OMIT_NESTED_VALUE) continue;
-      Object.defineProperty(copy, key, {
+      Object.defineProperty(copy, parsedKey.data, {
         configurable: true,
         enumerable: true,
         value: child,
@@ -843,26 +983,29 @@ function copyNestedValueAt(
     }
     return copy;
   } finally {
-    context.ancestors.delete(value);
+    context.ancestors.delete(object);
   }
 }
 
 function copyNestedArray(
-  value: object,
+  value: PiSessionInspectableObject,
   depth: number,
   context: NestedCopyContext,
-): NestedCopyResult {
+): PiNestedCopyResult {
   const lengthProperty = readOwnDataProperty(value, "length");
+  if (lengthProperty === undefined) return OMIT_NESTED_VALUE;
+  const parsedLength = PI_SESSION_NUMBER_SCHEMA.safeParse(lengthProperty.value);
   if (
-    lengthProperty === undefined ||
-    !Number.isSafeInteger(lengthProperty.value) ||
-    (lengthProperty.value as number) > MAX_SKILL_METADATA_PROPERTIES
+    !parsedLength.success ||
+    !Number.isSafeInteger(parsedLength.data) ||
+    parsedLength.data < 0 ||
+    parsedLength.data > MAX_SKILL_METADATA_PROPERTIES
   ) {
     return OMIT_NESTED_VALUE;
   }
 
-  const length = lengthProperty.value as number;
-  const copy: unknown[] = [];
+  const length = parsedLength.data;
+  const copy: PiSkillMetadataValue[] = [];
   for (let index = 0; index < length; index += 1) {
     const property = readOwnDataProperty(value, String(index));
     if (property === undefined || !property.enumerable) {
@@ -882,19 +1025,30 @@ function copyNestedArray(
 }
 
 function copyResolvedSkill(skill: ResolvedSkill): ResolvedSkill {
-  const skillName = readOwnDataProperty(skill, "name")?.value;
-  const skillInfoValue = readOwnDataProperty(skill, "skillInfo")?.value;
-  const safeSkillName = typeof skillName === "string" ? skillName : "";
-  if (!isObjectRecord(skillInfoValue)) {
-    return { name: safeSkillName, skillInfo: { name: safeSkillName } };
+  const skillObject = parseSessionObject(skill);
+  const skillNameValue =
+    skillObject === undefined
+      ? undefined
+      : readOwnDataProperty(skillObject, "name")?.value;
+  const parsedSkillName = PI_SESSION_STRING_SCHEMA.safeParse(skillNameValue);
+  const safeSkillName = parsedSkillName.success ? parsedSkillName.data : "";
+
+  const skillInfoValue =
+    skillObject === undefined
+      ? undefined
+      : readOwnDataProperty(skillObject, "skillInfo")?.value;
+  const skillInfoObject = parseSessionObject(skillInfoValue);
+  const skillInfo: PiCopiedSkillInfo = { name: safeSkillName };
+  if (skillInfoObject === undefined) {
+    return { name: safeSkillName, skillInfo };
   }
 
-  const skillInfoName = readOwnDataProperty(skillInfoValue, "name")?.value;
-  const skillInfo: { name: string; metadata?: unknown } = {
-    name: typeof skillInfoName === "string" ? skillInfoName : safeSkillName,
-  };
-  const metadataProperty = readOwnDataProperty(skillInfoValue, "metadata");
-  if (metadataProperty !== undefined) {
+  const skillInfoName = readOwnDataProperty(skillInfoObject, "name")?.value;
+  const parsedSkillInfoName = PI_SESSION_STRING_SCHEMA.safeParse(skillInfoName);
+  if (parsedSkillInfoName.success) skillInfo.name = parsedSkillInfoName.data;
+
+  const metadataProperty = readOwnDataProperty(skillInfoObject, "metadata");
+  if (metadataProperty?.enumerable === true) {
     const metadata = copyNestedValue(metadataProperty.value);
     if (metadata !== undefined) skillInfo.metadata = metadata.value;
   }
@@ -948,30 +1102,39 @@ function copyPrimaryModelActivationOutcome(
       currentModel: copyOptionalModelInfo(outcome.currentModel),
     };
   }
-  return {
+
+  const model = copyModelInfo(outcome.model);
+  if (model === undefined) {
+    return {
+      status: "degraded",
+      reason: "apply-failed",
+      currentModel: undefined,
+    };
+  }
+  const copy: PiMutableAppliedActivation = {
     status: "applied",
-    model: copyModelInfo(outcome.model),
+    model,
     intentEntry: outcome.intentEntry,
     source: outcome.source,
-    ...(outcome.thinkingLevel === undefined
-      ? {}
-      : { thinkingLevel: outcome.thinkingLevel }),
-    ...(outcome.thinkingApplied === undefined
-      ? {}
-      : { thinkingApplied: outcome.thinkingApplied }),
   };
+  if (outcome.thinkingLevel !== undefined)
+    copy.thinkingLevel = outcome.thinkingLevel;
+  if (outcome.thinkingApplied !== undefined)
+    copy.thinkingApplied = outcome.thinkingApplied;
+  return copy;
 }
 
 function copyActivePrimary(active: PiActivePrimary): PiActivePrimary {
-  return {
+  const copy: PiMutableActivePrimary = {
     descriptor: copyAgentDescriptor(active.descriptor),
     promptBlock: active.promptBlock,
     modelActivation: copyPrimaryModelActivationOutcome(active.modelActivation),
     resolvedSkills: copyResolvedSkills(active.resolvedSkills),
     temperatureDegraded: active.temperatureDegraded,
     generation: active.generation,
-    ...(active.fast === true ? { fast: true as const } : {}),
   };
+  if (active.fast === true) copy.fast = true;
+  return copy;
 }
 
 function selectedModelFromActivation(
@@ -981,36 +1144,97 @@ function selectedModelFromActivation(
   return modelActivation.currentModel;
 }
 
-function isObjectRecord(value: unknown): value is Record<PropertyKey, unknown> {
-  return typeof value === "object" && value !== null;
+function hasOwn(value: PiSessionInspectableObject, key: PropertyKey): boolean {
+  return Result.fromThrowable(
+    () => hasOwnPropertyFn.call(value, key),
+    (): boolean => false,
+  )().unwrapOr(false);
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
-  return Object.hasOwn(value, key);
+function ownKeys(
+  value: PiSessionInspectableObject,
+): readonly PropertyKey[] | undefined {
+  const result = Result.fromThrowable(
+    () => Reflect.ownKeys(value),
+    (): null => null,
+  )();
+  return result.isErr() || result.value === null ? undefined : result.value;
 }
 
-function hasSameOwnKeys(left: object, right: object): boolean {
-  const leftKeys = Reflect.ownKeys(left);
-  const rightKeys = Reflect.ownKeys(right);
+function hasSameOwnKeys(
+  left: PiSessionInspectableObject,
+  right: PiSessionInspectableObject,
+): boolean {
+  const leftKeys = ownKeys(left);
+  const rightKeys = ownKeys(right);
+  if (leftKeys === undefined || rightKeys === undefined) return false;
   return (
     leftKeys.length === rightKeys.length &&
     leftKeys.every((key) => rightKeys.includes(key))
   );
 }
 
+function asObservedArray(
+  value: PiSessionObservedValue,
+): PiSessionInspectableObject | undefined {
+  const object = parseSessionObject(value);
+  if (object === undefined) return undefined;
+  const isArray = Result.fromThrowable(
+    () => Array.isArray(object),
+    (): boolean => false,
+  )().unwrapOr(false);
+  return isArray ? object : undefined;
+}
+
+function readObservedArrayLength(
+  value: PiSessionInspectableObject,
+): number | undefined {
+  const lengthProperty = readOwnDataProperty(value, "length");
+  if (lengthProperty === undefined) return undefined;
+  const parsedLength = PI_SESSION_NUMBER_SCHEMA.safeParse(lengthProperty.value);
+  if (
+    !parsedLength.success ||
+    !Number.isSafeInteger(parsedLength.data) ||
+    parsedLength.data < 0
+  ) {
+    return undefined;
+  }
+  return parsedLength.data;
+}
+
+function readObservedString(
+  value: PiSessionInspectableObject,
+  key: PropertyKey,
+): string | undefined {
+  const property = readOwnDataProperty(value, key);
+  if (property === undefined) return undefined;
+  const parsed = PI_SESSION_STRING_SCHEMA.safeParse(property.value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function modelIntentsMatch(
-  candidate: unknown,
+  candidate: PiSessionObservedValue,
   committed: readonly string[],
 ): boolean {
+  const candidateArray = asObservedArray(candidate);
+  const committedArray = asObservedArray(committed);
+  if (candidateArray === undefined || committedArray === undefined) {
+    return false;
+  }
+  if (!hasSameOwnKeys(candidateArray, committedArray)) return false;
+  const candidateLength = readObservedArrayLength(candidateArray);
+  const committedLength = readObservedArrayLength(committedArray);
   if (
-    !Array.isArray(candidate) ||
-    !hasSameOwnKeys(candidate, committed) ||
-    candidate.length !== committed.length
+    candidateLength === undefined ||
+    committedLength === undefined ||
+    candidateLength !== committedLength ||
+    candidateLength !== committed.length
   ) {
     return false;
   }
   for (let index = 0; index < committed.length; index += 1) {
-    if (!hasOwn(candidate, index) || candidate[index] !== committed[index]) {
+    const candidateValue = readObservedString(candidateArray, String(index));
+    if (candidateValue === undefined || candidateValue !== committed[index]) {
       return false;
     }
   }
@@ -1018,64 +1242,110 @@ function modelIntentsMatch(
 }
 
 function selectedModelsMatch(
-  candidate: unknown,
+  candidate: PiSessionObservedValue,
   committed: PiModelInfo | undefined,
 ): boolean {
   if (candidate === undefined || committed === undefined) {
     return candidate === committed;
   }
-  if (!isObjectRecord(candidate) || !hasSameOwnKeys(candidate, committed)) {
+  const candidateObject = parseSessionObject(candidate);
+  const committedObject = parseSessionObject(committed);
+  if (candidateObject === undefined || committedObject === undefined) {
     return false;
   }
+  if (!hasSameOwnKeys(candidateObject, committedObject)) return false;
+  const committedObservation = observePiModel(committed);
+  if (committedObservation.isErr()) return false;
+  const candidateProvider = readObservedString(candidateObject, "provider");
+  const candidateId = readObservedString(candidateObject, "id");
+  if (
+    candidateProvider !== committedObservation.value.provider ||
+    candidateId !== committedObservation.value.id
+  ) {
+    return false;
+  }
+
+  const candidateName = readObservedString(candidateObject, "name");
+  const candidateApi = readObservedString(candidateObject, "api");
   return (
-    candidate.provider === committed.provider &&
-    candidate.id === committed.id &&
-    candidate.name === committed.name &&
-    candidate.api === committed.api
+    candidateName === committedObservation.value.name &&
+    candidateApi === committedObservation.value.api
   );
 }
 
 function requestSnapshotsMatch(
-  candidate: unknown,
+  candidate: PiSessionObservedValue,
   committed: PiPrimaryRequestSnapshot,
 ): boolean {
-  if (!isObjectRecord(candidate) || !hasSameOwnKeys(candidate, committed)) {
+  const candidateObject = parseSessionObject(candidate);
+  const committedObject = parseSessionObject(committed);
+  if (candidateObject === undefined || committedObject === undefined) {
     return false;
   }
-  for (const key of [
-    "generation",
+  if (!hasSameOwnKeys(candidateObject, committedObject)) return false;
+  const generationProperty = readOwnDataProperty(candidateObject, "generation");
+  const primaryNameProperty = readOwnDataProperty(
+    candidateObject,
     "primaryName",
-    "modelIntent",
-    "selectedModel",
-  ]) {
-    if (!hasOwn(candidate, key)) return false;
-  }
-  const candidateFastPresent = hasOwn(candidate, "fast");
-  const committedFastPresent = hasOwn(committed, "fast");
-  return (
-    candidate.generation === committed.generation &&
-    candidate.primaryName === committed.primaryName &&
-    modelIntentsMatch(candidate.modelIntent, committed.modelIntent) &&
-    selectedModelsMatch(candidate.selectedModel, committed.selectedModel) &&
-    candidateFastPresent === committedFastPresent &&
-    (!candidateFastPresent || candidate.fast === committed.fast)
   );
+  const modelIntentProperty = readOwnDataProperty(
+    candidateObject,
+    "modelIntent",
+  );
+  const selectedModelProperty = readOwnDataProperty(
+    candidateObject,
+    "selectedModel",
+  );
+  if (
+    generationProperty === undefined ||
+    primaryNameProperty === undefined ||
+    modelIntentProperty === undefined ||
+    selectedModelProperty === undefined
+  ) {
+    return false;
+  }
+  const generation = PI_SESSION_NUMBER_SCHEMA.safeParse(
+    generationProperty.value,
+  );
+  const primaryName = PI_SESSION_STRING_SCHEMA.safeParse(
+    primaryNameProperty.value,
+  );
+  if (
+    !generation.success ||
+    !Number.isSafeInteger(generation.data) ||
+    !primaryName.success
+  ) {
+    return false;
+  }
+  if (
+    generation.data !== committed.generation ||
+    primaryName.data !== committed.primaryName ||
+    !modelIntentsMatch(modelIntentProperty.value, committed.modelIntent) ||
+    !selectedModelsMatch(selectedModelProperty.value, committed.selectedModel)
+  ) {
+    return false;
+  }
+
+  const candidateFastPresent = hasOwn(candidateObject, "fast");
+  const committedFastPresent = hasOwn(committedObject, "fast");
+  if (candidateFastPresent !== committedFastPresent) return false;
+  if (!candidateFastPresent) return true;
+  const fastProperty = readOwnDataProperty(candidateObject, "fast");
+  if (fastProperty === undefined) return false;
+  const fast = PI_SESSION_BOOLEAN_SCHEMA.safeParse(fastProperty.value);
+  return fast.success && fast.data === true && committed.fast === true;
 }
 
-function copySelectedModel(model: PiModelInfo): PiModelInfo {
-  return Object.freeze({
-    provider: model.provider,
-    id: model.id,
-    ...(model.name === undefined ? {} : { name: model.name }),
-    ...copyOptionalBoundedApi(model.api),
-  });
+function copySelectedModel(model: PiModelInfo): PiModelInfo | undefined {
+  const copy = copyModelInfo(model);
+  return copy === undefined ? undefined : Object.freeze(copy);
 }
 
 function copyRequestSnapshot(
   current: PiActivePrimary,
 ): PiPrimaryRequestSnapshot {
   const selectedModel = selectedModelFromActivation(current.modelActivation);
-  return Object.freeze({
+  const snapshot: PiMutableRequestSnapshot = {
     generation: current.generation,
     primaryName: current.descriptor.name,
     modelIntent: Object.freeze([...current.descriptor.models]),
@@ -1083,8 +1353,9 @@ function copyRequestSnapshot(
       selectedModel === undefined
         ? undefined
         : copySelectedModel(selectedModel),
-    ...(current.fast === true ? { fast: true as const } : {}),
-  });
+  };
+  if (current.fast === true) snapshot.fast = true;
+  return Object.freeze(snapshot);
 }
 
 function errAsyncActivation(

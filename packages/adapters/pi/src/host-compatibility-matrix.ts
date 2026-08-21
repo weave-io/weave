@@ -1,4 +1,5 @@
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result, type Result as ResultType } from "neverthrow";
+import { z } from "zod";
 import {
   HOST_PACKAGE_NAME,
   HOST_VERSION_FLOOR,
@@ -191,47 +192,310 @@ export type HostCompatibilityMatrixError =
   | { type: "FloorDrift"; expected: string; actual: string }
   | { type: "ExactVersionMalformed"; version: string }
   | { type: "ExactVersionOutOfRange"; version: string }
-  | { type: "SurfaceDrift"; reason: string };
+  | { type: "SurfaceDrift"; reason: string }
+  | { type: "Malformed"; field: string };
 
 const EXACT_TESTED_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+const MATRIX_INPUT_SCHEMA = z.unknown();
+type MatrixInput = z.input<typeof MATRIX_INPUT_SCHEMA>;
+
+interface MatrixObjectReference {
+  readonly matrixObjectMarker?: never;
+}
+
+const MATRIX_OBJECT_SCHEMA = z.custom<MatrixObjectReference>((value) => {
+  const checked = Result.fromThrowable(
+    (): boolean => {
+      if (value === null || Object(value) !== value) return false;
+      if (Array.isArray(value)) return false;
+      const prototype = Object.getPrototypeOf(value);
+      return prototype === Object.prototype || prototype === null;
+    },
+    (): boolean => false,
+  )();
+  return checked.isOk() && checked.value;
+});
+
+type MatrixDataRead =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: MatrixInput };
+
+function readMatrixData(value: MatrixInput, key: string): MatrixDataRead {
+  const record = MATRIX_OBJECT_SCHEMA.safeParse(value);
+  if (!record.success) return { kind: "invalid" };
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(record.data, key),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr()) return { kind: "invalid" };
+  if (descriptor.value === undefined) return { kind: "missing" };
+  if (!("value" in descriptor.value) || descriptor.value.enumerable !== true) {
+    return { kind: "invalid" };
+  }
+  return { kind: "value", value: descriptor.value.value };
+}
+
+function readMatrixArray(
+  value: MatrixInput,
+): readonly MatrixInput[] | undefined {
+  const isArray = Result.fromThrowable(
+    () => Array.isArray(value),
+    (): boolean => false,
+  )();
+  if (isArray.isErr() || !isArray.value) return undefined;
+  const lengthDescriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(value, "length"),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (lengthDescriptor.isErr() || lengthDescriptor.value === undefined) {
+    return undefined;
+  }
+  if (
+    !("value" in lengthDescriptor.value) ||
+    lengthDescriptor.value.enumerable === true
+  ) {
+    return undefined;
+  }
+  const parsedLength = z
+    .number()
+    .int()
+    .min(0)
+    .max(PI_HOST_SURFACE_IDS.length)
+    .safeParse(lengthDescriptor.value.value);
+  if (!parsedLength.success || !Number.isSafeInteger(parsedLength.data)) {
+    return undefined;
+  }
+  const values: MatrixInput[] = [];
+  for (let index = 0; index < parsedLength.data; index += 1) {
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(value, String(index)),
+      (): PropertyDescriptor | undefined => undefined,
+    )();
+    if (descriptor.isErr() || descriptor.value === undefined) return undefined;
+    if (
+      !("value" in descriptor.value) ||
+      descriptor.value.enumerable !== true
+    ) {
+      return undefined;
+    }
+    values.push(descriptor.value.value);
+  }
+  return values;
+}
+
+function parseMatrixString(
+  value: MatrixInput,
+  field: string,
+): ResultType<string, HostCompatibilityMatrixError> {
+  const parsed = z.string().safeParse(value);
+  return parsed.success ? ok(parsed.data) : err({ type: "Malformed", field });
+}
+
+function parseMatrixBoolean(
+  value: MatrixInput,
+  field: string,
+): ResultType<boolean, HostCompatibilityMatrixError> {
+  const parsed = z.boolean().safeParse(value);
+  return parsed.success ? ok(parsed.data) : err({ type: "Malformed", field });
+}
+
+type MutableSurfaceDeclaration = {
+  id: PiHostSurfaceId;
+  required: boolean;
+  nativeSupport: boolean;
+  minimumHostVersion: string;
+  severity: PiHostSurfaceSeverity;
+  contract: string;
+  remediation: string;
+  fallback?: PiHostSurfaceFallback;
+};
+
+function parseSurface(
+  value: MatrixInput,
+  index: number,
+): ResultType<PiHostSurfaceDeclaration, HostCompatibilityMatrixError> {
+  const idValue = readMatrixData(value, "id");
+  const requiredValue = readMatrixData(value, "required");
+  const nativeValue = readMatrixData(value, "nativeSupport");
+  const minimumValue = readMatrixData(value, "minimumHostVersion");
+  const severityValue = readMatrixData(value, "severity");
+  const contractValue = readMatrixData(value, "contract");
+  const remediationValue = readMatrixData(value, "remediation");
+  if (
+    idValue.kind !== "value" ||
+    requiredValue.kind !== "value" ||
+    nativeValue.kind !== "value" ||
+    minimumValue.kind !== "value" ||
+    severityValue.kind !== "value" ||
+    contractValue.kind !== "value" ||
+    remediationValue.kind !== "value"
+  ) {
+    return err({ type: "Malformed", field: `surfaces[${index}]` });
+  }
+  const id = parseMatrixString(idValue.value, `surfaces.id[${index}]`);
+  const required = parseMatrixBoolean(
+    requiredValue.value,
+    `surfaces.required[${index}]`,
+  );
+  const nativeSupport = parseMatrixBoolean(
+    nativeValue.value,
+    `surfaces.nativeSupport[${index}]`,
+  );
+  const minimumHostVersion = parseMatrixString(
+    minimumValue.value,
+    `surfaces.minimumHostVersion[${index}]`,
+  );
+  const severity = z
+    .enum([
+      "required-for-delegation",
+      "overlay-only",
+      "rendering-fallback",
+      "feature-only",
+    ])
+    .safeParse(severityValue.value);
+  const contract = parseMatrixString(
+    contractValue.value,
+    `surfaces.contract[${index}]`,
+  );
+  const remediation = parseMatrixString(
+    remediationValue.value,
+    `surfaces.remediation[${index}]`,
+  );
+  if (
+    id.isErr() ||
+    required.isErr() ||
+    nativeSupport.isErr() ||
+    minimumHostVersion.isErr() ||
+    !severity.success ||
+    contract.isErr() ||
+    remediation.isErr()
+  ) {
+    return err({ type: "Malformed", field: `surfaces[${index}]` });
+  }
+  const surfaceId = PI_HOST_SURFACE_IDS.find(
+    (candidate) => candidate === id.value,
+  );
+  if (surfaceId === undefined) {
+    return err({
+      type: "SurfaceDrift",
+      reason: "surface-unknown-or-duplicate",
+    });
+  }
+  const fallbackValue = readMatrixData(value, "fallback");
+  if (fallbackValue.kind === "invalid") {
+    return err({ type: "Malformed", field: `surfaces.fallback[${index}]` });
+  }
+  let fallback: PiHostSurfaceFallback | undefined;
+  if (fallbackValue.kind === "value") {
+    const parsedFallback = z
+      .enum(["pi-default", "custom-editor"])
+      .optional()
+      .safeParse(fallbackValue.value);
+    if (!parsedFallback.success) {
+      return err({ type: "Malformed", field: `surfaces.fallback[${index}]` });
+    }
+    fallback = parsedFallback.data;
+  }
+  const declaration: MutableSurfaceDeclaration = {
+    id: surfaceId,
+    required: required.value,
+    nativeSupport: nativeSupport.value,
+    minimumHostVersion: minimumHostVersion.value,
+    severity: severity.data,
+    contract: contract.value,
+    remediation: remediation.value,
+  };
+  if (fallback !== undefined) declaration.fallback = fallback;
+  return ok(declaration);
+}
+
+function parseMatrix(
+  value: MatrixInput,
+): ResultType<PiHostCompatibilityMatrix, HostCompatibilityMatrixError> {
+  const packageField = readMatrixData(value, "package");
+  const rangeField = readMatrixData(value, "supportedRange");
+  const floorField = readMatrixData(value, "floorVersion");
+  const exactField = readMatrixData(value, "exactTestedVersion");
+  const surfacesField = readMatrixData(value, "surfaces");
+  if (
+    packageField.kind !== "value" ||
+    rangeField.kind !== "value" ||
+    floorField.kind !== "value" ||
+    exactField.kind !== "value" ||
+    surfacesField.kind !== "value"
+  ) {
+    return err({ type: "Malformed", field: "matrix" });
+  }
+  const packageValue = parseMatrixString(packageField.value, "package");
+  const rangeValue = parseMatrixString(rangeField.value, "supportedRange");
+  const floorValue = parseMatrixString(floorField.value, "floorVersion");
+  const exactValue = parseMatrixString(exactField.value, "exactTestedVersion");
+  const rawSurfaces = readMatrixArray(surfacesField.value);
+  if (
+    packageValue.isErr() ||
+    rangeValue.isErr() ||
+    floorValue.isErr() ||
+    exactValue.isErr() ||
+    rawSurfaces === undefined
+  ) {
+    return err({ type: "Malformed", field: "matrix" });
+  }
+  const surfaces: PiHostSurfaceDeclaration[] = [];
+  for (const [index, surfaceValue] of rawSurfaces.entries()) {
+    const surface = parseSurface(surfaceValue, index);
+    if (surface.isErr()) return err(surface.error);
+    surfaces.push(surface.value);
+  }
+  return ok({
+    package: packageValue.value,
+    supportedRange: rangeValue.value,
+    floorVersion: floorValue.value,
+    exactTestedVersion: exactValue.value,
+    surfaces,
+  });
+}
 
 export function validateHostCompatibilityMatrix(
   matrix: PiHostCompatibilityMatrix,
 ): Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError> {
-  if (matrix.package !== HOST_PACKAGE_NAME)
+  const parsed = parseMatrix(matrix);
+  if (parsed.isErr()) return err(parsed.error);
+  const candidate = parsed.value;
+  if (candidate.package !== HOST_PACKAGE_NAME)
     return err({
       type: "PackageMismatch",
       expected: HOST_PACKAGE_NAME,
-      actual: matrix.package,
+      actual: candidate.package,
     });
   const expectedRange = `>=${HOST_VERSION_FLOOR}`;
-  if (matrix.supportedRange !== expectedRange)
+  if (candidate.supportedRange !== expectedRange)
     return err({
       type: "RangeDrift",
       expected: expectedRange,
-      actual: matrix.supportedRange,
+      actual: candidate.supportedRange,
     });
-  if (matrix.floorVersion !== HOST_VERSION_FLOOR)
+  if (candidate.floorVersion !== HOST_VERSION_FLOOR)
     return err({
       type: "FloorDrift",
       expected: HOST_VERSION_FLOOR,
-      actual: matrix.floorVersion,
+      actual: candidate.floorVersion,
     });
-  if (!EXACT_TESTED_VERSION_PATTERN.test(matrix.exactTestedVersion))
+  if (!EXACT_TESTED_VERSION_PATTERN.test(candidate.exactTestedVersion))
     return err({
       type: "ExactVersionMalformed",
-      version: matrix.exactTestedVersion,
+      version: candidate.exactTestedVersion,
     });
-  if (!isSupportedHostVersion(matrix.exactTestedVersion))
+  if (!isSupportedHostVersion(candidate.exactTestedVersion))
     return err({
       type: "ExactVersionOutOfRange",
-      version: matrix.exactTestedVersion,
+      version: candidate.exactTestedVersion,
     });
-  if (matrix.surfaces.length !== PI_HOST_SURFACE_IDS.length)
+  if (candidate.surfaces.length !== PI_HOST_SURFACE_IDS.length)
     return err({ type: "SurfaceDrift", reason: "surface-count" });
   const seen = new Set<string>();
-  for (const surface of matrix.surfaces) {
-    if (!PI_HOST_SURFACE_IDS.includes(surface.id) || seen.has(surface.id))
+  for (const surface of candidate.surfaces) {
+    if (seen.has(surface.id))
       return err({
         type: "SurfaceDrift",
         reason: "surface-unknown-or-duplicate",
@@ -256,7 +520,7 @@ export function validateHostCompatibilityMatrix(
     const expectedFallback = ((): PiHostSurfaceFallback | undefined => {
       if (renderingSurface) return "pi-default";
       if (overlaySurface) return "custom-editor";
-      return undefined;
+      return void 0;
     })();
     if (
       !knownSeverity ||
@@ -280,5 +544,5 @@ export function validateHostCompatibilityMatrix(
   }
   if (seen.size !== PI_HOST_SURFACE_IDS.length)
     return err({ type: "SurfaceDrift", reason: "surface-missing" });
-  return ok(matrix);
+  return ok(candidate);
 }

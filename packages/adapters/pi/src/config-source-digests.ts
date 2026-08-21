@@ -60,7 +60,8 @@ import {
   normalizePath,
 } from "@weaveio/weave-config";
 import type { WeaveConfig } from "@weaveio/weave-core";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { PiTrustState } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -182,10 +183,32 @@ function describeCause(cause: unknown): string {
   return String(cause);
 }
 
+const MISSING_FILE_CODE_SCHEMA = z.enum(["ENOENT", "ENOTDIR", "ENAMETOOLONG"]);
+interface MissingFileCauseObject {
+  readonly missingFileCauseObjectMarker?: never;
+}
+const MISSING_FILE_CAUSE_OBJECT_SCHEMA = z.custom<MissingFileCauseObject>(
+  (value) =>
+    Result.fromThrowable(
+      () =>
+        value !== null &&
+        Object(value) === value &&
+        !Array.isArray(value) &&
+        !(value instanceof Function),
+      (): boolean => false,
+    )().unwrapOr(false),
+);
+
 function isMissingFileCause(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null) return false;
-  const code = (cause as { code?: unknown }).code;
-  return code === "ENOENT" || code === "ENOTDIR" || code === "ENAMETOOLONG";
+  const parsedCause = MISSING_FILE_CAUSE_OBJECT_SCHEMA.safeParse(cause);
+  if (!parsedCause.success) return false;
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(parsedCause.data, "code"),
+    (): PropertyDescriptor | undefined => undefined,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return false;
+  if (!("value" in descriptor.value)) return false;
+  return MISSING_FILE_CODE_SCHEMA.safeParse(descriptor.value.value).success;
 }
 
 /**
@@ -236,7 +259,7 @@ export function createPiConfigSourceFsPort(
             return okAsync<
               PiConfigSourceFileStat | undefined,
               PiConfigSourceFsError
-            >(undefined);
+            >(void 0);
           }
           return errAsync<
             PiConfigSourceFileStat | undefined,

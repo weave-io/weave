@@ -1,10 +1,43 @@
 import { err, ok, Result, type ResultAsync } from "neverthrow";
-import type {
-  PiModelInfo,
-  PiModelInfoWithContextWindow,
-  PiOrderedModelResolution,
+import { z } from "zod";
+import {
+  observePiModel,
+  type PiModelInfo,
+  type PiModelInfoWithContextWindow,
+  type PiOrderedModelResolution,
 } from "./model-resolution.js";
 import { canonicalizeToBytes, type JsonValue } from "./strict-json.js";
+
+const PI_FAILOVER_INPUT_SCHEMA = z.unknown();
+export type PiFailoverObservedValue = z.input<typeof PI_FAILOVER_INPUT_SCHEMA>;
+
+interface PiInspectableObject {
+  readonly piInspectableObjectMarker?: never;
+}
+
+const PI_INSPECTABLE_OBJECT_SCHEMA = z.custom<PiInspectableObject>((value) =>
+  Result.fromThrowable(
+    () =>
+      value !== null && Object(value) === value && !(value instanceof Function),
+    (): boolean => false,
+  )().unwrapOr(false),
+);
+
+const PI_STRING_SCHEMA = z.string();
+const PI_BOOLEAN_SCHEMA = z.boolean();
+const PI_NUMBER_SCHEMA = z.number();
+
+function parseInspectableObject(
+  value: PiFailoverObservedValue,
+): PiInspectableObject | undefined {
+  const parsed = PI_INSPECTABLE_OBJECT_SCHEMA.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parsePropertyKeyString(key: PropertyKey): string | undefined {
+  const parsed = PI_STRING_SCHEMA.safeParse(key);
+  return parsed.success ? parsed.data : undefined;
+}
 
 /** The complete, closed set of provider failures eligible for model fallback. */
 export const PI_FAILOVER_FAILURE_CLASSES = Object.freeze([
@@ -64,7 +97,7 @@ export type PiOwnDataReadState = "missing" | "data" | "accessor" | "unreadable";
 
 export interface PiOwnDataRead {
   readonly state: PiOwnDataReadState;
-  readonly value?: unknown;
+  readonly value?: PiFailoverObservedValue;
 }
 
 /**
@@ -72,18 +105,14 @@ export interface PiOwnDataRead {
  * trap or descriptor failure is represented as `unreadable`, never thrown.
  */
 export function readPiOwnEnumerableData(
-  target: unknown,
+  target: PiFailoverObservedValue,
   key: PropertyKey,
 ): PiOwnDataRead {
-  if (
-    target === null ||
-    (typeof target !== "object" && typeof target !== "function")
-  ) {
-    return { state: "missing" };
-  }
+  const parsedTarget = parseInspectableObject(target);
+  if (parsedTarget === undefined) return { state: "missing" };
 
   return Result.fromThrowable(
-    () => getOwnPropertyDescriptor(target, key),
+    () => getOwnPropertyDescriptor(parsedTarget, key),
     (): undefined => undefined,
   )().match(
     (descriptor) => {
@@ -100,7 +129,7 @@ export function readPiOwnEnumerableData(
 }
 
 function readOwnPropertyDescriptor(
-  target: object,
+  target: PiInspectableObject,
   key: PropertyKey,
 ): Result<PropertyDescriptor | undefined, "unreadable"> {
   return Result.fromThrowable(
@@ -110,7 +139,7 @@ function readOwnPropertyDescriptor(
 }
 
 function readOwnKeys(
-  target: object,
+  target: PiInspectableObject,
 ): Result<readonly PropertyKey[], "unreadable"> {
   return Result.fromThrowable(
     () => Reflect.ownKeys(target),
@@ -118,7 +147,9 @@ function readOwnKeys(
   )();
 }
 
-function readPrototype(target: object): Result<object | null, "unreadable"> {
+function readPrototype(
+  target: PiInspectableObject,
+): Result<PiInspectableObject | null, "unreadable"> {
   return Result.fromThrowable(
     () => getPrototypeOf(target),
     (): "unreadable" => "unreadable",
@@ -126,17 +157,18 @@ function readPrototype(target: object): Result<object | null, "unreadable"> {
 }
 
 function boundedText(
-  value: unknown,
+  value: PiFailoverObservedValue,
 ):
   | { readonly state: "usable"; readonly text: string }
   | { readonly state: "absent" | "hostile" } {
-  if (typeof value !== "string") return { state: "absent" };
-  if (value.length > MAX_PI_ERROR_MESSAGE_BYTES) {
+  const parsedValue = PI_STRING_SCHEMA.safeParse(value);
+  if (!parsedValue.success) return { state: "absent" };
+  if (parsedValue.data.length > MAX_PI_ERROR_MESSAGE_BYTES) {
     return { state: "hostile" };
   }
 
   const bytes = Result.fromThrowable(
-    () => textEncoder.encode(value),
+    () => textEncoder.encode(parsedValue.data),
     (): undefined => undefined,
   )();
   if (bytes.isErr() || bytes.value.byteLength > MAX_PI_ERROR_MESSAGE_BYTES) {
@@ -145,7 +177,7 @@ function boundedText(
 
   return {
     state: "usable",
-    text: stringToLowerCase.call(value),
+    text: stringToLowerCase.call(parsedValue.data),
   };
 }
 
@@ -248,13 +280,16 @@ interface FailureEvidence {
   readonly hostile: boolean;
 }
 
-function collectFailureEvidence(root: unknown): FailureEvidence {
+function collectFailureEvidence(
+  root: PiFailoverObservedValue,
+): FailureEvidence {
   const statusCodes: number[] = [];
   const textClasses: PiFailoverFailureClass[] = [];
-  const queue: Array<{ readonly value: unknown; readonly depth: number }> = [
-    { value: root, depth: 0 },
-  ];
-  const seen = new Set<object>();
+  const queue: Array<{
+    readonly value: PiFailoverObservedValue;
+    readonly depth: number;
+  }> = [{ value: root, depth: 0 }];
+  const seen = new Set<PiInspectableObject>();
   let timeoutFlag = false;
   let overflowFlag = false;
   let hostile = false;
@@ -263,34 +298,31 @@ function collectFailureEvidence(root: unknown): FailureEvidence {
     const current = queue.shift();
     if (current === undefined) break;
     const { value, depth } = current;
-    if (
-      value === null ||
-      (typeof value !== "object" && typeof value !== "function")
-    ) {
-      continue;
-    }
-    if (seen.has(value)) continue;
-    seen.add(value);
+    const currentObject = parseInspectableObject(value);
+    if (currentObject === undefined) continue;
+    if (seen.has(currentObject)) continue;
+    seen.add(currentObject);
 
     for (const key of STATUS_KEYS) {
-      const read = readPiOwnEnumerableData(value, key);
+      const read = readPiOwnEnumerableData(currentObject, key);
       if (read.state === "accessor" || read.state === "unreadable") {
         hostile = true;
         continue;
       }
+      if (read.state !== "data") continue;
+      const status = PI_NUMBER_SCHEMA.safeParse(read.value);
       if (
-        read.state === "data" &&
-        typeof read.value === "number" &&
-        Number.isSafeInteger(read.value) &&
-        read.value >= 100 &&
-        read.value <= 599
+        status.success &&
+        Number.isSafeInteger(status.data) &&
+        status.data >= 100 &&
+        status.data <= 599
       ) {
-        statusCodes.push(read.value);
+        statusCodes.push(status.data);
       }
     }
 
     for (const key of TEXT_KEYS) {
-      const read = readPiOwnEnumerableData(value, key);
+      const read = readPiOwnEnumerableData(currentObject, key);
       if (read.state === "accessor" || read.state === "unreadable") {
         hostile = true;
         continue;
@@ -305,36 +337,36 @@ function collectFailureEvidence(root: unknown): FailureEvidence {
     }
 
     for (const key of BOOLEAN_TIMEOUT_KEYS) {
-      const read = readPiOwnEnumerableData(value, key);
+      const read = readPiOwnEnumerableData(currentObject, key);
       if (read.state === "accessor" || read.state === "unreadable") {
         hostile = true;
-      } else if (read.state === "data" && read.value === true) {
-        timeoutFlag = true;
+      } else if (read.state === "data") {
+        const timeout = PI_BOOLEAN_SCHEMA.safeParse(read.value);
+        if (timeout.success && timeout.data) timeoutFlag = true;
       }
     }
 
     for (const key of BOOLEAN_OVERFLOW_KEYS) {
-      const read = readPiOwnEnumerableData(value, key);
+      const read = readPiOwnEnumerableData(currentObject, key);
       if (read.state === "accessor" || read.state === "unreadable") {
         hostile = true;
-      } else if (read.state === "data" && read.value === true) {
-        overflowFlag = true;
+      } else if (read.state === "data") {
+        const overflow = PI_BOOLEAN_SCHEMA.safeParse(read.value);
+        if (overflow.success && overflow.data) overflowFlag = true;
       }
     }
 
     if (depth >= MAX_PI_FAILURE_EVIDENCE_DEPTH) continue;
     for (const key of NESTED_ERROR_KEYS) {
-      const read = readPiOwnEnumerableData(value, key);
+      const read = readPiOwnEnumerableData(currentObject, key);
       if (read.state === "accessor" || read.state === "unreadable") {
         hostile = true;
         continue;
       }
-      if (
-        read.state === "data" &&
-        read.value !== null &&
-        (typeof read.value === "object" || typeof read.value === "function")
-      ) {
-        queue.push({ value: read.value, depth: depth + 1 });
+      if (read.state !== "data") continue;
+      const nestedObject = parseInspectableObject(read.value);
+      if (nestedObject !== undefined) {
+        queue.push({ value: nestedObject, depth: depth + 1 });
       }
     }
   }
@@ -343,21 +375,22 @@ function collectFailureEvidence(root: unknown): FailureEvidence {
 }
 
 function classifyTerminalAssistant(
-  message: unknown,
+  message: PiFailoverObservedValue,
 ): PiFailureClassification | undefined {
-  if (message === null || typeof message !== "object") return undefined;
-  const role = readPiOwnEnumerableData(message, "role");
+  const messageObject = parseInspectableObject(message);
+  if (messageObject === undefined) return undefined;
+  const role = readPiOwnEnumerableData(messageObject, "role");
   if (role.state !== "data" || role.value !== "assistant") return undefined;
-  const stopReason = readPiOwnEnumerableData(message, "stopReason");
-  if (stopReason.state !== "data" || typeof stopReason.value !== "string") {
-    return undefined;
-  }
+  const stopReason = readPiOwnEnumerableData(messageObject, "stopReason");
+  if (stopReason.state !== "data") return undefined;
+  const parsedStopReason = PI_STRING_SCHEMA.safeParse(stopReason.value);
+  if (!parsedStopReason.success) return undefined;
 
   // Only a terminal provider error is a fallback signal. In particular, a
   // length stop is not evidence that Pi's overflow recovery failed.
-  if (stopReason.value !== "error") return undefined;
+  if (parsedStopReason.data !== "error") return undefined;
 
-  const evidence = collectFailureEvidence(message);
+  const evidence = collectFailureEvidence(messageObject);
   if (evidence.hostile) {
     return { failureClass: "unknown_provider_failure" };
   }
@@ -409,14 +442,15 @@ function classifyTerminalAssistant(
  * classification for abort, normal completion, or a length stop.
  */
 export function classifyPiFailure(
-  messageOrEvent: unknown,
+  messageOrEvent: PiFailoverObservedValue,
 ): PiFailureClassification | undefined {
   return Result.fromThrowable(
     () => {
-      if (messageOrEvent !== null && typeof messageOrEvent === "object") {
-        const type = readPiOwnEnumerableData(messageOrEvent, "type");
+      const eventObject = parseInspectableObject(messageOrEvent);
+      if (eventObject !== undefined) {
+        const type = readPiOwnEnumerableData(eventObject, "type");
         if (type.state === "data" && type.value === "message_end") {
-          const message = readPiOwnEnumerableData(messageOrEvent, "message");
+          const message = readPiOwnEnumerableData(eventObject, "message");
           return message.state === "data"
             ? classifyTerminalAssistant(message.value)
             : undefined;
@@ -424,10 +458,10 @@ export function classifyPiFailure(
       }
       return classifyTerminalAssistant(messageOrEvent);
     },
-    (): undefined => undefined,
+    (): undefined => void 0,
   )().match(
     (value) => value,
-    () => undefined,
+    () => void 0,
   );
 }
 
@@ -436,11 +470,12 @@ export const classifyPiProviderFailure = classifyPiFailure;
 
 /** Classify an event only when it is the public terminal `message_end` event. */
 export function classifyPiMessageEndFailure(
-  event: unknown,
+  event: PiFailoverObservedValue,
 ): PiFailureClassification | undefined {
-  if (event === null || typeof event !== "object") return undefined;
-  const type = readPiOwnEnumerableData(event, "type");
-  const message = readPiOwnEnumerableData(event, "message");
+  const eventObject = parseInspectableObject(event);
+  if (eventObject === undefined) return undefined;
+  const type = readPiOwnEnumerableData(eventObject, "type");
+  const message = readPiOwnEnumerableData(eventObject, "message");
   if (type.state !== "data" || type.value !== "message_end") return undefined;
   if (message.state !== "data") return undefined;
   return classifyPiFailure(message.value);
@@ -448,12 +483,13 @@ export function classifyPiMessageEndFailure(
 
 /** Public Pi settlement carries no recovery payload. */
 export function isPiPayloadlessAgentSettledEvent(
-  event: unknown,
+  event: PiFailoverObservedValue,
 ): event is { readonly type: "agent_settled" } {
-  const type = readPiOwnEnumerableData(event, "type");
+  const eventObject = parseInspectableObject(event);
+  if (eventObject === undefined) return false;
+  const type = readPiOwnEnumerableData(eventObject, "type");
   if (type.state !== "data" || type.value !== "agent_settled") return false;
-  if (event === null || typeof event !== "object") return false;
-  const keys = readOwnKeys(event);
+  const keys = readOwnKeys(eventObject);
   return keys.isOk() && keys.value.length === 1 && keys.value[0] === "type";
 }
 
@@ -522,29 +558,34 @@ export type PiModelFailoverMarkerError =
   | { readonly type: "MarkerDetailsMalformed" };
 
 /** Check the strict RFC 4122 version-4 token shape. */
-export function isPiUuidV4(value: unknown): value is string {
-  return typeof value === "string" && UUID_V4_PATTERN.test(value);
+export function isPiUuidV4(value: PiFailoverObservedValue): value is string {
+  const parsed = PI_STRING_SCHEMA.safeParse(value);
+  return parsed.success && UUID_V4_PATTERN.test(parsed.data);
 }
 
 /** Compatibility spelling for marker-token validation. */
 export const isPiUuidV4Token = isPiUuidV4;
 
 function strictMarkerDetails(
-  value: unknown,
+  value: PiFailoverObservedValue,
   expectedToken?: string,
 ): Result<PiModelFailoverMarkerDetails, PiModelFailoverMarkerError> {
-  if (value === null || typeof value !== "object") {
+  const object = parseInspectableObject(value);
+  if (object === undefined) {
     return err({ type: "MarkerDetailsMalformed" });
   }
-  const prototype = readPrototype(value);
+  const prototype = readPrototype(object);
   if (
     prototype.isErr() ||
     (prototype.value !== Object.prototype && prototype.value !== null)
   ) {
     return err({ type: "MarkerDetailsMalformed" });
   }
-  const keys = readOwnKeys(value);
-  if (keys.isErr() || keys.value.some((key) => typeof key !== "string")) {
+  const keys = readOwnKeys(object);
+  if (
+    keys.isErr() ||
+    keys.value.some((key) => parsePropertyKeyString(key) === undefined)
+  ) {
     return err({ type: "MarkerDetailsMalformed" });
   }
   if (
@@ -554,8 +595,8 @@ function strictMarkerDetails(
   ) {
     return err({ type: "MarkerDetailsMalformed" });
   }
-  const schemaVersion = readPiOwnEnumerableData(value, "schemaVersion");
-  const token = readPiOwnEnumerableData(value, "token");
+  const schemaVersion = readPiOwnEnumerableData(object, "schemaVersion");
+  const token = readPiOwnEnumerableData(object, "token");
   if (
     schemaVersion.state !== "data" ||
     token.state !== "data" ||
@@ -575,7 +616,7 @@ function strictMarkerDetails(
 
 /** Validate marker details without retaining or exposing provider content. */
 export function parsePiModelFailoverMarkerDetails(
-  value: unknown,
+  value: PiFailoverObservedValue,
   expectedToken?: string,
 ): Result<PiModelFailoverMarkerDetails, PiModelFailoverMarkerError> {
   if (expectedToken !== undefined && !isPiUuidV4(expectedToken)) {
@@ -627,16 +668,17 @@ export const createPiModelFallbackMarker = createPiModelFailoverMarker;
 
 /** Validate one complete marker against an expected token. */
 export function isPiModelFailoverMarker(
-  value: unknown,
+  value: PiFailoverObservedValue,
   expectedToken?: string,
 ): value is PiModelFailoverMarker {
-  if (value === null || typeof value !== "object") return false;
+  const object = parseInspectableObject(value);
+  if (object === undefined) return false;
   if (expectedToken !== undefined && !isPiUuidV4(expectedToken)) return false;
-  const role = readPiOwnEnumerableData(value, "role");
-  const customType = readPiOwnEnumerableData(value, "customType");
-  const content = readPiOwnEnumerableData(value, "content");
-  const display = readPiOwnEnumerableData(value, "display");
-  const details = readPiOwnEnumerableData(value, "details");
+  const role = readPiOwnEnumerableData(object, "role");
+  const customType = readPiOwnEnumerableData(object, "customType");
+  const content = readPiOwnEnumerableData(object, "content");
+  const display = readPiOwnEnumerableData(object, "display");
+  const details = readPiOwnEnumerableData(object, "details");
   if (
     role.state !== "data" ||
     customType.state !== "data" ||
@@ -686,6 +728,10 @@ interface FingerprintState {
   contentBlockCount: number;
 }
 
+interface PiFingerprintObject {
+  [key: string]: JsonValue;
+}
+
 function hasLoneSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -705,7 +751,26 @@ function hasLoneSurrogate(value: string): boolean {
 function fingerprintFailure(
   type: PiAssistantFingerprintError["type"],
 ): Result<never, PiAssistantFingerprintError> {
-  return err({ type } as PiAssistantFingerprintError);
+  switch (type) {
+    case "FingerprintNotAssistant":
+      return err({ type: "FingerprintNotAssistant" });
+    case "FingerprintDepthExceeded":
+      return err({ type: "FingerprintDepthExceeded" });
+    case "FingerprintPropertyLimitExceeded":
+      return err({ type: "FingerprintPropertyLimitExceeded" });
+    case "FingerprintByteLimitExceeded":
+      return err({ type: "FingerprintByteLimitExceeded" });
+    case "FingerprintContentBlockLimitExceeded":
+      return err({ type: "FingerprintContentBlockLimitExceeded" });
+    case "FingerprintAccessor":
+      return err({ type: "FingerprintAccessor" });
+    case "FingerprintProxy":
+      return err({ type: "FingerprintProxy" });
+    case "FingerprintUnsupportedValue":
+      return err({ type: "FingerprintUnsupportedValue" });
+    case "FingerprintNonCanonicalValue":
+      return err({ type: "FingerprintNonCanonicalValue" });
+  }
 }
 
 function addProperties(
@@ -720,11 +785,11 @@ function addProperties(
     return fingerprintFailure("FingerprintPropertyLimitExceeded");
   }
   state.propertyCount += count;
-  return ok(undefined);
+  return ok(void 0);
 }
 
 function cloneFingerprintValue(
-  value: unknown,
+  value: PiFailoverObservedValue,
   depth: number,
   state: FingerprintState,
 ): Result<JsonValue, PiAssistantFingerprintError> {
@@ -733,59 +798,73 @@ function cloneFingerprintValue(
     return fingerprintFailure("FingerprintDepthExceeded");
   }
   if (value === null) return ok(null);
-  if (typeof value === "string") {
+  const stringValue = PI_STRING_SCHEMA.safeParse(value);
+  if (stringValue.success) {
     if (
-      value.length > MAX_PI_ASSISTANT_FINGERPRINT_BYTES ||
-      hasLoneSurrogate(value) ||
-      textEncoder.encode(value).byteLength > MAX_PI_ASSISTANT_FINGERPRINT_BYTES
+      stringValue.data.length > MAX_PI_ASSISTANT_FINGERPRINT_BYTES ||
+      hasLoneSurrogate(stringValue.data) ||
+      textEncoder.encode(stringValue.data).byteLength >
+        MAX_PI_ASSISTANT_FINGERPRINT_BYTES
     ) {
       return fingerprintFailure("FingerprintNonCanonicalValue");
     }
-    return ok(value);
+    return ok(stringValue.data);
   }
-  if (typeof value === "boolean") return ok(value);
-  if (typeof value === "number") {
+  const booleanValue = PI_BOOLEAN_SCHEMA.safeParse(value);
+  if (booleanValue.success) return ok(booleanValue.data);
+  const numberValue = PI_NUMBER_SCHEMA.safeParse(value);
+  if (numberValue.success) {
     if (
-      !Number.isFinite(value) ||
-      (Number.isInteger(value) && !Number.isSafeInteger(value))
+      !Number.isFinite(numberValue.data) ||
+      (Number.isInteger(numberValue.data) &&
+        !Number.isSafeInteger(numberValue.data))
     ) {
       return fingerprintFailure("FingerprintNonCanonicalValue");
     }
-    return ok(value);
+    return ok(numberValue.data);
   }
-  if (typeof value !== "object") {
+
+  const object = parseInspectableObject(value);
+  if (object === undefined) {
     return fingerprintFailure("FingerprintUnsupportedValue");
   }
 
-  const prototype = readPrototype(value);
+  const prototype = readPrototype(object);
   if (prototype.isErr()) return fingerprintFailure("FingerprintProxy");
 
-  if (Array.isArray(value)) {
+  if (Array.isArray(object)) {
     if (prototype.value !== Array.prototype) {
       return fingerprintFailure("FingerprintProxy");
     }
-    const keys = readOwnKeys(value);
+    const keys = readOwnKeys(object);
     if (keys.isErr()) return fingerprintFailure("FingerprintProxy");
-    const stringKeys = keys.value.filter(
-      (key): key is string => typeof key === "string",
-    );
+    const stringKeys = keys.value
+      .map(parsePropertyKeyString)
+      .filter((key): key is string => key !== undefined);
     if (stringKeys.length !== keys.value.length) {
       return fingerprintFailure("FingerprintUnsupportedValue");
     }
-    const lengthDescriptor = readOwnPropertyDescriptor(value, "length");
+    const lengthDescriptor = readOwnPropertyDescriptor(object, "length");
     if (
       lengthDescriptor.isErr() ||
       lengthDescriptor.value === undefined ||
       lengthDescriptor.value.enumerable !== false ||
-      !hasOwnPropertyFn.call(lengthDescriptor.value, "value") ||
-      typeof lengthDescriptor.value.value !== "number" ||
-      !Number.isSafeInteger(lengthDescriptor.value.value) ||
-      lengthDescriptor.value.value < 0 ||
-      lengthDescriptor.value.value > MAX_PI_ASSISTANT_FINGERPRINT_PROPERTIES
+      !hasOwnPropertyFn.call(lengthDescriptor.value, "value")
     ) {
       return fingerprintFailure("FingerprintAccessor");
     }
-    const length = lengthDescriptor.value.value;
+    const parsedLength = PI_NUMBER_SCHEMA.safeParse(
+      lengthDescriptor.value.value,
+    );
+    if (
+      !parsedLength.success ||
+      !Number.isSafeInteger(parsedLength.data) ||
+      parsedLength.data < 0 ||
+      parsedLength.data > MAX_PI_ASSISTANT_FINGERPRINT_PROPERTIES
+    ) {
+      return fingerprintFailure("FingerprintAccessor");
+    }
+    const length = parsedLength.data;
     const propertyCount = addProperties(state, length);
     if (propertyCount.isErr()) {
       return fingerprintFailure(propertyCount.error.type);
@@ -793,7 +872,7 @@ function cloneFingerprintValue(
 
     const output: JsonValue[] = [];
     for (let index = 0; index < length; index += 1) {
-      const descriptor = readOwnPropertyDescriptor(value, String(index));
+      const descriptor = readOwnPropertyDescriptor(object, String(index));
       if (
         descriptor.isErr() ||
         descriptor.value === undefined ||
@@ -832,11 +911,11 @@ function cloneFingerprintValue(
   if (prototype.value !== Object.prototype && prototype.value !== null) {
     return fingerprintFailure("FingerprintUnsupportedValue");
   }
-  const keys = readOwnKeys(value);
+  const keys = readOwnKeys(object);
   if (keys.isErr()) return fingerprintFailure("FingerprintProxy");
-  const stringKeys = keys.value.filter(
-    (key): key is string => typeof key === "string",
-  );
+  const stringKeys = keys.value
+    .map(parsePropertyKeyString)
+    .filter((key): key is string => key !== undefined);
   if (stringKeys.length !== keys.value.length) {
     return fingerprintFailure("FingerprintUnsupportedValue");
   }
@@ -845,14 +924,12 @@ function cloneFingerprintValue(
     return fingerprintFailure(propertyCount.error.type);
   }
 
-  const output: { [key: string]: JsonValue } = Object.create(null) as {
-    [key: string]: JsonValue;
-  };
+  const output: PiFingerprintObject = {};
   for (const key of stringKeys) {
     if (key.length > MAX_PI_ASSISTANT_FINGERPRINT_BYTES) {
       return fingerprintFailure("FingerprintByteLimitExceeded");
     }
-    const descriptor = readOwnPropertyDescriptor(value, key);
+    const descriptor = readOwnPropertyDescriptor(object, key);
     if (
       descriptor.isErr() ||
       descriptor.value === undefined ||
@@ -861,18 +938,19 @@ function cloneFingerprintValue(
     ) {
       return fingerprintFailure("FingerprintAccessor");
     }
-    if (key === "content" && Array.isArray(descriptor.value.value)) {
-      const blockLength = readOwnPropertyDescriptor(
-        descriptor.value.value,
-        "length",
-      );
-      const blockCount =
+    const contentObject = parseInspectableObject(descriptor.value.value);
+    const contentIsArray =
+      contentObject !== undefined && Array.isArray(contentObject);
+    if (key === "content" && contentIsArray && contentObject !== undefined) {
+      const blockLength = readOwnPropertyDescriptor(contentObject, "length");
+      const blockCountRead =
         blockLength.isOk() &&
         blockLength.value !== undefined &&
-        hasOwnPropertyFn.call(blockLength.value, "value") &&
-        typeof blockLength.value.value === "number"
-          ? blockLength.value.value
+        hasOwnPropertyFn.call(blockLength.value, "value")
+          ? PI_NUMBER_SCHEMA.safeParse(blockLength.value.value)
           : undefined;
+      const blockCount =
+        blockCountRead?.success === true ? blockCountRead.data : undefined;
       if (
         blockCount === undefined ||
         !Number.isSafeInteger(blockCount) ||
@@ -890,25 +968,31 @@ function cloneFingerprintValue(
       state,
     );
     if (child.isErr()) return child;
-    output[key] = child.value;
+    Object.defineProperty(output, key, {
+      configurable: true,
+      enumerable: true,
+      value: child.value,
+      writable: true,
+    });
   }
   return ok(output);
 }
 
 function parseFingerprint(
-  value: unknown,
+  value: PiFailoverObservedValue,
 ): Result<PiAssistantFingerprint, PiAssistantFingerprintError> {
-  if (value === null || typeof value !== "object") {
+  const object = parseInspectableObject(value);
+  if (object === undefined) {
     return fingerprintFailure("FingerprintNonCanonicalValue");
   }
-  const prototype = readPrototype(value);
+  const prototype = readPrototype(object);
   if (prototype.isErr()) return fingerprintFailure("FingerprintProxy");
   if (prototype.value !== Object.prototype && prototype.value !== null) {
     return fingerprintFailure("FingerprintNonCanonicalValue");
   }
-  const keys = readOwnKeys(value);
+  const keys = readOwnKeys(object);
   if (keys.isErr()) return fingerprintFailure("FingerprintProxy");
-  const expectedKeys = [
+  const expectedKeys: readonly string[] = [
     "schemaVersion",
     "algorithm",
     "digest",
@@ -916,24 +1000,27 @@ function parseFingerprint(
     "depth",
     "propertyCount",
     "contentBlockCount",
-  ] as const;
+  ];
+  const stringKeys = keys.value
+    .map(parsePropertyKeyString)
+    .filter((key): key is string => key !== undefined);
   if (
-    keys.value.length !== expectedKeys.length ||
-    keys.value.some(
-      (key) =>
-        typeof key !== "string" ||
-        !expectedKeys.includes(key as (typeof expectedKeys)[number]),
-    )
+    stringKeys.length !== keys.value.length ||
+    stringKeys.length !== expectedKeys.length ||
+    stringKeys.some((key) => !expectedKeys.includes(key))
   ) {
     return fingerprintFailure("FingerprintNonCanonicalValue");
   }
-  const schemaVersion = readPiOwnEnumerableData(value, "schemaVersion");
-  const algorithm = readPiOwnEnumerableData(value, "algorithm");
-  const digest = readPiOwnEnumerableData(value, "digest");
-  const byteLength = readPiOwnEnumerableData(value, "byteLength");
-  const depth = readPiOwnEnumerableData(value, "depth");
-  const propertyCount = readPiOwnEnumerableData(value, "propertyCount");
-  const contentBlockCount = readPiOwnEnumerableData(value, "contentBlockCount");
+  const schemaVersion = readPiOwnEnumerableData(object, "schemaVersion");
+  const algorithm = readPiOwnEnumerableData(object, "algorithm");
+  const digest = readPiOwnEnumerableData(object, "digest");
+  const byteLength = readPiOwnEnumerableData(object, "byteLength");
+  const depth = readPiOwnEnumerableData(object, "depth");
+  const propertyCount = readPiOwnEnumerableData(object, "propertyCount");
+  const contentBlockCount = readPiOwnEnumerableData(
+    object,
+    "contentBlockCount",
+  );
   const fields = [
     schemaVersion,
     algorithm,
@@ -956,44 +1043,58 @@ function parseFingerprint(
     byteLength.state !== "data" ||
     depth.state !== "data" ||
     propertyCount.state !== "data" ||
-    contentBlockCount.state !== "data" ||
-    schemaVersion.value !== 1 ||
-    algorithm.value !== "sha256" ||
-    typeof digest.value !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(digest.value) ||
-    typeof byteLength.value !== "number" ||
-    !Number.isSafeInteger(byteLength.value) ||
-    byteLength.value < 0 ||
-    byteLength.value > MAX_PI_ASSISTANT_FINGERPRINT_BYTES ||
-    typeof depth.value !== "number" ||
-    !Number.isSafeInteger(depth.value) ||
-    depth.value < 0 ||
-    depth.value > MAX_PI_ASSISTANT_FINGERPRINT_DEPTH ||
-    typeof propertyCount.value !== "number" ||
-    !Number.isSafeInteger(propertyCount.value) ||
-    propertyCount.value < 0 ||
-    propertyCount.value > MAX_PI_ASSISTANT_FINGERPRINT_PROPERTIES ||
-    typeof contentBlockCount.value !== "number" ||
-    !Number.isSafeInteger(contentBlockCount.value) ||
-    contentBlockCount.value < 0 ||
-    contentBlockCount.value > MAX_PI_ASSISTANT_FINGERPRINT_CONTENT_BLOCKS
+    contentBlockCount.state !== "data"
+  ) {
+    return fingerprintFailure("FingerprintNonCanonicalValue");
+  }
+
+  const parsedSchemaVersion = z.literal(1).safeParse(schemaVersion.value);
+  const parsedAlgorithm = z.literal("sha256").safeParse(algorithm.value);
+  const parsedDigest = PI_STRING_SCHEMA.safeParse(digest.value);
+  const parsedByteLength = PI_NUMBER_SCHEMA.safeParse(byteLength.value);
+  const parsedDepth = PI_NUMBER_SCHEMA.safeParse(depth.value);
+  const parsedPropertyCount = PI_NUMBER_SCHEMA.safeParse(propertyCount.value);
+  const parsedContentBlockCount = PI_NUMBER_SCHEMA.safeParse(
+    contentBlockCount.value,
+  );
+  if (
+    !parsedSchemaVersion.success ||
+    !parsedAlgorithm.success ||
+    !parsedDigest.success ||
+    !/^[0-9a-f]{64}$/u.test(parsedDigest.data) ||
+    !parsedByteLength.success ||
+    !Number.isSafeInteger(parsedByteLength.data) ||
+    parsedByteLength.data < 0 ||
+    parsedByteLength.data > MAX_PI_ASSISTANT_FINGERPRINT_BYTES ||
+    !parsedDepth.success ||
+    !Number.isSafeInteger(parsedDepth.data) ||
+    parsedDepth.data < 0 ||
+    parsedDepth.data > MAX_PI_ASSISTANT_FINGERPRINT_DEPTH ||
+    !parsedPropertyCount.success ||
+    !Number.isSafeInteger(parsedPropertyCount.data) ||
+    parsedPropertyCount.data < 0 ||
+    parsedPropertyCount.data > MAX_PI_ASSISTANT_FINGERPRINT_PROPERTIES ||
+    !parsedContentBlockCount.success ||
+    !Number.isSafeInteger(parsedContentBlockCount.data) ||
+    parsedContentBlockCount.data < 0 ||
+    parsedContentBlockCount.data > MAX_PI_ASSISTANT_FINGERPRINT_CONTENT_BLOCKS
   ) {
     return fingerprintFailure("FingerprintNonCanonicalValue");
   }
   return ok({
-    schemaVersion: 1,
-    algorithm: "sha256",
-    digest: digest.value,
-    byteLength: byteLength.value,
-    depth: depth.value,
-    propertyCount: propertyCount.value,
-    contentBlockCount: contentBlockCount.value,
+    schemaVersion: parsedSchemaVersion.data,
+    algorithm: parsedAlgorithm.data,
+    digest: parsedDigest.data,
+    byteLength: parsedByteLength.data,
+    depth: parsedDepth.data,
+    propertyCount: parsedPropertyCount.data,
+    contentBlockCount: parsedContentBlockCount.data,
   });
 }
 
 /** Compute a bounded, content-free fingerprint of a complete assistant message. */
 export function fingerprintPiAssistantMessage(
-  message: unknown,
+  message: PiFailoverObservedValue,
 ): Result<PiAssistantFingerprint, PiAssistantFingerprintError> {
   const computation = Result.fromThrowable(
     (): Result<PiAssistantFingerprint, PiAssistantFingerprintError> => {
@@ -1045,8 +1146,8 @@ export const createPiAssistantFingerprint = fingerprintPiAssistantMessage;
 
 /** Compare fingerprints only after validating the retained value. */
 export function isPiAssistantFingerprintEqual(
-  actual: unknown,
-  expected: unknown,
+  actual: PiFailoverObservedValue,
+  expected: PiFailoverObservedValue,
 ): boolean {
   const actualParsed = fingerprintPiAssistantMessage(actual);
   if (actualParsed.isErr()) return false;
@@ -1066,7 +1167,7 @@ export function isPiAssistantFingerprintEqual(
 
 /** Parse a retained fingerprint for the context-repair module. */
 export function parsePiAssistantFingerprint(
-  value: unknown,
+  value: PiFailoverObservedValue,
 ): Result<PiAssistantFingerprint, PiAssistantFingerprintError> {
   return parseFingerprint(value);
 }
@@ -1080,22 +1181,31 @@ export type PiCandidateCursorEntry =
   | PiOrderedModelResolution;
 
 type CandidateModel = PiModelInfo | PiOrderedModelResolution;
+type FailedModel = Pick<PiModelInfo, "provider" | "id"> | string;
 
-function candidateModel(candidate: CandidateModel): PiModelInfo {
-  if (
-    typeof candidate === "object" &&
-    candidate !== null &&
-    "resolved" in candidate
-  ) {
-    return candidate.model;
-  }
-  return candidate;
+function isFailedModelIdentity(
+  value: FailedModel,
+): value is Pick<PiModelInfo, "provider" | "id"> {
+  return !PI_STRING_SCHEMA.safeParse(value).success;
+}
+
+function candidateModel(candidate: CandidateModel): PiModelInfo | undefined {
+  return Result.fromThrowable(
+    () => ("resolved" in candidate ? candidate.model : candidate),
+    (): null => null,
+  )().match(
+    (model) => model,
+    () => void 0,
+  );
 }
 
 function canonicalIdentity(
   model: Pick<PiModelInfo, "provider" | "id">,
-): string {
-  return `${model.provider}/${model.id}`;
+): string | undefined {
+  const observed = observePiModel(model);
+  return observed.isOk()
+    ? `${observed.value.provider}/${observed.value.id}`
+    : undefined;
 }
 
 /** Mutable, bounded cursor over the suffix after the failed model. */
@@ -1123,18 +1233,24 @@ class BoundedPiCandidateCursor<T extends PiCandidateCursorEntry>
     failedModel: Pick<PiModelInfo, "provider" | "id"> | string | undefined,
   ) {
     let failedIdentity: string | undefined;
-    if (typeof failedModel === "string") {
-      failedIdentity = failedModel;
-    } else if (failedModel !== undefined) {
+    const failedModelText = PI_STRING_SCHEMA.safeParse(failedModel);
+    if (failedModelText.success) {
+      failedIdentity = failedModelText.data;
+    } else if (
+      failedModel !== undefined &&
+      isFailedModelIdentity(failedModel)
+    ) {
       failedIdentity = canonicalIdentity(failedModel);
     }
     const failedIndex =
       failedIdentity === undefined
         ? -1
-        : candidates.findIndex(
-            (candidate) =>
-              canonicalIdentity(candidateModel(candidate)) === failedIdentity,
-          );
+        : candidates.findIndex((candidate) => {
+            const model = candidateModel(candidate);
+            return (
+              model !== undefined && canonicalIdentity(model) === failedIdentity
+            );
+          });
     this.nextIndex = Math.min(candidates.length, Math.max(0, failedIndex + 1));
   }
 
@@ -1169,8 +1285,10 @@ function canonicalDistinctCandidates<T extends PiCandidateCursorEntry>(
   const seen = new Set<string>();
   const distinct: T[] = [];
   for (const candidate of candidates) {
-    const identity = canonicalIdentity(candidateModel(candidate));
-    if (seen.has(identity)) continue;
+    const model = candidateModel(candidate);
+    if (model === undefined) continue;
+    const identity = canonicalIdentity(model);
+    if (identity === undefined || seen.has(identity)) continue;
     seen.add(identity);
     distinct.push(candidate);
     if (distinct.length >= MAX_PI_FAILOVER_CANDIDATES) break;
@@ -1195,24 +1313,22 @@ function modelContextWindow(
   model: PiModelInfoWithContextWindow | undefined,
 ): number | undefined {
   if (model === undefined) return undefined;
-  return typeof model.contextWindow === "number"
-    ? model.contextWindow
-    : undefined;
+  return observePiModel(model).match(
+    (facts) => facts.contextWindow,
+    () => void 0,
+  );
 }
 
 function modelFromCandidate(
   candidate: PiFailoverCandidate | PiModelInfo,
 ): PiModelInfoWithContextWindow | undefined {
-  if (candidate === undefined || candidate === null) return undefined;
-  if (
-    typeof candidate === "object" &&
-    "model" in candidate &&
-    "resolved" in candidate &&
-    candidate.resolved === true
-  ) {
-    return candidate.model;
-  }
-  return candidate as PiModelInfoWithContextWindow;
+  return Result.fromThrowable(
+    () => ("resolved" in candidate ? candidate.model : candidate),
+    (): null => null,
+  )().match(
+    (model) => model,
+    () => void 0,
+  );
 }
 
 /** Overflow recovery may use only a strictly larger declared context window. */
@@ -1269,15 +1385,17 @@ export interface PiCandidatePreflightPort {
 export function piCanonicalModelIdentity(
   model: Pick<PiModelInfo, "provider" | "id">,
 ): string {
-  return canonicalIdentity(model);
+  return canonicalIdentity(model) ?? "";
 }
 
 /** Runtime guard for values crossing a typed control boundary. */
 export function isPiFailoverFailureClass(
-  value: unknown,
+  value: PiFailoverObservedValue,
 ): value is PiFailoverFailureClass {
-  return (
-    typeof value === "string" &&
-    (PI_FAILOVER_FAILURE_CLASSES as readonly string[]).includes(value)
-  );
+  const parsed = PI_STRING_SCHEMA.safeParse(value);
+  if (!parsed.success) return false;
+  for (const failureClass of PI_FAILOVER_FAILURE_CLASSES) {
+    if (failureClass === parsed.data) return true;
+  }
+  return false;
 }

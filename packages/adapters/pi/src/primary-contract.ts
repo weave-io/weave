@@ -193,6 +193,8 @@ export function toPiPrimaryContractCandidate(
  * broken skill port that throws yields `err`, which the caller treats as
  * "cannot prove the prompt is unchanged".
  */
+const PROMPT_RENDER_FAILED = "prompt-render-failed" as const;
+
 const renderPromptBlockSafely = Result.fromThrowable(
   (
     skills: PiSkillResolutionPort,
@@ -204,7 +206,7 @@ const renderPromptBlockSafely = Result.fromThrowable(
       resolveDescriptorSkillResolution(skills, descriptor, disabledSkills)
         .resolvedSkills,
     ),
-  () => undefined,
+  () => PROMPT_RENDER_FAILED,
 );
 
 function promptChanged(
