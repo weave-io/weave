@@ -1,25 +1,24 @@
 import { Result } from "neverthrow";
-import type {
-  BoundedProcess,
-  ProcessByteStream,
-} from "./child-stream-live-proof-system-contract.js";
+import type { BoundedProcess, ProcessByteStream } from "./contract.js";
 
-/** Hard bounds for process output retained by the live-proof reader. */
-export const MAX_LIVE_PROOF_LINE_BYTES = 64 * 1024;
-export const MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES = 64 * 1024;
-export const MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM = 256;
-export const MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM = 512 * 1024;
-export const MAX_LIVE_PROOF_TOTAL_QUEUED_LINES =
-  MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM * 2;
-export const MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES = 1024 * 1024;
+/** Hard bounds for process output retained by the bounded reader. */
+export const MAX_BOUNDED_PROCESS_LINE_BYTES = 64 * 1024;
+export const MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES = 64 * 1024;
+export const MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM = 256;
+export const MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM = 512 * 1024;
+export const MAX_BOUNDED_PROCESS_TOTAL_QUEUED_LINES =
+  MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM * 2;
+export const MAX_BOUNDED_PROCESS_TOTAL_QUEUED_BYTES = 1024 * 1024;
 
 /** The only stream failure that is allowed to cross the process boundary. */
-export const LIVE_PROOF_STREAM_OVERFLOW = Symbol("live-proof-stream-overflow");
+export const BOUNDED_PROCESS_STREAM_OVERFLOW = Symbol(
+  "bounded-process-stream-overflow",
+);
 
-export function isLiveProofStreamOverflow(
+export function isBoundedProcessStreamOverflow(
   value: unknown,
-): value is typeof LIVE_PROOF_STREAM_OVERFLOW {
-  return value === LIVE_PROOF_STREAM_OVERFLOW;
+): value is typeof BOUNDED_PROCESS_STREAM_OVERFLOW {
+  return value === BOUNDED_PROCESS_STREAM_OVERFLOW;
 }
 
 /**
@@ -28,7 +27,7 @@ export function isLiveProofStreamOverflow(
  * cannot drift apart.
  */
 export const MAX_BOUNDED_PROCESS_TOTAL_READ_BYTES =
-  MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES * 2;
+  MAX_BOUNDED_PROCESS_TOTAL_QUEUED_BYTES * 2;
 
 /**
  * Read stdout and stderr as text lines. The returned iterator closes on
@@ -62,7 +61,7 @@ export function readProcessLines(
     stream,
     // Keep raw bytes until a complete line arrives. This makes a split UTF-8
     // sequence bounded by the same byte budget as every other line.
-    lineBuffer: new Uint8Array(MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES),
+    lineBuffer: new Uint8Array(MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES),
     cancelRequested: false,
     lineBytes: 0,
     queuedLines: 0,
@@ -121,11 +120,11 @@ export function readProcessLines(
   const enqueue = (state: OutputStreamState, value: string): boolean => {
     const bytes = encoder.encode(value).byteLength;
     if (
-      bytes > MAX_LIVE_PROOF_LINE_BYTES ||
-      state.queuedLines >= MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM ||
-      state.queuedBytes > MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM - bytes ||
-      totalQueuedLines >= MAX_LIVE_PROOF_TOTAL_QUEUED_LINES ||
-      totalQueuedBytes > MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES - bytes
+      bytes > MAX_BOUNDED_PROCESS_LINE_BYTES ||
+      state.queuedLines >= MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM ||
+      state.queuedBytes > MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM - bytes ||
+      totalQueuedLines >= MAX_BOUNDED_PROCESS_TOTAL_QUEUED_LINES ||
+      totalQueuedBytes > MAX_BOUNDED_PROCESS_TOTAL_QUEUED_BYTES - bytes
     ) {
       signalOverflow();
       return false;
@@ -179,8 +178,8 @@ export function readProcessLines(
         continue;
       }
       if (
-        state.lineBytes >= MAX_LIVE_PROOF_LINE_BYTES ||
-        state.lineBytes >= MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
+        state.lineBytes >= MAX_BOUNDED_PROCESS_LINE_BYTES ||
+        state.lineBytes >= MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES
       ) {
         signalOverflow();
         return;
@@ -242,7 +241,7 @@ export function readProcessLines(
         yield next.value;
         continue;
       }
-      if (overflowed) throw LIVE_PROOF_STREAM_OVERFLOW;
+      if (overflowed) throw BOUNDED_PROCESS_STREAM_OVERFLOW;
       if (closed || open <= 0) return;
       await new Promise<void>((resolveWake) => {
         wake = resolveWake;

@@ -1,4 +1,5 @@
 import type { Result, ResultAsync } from "neverthrow";
+import type { BoundedProcessSpawnInput } from "../bounded-process/contract.js";
 import type { LiveProofFailureCode } from "./child-stream-live-proof-contract.js";
 
 /**
@@ -18,12 +19,6 @@ export function systemFailure(
 }
 
 export type LiveProofPathKind = "missing" | "file" | "symlink" | "other";
-
-export interface LiveProofSpawnInput {
-  readonly cmd: readonly string[];
-  readonly cwd: string;
-  readonly env: Readonly<Record<string, string>>;
-}
 
 /**
  * A started process. `lines` yields stdout/stderr text lines; the caller owns
@@ -91,69 +86,22 @@ export interface LiveProofSystem {
   readonly delay: (ms: number) => ResultAsync<void, LiveProofSystemFailure>;
 }
 
-export type ProcessByteStream = ReadableStream<Uint8Array<ArrayBuffer>>;
+export type LiveProofSpawnInput = BoundedProcessSpawnInput;
 
-export type BoundedProcessStreamName = "stdout" | "stderr";
-export type BoundedProcessSignal = "SIGTERM" | "SIGKILL";
-
-/** The small writable surface needed to send one bounded request to a child. */
-export interface BoundedProcessStdin {
-  readonly write: (chunk: string) => number | PromiseLike<number> | undefined;
-  readonly flush?: () => number | PromiseLike<number> | undefined;
-}
-
-/** A Bun process shape that is also easy to exercise with a fake process. */
-export interface BoundedProcess {
-  readonly stdin?: BoundedProcessStdin | number | null;
-  readonly stdout?: ProcessByteStream | number | null;
-  readonly stderr?: ProcessByteStream | number | null;
-  readonly exited: PromiseLike<number>;
-  readonly exitCode: number | null;
-  readonly signalCode: string | null;
-  readonly kill: (signal: BoundedProcessSignal) => unknown;
-}
-
-export interface BoundedProcessLimits {
-  readonly spawnMs: number;
-  readonly firstOutputMs: number;
-  readonly totalReadMs: number;
-  readonly gracefulTermMs: number;
-  readonly postKillMs: number;
-  readonly cleanupMs: number;
-  readonly maxCaptureBytes: number;
-}
-
-/** Deadlines and capture limits shared by every non-interactive verifier run. */
-export const DEFAULT_BOUNDED_PROCESS_LIMITS: BoundedProcessLimits =
-  Object.freeze({
-    spawnMs: 1_000,
-    firstOutputMs: 5_000,
-    totalReadMs: 20_000,
-    gracefulTermMs: 1_000,
-    postKillMs: 1_000,
-    cleanupMs: 3_000,
-    maxCaptureBytes: 32 * 1024,
-  });
-
-export interface BoundedProcessOutput {
-  readonly exitCode: number;
-  /** Only stdout is returned. Stderr is drained and discarded. */
-  readonly stdout: string;
-}
-
-export interface BoundedProcessRunnerInput {
-  readonly cmd: readonly string[];
-  readonly cwd: string;
-  readonly env: Readonly<Record<string, string>>;
-  readonly stdin?: "ignore" | "pipe";
-  /** Optional one-shot input. The runner writes and flushes it in-bounds. */
-  readonly stdinText?: string;
-  readonly limits?: Partial<BoundedProcessLimits>;
-  /** Test seam; production uses Bun.spawn. */
-  readonly spawn?: () => BoundedProcess | PromiseLike<BoundedProcess>;
-  /** Called for bounded complete lines. Returning true stops the process. */
-  readonly onLine?: (
-    stream: BoundedProcessStreamName,
-    line: string,
-  ) => boolean | undefined;
-}
+export type {
+  BoundedProcess,
+  BoundedProcessFailure,
+  BoundedProcessFailureCode,
+  BoundedProcessLimits,
+  BoundedProcessOutput,
+  BoundedProcessRunnerInput,
+  BoundedProcessSignal,
+  BoundedProcessSpawnInput,
+  BoundedProcessStdin,
+  BoundedProcessStreamName,
+  ProcessByteStream,
+} from "../bounded-process/contract.js";
+export {
+  boundedProcessFailure,
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
+} from "../bounded-process/contract.js";

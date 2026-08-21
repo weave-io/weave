@@ -1,10 +1,10 @@
 import { Result } from "neverthrow";
-import type {
-  BoundedProcess,
-  BoundedProcessLimits,
-  BoundedProcessSignal,
-} from "./child-stream-live-proof-system-contract.js";
-import { DEFAULT_BOUNDED_PROCESS_LIMITS } from "./child-stream-live-proof-system-contract.js";
+import {
+  type BoundedProcess,
+  type BoundedProcessLimits,
+  type BoundedProcessSignal,
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
+} from "./contract.js";
 
 export type BoundedWaitOutcome<T> =
   | { readonly kind: "resolved"; readonly value: T }

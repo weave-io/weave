@@ -1,37 +1,37 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
-  MAX_BOUNDED_PROCESS_TOTAL_READ_BYTES,
-  MAX_LIVE_PROOF_LINE_BYTES,
-  MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM,
-  MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM,
-  MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES,
-  MAX_LIVE_PROOF_TOTAL_QUEUED_LINES,
-  MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES,
-} from "./child-stream-live-proof-bounded-stream.js";
+  type BoundedProcess,
+  type BoundedProcessFailure,
+  type BoundedProcessLimits,
+  type BoundedProcessOutput,
+  type BoundedProcessRunnerInput,
+  type BoundedProcessSpawnInput,
+  type BoundedProcessStreamName,
+  boundedProcessFailure,
+  type ProcessByteStream,
+} from "./contract.js";
 import {
   type BoundedWaitOutcome,
   normalizedBoundedProcessLimits,
   observeBoundedPromise,
   terminateBoundedProcess,
-} from "./child-stream-live-proof-process-control.js";
+} from "./control.js";
 import {
-  type BoundedProcess,
-  type BoundedProcessLimits,
-  type BoundedProcessOutput,
-  type BoundedProcessRunnerInput,
-  type BoundedProcessStreamName,
-  type LiveProofSpawnInput,
-  type LiveProofSystemFailure,
-  type ProcessByteStream,
-  systemFailure,
-} from "./child-stream-live-proof-system-contract.js";
+  MAX_BOUNDED_PROCESS_LINE_BYTES,
+  MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM,
+  MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM,
+  MAX_BOUNDED_PROCESS_TOTAL_QUEUED_BYTES,
+  MAX_BOUNDED_PROCESS_TOTAL_QUEUED_LINES,
+  MAX_BOUNDED_PROCESS_TOTAL_READ_BYTES,
+  MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES,
+} from "./stream.js";
 
 function spawnBunProcess(
   input: Pick<
     BoundedProcessRunnerInput,
     "cmd" | "cwd" | "env" | "stdin" | "stdinText"
   >,
-): Result<BoundedProcess, LiveProofSystemFailure> {
+): Result<BoundedProcess, BoundedProcessFailure> {
   return Result.fromThrowable(
     () =>
       Bun.spawn({
@@ -43,18 +43,18 @@ function spawnBunProcess(
         stdout: "pipe",
         stderr: "pipe",
       }),
-    () => systemFailure("spawn-failed"),
+    () => boundedProcessFailure("spawn-failed"),
   )();
 }
 
 /**
- * Spawn the interactive proof process through the same Bun boundary as the
+ * Spawn the interactive process through the same Bun boundary as the
  * non-interactive runner. Its callers must use the bounded line reader and
  * bounded TERM/KILL termination helpers.
  */
 export function spawnBoundedInteractiveProcess(
-  input: LiveProofSpawnInput,
-): Result<BoundedProcess, LiveProofSystemFailure> {
+  input: BoundedProcessSpawnInput,
+): Result<BoundedProcess, BoundedProcessFailure> {
   return spawnBunProcess({
     cmd: input.cmd,
     cwd: input.cwd,
@@ -72,7 +72,7 @@ interface BoundedPendingLine {
 type BoundedTerminal =
   | { readonly kind: "normal" }
   | { readonly kind: "stop" }
-  | { readonly kind: "failure"; readonly failure: LiveProofSystemFailure };
+  | { readonly kind: "failure"; readonly failure: BoundedProcessFailure };
 
 interface BoundedReaderState {
   readonly name: BoundedProcessStreamName;
@@ -167,20 +167,20 @@ function finishBoundedLine(
   if (decoded.isErr()) {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: boundedProcessFailure("spawn-failed"),
     });
     return false;
   }
   const bytes = contentBytes;
   if (
-    reader.queuedLines >= MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM ||
-    reader.queuedBytes > MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM - bytes ||
-    state.totalQueuedLines >= MAX_LIVE_PROOF_TOTAL_QUEUED_LINES ||
-    state.totalQueuedBytes > MAX_LIVE_PROOF_TOTAL_QUEUED_BYTES - bytes
+    reader.queuedLines >= MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM ||
+    reader.queuedBytes > MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM - bytes ||
+    state.totalQueuedLines >= MAX_BOUNDED_PROCESS_TOTAL_QUEUED_LINES ||
+    state.totalQueuedBytes > MAX_BOUNDED_PROCESS_TOTAL_QUEUED_BYTES - bytes
   ) {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("overflow"),
+      failure: boundedProcessFailure("overflow"),
     });
     return false;
   }
@@ -205,7 +205,7 @@ function consumeBoundedChunk(
   ) {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("overflow"),
+      failure: boundedProcessFailure("overflow"),
     });
     return;
   }
@@ -219,12 +219,12 @@ function consumeBoundedChunk(
       continue;
     }
     if (
-      reader.lineBytes >= MAX_LIVE_PROOF_LINE_BYTES ||
-      reader.lineBytes >= MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
+      reader.lineBytes >= MAX_BOUNDED_PROCESS_LINE_BYTES ||
+      reader.lineBytes >= MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES
     ) {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("overflow"),
+        failure: boundedProcessFailure("overflow"),
       });
       return;
     }
@@ -245,7 +245,7 @@ async function boundedPump(
     state.openReaders -= 1;
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: boundedProcessFailure("spawn-failed"),
     });
     notifyBoundedRunner(state);
     return;
@@ -264,7 +264,7 @@ async function boundedPump(
     if (!state.closed) {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("spawn-failed"),
+        failure: boundedProcessFailure("spawn-failed"),
       });
     }
   } finally {
@@ -299,7 +299,7 @@ async function consumeBoundedQueue(state: BoundedRunnerState): Promise<void> {
         if (state.stdoutBytes > state.limits.maxCaptureBytes - bytes) {
           finishBoundedRunner(state, {
             kind: "failure",
-            failure: systemFailure("overflow"),
+            failure: boundedProcessFailure("overflow"),
           });
           break;
         }
@@ -315,7 +315,7 @@ async function consumeBoundedQueue(state: BoundedRunnerState): Promise<void> {
         if (called.isErr()) {
           finishBoundedRunner(state, {
             kind: "failure",
-            failure: systemFailure("spawn-failed"),
+            failure: boundedProcessFailure("spawn-failed"),
           });
           break;
         }
@@ -397,10 +397,10 @@ async function writeBoundedProcessInput(
   input: string,
   timeoutMs: number,
 ): Promise<BoundedWaitOutcome<unknown>> {
-  if (input.length > MAX_LIVE_PROOF_LINE_BYTES) {
+  if (input.length > MAX_BOUNDED_PROCESS_LINE_BYTES) {
     return { kind: "rejected" };
   }
-  const encoded = new Uint8Array(MAX_LIVE_PROOF_LINE_BYTES + 1);
+  const encoded = new Uint8Array(MAX_BOUNDED_PROCESS_LINE_BYTES + 1);
   const measured = Result.fromThrowable(
     () => new TextEncoder().encodeInto(input, encoded),
     () => undefined,
@@ -408,7 +408,7 @@ async function writeBoundedProcessInput(
   if (
     measured.isErr() ||
     measured.value.read !== input.length ||
-    measured.value.written > MAX_LIVE_PROOF_LINE_BYTES
+    measured.value.written > MAX_BOUNDED_PROCESS_LINE_BYTES
   ) {
     return { kind: "rejected" };
   }
@@ -523,7 +523,7 @@ async function cleanupLateBoundedProcess(
 
 async function runBoundedProcessValue(
   input: BoundedProcessRunnerInput,
-): Promise<Result<BoundedProcessOutput, LiveProofSystemFailure>> {
+): Promise<Result<BoundedProcessOutput, BoundedProcessFailure>> {
   const limits = normalizedBoundedProcessLimits(input.limits);
   const spawn = input.spawn;
   const spawned =
@@ -531,14 +531,14 @@ async function runBoundedProcessValue(
       ? spawnBunProcess(input)
       : Result.fromThrowable(
           () => spawn(),
-          () => systemFailure("spawn-failed"),
+          () => boundedProcessFailure("spawn-failed"),
         )();
   if (spawned.isErr()) return err(spawned.error);
   const spawnedPromise = Result.fromThrowable(
     () => Promise.resolve(spawned.value),
     () => undefined,
   )();
-  if (spawnedPromise.isErr()) return err(systemFailure("spawn-failed"));
+  if (spawnedPromise.isErr()) return err(boundedProcessFailure("spawn-failed"));
 
   // Keep this continuation attached before the deadline race. A late
   // fulfillment owns a real process even though the caller has already
@@ -585,7 +585,9 @@ async function runBoundedProcessValue(
   }
   if (started.kind !== "resolved") {
     return err(
-      systemFailure(started.kind === "timeout" ? "timeout" : "spawn-failed"),
+      boundedProcessFailure(
+        started.kind === "timeout" ? "timeout" : "spawn-failed",
+      ),
     );
   }
   const process = started.value;
@@ -604,8 +606,8 @@ async function runBoundedProcessValue(
   ) {
     const terminated = await terminateBoundedProcess(process, limits);
     return terminated
-      ? err(systemFailure("spawn-failed"))
-      : err(systemFailure("cleanup-failed"));
+      ? err(boundedProcessFailure("spawn-failed"))
+      : err(boundedProcessFailure("cleanup-failed"));
   }
 
   const state: BoundedRunnerState = {
@@ -615,7 +617,7 @@ async function runBoundedProcessValue(
       {
         name: "stdout",
         stream: streams.value[0],
-        lineBuffer: new Uint8Array(MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES),
+        lineBuffer: new Uint8Array(MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES),
         cancelRequested: false,
         lineBytes: 0,
         queuedLines: 0,
@@ -624,7 +626,7 @@ async function runBoundedProcessValue(
       {
         name: "stderr",
         stream: streams.value[1],
-        lineBuffer: new Uint8Array(MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES),
+        lineBuffer: new Uint8Array(MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES),
         cancelRequested: false,
         lineBytes: 0,
         queuedLines: 0,
@@ -654,7 +656,7 @@ async function runBoundedProcessValue(
     if (!state.firstOutputSeen) {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("timeout"),
+        failure: boundedProcessFailure("timeout"),
       });
     }
   }, limits.firstOutputMs);
@@ -662,7 +664,7 @@ async function runBoundedProcessValue(
     () =>
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("timeout"),
+        failure: boundedProcessFailure("timeout"),
       }),
     limits.totalReadMs,
   );
@@ -680,7 +682,7 @@ async function runBoundedProcessValue(
     if (outcome.kind === "rejected" || outcome.kind === "timeout") {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("timeout"),
+        failure: boundedProcessFailure("timeout"),
       });
       return;
     }
@@ -689,7 +691,7 @@ async function runBoundedProcessValue(
   const observedExitSafe = observedExit.catch(() => {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: boundedProcessFailure("spawn-failed"),
     });
   });
 
@@ -697,7 +699,7 @@ async function runBoundedProcessValue(
   const observedConsumer = consumer.catch(() => {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: boundedProcessFailure("spawn-failed"),
     });
   });
 
@@ -706,7 +708,7 @@ async function runBoundedProcessValue(
     const observedPump = pump.catch(() => {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("spawn-failed"),
+        failure: boundedProcessFailure("spawn-failed"),
       });
     });
     state.pumpPromises.push(observedPump);
@@ -724,7 +726,7 @@ async function runBoundedProcessValue(
     if (outcome.kind !== "resolved") {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure(
+        failure: boundedProcessFailure(
           outcome.kind === "timeout" ? "timeout" : "spawn-failed",
         ),
       });
@@ -736,7 +738,7 @@ async function runBoundedProcessValue(
     state.inputOutcome = { kind: "rejected" };
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: boundedProcessFailure("spawn-failed"),
     });
   });
 
@@ -767,7 +769,7 @@ async function runBoundedProcessValue(
       outcome.kind === "resolved" &&
       (typeof outcome.value !== "boolean" || outcome.value === true),
   );
-  if (!cleanupOk) return err(systemFailure("cleanup-failed"));
+  if (!cleanupOk) return err(boundedProcessFailure("cleanup-failed"));
   if (finalTerminal.kind === "failure") return err(finalTerminal.failure);
   const exitCode =
     state.exitOutcome?.kind === "resolved" ? state.exitOutcome.value : -1;
@@ -777,14 +779,14 @@ async function runBoundedProcessValue(
 /**
  * Run one bounded, content-free subprocess. Both pipes are pumped from the
  * moment of spawn, and every timeout, reader failure, and cleanup failure is
- * translated to a closed `LiveProofSystemFailure` code.
+ * translated to a closed `BoundedProcessFailure` code.
  */
 export function runBoundedProcess(
   input: BoundedProcessRunnerInput,
-): ResultAsync<BoundedProcessOutput, LiveProofSystemFailure> {
+): ResultAsync<BoundedProcessOutput, BoundedProcessFailure> {
   return ResultAsync.fromThrowable(
     () => runBoundedProcessValue(input),
-    (): LiveProofSystemFailure => systemFailure("spawn-failed"),
+    (): BoundedProcessFailure => boundedProcessFailure("spawn-failed"),
   )().andThen((result) =>
     result.isOk() ? okAsync(result.value) : errAsync(result.error),
   );

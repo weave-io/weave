@@ -2,6 +2,11 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import { readArtifactSha256 } from "../../packages/adapters/pi/src/extension-build-identity.js";
+import {
+  type BoundedProcessLimits,
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
+} from "../bounded-process/contract.js";
+import { runBoundedProcess } from "../bounded-process/runner.js";
 import type { SanitizedEvent } from "./child-stream-capture-contract.js";
 import {
   blocked,
@@ -25,13 +30,8 @@ import {
   serializeFixture,
   verifyCaptureManifest,
 } from "./child-stream-capture-verifier.js";
-import { runBoundedProcess } from "./child-stream-live-proof-bounded-runner.js";
 import type { LiveProofFailureCode } from "./child-stream-live-proof-contract.js";
 import { createLiveProofSystem } from "./child-stream-live-proof-host.js";
-import {
-  type BoundedProcessLimits,
-  DEFAULT_BOUNDED_PROCESS_LIMITS,
-} from "./child-stream-live-proof-system-contract.js";
 
 const CAPTURE_TIMEOUT_MS = 45_000;
 const CAPTURE_KILL_WAIT_MS = 1_000;

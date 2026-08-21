@@ -1,20 +1,214 @@
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
+import type { BoundedProcess } from "../../bounded-process/contract.js";
+import { MAX_BOUNDED_PROCESS_LINE_BYTES } from "../../bounded-process/stream.js";
 import {
+  BUILD_GIT_PROCESS_LIMITS,
   hasPrivateDeclarationReference,
   hasPrivateDependencyReference,
   hasRuntimeRelativeImport,
   PI_EXTENSION_IDENTITY_MANIFEST,
   type PublicPackageBuildError,
   type PublicPackageFileSystem,
+  parseGitBuildIdentity,
   piIdentityOutputFiles,
   piOutputName,
+  readGitBuildIdentity,
+  runGit,
   writePiExtensionBuildIdentityManifest,
 } from "../../build-public-packages.js";
 import {
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_RUNTIME_EXTERNALS,
 } from "../constants.js";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function streamFromText(text: string): ReadableStream<Uint8Array<ArrayBuffer>> {
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(text) as Uint8Array<ArrayBuffer>,
+      );
+      controller.close();
+    },
+  });
+}
+
+function trackedStream(
+  onCancel: () => void,
+): ReadableStream<Uint8Array<ArrayBuffer>> {
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
+    cancel() {
+      onCancel();
+    },
+  });
+}
+
+function fakeProcess(input: {
+  readonly stdout?: ReadableStream<Uint8Array<ArrayBuffer>>;
+  readonly stderr?: ReadableStream<Uint8Array<ArrayBuffer>>;
+  readonly exited?: PromiseLike<number>;
+  readonly onKill?: (signal: "SIGTERM" | "SIGKILL") => unknown;
+}): BoundedProcess {
+  return {
+    stdout: input.stdout ?? streamFromText(""),
+    stderr: input.stderr ?? streamFromText(""),
+    exited: input.exited ?? Promise.resolve(0),
+    exitCode: null,
+    signalCode: null,
+    kill: (signal) => input.onKill?.(signal),
+  };
+}
+
+const GIT_TEST_LIMITS = {
+  ...BUILD_GIT_PROCESS_LIMITS,
+  spawnMs: 10,
+  firstOutputMs: 15,
+  totalReadMs: 40,
+  gracefulTermMs: 10,
+  postKillMs: 10,
+  cleanupMs: 40,
+};
+
+describe("bounded Git build probes", () => {
+  it("parses a normal subject and dirty status only after both probes succeed", async () => {
+    const subject = "a".repeat(40);
+    const result = await readGitBuildIdentity((command) =>
+      command[0] === "rev-parse"
+        ? okAsync(`${subject}\n`)
+        : okAsync(" M scripts/build-public-packages.ts\n"),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({ subject, dirty: true });
+    const parsed = parseGitBuildIdentity(`${subject}\n`, "");
+    expect(parsed.isOk()).toBe(true);
+    expect(parsed._unsafeUnwrap()).toEqual({ subject, dirty: false });
+  });
+
+  it("drains stderr-only floods and returns a closed build error", async () => {
+    const result = await runGit(
+      ["rev-parse", "HEAD"],
+      "git-subject-unavailable",
+      {
+        limits: GIT_TEST_LIMITS,
+        spawn: () =>
+          fakeProcess({
+            stdout: streamFromText(""),
+            stderr: streamFromText("stderr-flood".repeat(100_000)),
+          }),
+      },
+    );
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "BuildIdentity",
+      reason: "git-subject-unavailable",
+    });
+  });
+
+  it("rejects newline-free and multiline stdout overflow", async () => {
+    const newlineFree = await runGit(
+      ["rev-parse", "HEAD"],
+      "git-subject-unavailable",
+      {
+        limits: GIT_TEST_LIMITS,
+        spawn: () =>
+          fakeProcess({
+            stdout: streamFromText(
+              "x".repeat(MAX_BOUNDED_PROCESS_LINE_BYTES + 1),
+            ),
+          }),
+      },
+    );
+    const multiline = await runGit(["status"], "git-state-unavailable", {
+      limits: { ...GIT_TEST_LIMITS, maxCaptureBytes: 8 },
+      spawn: () => fakeProcess({ stdout: streamFromText("1234\n5678\n") }),
+    });
+
+    expect(newlineFree.isErr()).toBe(true);
+    expect(multiline.isErr()).toBe(true);
+    expect(JSON.stringify(newlineFree)).not.toContain("x");
+  });
+
+  it("accepts stdout at the exact capture bound", async () => {
+    const result = await runGit(
+      ["rev-parse", "HEAD"],
+      "git-subject-unavailable",
+      {
+        limits: { ...GIT_TEST_LIMITS, maxCaptureBytes: 32 },
+        spawn: () =>
+          fakeProcess({ stdout: streamFromText(`${"x".repeat(31)}\n`) }),
+      },
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toBe(`${"x".repeat(31)}\n`);
+  });
+
+  it("bounds a hanging Git process through TERM and KILL", async () => {
+    const signals: string[] = [];
+    const result = await runGit(["status"], "git-state-unavailable", {
+      limits: GIT_TEST_LIMITS,
+      spawn: () =>
+        fakeProcess({
+          exited: new Promise<number>(() => undefined),
+          onKill: (signal) => signals.push(signal),
+        }),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("cleans up a process that arrives after the spawn deadline", async () => {
+    const signals: string[] = [];
+    let stdoutCancellations = 0;
+    let stderrCancellations = 0;
+    const late = fakeProcess({
+      stdout: trackedStream(() => {
+        stdoutCancellations += 1;
+      }),
+      stderr: trackedStream(() => {
+        stderrCancellations += 1;
+      }),
+      exited: new Promise<number>(() => undefined),
+      onKill: (signal) => signals.push(signal),
+    });
+    const result = await runGit(["status"], "git-state-unavailable", {
+      limits: GIT_TEST_LIMITS,
+      spawn: () =>
+        new Promise<BoundedProcess>((resolve) =>
+          setTimeout(() => resolve(late), GIT_TEST_LIMITS.spawnMs * 3),
+        ),
+    });
+
+    expect(result.isErr()).toBe(true);
+    await sleep(100);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(stdoutCancellations).toBe(1);
+    expect(stderrCancellations).toBe(1);
+  });
+
+  it("does not expose stderr from a nonzero Git exit", async () => {
+    const sentinel = "git-secret-sentinel";
+    const result = await runGit(["status"], "git-state-unavailable", {
+      limits: GIT_TEST_LIMITS,
+      spawn: () =>
+        fakeProcess({
+          stdout: streamFromText("ignored\n"),
+          stderr: streamFromText(sentinel),
+          exited: Promise.resolve(17),
+        }),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+  });
+});
 
 describe("public package build guard", () => {
   it("rejects bundled private workspace dependency maps", () => {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import {
-  observeBoundedPromise,
-  terminateBoundedProcess,
-} from "../child-stream-live-proof-process-control.js";
 import type {
   BoundedProcess,
   BoundedProcessLimits,
-} from "../child-stream-live-proof-system-contract.js";
+} from "../../bounded-process/contract.js";
+import {
+  observeBoundedPromise,
+  terminateBoundedProcess,
+} from "../../bounded-process/control.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));

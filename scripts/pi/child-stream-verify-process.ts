@@ -1,8 +1,6 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import {
-  DEFAULT_BOUNDED_PROCESS_LIMITS,
-  runBoundedProcess,
-} from "./child-stream-live-proof-system.js";
+import { DEFAULT_BOUNDED_PROCESS_LIMITS } from "../bounded-process/contract.js";
+import { runBoundedProcess } from "../bounded-process/runner.js";
 import {
   blocked,
   type VerifyChildStreamingFailure,

@@ -11,16 +11,16 @@ import {
   platformFlags,
   withRestrictiveCreateMask,
 } from "../../packages/engine/src/runtime/nofollow-ffi.js";
+import { terminateBoundedProcess } from "../bounded-process/control.js";
 import {
   runBoundedProcess,
   spawnBoundedInteractiveProcess,
-} from "./child-stream-live-proof-bounded-runner.js";
+} from "../bounded-process/runner.js";
 import {
-  MAX_LIVE_PROOF_LINE_BYTES,
+  MAX_BOUNDED_PROCESS_LINE_BYTES,
   readProcessLines,
-} from "./child-stream-live-proof-bounded-stream.js";
+} from "../bounded-process/stream.js";
 import type { LiveProofFailureCode } from "./child-stream-live-proof-contract.js";
-import { terminateBoundedProcess } from "./child-stream-live-proof-process-control.js";
 import {
   DEFAULT_BOUNDED_PROCESS_LIMITS,
   type LiveProofProcess,
@@ -31,7 +31,7 @@ import {
 } from "./child-stream-live-proof-system-contract.js";
 
 const MAX_GUARDED_BYTES = 1024 * 1024;
-const MAX_INTERACTIVE_INPUT_BYTES = MAX_LIVE_PROOF_LINE_BYTES;
+const MAX_INTERACTIVE_INPUT_BYTES = MAX_BOUNDED_PROCESS_LINE_BYTES;
 
 /** Drop credential-shaped variables before any spawned proof process. */
 export function safeProofEnvironment(
