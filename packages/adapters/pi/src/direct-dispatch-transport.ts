@@ -7,7 +7,6 @@
  * private child transport class (`PiRpcChild`) rather than a second
  * protocol implementation.
  */
-import { dirname } from "node:path";
 import type { ThinkingLevelDecl } from "@weaveio/weave-core";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import {
@@ -20,7 +19,10 @@ import {
 } from "neverthrow";
 import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
-import type { PiNativeSessionRecord } from "./child-native-sessions.js";
+import type {
+  PiNativeSessionRecord,
+  PiNativeThreadMetadataInput,
+} from "./child-native-sessions.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import type {
   AppendChildRefLifecycleInput,
@@ -283,6 +285,64 @@ export interface PiDirectStepBootstrap {
   readonly completionTool: typeof WEAVE_COMPLETE_STEP_TOOL_NAME;
 }
 
+interface DirectStepBootstrapJsonObject {
+  [key: string]: JsonValue;
+}
+
+/**
+ * Projects the typed bootstrap into the strict JSON graph accepted by the
+ * authenticated child transport. Building the graph explicitly keeps optional
+ * fields omitted instead of introducing `undefined` values that the canonical
+ * envelope signer must reject.
+ */
+function serializeDirectStepBootstrap(
+  bootstrap: PiDirectStepBootstrap,
+): JsonValue {
+  const delegationTargets = bootstrap.delegationTargets.map((target) => {
+    const targetBody: DirectStepBootstrapJsonObject = {
+      name: target.name,
+      triggers: [...target.triggers],
+      isCategory: target.isCategory,
+    };
+    if (target.description !== undefined) {
+      targetBody.description = target.description;
+    }
+    return targetBody;
+  });
+  const body: DirectStepBootstrapJsonObject = {
+    mode: bootstrap.mode,
+    agentName: bootstrap.agentName,
+    composedPrompt: bootstrap.composedPrompt,
+    models: [...bootstrap.models],
+    delegationTargets,
+    workflowInstanceId: bootstrap.workflowInstanceId,
+    leaseId: bootstrap.leaseId,
+    stepName: bootstrap.stepName,
+    correlationId: bootstrap.correlationId,
+    context: {
+      parentAgentName: bootstrap.context.parentAgentName,
+      parentDepth: bootstrap.context.parentDepth,
+      cwd: bootstrap.context.cwd,
+    },
+    completionTool: bootstrap.completionTool,
+  };
+  if (bootstrap.resolvedModel !== undefined) {
+    const resolvedModel: DirectStepBootstrapJsonObject = {
+      provider: bootstrap.resolvedModel.provider,
+      id: bootstrap.resolvedModel.id,
+    };
+    if (bootstrap.resolvedModel.name !== undefined) {
+      resolvedModel.name = bootstrap.resolvedModel.name;
+    }
+    body.resolvedModel = resolvedModel;
+  }
+  if (bootstrap.fast === true) body.fast = true;
+  if (bootstrap.thinkingLevel !== undefined) {
+    body.thinkingLevel = bootstrap.thinkingLevel;
+  }
+  return body;
+}
+
 export function createDirectDispatchTransport(
   deps: PiDirectDispatchTransportDeps,
   generationId: string,
@@ -321,14 +381,7 @@ export function createDirectDispatchTransport(
      * leave behind.
      */
     let capturedPrivateOutput: PiChildPrivateOutputCapture | undefined;
-    let child: PiRpcChild;
-    const respondToDelegation = (
-      correlationId: string,
-      body: JsonValue,
-    ): void => {
-      void child.sendDelegationResponse(correlationId, body);
-    };
-    child = new PiRpcChild(
+    const child = new PiRpcChild(
       childId,
       DIRECT_DISPATCH_PARENT_ID,
       generationId,
@@ -350,48 +403,55 @@ export function createDirectDispatchTransport(
         sessionObserver: {
           onEvent: (event) => {
             deps.inspectionRegistry?.checkpointEvent(childId, event).match(
-              () => undefined,
-              () => undefined,
+              () => {},
+              () => {},
             );
-            return ok(undefined);
+            return ok(void 0);
           },
         },
         onStreamingUpdate: () => {
           deps.inspectionRegistry?.checkpoint(childId).match(
-            () => undefined,
-            () => undefined,
+            () => {},
+            () => {},
           );
         },
         onPrivateOutput: (capture) => {
           capturedPrivateOutput = capture;
-          return deps.onPrivateOutput?.(childId, capture) ?? ok(undefined);
+          return deps.onPrivateOutput?.(childId, capture) ?? ok(void 0);
         },
         onDelegationRequest: (authenticatedChildId, correlationId, body) => {
+          const respondToDelegation = (responseBody: JsonValue): void => {
+            void child.sendDelegationResponse(correlationId, responseBody);
+          };
           const relayDelegation = deps.relayDelegation;
           if (relayDelegation === undefined) {
-            respondToDelegation(correlationId, {
+            respondToDelegation({
               ok: false,
               error: "nested-delegation-unavailable",
             });
             return;
           }
-          void relayDelegation({
+          const relayRequestBase = {
             parentId: authenticatedChildId,
             parentDepth: DIRECT_DISPATCH_DEPTH,
             parentAgentName: input.agentName,
             agentName: body.agentName,
             task: body.task,
             cwd: input.cwd,
-            // This child is outside the controller's tracked tree, so it hands
-            // over the snapshot it was dispatched with rather than letting the
-            // controller resolve a newer one on its behalf.
-            ...(snapshot === undefined ? {} : { snapshot }),
-          }).match(
+          };
+          // This child is outside the controller's tracked tree, so it hands
+          // over the snapshot it was dispatched with rather than letting the
+          // controller resolve a newer one on its behalf.
+          const relayRequest =
+            snapshot === undefined
+              ? relayRequestBase
+              : { ...relayRequestBase, snapshot };
+          void relayDelegation(relayRequest).match(
             (settlement) => {
-              respondToDelegation(correlationId, { ok: true, settlement });
+              respondToDelegation({ ok: true, settlement });
             },
             (failure) => {
-              respondToDelegation(correlationId, {
+              respondToDelegation({
                 ok: false,
                 error: failure.code,
               });
@@ -425,7 +485,7 @@ export function createDirectDispatchTransport(
       ? toModelIdentityBody(resolution.model)
       : undefined;
 
-    const bootstrap: PiDirectStepBootstrap = {
+    let bootstrap: PiDirectStepBootstrap = {
       mode: "direct-step",
       agentName: input.agentName,
       composedPrompt: input.composedPrompt,
@@ -453,13 +513,17 @@ export function createDirectDispatchTransport(
         parentDepth: DIRECT_DISPATCH_DEPTH,
         cwd: input.cwd,
       },
-      ...(resolvedModel === undefined ? {} : { resolvedModel }),
-      ...(input.fast === true ? { fast: true as const } : {}),
-      ...(resolution.resolved && resolution.thinkingLevel !== undefined
-        ? { thinkingLevel: resolution.thinkingLevel }
-        : {}),
       completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
     };
+    if (resolvedModel !== undefined) {
+      bootstrap = { ...bootstrap, resolvedModel };
+    }
+    if (input.fast === true) {
+      bootstrap = { ...bootstrap, fast: true };
+    }
+    if (resolution.resolved && resolution.thinkingLevel !== undefined) {
+      bootstrap = { ...bootstrap, thinkingLevel: resolution.thinkingLevel };
+    }
 
     const now = deps.now ?? (() => Date.now());
 
@@ -473,8 +537,8 @@ export function createDirectDispatchTransport(
       record: PiNativeSessionRecord,
     ): void => {
       void sessions.appendTombstone(record).match(
-        () => undefined,
-        () => undefined,
+        () => {},
+        () => {},
       );
     };
 
@@ -484,6 +548,9 @@ export function createDirectDispatchTransport(
      * delegation does. A failure here leaves no child process, no lease, no
      * thread, and no half-written authority.
      */
+    const absentProvisionedSession = (): undefined => {
+      return;
+    };
     const provisionDirectSession = (): ResultAsync<
       ProvisionedDirectSession | undefined,
       PiAdapterFailure
@@ -499,7 +566,7 @@ export function createDirectDispatchTransport(
                 "thread-sessions-unavailable",
               ),
             )
-          : okAsync(undefined);
+          : okAsync(absentProvisionedSession());
       }
       const refs = deps.threadRefs?.();
       if (refs === undefined) {
@@ -527,23 +594,34 @@ export function createDirectDispatchTransport(
           sessions
             .establishThreadLeaf(
               record.ref,
-              {
-                threadId: childId,
-                agentName: input.agentName,
-                parentId: DIRECT_DISPATCH_PARENT_ID,
-                parentAgentName: DIRECT_DISPATCH_PARENT_ID,
-                parentDepth: DIRECT_DISPATCH_DEPTH,
-                ownerParentSessionId: parentSession,
-                cwd: input.cwd,
-                ...(resolvedModel === undefined
-                  ? {}
-                  : { model: `${resolvedModel.provider}/${resolvedModel.id}` }),
-                ...(resolution.resolved &&
-                resolution.thinkingLevel !== undefined
-                  ? { reasoning: resolution.thinkingLevel }
-                  : {}),
-                createdAt,
-              },
+              (() => {
+                let threadMetadata: PiNativeThreadMetadataInput = {
+                  threadId: childId,
+                  agentName: input.agentName,
+                  parentId: DIRECT_DISPATCH_PARENT_ID,
+                  parentAgentName: DIRECT_DISPATCH_PARENT_ID,
+                  parentDepth: DIRECT_DISPATCH_DEPTH,
+                  ownerParentSessionId: parentSession,
+                  cwd: input.cwd,
+                  createdAt,
+                };
+                if (resolvedModel !== undefined) {
+                  threadMetadata = {
+                    ...threadMetadata,
+                    model: `${resolvedModel.provider}/${resolvedModel.id}`,
+                  };
+                }
+                if (
+                  resolution.resolved &&
+                  resolution.thinkingLevel !== undefined
+                ) {
+                  threadMetadata = {
+                    ...threadMetadata,
+                    reasoning: resolution.thinkingLevel,
+                  };
+                }
+                return threadMetadata;
+              })(),
               parentSession,
             )
             .mapErr(() => {
@@ -630,7 +708,7 @@ export function createDirectDispatchTransport(
         workflowInstanceId: input.workflowInstanceId,
         stepName: input.stepName,
         snapshot: () => child.snapshot(),
-      }) ?? okAsync(undefined);
+      }) ?? okAsync(void 0);
     let terminalLifecycleAppended = false;
     /**
      * The terminal ref status for one settled direct step. It follows the raw
@@ -659,11 +737,11 @@ export function createDirectDispatchTransport(
     const appendTerminalLifecycle = async (
       provisioned: ProvisionedDirectSession | undefined,
       status: AppendChildRefLifecycleInput["status"],
-    ): Promise<Result<undefined, PiAdapterFailure>> => {
-      if (provisioned === undefined) return ok(undefined);
+    ): Promise<Result<void, PiAdapterFailure>> => {
+      if (provisioned === undefined) return ok(void 0);
       // Exactly once per dispatch, even if this settlement path were ever
       // re-entered.
-      if (terminalLifecycleAppended) return ok(undefined);
+      if (terminalLifecycleAppended) return ok(void 0);
       terminalLifecycleAppended = true;
       const liveRefs = deps.threadRefs?.();
       if (
@@ -699,7 +777,7 @@ export function createDirectDispatchTransport(
           ),
         );
       }
-      return ok(undefined);
+      return ok(void 0);
     };
 
     /**
@@ -717,8 +795,8 @@ export function createDirectDispatchTransport(
       provisioned: ProvisionedDirectSession | undefined,
       capture: PiChildPrivateOutputCapture | undefined,
       settlementCandidate: string | undefined,
-    ): Promise<Result<undefined, PiAdapterFailure>> => {
-      if (provisioned === undefined) return ok(undefined);
+    ): Promise<Result<void, PiAdapterFailure>> => {
+      if (provisioned === undefined) return ok(void 0);
       if (capture === undefined) {
         deps.logger.error(
           { childId, agentName: input.agentName },
@@ -772,7 +850,7 @@ export function createDirectDispatchTransport(
             : makeChildRecoveryUnavailableFailure(childId),
         );
       }
-      return ok(undefined);
+      return ok(void 0);
     };
 
     const historyFailure = (failure: {
@@ -801,18 +879,21 @@ export function createDirectDispatchTransport(
         const execution = child
           .spawnAndHandshake(sessionSpawnInput)
           .andThen(() =>
-            child.runTask(sessionSpawnInput, bootstrap as unknown as JsonValue),
+            child.runTask(
+              sessionSpawnInput,
+              serializeDirectStepBootstrap(bootstrap),
+            ),
           );
         return new ResultAsync(
           (async () => {
             const outcome = await execution;
-            const finalOutput =
-              outcome.isOk() && outcome.value.outcome === "completed"
-                ? outcome.value.assistantOutput
-                : undefined;
+            let finalOutput: string | undefined;
+            if (outcome.isOk() && outcome.value.outcome === "completed") {
+              finalOutput = outcome.value.assistantOutput;
+            }
             const persisted =
               deps.inspectionRegistry === undefined
-                ? ok(undefined)
+                ? ok(void 0)
                 : await deps.inspectionRegistry.retainTerminal(
                     childId,
                     child.snapshot(),
@@ -833,7 +914,7 @@ export function createDirectDispatchTransport(
                     capturedPrivateOutput,
                     outcome.value.completionCandidate,
                   )
-                : ok<undefined, PiAdapterFailure>(undefined);
+                : ok(void 0);
             const lifecycle = await appendTerminalLifecycle(
               provisioned,
               outputPersisted.isErr()

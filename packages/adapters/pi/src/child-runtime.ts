@@ -23,16 +23,17 @@ import {
   type PiBootstrapAckBody,
   type PiDelegateRequestBody,
   type PiDelegateResponseBody,
+  type PiSettledBody,
   type PiTransferResultBody,
   parseControlBody,
 } from "./child-control-bodies.js";
-import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   generateNonceHex,
   type HmacPort,
   hexToBytes,
   type RandomPort,
 } from "./child-crypto.js";
+import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   WEAVE_CHILD_ID_ENV,
   WEAVE_CHILD_SECRET_ENV,
@@ -83,6 +84,53 @@ const CHILD_CORRELATED_TIMEOUT_MS = 300_000;
 export interface PiChildOutputPort {
   /** Writes one already-LF-terminated line directly to this process's own stdout. */
   writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError>;
+}
+
+export interface PiChildSettlementDetail {
+  readonly assistantOutput?: string;
+  readonly completionCandidate?: string;
+  readonly completionCandidateTransferred?: boolean;
+  readonly outputTransferId?: string;
+  readonly outputByteLength?: number;
+  readonly interventionCount?: number;
+  readonly reason?: string;
+}
+
+type CompletedSettlementBody = Extract<PiSettledBody, { outcome: "completed" }>;
+type FailedSettlementBody = Extract<PiSettledBody, { outcome: "failed" }>;
+
+function buildSettledBody(
+  outcome: "completed" | "failed",
+  detail: PiChildSettlementDetail,
+): PiSettledBody {
+  if (outcome === "failed") {
+    const body: FailedSettlementBody = { outcome };
+    if (detail.reason !== undefined) {
+      body.reason = projectDiagnosticText(detail.reason);
+    }
+    return body;
+  }
+
+  const body: CompletedSettlementBody = { outcome };
+  if (detail.assistantOutput !== undefined) {
+    body.assistantOutput = detail.assistantOutput;
+  }
+  if (detail.completionCandidate !== undefined) {
+    body.completionCandidate = detail.completionCandidate;
+  }
+  if (detail.completionCandidateTransferred === true) {
+    body.completionCandidateTransferred = true;
+  }
+  if (detail.outputTransferId !== undefined) {
+    body.outputTransferId = detail.outputTransferId;
+  }
+  if (detail.outputByteLength !== undefined) {
+    body.outputByteLength = detail.outputByteLength;
+  }
+  if (detail.interventionCount !== undefined) {
+    body.interventionCount = detail.interventionCount;
+  }
+  return body;
 }
 
 export interface PiChildRuntimeDeps {
@@ -141,7 +189,7 @@ export class PiChildRuntime {
   private readonly pendingCorrelated = new Map<
     string,
     {
-      resolve: (body: JsonValue) => void;
+      resolve: (body: PiDelegateResponseBody) => void;
       reject: (error: PiChildRuntimeError) => void;
     }
   >();
@@ -324,7 +372,7 @@ export class PiChildRuntime {
       return;
     }
     this.bootstrapAdmitted = true;
-    await handlers.onBootstrap(body);
+    await handlers.onBootstrap(parsed.value);
   }
 
   private async admitCancel(
@@ -418,15 +466,7 @@ export class PiChildRuntime {
 
   reportSettled(
     outcome: "completed" | "failed",
-    detail: {
-      assistantOutput?: string;
-      completionCandidate?: string;
-      completionCandidateTransferred?: boolean;
-      outputTransferId?: string;
-      outputByteLength?: number;
-      interventionCount?: number;
-      reason?: string;
-    },
+    detail: PiChildSettlementDetail,
   ): ResultAsync<void, PiChildRuntimeError> {
     if (this.settledReported || this.settledReportInFlight) {
       return errAsync({
@@ -434,36 +474,20 @@ export class PiChildRuntime {
         reason: "settlement-already-reported",
       });
     }
+    const body = buildSettledBody(outcome, detail);
+    const parsed = parseControlBody("settled", body);
+    if (!parsed.ok) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "settlement-body-invalid",
+      });
+    }
     this.settledReportInFlight = true;
-    const body: JsonValue = {
-      outcome,
-      ...(detail.assistantOutput !== undefined
-        ? { assistantOutput: detail.assistantOutput }
-        : {}),
-      ...(detail.completionCandidate !== undefined
-        ? { completionCandidate: detail.completionCandidate }
-        : {}),
-      ...(detail.completionCandidateTransferred === true
-        ? { completionCandidateTransferred: true }
-        : {}),
-      ...(detail.outputTransferId !== undefined
-        ? { outputTransferId: detail.outputTransferId }
-        : {}),
-      ...(detail.outputByteLength !== undefined
-        ? { outputByteLength: detail.outputByteLength }
-        : {}),
-      ...(detail.interventionCount !== undefined
-        ? { interventionCount: detail.interventionCount }
-        : {}),
-      ...(detail.reason !== undefined
-        ? { reason: projectDiagnosticText(detail.reason) }
-        : {}),
-    };
-    return this.sendControl("settled", this.childId, body)
+    return this.sendControl("settled", this.childId, parsed.value)
       .map(() => {
         this.settledReportInFlight = false;
         this.settledReported = true;
-        return undefined;
+        return void 0;
       })
       .mapErr((failure) => {
         this.settledReportInFlight = false;
@@ -472,23 +496,27 @@ export class PiChildRuntime {
   }
 
   reportCancelled(): ResultAsync<void, PiChildRuntimeError> {
-    return this.sendControl("cancelled", this.childId, {}).map(() => undefined);
+    return this.sendControl("cancelled", this.childId, {}).map(() => {
+      return void 0;
+    });
   }
 
   /** Proves to the parent that bootstrap completed before task work starts. */
   reportBootstrapAck(
     body: PiBootstrapAckBody,
   ): ResultAsync<void, PiChildRuntimeError> {
-    return this.sendControl("bootstrap-ack", this.childId, body).map(
-      () => undefined,
-    );
+    return this.sendControl("bootstrap-ack", this.childId, body).map(() => {
+      return void 0;
+    });
   }
 
   reportTransferResult(
     body: PiTransferResultBody,
   ): ResultAsync<void, PiChildRuntimeError> {
     return this.sendControl("transfer-result", body.transferId, body).map(
-      () => undefined,
+      () => {
+        return void 0;
+      },
     );
   }
 
@@ -541,7 +569,7 @@ export class PiChildRuntime {
       },
     };
 
-    let send: ResultAsync<void, PiChildRuntimeError> = okAsync(undefined);
+    let send: ResultAsync<void, PiChildRuntimeError> = okAsync();
     for (const chunk of chunks.value) {
       send = send.andThen(() =>
         this.sendControl("transfer-chunk", transferId, {
@@ -589,17 +617,19 @@ export class PiChildRuntime {
         type: "EnvelopeSignFailed",
         reason: "delegate-request-body-invalid",
       });
-    return this.sendCorrelatedRequest<PiDelegateResponseBody>(parsed.value);
+    return this.sendCorrelatedRequest(parsed.value);
   }
 
   /** Sends a bounded, correlated delegation request as authenticated chunks. */
-  private sendCorrelatedRequest<T extends JsonValue>(
+  private sendCorrelatedRequest(
     body: PiDelegateRequestBody,
-  ): ResultAsync<T, PiChildRuntimeError> {
+  ): ResultAsync<PiDelegateResponseBody, PiChildRuntimeError> {
     const correlationId = `${this.childId}-delegate-${this.correlationCounter}`;
     this.correlationCounter += 1;
-    let resolveWait!: (result: Result<T, PiChildRuntimeError>) => void;
-    const wait = new ResultAsync<T, PiChildRuntimeError>(
+    let resolveWait!: (
+      result: Result<PiDelegateResponseBody, PiChildRuntimeError>,
+    ) => void;
+    const wait = new ResultAsync<PiDelegateResponseBody, PiChildRuntimeError>(
       new Promise((resolve) => {
         resolveWait = resolve;
       }),
@@ -619,7 +649,7 @@ export class PiChildRuntime {
     this.pendingCorrelated.set(correlationId, {
       resolve: (responseBody) => {
         timer.cancel();
-        resolveWait(ok(responseBody as T));
+        resolveWait(ok(responseBody));
       },
       reject: (error) => {
         timer.cancel();
@@ -639,7 +669,7 @@ export class PiChildRuntime {
         reason: chunks.error.type,
       });
     }
-    let send: ResultAsync<void, PiChildRuntimeError> = okAsync(undefined);
+    let send: ResultAsync<void, PiChildRuntimeError> = okAsync();
     for (const chunk of chunks.value) {
       send = send.andThen(() =>
         this.sendControl("delegate-request-chunk", correlationId, chunk),
@@ -673,13 +703,12 @@ export class PiChildRuntime {
       resolveResult(await this.sendControlNow(kind, correlationId, body));
     });
     this.outgoingSendTail = operation.then(
-      () => undefined,
-      (error: unknown) => {
+      () => {},
+      () => {
         resolveResult(
           err({
             type: "EnvelopeSignFailed",
-            reason:
-              error instanceof Error ? error.message : "control send failed",
+            reason: "control send failed",
           }),
         );
       },
@@ -827,12 +856,12 @@ export function authorizeChildAccess(
   state: PiChildAccessState,
   operation: PiChildAccessOperation,
 ): Result<void, PiChildAccessDenial> {
-  if (state === "owned") return ok(undefined);
+  if (state === "owned") return ok();
   if (state === "unavailable") {
     return err(makeChildInteractionUnavailableFailure(childId));
   }
   if (READ_ONLY_CHILD_ACCESS_OPERATIONS.has(operation)) {
-    return ok(undefined);
+    return ok();
   }
   if (state === "origin-mismatch") {
     return err(makeThreadNotFoundFailure(childId, "origin-mismatch"));

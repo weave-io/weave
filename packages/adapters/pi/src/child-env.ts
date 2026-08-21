@@ -91,6 +91,15 @@ export function buildDefaultPiChildCommand(
 }
 
 /**
+ * A named owner contract for the string-only environment passed to a child.
+ * The object stays mutable because the child spawn seam adds its private
+ * bootstrap values after taking this sanitized snapshot.
+ */
+interface SanitizedChildEnvironment {
+  [key: string]: string;
+}
+
+/**
  * A sanitized snapshot of the current process's own environment, safe to
  * use as the base environment for a spawned private child - preserves
  * ordinary runtime necessities (`PATH`, `HOME`, etc.) so the child process
@@ -101,7 +110,7 @@ export function buildDefaultPiChildCommand(
  */
 export function sanitizedBaseEnv(
   isDeniedKey: (key: string) => boolean,
-): Record<string, string> {
+): SanitizedChildEnvironment {
   const reserved = new Set<string>([
     WEAVE_CHILD_SECRET_ENV,
     WEAVE_CHILD_ID_ENV,
@@ -110,7 +119,7 @@ export function sanitizedBaseEnv(
     WEAVE_CHILD_DEPTH_ENV,
     WEAVE_CHILD_PARENT_ID_ENV,
   ]);
-  const sanitized: Record<string, string> = {};
+  const sanitized: SanitizedChildEnvironment = {};
   for (const [key, value] of Object.entries(Bun.env)) {
     if (value === undefined) continue;
     if (reserved.has(key)) continue;

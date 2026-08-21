@@ -4,6 +4,7 @@ import {
   ResultAsync,
   type ResultAsync as ResultAsyncType,
 } from "neverthrow";
+import { z } from "zod";
 import type { PiChildSessionEvent } from "./child-session-events.js";
 import type { PiChildRefRecord } from "./child-session-refs.js";
 import { MAX_FINAL_OUTPUT_BYTES } from "./child-tree.js";
@@ -45,13 +46,23 @@ export interface PiChildRecoveryDescriptor {
   readonly current?: boolean;
 }
 
+export type PiChildRecoveryJsonValue =
+  | null
+  | boolean
+  | string
+  | number
+  | readonly PiChildRecoveryJsonValue[]
+  | { readonly [key: string]: PiChildRecoveryJsonValue };
+
+export type PiChildRecoveryPolicy = PiChildRecoveryJsonValue;
+
 export interface PiChildRecoverySpawnInput {
   readonly record: PiChildRecoveryRecord;
   readonly descriptor: PiChildRecoveryDescriptor;
   readonly generationId: string;
   readonly model?: string;
-  readonly policy?: unknown;
-  readonly limits?: unknown;
+  readonly policy?: PiChildRecoveryPolicy;
+  readonly limits?: PiChildRecoveryJsonValue;
   readonly continuation: string;
   /**
    * Optional parser-approved session-event sink for restore spawns. Invoked
@@ -84,8 +95,8 @@ export interface PiChildRecoveryDeps {
    * published catalog holds when the user accepts it, not the one activated
    * at boot.
    */
-  readonly currentPolicy?: () => unknown;
-  readonly currentLimits?: unknown;
+  readonly currentPolicy?: () => PiChildRecoveryPolicy | undefined;
+  readonly currentLimits?: PiChildRecoveryJsonValue;
   /** Starts a child and resolves only with its authenticated terminal result. */
   readonly spawn: (
     input: PiChildRecoverySpawnInput,
@@ -104,6 +115,17 @@ export type PiChildRecoveryFailure =
 
 export const RECOVERY_CONTINUATION =
   "Continue from the saved session. Review the current state and complete the original task. Do not repeat completed work.";
+
+const PiChildRecoverySettlementSchema = z
+  .object({
+    finalOutput: z.string(),
+    interventionCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
 
 /**
  * A ref record is recoverable only when it still names a usable native
@@ -247,15 +269,13 @@ export class PiChildRecoveryCoordinator {
       );
       const spawned = running.andThen(() =>
         safely(() => this.deps.spawn(input), "Recovery process failed.")
-          .andThen((settlement) =>
-            settlement !== null &&
-            typeof settlement === "object" &&
-            typeof settlement.finalOutput === "string" &&
-            Number.isSafeInteger(settlement.interventionCount) &&
-            settlement.interventionCount >= 0
-              ? okAsync(settlement)
-              : errAsync({ type: "ChildRecoverySpawnFailed" as const }),
-          )
+          .andThen((settlement) => {
+            const parsed =
+              PiChildRecoverySettlementSchema.safeParse(settlement);
+            return parsed.success
+              ? okAsync(parsed.data)
+              : errAsync({ type: "ChildRecoverySpawnFailed" as const });
+          })
           .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }))
           .orElse((failure) =>
             safely(
@@ -270,16 +290,8 @@ export class PiChildRecoveryCoordinator {
         // A valid authenticated settlement is terminal even when this
         // generation has gone stale. Persist it before deciding whether
         // context may cross back into the parent.
-        const count =
-          Number.isSafeInteger(settlement.interventionCount) &&
-          settlement.interventionCount >= 0
-            ? settlement.interventionCount
-            : 0;
-        const output = boundedRecoveryOutput(
-          typeof settlement.finalOutput === "string"
-            ? settlement.finalOutput
-            : "",
-        );
+        const count = settlement.interventionCount;
+        const output = boundedRecoveryOutput(settlement.finalOutput);
         return safely(
           () => this.deps.history.updateStatus(record, "completed"),
           "Child ref settlement update failed.",
@@ -306,21 +318,20 @@ export class PiChildRecoveryCoordinator {
               RECOVERY_CHOICES,
               { timeout: Math.max(0, this.deps.countdownSeconds) * 1000 },
             ),
-            () => undefined,
+            () => "recovery-prompt-failed" as const,
           ),
         "Recovery prompt failed.",
       ).andThen((choice) => {
         if (choice === "Skip") return okAsync("skipped" as const);
         if (choice === "Inspect") {
-          let result: ResultAsyncType<void, PiChildRecoveryFailure> =
-            okAsync(undefined);
+          let result: ResultAsyncType<void, PiChildRecoveryFailure> = okAsync();
           for (const candidate of records) {
             result = result.andThen(() =>
               safely(
                 () =>
                   ResultAsync.fromPromise(
                     Promise.resolve(this.deps.ui.inspect?.(candidate)),
-                    () => undefined,
+                    () => "recovery-inspection-failed" as const,
                   ),
                 "Recovery inspection failed.",
               ),
@@ -370,7 +381,7 @@ export class PiChildRecoveryCoordinator {
     generationId: string,
   ): ResultAsyncType<void, PiChildRecoveryFailure> {
     const injectParentContext = this.deps.injectParentContext;
-    if (injectParentContext === undefined) return okAsync(undefined);
+    if (injectParentContext === undefined) return okAsync();
     if (!this.current(generationId))
       return unavailable("The recovery generation is stale.");
     const content = `Recovered child result:\n${output}\nInterventions: ${count}`;
@@ -380,7 +391,7 @@ export class PiChildRecoveryCoordinator {
     )
       .andThen(() =>
         this.current(generationId)
-          ? okAsync(undefined)
+          ? okAsync()
           : unavailable("The recovery generation is stale."),
       )
       .mapErr(() => ({ type: "ChildRecoverySpawnFailed" as const }));

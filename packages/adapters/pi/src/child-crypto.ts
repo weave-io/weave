@@ -48,9 +48,9 @@ export class WebCryptoHmacPort implements HmacPort {
   signHex(key: Uint8Array, data: Uint8Array): ResultAsync<string, HmacError> {
     return ResultAsync.fromPromise(
       this.computeHex(key, data),
-      (cause): HmacError => ({
+      (): HmacError => ({
         type: "HmacFailed",
-        reason: describeThrown(cause),
+        reason: describeThrown(),
       }),
     );
   }
@@ -62,9 +62,9 @@ export class WebCryptoHmacPort implements HmacPort {
   ): ResultAsync<boolean, HmacError> {
     return ResultAsync.fromPromise(
       this.computeVerify(key, data, expectedMacHex),
-      (cause): HmacError => ({
+      (): HmacError => ({
         type: "HmacFailed",
-        reason: describeThrown(cause),
+        reason: describeThrown(),
       }),
     );
   }
@@ -133,7 +133,7 @@ function toFreshBuffer(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
  *). Every HMAC failure is reported through this single bounded,
  * closed-set reason regardless of cause.
  */
-function describeThrown(_cause: unknown): string {
+function describeThrown(): string {
   return "webcrypto-hmac-operation-failed";
 }
 

@@ -100,7 +100,10 @@ function executeRun(
 
 function rejectDuplicateSentinels(
   runs: readonly PiSettlementValidationRun[],
-): Result<readonly PiSettlementValidationRun[], PiRepeatedSettlementValidationError> {
+): Result<
+  readonly PiSettlementValidationRun[],
+  PiRepeatedSettlementValidationError
+> {
   const seen = new Set<string>();
   for (const run of runs) {
     if (seen.has(run.sentinel)) {

@@ -6,9 +6,9 @@
  */
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   parsePiChildSessionEvent,
-  preserveUnknownChildEvent,
   retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
@@ -17,6 +17,8 @@ import {
   type PiChildTranscriptState,
 } from "./child-transcript.js";
 import type { JsonValue } from "./strict-json.js";
+
+type PiChildSessionEventInput = Parameters<typeof parsePiChildSessionEvent>[0];
 
 export const ROOT_NODE_ID = "root";
 
@@ -50,7 +52,7 @@ export interface PiChildInspectionHistoryPort {
   ) => ResultAsync<void, PiChildInspectionHistoryError>;
   readonly checkpoint?: (
     id: string,
-    event?: unknown,
+    event?: PiChildSessionEventInput,
   ) => ResultAsync<void, PiChildInspectionHistoryError>;
   readonly interrupted?: (
     id: string,
@@ -85,6 +87,11 @@ export interface PiChildInspectionRegistration {
   readonly onTerminal?: (snapshot: PiChildTreeNode) => void;
 }
 
+export interface PiChildRuntimeMeta {
+  readonly model?: string;
+  readonly thinkingLevel?: string;
+}
+
 export class PiChildInspectionRegistry {
   private readonly live = new Map<string, PiChildInspectionRegistration>();
   private readonly records = new Map<string, PiChildTreeNode>();
@@ -94,8 +101,7 @@ export class PiChildInspectionRegistry {
   >();
   private generationOpen = true;
   private transcriptListener: ((childId: string) => void) | undefined;
-  private tail: ResultAsync<void, PiChildInspectionHistoryError> =
-    okAsync(undefined);
+  private tail: ResultAsync<void, PiChildInspectionHistoryError> = okAsync();
   private firstFailure: PiChildInspectionHistoryError | undefined;
 
   constructor(private readonly history?: PiChildInspectionHistoryPort) {}
@@ -109,7 +115,7 @@ export class PiChildInspectionRegistry {
     const next = this.tail
       .orElse((failure) => {
         this.firstFailure ??= failure;
-        return okAsync(undefined);
+        return okAsync();
       })
       .andThen(operation)
       .mapErr((failure) => {
@@ -120,11 +126,11 @@ export class PiChildInspectionRegistry {
     return next
       .orElse((failure) => {
         this.firstFailure ??= failure;
-        return okAsync(undefined);
+        return okAsync();
       })
       .andThen(() =>
         this.firstFailure === undefined
-          ? okAsync(undefined)
+          ? okAsync()
           : errAsync(this.firstFailure),
       );
   }
@@ -134,11 +140,11 @@ export class PiChildInspectionRegistry {
     return this.tail
       .orElse((failure) => {
         this.firstFailure ??= failure;
-        return okAsync(undefined);
+        return okAsync();
       })
       .andThen(() =>
         this.firstFailure === undefined
-          ? okAsync(undefined)
+          ? okAsync()
           : errAsync(this.firstFailure),
       );
   }
@@ -164,18 +170,18 @@ export class PiChildInspectionRegistry {
     this.live.set(registration.id, registration);
     if (!this.records.has(registration.id))
       this.records.set(registration.id, registration.snapshot());
-    return okAsync(undefined);
+    return okAsync();
   }
 
   register(
     registration: PiChildInspectionRegistration,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
-    if (!this.generationOpen) return okAsync(undefined);
+    if (!this.generationOpen) return okAsync();
     return this.enqueue(() =>
-      (this.history?.register?.(registration) ?? okAsync(undefined)).map(() => {
+      (this.history?.register?.(registration) ?? okAsync()).map(() => {
         this.live.set(registration.id, registration);
         this.records.set(registration.id, registration.snapshot());
-        return undefined;
+        return void 0;
       }),
     );
   }
@@ -206,9 +212,9 @@ export class PiChildInspectionRegistry {
    */
   checkpointEvent(
     id: string,
-    event: unknown,
+    event: PiChildSessionEventInput,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
-    if (!this.live.has(id)) return okAsync(undefined);
+    if (!this.live.has(id)) return okAsync();
     const parsed = parsePiChildSessionEvent(event);
     const retained = parsed.success
       ? retainedChildSessionEvent(parsed.data)
@@ -221,9 +227,9 @@ export class PiChildInspectionRegistry {
       this.transcriptListener?.(id);
     }
     return this.enqueue(() =>
-      (this.history?.checkpoint?.(id, retained) ?? okAsync(undefined)).map(
-        () => undefined,
-      ),
+      (this.history?.checkpoint?.(id, retained) ?? okAsync()).map(() => {
+        return void 0;
+      }),
     );
   }
 
@@ -236,29 +242,32 @@ export class PiChildInspectionRegistry {
   }
 
   /** Model and thinking intent the child was bootstrapped with, when known. */
-  getChildRuntimeMeta(id: string): {
-    readonly model?: string;
-    readonly thinkingLevel?: string;
-  } {
+  getChildRuntimeMeta(id: string): PiChildRuntimeMeta {
     const registration = this.live.get(id);
     if (registration === undefined) return {};
-    return {
-      ...(registration.model === undefined
-        ? {}
-        : { model: registration.model }),
-      ...(registration.thinkingLevel === undefined
-        ? {}
-        : { thinkingLevel: registration.thinkingLevel }),
-    };
+    if (
+      registration.model !== undefined &&
+      registration.thinkingLevel !== undefined
+    ) {
+      return {
+        model: registration.model,
+        thinkingLevel: registration.thinkingLevel,
+      };
+    }
+    if (registration.model !== undefined) return { model: registration.model };
+    if (registration.thinkingLevel !== undefined) {
+      return { thinkingLevel: registration.thinkingLevel };
+    }
+    return {};
   }
 
   checkpoint(id: string): ResultAsync<void, PiChildInspectionHistoryError> {
-    if (!this.live.has(id)) return okAsync(undefined);
+    if (!this.live.has(id)) return okAsync();
     return this.enqueue(() =>
-      (this.history?.checkpoint?.(id) ?? okAsync(undefined)).map(() => {
+      (this.history?.checkpoint?.(id) ?? okAsync()).map(() => {
         const registration = this.live.get(id);
         if (registration) this.records.set(id, registration.snapshot());
-        return undefined;
+        return void 0;
       }),
     );
   }
@@ -267,13 +276,13 @@ export class PiChildInspectionRegistry {
     id: string,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     const registration = this.live.get(id);
-    if (registration === undefined) return okAsync(undefined);
+    if (registration === undefined) return okAsync();
     return this.enqueue(() =>
-      (this.history?.interrupted?.(id) ?? okAsync(undefined)).map(() => {
+      (this.history?.interrupted?.(id) ?? okAsync()).map(() => {
         const snapshot = registration.snapshot();
         this.records.set(id, { ...snapshot, status: "cancelled" });
         registration.onInterrupted?.();
-        return undefined;
+        return void 0;
       }),
     );
   }
@@ -285,17 +294,16 @@ export class PiChildInspectionRegistry {
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     const registration = this.live.get(id);
     const terminal = snapshot ?? registration?.snapshot();
-    if (terminal === undefined) return okAsync(undefined);
+    if (terminal === undefined) return okAsync();
     return this.enqueue(() =>
-      (
-        this.history?.terminal?.(id, terminal, finalOutput) ??
-        okAsync(undefined)
-      ).map(() => {
-        this.records.set(id, terminal);
-        this.live.delete(id);
-        registration?.onTerminal?.(terminal);
-        return undefined;
-      }),
+      (this.history?.terminal?.(id, terminal, finalOutput) ?? okAsync()).map(
+        () => {
+          this.records.set(id, terminal);
+          this.live.delete(id);
+          registration?.onTerminal?.(terminal);
+          return void 0;
+        },
+      ),
     );
   }
 
@@ -345,7 +353,7 @@ export class PiChildInspectionRegistry {
     if (clear) {
       let clearedCount = 0;
       return this.enqueue(() => {
-        if (!isCurrent()) return okAsync(undefined);
+        if (!isCurrent()) return okAsync();
         return clear().map((count) => {
           clearedCount = count;
           if (isCurrent()) {
@@ -354,7 +362,7 @@ export class PiChildInspectionRegistry {
                 this.records.delete(id);
             }
           }
-          return undefined;
+          return void 0;
         });
       }).map(() => clearedCount);
     }
@@ -363,9 +371,9 @@ export class PiChildInspectionRegistry {
         result.andThen((count) => {
           if (!isCurrent()) return okAsync(count);
           return this.enqueue(() =>
-            (this.history?.clear?.(id) ?? okAsync(undefined)).map(() => {
+            (this.history?.clear?.(id) ?? okAsync()).map(() => {
               if (isCurrent()) this.records.delete(id);
-              return undefined;
+              return void 0;
             }),
           ).map(() => count + 1);
         }),
@@ -521,6 +529,25 @@ export function truncateLatestOutput(text: string): string {
  * `delta.text` first.
  */
 
+interface AssistantMessageFields {
+  readonly role: "assistant";
+  readonly stopReason?: string;
+  readonly id?: string;
+}
+
+const AssistantMessageSchema = z.object({
+  role: z.literal("assistant"),
+  stopReason: z.string().optional(),
+  id: z.string().optional(),
+});
+
+function assistantMessageFields(
+  record: Record<string, JsonValue>,
+): AssistantMessageFields | undefined {
+  const parsed = AssistantMessageSchema.safeParse(record.message);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /**
  * Reads the terminal `stopReason` of a just-completed assistant message from
  * a `message_end` event record, if present.
@@ -538,18 +565,7 @@ export function truncateLatestOutput(text: string): string {
 export function extractAssistantStopReason(
   record: Record<string, JsonValue>,
 ): string | undefined {
-  const message = record.message;
-  if (
-    typeof message !== "object" ||
-    message === null ||
-    Array.isArray(message)
-  ) {
-    return undefined;
-  }
-  const messageRecord = message as Record<string, JsonValue>;
-  if (messageRecord.role !== "assistant") return undefined;
-  const stopReason = messageRecord.stopReason;
-  return typeof stopReason === "string" ? stopReason : undefined;
+  return assistantMessageFields(record)?.stopReason;
 }
 
 /**
@@ -563,18 +579,8 @@ export function extractAssistantStopReason(
 export function extractAssistantMessageId(
   record: Record<string, JsonValue>,
 ): string | undefined {
-  const message = record.message;
-  if (
-    typeof message !== "object" ||
-    message === null ||
-    Array.isArray(message)
-  ) {
-    return undefined;
-  }
-  const messageRecord = message as Record<string, JsonValue>;
-  if (messageRecord.role !== "assistant") return undefined;
-  const id = messageRecord.id;
-  return typeof id === "string" && id.length > 0 ? id : undefined;
+  const id = assistantMessageFields(record)?.id;
+  return id === undefined || id.length === 0 ? undefined : id;
 }
 
 export interface PiChildTreeSnapshot {
@@ -642,7 +648,8 @@ export function subtreeIds(
   }
   const queue = [nodeId];
   while (queue.length > 0) {
-    const current = queue.shift() as string;
+    const current = queue.shift();
+    if (current === undefined) break;
     const children = childrenByParent.get(current) ?? [];
     for (const child of children) {
       result.push(child);

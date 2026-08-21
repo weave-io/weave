@@ -9,12 +9,14 @@
  * telemetry without rolling back or repeating the already-committed write.
  */
 
-import { err, ok, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
   makeSessionPointerAppendFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import type { JsonValue } from "./strict-json.js";
+import { parseStrictJson } from "./strict-json.js";
 
 export const RECOVERY_POINTER_SCHEMA_VERSION = 1 as const;
 
@@ -64,9 +66,13 @@ export type RecoveryPointerValidationFailure =
   | { readonly kind: "malformed"; readonly reason: string }
   | { readonly kind: "unknown-version" };
 
+type RecoveryPointerInput =
+  | JsonValue
+  | Readonly<Record<string, JsonValue | undefined>>;
+
 /** Never throws; malformed/unknown-version pointers are a deduplicated diagnostic, never a crash. */
 export function parseRecoveryPointer(
-  raw: unknown,
+  raw: RecoveryPointerInput,
 ): Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure> {
   const parsed = PiWeaveRecoveryPointerSchema.safeParse(raw);
   if (!parsed.success) {
@@ -128,6 +134,11 @@ export type WorkflowAttemptLinkageValidationFailure = {
   readonly reason: "attempt-id" | "previous-attempt-id";
 };
 
+type WorkflowAttemptLinkageInput = {
+  attemptId: string;
+  previousAttemptId?: string;
+};
+
 /** Creates fresh attempt linkage without throwing on bounded input failures. */
 export function createWorkflowAttemptLinkage(
   previousAttemptId: string | undefined,
@@ -155,10 +166,11 @@ export function createWorkflowAttemptLinkage(
       WorkflowAttemptLinkageValidationFailure
     >({ kind: "malformed", reason: "attempt-id" });
   }
-  const parsed = PiWorkflowAttemptLinkageSchema.safeParse({
-    attemptId,
-    ...(previousAttemptId !== undefined ? { previousAttemptId } : {}),
-  });
+  const linkageInput: WorkflowAttemptLinkageInput = { attemptId };
+  if (previousAttemptId !== undefined) {
+    linkageInput.previousAttemptId = previousAttemptId;
+  }
+  const parsed = PiWorkflowAttemptLinkageSchema.safeParse(linkageInput);
   if (!parsed.success) {
     return err<
       PiWorkflowAttemptLinkage,
@@ -205,13 +217,15 @@ export function activeInstanceFromRecoveryPointer(
   if (!isPointerEligibleForExplicitResume(pointer)) return undefined;
   if (pointer.workflowId === undefined) return undefined;
   if (pointer.leaseId === undefined) return undefined;
-  return {
+  const activeInstance = {
     workflowInstanceId: pointer.workflowId,
     leaseId: pointer.leaseId,
     controllerGeneration: pointer.controllerGeneration,
-    ...(pointer.attempt?.attemptId !== undefined
-      ? { attemptId: pointer.attempt.attemptId }
-      : {}),
+  };
+  if (pointer.attempt?.attemptId === undefined) return activeInstance;
+  return {
+    ...activeInstance,
+    attemptId: pointer.attempt.attemptId,
   };
 }
 
@@ -241,13 +255,10 @@ export class InMemoryRecoveryPointerStore implements PiRecoveryPointerStore {
     if (this.failNextAppend !== undefined) {
       const reason = this.failNextAppend;
       this.failNextAppend = undefined;
-      return ResultAsync.fromPromise(
-        Promise.reject(makeSessionPointerAppendFailedFailure(reason)),
-        (cause) => cause as PiAdapterFailure,
-      );
+      return errAsync(makeSessionPointerAppendFailedFailure(reason));
     }
     this.pointers.push(pointer);
-    return ResultAsync.fromSafePromise(Promise.resolve(undefined));
+    return ResultAsync.fromSafePromise(Promise.resolve());
   }
 
   readLatestPointer(): ResultAsync<
@@ -304,15 +315,12 @@ export class BunJsonlRecoveryPointerStore implements PiRecoveryPointerStore {
           .catch(() => "");
         const lines = text.split("\n").filter((line) => line.trim().length > 0);
         for (let i = lines.length - 1; i >= 0; i -= 1) {
-          const parsedJson = Result.fromThrowable(
-            () => JSON.parse(lines[i] as string) as unknown,
-            () => undefined,
-          )();
+          const parsedJson = parseStrictJson(lines[i]);
           if (parsedJson.isErr()) continue;
           const validated = parseRecoveryPointer(parsedJson.value);
           if (validated.isOk()) return validated.value;
         }
-        return undefined;
+        return;
       })(),
       // Fixed, bounded reason only - never the raw thrown `Error.message`.
       () => makeSessionPointerAppendFailedFailure("pointer-read-io-failed"),

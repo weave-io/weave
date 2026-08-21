@@ -121,7 +121,7 @@ export type PiThreadSourceFactory = (
 ) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>;
 
 const NOOP_CACHE: PiThreadCachePort = {
-  upsertRef: () => ok(undefined),
+  upsertRef: () => ok(),
 };
 
 /**
@@ -147,7 +147,7 @@ function resolveSessionRoot(
     (root) => okAsync<string, PiThreadSourceFactoryError>(root),
     (failure) =>
       errAsync<string, PiThreadSourceFactoryError>({
-        type: "SessionRootUnavailable" as const,
+        type: "SessionRootUnavailable",
         reason: failure.reason,
       }),
   );
@@ -157,9 +157,7 @@ function resolveHost(
   input: PiThreadSourceFactoryInput,
 ): Result<PiNativeSessionHostPort, PiThreadSourceFactoryError> {
   if (input.host !== undefined) return ok(input.host);
-  const candidate =
-    input.SessionManager ??
-    (PiPublicExports as { SessionManager?: unknown }).SessionManager;
+  const candidate = input.SessionManager ?? PiPublicExports.SessionManager;
   if (!isPiSessionManagerStatic(candidate)) {
     return err({
       type: "NativeHostUnavailable",
@@ -169,10 +167,14 @@ function resolveHost(
   return ok(createPiNativeSessionHost(candidate));
 }
 
-function cachePortFromOutcome(outcome: PiChildMetadataCacheOpenOutcome): {
+interface PiThreadCacheSelection {
   readonly cache: PiThreadCachePort;
   readonly cacheMode: "active" | "degraded";
-} {
+}
+
+function cachePortFromOutcome(
+  outcome: PiChildMetadataCacheOpenOutcome,
+): PiThreadCacheSelection {
   if (outcome.mode === "active") {
     return { cache: outcome.cache, cacheMode: "active" };
   }
@@ -230,22 +232,35 @@ function openWithSessionRoot(
     }),
     (): PiNativeSessionStoreLaunchMode => ({ mode: "read-only" }),
   );
-  const sessions = new PiNativeSessionStore({
-    root,
-    fs: input.fs ?? createBunPiNativeSessionFs(),
-    host,
-    launch,
-    ...(now === undefined ? {} : { now: () => new Date(now()) }),
-  });
+  const sessionFs = input.fs ?? createBunPiNativeSessionFs();
+  const sessions =
+    now === undefined
+      ? new PiNativeSessionStore({ root, fs: sessionFs, host, launch })
+      : new PiNativeSessionStore({
+          root,
+          fs: sessionFs,
+          host,
+          launch,
+          now: () => new Date(now()),
+        });
   const authority = createNativeChildRefSourceAuthority(sessions);
-  const refs = new PiChildSessionRefStore({
-    parentSessionId: input.parentSessionId,
-    append: input.append,
-    read: input.read,
-    authority,
-    storage: storageAuthority,
-    ...(now === undefined ? {} : { now }),
-  });
+  const refs =
+    now === undefined
+      ? new PiChildSessionRefStore({
+          parentSessionId: input.parentSessionId,
+          append: input.append,
+          read: input.read,
+          authority,
+          storage: storageAuthority,
+        })
+      : new PiChildSessionRefStore({
+          parentSessionId: input.parentSessionId,
+          append: input.append,
+          read: input.read,
+          authority,
+          storage: storageAuthority,
+          now,
+        });
 
   const cacheRootResult = (() => {
     if (input.cacheRoot !== undefined) {
@@ -276,25 +291,28 @@ function openWithSessionRoot(
   };
 
   if (cacheRootResult.isErr()) {
-    return okAsync({
+    const degradedSources: PiThreadSources = {
       refs,
       sessions,
       cache: NOOP_CACHE,
-      cacheMode: "degraded" as const,
-    });
+      cacheMode: "degraded",
+    };
+    return okAsync(degradedSources);
   }
 
-  return openPiChildMetadataCache({
+  const cacheOptions = {
     root: cacheRootResult.value,
     fs: input.cacheFs ?? new BunPiChildMetadataCacheFs(),
     authority,
     source: metadataSource,
-    ...(input.readOnly === true ? { readOnly: true as const } : {}),
-    ...(input.openDatabase === undefined
-      ? {}
-      : { openDatabase: input.openDatabase }),
-    ...(now === undefined ? {} : { now }),
-  }).map((outcome) => {
+  };
+  if (input.readOnly === true) Object.assign(cacheOptions, { readOnly: true });
+  if (input.openDatabase !== undefined) {
+    Object.assign(cacheOptions, { openDatabase: input.openDatabase });
+  }
+  if (now !== undefined) Object.assign(cacheOptions, { now });
+
+  return openPiChildMetadataCache(cacheOptions).map((outcome) => {
     const { cache, cacheMode } = cachePortFromOutcome(outcome);
     return { refs, sessions, cache, cacheMode };
   });
@@ -304,11 +322,12 @@ function openWithSessionRoot(
 export function createProductionPiThreadSourceFactory(
   options: { readonly SessionManager?: PiSessionManagerStatic } = {},
 ): PiThreadSourceFactory {
+  const SessionManager = options.SessionManager;
+  if (SessionManager === undefined)
+    return (input) => openPiThreadSources(input);
   return (input) =>
     openPiThreadSources({
       ...input,
-      ...(options.SessionManager === undefined
-        ? {}
-        : { SessionManager: options.SessionManager }),
+      SessionManager,
     });
 }

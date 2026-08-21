@@ -89,7 +89,7 @@ export const FORCE_KILL_SIGNAL = 9;
 
 export interface PiChildStdinSink {
   write(bytes: Uint8Array): number | Promise<number>;
-  flush(): void | number | Promise<void | number>;
+  flush(): void;
 }
 
 /**
@@ -126,7 +126,7 @@ export function writeAllToSink(
         }
         await sink.flush();
       }
-      return ok(undefined);
+      return ok();
     },
     (): ChildProcessError => ({
       type: "WriteFailed",
@@ -151,7 +151,7 @@ export function resolveKillSignal(
   mode: "cooperative" | "force",
 ): number | undefined {
   if (mode === "force") return FORCE_KILL_SIGNAL;
-  return undefined;
+  return;
 }
 
 /**
@@ -192,8 +192,8 @@ export class BunPiChildProcessPort implements PiChildProcessPort {
   }
 
   private doSpawn(input: PiChildSpawnInput): PiSpawnedChildProcess {
-    const subprocess = Bun.spawn(input.command as string[], {
-      env: input.env as Record<string, string>,
+    const subprocess = Bun.spawn([...input.command], {
+      env: { ...input.env },
       cwd: input.cwd,
       stdin: "pipe",
       stdout: "pipe",

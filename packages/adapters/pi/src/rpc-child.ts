@@ -29,7 +29,6 @@ import {
   type PiBootstrapAckBody,
   type PiBootstrapBody,
   type PiDelegateRequestBody,
-  type PiTransferChunkBody,
   type PiTransferResultBody,
   parseControlBody,
 } from "./child-control-bodies.js";
@@ -57,7 +56,10 @@ import {
   signEnvelope,
   verifyEnvelope,
 } from "./child-envelope.js";
-import { normalizePiExtensionUiRequest } from "./child-extension-ui.js";
+import {
+  normalizePiExtensionUiRequest,
+  type PiNormalizedExtensionUiRequest,
+} from "./child-extension-ui.js";
 import { PiLineFramer } from "./child-framing.js";
 import type {
   PiChildProcessPort,
@@ -68,8 +70,10 @@ import {
   makeChildRuntimeExceededFailure,
 } from "./child-runtime-budget.js";
 import {
+  MAX_CHILD_EVENT_ITEMS,
+  MAX_CHILD_EVENT_KEYS,
+  MAX_CHILD_EVENT_STRING,
   type PiChildSessionEvent,
-  PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
 import {
@@ -321,6 +325,11 @@ export interface PiRpcChildSpawnInput {
   readonly session?: PiRpcChildSpawnSession;
 }
 
+/** Mutable owner contract for the final string-only child environment. */
+interface ChildSpawnEnvironment {
+  [key: string]: string;
+}
+
 export type PiChildSettlement =
   | {
       readonly outcome: "completed";
@@ -333,6 +342,14 @@ export type PiChildSettlement =
     }
   | { readonly outcome: "failed"; readonly reason: string }
   | { readonly outcome: "cancelled" };
+
+interface PiCompletedSettlementDraft {
+  outcome: "completed";
+  assistantOutput?: string;
+  completionCandidate?: string;
+  outputByteLength?: number;
+  interventionCount: number;
+}
 
 const DEFAULT_COMMAND = ["pi", "--mode", "rpc"] as const;
 const SESSION_FLAGS = [
@@ -367,6 +384,19 @@ const MAX_EXTENSION_ARG_PATH_BYTES = 512;
 /** `--no-extensions` plus one flag and one path per selected extension. */
 const MAX_EXTENSION_ARGS = 1 + 2 * MAX_EXTENSION_ARG_PATHS;
 
+const SpawnPathValueSchema = z.string().min(1);
+type SpawnPathValue = z.infer<typeof SpawnPathValueSchema>;
+const SpawnSessionIdValueSchema = z.string().min(1);
+type SpawnSessionIdValue = z.infer<typeof SpawnSessionIdValueSchema>;
+const SpawnCommandArgumentsSchema = z.array(z.string());
+const ExtensionArgumentsArraySchema = z.array(z.unknown());
+const ExtensionArgumentsSchema = z.array(z.string());
+type ExtensionArguments = z.infer<typeof ExtensionArgumentsSchema>;
+const SpawnSessionSelectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("ephemeral") }).strict(),
+  z.object({ mode: z.literal("native"), grant: z.unknown() }).strict(),
+]);
+
 const MAX_SPAWN_SESSION_ID_BYTES = 256;
 const MAX_SPAWN_CHECKPOINT_CURSOR = Number.MAX_SAFE_INTEGER;
 const MAX_LIVE_RPC_ID_LENGTH = 256;
@@ -380,19 +410,24 @@ function invalidSpawnSession<T>(reason: string): Result<T, string> {
 }
 
 function validateAbsoluteSpawnPath(
-  value: unknown,
+  value: SpawnPathValue,
   field: string,
 ): Result<string, string> {
-  if (typeof value !== "string" || value.length === 0) {
+  const parsed = Result.fromThrowable(
+    () => SpawnPathValueSchema.safeParse(value),
+    () => null,
+  )();
+  if (parsed.isErr() || !parsed.value.success) {
     return err(`${field} must be a non-empty absolute path`);
   }
-  if (value.includes("\0") || value.includes("\\")) {
+  const path = parsed.value.data;
+  if (path.includes("\0") || path.includes("\\")) {
     return err(`${field} contains an unsafe path character`);
   }
-  if (!isAbsolute(value)) {
+  if (!isAbsolute(path)) {
     return err(`${field} must be absolute`);
   }
-  const components = value.split("/");
+  const components = path.split("/");
   if (
     components.some(
       (component, index) =>
@@ -401,7 +436,7 @@ function validateAbsoluteSpawnPath(
   ) {
     return err(`${field} contains a traversal component`);
   }
-  return ok(value);
+  return ok(path);
 }
 
 function isSessionFlagArgument(value: string): boolean {
@@ -423,19 +458,13 @@ function isSessionFlagArgument(value: string): boolean {
  * deselected, and both are worse than a typed `ChildSpawnFailed`.
  */
 function validateExtensionArguments(
-  values: readonly string[],
+  values: ExtensionArguments,
 ): Result<readonly string[], string> {
-  if (!Array.isArray(values)) {
-    return err("extension arguments must be an array");
-  }
   if (values.length === 0) return ok([]);
   if (values.length > MAX_EXTENSION_ARGS) {
     return err("extension arguments exceed their bound");
   }
   for (const value of values) {
-    if (typeof value !== "string") {
-      return err("extension arguments must be strings");
-    }
     if (isSessionFlagArgument(value)) {
       return err("extension arguments contain a session flag");
     }
@@ -483,20 +512,41 @@ function resolveExtensionArguments(
     () => "extension argument provider failed",
   )();
   if (resolved.isErr()) return err(resolved.error);
-  return validateExtensionArguments(resolved.value);
+  const parsedArray = Result.fromThrowable(
+    () => ExtensionArgumentsArraySchema.safeParse(resolved.value),
+    () => null,
+  )();
+  if (parsedArray.isErr() || !parsedArray.value.success) {
+    return err("extension arguments must be an array");
+  }
+  const parsed = Result.fromThrowable(
+    () => ExtensionArgumentsSchema.safeParse(parsedArray.value.data),
+    () => null,
+  )();
+  if (parsed.isErr() || !parsed.value.success) {
+    return err("extension arguments must be strings");
+  }
+  return validateExtensionArguments(parsed.value.data);
 }
 
-function validateSpawnSessionId(value: unknown): Result<string, string> {
-  if (typeof value !== "string" || value.length === 0) {
+function validateSpawnSessionId(
+  value: SpawnSessionIdValue,
+): Result<string, string> {
+  const parsed = Result.fromThrowable(
+    () => SpawnSessionIdValueSchema.safeParse(value),
+    () => null,
+  )();
+  if (parsed.isErr() || !parsed.value.success) {
     return err("activeLeafId must be non-empty");
   }
+  const sessionId = parsed.value.data;
   if (
-    value.includes("\0") ||
-    new TextEncoder().encode(value).byteLength > MAX_SPAWN_SESSION_ID_BYTES
+    sessionId.includes("\0") ||
+    new TextEncoder().encode(sessionId).byteLength > MAX_SPAWN_SESSION_ID_BYTES
   ) {
     return err("activeLeafId exceeds its bound");
   }
-  return ok(value);
+  return ok(sessionId);
 }
 
 interface SpawnSessionPlan {
@@ -515,8 +565,15 @@ function buildSpawnCommand(
   },
   resolveExtensionArgs?: () => readonly string[],
 ): SpawnSessionPlanResult {
-  for (const argument of baseCommand) {
-    if (typeof argument !== "string" || isSessionFlagArgument(argument)) {
+  const parsedBaseCommand = Result.fromThrowable(
+    () => SpawnCommandArgumentsSchema.safeParse(baseCommand),
+    () => null,
+  )();
+  if (parsedBaseCommand.isErr() || !parsedBaseCommand.value.success) {
+    return invalidSpawnSession("base command contains a session flag");
+  }
+  for (const argument of parsedBaseCommand.value.data) {
+    if (isSessionFlagArgument(argument)) {
       return invalidSpawnSession("base command contains a session flag");
     }
   }
@@ -526,26 +583,33 @@ function buildSpawnCommand(
   // transport alone owns.
   const extensionArgs = resolveExtensionArguments(resolveExtensionArgs);
   if (extensionArgs.isErr()) return invalidSpawnSession(extensionArgs.error);
-  const launchCommand = [...baseCommand, ...extensionArgs.value];
+  const launchCommand = [
+    ...parsedBaseCommand.value.data,
+    ...extensionArgs.value,
+  ];
 
   const selected = session ?? { mode: "ephemeral" as const };
-  if (typeof selected !== "object" || selected === null) {
-    return invalidSpawnSession("session must be an object");
-  }
-  if (selected.mode === "ephemeral") {
-    return ok({ command: [...launchCommand, "--no-session"] });
-  }
-  if (selected.mode !== "native") {
+  const parsedSession = Result.fromThrowable(
+    () => SpawnSessionSelectionSchema.safeParse(selected),
+    () => null,
+  )();
+  if (parsedSession.isErr() || !parsedSession.value.success) {
     return invalidSpawnSession("unknown session mode");
+  }
+  if (parsedSession.value.data.mode === "ephemeral") {
+    return ok({ command: [...launchCommand, "--no-session"] });
   }
 
   // The only path authority: an opaque grant this process minted through the
   // store, bound to the generation's validated root and to this child. A
   // caller-supplied path, however well-formed, has no grant and stops here.
-  const launch = redeemPiChildSessionLaunchGrant(selected.grant, {
-    childId: identity.childId,
-    authority: identity.authority,
-  });
+  const launch = redeemPiChildSessionLaunchGrant(
+    parsedSession.value.data.grant,
+    {
+      childId: identity.childId,
+      authority: identity.authority,
+    },
+  );
   if (launch.isErr()) {
     return err(describePiChildSessionLaunchRejection(launch.error));
   }
@@ -605,27 +669,39 @@ function buildSpawnCommand(
 
 /** Native Pi commands, kept outside the authenticated private envelope kinds. */
 const LiveRpcCommandSchema = z.enum(["steer", "follow_up", "get_entries"]);
+const LiveRpcIdSchema = z
+  .string()
+  .min(1)
+  .max(MAX_LIVE_RPC_ID_LENGTH)
+  .refine(
+    (value) =>
+      new TextEncoder().encode(value).byteLength <= MAX_LIVE_RPC_ID_LENGTH,
+    "id is too large",
+  );
 const LiveRpcResponseSchema = z
   .object({
-    id: z
-      .string()
-      .min(1)
-      .max(MAX_LIVE_RPC_ID_LENGTH)
-      .refine(
-        (value) =>
-          new TextEncoder().encode(value).byteLength <= MAX_LIVE_RPC_ID_LENGTH,
-        "id is too large",
-      ),
+    id: LiveRpcIdSchema,
     type: z.literal("response"),
     command: LiveRpcCommandSchema,
     success: z.boolean(),
   })
   .passthrough();
+const JsonRecordSchema = z.record(z.string(), z.json());
+type PiMessageRecord = z.infer<typeof JsonRecordSchema>;
+const MessageStopReasonSchema = z
+  .object({ stopReason: z.string() })
+  .passthrough();
 
-const boundedJsonSchema = z.custom<JsonValue>(
-  (value) => isBoundedGetEntriesJson(value as JsonValue),
-  { message: "bounded JSON value required" },
-);
+type NormalizedSessionRecord =
+  | Record<string, JsonValue>
+  | PiNormalizedExtensionUiRequest;
+
+const boundedJsonSchema = z
+  .json()
+  .refine(
+    (value) => isBoundedGetEntriesJson(value),
+    "bounded JSON value required",
+  );
 
 const boundedField = (maxBytes = MAX_LIVE_RPC_MESSAGE_LENGTH, min = 0) =>
   z
@@ -636,7 +712,7 @@ const boundedField = (maxBytes = MAX_LIVE_RPC_MESSAGE_LENGTH, min = 0) =>
       "field is too large",
     );
 const entryIdSchema = boundedField(MAX_LIVE_RPC_ID_LENGTH, 1);
-const entryBaseShape = {
+const entryIdentityFields = {
   id: entryIdSchema,
   parentId: z.union([entryIdSchema, z.null()]),
   timestamp: boundedField(128, 1),
@@ -646,21 +722,21 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("message"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       message: boundedJsonSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("thinking_level_change"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       thinkingLevel: boundedField(),
     })
     .strict(),
   z
     .object({
       type: z.literal("model_change"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       provider: boundedField(),
       modelId: boundedField(),
     })
@@ -668,7 +744,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("compaction"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       summary: boundedField(),
       firstKeptEntryId: entryIdSchema,
       tokensBefore: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -680,7 +756,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("branch_summary"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       fromId: entryIdSchema,
       summary: boundedField(),
       details: boundedJsonSchema.optional(),
@@ -691,7 +767,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("custom"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       customType: boundedField(MAX_LIVE_RPC_ID_LENGTH, 1),
       data: boundedJsonSchema.optional(),
     })
@@ -699,7 +775,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("custom_message"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       customType: boundedField(MAX_LIVE_RPC_ID_LENGTH, 1),
       content: z.union([
         boundedField(),
@@ -712,7 +788,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("label"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       targetId: entryIdSchema,
       label: boundedField().optional(),
     })
@@ -720,7 +796,7 @@ const PiGetEntriesEntrySchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("session_info"),
-      ...entryBaseShape,
+      ...entryIdentityFields,
       name: boundedField().optional(),
     })
     .strict(),
@@ -772,7 +848,7 @@ export type PiRestoreAuthenticationReason =
 function measureRestoreSuffixEntry(entry: PiGetEntriesEntry): number {
   const encoded = Result.fromThrowable(
     () => new TextEncoder().encode(JSON.stringify(entry)).byteLength,
-    () => undefined,
+    () => null,
   )();
   // An unserializable entry is treated as over budget rather than free.
   return encoded.isOk() ? encoded.value : Number.POSITIVE_INFINITY;
@@ -796,10 +872,10 @@ export function authenticateRestoreStartupSuffix(
   const { entries, leafId } = page;
   if (entries.length === 0) {
     return leafId === establishedLeafId
-      ? ok(undefined)
+      ? ok()
       : err("restore-active-leaf-mismatch");
   }
-  if (typeof leafId !== "string" || leafId.length === 0) {
+  if (!entryIdSchema.safeParse(leafId).success) {
     return err("restore-active-leaf-mismatch");
   }
   if (entries.length > MAX_RESTORE_STARTUP_SUFFIX_ENTRIES) {
@@ -837,7 +913,7 @@ export function authenticateRestoreStartupSuffix(
   }
 
   return expectedParentId === leafId
-    ? ok(undefined)
+    ? ok()
     : err("restore-active-leaf-mismatch");
 }
 
@@ -1121,7 +1197,7 @@ export class PiRpcChild {
   }
 
   snapshot(): PiChildTreeNode {
-    return {
+    const snapshot = {
       id: this.childId,
       parentId: this.parentId,
       name: this.agentName,
@@ -1137,18 +1213,20 @@ export class PiRpcChild {
       // chain-of-thought in four places at once.
       latestOutput: this.latestOutput,
       reasoningObserved: this.reasoningObserved,
-      // Present only while a message is genuinely open and has answer text.
-      // Absence is therefore the honest statement "nothing is being written",
-      // which is what stops a reader adopting a finished answer as live.
-      ...(this.liveAnswer.open && this.liveAnswer.text.length > 0
-        ? {
-            liveAnswer: {
-              id: this.liveAnswer.id,
-              text: this.liveAnswer.text,
-            },
-          }
-        : {}),
-    };
+    } satisfies PiChildTreeNode;
+    // Present only while a message is genuinely open and has answer text.
+    // Absence is therefore the honest statement "nothing is being written",
+    // which is what stops a reader adopting a finished answer as live.
+    if (this.liveAnswer.open && this.liveAnswer.text.length > 0) {
+      return {
+        ...snapshot,
+        liveAnswer: {
+          id: this.liveAnswer.id,
+          text: this.liveAnswer.text,
+        },
+      };
+    }
+    return snapshot;
   }
 
   /** Opens a new assistant answer lifecycle with a fresh bounded identity. */
@@ -1248,7 +1326,7 @@ export class PiRpcChild {
       this.failOutstanding(failure);
       return errAsync(failure);
     }
-    const env: Record<string, string> = {
+    const env: ChildSpawnEnvironment = {
       ...this.baseEnv,
       ...input.env,
       [WEAVE_CHILD_SECRET_ENV]: bytesToHex(secretBytes),
@@ -1709,13 +1787,13 @@ export class PiRpcChild {
         ),
       );
     }
-    return this.sendLiveRpc<undefined>(childId, generationId, "steer", {
+    return this.sendLiveRpc(childId, generationId, "steer", {
       message: validMessage.data,
       images: [],
-    }).map(() => {
+    }).andThen(() => {
       this.interventionCount += 1;
       this.notifyInterventionCount();
-      return undefined;
+      return okAsync();
     });
   }
 
@@ -1744,13 +1822,13 @@ export class PiRpcChild {
         ),
       );
     }
-    return this.sendLiveRpc<undefined>(childId, generationId, "follow_up", {
+    return this.sendLiveRpc(childId, generationId, "follow_up", {
       message: validMessage.data,
       images: [],
-    }).map(() => {
+    }).andThen(() => {
       this.interventionCount += 1;
       this.notifyInterventionCount();
-      return undefined;
+      return okAsync();
     });
   }
 
@@ -1773,12 +1851,7 @@ export class PiRpcChild {
     }
     const payload: Record<string, JsonValue> = {};
     if (since !== undefined) payload.since = since;
-    return this.sendLiveRpc<PiGetEntriesResult>(
-      childId,
-      generationId,
-      "get_entries",
-      payload,
-    );
+    return this.sendLiveRpc(childId, generationId, "get_entries", payload);
   }
 
   /**
@@ -1829,9 +1902,9 @@ export class PiRpcChild {
       .mapErr(() =>
         makeChildSpawnFailedFailure(this.childId, "stdin-write-failed"),
       )
-      .map(() => {
+      .andThen(() => {
         this.outstandingExtensionUiRequestIds.delete(requestId);
-        return undefined;
+        return okAsync();
       })
       .orElse((failure) => {
         this.failOutstanding(failure);
@@ -1872,7 +1945,7 @@ export class PiRpcChild {
     ) {
       return err(makeChildInteractionUnavailableFailure(this.childId));
     }
-    return ok(undefined);
+    return ok();
   }
 
   /**
@@ -1880,12 +1953,24 @@ export class PiRpcChild {
    * must use `sendControl` instead; this path guards identity, lifecycle, and
    * correlated responses independently of envelope authentication.
    */
-  private sendLiveRpc<T extends LiveRpcResult>(
+  private sendLiveRpc(
+    childId: string,
+    generationId: string,
+    command: "steer" | "follow_up",
+    payload: Record<string, JsonValue>,
+  ): ResultAsync<undefined, PiAdapterFailure>;
+  private sendLiveRpc(
+    childId: string,
+    generationId: string,
+    command: "get_entries",
+    payload: Record<string, JsonValue>,
+  ): ResultAsync<PiGetEntriesResult, PiAdapterFailure>;
+  private sendLiveRpc(
     childId: string,
     generationId: string,
     command: "steer" | "follow_up" | "get_entries",
     payload: Record<string, JsonValue>,
-  ): ResultAsync<T, PiAdapterFailure> {
+  ): ResultAsync<LiveRpcResult, PiAdapterFailure> {
     const guard = this.guardLiveSession(childId, generationId);
     if (guard.isErr()) return errAsync(guard.error);
     const process = this.process;
@@ -1906,8 +1991,8 @@ export class PiRpcChild {
           command,
           // Install the pending call before scheduling or writing. This keeps
           // synchronous timer/process test doubles from racing the map entry.
-          timer: { cancel: () => undefined },
-          resolve: (result) => resolve(result as Result<T, PiAdapterFailure>),
+          timer: { cancel: () => {} },
+          resolve: (result) => resolve(result),
         };
         this.liveRpcPending.set(id, pending);
         pending.timer = this.timerPort.schedule(() => {
@@ -1926,7 +2011,7 @@ export class PiRpcChild {
             makeChildSpawnFailedFailure(this.childId, "stdin-write-failed"),
           )
           .match(
-            () => undefined,
+            () => {},
             (failure) => {
               this.settleLiveRpc(id, err(failure));
               this.failOutstanding(failure);
@@ -1937,16 +2022,16 @@ export class PiRpcChild {
   }
 
   private handleLiveRpcResponse(record: Record<string, JsonValue>): void {
-    const responseId = record.id;
-    if (typeof responseId !== "string") return;
-    const pending = this.liveRpcPending.get(responseId);
+    const responseId = LiveRpcIdSchema.safeParse(record.id);
+    if (!responseId.success) return;
+    const pending = this.liveRpcPending.get(responseId.data);
     // Unknown ids are late or duplicate replies. They must not affect a new
     // call, its count, or the child's lifecycle.
     if (pending === undefined) return;
     const parsed = LiveRpcResponseSchema.safeParse(record);
     if (!parsed.success) {
       this.settleLiveRpc(
-        responseId,
+        responseId.data,
         err(
           makeChildEnvelopeMalformedFailure(
             this.childId,
@@ -1978,14 +2063,14 @@ export class PiRpcChild {
     const result =
       pending.command === "get_entries"
         ? this.parseGetEntriesResponse(record)
-        : ok(undefined);
+        : ok(void 0);
     this.settleLiveRpc(parsed.data.id, result);
   }
 
   private parseGetEntriesResponse(
     record: Record<string, JsonValue>,
   ): Result<PiGetEntriesResult, PiAdapterFailure> {
-    const responseBytes = encodedJsonByteLength(record as JsonValue);
+    const responseBytes = encodedJsonByteLength(record);
     if (responseBytes === undefined || responseBytes > MAX_GET_ENTRIES_BYTES) {
       return err(
         makeChildEnvelopeMalformedFailure(this.childId, "entries-too-large"),
@@ -2025,7 +2110,7 @@ export class PiRpcChild {
     if (callback === undefined) return;
     Result.fromThrowable(
       () => callback(this.interventionCount),
-      () => undefined,
+      () => {},
     )();
   }
 
@@ -2093,9 +2178,7 @@ export class PiRpcChild {
       return;
     }
 
-    const accepted = this.outputTransferAssembler.accept(
-      parsed.value as PiTransferChunkBody,
-    );
+    const accepted = this.outputTransferAssembler.accept(parsed.value);
     if (accepted.isErr()) {
       this.outputTransferAssembler.drop(parsed.value.transferId);
       void this.sendControl("transfer-result", parsed.value.transferId, {
@@ -2198,34 +2281,41 @@ export class PiRpcChild {
       this.settled = true;
       this.status = "completed";
       const interventionCount = this.interventionCount;
-      const settlement: PiChildSettlement =
-        parsed.value.outcome === "failed"
-          ? { outcome: "failed", reason: parsed.value.reason ?? "unknown" }
-          : {
-              outcome: "completed",
-              // Only the last observer-approved terminal message_end crosses
-              // to the parent model. A transferred/private payload, including
-              // one supplied by a child, is never parent-projection authority.
-              ...(this.latestCompletedAssistantOutput.length > 0
-                ? {
-                    assistantOutput: truncateFinalOutput(
-                      this.latestCompletedAssistantOutput,
-                    ),
-                  }
-                : {}),
-              ...(parsed.value.completionCandidate !== undefined
-                ? { completionCandidate: parsed.value.completionCandidate }
-                : {}),
-              ...(parsed.value.completionCandidateTransferred === true &&
-              outputTransferUsable
-                ? { completionCandidate: privateOutput }
-                : {}),
-              ...(outputTransferUsable &&
-              parsed.value.outputByteLength !== undefined
-                ? { outputByteLength: parsed.value.outputByteLength }
-                : {}),
-              interventionCount,
-            };
+      let settlement: PiChildSettlement;
+      if (parsed.value.outcome === "failed") {
+        settlement = {
+          outcome: "failed",
+          reason: parsed.value.reason ?? "unknown",
+        };
+      } else {
+        const completed = parsed.value;
+        const completedSettlement: PiCompletedSettlementDraft = {
+          outcome: "completed",
+          interventionCount,
+        };
+        // Only the last observer-approved terminal message_end crosses to the
+        // parent model. A transferred/private payload, including one supplied by
+        // a child, is never parent-projection authority.
+        if (this.latestCompletedAssistantOutput.length > 0) {
+          completedSettlement.assistantOutput = truncateFinalOutput(
+            this.latestCompletedAssistantOutput,
+          );
+        }
+        if (completed.completionCandidate !== undefined) {
+          completedSettlement.completionCandidate =
+            completed.completionCandidate;
+        }
+        if (
+          completed.completionCandidateTransferred === true &&
+          outputTransferUsable
+        ) {
+          completedSettlement.completionCandidate = privateOutput;
+        }
+        if (outputTransferUsable && completed.outputByteLength !== undefined) {
+          completedSettlement.outputByteLength = completed.outputByteLength;
+        }
+        settlement = completedSettlement;
+      }
       const resolvers = this.settlementResolvers;
       this.settlementResolvers = undefined;
       resolvers?.resolve(settlement);
@@ -2379,7 +2469,7 @@ export class PiRpcChild {
 
   private normalizeUiRequestForSession(
     record: Record<string, JsonValue>,
-  ): Result<Record<string, JsonValue>, PiAdapterFailure> {
+  ): Result<NormalizedSessionRecord, PiAdapterFailure> {
     if (record.type !== "extension_ui_request") return ok(record);
 
     // Scripted/test hosts and older Pi builds may already emit Weave's
@@ -2396,13 +2486,13 @@ export class PiRpcChild {
         ),
       );
     }
-    return ok(normalized.value as unknown as Record<string, JsonValue>);
+    return ok(normalized.value);
   }
 
   private handleOrdinaryEvent(json: JsonValue): void {
-    if (typeof json !== "object" || json === null || Array.isArray(json))
-      return;
-    const record = json as Record<string, JsonValue>;
+    const parsedRecord = JsonRecordSchema.safeParse(json);
+    if (!parsedRecord.success) return;
+    const record = parsedRecord.data;
     if (record.type === "response") {
       this.handleLiveRpcResponse(record);
       return;
@@ -2421,9 +2511,7 @@ export class PiRpcChild {
         this.status === "running" &&
         !this.disposed
       ) {
-        this.outstandingExtensionUiRequestIds.add(
-          parsed.data.requestId as string,
-        );
+        this.outstandingExtensionUiRequestIds.add(parsed.data.requestId);
       }
       this.forwardSessionEvent(parsed.data);
       this.observeResultContractEvent(parsed.data);
@@ -2449,8 +2537,10 @@ export class PiRpcChild {
       return;
     }
     if (type === "tool_execution_start") {
-      const toolName = (normalized.value as Record<string, JsonValue>).toolName;
-      if (typeof toolName === "string") this.currentTool = toolName;
+      if (parsed.success && parsed.data.type === "tool_call") {
+        const toolName = z.string().safeParse(parsed.data.toolName);
+        if (toolName.success) this.currentTool = toolName.data;
+      }
       this.onStreamingUpdate?.(this.snapshot());
       return;
     }
@@ -2514,29 +2604,28 @@ export class PiRpcChild {
       // showing. Everything downstream reads this as "no answer is in flight".
       this.closeLiveAnswer();
       const message = record.message;
-      const stopReason =
-        isJsonRecord(message) && typeof message.stopReason === "string"
-          ? message.stopReason
-          : undefined;
+      const stopReason = MessageStopReasonSchema.safeParse(message);
       const assistantOutput = extractCompletedAssistantText(message);
       if (
         assistantOutput !== undefined &&
-        (stopReason === undefined ||
-          stopReason === "stop" ||
-          stopReason === "length")
+        (!stopReason.success ||
+          stopReason.data.stopReason === "stop" ||
+          stopReason.data.stopReason === "length")
       ) {
         this.latestCompletedAssistantOutput = assistantOutput;
         this.terminalAssistantMessageObserved = true;
         if (assistantOutput.trim().length > 0)
           this.terminalResponseObserved = true;
       }
-      this.projectUsageFromMessage(record);
+      const parsedMessage = JsonRecordSchema.safeParse(message);
+      if (parsedMessage.success) {
+        this.projectUsageFromMessage(parsedMessage.data);
+      }
       // A terminal message may legitimately arrive after the authenticated
       // settlement; classification waits for it (Pi adapter contract §10).
       this.maybeFinishDrainedSettlement();
       return;
     }
-    if (type === "agent_settled") this.projectUsageFromMessage(record);
   }
 
   /**
@@ -2584,7 +2673,7 @@ export class PiRpcChild {
       void ResultAsync.fromPromise(result, () =>
         makeChildInteractionUnavailableFailure(this.childId),
       ).match(
-        () => undefined,
+        () => {},
         () => this.handleSessionObserverFailure(),
       );
       return;
@@ -2602,28 +2691,17 @@ export class PiRpcChild {
     this.failOutstanding(failure);
   }
 
-  private projectUsageFromMessage(record: Record<string, JsonValue>): void {
-    const message = record.message;
-    if (
-      typeof message !== "object" ||
-      message === null ||
-      Array.isArray(message)
-    )
-      return;
-    const messageRecord = message as Record<string, JsonValue>;
-    if (messageRecord.role !== "assistant") return;
-    const idCandidate = messageRecord.id ?? messageRecord.responseId;
-    if (typeof idCandidate !== "string" || idCandidate.length === 0) return;
-    const id = idCandidate;
+  private projectUsageFromMessage(message: PiMessageRecord): void {
+    const role = z.literal("assistant").safeParse(message.role);
+    if (!role.success) return;
+    const idCandidate = message.id ?? message.responseId;
+    const parsedId = z.string().min(1).safeParse(idCandidate);
+    if (!parsedId.success) return;
+    const id = parsedId.data;
     if (this.seenUsageMessageIds.has(id)) return;
-    const usageValue = messageRecord.usage;
-    if (
-      typeof usageValue !== "object" ||
-      usageValue === null ||
-      Array.isArray(usageValue)
-    )
-      return;
-    const usageRecord = usageValue as Record<string, JsonValue>;
+    const parsedUsage = JsonRecordSchema.safeParse(message.usage);
+    if (!parsedUsage.success) return;
+    const usageRecord = parsedUsage.data;
     this.seenUsageMessageIds.add(id);
     const projected = {
       inputTokens: safeNumberField(usageRecord, "input"),
@@ -2645,7 +2723,7 @@ export class PiRpcChild {
         this.handshakeResolvers = {
           resolve: () => {
             timer.cancel();
-            resolve(ok(undefined));
+            resolve(ok());
           },
           reject: (failure) => {
             timer.cancel();
@@ -2793,7 +2871,7 @@ export class PiRpcChild {
    */
   private verifyRestoreContext(): ResultAsync<void, PiAdapterFailure> {
     const restore = this.restoreSession;
-    if (restore === undefined) return okAsync(undefined);
+    if (restore === undefined) return okAsync();
 
     const activeLeafId = validateSpawnSessionId(restore.activeLeafId);
     if (activeLeafId.isErr()) {
@@ -2823,11 +2901,15 @@ export class PiRpcChild {
           ),
         );
       }
-      return this.notifyRestoreContextVerified({
+      const metadata = {
         activeLeafId: establishedLeafId,
-        ...(restore.checkpointCursor === undefined
-          ? {}
-          : { checkpointCursor: restore.checkpointCursor }),
+      } satisfies PiRestoreContextMetadata;
+      if (restore.checkpointCursor === undefined) {
+        return this.notifyRestoreContextVerified(metadata);
+      }
+      return this.notifyRestoreContextVerified({
+        ...metadata,
+        checkpointCursor: restore.checkpointCursor,
       });
     });
   }
@@ -2837,7 +2919,7 @@ export class PiRpcChild {
     metadata: PiRestoreContextMetadata,
   ): ResultAsync<void, PiAdapterFailure> {
     const observer = this.onRestoreContextVerified;
-    if (observer === undefined) return okAsync(undefined);
+    if (observer === undefined) return okAsync();
 
     const observerFailure = () =>
       makeChildInteractionUnavailableFailure(this.childId);
@@ -2849,13 +2931,10 @@ export class PiRpcChild {
 
     if (callback.value instanceof ResultAsync) {
       return ResultAsync.fromPromise(callback.value, observerFailure).andThen(
-        (result) =>
-          result.isErr() ? errAsync(observerFailure()) : okAsync(undefined),
+        (result) => (result.isErr() ? errAsync(observerFailure()) : okAsync()),
       );
     }
-    return callback.value.isErr()
-      ? errAsync(observerFailure())
-      : okAsync(undefined);
+    return callback.value.isErr() ? errAsync(observerFailure()) : okAsync();
   }
 
   /** Verifies the concrete model identity when the parent supplied one. */
@@ -2884,7 +2963,7 @@ export class PiRpcChild {
         );
       }
     }
-    return okAsync(undefined);
+    return okAsync();
   }
 
   private awaitBootstrapAck(): ResultAsync<
@@ -2946,7 +3025,7 @@ export class PiRpcChild {
     // Install the waiter before writing any chunk: a fast child can ACK in
     // the same turn as the final write and must never race past its resolver.
     const acknowledged = this.awaitPromptTransferResult(transferId);
-    let writes: ResultAsync<void, PiAdapterFailure> = okAsync(undefined);
+    let writes: ResultAsync<void, PiAdapterFailure> = okAsync();
     for (const chunk of chunks.value) {
       const line = `${JSON.stringify({
         type: "prompt",
@@ -2963,7 +3042,7 @@ export class PiRpcChild {
         return errAsync(failure);
       })
       .andThen(() => acknowledged)
-      .map(() => undefined)
+      .andThen(() => okAsync())
       .orElse((failure) => {
         if (attempt < PI_TRANSPORT_LIMITS.transferMaxRetries) {
           return this.sendPromptTransferAttempt(task, attempt + 1);
@@ -3230,8 +3309,7 @@ export class PiRpcChild {
   private runCancellation(options: {
     readonly reportDeliveryFailure: boolean;
   }): ResultAsync<void, PiAdapterFailure> {
-    if (this.disposed || this.settled)
-      return new ResultAsync(Promise.resolve(ok(undefined)));
+    if (this.disposed || this.settled) return okAsync();
     this.status = "cancelling";
     let deliveryFailed = false;
     return this.sendControl(
@@ -3245,13 +3323,13 @@ export class PiRpcChild {
           { childId: this.childId, code: failure.code },
           "authenticated cancel notice failed to deliver; proceeding to raw abort and bounded force-kill",
         );
-        return new ResultAsync(Promise.resolve(ok(undefined)));
+        return okAsync();
       })
       .andThen(() => {
         const process = this.process;
         const abortWrite =
           process === undefined
-            ? okAsync(undefined)
+            ? okAsync()
             : process
                 .writeStdin(
                   new TextEncoder().encode(
@@ -3264,7 +3342,7 @@ export class PiRpcChild {
                     { childId: this.childId, code: failure.type },
                     "raw abort command failed to write; proceeding to bounded force-kill regardless",
                   );
-                  return okAsync(undefined);
+                  return okAsync();
                 });
         return abortWrite.andThen(() => this.waitBoundedThenForceKill());
       })
@@ -3277,7 +3355,7 @@ export class PiRpcChild {
             ),
           );
         }
-        return okAsync(undefined);
+        return okAsync();
       });
   }
 
@@ -3292,7 +3370,7 @@ export class PiRpcChild {
           // abort-failed error.
           this.cancelResolvers = undefined;
           this.completeCancellation();
-          resolve(ok(undefined));
+          resolve(ok());
         }, this.cancelGraceMs);
         this.cancelResolvers = {
           // `completeCancellation()` (the only caller of this resolver, from
@@ -3302,7 +3380,7 @@ export class PiRpcChild {
           // timer and settle this bounded wait.
           resolve: () => {
             timer.cancel();
-            resolve(ok(undefined));
+            resolve(ok());
           },
         };
       }),
@@ -3343,6 +3421,340 @@ const NORMALIZED_EXTENSION_UI_RESPONSE_KEYS = new Set([
   "error",
 ]);
 
+type HostParseFailure = "invalid";
+
+const HostInputBoundary = z.unknown();
+type HostInput = z.input<typeof HostInputBoundary>;
+
+interface HostObjectReference {
+  readonly hostObjectMarker?: never;
+}
+
+interface HostJsonBounds {
+  readonly maxStringLength: number;
+  readonly maxKeyLength: number;
+  readonly maxItems: number;
+  readonly maxKeys: number;
+  readonly maxDepth: number;
+  readonly utf8Lengths: boolean;
+}
+
+const LIVE_JSON_BOUNDS: HostJsonBounds = {
+  maxStringLength: MAX_LIVE_RPC_MESSAGE_LENGTH,
+  maxKeyLength: MAX_LIVE_RPC_ID_LENGTH,
+  maxItems: MAX_GET_ENTRIES,
+  maxKeys: MAX_GET_ENTRIES,
+  maxDepth: MAX_LIVE_JSON_DEPTH,
+  utf8Lengths: false,
+};
+
+const GET_ENTRIES_JSON_BOUNDS: HostJsonBounds = {
+  ...LIVE_JSON_BOUNDS,
+  utf8Lengths: true,
+};
+
+const MESSAGE_JSON_BOUNDS: HostJsonBounds = {
+  maxStringLength: 8 * 1024 * 1024,
+  maxKeyLength: 8 * 1024 * 1024,
+  maxItems: 512,
+  maxKeys: 512,
+  maxDepth: 128,
+  utf8Lengths: false,
+};
+
+const EXTENSION_UI_RESPONSE_JSON_BOUNDS: HostJsonBounds = {
+  maxStringLength: MAX_CHILD_EVENT_STRING,
+  maxKeyLength: MAX_LIVE_RPC_ID_LENGTH,
+  maxItems: MAX_CHILD_EVENT_ITEMS,
+  maxKeys: MAX_CHILD_EVENT_KEYS,
+  maxDepth: MAX_LIVE_JSON_DEPTH,
+  utf8Lengths: false,
+};
+
+const HostObjectReferenceSchema = z.custom<HostObjectReference>(
+  (value) => Object(value) === value,
+);
+const HostCallableSchema = z.function();
+const HostStringSchema = z.string();
+const HostFiniteNumberSchema = z.number().finite();
+const HostBooleanSchema = z.boolean();
+
+const ownDescriptorSafe = Result.fromThrowable(
+  (
+    target: HostObjectReference,
+    key: PropertyKey,
+  ): PropertyDescriptor | undefined =>
+    Object.getOwnPropertyDescriptor(target, key),
+  (): HostParseFailure => "invalid",
+);
+
+const ownKeysSafe = Result.fromThrowable(
+  (target: HostObjectReference): readonly PropertyKey[] =>
+    Reflect.ownKeys(target),
+  (): HostParseFailure => "invalid",
+);
+
+function hostObjectReference(
+  value: HostInput,
+): Result<HostObjectReference, HostParseFailure> {
+  const parsed = Result.fromThrowable(
+    () => HostObjectReferenceSchema.safeParse(value),
+    (): HostParseFailure => "invalid",
+  )();
+  if (parsed.isErr() || !parsed.value.success) return err("invalid");
+
+  const callable = Result.fromThrowable(
+    () => HostCallableSchema.safeParse(value),
+    (): HostParseFailure => "invalid",
+  )();
+  if (callable.isErr() || callable.value.success) return err("invalid");
+  return ok(parsed.value.data);
+}
+
+function hostArrayStatus(
+  value: HostObjectReference,
+): Result<boolean, HostParseFailure> {
+  return Result.fromThrowable(
+    () => Array.isArray(value),
+    (): HostParseFailure => "invalid",
+  )();
+}
+
+function hostPrototype(
+  value: HostObjectReference,
+): Result<object | null, HostParseFailure> {
+  return Result.fromThrowable(
+    () => Object.getPrototypeOf(value),
+    (): HostParseFailure => "invalid",
+  )();
+}
+
+function hostRecordReference(
+  value: HostInput,
+): Result<HostObjectReference, HostParseFailure> {
+  const reference = hostObjectReference(value);
+  if (reference.isErr()) return reference;
+  const array = hostArrayStatus(reference.value);
+  if (array.isErr() || array.value) return err("invalid");
+  const prototype = hostPrototype(reference.value);
+  if (
+    prototype.isErr() ||
+    (prototype.value !== Object.prototype && prototype.value !== null)
+  ) {
+    return err("invalid");
+  }
+  return ok(reference.value);
+}
+
+function readHostRecord(
+  value: HostInput,
+): Result<ReadonlyMap<string, HostInput>, HostParseFailure> {
+  const reference = hostRecordReference(value);
+  if (reference.isErr()) return err(reference.error);
+  const keys = ownKeysSafe(reference.value);
+  if (keys.isErr() || keys.value.length > MAX_GET_ENTRIES) {
+    return err("invalid");
+  }
+
+  const fields = new Map<string, HostInput>();
+  for (const key of keys.value) {
+    const parsedKey = HostStringSchema.safeParse(key);
+    if (!parsedKey.success) return err("invalid");
+    const descriptor = ownDescriptorSafe(reference.value, key);
+    if (descriptor.isErr()) return err("invalid");
+    const found = descriptor.value;
+    if (
+      found === undefined ||
+      !("value" in found) ||
+      found.enumerable !== true
+    ) {
+      return err("invalid");
+    }
+    fields.set(parsedKey.data, found.value);
+  }
+  return ok(fields);
+}
+
+function readHostRecordField(
+  value: HostInput,
+  field: string,
+): Result<HostInput, HostParseFailure> {
+  const reference = hostRecordReference(value);
+  if (reference.isErr()) return err(reference.error);
+  const descriptor = ownDescriptorSafe(reference.value, field);
+  if (descriptor.isErr()) return err("invalid");
+  const found = descriptor.value;
+  if (found === undefined) return ok();
+  if (!("value" in found) || found.enumerable !== true) return err("invalid");
+  return ok(found.value);
+}
+
+function parseHostJson(
+  value: HostInput,
+  bounds: HostJsonBounds,
+  depth = 0,
+): Result<JsonValue, HostParseFailure> {
+  if (!Number.isSafeInteger(depth) || depth < 0 || depth > bounds.maxDepth) {
+    return err("invalid");
+  }
+  const active = new WeakSet<HostObjectReference>();
+  const parsed = Result.fromThrowable(
+    () => parseHostJsonValue(value, bounds, depth, active),
+    (): HostParseFailure => "invalid",
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return parsed.value;
+}
+
+function parseHostJsonValue(
+  value: HostInput,
+  bounds: HostJsonBounds,
+  depth: number,
+  active: WeakSet<HostObjectReference>,
+): Result<JsonValue, HostParseFailure> {
+  if (depth > bounds.maxDepth) return err("invalid");
+  const stringValue = HostStringSchema.safeParse(value);
+  if (stringValue.success) {
+    const length = bounds.utf8Lengths
+      ? new TextEncoder().encode(stringValue.data).byteLength
+      : stringValue.data.length;
+    return length <= bounds.maxStringLength
+      ? ok(stringValue.data)
+      : err("invalid");
+  }
+
+  const numberValue = HostFiniteNumberSchema.safeParse(value);
+  if (numberValue.success) return ok(numberValue.data);
+
+  const booleanValue = HostBooleanSchema.safeParse(value);
+  if (booleanValue.success) return ok(booleanValue.data);
+  if (value === null) return ok(null);
+
+  const reference = hostObjectReference(value);
+  if (reference.isErr()) return err("invalid");
+  const array = hostArrayStatus(reference.value);
+  if (array.isErr()) return err("invalid");
+  const prototype = hostPrototype(reference.value);
+  if (prototype.isErr()) return err("invalid");
+  if (
+    array.value
+      ? prototype.value !== Array.prototype
+      : prototype.value !== Object.prototype && prototype.value !== null
+  ) {
+    return err("invalid");
+  }
+  if (active.has(reference.value)) return err("invalid");
+  active.add(reference.value);
+  try {
+    return array.value
+      ? parseHostJsonArray(reference.value, bounds, depth, active)
+      : parseHostJsonObject(reference.value, bounds, depth, active);
+  } finally {
+    active.delete(reference.value);
+  }
+}
+
+function parseHostJsonArray(
+  value: HostObjectReference,
+  bounds: HostJsonBounds,
+  depth: number,
+  active: WeakSet<HostObjectReference>,
+): Result<JsonValue, HostParseFailure> {
+  const lengthResult = ownDescriptorSafe(value, "length");
+  if (lengthResult.isErr()) return err("invalid");
+  const lengthDescriptor = lengthResult.value;
+  if (
+    lengthDescriptor === undefined ||
+    !("value" in lengthDescriptor) ||
+    lengthDescriptor.enumerable !== false ||
+    lengthDescriptor.configurable !== false ||
+    lengthDescriptor.writable !== true
+  ) {
+    return err("invalid");
+  }
+  const length = HostFiniteNumberSchema.safeParse(lengthDescriptor.value);
+  if (
+    !length.success ||
+    !Number.isSafeInteger(length.data) ||
+    length.data < 0 ||
+    length.data > bounds.maxItems
+  ) {
+    return err("invalid");
+  }
+
+  const keys = ownKeysSafe(value);
+  if (keys.isErr() || keys.value.length !== length.data + 1) {
+    return err("invalid");
+  }
+  const items: JsonValue[] = [];
+  for (let index = 0; index < length.data; index += 1) {
+    const key = String(index);
+    if (keys.value[index] !== key) return err("invalid");
+    const descriptor = ownDescriptorSafe(value, key);
+    if (descriptor.isErr()) return err("invalid");
+    const found = descriptor.value;
+    if (
+      found === undefined ||
+      !("value" in found) ||
+      found.enumerable !== true
+    ) {
+      return err("invalid");
+    }
+    const item = parseHostJsonValue(found.value, bounds, depth + 1, active);
+    if (item.isErr()) return err(item.error);
+    items.push(item.value);
+  }
+  return keys.value[length.data] === "length" ? ok(items) : err("invalid");
+}
+
+function parseHostJsonObject(
+  value: HostObjectReference,
+  bounds: HostJsonBounds,
+  depth: number,
+  active: WeakSet<HostObjectReference>,
+): Result<JsonValue, HostParseFailure> {
+  const keys = ownKeysSafe(value);
+  if (keys.isErr() || keys.value.length > bounds.maxKeys) return err("invalid");
+  const entries: Array<[string, JsonValue]> = [];
+  for (const key of keys.value) {
+    const parsedKey = HostStringSchema.safeParse(key);
+    if (!parsedKey.success) return err("invalid");
+    const keyLength = bounds.utf8Lengths
+      ? new TextEncoder().encode(parsedKey.data).byteLength
+      : parsedKey.data.length;
+    if (keyLength > bounds.maxKeyLength) return err("invalid");
+
+    const descriptor = ownDescriptorSafe(value, key);
+    if (descriptor.isErr()) return err("invalid");
+    const found = descriptor.value;
+    if (
+      found === undefined ||
+      !("value" in found) ||
+      found.enumerable !== true
+    ) {
+      return err("invalid");
+    }
+    const item = parseHostJsonValue(found.value, bounds, depth + 1, active);
+    if (item.isErr()) return err(item.error);
+    entries.push([parsedKey.data, item.value]);
+  }
+  return ok(Object.fromEntries(entries));
+}
+
+function parseJsonRecord(
+  value: HostInput,
+  bounds: HostJsonBounds = MESSAGE_JSON_BOUNDS,
+): PiMessageRecord | undefined {
+  const parsed = parseHostJson(value, bounds);
+  if (parsed.isErr()) return undefined;
+  const record = Result.fromThrowable(
+    () => JsonRecordSchema.safeParse(parsed.value),
+    (): null => null,
+  )();
+  if (record.isErr() || !record.value.success) return undefined;
+  return record.value.data;
+}
+
 /**
  * Converts the bounded normalized shape into Pi's deliberately smaller native
  * shape. In particular, never spread normalized input into the native line:
@@ -3352,62 +3764,90 @@ const NORMALIZED_EXTENSION_UI_RESPONSE_KEYS = new Set([
 function normalizeExtensionUiResponse(
   input: PiExtensionUiResponseInput,
 ): Result<NativeExtensionUiResponse, "invalid"> {
-  const parsed = Result.fromThrowable(
-    () => PiExtensionUiResponseSchema.safeParse(input),
-    () => "invalid" as const,
-  )();
-  if (
-    parsed.isErr() ||
-    !parsed.value.success ||
-    Object.keys(parsed.value.data).some(
-      (key) => !NORMALIZED_EXTENSION_UI_RESPONSE_KEYS.has(key),
-    )
-  ) {
+  const fields = readHostRecord(input);
+  if (fields.isErr()) return err("invalid");
+  for (const key of fields.value.keys()) {
+    if (!NORMALIZED_EXTENSION_UI_RESPONSE_KEYS.has(key)) return err("invalid");
+  }
+
+  const type = HostStringSchema.safeParse(fields.value.get("type"));
+  if (!type.success || type.data !== "extension_ui_response") {
     return err("invalid");
   }
-  if (parsed.value.data.error !== undefined) return err("invalid");
-  const requestId = parsed.value.data.requestId as string;
+  const requestId = z
+    .string()
+    .max(MAX_CHILD_EVENT_STRING)
+    .safeParse(fields.value.get("requestId"));
+  if (!requestId.success) return err("invalid");
 
-  const response = parsed.value.data.response as JsonValue | undefined;
-  if (parsed.value.data.cancelled === true) {
+  const error = fields.value.get("error");
+  if (error !== undefined) {
+    const parsedError = z.string().max(MAX_CHILD_EVENT_STRING).safeParse(error);
+    if (!parsedError.success) return err("invalid");
+    return err("invalid");
+  }
+
+  const cancelledValue = fields.value.get("cancelled");
+  let cancelled = false;
+  if (cancelledValue !== undefined) {
+    const parsedCancelled = HostBooleanSchema.safeParse(cancelledValue);
+    if (!parsedCancelled.success) return err("invalid");
+    cancelled = parsedCancelled.data;
+  }
+
+  const rawResponse = fields.value.get("response");
+  let response: JsonValue | undefined;
+  if (rawResponse !== undefined) {
+    const parsedResponse = parseHostJson(
+      rawResponse,
+      EXTENSION_UI_RESPONSE_JSON_BOUNDS,
+    );
+    if (parsedResponse.isErr()) return err("invalid");
+    response = parsedResponse.value;
+  }
+
+  if (cancelled) {
     // A cancelled request has no second native result. Rejecting mixed input
     // keeps a caller from smuggling a value alongside cancellation.
     if (response !== undefined) return err("invalid");
     return ok({
       type: "extension_ui_response",
-      id: requestId,
+      id: requestId.data,
       cancelled: true,
     });
   }
-  if (response === undefined) return err("invalid");
-  if (!isBoundedJson(response)) return err("invalid");
+  if (response === undefined || !isBoundedJson(response)) return err("invalid");
 
-  if (typeof response === "boolean") {
+  const confirmed = HostBooleanSchema.safeParse(response);
+  if (confirmed.success) {
     return ok({
       type: "extension_ui_response",
-      id: requestId,
-      confirmed: response,
+      id: requestId.data,
+      confirmed: confirmed.data,
     });
   }
-  if (isJsonRecord(response)) {
-    const keys = Object.keys(response);
-    if (
-      keys.length === 1 &&
-      keys[0] === "confirmed" &&
-      typeof response.confirmed === "boolean"
-    ) {
-      return ok({
-        type: "extension_ui_response",
-        id: requestId,
-        confirmed: response.confirmed,
-      });
+
+  const responseRecord = parseJsonRecord(response);
+  if (responseRecord !== undefined) {
+    const keys = Object.keys(responseRecord);
+    if (keys.length === 1 && keys[0] === "confirmed") {
+      const parsedConfirmed = HostBooleanSchema.safeParse(
+        responseRecord.confirmed,
+      );
+      if (parsedConfirmed.success) {
+        return ok({
+          type: "extension_ui_response",
+          id: requestId.data,
+          confirmed: parsedConfirmed.data,
+        });
+      }
     }
     if (keys.length === 1 && keys[0] === "value") {
-      const value = response.value;
+      const value = responseRecord.value;
       if (value !== undefined && isBoundedJson(value)) {
         return ok({
           type: "extension_ui_response",
-          id: requestId,
+          id: requestId.data,
           value,
         });
       }
@@ -3416,26 +3856,32 @@ function normalizeExtensionUiResponse(
   }
   return ok({
     type: "extension_ui_response",
-    id: requestId,
+    id: requestId.data,
     value: response,
   });
 }
 
 function extractCompletedAssistantText(message: JsonValue): string | undefined {
-  if (!isJsonRecord(message) || message.role !== "assistant") return undefined;
+  const record = parseJsonRecord(message);
+  if (record === undefined) return undefined;
+  const role = HostStringSchema.safeParse(record.role);
+  if (!role.success || role.data !== "assistant") return undefined;
 
-  const content = message.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
+  const content = record.content;
+  const contentText = HostStringSchema.safeParse(content);
+  if (contentText.success) return contentText.data;
+  const contentArray = z.array(z.unknown()).safeParse(content);
+  if (!contentArray.success) return "";
 
   let containsToolUse = false;
   let hasTerminalText = false;
   let text = "";
-  for (const block of content) {
-    if (!isJsonRecord(block)) continue;
-    const type = block.type;
-    if (typeof type !== "string") continue;
-    const normalizedType = type.toLowerCase();
+  for (const block of contentArray.data) {
+    const blockRecord = parseJsonRecord(block);
+    if (blockRecord === undefined) continue;
+    const type = HostStringSchema.safeParse(blockRecord.type);
+    if (!type.success) continue;
+    const normalizedType = type.data.toLowerCase();
     if (
       normalizedType.includes("tool") ||
       normalizedType.includes("function_call") ||
@@ -3444,70 +3890,30 @@ function extractCompletedAssistantText(message: JsonValue): string | undefined {
       containsToolUse = true;
       continue;
     }
-    if (type !== "text" || typeof block.text !== "string") continue;
-    if (block.text.length > 0) hasTerminalText = true;
-    text += block.text;
+    const blockText = HostStringSchema.safeParse(blockRecord.text);
+    if (type.data !== "text" || !blockText.success) continue;
+    if (blockText.data.length > 0) hasTerminalText = true;
+    text += blockText.data;
   }
 
   if (containsToolUse || !hasTerminalText) return "";
   return text;
 }
 
-function isJsonRecord(value: JsonValue): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isBoundedJson(value: HostInput, depth = 0): boolean {
+  return parseHostJson(value, LIVE_JSON_BOUNDS, depth).isOk();
 }
 
-function isBoundedJson(value: JsonValue, depth = 0): boolean {
-  if (depth > MAX_LIVE_JSON_DEPTH) return false;
-  if (typeof value === "string")
-    return value.length <= MAX_LIVE_RPC_MESSAGE_LENGTH;
-  if (value === null || typeof value === "boolean" || typeof value === "number")
-    return true;
-  if (Array.isArray(value)) {
-    return (
-      value.length <= MAX_GET_ENTRIES &&
-      value.every((entry) => isBoundedJson(entry, depth + 1))
-    );
-  }
-  const entries = Object.entries(value);
-  return (
-    entries.length <= MAX_GET_ENTRIES &&
-    entries.every(
-      ([key, entry]) =>
-        key.length <= MAX_LIVE_RPC_ID_LENGTH && isBoundedJson(entry, depth + 1),
-    )
-  );
+function isBoundedGetEntriesJson(value: HostInput, depth = 0): boolean {
+  return parseHostJson(value, GET_ENTRIES_JSON_BOUNDS, depth).isOk();
 }
 
-function isBoundedGetEntriesJson(value: JsonValue, depth = 0): boolean {
-  if (value === undefined || depth > MAX_LIVE_JSON_DEPTH) return false;
-  if (typeof value === "string")
-    return (
-      new TextEncoder().encode(value).byteLength <= MAX_LIVE_RPC_MESSAGE_LENGTH
-    );
-  if (value === null || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) {
-    return (
-      value.length <= MAX_GET_ENTRIES &&
-      value.every((entry) => isBoundedGetEntriesJson(entry, depth + 1))
-    );
-  }
-  const entries = Object.entries(value);
-  return (
-    entries.length <= MAX_GET_ENTRIES &&
-    entries.every(
-      ([key, entry]) =>
-        new TextEncoder().encode(key).byteLength <= MAX_LIVE_RPC_ID_LENGTH &&
-        isBoundedGetEntriesJson(entry, depth + 1),
-    )
-  );
-}
-
-function encodedJsonByteLength(value: JsonValue): number | undefined {
+function encodedJsonByteLength(value: HostInput): number | undefined {
+  const parsed = parseHostJson(value, LIVE_JSON_BOUNDS);
+  if (parsed.isErr()) return undefined;
   const serialized = Result.fromThrowable(
-    () => JSON.stringify(value),
-    () => undefined,
+    () => JSON.stringify(parsed.value),
+    (): undefined => {},
   )();
   if (serialized.isErr() || serialized.value === undefined) return undefined;
   return new TextEncoder().encode(serialized.value).byteLength;
@@ -3517,20 +3923,24 @@ function safeNumberField(
   record: Record<string, JsonValue>,
   field: string,
 ): number {
-  const candidate = record[field];
-  if (typeof candidate !== "number" || !Number.isFinite(candidate)) return 0;
+  const candidate = readHostRecordField(record, field);
+  if (candidate.isErr()) return 0;
+  const parsed = HostFiniteNumberSchema.safeParse(candidate.value);
+  if (!parsed.success) return 0;
   // Usage figures must never regress the running aggregate via a
   // negative/malformed value reported by the child.
-  return Math.max(0, candidate);
+  return Math.max(0, parsed.data);
 }
 
 function extractCostTotal(usageRecord: Record<string, JsonValue>): number {
-  const cost = usageRecord.cost;
-  if (typeof cost !== "object" || cost === null || Array.isArray(cost))
-    return 0;
-  const total = (cost as Record<string, JsonValue>).total;
-  if (typeof total !== "number" || !Number.isFinite(total)) return 0;
-  return Math.max(0, total);
+  const cost = readHostRecordField(usageRecord, "cost");
+  if (cost.isErr()) return 0;
+
+  const total = readHostRecordField(cost.value, "total");
+  if (total.isErr()) return 0;
+  const parsed = HostFiniteNumberSchema.safeParse(total.value);
+  if (!parsed.success) return 0;
+  return Math.max(0, parsed.data);
 }
 
 export { DEFAULT_REPLY_TIMEOUT_MS };
