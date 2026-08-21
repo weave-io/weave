@@ -20,10 +20,48 @@ import {
   type BoundedProcessOutput,
   type BoundedProcessRunnerInput,
   type BoundedProcessStreamName,
+  type LiveProofSpawnInput,
   type LiveProofSystemFailure,
   type ProcessByteStream,
   systemFailure,
 } from "./child-stream-live-proof-system-contract.js";
+
+function spawnBunProcess(
+  input: Pick<
+    BoundedProcessRunnerInput,
+    "cmd" | "cwd" | "env" | "stdin" | "stdinText"
+  >,
+): Result<BoundedProcess, LiveProofSystemFailure> {
+  return Result.fromThrowable(
+    () =>
+      Bun.spawn({
+        cmd: [...input.cmd],
+        cwd: input.cwd,
+        env: { ...input.env },
+        stdin:
+          input.stdin ?? (input.stdinText === undefined ? "ignore" : "pipe"),
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    () => systemFailure("spawn-failed"),
+  )();
+}
+
+/**
+ * Spawn the interactive proof process through the same Bun boundary as the
+ * non-interactive runner. Its callers must use the bounded line reader and
+ * bounded TERM/KILL termination helpers.
+ */
+export function spawnBoundedInteractiveProcess(
+  input: LiveProofSpawnInput,
+): Result<BoundedProcess, LiveProofSystemFailure> {
+  return spawnBunProcess({
+    cmd: input.cmd,
+    cwd: input.cwd,
+    env: input.env,
+    stdin: "pipe",
+  });
+}
 
 interface BoundedPendingLine {
   readonly stream: BoundedProcessStreamName;
@@ -62,6 +100,7 @@ interface BoundedRunnerState {
   stdoutBytes: number;
   firstOutputSeen: boolean;
   exitOutcome?: BoundedWaitOutcome<number>;
+  inputOutcome?: BoundedWaitOutcome<unknown>;
   consumerDone: boolean;
   terminal?: BoundedTerminal;
   wake?: () => void;
@@ -78,6 +117,7 @@ function maybeFinishBoundedRunner(state: BoundedRunnerState): void {
   if (
     state.terminal === undefined &&
     state.exitOutcome?.kind === "resolved" &&
+    state.inputOutcome?.kind === "resolved" &&
     state.openReaders <= 0 &&
     state.consumerDone &&
     state.queue.length === 0
@@ -140,7 +180,7 @@ function finishBoundedLine(
   ) {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: systemFailure("overflow"),
     });
     return false;
   }
@@ -165,7 +205,7 @@ function consumeBoundedChunk(
   ) {
     finishBoundedRunner(state, {
       kind: "failure",
-      failure: systemFailure("spawn-failed"),
+      failure: systemFailure("overflow"),
     });
     return;
   }
@@ -184,7 +224,7 @@ function consumeBoundedChunk(
     ) {
       finishBoundedRunner(state, {
         kind: "failure",
-        failure: systemFailure("spawn-failed"),
+        failure: systemFailure("overflow"),
       });
       return;
     }
@@ -259,7 +299,7 @@ async function consumeBoundedQueue(state: BoundedRunnerState): Promise<void> {
         if (state.stdoutBytes > state.limits.maxCaptureBytes - bytes) {
           finishBoundedRunner(state, {
             kind: "failure",
-            failure: systemFailure("spawn-failed"),
+            failure: systemFailure("overflow"),
           });
           break;
         }
@@ -336,6 +376,73 @@ async function closeBoundedReaders(
   );
 }
 
+function utf8PrefixForBytes(value: string, bytes: number): string | undefined {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return undefined;
+  if (bytes === 0) return "";
+  const encoder = new TextEncoder();
+  let consumedBytes = 0;
+  let consumedCodeUnits = 0;
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (consumedBytes > bytes - characterBytes) return undefined;
+    consumedBytes += characterBytes;
+    consumedCodeUnits += character.length;
+    if (consumedBytes === bytes) return value.slice(0, consumedCodeUnits);
+  }
+  return undefined;
+}
+
+async function writeBoundedProcessInput(
+  process: BoundedProcess,
+  input: string,
+  timeoutMs: number,
+): Promise<BoundedWaitOutcome<unknown>> {
+  if (input.length > MAX_LIVE_PROOF_LINE_BYTES) {
+    return { kind: "rejected" };
+  }
+  const encoded = new Uint8Array(MAX_LIVE_PROOF_LINE_BYTES + 1);
+  const measured = Result.fromThrowable(
+    () => new TextEncoder().encodeInto(input, encoded),
+    () => undefined,
+  )();
+  if (
+    measured.isErr() ||
+    measured.value.read !== input.length ||
+    measured.value.written > MAX_LIVE_PROOF_LINE_BYTES
+  ) {
+    return { kind: "rejected" };
+  }
+  const stdin = process.stdin;
+  if (stdin === undefined || stdin === null || typeof stdin === "number") {
+    return { kind: "rejected" };
+  }
+  const write = Result.fromThrowable(
+    () =>
+      (async () => {
+        let offset = 0;
+        while (offset < input.length) {
+          const remaining = input.slice(offset);
+          const accepted = await Promise.resolve(stdin.write(remaining));
+          if (accepted === undefined) {
+            offset = input.length;
+          } else {
+            const acceptedPrefix = utf8PrefixForBytes(remaining, accepted);
+            if (acceptedPrefix === undefined || acceptedPrefix.length === 0) {
+              throw new Error("bounded stdin write failed");
+            }
+            offset += acceptedPrefix.length;
+          }
+          if (stdin.flush !== undefined) {
+            await Promise.resolve(stdin.flush());
+          }
+        }
+      })(),
+    () => undefined,
+  )();
+  if (write.isErr()) return { kind: "rejected" };
+  return observeBoundedPromise(write.value, timeoutMs);
+}
+
 async function observeBoundedBackgroundPromises(
   state: BoundedRunnerState,
 ): Promise<boolean> {
@@ -386,7 +493,8 @@ async function cleanupLateBoundedProcess(
   const cancellations: Promise<boolean>[] = [];
   if (streams.isOk()) {
     for (const stream of streams.value) {
-      if (stream === undefined || typeof stream === "number") continue;
+      if (stream === undefined || stream === null || typeof stream === "number")
+        continue;
       cancellations.push(cancelLateProcessStream(stream, limits.cleanupMs));
     }
   }
@@ -417,19 +525,14 @@ async function runBoundedProcessValue(
   input: BoundedProcessRunnerInput,
 ): Promise<Result<BoundedProcessOutput, LiveProofSystemFailure>> {
   const limits = normalizedBoundedProcessLimits(input.limits);
-  const spawned = Result.fromThrowable(
-    () =>
-      input.spawn?.() ??
-      Bun.spawn({
-        cmd: [...input.cmd],
-        cwd: input.cwd,
-        env: { ...input.env },
-        stdin: input.stdin ?? "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
-    () => systemFailure("spawn-failed"),
-  )();
+  const spawn = input.spawn;
+  const spawned =
+    spawn === undefined
+      ? spawnBunProcess(input)
+      : Result.fromThrowable(
+          () => spawn(),
+          () => systemFailure("spawn-failed"),
+        )();
   if (spawned.isErr()) return err(spawned.error);
   const spawnedPromise = Result.fromThrowable(
     () => Promise.resolve(spawned.value),
@@ -493,7 +596,9 @@ async function runBoundedProcessValue(
   if (
     streams.isErr() ||
     streams.value[0] === undefined ||
+    streams.value[0] === null ||
     streams.value[1] === undefined ||
+    streams.value[1] === null ||
     typeof streams.value[0] === "number" ||
     typeof streams.value[1] === "number"
   ) {
@@ -536,6 +641,10 @@ async function runBoundedProcessValue(
     stdout: "",
     stdoutBytes: 0,
     firstOutputSeen: false,
+    inputOutcome:
+      input.stdinText === undefined
+        ? { kind: "resolved", value: undefined }
+        : undefined,
     consumerDone: false,
   };
   const terminal = new Promise<BoundedTerminal>((resolveTerminal) => {
@@ -564,7 +673,7 @@ async function runBoundedProcessValue(
   )();
   const processExit = processExited.isErr()
     ? Promise.resolve<BoundedWaitOutcome<number>>({ kind: "rejected" })
-    : observeBoundedPromise(processExited.value);
+    : observeBoundedPromise(processExited.value, limits.totalReadMs);
   const observedExit = processExit.then((outcome) => {
     if (state.terminal !== undefined) return;
     state.exitOutcome = outcome;
@@ -603,6 +712,34 @@ async function runBoundedProcessValue(
     state.pumpPromises.push(observedPump);
   }
 
+  const inputPromise =
+    input.stdinText === undefined
+      ? Promise.resolve<BoundedWaitOutcome<unknown>>({
+          kind: "resolved",
+          value: undefined,
+        })
+      : writeBoundedProcessInput(process, input.stdinText, limits.spawnMs);
+  const observedInput = inputPromise.then((outcome) => {
+    state.inputOutcome = outcome;
+    if (outcome.kind !== "resolved") {
+      finishBoundedRunner(state, {
+        kind: "failure",
+        failure: systemFailure(
+          outcome.kind === "timeout" ? "timeout" : "spawn-failed",
+        ),
+      });
+      return;
+    }
+    maybeFinishBoundedRunner(state);
+  });
+  const observedInputSafe = observedInput.catch(() => {
+    state.inputOutcome = { kind: "rejected" };
+    finishBoundedRunner(state, {
+      kind: "failure",
+      failure: systemFailure("spawn-failed"),
+    });
+  });
+
   // The terminal promise has a timer and every reader/exit promise has an
   // observer. It cannot remain pending after a bounded failure or process exit.
   const finalTerminal = await terminal;
@@ -617,6 +754,7 @@ async function runBoundedProcessValue(
     observeBoundedPromise(closePromise, limits.cleanupMs),
     observeBoundedPromise(terminationPromise, limits.cleanupMs),
     observeBoundedPromise(observedExitSafe, limits.cleanupMs),
+    observeBoundedPromise(observedInputSafe, limits.cleanupMs),
     observeBoundedPromise(observedConsumer, limits.cleanupMs),
     observeBoundedPromise(
       observeBoundedBackgroundPromises(state),

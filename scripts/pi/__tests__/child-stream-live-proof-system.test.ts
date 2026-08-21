@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type BoundedProcess,
   createLiveProofSystem,
@@ -88,6 +90,64 @@ describe("live proof system timers", () => {
   });
 });
 
+describe("live proof host filesystem", () => {
+  it("uses bounded host operations and refuses symlink reads and writes", async () => {
+    const system = createLiveProofSystem();
+    const root = join(tmpdir(), `weave-live-proof-host-${crypto.randomUUID()}`);
+    const target = join(root, "target.txt");
+    const privateFile = join(root, "private.txt");
+    const link = join(root, "target-link.txt");
+    try {
+      expect((await system.makeDirectory(root)).isOk()).toBe(true);
+      expect((await system.writeText(target, "safe")).isOk()).toBe(true);
+      expect((await system.createPrivateFile(privateFile)).isOk()).toBe(true);
+      const privateStat = await Bun.file(privateFile).stat();
+      expect(privateStat.isFile()).toBe(true);
+      expect(privateStat.mode & 0o7777).toBe(0o600);
+      expect((await system.pathKind(target))._unsafeUnwrap()).toBe("file");
+      expect(
+        new TextDecoder().decode(
+          (await system.readBytes(target))._unsafeUnwrap(),
+        ),
+      ).toBe("safe");
+
+      const linked = Bun.spawn(["/bin/ln", "-s", target, link], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(await linked.exited).toBe(0);
+      expect((await system.pathKind(link))._unsafeUnwrap()).toBe("symlink");
+      expect((await system.readBytes(link)).isErr()).toBe(true);
+      expect((await system.writeText(link, "must-not-follow")).isErr()).toBe(
+        true,
+      );
+      expect(await Bun.file(target).text()).toBe("safe");
+    } finally {
+      await system.removePath(root);
+    }
+  });
+
+  it("keeps exclusive private-file creation closed across a symlink race", async () => {
+    const system = createLiveProofSystem();
+    const root = join(tmpdir(), `weave-live-proof-race-${crypto.randomUUID()}`);
+    const target = join(root, "target.txt");
+    const candidate = join(root, "candidate.txt");
+    try {
+      expect((await system.makeDirectory(root)).isOk()).toBe(true);
+      await Bun.write(target, "unchanged");
+      const linked = Bun.spawn(["/bin/ln", "-s", target, candidate], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(await linked.exited).toBe(0);
+      expect((await system.createPrivateFile(candidate)).isErr()).toBe(true);
+      expect(await Bun.file(target).text()).toBe("unchanged");
+    } finally {
+      await system.removePath(root);
+    }
+  });
+});
+
 describe("shared bounded verifier process runner", () => {
   const limits = {
     ...DEFAULT_BOUNDED_PROCESS_LIMITS,
@@ -110,6 +170,27 @@ describe("shared bounded verifier process runner", () => {
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toEqual({ exitCode: 0, stdout: "" });
+  });
+
+  it("writes bounded stdin before collecting both output streams", async () => {
+    const result = await runBoundedProcess({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        "read value; printf '%s\\n' \"$value\"; printf 'input-stderr\\n' >&2",
+      ],
+      cwd: REPO_ROOT,
+      env: { PATH: "/usr/bin:/bin" },
+      stdin: "pipe",
+      stdinText: "bounded-input\n",
+      limits,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({
+      exitCode: 0,
+      stdout: "bounded-input\n",
+    });
   });
 
   it("drains simultaneous stdout and stderr floods without deadlock", async () => {

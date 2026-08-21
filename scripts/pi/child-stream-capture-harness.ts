@@ -1,7 +1,6 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { $ } from "bun";
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import { readArtifactSha256 } from "../../packages/adapters/pi/src/extension-build-identity.js";
 import type { SanitizedEvent } from "./child-stream-capture-contract.js";
 import {
@@ -26,12 +25,30 @@ import {
   serializeFixture,
   verifyCaptureManifest,
 } from "./child-stream-capture-verifier.js";
+import { runBoundedProcess } from "./child-stream-live-proof-bounded-runner.js";
+import type { LiveProofFailureCode } from "./child-stream-live-proof-contract.js";
+import { createLiveProofSystem } from "./child-stream-live-proof-host.js";
+import {
+  type BoundedProcessLimits,
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
+} from "./child-stream-live-proof-system-contract.js";
 
 const CAPTURE_TIMEOUT_MS = 45_000;
 const CAPTURE_KILL_WAIT_MS = 1_000;
+const CAPTURE_PACKAGE_MAX_BYTES = 128 * 1024;
+const CAPTURE_PROCESS_LIMITS: BoundedProcessLimits = Object.freeze({
+  ...DEFAULT_BOUNDED_PROCESS_LIMITS,
+  firstOutputMs: CAPTURE_TIMEOUT_MS,
+  totalReadMs: CAPTURE_TIMEOUT_MS,
+  gracefulTermMs: CAPTURE_KILL_WAIT_MS,
+  postKillMs: CAPTURE_KILL_WAIT_MS,
+  cleanupMs: CAPTURE_KILL_WAIT_MS * 3,
+  maxCaptureBytes: MAX_CAPTURE_TOTAL_BYTES,
+});
 const CAPTURE_PROMPT_TEXT = "go";
 const CAPTURE_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const CAPTURE_PI_AI_PACKAGE_NAME = "@earendil-works/pi-ai";
+const captureFilesystem = createLiveProofSystem();
 
 /**
  * This extension is loaded with Pi's public `-e` option. Its deterministic
@@ -135,6 +152,16 @@ interface DeterministicCaptureWorkspace {
   readonly workspacePath: string;
 }
 
+function writeCaptureText(
+  path: string,
+  text: string,
+  failureType: CaptureFailure["type"],
+): ResultAsync<void, CaptureFailure> {
+  return captureFilesystem
+    .writeText(path, text)
+    .mapErr(() => blocked(failureType));
+}
+
 function prepareWorkspace(): ResultAsync<
   DeterministicCaptureWorkspace,
   CaptureFailure
@@ -142,27 +169,33 @@ function prepareWorkspace(): ResultAsync<
   const root = join(tmpdir(), `weave-pi-capture-${crypto.randomUUID()}`);
   const extensionPath = join(root, "deterministic-extension.ts");
   const workspacePath = join(root, "workspace");
-  return ResultAsync.fromPromise(
-    $`mkdir -p ${workspacePath}`
-      .quiet()
-      .then(() => Bun.write(extensionPath, DETERMINISTIC_EXTENSION_SOURCE))
-      .then(() =>
-        Bun.write(
-          join(workspacePath, "weave-capture-sample.txt"),
-          "weave capture deterministic workspace file\n",
-        ),
-      )
-      .then(() => ({ root, extensionPath, workspacePath })),
-    () => blocked("workspace-failed"),
-  ).orElse((failure) =>
-    cleanupWorkspace(root).andThen(() => errAsync(failure)),
-  );
+  return captureFilesystem
+    .makeDirectory(workspacePath)
+    .mapErr(() => blocked("workspace-failed"))
+    .andThen(() =>
+      writeCaptureText(
+        extensionPath,
+        DETERMINISTIC_EXTENSION_SOURCE,
+        "workspace-failed",
+      ),
+    )
+    .andThen(() =>
+      writeCaptureText(
+        join(workspacePath, "weave-capture-sample.txt"),
+        "weave capture deterministic workspace file\n",
+        "workspace-failed",
+      ),
+    )
+    .map(() => ({ root, extensionPath, workspacePath }))
+    .orElse((failure) =>
+      cleanupWorkspace(root).andThen(() => errAsync(failure)),
+    );
 }
 
 function cleanupWorkspace(root: string): ResultAsync<void, CaptureFailure> {
-  return ResultAsync.fromPromise($`rm -rf ${root}`.quiet(), () =>
-    blocked("workspace-failed"),
-  ).map(() => undefined);
+  return captureFilesystem
+    .removePath(root)
+    .mapErr(() => blocked("workspace-failed"));
 }
 
 function safeRuntimeEnvironment(): Record<string, string> {
@@ -177,193 +210,120 @@ function safeRuntimeEnvironment(): Record<string, string> {
   return output;
 }
 
-function appendJsonlLine(
-  buffer: string,
-  chunk: string,
-): {
-  readonly buffer: string;
-  readonly lines: readonly string[];
-} {
-  const combined = `${buffer}${chunk}`;
-  const parts = combined.split("\n");
-  const remainder = parts.pop() ?? "";
-  return {
-    buffer: remainder,
-    lines: parts.map((line) =>
-      line.endsWith("\r") ? line.slice(0, -1) : line,
-    ),
-  };
+function mapBoundedCaptureFailure(code: LiveProofFailureCode): CaptureFailure {
+  if (code === "timeout") return blocked("capture-timeout");
+  if (code === "overflow") return blocked("bounds-exceeded");
+  return blocked("spawn-failed");
 }
 
-function verifyPiVersion(
+export function verifyPiVersion(
   pi: string,
   requiredVersion: string,
 ): ResultAsync<string, CaptureFailure> {
-  return ResultAsync.fromPromise(
-    (async () => {
-      const process = Bun.spawn({
-        cmd: [pi, "--version"],
-        stdout: "pipe",
-        stderr: "pipe",
-        env: safeRuntimeEnvironment(),
-      });
-      const stdout = process.stdout;
-      if (stdout === undefined || typeof stdout === "number") {
-        await process.exited;
-        return "";
-      }
-      const version = await new Response(stdout).text();
-      await process.exited;
-      return version.trim();
-    })(),
-    () => blocked("spawn-failed"),
-  ).andThen((version) =>
-    version === requiredVersion || version.startsWith(`${requiredVersion} `)
-      ? okAsync(version)
-      : errAsync(blocked("pi-version-mismatch")),
-  );
-}
-
-async function readDeterministicEvents(
-  child: ReturnType<typeof Bun.spawn>,
-): Promise<Result<readonly SanitizedEvent[], CaptureFailure>> {
-  const stdout = child.stdout;
-  if (stdout === undefined || typeof stdout === "number") {
-    return err(blocked("spawn-failed"));
-  }
-  const reader = stdout.getReader();
-  const decoder = new TextDecoder();
-  const state: SanitizerState = { ordinals: createOrdinalState() };
-  const events: SanitizedEvent[] = [];
-  let buffer = "";
-  let settled = false;
-  const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
-  try {
-    while (!settled) {
-      if (Date.now() > deadline) return err(blocked("capture-timeout"));
-      const remainingMs = deadline - Date.now();
-      const read = await Promise.race([
-        reader.read(),
-        new Promise<{ readonly timedOut: true }>((resolveTimeout) =>
-          setTimeout(() => resolveTimeout({ timedOut: true }), remainingMs),
-        ),
-      ]);
-      if ("timedOut" in read) return err(blocked("capture-timeout"));
-      if (read.done) {
-        return buffer.length === 0
-          ? err(blocked("capture-timeout"))
-          : err(blocked("sanitization-failed"));
-      }
-      const chunk = decoder.decode(read.value, { stream: true });
-      if (utf8Bytes(buffer) + read.value.byteLength > MAX_CAPTURE_TOTAL_BYTES) {
-        return err(blocked("bounds-exceeded"));
-      }
-      const decoded = appendJsonlLine(buffer, chunk);
-      buffer = decoded.buffer;
-      for (const line of decoded.lines) {
-        if (line.length === 0) continue;
-        const parsed = Result.fromThrowable(
-          () => JSON.parse(line) as unknown,
-          () => blocked("sanitization-failed"),
-        )();
-        if (parsed.isErr() || !isRecord(parsed.value)) {
-          return err(
-            parsed.isErr() ? parsed.error : blocked("sanitization-failed"),
-          );
-        }
-        const eventType = parsed.value.type;
-        if (typeof eventType !== "string")
-          return err(blocked("sanitization-failed"));
-        if (!RETAINED_EVENT_TYPES.has(eventType)) continue;
-        if (events.length >= MAX_CAPTURE_EVENTS)
-          return err(blocked("bounds-exceeded"));
-        const sanitized = sanitizeRawEventWithState(
-          parsed.value,
-          events.length,
-          state,
-        );
-        if (sanitized.isErr()) return err(sanitized.error);
-        events.push(sanitized.value);
-        if (eventType === "agent_settled") {
-          settled = true;
-          break;
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return settled ? ok(events) : err(blocked("capture-timeout"));
-}
-
-async function terminateChild(
-  child: ReturnType<typeof Bun.spawn>,
-): Promise<void> {
-  Result.fromThrowable(
-    () => child.kill("SIGTERM"),
-    () => undefined,
-  )();
-  await Promise.race([
-    child.exited,
-    new Promise<void>((resolveDelay) =>
-      setTimeout(resolveDelay, CAPTURE_KILL_WAIT_MS),
-    ),
-  ]);
-  if (child.exitCode === null) {
-    Result.fromThrowable(
-      () => child.kill("SIGKILL"),
-      () => undefined,
-    )();
-  }
+  return runBoundedProcess({
+    cmd: [pi, "--version"],
+    cwd: ".",
+    env: safeRuntimeEnvironment(),
+    limits: CAPTURE_PROCESS_LIMITS,
+  })
+    .map(({ stdout }) => stdout.trim())
+    .mapErr((failure) => mapBoundedCaptureFailure(failure.code))
+    .andThen((version) =>
+      version === requiredVersion || version.startsWith(`${requiredVersion} `)
+        ? okAsync(requiredVersion)
+        : errAsync(blocked("pi-version-mismatch")),
+    );
 }
 
 function runDeterministicCapture(input: {
   readonly pi: string;
   readonly workspace: DeterministicCaptureWorkspace;
 }): ResultAsync<readonly SanitizedEvent[], CaptureFailure> {
-  return ResultAsync.fromPromise(
-    (async () => {
-      const child = Bun.spawn({
-        cmd: [
-          input.pi,
-          "--mode",
-          "rpc",
-          "--no-session",
-          "--no-extensions",
-          "--no-context-files",
-          "--no-skills",
-          "--no-prompt-templates",
-          "--offline",
-          "-e",
-          input.workspace.extensionPath,
-          "--provider",
-          "weave-capture-deterministic",
-          "--model",
-          "capture-deterministic-1",
-        ],
-        cwd: input.workspace.workspacePath,
-        env: safeRuntimeEnvironment(),
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      try {
-        const stdin = child.stdin;
-        if (stdin === undefined || typeof stdin === "number") {
-          return err(blocked("spawn-failed"));
-        }
-        stdin.write(
-          `${JSON.stringify({ type: "prompt", message: CAPTURE_PROMPT_TEXT })}\n`,
-        );
-        return await readDeterministicEvents(child);
-      } finally {
-        await terminateChild(child);
+  const state: SanitizerState = { ordinals: createOrdinalState() };
+  const events: SanitizedEvent[] = [];
+  let settled = false;
+  let failure: CaptureFailure | undefined;
+  let observedOutputBytes = 0;
+
+  const result = runBoundedProcess({
+    cmd: [
+      input.pi,
+      "--mode",
+      "rpc",
+      "--no-session",
+      "--no-extensions",
+      "--no-context-files",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--offline",
+      "-e",
+      input.workspace.extensionPath,
+      "--provider",
+      "weave-capture-deterministic",
+      "--model",
+      "capture-deterministic-1",
+    ],
+    cwd: input.workspace.workspacePath,
+    env: safeRuntimeEnvironment(),
+    stdin: "pipe",
+    stdinText: `${JSON.stringify({ type: "prompt", message: CAPTURE_PROMPT_TEXT })}\n`,
+    limits: CAPTURE_PROCESS_LIMITS,
+    onLine: (stream, line) => {
+      observedOutputBytes += utf8Bytes(line) + 1;
+      if (observedOutputBytes > MAX_CAPTURE_TOTAL_BYTES) {
+        failure = blocked("bounds-exceeded");
+        return true;
       }
-    })(),
-    () => blocked("spawn-failed"),
-  ).andThen((result) =>
-    result.isOk() ? okAsync(result.value) : errAsync(result.error),
-  );
+      if (stream !== "stdout" || settled || failure !== undefined) {
+        return false;
+      }
+      if (line.length === 0) return false;
+      const parsed = Result.fromThrowable(
+        () => JSON.parse(line) as unknown,
+        () => blocked("sanitization-failed"),
+      )();
+      if (parsed.isErr() || !isRecord(parsed.value)) {
+        failure = parsed.isErr()
+          ? parsed.error
+          : blocked("sanitization-failed");
+        return true;
+      }
+      const eventType = parsed.value.type;
+      if (typeof eventType !== "string") {
+        failure = blocked("sanitization-failed");
+        return true;
+      }
+      if (!RETAINED_EVENT_TYPES.has(eventType)) return false;
+      if (events.length >= MAX_CAPTURE_EVENTS) {
+        failure = blocked("bounds-exceeded");
+        return true;
+      }
+      const sanitized = sanitizeRawEventWithState(
+        parsed.value,
+        events.length,
+        state,
+      );
+      if (sanitized.isErr()) {
+        failure = sanitized.error;
+        return true;
+      }
+      events.push(sanitized.value);
+      if (eventType === "agent_settled") {
+        settled = true;
+        return true;
+      }
+      return false;
+    },
+  })
+    .mapErr((boundedFailure) => mapBoundedCaptureFailure(boundedFailure.code))
+    .andThen(() => {
+      if (failure !== undefined) return errAsync(failure);
+      return settled
+        ? okAsync<readonly SanitizedEvent[], CaptureFailure>(events)
+        : errAsync(blocked("capture-timeout"));
+    });
+
+  return result;
 }
 
 interface PackageIdentity {
@@ -402,12 +362,29 @@ function readPackageIdentity(
   ): ResultAsync<PackageIdentity, CaptureFailure> => {
     const path = candidates[index];
     if (path === undefined) return errAsync(blocked("pi-ai-unavailable"));
-    return ResultAsync.fromPromise(Bun.file(path).text(), () =>
-      blocked("pi-ai-unavailable"),
-    )
-      .andThen((text) => {
+    const file = Result.fromThrowable(
+      () => Bun.file(path),
+      () => blocked("pi-ai-unavailable"),
+    )();
+    if (file.isErr()) return errAsync(file.error);
+    if (file.value.size > CAPTURE_PACKAGE_MAX_BYTES) {
+      return errAsync(blocked("pi-ai-unavailable"));
+    }
+    return ResultAsync.fromThrowable(
+      () => file.value.slice(0, CAPTURE_PACKAGE_MAX_BYTES + 1).arrayBuffer(),
+      () => blocked("pi-ai-unavailable"),
+    )()
+      .andThen((bytes) => {
+        if (bytes.byteLength > CAPTURE_PACKAGE_MAX_BYTES) {
+          return errAsync(blocked("pi-ai-unavailable"));
+        }
+        const text = Result.fromThrowable(
+          () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          () => blocked("pi-ai-unavailable"),
+        )();
+        if (text.isErr()) return errAsync(text.error);
         const parsed = Result.fromThrowable(
-          () => JSON.parse(text) as unknown,
+          () => JSON.parse(text.value) as unknown,
           () => blocked("pi-ai-unavailable"),
         )();
         if (
@@ -421,12 +398,26 @@ function readPackageIdentity(
         }
         return okAsync({
           version: parsed.value.version,
-          sha256: sha256HexOfText(text),
+          sha256: sha256HexOfText(text.value),
         });
       })
       .orElse(() => readCandidate(index + 1));
   };
   return readCandidate(0);
+}
+
+function createExclusiveCaptureFile(
+  path: string,
+): ResultAsync<void, CaptureFailure> {
+  return captureFilesystem
+    .createPrivateFile(path)
+    .mapErr(() => blocked("fixture-exists"));
+}
+
+function deleteCaptureFile(path: string): ResultAsync<void, CaptureFailure> {
+  return captureFilesystem
+    .removePath(path)
+    .mapErr(() => blocked("write-failed"));
 }
 
 function writeImmutableCapture(
@@ -435,24 +426,47 @@ function writeImmutableCapture(
   fixtureText: string,
   manifestText: string,
 ): ResultAsync<void, CaptureFailure> {
-  return ResultAsync.fromPromise(
-    Promise.all([
-      Bun.file(fixturePath).exists(),
-      Bun.file(manifestPath).exists(),
-    ]),
-    () => blocked("write-failed"),
-  ).andThen(([fixtureExists, manifestExists]) => {
-    if (fixtureExists || manifestExists)
-      return errAsync(blocked("fixture-exists"));
-    return ResultAsync.fromPromise(
-      $`mkdir -p ${fixturePath.slice(0, fixturePath.lastIndexOf("/"))}`
-        .quiet()
-        .then(() => Bun.write(fixturePath, fixtureText))
-        .then(() => Bun.write(manifestPath, manifestText))
-        .then(() => undefined),
-      () => blocked("write-failed"),
-    );
-  });
+  const fixtureDir = fixturePath.slice(0, fixturePath.lastIndexOf("/"));
+  let fixtureCreated = false;
+  let manifestCreated = false;
+  const requireMissing = (path: string): ResultAsync<void, CaptureFailure> =>
+    captureFilesystem
+      .pathKind(path)
+      .mapErr(() => blocked("write-failed"))
+      .andThen((kind) =>
+        kind === "missing"
+          ? okAsync<void, CaptureFailure>(undefined)
+          : errAsync(blocked("fixture-exists")),
+      );
+  const cleanupCreated = (): ResultAsync<void, CaptureFailure> => {
+    let cleanup = okAsync<void, CaptureFailure>(undefined);
+    if (manifestCreated) {
+      cleanup = cleanup.andThen(() => deleteCaptureFile(manifestPath));
+    }
+    if (fixtureCreated) {
+      cleanup = cleanup.andThen(() => deleteCaptureFile(fixturePath));
+    }
+    return cleanup;
+  };
+
+  return captureFilesystem
+    .makeDirectory(fixtureDir)
+    .mapErr(() => blocked("write-failed"))
+    .andThen(() => requireMissing(fixturePath))
+    .andThen(() => createExclusiveCaptureFile(fixturePath))
+    .map(() => {
+      fixtureCreated = true;
+      return undefined;
+    })
+    .andThen(() => writeCaptureText(fixturePath, fixtureText, "write-failed"))
+    .andThen(() => requireMissing(manifestPath))
+    .andThen(() => createExclusiveCaptureFile(manifestPath))
+    .map(() => {
+      manifestCreated = true;
+      return undefined;
+    })
+    .andThen(() => writeCaptureText(manifestPath, manifestText, "write-failed"))
+    .orElse((failure) => cleanupCreated().andThen(() => errAsync(failure)));
 }
 
 function withWorkspaceCleanup<T>(

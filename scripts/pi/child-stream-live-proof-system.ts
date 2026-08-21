@@ -6,7 +6,10 @@
  * callers keep importing this stable path.
  */
 
-export { runBoundedProcess } from "./child-stream-live-proof-bounded-runner.js";
+export {
+  runBoundedProcess,
+  spawnBoundedInteractiveProcess,
+} from "./child-stream-live-proof-bounded-runner.js";
 export {
   isLiveProofStreamOverflow,
   LIVE_PROOF_STREAM_OVERFLOW,
@@ -27,6 +30,7 @@ export type {
   BoundedProcessLimits,
   BoundedProcessOutput,
   BoundedProcessRunnerInput,
+  BoundedProcessStdin,
   LiveProofCommandOutput,
   LiveProofPathKind,
   LiveProofProcess,

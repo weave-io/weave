@@ -27,6 +27,7 @@ import {
   validateFixtureStructure,
   verifyCaptureManifest,
 } from "../child-stream-capture.js";
+import { verifyPiVersion } from "../child-stream-capture-harness.js";
 
 const CONTROLLED_REASONING_SENTINEL = "CONTROLLED-REASONING-SENTINEL";
 const FIXTURE_PATH = join(
@@ -259,6 +260,94 @@ describe("child-stream-capture online omission and sanitization", () => {
     expect(JSON.stringify(injected)).toContain(
       "SYNTHETIC-CONTROLLED-REASONING-7",
     );
+  });
+});
+
+describe("bounded Pi version probe", () => {
+  async function writePiShim(root: string, body: string): Promise<string> {
+    const path = join(root, "pi-shim");
+    await Bun.write(path, `#!/bin/sh\n${body}\n`);
+    const chmod = Bun.spawn(["/bin/chmod", "+x", path], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await chmod.exited).toBe(0);
+    return path;
+  }
+
+  async function removeRoot(root: string): Promise<void> {
+    const removed = Bun.spawn(["/bin/rm", "-rf", "--", root], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await removed.exited).toBe(0);
+  }
+
+  it("parses bounded newline-free stdout", async () => {
+    const root = join(tmpdir(), `weave-pi-version-${crypto.randomUUID()}`);
+    const made = Bun.spawn(["/bin/mkdir", "-p", "--", root], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await made.exited).toBe(0);
+    try {
+      const pi = await writePiShim(root, "printf '0.84.2'");
+      const result = await verifyPiVersion(pi, "0.84.2");
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe("0.84.2");
+    } finally {
+      await removeRoot(root);
+    }
+  });
+
+  it("does not return an uncontrolled version suffix", async () => {
+    const root = join(
+      tmpdir(),
+      `weave-pi-version-suffix-${crypto.randomUUID()}`,
+    );
+    const made = Bun.spawn(["/bin/mkdir", "-p", "--", root], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await made.exited).toBe(0);
+    try {
+      const pi = await writePiShim(root, "printf '0.84.2 secret-version-text'");
+      const result = await verifyPiVersion(pi, "0.84.2");
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap()).toBe("0.84.2");
+      expect(JSON.stringify(result)).not.toContain("secret-version-text");
+    } finally {
+      await removeRoot(root);
+    }
+  });
+
+  it("drains a version stderr flood without exposing stderr", async () => {
+    const root = join(
+      tmpdir(),
+      `weave-pi-version-flood-${crypto.randomUUID()}`,
+    );
+    const made = Bun.spawn(["/bin/mkdir", "-p", "--", root], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await made.exited).toBe(0);
+    try {
+      const pi = await writePiShim(
+        root,
+        [
+          "(while :; do printf 'version-stderr-secret\\n' >&2; done) &",
+          "worker=$!",
+          "trap 'kill $worker 2>/dev/null; exit 0' TERM INT EXIT",
+          "printf '0.84.2\\n'",
+          "while :; do sleep 1; done",
+        ].join("\n"),
+      );
+      const result = await verifyPiVersion(pi, "0.84.2");
+      expect(result.isErr()).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("version-stderr-secret");
+    } finally {
+      await removeRoot(root);
+    }
   });
 });
 

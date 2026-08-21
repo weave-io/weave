@@ -96,10 +96,17 @@ export type ProcessByteStream = ReadableStream<Uint8Array<ArrayBuffer>>;
 export type BoundedProcessStreamName = "stdout" | "stderr";
 export type BoundedProcessSignal = "SIGTERM" | "SIGKILL";
 
+/** The small writable surface needed to send one bounded request to a child. */
+export interface BoundedProcessStdin {
+  readonly write: (chunk: string) => number | PromiseLike<number> | undefined;
+  readonly flush?: () => number | PromiseLike<number> | undefined;
+}
+
 /** A Bun process shape that is also easy to exercise with a fake process. */
 export interface BoundedProcess {
-  readonly stdout?: ProcessByteStream | number;
-  readonly stderr?: ProcessByteStream | number;
+  readonly stdin?: BoundedProcessStdin | number | null;
+  readonly stdout?: ProcessByteStream | number | null;
+  readonly stderr?: ProcessByteStream | number | null;
   readonly exited: PromiseLike<number>;
   readonly exitCode: number | null;
   readonly signalCode: string | null;
@@ -139,6 +146,8 @@ export interface BoundedProcessRunnerInput {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
   readonly stdin?: "ignore" | "pipe";
+  /** Optional one-shot input. The runner writes and flushes it in-bounds. */
+  readonly stdinText?: string;
   readonly limits?: Partial<BoundedProcessLimits>;
   /** Test seam; production uses Bun.spawn. */
   readonly spawn?: () => BoundedProcess | PromiseLike<BoundedProcess>;

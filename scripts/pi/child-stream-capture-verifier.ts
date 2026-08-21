@@ -1,4 +1,4 @@
-import { err, ok, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   CAPTURE_BOUNDS,
   type CaptureFixture,
@@ -510,6 +510,32 @@ export function deriveManifestPath(fixturePath: string): string {
     : `${fixturePath}.manifest.json`;
 }
 
+function readBoundedFixtureText(
+  path: string,
+): ResultAsync<string, FixtureValidationFailure> {
+  const file = Result.fromThrowable(
+    () => Bun.file(path),
+    () => invalidFixture("fixture-corrupt"),
+  )();
+  if (file.isErr()) return errAsync(file.error);
+  if (file.value.size > MAX_CAPTURE_TOTAL_BYTES) {
+    return errAsync(invalidFixture("fixture-corrupt"));
+  }
+  return ResultAsync.fromThrowable(
+    () => file.value.slice(0, MAX_CAPTURE_TOTAL_BYTES + 1).arrayBuffer(),
+    () => invalidFixture("fixture-corrupt"),
+  )().andThen((bytes) => {
+    if (bytes.byteLength > MAX_CAPTURE_TOTAL_BYTES) {
+      return errAsync(invalidFixture("fixture-corrupt"));
+    }
+    const decoded = Result.fromThrowable(
+      () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      () => invalidFixture("fixture-corrupt"),
+    )();
+    return decoded.isOk() ? okAsync(decoded.value) : errAsync(decoded.error);
+  });
+}
+
 export function readFixtureAndManifest(
   fixturePath: string,
 ): ResultAsync<
@@ -517,8 +543,10 @@ export function readFixtureAndManifest(
   FixtureValidationFailure
 > {
   const manifestPath = deriveManifestPath(fixturePath);
-  return ResultAsync.fromPromise(
-    Promise.all([Bun.file(fixturePath).text(), Bun.file(manifestPath).text()]),
-    () => invalidFixture("fixture-corrupt"),
-  ).map(([fixtureText, manifestText]) => ({ fixtureText, manifestText }));
+  return readBoundedFixtureText(fixturePath).andThen((fixtureText) =>
+    readBoundedFixtureText(manifestPath).map((manifestText) => ({
+      fixtureText,
+      manifestText,
+    })),
+  );
 }

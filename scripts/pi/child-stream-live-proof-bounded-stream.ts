@@ -1,5 +1,8 @@
 import { Result } from "neverthrow";
-import type { ProcessByteStream } from "./child-stream-live-proof-system-contract.js";
+import type {
+  BoundedProcess,
+  ProcessByteStream,
+} from "./child-stream-live-proof-system-contract.js";
 
 /** Hard bounds for process output retained by the live-proof reader. */
 export const MAX_LIVE_PROOF_LINE_BYTES = 64 * 1024;
@@ -33,11 +36,11 @@ export const MAX_BOUNDED_PROCESS_TOTAL_READ_BYTES =
  * of waiting for output that a silent process may never produce.
  */
 export function readProcessLines(
-  process: ReturnType<typeof Bun.spawn>,
+  process: Pick<BoundedProcess, "stdout" | "stderr">,
 ): AsyncIterable<string> {
   const streams = [process.stdout, process.stderr].filter(
     (stream): stream is ProcessByteStream =>
-      stream !== undefined && typeof stream !== "number",
+      stream !== undefined && stream !== null && typeof stream !== "number",
   );
   type Reader = ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
   interface OutputStreamState {
