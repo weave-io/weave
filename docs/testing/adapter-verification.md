@@ -210,6 +210,19 @@ closed. The current 2026-08-18 run is preserved as RED evidence; deterministic
 Task 9 tests are separate evidence and do not turn that live run into a pass.
 See [`33-child-streaming-remediation-proof.md`](../specs/33-spec-pi-adapter/33-proofs/33-child-streaming-remediation-proof.md).
 
+The pinned child bootstrap regression is a separate opt-in real-host test. Build
+first, then run it with an isolated Pi configuration:
+
+```bash
+bun run build
+WEAVE_PI_REAL_HOST_REGRESSION=1 \\
+  bun test scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+```
+
+It requires an installed Pi and reports only the missing-handshake RED control,
+the bootstrap-ack green control, and bounded cleanup status. The adapter test
+suite keeps this coverage mocked.
+
 ## Minimum adapter checks
 
 ### Pi
