@@ -227,7 +227,6 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         source: "packages/adapters/pi/src/extension-build-identity.ts",
         output: "packages/adapters/pi/dist/extension-build-identity.js",
-        transpileOnly: true,
       },
       {
         source: "packages/adapters/pi/src/extension.ts",

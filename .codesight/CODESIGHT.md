@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 359 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~39,800 tokens. Without it, AI exploration would cost ~112,600 tokens. **Saves ~72,900 tokens per conversation.**
-> **Last scanned:** 2026-08-21 01:27 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 367 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~40,500 tokens. Without it, AI exploration would cost ~114,700 tokens. **Saves ~74,200 tokens per conversation.**
+> **Last scanned:** 2026-08-21 02:24 — re-run after significant changes
 
 ---
 
@@ -785,14 +785,33 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
   - _...95 more_
-- `packages/adapters/pi/src/extension-build-identity.ts`
-  - function computeExtensionBuildBinding: (input) => Result<string, ExtensionBuildIdentityError>
-  - function extensionProcessStartMs: () => number
-  - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
-  - function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
+- `packages/adapters/pi/src/extension-build-identity-binding.ts` — function computeExtensionBuildBinding: (input) => Result<string, ExtensionBuildIdentityError>, function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
+- `packages/adapters/pi/src/extension-build-identity-manifest.ts`
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
-  - _...31 more_
+  - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function readArtifactSha256: (path) => ResultAsync<string, ExtensionBuildIdentityError>
+  - function parseExtensionBuildManifestText: (text) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+- `packages/adapters/pi/src/extension-build-identity-proof.ts`
+  - function renderExtensionBuildIdentityHealthLine: (health) => string
+  - function renderExtensionBuildIdentityProofLine: (identity) => string
+  - function parseExtensionBuildIdentityProof: (value) => Result<ExtensionBuildIdentityProof, ExtensionBuildIdentityError>
+  - function maybeWriteExtensionBuildIdentityProofLine: (identity, options, string | undefined>>;
+    readonly proofWrite?) => void
+- `packages/adapters/pi/src/extension-build-identity-runtime.ts`
+  - function extensionProcessStartMs: () => number
+  - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
+  - function loadExtensionBuildIdentity: (artifactPath) => ResultAsync<ExtensionLoadedIdentity, never>
+  - function evaluateExtensionBuildIdentity: (input) => ExtensionBuildIdentityHealth
+  - function readExtensionBuildIdentityHealth: (loaded) => ResultAsync<ExtensionBuildIdentityHealth, never>
+- `packages/adapters/pi/src/extension-build-identity-validation.ts`
+  - function isRecord: (value) => value is Record<string, unknown>
+  - function isSha256: (value) => value is string
+  - function isBoundedString: (value, maxLength) => value is string
+  - function isGitSubject: (value) => value is string
+  - function isSafeTimestamp: (value) => value is string
+  - function isSafeMilliseconds: (value) => value is number
+  - _...8 more_
 - `packages/adapters/pi/src/extension-impl.ts`
   - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
@@ -1900,6 +1919,15 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-live-proof-bounded-runner.ts` — function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, LiveProofSystemFailure>
+- `scripts/pi/child-stream-live-proof-bounded-stream.ts`
+  - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
+  - function readProcessLines: (process) => AsyncIterable<string>
+  - const MAX_LIVE_PROOF_LINE_BYTES
+  - const MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
+  - const MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM
+  - const MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM
+  - _...4 more_
 - `scripts/pi/child-stream-live-proof-command.ts`
   - function liveProofReportPassed: (report) => boolean
   - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
@@ -1913,11 +1941,20 @@
   - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
   - interface LiveProofArgumentFailure
   - _...56 more_
+- `scripts/pi/child-stream-live-proof-host.ts`
+  - function safeProofEnvironment: (source, string>>) => Record<string, string>
+  - function createLiveProofSystem: () => LiveProofSystem
+  - function workspacePath: (root, name) => string
 - `scripts/pi/child-stream-live-proof-observer.ts` — function createLiveProofObserver: (sentinel) => LiveProofObserver, class LiveProofObserver
 - `scripts/pi/child-stream-live-proof-port.ts`
   - function createLiveProofPort: (config) => LiveProofPort
   - interface LiveProofGuardedResource
   - interface LiveProofPortConfig
+- `scripts/pi/child-stream-live-proof-process-control.ts`
+  - function normalizedBoundedProcessLimits: (supplied) => BoundedProcessLimits
+  - function observeBoundedPromise: (promiseLike, timeoutMs?) => Promise<BoundedWaitOutcome<T>>
+  - function terminateBoundedProcess: (process, limits) => Promise<boolean>
+  - type BoundedWaitOutcome
 - `scripts/pi/child-stream-live-proof-report-writer.ts` — function writeLiveProofReport: (input) => ResultAsync<number, LiveProofWriteFailure>, interface LiveProofWriteFailure
 - `scripts/pi/child-stream-live-proof-runner.ts`
   - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
@@ -1927,14 +1964,14 @@
   - interface LiveProofFreshParentLaunch
   - interface LiveProofDeterministicChildRequest
   - _...14 more_
-- `scripts/pi/child-stream-live-proof-system.ts`
+- `scripts/pi/child-stream-live-proof-system-contract.ts`
   - function systemFailure: (code) => LiveProofSystemFailure
-  - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
-  - function safeProofEnvironment: (source, string>>) => Record<string, string>
-  - function createLiveProofSystem: () => LiveProofSystem
-  - function workspacePath: (root, name) => string
   - interface LiveProofSystemFailure
-  - _...13 more_
+  - interface LiveProofSpawnInput
+  - interface LiveProofProcess
+  - interface LiveProofTimer
+  - interface LiveProofCommandOutput
+  - _...10 more_
 - `scripts/pi/verify-child-streaming.ts`
   - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
   - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>

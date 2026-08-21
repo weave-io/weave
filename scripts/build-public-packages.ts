@@ -724,10 +724,16 @@ export class PublicPackageBuilder {
     void,
     PublicPackageBuildError
   > {
-    return this.transpileEntry("@weaveio/weave-adapter-pi", {
-      source: PI_EXTENSION_IDENTITY_SOURCE,
-      output: PI_EXTENSION_IDENTITY_OUTPUT,
-    })
+    return this.bundleEntry(
+      "@weaveio/weave-adapter-pi",
+      {
+        source: PI_EXTENSION_IDENTITY_SOURCE,
+        output: PI_EXTENSION_IDENTITY_OUTPUT,
+      },
+      PI_BUILD.entries,
+      [...PUBLIC_RUNTIME_EXTERNALS, ...(PI_BUILD.runtimeExternals ?? [])],
+      {},
+    )
       .andThen(() => this.readGitBuildIdentity())
       .andThen((git) =>
         this.readPiBuildInputs().map((buildInputs) => ({ git, buildInputs })),

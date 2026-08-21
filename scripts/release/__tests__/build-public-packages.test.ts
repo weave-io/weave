@@ -83,6 +83,13 @@ describe("public package build guard", () => {
         (entry) => entry.output === "packages/adapters/pi/dist/extension.js",
       )?.transpileOnly,
     ).toBe(true);
+    const identityEntry = piBuild.entries.find(
+      (entry) =>
+        entry.output ===
+        "packages/adapters/pi/dist/extension-build-identity.js",
+    );
+    expect(identityEntry).toBeDefined();
+    expect("transpileOnly" in (identityEntry ?? {})).toBe(false);
   });
 
   it("keeps the three Pi host packages as public runtime externals", () => {
