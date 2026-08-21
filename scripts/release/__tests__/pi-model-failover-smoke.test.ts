@@ -67,7 +67,10 @@ import {
   validateFixtureSourceBoundary,
   validateRollbackShimSource,
 } from "../pi-model-failover-smoke/fixture-sources.js";
-import { parseHealthFacts } from "../pi-model-failover-smoke/health-observation.js";
+import {
+  parseHealthFacts,
+  visibleEventCount,
+} from "../pi-model-failover-smoke/health-observation.js";
 import {
   MAX_NATIVE_INITIAL_MODEL_ENTRIES,
   MAX_NATIVE_MODEL_TIMELINE_ENTRIES,
@@ -677,7 +680,10 @@ function successfulFallbackInput() {
   };
   return {
     observation: {
-      output: "MODEL FALLBACK\nmodel fallback · smoke/second",
+      output:
+        "Wa│▌ MODEL FALLBACK\n" +
+        "tu│→ smoke/second\n" +
+        "model fallback · smoke/second",
       visibleEventCount: 1,
       captures: [child, parent],
       providerCaptures: [providerCapture(child), providerCapture(parent)],
@@ -999,6 +1005,32 @@ describe("Pi model-fallback release smoke", () => {
     expect(task).toBeGreaterThan(health);
   });
 
+  it("opens the fallback child inspector before quitting the real TUI", () => {
+    const driver = buildExpectDriver({
+      command: ["/tmp/pi/bin/pi", "--offline"],
+      doneMarker: "DONE_MARKER",
+      inspectChildOnFallback: true,
+      task: "TASK",
+      timeoutSeconds: 3,
+    });
+    const nativeLine = driver.indexOf(`-re "${EXPECTED_NATIVE_LINE}"`);
+    const fallback = driver.indexOf('-re "MODEL FALLBACK"');
+    const openInspector = driver.indexOf('send "\\033i"');
+    const picker = driver.indexOf('-re "Weave children"');
+    const inspectorFallback = driver.indexOf('-re "MODEL FALLBACK"', picker);
+    const closeInspector = driver.indexOf('send "\\033"', inspectorFallback);
+    const done = driver.indexOf('-re "DONE_MARKER"', closeInspector);
+    const quit = driver.indexOf('send "/quit\\r"');
+    expect(nativeLine).toBeGreaterThanOrEqual(0);
+    expect(fallback).toBeGreaterThan(nativeLine);
+    expect(openInspector).toBeGreaterThan(fallback);
+    expect(picker).toBeGreaterThan(openInspector);
+    expect(inspectorFallback).toBeGreaterThan(picker);
+    expect(closeInspector).toBeGreaterThan(inspectorFallback);
+    expect(done).toBeGreaterThan(closeInspector);
+    expect(quit).toBeGreaterThan(done);
+  });
+
   it("pins child PATH to the owned launcher and rejects launcher aliases", () => {
     const root = `/tmp/weave-launcher-path-${crypto.randomUUID()}`;
     const paths: ScenarioPaths = {
@@ -1038,6 +1070,18 @@ describe("Pi model-fallback release smoke", () => {
       validateScenarioLauncher(root, `${root}/bin/../bin/pi`).isErr(),
     ).toBe(true);
     expect(validateScenarioLauncher(root, "/usr/bin/pi").isErr()).toBe(true);
+  });
+
+  it("counts only the framed child fallback renderer and preserves duplicates", () => {
+    const output =
+      "▌ MODEL FALLBACK\r\n" +
+      "smoke/first → smoke/second\r\n" +
+      "model fallback · smoke/second\r\n" +
+      "Wa│▌ MODEL FALLBACK\r\n" +
+      "tu│→ smoke/second\r\n";
+    expect(visibleEventCount(output)).toBe(1);
+    expect(visibleEventCount(`${output}${output}`)).toBe(2);
+    expect(visibleEventCount("▌ MODEL FALLBACK\n")).toBe(0);
   });
 
   it("parses a wrapped real Pi health capability gap", () => {

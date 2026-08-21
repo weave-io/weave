@@ -721,6 +721,7 @@ describe("PiDelegationController", () => {
     const from = { provider: "origin", id: "model-a" };
     const to = { provider: "fallback", id: "model-b" };
     const observed: unknown[] = [];
+    const requested: unknown[] = [];
     const controller = makeController(config(GENEROUS), port, {
       onModelTransition: (_childId, transition) => observed.push(transition),
     });
@@ -738,6 +739,9 @@ describe("PiDelegationController", () => {
             cwd: "/project",
           },
           resolvedModel: from,
+        },
+        onModelTransition: (transition) => {
+          requested.push(transition);
         },
       }),
     );
@@ -803,6 +807,7 @@ describe("PiDelegationController", () => {
       (await controller.resolveOverlayChild(childId))._unsafeUnwrap().model,
     ).toBe("model-b");
     expect(observed).toEqual([applied]);
+    expect(requested).toEqual([applied]);
 
     spawned.emitLine(
       (
@@ -811,6 +816,10 @@ describe("PiDelegationController", () => {
     );
     await flush();
     expect(observed).toEqual([
+      applied,
+      { ...applied, phase: "recovery-confirmed" },
+    ]);
+    expect(requested).toEqual([
       applied,
       { ...applied, phase: "recovery-confirmed" },
     ]);

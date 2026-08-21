@@ -400,6 +400,21 @@ function freezeModelTransitionBody(
   });
 }
 
+/**
+ * Gives observers a fresh descriptor-safe copy while keeping the child's own
+ * admitted model truth immutable. Observer consumers re-validate the copy at
+ * their boundaries, so frozen internal state must never cross this seam.
+ */
+function copyModelTransitionBody(
+  transition: PiModelTransitionBody,
+): PiModelTransitionBody {
+  return {
+    ...transition,
+    from: { ...transition.from },
+    to: { ...transition.to },
+  };
+}
+
 function invalidSpawnSession<T>(reason: string): Result<T, string> {
   return err(`invalid session spawn configuration: ${reason}`);
 }
@@ -1653,7 +1668,7 @@ export class PiRpcChild {
         );
         return;
       }
-      this.notifyModelTransition(transition);
+      this.notifyModelTransition(copyModelTransitionBody(parsed.value));
       return;
     }
     if (envelope.kind === "settled") {

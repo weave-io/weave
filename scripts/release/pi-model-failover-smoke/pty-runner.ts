@@ -5,8 +5,8 @@ import {
   ADAPTER_READY_MARKER,
   type CleanupResourceTracker,
   type CommandResult,
-  PARENT_TASK,
-  ROLLBACK_TASK,
+  PARENT_TASK_TEXT,
+  ROLLBACK_TASK_TEXT,
   type ScenarioPaths,
   type SmokeCase,
   type SmokeFailure,
@@ -40,7 +40,7 @@ export async function runPty(
   // rollback then invokes the real `/weave:health` command and parses that
   // command's notification below.
   const doneMarker = "PI_MODEL_FAILOVER_SMOKE_DONE";
-  const task = smokeCase === "rollback" ? ROLLBACK_TASK : PARENT_TASK;
+  const task = smokeCase === "rollback" ? ROLLBACK_TASK_TEXT : PARENT_TASK_TEXT;
   const rollbackHealth = smokeCase === "rollback";
   const driverPath = join(paths.root, `driver-${crypto.randomUUID()}.exp`);
   resources?.registerOwnedPath(driverPath);
@@ -49,6 +49,7 @@ export async function runPty(
     buildExpectDriver({
       command,
       doneMarker,
+      inspectChildOnFallback: smokeCase === "fallback",
       readyMarker: ADAPTER_READY_MARKER,
       ...(rollbackHealth
         ? {

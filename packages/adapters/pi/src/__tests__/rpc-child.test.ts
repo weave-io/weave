@@ -13,6 +13,7 @@ import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type { PiChildTreeNode } from "../child-tree.js";
+import { modelFailoverRecordFromTransition } from "../model-failover-record.js";
 import {
   encodePromptChunks,
   PROMPT_CHUNK_COMMAND,
@@ -489,10 +490,12 @@ describe("PiRpcChild", () => {
     const from = { provider: "origin", id: "model-a", name: "Origin" };
     const to = { provider: "fallback", id: "model-b", name: "Fallback" };
     const transitions: unknown[] = [];
+    const records: ReturnType<typeof modelFailoverRecordFromTransition>[] = [];
     const running = await startRunningChild(
       {
         onModelTransition: (_childId, transition) => {
           transitions.push(transition);
+          records.push(modelFailoverRecordFromTransition(transition));
         },
       },
       validBootstrap({ resolvedModel: from }),
@@ -520,6 +523,8 @@ describe("PiRpcChild", () => {
     await flush();
     expect(settled).toBe(false);
     expect(transitions).toEqual([applied]);
+    expect(records[0]?.isOk()).toBe(true);
+    if (records[0]?.isOk()) expect(records[0].value).toBeUndefined();
 
     await running.responder.send(
       "model-transition",
@@ -533,6 +538,15 @@ describe("PiRpcChild", () => {
       applied,
       { ...applied, phase: "recovery-confirmed" },
     ]);
+    expect(records).toHaveLength(2);
+    expect(records[1]?.isOk()).toBe(true);
+    if (records[1]?.isOk()) {
+      expect(records[1].value).toMatchObject({
+        transitionId: applied.transitionId,
+        from,
+        to,
+      });
+    }
 
     await running.responder.send(
       "settled",

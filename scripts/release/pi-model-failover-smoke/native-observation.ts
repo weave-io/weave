@@ -5,10 +5,12 @@ import {
   artifactDigest,
   boundText,
   CHILD_TASK,
+  CHILD_TASK_TEXT,
   CHILD_TOOL_CALL_ID,
   type CleanupResourceTracker,
   descriptorCounts,
   FALLBACK_SUCCESS,
+  FALLBACK_SUCCESS_TEXT,
   type FixtureContextFact,
   type FixtureHistoryDescriptor,
   type FixtureHistoryFacts,
@@ -32,6 +34,7 @@ import {
   ORIGINAL_USER,
   ORIGINAL_USER_ID,
   PARENT_TASK,
+  PARENT_TASK_TEXT,
   PARENT_TOOL_CALL_ID,
   PI_NATIVE_RESULT_CHUNK_ENTRY_TYPE,
   PI_NATIVE_RESULT_COMMIT_ENTRY_TYPE,
@@ -41,6 +44,7 @@ import {
   RECOVERY_MARKER,
   ROLLBACK_DISABLED_SURFACE,
   ROLLBACK_TASK,
+  ROLLBACK_TASK_TEXT,
   type SafeModelIdentity,
   type ScenarioPaths,
   type SmokeFailure,
@@ -145,6 +149,9 @@ function classifyNativeFact(
       contentText.includes(PARENT_TASK) ||
       contentText.includes(ROLLBACK_TASK) ||
       contentText.includes(CHILD_TASK) ||
+      contentText.includes(PARENT_TASK_TEXT) ||
+      contentText.includes(ROLLBACK_TASK_TEXT) ||
+      contentText.includes(CHILD_TASK_TEXT) ||
       entry.id === ORIGINAL_TASK_ID
     )
       return "original-task-user";
@@ -161,7 +168,11 @@ function classifyNativeFact(
   if (role === "assistant") {
     if (entry.stopReason === "error") return "failed-assistant";
     if (toolCallCount > 0 && fixtureToolCall) return "tool-call";
-    if (contentText.includes(FALLBACK_SUCCESS)) return "successful-assistant";
+    if (
+      contentText.includes(FALLBACK_SUCCESS) ||
+      contentText.includes(FALLBACK_SUCCESS_TEXT)
+    )
+      return "successful-assistant";
     return undefined;
   }
   if (

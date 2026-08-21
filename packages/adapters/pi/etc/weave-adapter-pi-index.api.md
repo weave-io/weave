@@ -4938,6 +4938,7 @@ export interface PiDelegationRequest {
     readonly cwd: string;
     // (undocumented)
     readonly env: Readonly<Record<string, string>>;
+    readonly onModelTransition?: (transition: PiModelTransitionBody) => void;
     readonly onSessionEvent?: (event: PiChildSessionEvent) => void;
     readonly onUpdate?: (snapshot: PiChildTreeNode) => void;
     readonly parentAgentName: string;
@@ -7304,6 +7305,7 @@ export interface PiThreadRunRequest {
     // (undocumented)
     readonly initiator: PiThreadInitiator;
     readonly instruction?: string;
+    readonly onModelTransition?: (transition: PiModelTransitionBody) => void;
     readonly onRunAssigned?: (assignment: PiThreadRunAssignment) => void;
     readonly onSessionEvent?: (event: PiChildSessionEvent) => void;
     // (undocumented)

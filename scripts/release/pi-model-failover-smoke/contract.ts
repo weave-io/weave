@@ -137,6 +137,11 @@ export const PARENT_TASK = "PI_MODEL_FAILOVER_SMOKE_PARENT_TASK";
 export const ROLLBACK_TASK = "PI_MODEL_FAILOVER_SMOKE_ROLLBACK_TASK";
 export const CHILD_TASK = "PI_MODEL_FAILOVER_SMOKE_CHILD_TASK";
 export const FALLBACK_SUCCESS = "PI_MODEL_FAILOVER_SMOKE_FALLBACK_SUCCESS";
+/** User-facing fixture text must not contain the private correlation markers. */
+export const PARENT_TASK_TEXT = "delegate one child to inspect the README";
+export const ROLLBACK_TASK_TEXT = "run the rollback health check";
+export const CHILD_TASK_TEXT = "read the README and report the result";
+export const FALLBACK_SUCCESS_TEXT = "fallback completed successfully";
 export const ROLLBACK_SHIM_FILENAME = "rollback-shim.js";
 export const ROLLBACK_DISABLED_SURFACE = "callable-send-message" as const;
 export const ROLLBACK_SHIM_BOUNDARY = "extension-factory-proxy" as const;

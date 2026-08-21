@@ -1596,6 +1596,9 @@ export function buildDelegationToolRegistration(
             onSessionEvent: (event: PiChildSessionEvent) => {
               stream?.applyEvent(event);
             },
+            onModelTransition: (transition: PiModelTransitionBody) => {
+              stream?.applyModelTransition(transition);
+            },
           })
           .match(
             (outcome) => {
@@ -1671,10 +1674,14 @@ export function buildDelegationToolRegistration(
           ctx,
           invocation.parentAgentName,
         ),
-        // Live card updates come only from parser-approved session events.
-        // Tree-snapshot onUpdate must not overwrite event-derived card facts.
+        // Live card updates come only from parser-approved session events and
+        // authenticated model transitions. Tree-snapshot onUpdate must not
+        // overwrite event-derived card facts.
         onSessionEvent: (event: PiChildSessionEvent) => {
           stream.applyEvent(event);
+        },
+        onModelTransition: (transition: PiModelTransitionBody) => {
+          stream.applyModelTransition(transition);
         },
         childId,
       };

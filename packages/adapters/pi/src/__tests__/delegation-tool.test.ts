@@ -5,6 +5,10 @@ import {
   CARD_FACTS_SCHEMA_VERSION,
   type PiDelegationCardFacts,
 } from "../child-card-model.js";
+import {
+  MODEL_TRANSITION_SCHEMA_VERSION,
+  type PiModelTransitionBody,
+} from "../child-control-bodies.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
 import type {
   PiDelegationController,
@@ -523,6 +527,92 @@ describe("buildDelegationToolRegistration", () => {
       ?.render(80)
       .join("\n");
     expect(call).toContain("Shuttle");
+  });
+
+  it("execute: projects one confirmed model fallback from authenticated phases", async () => {
+    let capturedRequest: PiDelegationRequest | undefined;
+    let resolveSettlement!: (
+      result: Result<PiChildSettlement, PiAdapterFailure>,
+    ) => void;
+    const settlement = new ResultAsync<PiChildSettlement, PiAdapterFailure>(
+      new Promise((resolve) => {
+        resolveSettlement = resolve;
+      }),
+    );
+    const updates: PiToolResult[] = [];
+    const timers: (() => void)[] = [];
+    const timerPort = {
+      schedule: (callback: () => void) => {
+        timers.push(callback);
+        return { cancel: () => undefined };
+      },
+    };
+    const fireRefreshWindow = (): void => {
+      const pending = timers.splice(0, timers.length);
+      for (const tick of pending) tick();
+    };
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        timerPort,
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return settlement;
+          }),
+      }),
+    );
+    const executePromise = registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      (update) => updates.push(update),
+      ctx(),
+    );
+    const applied: PiModelTransitionBody = {
+      schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable",
+      from: { provider: "origin", id: "model-a" },
+      to: { provider: "fallback", id: "model-b" },
+      phase: "applied",
+    };
+    const confirmed: PiModelTransitionBody = {
+      ...applied,
+      phase: "recovery-confirmed",
+    };
+    expect(capturedRequest?.onModelTransition).toBeDefined();
+    capturedRequest?.onModelTransition?.(applied);
+    capturedRequest?.onModelTransition?.(confirmed);
+    capturedRequest?.onModelTransition?.(confirmed);
+    fireRefreshWindow();
+
+    const fallbackUpdates = updates.filter(
+      (update) =>
+        (update.details as PiDelegationCardDetails | undefined)?.facts.activity
+          .kind === "fallback",
+    );
+    expect(fallbackUpdates).toHaveLength(1);
+    const fallbackDetails = fallbackUpdates[0]
+      ?.details as PiDelegationCardDetails;
+    expect(fallbackDetails.facts.fallback).toMatchObject({
+      transitionId: applied.transitionId,
+      from: applied.from,
+      to: applied.to,
+    });
+    expect(fallbackDetails.facts.activity.text).toBe(
+      "model fallback · fallback/model-b",
+    );
+
+    resolveSettlement(
+      ok({
+        outcome: "completed",
+        assistantOutput: "done",
+      } as PiChildSettlement),
+    );
+    const result = await executePromise;
+    expect((result.details as PiDelegationCardDetails).facts.settled).toBe(
+      true,
+    );
   });
 
   it("renderResult: degrades a foreign (older compact) details payload", () => {

@@ -1,8 +1,10 @@
 import { err, ok, type Result } from "neverthrow";
 import {
   CHILD_TASK,
+  CHILD_TASK_TEXT,
   CHILD_TOOL_CALL_ID,
   FALLBACK_SUCCESS,
+  FALLBACK_SUCCESS_TEXT,
   FIXTURE_CREDENTIAL,
   FOLLOW_UP_USER,
   FOLLOW_UP_USER_ID,
@@ -14,6 +16,7 @@ import {
   ORIGINAL_USER,
   ORIGINAL_USER_ID,
   PARENT_TASK,
+  PARENT_TASK_TEXT,
   PARENT_TOOL_CALL_ID,
   QUEUED_USER,
   QUEUED_USER_ID,
@@ -23,6 +26,7 @@ import {
   ROLLBACK_SHIM_BOUNDARY,
   ROLLBACK_SHIM_FILENAME,
   ROLLBACK_TASK,
+  ROLLBACK_TASK_TEXT,
   type SmokeFailure,
   STEERING_USER,
   STEERING_USER_ID,
@@ -38,11 +42,15 @@ const NATIVE_RECOVERY_MARKER_TYPE = ${encoded(NATIVE_RECOVERY_MARKER_TYPE)};
 const PARENT_TASK = ${encoded(PARENT_TASK)};
 const ROLLBACK_TASK = ${encoded(ROLLBACK_TASK)};
 const CHILD_TASK = ${encoded(CHILD_TASK)};
+const PARENT_TASK_TEXT = ${encoded(PARENT_TASK_TEXT)};
+const ROLLBACK_TASK_TEXT = ${encoded(ROLLBACK_TASK_TEXT)};
+const CHILD_TASK_TEXT = ${encoded(CHILD_TASK_TEXT)};
 const ORIGINAL_USER = ${encoded(ORIGINAL_USER)};
 const STEERING_USER = ${encoded(STEERING_USER)};
 const FOLLOW_UP_USER = ${encoded(FOLLOW_UP_USER)};
 const QUEUED_USER = ${encoded(QUEUED_USER)};
 const FALLBACK_SUCCESS = ${encoded(FALLBACK_SUCCESS)};
+const FALLBACK_SUCCESS_TEXT = ${encoded(FALLBACK_SUCCESS_TEXT)};
 const UNRELATED_CUSTOM_TYPE = ${encoded(UNRELATED_CUSTOM_TYPE)};
 const ORIGINAL_TASK_ID = ${encoded(ORIGINAL_TASK_ID)};
 const ORIGINAL_USER_ID = ${encoded(ORIGINAL_USER_ID)};
@@ -98,7 +106,7 @@ const classifyDescriptor = (entry, role, toolCallCount) => {
     // The fixture-issued marker in the content keeps that real entry
     // distinguishable from a synthetic user message after conversion.
     if (contentText.includes(UNRELATED_CUSTOM_TYPE)) return "unrelated-custom";
-    if (contentText.includes(PARENT_TASK) || contentText.includes(ROLLBACK_TASK) || contentText.includes(CHILD_TASK) || entry?.id === ORIGINAL_TASK_ID) return "original-task-user";
+    if (contentText.includes(PARENT_TASK) || contentText.includes(ROLLBACK_TASK) || contentText.includes(CHILD_TASK) || contentText.includes(PARENT_TASK_TEXT) || contentText.includes(ROLLBACK_TASK_TEXT) || contentText.includes(CHILD_TASK_TEXT) || entry?.id === ORIGINAL_TASK_ID) return "original-task-user";
     if (contentText.includes(ORIGINAL_USER) || entry?.id === ORIGINAL_USER_ID) return "original-user";
     if (contentText.includes(STEERING_USER) || entry?.id === STEERING_USER_ID) return "steering-user";
     if (contentText.includes(FOLLOW_UP_USER) || entry?.id === FOLLOW_UP_USER_ID) return "follow-up-user";
@@ -108,7 +116,7 @@ const classifyDescriptor = (entry, role, toolCallCount) => {
   if (role === "assistant") {
     if (entry?.stopReason === "error") return "failed-assistant";
     if (toolCallCount > 0 && fixtureToolCall) return "tool-call";
-    if (contentText.includes(FALLBACK_SUCCESS)) return "successful-assistant";
+    if (contentText.includes(FALLBACK_SUCCESS) || contentText.includes(FALLBACK_SUCCESS_TEXT)) return "successful-assistant";
     return undefined;
   }
   if (
@@ -249,23 +257,30 @@ const streamFor = (model, facts) => {
     stream.push({ type: "error", reason: "error", error: failed });
     return stream;
   }
-  const content = [{ type: "text", text: facts.text }];
-  const partial = assistant(model, content, "pending");
-  stream.push({ type: "text_start", contentIndex: 0, partial });
-  stream.push({ type: "text_delta", contentIndex: 0, delta: facts.text, partial });
-  stream.push({ type: "text_end", contentIndex: 0, content: facts.text, partial });
-  stream.push({ type: "done", reason: "stop", message: assistant(model, content, "stop") });
+  const pushText = () => {
+    const content = [{ type: "text", text: facts.text }];
+    const partial = assistant(model, content, "pending");
+    stream.push({ type: "text_start", contentIndex: 0, partial });
+    stream.push({ type: "text_delta", contentIndex: 0, delta: facts.text, partial });
+    stream.push({ type: "text_end", contentIndex: 0, content: facts.text, partial });
+    stream.push({ type: "done", reason: "stop", message: assistant(model, content, "stop") });
+  };
+  if (typeof facts.delayMs === "number") setTimeout(pushText, facts.delayMs);
+  else pushText();
   return stream;
 };
 const providerRequest = (model, requestContext) => {
   requestCount += 1;
   const contextMessages = Array.isArray(requestContext?.messages) ? requestContext.messages : [];
-  const rollbackTaskPresent = contextMessages.some((entry) => textOf(entry?.content).includes(ROLLBACK_TASK));
+  const rollbackTaskPresent = contextMessages.some((entry) => {
+    const text = textOf(entry?.content);
+    return text.includes(ROLLBACK_TASK) || text.includes(ROLLBACK_TASK_TEXT);
+  });
   requests.push(messagesFacts(contextMessages, model));
   void persist();
   if (role === "parent" && requestCount === 1) {
     if (rollbackTaskPresent) return streamFor(model, { kind: "error" });
-    return streamFor(model, { kind: "tool", id: "smoke-parent-tool-call", name: "weave_delegate", arguments: { agent: "shuttle", task: CHILD_TASK } });
+    return streamFor(model, { kind: "tool", id: "smoke-parent-tool-call", name: "weave_delegate", arguments: { agent: "shuttle", task: CHILD_TASK_TEXT } });
   }
   if (role === "child" && requestCount === 1) {
     return streamFor(model, { kind: "tool", id: "smoke-child-tool-call", name: "read", arguments: { path: "README.md" } });
@@ -273,7 +288,13 @@ const providerRequest = (model, requestContext) => {
   if (role === "child" && requestCount === 2) {
     return streamFor(model, { kind: "error" });
   }
-  return streamFor(model, { kind: "text", text: role === "child" ? FALLBACK_SUCCESS : "PI_MODEL_FAILOVER_SMOKE_PARENT_SUCCESS" });
+  // Keep the fallback answer open long enough for the real TUI to paint the
+  // authenticated fallback Native Line before settlement replaces it.
+  return streamFor(model, {
+    kind: "text",
+    text: role === "child" ? FALLBACK_SUCCESS_TEXT : "PI_MODEL_FAILOVER_SMOKE_PARENT_SUCCESS",
+    ...(role === "child" ? { delayMs: 250 } : {}),
+  });
 };
 
 export default function smokeFixture(pi) {

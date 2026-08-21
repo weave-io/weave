@@ -8,6 +8,7 @@ import {
   DEFAULT_COMMAND_TIMEOUT_MS,
   EXACT_PI_VERSION,
   EXPECTED_EXTENSION_SHA_ENV,
+  EXPECTED_NATIVE_LINE,
   EXPECTED_PACKAGE_ROOT_ENV,
   EXPECTED_PACKAGE_VERSION_ENV,
   FORBIDDEN_ENV_KEY_PATTERN,
@@ -357,6 +358,8 @@ export const buildPiCommand = buildPiLaunchCommand;
 export function buildExpectDriver(input: {
   readonly command: readonly string[];
   readonly doneMarker: string;
+  /** Open the child inspector when the durable fallback event appears. */
+  readonly inspectChildOnFallback?: boolean;
   /** Adapter startup synchronization. The Weave badge is the safe default. */
   readonly readyMarker?: string;
   /** A real TUI command to run before the smoke task. */
@@ -391,10 +394,41 @@ export function buildExpectDriver(input: {
       "}",
     );
   }
+  lines.push(`send "${quote(input.task)}\\r"`, "expect {");
+  if (input.inspectChildOnFallback === true) {
+    // The recovery-confirmed entry is appended before child settlement. Open
+    // the inspector from that durable event so the PTY captures the child's
+    // authenticated fallback Native Line before settlement rewrites it.
+    lines.push(
+      // Keep waiting after the first Native Line repaint. The fallback event
+      // is durable and may arrive after that repaint, so the PTY must retain
+      // both observations before it opens the inspector.
+      `  -re "${quote(EXPECTED_NATIVE_LINE)}" { exp_continue }`,
+      `  -re "MODEL FALLBACK" {`,
+      `    send "\\033i"`,
+      "    expect {",
+      `      -re "Weave children" { send "\\r" }`,
+      `      timeout { send "\\003"; exit 124 }`,
+      "    }",
+      "    expect {",
+      `      -re "MODEL FALLBACK" {`,
+      `        send "\\033"`,
+      "        expect {",
+      `          -re "${quote(input.doneMarker)}" { send "/quit\\r" }`,
+      `          timeout { send "\\003"; exit 124 }`,
+      "        }",
+      "      }",
+      `      timeout { send "\\003"; exit 124 }`,
+      "    }",
+      "  }",
+      // No fallback event is itself a valid bounded observation. Let the
+      // validator report the exact zero instead of hanging until timeout.
+      `  -re "${quote(input.doneMarker)}" { send "/quit\\r" }`,
+    );
+  } else {
+    lines.push(`  -re "${quote(input.doneMarker)}" { send "/quit\\r" }`);
+  }
   lines.push(
-    `send "${quote(input.task)}\\r"`,
-    "expect {",
-    `  -re "${quote(input.doneMarker)}" { send "/quit\\r" }`,
     `  timeout { send "\\003"; exit 124 }`,
     "}",
     "expect eof",

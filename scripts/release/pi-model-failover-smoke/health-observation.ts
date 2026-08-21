@@ -29,8 +29,15 @@ export function normalizedTuiOutput(output: string): string {
 }
 
 export function visibleEventCount(output: string): number {
+  // The durable entry is rendered in the parent transcript and is repainted
+  // when the inspector opens and closes. Count the child inspector's framed
+  // transcript row instead: it is the one stable visible renderer capture of
+  // the recovery-confirmed entry. A repeated framed row remains a duplicate
+  // and must fail the exact-one smoke assertion.
   return (
-    normalizedTuiOutput(output).match(/(?:^|\n)\s*MODEL FALLBACK\b/gm) ?? []
+    normalizedTuiOutput(output).match(
+      /^[^\n]*│[ \t]*▌[ \t]*MODEL[ \t]+FALLBACK\b/gm,
+    ) ?? []
   ).length;
 }
 
