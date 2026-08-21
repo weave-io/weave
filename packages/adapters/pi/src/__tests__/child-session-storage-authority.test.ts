@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { BunPiChildProcessPort } from "../child-process-port.js";
 import {
   CHILD_SESSION_STORAGE_UNAVAILABLE_REASON,
   createPiChildSessionStorageAuthority,
@@ -71,6 +72,23 @@ describe("child session storage authority", () => {
 
     expect(authority.requireNativeSessionAuthority().isErr()).toBe(true);
     expect(authority.readinessReason()).toBe("pi-session-root-unavailable");
+  });
+
+  test("recognizes the production process port's prototype spawn method", async () => {
+    const proof = (
+      await provePiChildSessionRoot({
+        root: "/data/weave/sessions",
+        fs: new MemoryPiNativeSessionFs(),
+      })
+    )._unsafeUnwrap();
+    const authority = createPiChildSessionStorageAuthority({
+      SessionManager: { create: () => undefined, open: () => undefined },
+      sessionRoot: proof,
+      processLaunch: new BunPiChildProcessPort(),
+    });
+
+    expect(authority.readinessReason()).toBeUndefined();
+    expect(authority.requireLaunchAuthority().isOk()).toBe(true);
   });
 
   test("granted authority without a host is an explicit test-only opt-in", () => {

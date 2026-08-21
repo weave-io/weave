@@ -2,23 +2,25 @@
  * Structured completion for direct workflow-step children (Pi adapter contract).
  *
  * A direct-step child receives exactly one governed `weave_complete_step`
- * tool. Its closed input is the *only* legitimate source of a completion
- * candidate: process exit, free-form prose, or a second/duplicate/late call
- * are never treated as success. This module owns pure parsing/validation of
- * that candidate into the engine's `StepCompletionSignal` shape - it never
- * touches the Runtime Store or calls `completeStep` itself (that remains the
- * `PiWorkflowController`'s job).
+ * tool. Its closed input is the only legitimate source of a completion
+ * candidate: process exit, free-form prose, or a second/late call never counts
+ * as success. This module parses a bounded, descriptor-safe snapshot and
+ * projects only the fields owned by the engine's completion signal.
  */
+
 import { StringEnum } from "@earendil-works/pi-ai";
+import { copySafeGraph, type SafeGraphCopyBudget } from "@weaveio/weave-core";
 import type { StepCompletionSignal } from "@weaveio/weave-engine";
-import { err, ok, Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { Type } from "typebox";
+import { z } from "zod";
 import { projectDiagnosticText } from "./child-diagnostic-projection.js";
 import {
   makeCompletionSignalMalformedFailure,
   makeCompletionSignalMissingFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import { type JsonValue, parseStrictJson } from "./strict-json.js";
 import type { PiToolRegistration } from "./types.js";
 
 export const WEAVE_COMPLETE_STEP_TOOL_NAME = "weave_complete_step";
@@ -29,6 +31,8 @@ const MAX_NEXT_STEP_HINT_LENGTH = 4_096;
 const MAX_COMPLETION_CANDIDATE_BYTES = 64 * 1_024 * 1_024;
 const MAX_ARTIFACT_FIELD_BYTES = 64 * 1_024;
 
+const TextEncoderInstance = new TextEncoder();
+
 /** The shared diagnostic projection with this module's own marker text. */
 function truncateCompletionText(value: string, maxBytes: number): string {
   return projectDiagnosticText(
@@ -38,254 +42,194 @@ function truncateCompletionText(value: string, maxBytes: number): string {
   );
 }
 
-const COMPLETION_OUTCOMES = new Set(["success", "blocked", "failed", "paused"]);
-const COMPLETION_METHODS = new Set([
-  "agent_signal",
-  "user_confirm",
-  "review_verdict",
-  "plan_created",
-  "plan_complete",
-]);
-
-interface RawArtifactRefCandidate {
-  readonly name?: unknown;
-  readonly path?: unknown;
-  readonly mimeType?: unknown;
-  readonly description?: unknown;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) === Object.prototype
+const ArtifactTextSchema = z
+  .string()
+  .refine(
+    (value) =>
+      TextEncoderInstance.encode(value).byteLength <= MAX_ARTIFACT_FIELD_BYTES,
+    `must be at most ${MAX_ARTIFACT_FIELD_BYTES} UTF-8 bytes`,
   );
+
+const ArtifactRefSchema = z
+  .object({
+    name: ArtifactTextSchema.min(1),
+    path: ArtifactTextSchema.min(1),
+    mimeType: ArtifactTextSchema.optional(),
+    description: ArtifactTextSchema.optional(),
+  })
+  .strip();
+
+const ArtifactListSchema = z
+  .array(ArtifactRefSchema)
+  .superRefine((artifacts, ctx) => {
+    let aggregateBytes = 2;
+    for (const artifact of artifacts) {
+      const fields = [
+        artifact.name,
+        artifact.path,
+        artifact.mimeType,
+        artifact.description,
+      ];
+      for (const field of fields) {
+        if (field !== undefined) {
+          aggregateBytes += TextEncoderInstance.encode(field).byteLength;
+        }
+      }
+      aggregateBytes += 32;
+      if (aggregateBytes > MAX_COMPLETION_CANDIDATE_BYTES) {
+        ctx.addIssue({
+          code: "custom",
+          message: "artifact catalog exceeds the 64 MiB aggregate limit",
+        });
+        return;
+      }
+    }
+  });
+
+const CompletionCandidateSchema = z
+  .object({
+    outcome: z.enum(["success", "blocked", "failed", "paused"]),
+    method: z
+      .enum([
+        "agent_signal",
+        "user_confirm",
+        "review_verdict",
+        "plan_created",
+        "plan_complete",
+      ])
+      .optional(),
+    approved: z.boolean().optional(),
+    message: z.string().optional(),
+    nextStepHint: z.string().optional(),
+    artifacts: ArtifactListSchema.optional(),
+  })
+  // Unknown tool fields are accepted for Pi compatibility but are never
+  // retained: the parsed output is this explicit allowlist only.
+  .strip();
+
+const CompletionCandidateInputBoundary = z.preprocess(
+  (value) => value,
+  z.json(),
+);
+
+const COMPLETION_GRAPH_BUDGET = {
+  maxDepth: 64,
+  maxNodes: 4_096,
+  maxProperties: 4_096,
+  maxPropertiesPerObject: 512,
+  maxArrayLength: 512,
+  maxStringLength: MAX_COMPLETION_CANDIDATE_BYTES,
+} satisfies SafeGraphCopyBudget;
+
+type ParsedArtifactRef = z.output<typeof ArtifactRefSchema>;
+
+interface MutableArtifactProjection {
+  name: string;
+  path: string;
+  mimeType?: string;
+  description?: string;
 }
 
-function parseArtifactRefs(
-  raw: unknown,
-  stepName: string,
-): Result<StepCompletionSignal["artifacts"], PiAdapterFailure> {
-  if (raw === undefined) return ok(undefined);
-  if (!Array.isArray(raw)) {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "artifacts must be an array",
-      ),
+interface MutableCompletionSignal {
+  outcome: StepCompletionSignal["outcome"];
+  method?: StepCompletionSignal["method"];
+  approved?: boolean;
+  message?: string;
+  nextStepHint?: string;
+  artifacts?: readonly MutableArtifactProjection[];
+}
+
+interface CompletionCandidateSource {
+  readonly outcome?: unknown;
+  readonly method?: unknown;
+  readonly approved?: unknown;
+  readonly message?: unknown;
+  readonly nextStepHint?: unknown;
+  readonly artifacts?: unknown;
+}
+
+function projectArtifact(
+  artifact: ParsedArtifactRef,
+): MutableArtifactProjection {
+  const projected: MutableArtifactProjection = {
+    name: artifact.name,
+    path: artifact.path,
+  };
+  if (artifact.mimeType !== undefined) projected.mimeType = artifact.mimeType;
+  if (artifact.description !== undefined) {
+    projected.description = artifact.description;
+  }
+  return projected;
+}
+
+type ParsedCompletionCandidate = z.output<typeof CompletionCandidateSchema>;
+
+function projectCandidate(
+  candidate: ParsedCompletionCandidate,
+): MutableCompletionSignal {
+  const signal: MutableCompletionSignal = { outcome: candidate.outcome };
+  if (candidate.method !== undefined) signal.method = candidate.method;
+  if (candidate.approved !== undefined) signal.approved = candidate.approved;
+  if (candidate.message !== undefined) {
+    signal.message = truncateCompletionText(
+      candidate.message,
+      MAX_MESSAGE_LENGTH,
     );
   }
-  const parsed: Array<{
-    name: string;
-    path: string;
-    mimeType?: string;
-    description?: string;
-  }> = [];
-  const encoder = new TextEncoder();
-  let aggregateBytes = 2;
-  for (let index = 0; index < raw.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(raw, String(index));
-    if (
-      descriptor === undefined ||
-      !("value" in descriptor) ||
-      descriptor.enumerable !== true
-    ) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact entries must be enumerable data properties",
-        ),
-      );
-    }
-    const entry = descriptor.value;
-    if (!isPlainRecord(entry)) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact entry must be an object",
-        ),
-      );
-    }
-    const candidate = entry as RawArtifactRefCandidate;
-    if (typeof candidate.name !== "string" || candidate.name.length === 0) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact name is required",
-        ),
-      );
-    }
-    if (typeof candidate.path !== "string" || candidate.path.length === 0) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact path is required",
-        ),
-      );
-    }
-    if (
-      candidate.mimeType !== undefined &&
-      typeof candidate.mimeType !== "string"
-    ) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact mimeType must be a string",
-        ),
-      );
-    }
-    if (
-      candidate.description !== undefined &&
-      typeof candidate.description !== "string"
-    ) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact description must be a string",
-        ),
-      );
-    }
-    const fields = [
-      candidate.name,
-      candidate.path,
-      candidate.mimeType,
-      candidate.description,
-    ].filter((value): value is string => typeof value === "string");
-    const fieldBytes = fields.map((value) => encoder.encode(value).byteLength);
-    if (fieldBytes.some((bytes) => bytes > MAX_ARTIFACT_FIELD_BYTES)) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact field exceeds the 64 KiB UTF-8 limit",
-        ),
-      );
-    }
-    aggregateBytes += fieldBytes.reduce((total, bytes) => total + bytes, 0) + 32;
-    if (aggregateBytes > MAX_COMPLETION_CANDIDATE_BYTES) {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "artifact catalog exceeds the 64 MiB aggregate limit",
-        ),
-      );
-    }
-    parsed.push({
-      name: candidate.name,
-      path: candidate.path,
-      ...(candidate.mimeType !== undefined
-        ? { mimeType: candidate.mimeType }
-        : {}),
-      ...(candidate.description !== undefined
-        ? { description: candidate.description }
-        : {}),
-    });
+  if (candidate.nextStepHint !== undefined) {
+    signal.nextStepHint = truncateCompletionText(
+      candidate.nextStepHint,
+      MAX_NEXT_STEP_HINT_LENGTH,
+    );
   }
-  return ok(parsed);
+  if (candidate.artifacts !== undefined) {
+    signal.artifacts = candidate.artifacts.map(projectArtifact);
+  }
+  return signal;
+}
+
+function malformedCompletion(
+  stepName: string,
+  parsed: z.ZodSafeParseError<ParsedCompletionCandidate>,
+): Result<never, PiAdapterFailure> {
+  const issue = parsed.error.issues[0];
+  return err(
+    makeCompletionSignalMalformedFailure(
+      stepName,
+      issue?.message ?? "candidate failed schema validation",
+    ),
+  );
 }
 
 /**
  * Validates one raw completion-candidate payload (the `weave_complete_step`
- * tool's input, exactly as received - never re-derived from prose) against
- * the closed Pi adapter contract shape. `raw === undefined` maps to
- * `CompletionSignalMissing` (the step settled without ever calling the
- * tool); a value failing shape validation maps to
- * `CompletionSignalMalformed`.
+ * tool input) against the closed Pi adapter contract. `undefined` maps to
+ * `CompletionSignalMissing`; every other failure maps to `CompletionSignalMalformed`.
  */
 export function parseStructuredCompletionCandidate(
-  raw: unknown,
+  raw: z.input<typeof CompletionCandidateInputBoundary>,
   stepName: string,
 ): Result<StepCompletionSignal, PiAdapterFailure> {
   if (raw === undefined) {
     return err(makeCompletionSignalMissingFailure(stepName));
   }
-  if (!isPlainRecord(raw)) {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "candidate must be a plain object",
-      ),
-    );
-  }
-  const outcome = raw.outcome;
-  if (typeof outcome !== "string" || !COMPLETION_OUTCOMES.has(outcome)) {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "outcome is missing or not a closed value",
-      ),
-    );
-  }
-  const method = raw.method;
-  if (
-    method !== undefined &&
-    (typeof method !== "string" || !COMPLETION_METHODS.has(method))
-  ) {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "method is not a closed completion method",
-      ),
-    );
-  }
-  const approved = raw.approved;
-  if (approved !== undefined && typeof approved !== "boolean") {
-    return err(
-      makeCompletionSignalMalformedFailure(
-        stepName,
-        "approved must be a boolean",
-      ),
-    );
-  }
-  const message = raw.message;
-  if (message !== undefined) {
-    if (typeof message !== "string") {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "message must be a string",
-        ),
-      );
-    }
 
+  const copied = copySafeGraph(raw, COMPLETION_GRAPH_BUDGET);
+  if (copied.isErr()) {
+    return err(
+      makeCompletionSignalMalformedFailure(
+        stepName,
+        "candidate contains unsafe object data",
+      ),
+    );
   }
-  const nextStepHint = raw.nextStepHint;
-  if (nextStepHint !== undefined) {
-    if (typeof nextStepHint !== "string") {
-      return err(
-        makeCompletionSignalMalformedFailure(
-          stepName,
-          "nextStepHint must be a string",
-        ),
-      );
-    }
 
-  }
-  const artifactsResult = parseArtifactRefs(raw.artifacts, stepName);
-  if (artifactsResult.isErr()) return err(artifactsResult.error);
+  const parsed = CompletionCandidateSchema.safeParse(copied.value);
+  if (!parsed.success) return malformedCompletion(stepName, parsed);
 
-  const signal: StepCompletionSignal = {
-    outcome: outcome as StepCompletionSignal["outcome"],
-    ...(method !== undefined
-      ? { method: method as StepCompletionSignal["method"] }
-      : {}),
-    ...(approved !== undefined ? { approved } : {}),
-    ...(message !== undefined
-      ? { message: truncateCompletionText(message, MAX_MESSAGE_LENGTH) }
-      : {}),
-    ...(nextStepHint !== undefined
-      ? {
-          nextStepHint: truncateCompletionText(
-            nextStepHint,
-            MAX_NEXT_STEP_HINT_LENGTH,
-          ),
-        }
-      : {}),
-    ...(artifactsResult.value !== undefined
-      ? { artifacts: artifactsResult.value }
-      : {}),
-  };
-  const serializedBytes = new TextEncoder().encode(
+  const signal = projectCandidate(parsed.data);
+
+  const serializedBytes = TextEncoderInstance.encode(
     serializeCompletionCandidate(signal),
   ).byteLength;
   if (serializedBytes > MAX_COMPLETION_CANDIDATE_BYTES) {
@@ -305,59 +249,58 @@ export function parseStructuredCompletionCandidate(
  * transport, but its completion semantics are distinct from ordinary
  * delegation's free-text output.
  */
-export function serializeCompletionCandidate(candidate: object): string {
+export function serializeCompletionCandidate(
+  candidate: CompletionCandidateSource,
+): string {
   // Re-project the already validated signal before crossing the settlement
-  // boundary. This is deliberate defense in depth: a caller cannot smuggle
-  // transcript, intervention, thinking, tool, or UI fields into the only
-  // completion-authority payload by passing an object with extra properties.
-  const signal = candidate as Partial<StepCompletionSignal>;
-  const bounded: Partial<StepCompletionSignal> = {
-    ...(signal.outcome !== undefined ? { outcome: signal.outcome } : {}),
-    ...(signal.method !== undefined ? { method: signal.method } : {}),
-    ...(signal.approved !== undefined ? { approved: signal.approved } : {}),
-    ...(signal.message !== undefined ? { message: signal.message } : {}),
-    ...(signal.nextStepHint !== undefined
-      ? { nextStepHint: signal.nextStepHint }
-      : {}),
-    ...(signal.artifacts !== undefined
-      ? {
-          artifacts: signal.artifacts.map((artifact) => ({
-            name: artifact.name,
-            path: artifact.path,
-            ...(artifact.mimeType !== undefined
-              ? { mimeType: artifact.mimeType }
-              : {}),
-            ...(artifact.description !== undefined
-              ? { description: artifact.description }
-              : {}),
-          })),
-        }
-      : {}),
-  };
-  return JSON.stringify(bounded);
+  // boundary. This allowlist prevents transcript, intervention, thinking, tool,
+  // or UI fields from entering the completion-authority payload. A caller that
+  // supplies an unsafe or malformed object gets an empty projection rather than
+  // an exception or an unvalidated field crossing the settlement boundary.
+  const copied = copySafeGraph(candidate, COMPLETION_GRAPH_BUDGET);
+  if (copied.isErr()) return JSON.stringify({});
+  const parsed = CompletionCandidateSchema.safeParse(copied.value);
+  if (!parsed.success) return JSON.stringify({});
+  return JSON.stringify(projectCandidate(parsed.data));
 }
 
 /**
  * Parses the bounded JSON string produced by {@link serializeCompletionCandidate}
- * back into a raw candidate value for {@link parseStructuredCompletionCandidate}.
- * Returns `undefined` (mapped by the caller to `CompletionSignalMissing`) for
- * anything that isn't valid, bounded JSON - never throws.
+ * back into parser-approved JSON for {@link parseStructuredCompletionCandidate}.
+ * Invalid, duplicate-key, trailing, or oversized input returns `undefined`.
  */
-export function tryParseCompletionCandidateJson(raw: string): unknown {
+interface CompletionCandidateJsonArtifact {
+  readonly name: string;
+  readonly path: string;
+  readonly mimeType?: string;
+  readonly description?: string;
+}
+
+interface CompletionCandidateJsonRecord {
+  readonly outcome?: StepCompletionSignal["outcome"];
+  readonly method?: StepCompletionSignal["method"];
+  readonly approved?: boolean;
+  readonly message?: string;
+  readonly nextStepHint?: string;
+  readonly artifacts?: readonly CompletionCandidateJsonArtifact[];
+}
+
+export type CompletionCandidateJson = JsonValue | CompletionCandidateJsonRecord;
+
+export function tryParseCompletionCandidateJson(
+  raw: string,
+): CompletionCandidateJson | undefined {
   if (
     raw.length === 0 ||
-    new TextEncoder().encode(raw).byteLength > MAX_COMPLETION_CANDIDATE_BYTES
+    TextEncoderInstance.encode(raw).byteLength > MAX_COMPLETION_CANDIDATE_BYTES
   ) {
     return undefined;
   }
-  const parsed = Result.fromThrowable(
-    () => JSON.parse(raw) as unknown,
-    () => undefined,
-  )();
+  const parsed = parseStrictJson(raw);
   return parsed.isOk() ? parsed.value : undefined;
 }
 
-/** One-shot recorder used by the child-side tool registration: records exactly one candidate, rejects a second as a typed duplicate. */
+/** One-shot recorder used by the child-side tool registration. */
 export class SingleCompletionCandidateRecorder {
   private candidate: StepCompletionSignal | undefined;
   private duplicateAttempted = false;
@@ -368,7 +311,7 @@ export class SingleCompletionCandidateRecorder {
       return err("duplicate");
     }
     this.candidate = input;
-    return ok(undefined);
+    return ok();
   }
 
   take(): StepCompletionSignal | undefined {
@@ -381,11 +324,9 @@ export class SingleCompletionCandidateRecorder {
 }
 
 /**
- * The real Pi-compatible TypeBox parameter schema for `weave_complete_step`
- * (Pi adapter contract), matching {@link parseStructuredCompletionCandidate}'s
- * closed shape exactly: closed outcome/method enums via `StringEnum`
- * (provider-safe, never `anyOf`/`const`), bounded strings, a bounded
- * artifact array.
+ * The real Pi-compatible TypeBox parameter schema for `weave_complete_step`.
+ * It mirrors the parser's closed outcome/method enums and bounded artifact
+ * fields while keeping the provider-safe `StringEnum` representation.
  */
 export function buildWeaveCompleteStepParameters() {
   return Type.Object({
@@ -425,8 +366,14 @@ export function buildWeaveCompleteStepParameters() {
     artifacts: Type.Optional(
       Type.Array(
         Type.Object({
-          name: Type.String({ minLength: 1, maxLength: MAX_ARTIFACT_FIELD_BYTES }),
-          path: Type.String({ minLength: 1, maxLength: MAX_ARTIFACT_FIELD_BYTES }),
+          name: Type.String({
+            minLength: 1,
+            maxLength: MAX_ARTIFACT_FIELD_BYTES,
+          }),
+          path: Type.String({
+            minLength: 1,
+            maxLength: MAX_ARTIFACT_FIELD_BYTES,
+          }),
           mimeType: Type.Optional(
             Type.String({ maxLength: MAX_ARTIFACT_FIELD_BYTES }),
           ),
@@ -454,16 +401,11 @@ export interface CompletionRecordAttempt {
   readonly malformedReason?: string;
 }
 
-/**
- * Pure: classifies one `weave_complete_step` call against the recorder and
- * whether the completion window is still open (Pi adapter contract). Missing,
- * duplicate, malformed, and late are distinct typed outcomes, never merged
- * into a single generic failure.
- */
+/** Classifies one completion-tool call against the one-shot recorder. */
 export function recordCompletionAttempt(
   recorder: SingleCompletionCandidateRecorder,
   windowOpen: boolean,
-  raw: unknown,
+  raw: z.input<typeof CompletionCandidateInputBoundary>,
   stepName: string,
 ): CompletionRecordAttempt {
   if (!windowOpen) return { outcome: "late" };
@@ -476,26 +418,13 @@ export function recordCompletionAttempt(
 }
 
 /**
- * Builds the one Weave-owned `weave_complete_step` tool for a single
- * direct-step child (Pi adapter contract). Never registered for ordinary-delegation
- * or nested-helper children - only the direct-step bootstrap branch
- * (`mode: "direct-step"`, see `direct-dispatch-transport.ts`) registers
- * this. Records exactly one candidate; never advances workflow state
- * itself - the parent controller validates it after `agent_settled` and
- * calls `completeStep` exactly once.
- *
+ * Builds the one Weave-owned `weave_complete_step` tool for a direct-step
+ * child. It records exactly one candidate and never advances workflow state.
  */
 export function buildWeaveCompleteStepToolRegistration(deps: {
   readonly stepName: string;
   readonly recorder: SingleCompletionCandidateRecorder;
   readonly isWindowOpen: () => boolean;
-  /**
-   * Fired for every attempt, recorded or not (Pi adapter contract). This is the
-   * only observation point available before `agent_settled` fires - the
-   * controller consults it (not free-form prose or process-exit state) to
-   * distinguish a missing candidate from a duplicate/late/malformed one at
-   * settlement time.
-   */
   readonly onAttempt?: (attempt: CompletionRecordAttempt) => void;
 }): PiToolRegistration {
   const tool: PiToolRegistration = {
@@ -514,13 +443,12 @@ export function buildWeaveCompleteStepToolRegistration(deps: {
         params,
         deps.stepName,
       );
+      deps.onAttempt?.(attempt);
       if (attempt.outcome === "recorded") {
-        deps.onAttempt?.(attempt);
         return {
           content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
         };
       }
-      deps.onAttempt?.(attempt);
       return {
         content: [
           {

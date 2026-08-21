@@ -18,6 +18,7 @@
  * content written by an injected prompt or compromised tool - from being
  * mistaken for a private control instruction.
  */
+import { copySafeGraph } from "@weaveio/weave-core";
 import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { HmacPort } from "./child-crypto.js";
@@ -90,7 +91,7 @@ const MAX_IDENTIFIER_LENGTH = 256;
 const MAX_SEQUENCE = Number.MAX_SAFE_INTEGER;
 const IdentifierSchema = z.string().min(1).max(MAX_IDENTIFIER_LENGTH);
 
-const EnvelopeShapeSchema = z
+const EnvelopeSchema = z
   .object({
     type: z.literal(CONTROL_ENVELOPE_TYPE_MARKER),
     schemaVersion: z.literal(CONTROL_ENVELOPE_SCHEMA_VERSION),
@@ -101,10 +102,69 @@ const EnvelopeShapeSchema = z
     nonce: z.string().regex(NONCE_PATTERN),
     correlationId: IdentifierSchema,
     kind: z.enum(PI_CONTROL_KINDS),
-    body: z.unknown(),
+    body: z.json(),
     mac: z.string().regex(MAC_PATTERN),
   })
   .strict();
+
+const EnvelopeMarkerSchema = z
+  .object({ type: z.literal(CONTROL_ENVELOPE_TYPE_MARKER) })
+  .passthrough();
+
+type UnsignedControlEnvelope = UnsignedEnvelopeInput & {
+  readonly type: typeof CONTROL_ENVELOPE_TYPE_MARKER;
+  readonly schemaVersion: typeof CONTROL_ENVELOPE_SCHEMA_VERSION;
+};
+
+function makeUnsignedControlEnvelope(
+  input: UnsignedEnvelopeInput,
+): UnsignedControlEnvelope {
+  return {
+    type: CONTROL_ENVELOPE_TYPE_MARKER,
+    schemaVersion: CONTROL_ENVELOPE_SCHEMA_VERSION,
+    childId: input.childId,
+    generationId: input.generationId,
+    direction: input.direction,
+    sequence: input.sequence,
+    nonce: input.nonce,
+    correlationId: input.correlationId,
+    kind: input.kind,
+    body: input.body,
+  };
+}
+
+function toJsonValue(envelope: UnsignedControlEnvelope): JsonValue {
+  return {
+    type: envelope.type,
+    schemaVersion: envelope.schemaVersion,
+    childId: envelope.childId,
+    generationId: envelope.generationId,
+    direction: envelope.direction,
+    sequence: envelope.sequence,
+    nonce: envelope.nonce,
+    correlationId: envelope.correlationId,
+    kind: envelope.kind,
+    body: envelope.body,
+  };
+}
+
+function toControlEnvelope(
+  parsed: z.output<typeof EnvelopeSchema>,
+): PiControlEnvelope {
+  return {
+    type: parsed.type,
+    schemaVersion: parsed.schemaVersion,
+    childId: parsed.childId,
+    generationId: parsed.generationId,
+    direction: parsed.direction,
+    sequence: parsed.sequence,
+    nonce: parsed.nonce,
+    correlationId: parsed.correlationId,
+    kind: parsed.kind,
+    body: parsed.body,
+    mac: parsed.mac,
+  };
+}
 
 export type EnvelopeError =
   | { readonly type: "BodyTooLarge"; readonly byteLength: number }
@@ -128,10 +188,7 @@ export interface UnsignedEnvelopeInput {
 }
 
 function canonicalBytesForSigning(
-  envelopeWithoutMac: UnsignedEnvelopeInput & {
-    readonly type: typeof CONTROL_ENVELOPE_TYPE_MARKER;
-    readonly schemaVersion: typeof CONTROL_ENVELOPE_SCHEMA_VERSION;
-  },
+  envelopeWithoutMac: UnsignedControlEnvelope,
 ): Result<Uint8Array, EnvelopeError> {
   const bodyBytes = canonicalizeToBytes(envelopeWithoutMac.body);
   if (bodyBytes.isErr()) {
@@ -143,9 +200,7 @@ function canonicalBytesForSigning(
       byteLength: bodyBytes.value.byteLength,
     });
   }
-  const wholeBytes = canonicalizeToBytes(
-    envelopeWithoutMac as unknown as JsonValue,
-  );
+  const wholeBytes = canonicalizeToBytes(toJsonValue(envelopeWithoutMac));
   if (wholeBytes.isErr()) {
     return err({ type: "CanonicalizeFailed", reason: wholeBytes.error.type });
   }
@@ -158,11 +213,7 @@ export function signEnvelope(
   secret: Uint8Array,
   hmac: HmacPort,
 ): ResultAsync<PiControlEnvelope, EnvelopeError> {
-  const withoutMac = {
-    type: CONTROL_ENVELOPE_TYPE_MARKER,
-    schemaVersion: CONTROL_ENVELOPE_SCHEMA_VERSION,
-    ...input,
-  };
+  const withoutMac = makeUnsignedControlEnvelope(input);
   const bytesResult = canonicalBytesForSigning(withoutMac);
   if (bytesResult.isErr()) return errAsync(bytesResult.error);
   return hmac
@@ -182,22 +233,29 @@ export function verifyEnvelope(
   secret: Uint8Array,
   hmac: HmacPort,
 ): ResultAsync<PiControlEnvelope, EnvelopeError> {
-  const parsed = EnvelopeShapeSchema.safeParse(candidate);
+  const copied = copySafeGraph(candidate);
+  if (copied.isErr()) {
+    return errAsync({
+      type: "MalformedShape",
+      issues: ["envelope contains unsafe object data"],
+    });
+  }
+  const parsed = EnvelopeSchema.safeParse(copied.value);
   if (!parsed.success) {
     return errAsync({
       type: "MalformedShape",
       issues: parsed.error.issues.map((issue) => issue.message),
     });
   }
-  const envelope = parsed.data as PiControlEnvelope;
-  const { mac, ...withoutMac } = envelope;
+  const envelope = toControlEnvelope(parsed.data);
+  const withoutMac = makeUnsignedControlEnvelope(envelope);
   const bytesResult = canonicalBytesForSigning(withoutMac);
   if (bytesResult.isErr()) return errAsync(bytesResult.error);
   // Verification uses the HMAC port's own constant-time `verifyHex`
   // primitive (backed by `crypto.subtle.verify` in production) rather than
   // recomputing a MAC in adapter code and comparing hex strings here.
   return hmac
-    .verifyHex(secret, bytesResult.value, mac)
+    .verifyHex(secret, bytesResult.value, envelope.mac)
     .mapErr(
       (hmacError): EnvelopeError => ({
         type: "SignFailed",
@@ -212,12 +270,9 @@ export function verifyEnvelope(
 
 /** Structural pre-check: does `candidate` look like one of our control envelopes (vs. an ordinary Pi RPC event/response line)? */
 export function looksLikeControlEnvelope(candidate: JsonValue): boolean {
-  return (
-    typeof candidate === "object" &&
-    candidate !== null &&
-    !Array.isArray(candidate) &&
-    (candidate as { type?: unknown }).type === CONTROL_ENVELOPE_TYPE_MARKER
-  );
+  const copied = copySafeGraph(candidate);
+  if (copied.isErr()) return false;
+  return EnvelopeMarkerSchema.safeParse(copied.value).success;
 }
 
 export type AuthStateError =
@@ -297,7 +352,7 @@ export class PiChildAuthState {
       return err({ type: "NonceReplay" });
     this.seenIncomingNonces.add(envelope.nonce);
     this.nextIncomingSequence += 1;
-    return ok(undefined);
+    return ok();
   }
 
   dispose(): void {

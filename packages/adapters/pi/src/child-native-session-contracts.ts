@@ -482,7 +482,7 @@ export interface PiNativeSessionHandle {
    * Optional because reading a session never needs it; the thread runtime
    * uses it once, at thread creation, to establish a real active leaf.
    */
-  appendCustomEntry?(customType: string, data?: unknown): string;
+  appendCustomEntry?<TData>(customType: string, data?: TData): string;
 }
 
 /**
@@ -537,21 +537,24 @@ export function encodeNativeSessionBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/u, "");
 }
 
+type NativeSessionBase64DecodeError = "invalid-base64";
+
+function invalidNativeSessionBase64(): NativeSessionBase64DecodeError {
+  return "invalid-base64";
+}
+
 /** Decodes an unpadded base64url cursor string; malformed input stays typed. */
 export function decodeNativeSessionBase64Url(
   value: string,
-): Result<Uint8Array, undefined> {
-  return ResultCtor.fromThrowable(
-    () => {
-      const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-      const padLength = (4 - (padded.length % 4)) % 4;
-      const binary = atob(padded + "=".repeat(padLength));
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-      return bytes;
-    },
-    () => undefined,
-  )();
+): Result<Uint8Array, NativeSessionBase64DecodeError> {
+  return ResultCtor.fromThrowable(() => {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padLength = (4 - (padded.length % 4)) % 4;
+    const binary = atob(padded + "=".repeat(padLength));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }, invalidNativeSessionBase64)();
 }
