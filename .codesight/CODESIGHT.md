@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 367 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~40,500 tokens. Without it, AI exploration would cost ~114,700 tokens. **Saves ~74,200 tokens per conversation.**
-> **Last scanned:** 2026-08-21 02:24 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 375 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~41,000 tokens. Without it, AI exploration would cost ~116,800 tokens. **Saves ~75,800 tokens per conversation.**
+> **Last scanned:** 2026-08-21 02:39 — re-run after significant changes
 
 ---
 
@@ -1919,6 +1919,18 @@
   - function runFixtureRedControls: (fixtureText, manifestText) => Result<
   - function deriveManifestPath: (fixturePath) => string
   - _...1 more_
+- `scripts/pi/child-stream-identity-environment.ts`
+  - function identityProbeIsolationPaths: (root) => Result<IdentityProbeIsolationPaths, VerifyChildStreamingFailure>
+  - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
+  - const IDENTITY_PROBE_ENV_ALLOWLIST
+- `scripts/pi/child-stream-identity-evaluation.ts`
+  - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+  - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
+  - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
+  >;
+  readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
+- `scripts/pi/child-stream-identity-probe.ts` — function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>, function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-identity-report.ts` — function renderIdentityVerification: (result, VerifyChildStreamingFailure>) => string
 - `scripts/pi/child-stream-live-proof-bounded-runner.ts` — function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, LiveProofSystemFailure>
 - `scripts/pi/child-stream-live-proof-bounded-stream.ts`
   - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
@@ -1972,16 +1984,27 @@
   - interface LiveProofTimer
   - interface LiveProofCommandOutput
   - _...10 more_
-- `scripts/pi/verify-child-streaming.ts`
-  - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
-  - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
-  - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
-  - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
-  >;
-  readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
-  - function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>
-  - function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
-  - _...10 more_
+- `scripts/pi/child-stream-verify-args.ts` — function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-verify-capture-command.ts`
+  - function runCaptureCommand: (input) => ResultAsync<CaptureCommandSuccess, VerifyChildStreamingFailure>
+  - function runReplayCommand: (input) => ResultAsync<ReplayCommandSuccess, VerifyChildStreamingFailure>
+  - interface CaptureCommandInput
+  - interface ReplayCommandInput
+  - interface ReplayCommandSuccess
+  - type CaptureCommandSuccess
+- `scripts/pi/child-stream-verify-cli.ts` — function runCommandLine: (argv) => Promise<void>
+- `scripts/pi/child-stream-verify-process.ts`
+  - function runVerifierProcess: (input) => ReturnType<typeof runBoundedProcess>
+  - function runVerifierCommand: (command, cwd) => ResultAsync<VerifierCommandOutput, VerifyChildStreamingFailure>
+  - function runIdentityProbeFilesystemCommand: (command) => ResultAsync<void, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-verify-types.ts`
+  - function blocked: (type, state?, "current">) => VerifyChildStreamingFailure
+  - interface IdentityVerificationSuccess
+  - interface IdentityVerificationFacts
+  - interface VerifyCurrentBuildIdentityInput
+  - interface IdentityProbeIsolationPaths
+  - type VerifyChildStreamingArgs
+  - _...3 more_
 - `scripts/pi/verify-host-singleton.ts`
   - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
   - function decideSkip: (presence, allowSkip) => SkipDecision
