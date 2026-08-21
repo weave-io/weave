@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync, type ResultAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 import {
   DEFAULT_COMPACTION_EVIDENCE_GRACE_MS,
   DEFAULT_COMPACTION_RESUME_TIMEOUT_MS,
@@ -16,6 +16,7 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import type { PiChildOutputWrite } from "../child-runtime.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
 import { createPiExtension, type PiExtensionDeps } from "../extension-impl.js";
 import type { JsonValue } from "../strict-json.js";
@@ -77,15 +78,13 @@ class FakeEnvPort implements PiEnvPort {
 
 class FakeOutputPort {
   readonly lines: Record<string, unknown>[] = [];
-  writeLine(
-    bytes: Uint8Array,
-  ): ResultAsync<void, { type: "ChildOutputWriteFailed"; reason: string }> {
+  writeLine(bytes: Uint8Array): PiChildOutputWrite {
     for (const line of new TextDecoder().decode(bytes).split("\n")) {
       if (line.length > 0) {
         this.lines.push(JSON.parse(line) as Record<string, unknown>);
       }
     }
-    return okAsync(undefined);
+    return { committed: true, result: okAsync(undefined), cancel: () => {} };
   }
 }
 

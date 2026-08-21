@@ -531,7 +531,9 @@ export {
   type PiChildAccessOperation,
   type PiChildAccessState,
   type PiChildBootstrapHandlers,
+  type PiChildOutputError,
   type PiChildOutputPort,
+  type PiChildOutputWrite,
   PiChildRuntime,
   type PiChildRuntimeDeps,
 } from "./child-runtime.js";

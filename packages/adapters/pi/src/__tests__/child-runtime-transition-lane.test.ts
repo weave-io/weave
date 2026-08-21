@@ -14,6 +14,7 @@ import { verifyEnvelope } from "../child-envelope.js";
 import {
   type PiChildOutputError,
   type PiChildOutputPort,
+  type PiChildOutputWrite,
   PiChildRuntime,
 } from "../child-runtime.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
@@ -103,8 +104,12 @@ class DeferredOutputPort implements PiChildOutputPort {
   readonly lines: Record<string, unknown>[] = [];
   readonly deferred: DeferredWrite[] = [];
   writeAttempts = 0;
+  cancelCalls = 0;
+  lateCallbacks = 0;
 
-  writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError> {
+  constructor(readonly commitModelTransitions = false) {}
+
+  writeLine(bytes: Uint8Array): PiChildOutputWrite {
     this.writeAttempts += 1;
     const envelope = JSON.parse(new TextDecoder().decode(bytes)) as Record<
       string,
@@ -112,20 +117,47 @@ class DeferredOutputPort implements PiChildOutputPort {
     >;
     if (envelope.kind !== "model-transition") {
       this.lines.push(envelope);
-      return okAsync(undefined);
+      return { committed: true, result: okAsync(undefined), cancel: () => {} };
     }
+
+    let settled = false;
+    let cancelled = false;
     let settle!: (result: Result<void, PiChildOutputError>) => void;
     const pending = new Promise<Result<void, PiChildOutputError>>((resolve) => {
       settle = resolve;
     });
+    const cancel = (): void => {
+      this.cancelCalls += 1;
+      if (settled) return;
+      cancelled = true;
+      settled = true;
+      settle(
+        err({
+          type: "ChildOutputWriteCancelled",
+          reason: "output-write-cancelled",
+        }),
+      );
+    };
     this.deferred.push({
       envelope,
       settle: (result) => {
-        if (result.isOk()) this.lines.push(envelope);
+        if (settled) {
+          this.lateCallbacks += 1;
+          return;
+        }
+        settled = true;
+        if (!cancelled && result.isOk() && !this.commitModelTransitions) {
+          this.lines.push(envelope);
+        }
         settle(result);
       },
     });
-    return new ResultAsync(pending);
+    if (this.commitModelTransitions) this.lines.push(envelope);
+    return {
+      committed: this.commitModelTransitions,
+      result: new ResultAsync(pending),
+      cancel,
+    };
   }
 
   settleNext(outcome: "resolve" | "reject"): void {
@@ -157,7 +189,11 @@ function appliedTransition() {
   };
 }
 
-async function buildRuntime(generationId = "gen-1") {
+async function buildRuntime(
+  generationId = "gen-1",
+  output = new DeferredOutputPort(),
+  clock = new FakeClock(),
+) {
   const secretBytes = randomPort.randomBytes(32);
   const env = new FakeEnvPort(
     new Map([
@@ -166,8 +202,6 @@ async function buildRuntime(generationId = "gen-1") {
       [WEAVE_CONTROLLER_GENERATION_ENV, generationId],
     ]),
   );
-  const output = new DeferredOutputPort();
-  const clock = new FakeClock();
   const runtime = new PiChildRuntime({
     envPort: env,
     randomPort,
@@ -222,7 +256,7 @@ async function verifyLines(
 }
 
 describe("PiChildRuntime model-transition transport lane", () => {
-  it("detaches a never-settling transition and writes one terminal settlement without resolving it", async () => {
+  it("cancels a hung transition and writes the terminal at the next valid sequence", async () => {
     const { runtime, output, clock, secretBytes, generationId } =
       await buildRuntime();
     const transition = runtime.reportModelTransition(appliedTransition());
@@ -245,14 +279,26 @@ describe("PiChildRuntime model-transition transport lane", () => {
     await flushMicrotasks();
     expect((await transition).isErr()).toBe(true);
     expect((await terminal).isOk()).toBe(true);
-    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
-      1,
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "settled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2]);
+    expect(output.lines.some((line) => line.kind === "model-transition")).toBe(
+      false,
     );
+    expect(output.cancelCalls).toBe(1);
     expect(clock.pending()).toHaveLength(0);
     await verifyLines(output.lines, secretBytes, generationId);
 
-    // The deferred transition was never resolved or rejected by this proof.
+    // The deferred transition was cancelled, then its host callback was left
+    // pending to prove that it cannot append after the terminal envelope.
     expect(output.deferred).toHaveLength(1);
+    const streamBeforeLateCallback = structuredClone(output.lines);
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    expect(output.lines).toEqual(streamBeforeLateCallback);
+    expect(output.lateCallbacks).toBe(1);
     runtime.dispose();
   });
 
@@ -273,6 +319,7 @@ describe("PiChildRuntime model-transition transport lane", () => {
       "settled",
     ]);
     expect(output.lines.map((line) => line.sequence)).toEqual([1, 2, 3]);
+    expect(output.cancelCalls).toBe(0);
     expect(clock.pending()).toHaveLength(0);
     await verifyLines(output.lines, secretBytes, generationId);
   });
@@ -297,24 +344,95 @@ describe("PiChildRuntime model-transition transport lane", () => {
     const terminal = runtime.reportSettled("failed", { reason: "repeated" });
     await flushMicrotasks();
     expect((await terminal).isOk()).toBe(true);
-    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
-      1,
-    );
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "settled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2]);
+    expect(output.cancelCalls).toBe(2);
 
     // Neither stale callback can mutate the transition cursor or produce a
     // second terminal result. The first callback rejects; the second resolves
     // after the terminal write has already completed.
+    const streamBeforeLateCallbacks = structuredClone(output.lines);
     output.settleNext("reject");
     output.settleNext("resolve");
     await flushMicrotasks();
-    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
-      1,
-    );
+    expect(output.lines).toEqual(streamBeforeLateCallbacks);
+    expect(output.lateCallbacks).toBe(2);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "settled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2]);
     expect((await runtime.reportSettled("completed", {})).isErr()).toBe(true);
     expect(
       (await runtime.reportModelTransition(appliedTransition())).isErr(),
     ).toBe(true);
     expect(clock.pending()).toHaveLength(0);
+  });
+
+  it("keeps a committed timed-out write's sequence out of terminal reuse", async () => {
+    const output = new DeferredOutputPort(true);
+    const { runtime, clock, secretBytes } = await buildRuntime(
+      "gen-committed",
+      output,
+      new FakeClock(),
+    );
+    const transition = runtime.reportModelTransition(appliedTransition());
+    await waitForDeferred(output);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "model-transition",
+    ]);
+
+    const terminal = runtime.reportSettled("failed", { reason: "flush" });
+    clock.advanceBy(5_000);
+    await flushMicrotasks();
+    expect((await transition).isErr()).toBe(true);
+    expect((await terminal).isOk()).toBe(true);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "model-transition",
+      "settled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2, 3]);
+    expect(output.cancelCalls).toBe(1);
+
+    const streamBeforeLateCallback = structuredClone(output.lines);
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    expect(output.lines).toEqual(streamBeforeLateCallback);
+    expect(output.lateCallbacks).toBe(1);
+    expect(clock.pending()).toHaveLength(0);
+    await verifyLines(output.lines, secretBytes, "gen-committed");
+  });
+
+  it("wins the timeout boundary with a normal transition completion", async () => {
+    const { runtime, output, clock, secretBytes, generationId } =
+      await buildRuntime();
+    const transition = runtime.reportModelTransition(appliedTransition());
+    await waitForDeferred(output);
+    const terminal = runtime.reportSettled("completed", {});
+
+    // The write completes at the deadline boundary before the timer callback
+    // runs. The timer must already be cancelled, so timeout cannot cancel a
+    // successful transition or append a second terminal envelope.
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    clock.advanceBy(5_000);
+    await flushMicrotasks();
+    expect((await transition).isOk()).toBe(true);
+    expect((await terminal).isOk()).toBe(true);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "model-transition",
+      "settled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2, 3]);
+    expect(output.cancelCalls).toBe(0);
+    expect(clock.pending()).toHaveLength(0);
+    await verifyLines(output.lines, secretBytes, generationId);
   });
 
   it("gives authenticated cancellation precedence and clears the transition deadline", async () => {
@@ -326,35 +444,67 @@ describe("PiChildRuntime model-transition transport lane", () => {
     await flushMicrotasks();
     expect((await transition).isErr()).toBe(true);
     expect((await cancel).isOk()).toBe(true);
-    expect(
-      output.lines.filter((line) => line.kind === "cancelled"),
-    ).toHaveLength(1);
-    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
-      0,
-    );
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "cancelled",
+    ]);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 2]);
+    expect(output.cancelCalls).toBe(1);
     expect(clock.pending()).toHaveLength(0);
 
+    const streamBeforeLateCallback = structuredClone(output.lines);
     output.settleNext("reject");
     await flushMicrotasks();
+    expect(output.lines).toEqual(streamBeforeLateCallback);
+    expect(output.lateCallbacks).toBe(1);
     expect((await runtime.reportSettled("completed", {})).isErr()).toBe(true);
     expect((await runtime.reportCancelled()).isErr()).toBe(true);
     await verifyLines(output.lines, secretBytes, "gen-1");
   });
 
-  it("releases the old lane on dispose so a later generation starts independently", async () => {
-    const old = await buildRuntime("gen-old");
+  it("does not replay an old-generation transition on a shared replacement stream", async () => {
+    const output = new DeferredOutputPort();
+    const old = await buildRuntime("gen-old", output, new FakeClock());
     const transition = old.runtime.reportModelTransition(appliedTransition());
-    await waitForDeferred(old.output);
+    await waitForDeferred(output);
     old.runtime.dispose();
     await flushMicrotasks();
     expect((await transition).isErr()).toBe(true);
     expect(old.clock.pending()).toHaveLength(0);
 
-    const next = await buildRuntime("gen-next");
+    const next = await buildRuntime("gen-next", output, new FakeClock());
     expect((await next.runtime.reportSettled("completed", {})).isOk()).toBe(
       true,
     );
-    expect(next.output.lines.map((line) => line.sequence)).toEqual([1, 2]);
-    await verifyLines(next.output.lines, next.secretBytes, "gen-next");
+    const streamBeforeLateCallback = structuredClone(output.lines);
+
+    // Resolve the old host callback only after the replacement generation has
+    // completed on the same byte stream.
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    expect(output.lines).toEqual(streamBeforeLateCallback);
+    expect(output.lateCallbacks).toBe(1);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "handshake",
+      "settled",
+    ]);
+    expect(
+      output.lines.some(
+        (line) =>
+          line.kind === "model-transition" && line.generationId === "gen-old",
+      ),
+    ).toBe(false);
+    expect(output.lines.map((line) => line.sequence)).toEqual([1, 1, 2]);
+    await verifyLines(
+      output.lines.filter((line) => line.generationId === "gen-old"),
+      old.secretBytes,
+      "gen-old",
+    );
+    await verifyLines(
+      output.lines.filter((line) => line.generationId === "gen-next"),
+      next.secretBytes,
+      "gen-next",
+    );
   });
 });

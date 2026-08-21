@@ -182,6 +182,7 @@ import { PiChildRecoveryCoordinator } from "./child-recovery.js";
 import {
   type PiChildOutputError,
   type PiChildOutputPort,
+  type PiChildOutputWrite,
   PiChildRuntime,
   type PiChildRuntimeError,
 } from "./child-runtime.js";
@@ -1039,10 +1040,49 @@ class StdoutChildOutputPort implements PiChildOutputPort {
   // Bun's own stdout `FileSink` writer, never Node's `process.stdout`.
   private readonly writer = Bun.stdout.writer();
 
-  writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError> {
-    return ResultAsync.fromThrowable(
+  writeLine(bytes: Uint8Array): PiChildOutputWrite {
+    let resolveResult!: (result: Result<void, PiChildOutputError>) => void;
+    let settled = false;
+    const settle = (result: Result<void, PiChildOutputError>): void => {
+      if (settled) return;
+      settled = true;
+      resolveResult(result);
+    };
+    const result = new ResultAsync<void, PiChildOutputError>(
+      new Promise((resolve) => {
+        resolveResult = resolve;
+      }),
+    );
+
+    // `writer.write` is the authenticated stream's commit point. If it
+    // throws, no bytes were handed to stdout and the sequence reservation can
+    // be safely retried. Once it returns, cancellation only ends the pending
+    // flush; it cannot retract bytes already committed to the stream.
+    const written = Result.fromThrowable(
+      () => this.writer.write(bytes),
+      (): PiChildOutputError => ({
+        type: "ChildOutputWriteFailed",
+        reason: "stdout-write-failed",
+      }),
+    )();
+    if (written.isErr()) {
+      settle(err(written.error));
+      return {
+        committed: false,
+        result,
+        cancel: () =>
+          settle(
+            err({
+              type: "ChildOutputWriteCancelled",
+              reason: "output-write-cancelled",
+            }),
+          ),
+      };
+    }
+
+    const flushed = ResultAsync.fromThrowable(
       async () => {
-        this.writer.write(bytes);
+        await written.value;
         await this.writer.flush();
       },
       (): PiChildOutputError => ({
@@ -1050,6 +1090,21 @@ class StdoutChildOutputPort implements PiChildOutputPort {
         reason: "stdout-write-failed",
       }),
     )();
+    void flushed.match(
+      () => settle(ok(undefined)),
+      (failure) => settle(err(failure)),
+    );
+    return {
+      committed: true,
+      result,
+      cancel: () =>
+        settle(
+          err({
+            type: "ChildOutputWriteCancelled",
+            reason: "output-write-cancelled",
+          }),
+        ),
+    };
   }
 }
 

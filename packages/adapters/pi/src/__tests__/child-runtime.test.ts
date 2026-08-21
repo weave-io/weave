@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import {
   bytesToHex,
   generateNonceHex,
@@ -15,6 +15,7 @@ import { signEnvelope } from "../child-envelope.js";
 import {
   type PiChildOutputError,
   type PiChildOutputPort,
+  type PiChildOutputWrite,
   PiChildRuntime,
 } from "../child-runtime.js";
 import { encodeDelegateRequestChunks } from "../delegate-request-chunking.js";
@@ -44,17 +45,17 @@ class FakeOutputPort implements PiChildOutputPort {
     this.nextError = error;
   }
 
-  writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError> {
+  writeLine(bytes: Uint8Array): PiChildOutputWrite {
     if (this.nextError !== undefined) {
       const error = this.nextError;
       this.nextError = undefined;
-      return errAsync(error);
+      return { committed: false, result: errAsync(error), cancel: () => {} };
     }
     const text = new TextDecoder().decode(bytes);
     for (const line of text.split("\n")) {
       if (line.length > 0) this.lines.push(JSON.parse(line));
     }
-    return okAsync(undefined);
+    return { committed: true, result: okAsync(undefined), cancel: () => {} };
   }
 }
 
@@ -631,9 +632,9 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
     const settled = output.lines.at(-1) as {
       body: { reason: string };
     };
-    expect(new TextEncoder().encode(settled.body.reason).byteLength).toBeLessThanOrEqual(
-      32 * 1_024,
-    );
+    expect(
+      new TextEncoder().encode(settled.body.reason).byteLength,
+    ).toBeLessThanOrEqual(32 * 1_024);
     expect(settled.body.reason).toEndWith("… [diagnostic truncated]");
   });
 

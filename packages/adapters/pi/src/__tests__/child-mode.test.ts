@@ -20,6 +20,10 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import type {
+  PiChildOutputError,
+  PiChildOutputWrite,
+} from "../child-runtime.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
 import {
   ChunkTransferAssembler,
@@ -78,14 +82,11 @@ class FakeEnvPort implements PiEnvPort {
 class FakeOutputPort {
   readonly lines: Record<string, unknown>[] = [];
   onLine: ((line: Record<string, unknown>) => void) | undefined;
-  private nextError:
-    | { type: "ChildOutputWriteFailed"; reason: string }
-    | undefined;
+  private nextError: PiChildOutputError | undefined;
   private readonly deferredWrites: Array<{
-    readonly settle: (
-      result: Result<void, { type: "ChildOutputWriteFailed"; reason: string }>,
-    ) => void;
+    readonly settle: (result: Result<void, PiChildOutputError>) => void;
     readonly bytes: Uint8Array;
+    cancelled: boolean;
   }> = [];
   failWritesRemaining = 0;
   deferWritesRemaining = 0;
@@ -111,7 +112,6 @@ class FakeOutputPort {
     const deferred = this.deferredWrites.shift();
     if (deferred === undefined) throw new Error("no deferred write pending");
     if (outcome === "resolve") {
-      this.record(deferred.bytes);
       deferred.settle(ok(undefined));
       return;
     }
@@ -128,9 +128,7 @@ class FakeOutputPort {
     }
   }
 
-  writeLine(
-    bytes: Uint8Array,
-  ): ResultAsync<void, { type: "ChildOutputWriteFailed"; reason: string }> {
+  writeLine(bytes: Uint8Array): PiChildOutputWrite {
     this.writeAttempts += 1;
     if (this.nextError !== undefined || this.failWritesRemaining > 0) {
       const error = this.nextError ?? {
@@ -139,7 +137,7 @@ class FakeOutputPort {
       };
       this.nextError = undefined;
       this.failWritesRemaining = Math.max(0, this.failWritesRemaining - 1);
-      return errAsync(error);
+      return { committed: false, result: errAsync(error), cancel: () => {} };
     }
     const firstLine = new TextDecoder().decode(bytes).split("\n")[0];
     const kind =
@@ -151,22 +149,43 @@ class FakeOutputPort {
       (this.deferModelTransitionWrites && kind === "model-transition")
     ) {
       if (this.deferWritesRemaining > 0) this.deferWritesRemaining -= 1;
-      let settle!: (
-        result: Result<
-          void,
-          { type: "ChildOutputWriteFailed"; reason: string }
-        >,
-      ) => void;
-      const pending = new Promise<
-        Result<void, { type: "ChildOutputWriteFailed"; reason: string }>
-      >((resolve) => {
-        settle = resolve;
-      });
-      this.deferredWrites.push({ settle, bytes });
-      return new ResultAsync(pending);
+      let settled = false;
+      let settle!: (result: Result<void, PiChildOutputError>) => void;
+      const pending = new Promise<Result<void, PiChildOutputError>>(
+        (resolve) => {
+          settle = resolve;
+        },
+      );
+      const entry: {
+        readonly settle: (result: Result<void, PiChildOutputError>) => void;
+        readonly bytes: Uint8Array;
+        cancelled: boolean;
+      } = {
+        settle: (result) => {
+          if (settled) return;
+          settled = true;
+          if (!entry.cancelled && result.isOk()) this.record(bytes);
+          settle(result);
+        },
+        bytes,
+        cancelled: false,
+      };
+      const cancel = (): void => {
+        if (settled) return;
+        entry.cancelled = true;
+        settled = true;
+        settle(
+          err({
+            type: "ChildOutputWriteCancelled",
+            reason: "output-write-cancelled",
+          }),
+        );
+      };
+      this.deferredWrites.push(entry);
+      return { committed: false, result: new ResultAsync(pending), cancel };
     }
     this.record(bytes);
-    return okAsync(undefined);
+    return { committed: true, result: okAsync(undefined), cancel: () => {} };
   }
 }
 

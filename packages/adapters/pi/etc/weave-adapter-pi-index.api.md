@@ -3115,9 +3115,24 @@ export interface PiChildMetadataSource {
 }
 
 // @public (undocumented)
+export type PiChildOutputError = {
+    readonly type: "ChildOutputWriteFailed";
+    readonly reason: string;
+} | {
+    readonly type: "ChildOutputWriteCancelled";
+    readonly reason: string;
+};
+
+// @public (undocumented)
 export interface PiChildOutputPort {
-    // Warning: (ae-forgotten-export) The symbol "PiChildOutputError" needs to be exported by the entry point index.d.ts
-    writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError>;
+    writeLine(bytes: Uint8Array): PiChildOutputWrite;
+}
+
+// @public (undocumented)
+export interface PiChildOutputWrite {
+    readonly cancel: () => void;
+    readonly committed: boolean;
+    readonly result: ResultAsync<void, PiChildOutputError>;
 }
 
 // @public (undocumented)

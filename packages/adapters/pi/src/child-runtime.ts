@@ -11,14 +11,7 @@
  * line, and any authentication/replay/protocol violation disposes this
  * runtime immediately rather than merely logging and continuing.
  */
-import {
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  type Result,
-  ResultAsync,
-} from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   modelIdentityBodiesEqual,
   modelTransitionFactsEqual,
@@ -79,10 +72,15 @@ export interface PiChildOutputTransfer {
   readonly byteLength: number;
 }
 
-export type PiChildOutputError = {
-  readonly type: "ChildOutputWriteFailed";
-  readonly reason: string;
-};
+export type PiChildOutputError =
+  | {
+      readonly type: "ChildOutputWriteFailed";
+      readonly reason: string;
+    }
+  | {
+      readonly type: "ChildOutputWriteCancelled";
+      readonly reason: string;
+    };
 
 /** How long a child waits for a correlated delegation reply. */
 const CHILD_CORRELATED_TIMEOUT_MS = 300_000;
@@ -99,9 +97,24 @@ const MODEL_TRANSITION_REPORT_TIMEOUT_REASON =
 const MODEL_TRANSITION_REPORT_CANCEL_REASON =
   "model-transition-report-cancelled";
 
+export interface PiChildOutputWrite {
+  /** True once the bytes have been committed to the output stream. */
+  readonly committed: boolean;
+  /** Settles when the output operation completes or is cancelled. */
+  readonly result: ResultAsync<void, PiChildOutputError>;
+  /** Cancels completion and prevents any not-yet-committed append. */
+  readonly cancel: () => void;
+}
+
 export interface PiChildOutputPort {
-  /** Writes one already-LF-terminated line directly to this process's own stdout. */
-  writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError>;
+  /**
+   * Starts one already-LF-terminated line directly on this process's own
+   * stdout. Implementations must commit synchronously when `committed` is
+   * true and make `cancel()` idempotent. A cancelled, uncommitted operation
+   * must never append its bytes, including when its host callback resolves
+   * later.
+   */
+  writeLine(bytes: Uint8Array): PiChildOutputWrite;
 }
 
 export interface PiChildRuntimeDeps {
@@ -119,6 +132,7 @@ interface ChildControlSendOptions {
     sequence: number,
     releaseSequence: () => void,
   ) => void;
+  readonly onWriteStarted?: (write: PiChildOutputWrite) => void;
 }
 
 interface ActiveModelTransition {
@@ -177,7 +191,7 @@ export class PiChildRuntime {
   private readonly reportedModelTransitionIds = new Set<string>();
   /** The last successfully reported phase in the current transition. */
   private lastModelTransition: PiModelTransitionBody | undefined;
-  /** Serializes allocation, signing, and output so failed sequences can be reused safely. */
+  /** Serializes allocation, signing, and output before a sequence is committed. */
   private outgoingSendTail: Promise<void> = Promise.resolve();
   /** Invalidates queued/in-flight sends when a generation-owned delivery is cancelled. */
   private outgoingSendEpoch = 0;
@@ -641,10 +655,11 @@ export class PiChildRuntime {
   /**
    * Sends one model-transition proof as a generation-owned lane task.
    *
-   * The underlying output promise is deliberately observed rather than
-   * awaited by the lane after the deadline. This is the key distinction from
-   * a normal serialized write: a wedged host writer can finish only its own
-   * stale operation and can never retain terminal settlement behind it.
+   * A timed-out output operation is cancelled at its transport boundary. A
+   * committed write keeps its sequence; an uncommitted reservation is
+   * released only after cancellation prevents its append. The old promise is
+   * still observed so a late host callback cannot become an unhandled
+   * rejection or mutate this lane.
    */
   private sendModelTransitionControl(
     transition: PiModelTransitionBody,
@@ -662,6 +677,8 @@ export class PiChildRuntime {
     let timer: TimerHandle | undefined;
     let releaseLane!: () => void;
     let releaseSequence: (() => void) | undefined;
+    let outputWrite: PiChildOutputWrite | undefined;
+    let outputCommitted = false;
     let lane: Promise<void> | undefined;
     const laneDone = new Promise<void>((resolve) => {
       releaseLane = resolve;
@@ -685,7 +702,11 @@ export class PiChildRuntime {
       cancelled = true;
       this.outgoingSendEpoch += 1;
       this.modelTransitionReportInFlight = false;
-      releaseSequence?.();
+      outputWrite?.cancel();
+      // A sequence is reusable only when the output port proves that the
+      // submitted write was never committed. A committed write owns its
+      // sequence forever, even when its flush promise settles late.
+      if (!outputCommitted) releaseSequence?.();
       // The old lane may still be waiting for an output promise. Detach it
       // only while it is still the current owner; a newer generation-owned
       // send must never be overwritten by an old timeout callback.
@@ -724,6 +745,14 @@ export class PiChildRuntime {
               onSequenceAllocated: (_sequence, release) => {
                 releaseSequence = release;
                 if (cancelled || this.outgoingSendEpoch !== epoch) release();
+              },
+              onWriteStarted: (write) => {
+                outputWrite = write;
+                outputCommitted = write.committed;
+                if (cancelled || this.outgoingSendEpoch !== epoch) {
+                  write.cancel();
+                  if (!outputCommitted) releaseSequence?.();
+                }
               },
             },
           );
@@ -1107,6 +1136,7 @@ export class PiChildRuntime {
         reason: "control-send-cancelled",
       });
     }
+    let outputCommitted = false;
     return signEnvelope(
       {
         childId: this.childId,
@@ -1135,8 +1165,31 @@ export class PiChildRuntime {
             reason: "control-send-cancelled",
           });
         }
-        return this.deps.outputPort
-          .writeLine(new TextEncoder().encode(`${JSON.stringify(envelope)}\n`))
+        const writeResult = Result.fromThrowable(
+          () =>
+            this.deps.outputPort.writeLine(
+              new TextEncoder().encode(`${JSON.stringify(envelope)}\n`),
+            ),
+          () => ({
+            type: "EnvelopeSignFailed" as const,
+            reason: "output write failed",
+          }),
+        )();
+        if (writeResult.isErr()) return errAsync(writeResult.error);
+        const write = writeResult.value;
+        outputCommitted = write.committed;
+        const startedResult = Result.fromThrowable(
+          () => options.onWriteStarted?.(write),
+          () => ({
+            type: "EnvelopeSignFailed" as const,
+            reason: "output write failed",
+          }),
+        )();
+        if (startedResult.isErr()) {
+          write.cancel();
+          return errAsync(startedResult.error);
+        }
+        return write.result
           .mapErr(
             (outputError): PiChildRuntimeError => ({
               type: "EnvelopeSignFailed",
@@ -1153,7 +1206,7 @@ export class PiChildRuntime {
           );
       })
       .orElse((failure) => {
-        releaseSequence();
+        if (!outputCommitted) releaseSequence();
         return errAsync(failure);
       });
   }

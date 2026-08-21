@@ -37,6 +37,7 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
+import type { PiChildOutputWrite } from "../child-runtime.js";
 import type { PiChildRefRecord } from "../child-session-refs.js";
 import { createPiChildSessionStorageAuthority } from "../child-session-storage-authority.js";
 import { PI_CHILD_TITLE_PROVENANCE } from "../child-title.js";
@@ -13350,13 +13351,13 @@ describe("createPiExtension: codex subscription fast provider in child mode", ()
 
   class CodexChildOutputPort {
     readonly lines: Record<string, unknown>[] = [];
-    writeLine(bytes: Uint8Array): ResultAsync<void, never> {
+    writeLine(bytes: Uint8Array): PiChildOutputWrite {
       for (const line of new TextDecoder().decode(bytes).split("\n")) {
         if (line.length > 0) {
           this.lines.push(JSON.parse(line) as Record<string, unknown>);
         }
       }
-      return okAsync(undefined);
+      return { committed: true, result: okAsync(undefined), cancel: () => {} };
     }
   }
 
