@@ -203,7 +203,11 @@ import {
   type PiChildSessionStorageAuthority,
   provePiChildSessionRoot,
 } from "./child-session-storage-authority.js";
-import { SystemTimerPort, type TimerPort } from "./child-timer.js";
+import {
+  SystemTimerPort,
+  type TimerHandle,
+  type TimerPort,
+} from "./child-timer.js";
 import {
   applyTreeControlKey,
   EMPTY_USAGE_AGGREGATE,
@@ -480,6 +484,15 @@ const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
 type PiModelTransitionFacts = Omit<PiModelTransitionBody, "phase">;
 
 const MAX_CHILD_MODEL_TRANSITION_REPORT_ATTEMPTS = 2;
+/**
+ * Each model-transition delivery is generation-owned. A host output writer
+ * that never settles cannot retain the child settlement lane indefinitely.
+ */
+const CHILD_MODEL_TRANSITION_REPORT_TIMEOUT_MS = 5_000;
+const CHILD_MODEL_TRANSITION_REPORT_TIMEOUT_REASON =
+  "model-transition-report-timeout";
+const CHILD_MODEL_TRANSITION_REPORT_CANCEL_REASON =
+  "model-transition-report-cancelled";
 
 type PiModelIdentityLike = {
   readonly provider: string;
@@ -1631,6 +1644,8 @@ interface PiChildModeState {
   promptAppended: boolean;
   /** True only once the bootstrap descriptor and model have been applied and acked. */
   bootstrapApplied: boolean;
+  /** Cancels the one generation-owned model-transition attempt, when present. */
+  cancelModelTransitionAttempt: (() => void) | undefined;
   runtime: PiChildRuntime | undefined;
   /**
    * The current turn's accumulated assistant text, truncated to <=4KiB
@@ -1714,6 +1729,7 @@ function createChildModeState(): PiChildModeState {
     delegationTargets: [],
     promptAppended: false,
     bootstrapApplied: false,
+    cancelModelTransitionAttempt: undefined,
     runtime: undefined,
     directStep: undefined,
     latestAssistantOutput: "",
@@ -1948,6 +1964,11 @@ async function applyChildBootstrap(
   state.appliedModel = appliedCatalogModel;
   state.delegationTargets = copyDelegationTargets(parsed.delegationTargets);
   state.bootstrapApplied = true;
+  // A replacement bootstrap invalidates every report owned by the previous
+  // generation before the generation number changes. The old callback may
+  // still settle later, but its result must remain inert.
+  state.cancelModelTransitionAttempt?.();
+  state.cancelModelTransitionAttempt = undefined;
   state.bootstrapGeneration += 1;
   state.directStep =
     parsed.mode === "direct-step"
@@ -1989,6 +2010,10 @@ async function activateChildModeIfApplicable(
     hmacPort: deps.hmacPort,
     outputPort: deps.childOutputPort,
     logger: deps.logger,
+    // Every child control delivery, including model-transition proofs, must
+    // use the generation's injected timer. A runtime-local default would let
+    // a deterministic timeout escape the generation owner on reload.
+    timerPort: deps.childTimerPort,
   });
   const outcome = await runtime.start();
   state.active = true;
@@ -2085,8 +2110,89 @@ async function activateChildModeIfApplicable(
   // rejects before Pi receives a replacement provider context.
   let childRecoveryAdmissionFailed = false;
 
+  const reportChildModelTransitionAttempt = (
+    transition: PiModelTransitionBody,
+    generation: number,
+  ): Promise<Result<void, PiChildRuntimeError>> => {
+    let resolveAttempt!: (result: Result<void, PiChildRuntimeError>) => void;
+    const attemptResult = new Promise<Result<void, PiChildRuntimeError>>(
+      (resolve) => {
+        resolveAttempt = resolve;
+      },
+    );
+    let completed = false;
+    let timer: TimerHandle | undefined;
+    let cancel: (() => void) | undefined;
+
+    const finish = (result: Result<void, PiChildRuntimeError>): void => {
+      if (completed) return;
+      completed = true;
+      timer?.cancel();
+      if (state.cancelModelTransitionAttempt === cancel) {
+        state.cancelModelTransitionAttempt = undefined;
+      }
+      if (
+        result.isOk() &&
+        (state.bootstrapGeneration !== generation ||
+          runtime.isCancelled() ||
+          !runtime.isActivated() ||
+          shuttingDown)
+      ) {
+        resolveAttempt(
+          err({
+            type: "EnvelopeSignFailed",
+            reason: CHILD_MODEL_TRANSITION_REPORT_CANCEL_REASON,
+          }),
+        );
+        return;
+      }
+      resolveAttempt(result);
+    };
+
+    cancel = (): void => {
+      finish(
+        err({
+          type: "EnvelopeSignFailed",
+          reason: CHILD_MODEL_TRANSITION_REPORT_CANCEL_REASON,
+        }),
+      );
+    };
+    state.cancelModelTransitionAttempt = cancel;
+
+    // Arm the generation-owned deadline before entering the runtime. A timer
+    // port is allowed to invoke its callback synchronously, so a synchronous
+    // expiry must also prevent the transport call from starting.
+    timer = deps.childTimerPort.schedule(
+      () =>
+        finish(
+          err({
+            type: "EnvelopeSignFailed",
+            reason: CHILD_MODEL_TRANSITION_REPORT_TIMEOUT_REASON,
+          }),
+        ),
+      CHILD_MODEL_TRANSITION_REPORT_TIMEOUT_MS,
+    );
+    if (completed) {
+      // The fake/host timer may have expired before schedule() returned. The
+      // returned handle still needs cancelling so the attempt owns no timer.
+      timer.cancel();
+      return attemptResult;
+    }
+
+    // `finish` is the only completion path. It latches before resolving this
+    // attempt, so a runtime result that arrives after timeout, reset, or
+    // cancellation cannot update the lifecycle queue or start a new outcome.
+    const reported = runtime.reportModelTransition(transition);
+    void reported.match(
+      (value) => finish(ok(value)),
+      (error) => finish(err(error)),
+    );
+    return attemptResult;
+  };
+
   const reportChildModelTransitionWithRetry = async (
     transition: PiModelTransitionBody,
+    generation: number,
   ): Promise<boolean> => {
     let lastErrorType: string | undefined;
     for (
@@ -2094,7 +2200,21 @@ async function activateChildModeIfApplicable(
       attempt < MAX_CHILD_MODEL_TRANSITION_REPORT_ATTEMPTS;
       attempt += 1
     ) {
-      const reported = await runtime.reportModelTransition(transition);
+      // A timeout, authenticated cancellation, or runtime disposal owns this
+      // delivery attempt. Do not start another attempt after that authority
+      // has been revoked, even if the old output writer later settles.
+      if (
+        state.bootstrapGeneration !== generation ||
+        runtime.isCancelled() ||
+        !runtime.isActivated() ||
+        shuttingDown
+      ) {
+        return false;
+      }
+      const reported = await reportChildModelTransitionAttempt(
+        transition,
+        generation,
+      );
       if (reported.isOk()) return true;
       lastErrorType = reported.error.type;
     }
@@ -2134,7 +2254,14 @@ async function activateChildModeIfApplicable(
     }
     const queued = previous
       .then(async (priorSucceeded) => {
-        if (state.bootstrapGeneration !== generation) return false;
+        if (
+          state.bootstrapGeneration !== generation ||
+          runtime.isCancelled() ||
+          !runtime.isActivated() ||
+          shuttingDown
+        ) {
+          return false;
+        }
         // A recovery claim is valid only when its paired applied fact reached
         // the parent. The runtime serializes control envelopes, while this
         // local queue preserves the phase order at the lifecycle seam.
@@ -2152,12 +2279,19 @@ async function activateChildModeIfApplicable(
           );
           if (appended.isErr()) return false;
         }
-        return reportChildModelTransitionWithRetry(transition);
+        return reportChildModelTransitionWithRetry(transition, generation);
       })
       .catch(() => false);
     childModelTransitionReportTail = queued;
     void queued.then((succeeded) => {
-      if (state.bootstrapGeneration !== generation) return;
+      if (
+        state.bootstrapGeneration !== generation ||
+        runtime.isCancelled() ||
+        !runtime.isActivated() ||
+        shuttingDown
+      ) {
+        return;
+      }
       if (phase === "applied") {
         childAppliedTransitionStatus = succeeded ? "succeeded" : "failed";
       }
@@ -2195,7 +2329,8 @@ async function activateChildModeIfApplicable(
       terminalSettlementClaimed ||
       cancellationClaimed ||
       shuttingDown ||
-      runtime.isCancelled()
+      runtime.isCancelled() ||
+      !runtime.isActivated()
     ) {
       return false;
     }
@@ -2677,6 +2812,7 @@ async function activateChildModeIfApplicable(
           // Close both independent epochs before publishing it, so no timer or
           // coordinator callback can race a second terminal settlement.
           cancellationClaimed = true;
+          state.cancelModelTransitionAttempt?.();
           fallbackGate?.dispose();
           childFailoverCoordinator?.cancel({
             authority: "authenticated-parent",
@@ -2807,6 +2943,7 @@ async function activateChildModeIfApplicable(
   // exit-without-settlement classification owns that outcome.
   pi.on("session_shutdown", () => {
     shuttingDown = true;
+    state.cancelModelTransitionAttempt?.();
     fallbackGate?.dispose();
     childFailoverCoordinator?.shutdown();
     abortGate.dispose();

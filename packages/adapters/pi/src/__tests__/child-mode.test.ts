@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import {
   bytesToHex,
@@ -74,11 +81,51 @@ class FakeOutputPort {
   private nextError:
     | { type: "ChildOutputWriteFailed"; reason: string }
     | undefined;
+  private readonly deferredWrites: Array<{
+    readonly settle: (
+      result: Result<void, { type: "ChildOutputWriteFailed"; reason: string }>,
+    ) => void;
+    readonly bytes: Uint8Array;
+  }> = [];
   failWritesRemaining = 0;
+  deferWritesRemaining = 0;
+  deferModelTransitionWrites = false;
   writeAttempts = 0;
 
   failNextWrite(reason: string): void {
     this.nextError = { type: "ChildOutputWriteFailed", reason };
+  }
+
+  deferNextWrite(): void {
+    this.deferWritesRemaining += 1;
+  }
+
+  pendingDeferredWrites(): number {
+    return this.deferredWrites.length;
+  }
+
+  settleDeferredWrite(
+    outcome: "resolve" | "reject",
+    reason = "late-output-write-failure",
+  ): void {
+    const deferred = this.deferredWrites.shift();
+    if (deferred === undefined) throw new Error("no deferred write pending");
+    if (outcome === "resolve") {
+      this.record(deferred.bytes);
+      deferred.settle(ok(undefined));
+      return;
+    }
+    deferred.settle(err({ type: "ChildOutputWriteFailed", reason }));
+  }
+
+  private record(bytes: Uint8Array): void {
+    for (const line of new TextDecoder().decode(bytes).split("\n")) {
+      if (line.length > 0) {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        this.onLine?.(parsed);
+        this.lines.push(parsed);
+      }
+    }
   }
 
   writeLine(
@@ -94,13 +141,31 @@ class FakeOutputPort {
       this.failWritesRemaining = Math.max(0, this.failWritesRemaining - 1);
       return errAsync(error);
     }
-    for (const line of new TextDecoder().decode(bytes).split("\n")) {
-      if (line.length > 0) {
-        const parsed = JSON.parse(line) as Record<string, unknown>;
-        this.onLine?.(parsed);
-        this.lines.push(parsed);
-      }
+    const firstLine = new TextDecoder().decode(bytes).split("\n")[0];
+    const kind =
+      firstLine === undefined || firstLine.length === 0
+        ? undefined
+        : (JSON.parse(firstLine) as { readonly kind?: unknown }).kind;
+    if (
+      this.deferWritesRemaining > 0 ||
+      (this.deferModelTransitionWrites && kind === "model-transition")
+    ) {
+      if (this.deferWritesRemaining > 0) this.deferWritesRemaining -= 1;
+      let settle!: (
+        result: Result<
+          void,
+          { type: "ChildOutputWriteFailed"; reason: string }
+        >,
+      ) => void;
+      const pending = new Promise<
+        Result<void, { type: "ChildOutputWriteFailed"; reason: string }>
+      >((resolve) => {
+        settle = resolve;
+      });
+      this.deferredWrites.push({ settle, bytes });
+      return new ResultAsync(pending);
     }
+    this.record(bytes);
     return okAsync(undefined);
   }
 }
@@ -357,11 +422,25 @@ function runtimeModelFallbackSurfaceReader(
 class ScriptedTimerPort implements TimerPort {
   private readonly scheduled: {
     callback: () => void;
+    delayMs: number;
+    dueMs: number;
+    order: number;
     cancelled: boolean;
     fired: boolean;
   }[] = [];
-  schedule(callback: () => void, _delayMs: number): TimerHandle {
-    const entry = { callback, cancelled: false, fired: false };
+  private nowMs = 0;
+  private nextOrder = 0;
+
+  schedule(callback: () => void, delayMs: number): TimerHandle {
+    const entry = {
+      callback,
+      delayMs,
+      dueMs: this.nowMs + delayMs,
+      order: this.nextOrder,
+      cancelled: false,
+      fired: false,
+    };
+    this.nextOrder += 1;
     this.scheduled.push(entry);
     return {
       cancel: () => {
@@ -369,6 +448,44 @@ class ScriptedTimerPort implements TimerPort {
       },
     };
   }
+  pending(): readonly (typeof this.scheduled)[number][] {
+    return this.scheduled.filter((entry) => !entry.cancelled && !entry.fired);
+  }
+
+  all(): readonly (typeof this.scheduled)[number][] {
+    return this.scheduled;
+  }
+
+  /** Advances the injected clock and fires every due timer in stable order. */
+  advanceBy(delayMs: number): void {
+    if (delayMs < 0) throw new Error("fake clock cannot move backwards");
+    this.nowMs += delayMs;
+    this.fireDue();
+  }
+
+  private fireDue(): void {
+    for (;;) {
+      const entry = this.pending()
+        .filter((candidate) => candidate.dueMs <= this.nowMs)
+        .sort(
+          (left, right) => left.dueMs - right.dueMs || left.order - right.order,
+        )[0];
+      if (entry === undefined) return;
+      entry.fired = true;
+      entry.callback();
+    }
+  }
+
+  fireDelay(delayMs: number): void {
+    const entry = this.pending().find(
+      (candidate) => candidate.delayMs === delayMs,
+    );
+    if (entry === undefined)
+      throw new Error(`no timer scheduled for ${delayMs}`);
+    entry.fired = true;
+    entry.callback();
+  }
+
   /** Fires every live timer once, in scheduling order. */
   fireAll(): void {
     for (const entry of [...this.scheduled]) {
@@ -452,6 +569,57 @@ async function signedBootstrap(
     hmacPort,
   );
   return envelope._unsafeUnwrap() as unknown as JsonValue;
+}
+
+async function beginFallbackAppliedTransition() {
+  const origin: PiModelInfo = {
+    provider: "origin",
+    id: "first",
+    name: "First",
+  };
+  const fallback: PiModelInfo = {
+    provider: "fallback",
+    id: "second",
+    name: "Second",
+  };
+  const recoveryCtx = fakeCtx({
+    model: origin,
+    modelRegistry: { getAvailable: () => [origin, fallback] },
+    hasPendingMessages: () => false,
+  });
+  const built = await buildChildExtension(recoveryCtx);
+  await deliverEnvelope(
+    built.host,
+    await signedBootstrap(built.secretBytes, {
+      models: ["origin/first", "fallback/second"],
+    }),
+    recoveryCtx,
+  );
+  const failedMessage = {
+    role: "assistant",
+    id: "hung-applied-transition",
+    stopReason: "error",
+    error: { status: 503, message: "provider unavailable" },
+    content: [{ type: "text", text: "retained failure" }],
+  } as const;
+  const deferred = built.host.deferNextSetModel();
+  await built.host.fire(
+    "message_end",
+    { type: "message_end", message: failedMessage },
+    recoveryCtx,
+  );
+  const fallbackSettlement = built.host.fire(
+    "agent_settled",
+    { type: "agent_settled" },
+    recoveryCtx,
+  );
+  await deferred.called;
+  await built.host.fire(
+    "model_select",
+    { type: "model_select", model: fallback },
+    recoveryCtx,
+  );
+  return { ...built, recoveryCtx, deferred, fallbackSettlement };
 }
 
 describe("private child mode (Pi adapter contract, end-to-end against a fake host)", () => {
@@ -849,6 +1017,124 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
       1,
     );
+  });
+
+  it("keeps a delayed applied-transition success live and cleans its deadline", async () => {
+    const { output, timers, deferred, fallbackSettlement } =
+      await beginFallbackAppliedTransition();
+    const timerCountBeforeReport = timers.all().length;
+    output.deferNextWrite();
+
+    deferred.settle(true);
+    await waitFor(() => output.pendingDeferredWrites() === 1);
+    timers.advanceBy(4_999);
+    await flush();
+    expect(
+      output.lines.filter((line) => line.kind === "model-transition"),
+    ).toHaveLength(0);
+
+    output.settleDeferredWrite("resolve");
+    await fallbackSettlement;
+    await waitFor(
+      () =>
+        output.lines.filter((line) => line.kind === "model-transition")
+          .length === 1,
+    );
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      0,
+    );
+    await waitFor(() =>
+      timers
+        .all()
+        .slice(timerCountBeforeReport)
+        .some((entry) => entry.cancelled),
+    );
+  });
+
+  it("bounds a hung applied-transition delivery, retains one failed settlement, and ignores late writes", async () => {
+    const { host, output, timers, deferred, fallbackSettlement } =
+      await beginFallbackAppliedTransition();
+    // Defer every model-transition write, not a fixed number of output calls.
+    // The clean runtime may reject a retry immediately while an older send is
+    // still in flight; a runtime with its own transport retry may start a
+    // second write. The test must prove the extension deadline in both cases
+    // without relying on either implementation detail.
+    output.deferModelTransitionWrites = true;
+
+    deferred.settle(true);
+    await waitFor(() => output.pendingDeferredWrites() >= 1);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      timers.advanceBy(5_000);
+      await flush();
+    }
+
+    // The transport writer may complete after the generation-owned deadlines.
+    // Resolve every retained callback as a failure; none may publish a model
+    // proof or seize a second terminal outcome.
+    while (output.pendingDeferredWrites() > 0) {
+      output.settleDeferredWrite("reject");
+    }
+    await flush();
+    await fallbackSettlement;
+    await waitFor(() => output.lines.some((line) => line.kind === "settled"));
+
+    const settled = output.lines.filter((line) => line.kind === "settled");
+    expect(settled).toHaveLength(1);
+    expect((settled[0]?.body as Record<string, unknown>).outcome).toBe(
+      "failed",
+    );
+    expect((settled[0]?.body as Record<string, unknown>).reason).toBe(
+      "model-transition-applied-report-failed",
+    );
+    expect(
+      output.lines.filter((line) => line.kind === "model-transition"),
+    ).toHaveLength(0);
+
+    await host.fire("agent_settled", { type: "agent_settled" }, fakeCtx());
+    await flush();
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      1,
+    );
+    expect(timers.pending()).toHaveLength(0);
+  });
+
+  it("cancels a pending transition attempt and ignores its late callback", async () => {
+    const { host, output, timers, secretBytes, recoveryCtx, deferred } =
+      await beginFallbackAppliedTransition();
+    output.deferNextWrite();
+    deferred.settle(true);
+    await waitFor(() => output.pendingDeferredWrites() === 1);
+    const cancel = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "parent-to-child",
+        sequence: 2,
+        nonce: generateNonceHex(randomPort),
+        correlationId: "child-1",
+        kind: "cancel",
+        body: { reason: "cancelled-by-parent" },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    const cancelDelivery = deliverEnvelope(
+      host,
+      cancel._unsafeUnwrap() as unknown as JsonValue,
+      recoveryCtx,
+    );
+    while (output.pendingDeferredWrites() > 0) {
+      output.settleDeferredWrite("reject");
+    }
+    await cancelDelivery;
+    await flush();
+    expect(
+      output.lines.filter((line) => line.kind === "cancelled"),
+    ).toHaveLength(1);
+    expect(output.lines.filter((line) => line.kind === "settled")).toHaveLength(
+      0,
+    );
+    expect(timers.pending()).toHaveLength(0);
   });
 
   it("retries a failed applied-transition delivery twice and settles terminally", async () => {
