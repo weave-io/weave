@@ -1,4 +1,11 @@
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  Result,
+  type ResultAsync,
+} from "neverthrow";
 import { sha256Hex } from "./extension-build-identity-binding.js";
 import type {
   ExtensionBuildIdentityError,
@@ -17,6 +24,7 @@ import {
   parseOutputDigestList,
   parseSha256List,
 } from "./extension-build-identity-validation.js";
+import { readAbsoluteFileBounded } from "./path-containment.js";
 
 /** Parse and validate a bounded path-free manifest. */
 export function parseExtensionBuildManifest(
@@ -116,16 +124,32 @@ export function createExtensionBuildManifest(input: {
   return parseExtensionBuildManifest(manifest);
 }
 
+/**
+ * Read one identity file with a closed failure and a hard byte ceiling.
+ *
+ * The no-follow descriptor reader performs stat-before-allocation and requests
+ * exactly `maxBytes + 1` bytes from the bounded slice. Callers choose the
+ * closed identity error because manifests and artifacts classify failures
+ * differently at their public boundary.
+ */
+export function readBoundedIdentityBytes(
+  path: string,
+  maxBytes: number,
+  failure: "ArtifactReadFailed" | "ManifestReadFailed" = "ArtifactReadFailed",
+): ResultAsync<Uint8Array, ExtensionBuildIdentityError> {
+  return readAbsoluteFileBounded(path, maxBytes).mapErr(
+    (): ExtensionBuildIdentityError => ({ type: failure }),
+  );
+}
+
 /** Read one artifact digest without allowing an exception to escape. */
 export function readArtifactSha256(
   path: string,
 ): ResultAsync<string, ExtensionBuildIdentityError> {
-  return ResultAsync.fromPromise(Bun.file(path).arrayBuffer(), () => ({
-    type: "ArtifactReadFailed" as const,
-  })).andThen((bytes) => {
-    if (bytes.byteLength > MAX_EXTENSION_BUILD_OUTPUT_BYTES) {
-      return errAsync({ type: "ArtifactReadFailed" as const });
-    }
+  return readBoundedIdentityBytes(
+    path,
+    MAX_EXTENSION_BUILD_OUTPUT_BYTES,
+  ).andThen((bytes) => {
     const digest = sha256Hex(bytes);
     return digest.isOk() ? okAsync(digest.value) : errAsync(digest.error);
   });

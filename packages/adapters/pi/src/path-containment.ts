@@ -53,6 +53,12 @@ import { dlopen, ptr, read } from "bun:ffi";
 import { platform } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  type BoundedFileReadError,
+  captureBoundedFileIdentity,
+  readBoundedFileObject,
+  sameBoundedFileIdentity,
+} from "./bounded-file-read.js";
 
 /** Closed set of ways a path can fail no-follow containment verification. */
 export type PathContainmentError =
@@ -115,6 +121,8 @@ interface NoFollowOpenFlags {
   readonly O_DIRECTORY: number;
   readonly O_NOFOLLOW: number;
   readonly O_CLOEXEC: number;
+  /** Prevent a FIFO or other special file from blocking the identity read. */
+  readonly O_NONBLOCK: number;
 }
 
 function noFollowOpenFlags(): NoFollowOpenFlags | undefined {
@@ -125,6 +133,7 @@ function noFollowOpenFlags(): NoFollowOpenFlags | undefined {
       O_DIRECTORY: 0x0010_0000,
       O_NOFOLLOW: 0x0100,
       O_CLOEXEC: 0x0100_0000,
+      O_NONBLOCK: 0x0004,
     };
   }
   if (os === "linux") {
@@ -133,6 +142,7 @@ function noFollowOpenFlags(): NoFollowOpenFlags | undefined {
       O_DIRECTORY: 0x1_0000,
       O_NOFOLLOW: 0x2_0000,
       O_CLOEXEC: 0x8_0000,
+      O_NONBLOCK: 0x0800,
     };
   }
   return undefined;
@@ -309,7 +319,10 @@ function inspectOpenedEntry(
     (): NoFollowInspectionError => ({ type: "io" }),
   )()
     .andThen((stat) => {
-      if ((kind === "directory" && !stat.isDirectory()) || (kind === "file" && !stat.isFile())) {
+      if (
+        (kind === "directory" && !stat.isDirectory()) ||
+        (kind === "file" && !stat.isFile())
+      ) {
         return errAsync<NoFollowEntryIdentity, NoFollowInspectionError>({
           type: "wrong-kind",
           kind,
@@ -384,7 +397,11 @@ export function inspectNoFollowFile(
   const libcResult = loadNoFollowLibc();
   if (libcResult.isErr()) return errAsync(inspectionError(libcResult.error));
   const libc = libcResult.value;
-  const opened = openNoFollowDirectoryChain(libc, "/", segments.value.slice(0, -1));
+  const opened = openNoFollowDirectoryChain(
+    libc,
+    "/",
+    segments.value.slice(0, -1),
+  );
   if (opened.isErr()) {
     libc.dispose();
     return errAsync(inspectionError(opened.error));
@@ -412,6 +429,128 @@ export function inspectNoFollowFile(
       libc.dispose();
       return error;
     });
+}
+
+/** Closed failures for a bounded, absolute, no-follow file read. */
+export type BoundedAbsoluteFileReadError =
+  | BoundedFileReadError
+  | PathContainmentError;
+
+/**
+ * Read an absolute regular file through one no-follow descriptor.
+ *
+ * The leaf is opened with `O_NOFOLLOW`, stat'ed before any body allocation, and
+ * read through a `slice(0, maxBytes + 1)` sentinel. Descriptor identity is
+ * checked before and after the read, and the named leaf is reopened against
+ * the held parent descriptor before success so a replacement or symlink swap
+ * cannot make the digest describe bytes that are no longer at `path`.
+ */
+export function readAbsoluteFileBounded(
+  path: string,
+  maxBytes: number,
+): ResultAsync<Uint8Array, BoundedAbsoluteFileReadError> {
+  const segments = absoluteNoFollowSegments(path);
+  if (segments.isErr()) {
+    return errAsync("resolved-target-outside-root");
+  }
+  const fileName = segments.value.at(-1);
+  if (fileName === undefined) return errAsync("resolved-target-outside-root");
+
+  const libcResult = loadNoFollowLibc();
+  if (libcResult.isErr()) return errAsync(libcResult.error);
+  const libc = libcResult.value;
+  const openedParent = openNoFollowDirectoryChain(
+    libc,
+    "/",
+    segments.value.slice(0, -1),
+  );
+  if (openedParent.isErr()) {
+    libc.dispose();
+    return errAsync(openedParent.error);
+  }
+
+  const read = ResultAsync.fromThrowable(
+    async (): Promise<Result<Uint8Array, BoundedAbsoluteFileReadError>> => {
+      const parentFd = openedParent.value;
+      let fileFd: number | undefined;
+      try {
+        fileFd = libc.openat(
+          parentFd,
+          cstr(fileName),
+          libc.flags.O_RDONLY |
+            libc.flags.O_NOFOLLOW |
+            libc.flags.O_CLOEXEC |
+            libc.flags.O_NONBLOCK,
+        );
+        if (fileFd < 0) {
+          const openErrno = libc.errno();
+          return err(
+            isMissingComponentErrno(openErrno)
+              ? "path-component-missing"
+              : "symlink-component-rejected",
+          );
+        }
+
+        const file = Bun.file(fileFd);
+        const openedIdentity = captureBoundedFileIdentity(await file.stat());
+        if (openedIdentity.isErr()) return err(openedIdentity.error);
+        if (openedIdentity.value.size > maxBytes) {
+          return err("file-too-large");
+        }
+
+        const bounded = await readBoundedFileObject(file, maxBytes);
+        if (bounded.isErr()) return err(bounded.error);
+
+        const currentFd = libc.openat(
+          parentFd,
+          cstr(fileName),
+          libc.flags.O_RDONLY |
+            libc.flags.O_NOFOLLOW |
+            libc.flags.O_CLOEXEC |
+            libc.flags.O_NONBLOCK,
+        );
+        if (currentFd < 0) {
+          const currentErrno = libc.errno();
+          return err(
+            isMissingComponentErrno(currentErrno)
+              ? "path-component-missing"
+              : "file-changed",
+          );
+        }
+        try {
+          const currentIdentity = captureBoundedFileIdentity(
+            await Bun.file(currentFd).stat(),
+          );
+          if (currentIdentity.isErr()) return err(currentIdentity.error);
+          if (
+            !sameBoundedFileIdentity(
+              openedIdentity.value,
+              currentIdentity.value,
+            )
+          ) {
+            return err("file-changed");
+          }
+        } finally {
+          libc.close(currentFd);
+        }
+        return ok(bounded.value);
+      } finally {
+        if (fileFd !== undefined && fileFd >= 0) libc.close(fileFd);
+        libc.close(parentFd);
+      }
+    },
+    (): BoundedAbsoluteFileReadError => "read-failed",
+  )()
+    .andThen(toResultAsync)
+    .map((value) => {
+      libc.dispose();
+      return value;
+    })
+    .mapErr((error) => {
+      libc.dispose();
+      return error;
+    });
+  return read;
 }
 
 /**

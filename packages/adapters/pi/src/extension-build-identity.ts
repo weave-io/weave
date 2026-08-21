@@ -16,6 +16,7 @@ export {
   parseExtensionBuildManifest,
   parseExtensionBuildManifestText,
   readArtifactSha256,
+  readBoundedIdentityBytes,
   renderExtensionBuildManifest,
 } from "./extension-build-identity-manifest.js";
 export {

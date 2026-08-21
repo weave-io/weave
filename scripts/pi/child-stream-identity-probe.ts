@@ -9,6 +9,7 @@ import {
   parseExtensionBuildIdentityProof,
   parseExtensionBuildManifestText,
   readArtifactSha256,
+  readBoundedIdentityBytes,
 } from "../../packages/adapters/pi/src/extension-build-identity.js";
 import { piIdentityOutputFiles } from "../build-public-packages.js";
 import {
@@ -73,23 +74,23 @@ function readGitIdentity(
 function readManifest(
   repoRoot: string,
 ): ResultAsync<ExtensionBuildIdentityManifest, VerifyChildStreamingFailure> {
-  return ResultAsync.fromPromise(
-    Bun.file(join(repoRoot, MANIFEST_RELATIVE_PATH)).arrayBuffer(),
-    () => blocked("unverifiable", "unverifiable"),
-  ).andThen((bytes) => {
-    if (bytes.byteLength > MAX_EXTENSION_BUILD_MANIFEST_BYTES) {
-      return errAsync(blocked("unverifiable", "unverifiable"));
-    }
-    const text = Result.fromThrowable(
-      () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-      () => blocked("unverifiable", "unverifiable"),
-    )();
-    if (text.isErr()) return errAsync(text.error);
-    const parsed = parseExtensionBuildManifestText(text.value);
-    return parsed.isOk()
-      ? okAsync(parsed.value)
-      : errAsync(blocked("unverifiable", "unverifiable"));
-  });
+  return readBoundedIdentityBytes(
+    join(repoRoot, MANIFEST_RELATIVE_PATH),
+    MAX_EXTENSION_BUILD_MANIFEST_BYTES,
+    "ManifestReadFailed",
+  )
+    .mapErr(() => blocked("unverifiable", "unverifiable"))
+    .andThen((bytes) => {
+      const text = Result.fromThrowable(
+        () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        () => blocked("unverifiable", "unverifiable"),
+      )();
+      if (text.isErr()) return errAsync(text.error);
+      const parsed = parseExtensionBuildManifestText(text.value);
+      return parsed.isOk()
+        ? okAsync(parsed.value)
+        : errAsync(blocked("unverifiable", "unverifiable"));
+    });
 }
 
 function collectBuildInputs(

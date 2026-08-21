@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 381 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~41,500 tokens. Without it, AI exploration would cost ~118,400 tokens. **Saves ~76,900 tokens per conversation.**
-> **Last scanned:** 2026-08-21 05:29 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 382 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~41,700 tokens. Without it, AI exploration would cost ~118,600 tokens. **Saves ~76,900 tokens per conversation.**
+> **Last scanned:** 2026-08-21 06:07 — re-run after significant changes
 
 ---
 
@@ -129,6 +129,14 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
+- `packages/adapters/pi/src/bounded-file-read.ts`
+  - function captureBoundedFileIdentity: (value) => Result<BoundedFileIdentity, BoundedFileReadError>
+  - function sameBoundedFileIdentity: (left, right) => boolean
+  - function readBoundedFileObject: (file, maxBytes) => ResultAsync<Uint8Array, BoundedFileReadError>
+  - interface BoundedFileStat
+  - interface BoundedFile
+  - interface BoundedFileIdentity
+  - _...1 more_
 - `packages/adapters/pi/src/capability-prober.ts`
   - function probeAgentRecoveryExhaustedFeature: (host) => Result<boolean, AgentRecoveryExhaustedProbeError>
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
@@ -790,6 +798,7 @@
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
   - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function readBoundedIdentityBytes: (path, maxBytes, failure) => ResultAsync<Uint8Array, ExtensionBuildIdentityError>
   - function readArtifactSha256: (path) => ResultAsync<string, ExtensionBuildIdentityError>
   - function parseExtensionBuildManifestText: (text) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
 - `packages/adapters/pi/src/extension-build-identity-proof.ts`
@@ -946,10 +955,10 @@
   - function isLexicallyContained: (relativePath) => boolean
   - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
   - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
+  - function readAbsoluteFileBounded: (path, maxBytes) => ResultAsync<Uint8Array, BoundedAbsoluteFileReadError>
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
   - class BunPathContainmentPort
-  - class NullPathContainmentPort
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/pi-config-ui.ts`
   - function mergePiConfigEntries: (entries, record) => readonly PiConfigExtensionEntry[]
   - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
@@ -2406,7 +2415,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 385 test files found
+> 386 test files found
 
 ---
 

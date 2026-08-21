@@ -1,8 +1,9 @@
 import { dirname, join } from "node:path";
-import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, type ResultAsync } from "neverthrow";
 import {
   parseExtensionBuildManifestText,
   readArtifactSha256,
+  readBoundedIdentityBytes,
 } from "./extension-build-identity-manifest.js";
 import type {
   ExtensionBuildIdentityError,
@@ -314,17 +315,12 @@ export function readExtensionBuildIdentityHealth(
         readonly diskOutputs?: readonly ExtensionBuildOutputDigest[];
       }>({}),
     );
-  const manifest = ResultAsync.fromPromise(
-    Bun.file(manifestPath).arrayBuffer(),
-    (): ExtensionBuildIdentityError => ({ type: "ManifestReadFailed" }),
+  const manifest = readBoundedIdentityBytes(
+    manifestPath,
+    MAX_EXTENSION_BUILD_MANIFEST_BYTES,
+    "ManifestReadFailed",
   )
     .andThen((bytes) => {
-      if (bytes.byteLength > MAX_EXTENSION_BUILD_MANIFEST_BYTES) {
-        return errAsync<
-          { readonly manifest: ExtensionBuildIdentityManifest },
-          ExtensionBuildIdentityError
-        >({ type: "ManifestMalformed" });
-      }
       const decoded = Result.fromThrowable(
         () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
         (): ExtensionBuildIdentityError => ({ type: "ManifestMalformed" }),

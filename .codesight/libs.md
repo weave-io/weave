@@ -118,6 +118,14 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
+- `packages/adapters/pi/src/bounded-file-read.ts`
+  - function captureBoundedFileIdentity: (value) => Result<BoundedFileIdentity, BoundedFileReadError>
+  - function sameBoundedFileIdentity: (left, right) => boolean
+  - function readBoundedFileObject: (file, maxBytes) => ResultAsync<Uint8Array, BoundedFileReadError>
+  - interface BoundedFileStat
+  - interface BoundedFile
+  - interface BoundedFileIdentity
+  - _...1 more_
 - `packages/adapters/pi/src/capability-prober.ts`
   - function probeAgentRecoveryExhaustedFeature: (host) => Result<boolean, AgentRecoveryExhaustedProbeError>
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
@@ -779,6 +787,7 @@
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
   - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function readBoundedIdentityBytes: (path, maxBytes, failure) => ResultAsync<Uint8Array, ExtensionBuildIdentityError>
   - function readArtifactSha256: (path) => ResultAsync<string, ExtensionBuildIdentityError>
   - function parseExtensionBuildManifestText: (text) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
 - `packages/adapters/pi/src/extension-build-identity-proof.ts`
@@ -935,10 +944,10 @@
   - function isLexicallyContained: (relativePath) => boolean
   - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
   - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
+  - function readAbsoluteFileBounded: (path, maxBytes) => ResultAsync<Uint8Array, BoundedAbsoluteFileReadError>
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
   - class BunPathContainmentPort
-  - class NullPathContainmentPort
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/pi-config-ui.ts`
   - function mergePiConfigEntries: (entries, record) => readonly PiConfigExtensionEntry[]
   - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
