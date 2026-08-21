@@ -880,7 +880,7 @@ export class PublicPackagePackager {
       for (const file of build.bootstrap) files.add(`dist/bootstrap/${file}`);
     if (build.extraFiles !== undefined)
       for (const file of build.extraFiles) files.add(file);
-    if (packageName !== "@weaveio/weave-cli") files.add("README.md");
+    files.add("README.md");
     files.add("CHANGELOG.md");
     files.add("LICENSE");
     let result = okAsync<void, PackagerError>(undefined);

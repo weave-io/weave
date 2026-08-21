@@ -7,7 +7,10 @@ import {
   isSupportedHostVersion,
 } from "../../../packages/adapters/pi/src/host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../../../packages/adapters/pi/src/host-compatibility-matrix.js";
-import { AcceptanceManifestSchema } from "../acceptance-manifest.js";
+import {
+  AcceptanceManifestSchema,
+  HostSchema,
+} from "../acceptance-manifest.js";
 import { isJsonObject, isJsonString, parseJsonValue } from "../json.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
@@ -18,8 +21,8 @@ import { TarInspector } from "../tar-inspector.js";
  *
  * Materializes the packed `@weaveio/weave-adapter-pi` tarball into a fully
  * isolated directory (never the developer's project) alongside a local
- * *fake* `@earendil-works/pi-coding-agent` peer pinned to the exact
- * release-tested version (0.81.1), plus fake `pi-ai`/`pi-tui` peers and
+ * *fake* `@earendil-works/pi-coding-agent` peer pinned to the current exact
+ * release-tested version, plus fake `pi-ai`/`pi-tui` peers and
  * this workspace's own already-resolved real runtime dependencies. No
  * `npm install`, no registry, no
  * network call of any kind, and the extension's default factory is only
@@ -36,6 +39,12 @@ const ACCEPTANCE_FIXTURE_SMOKE = join(
   ".",
   "scripts/release/pi-acceptance/smoke-checklist.md",
 );
+
+const HistoricalAcceptanceManifestSchema = AcceptanceManifestSchema.extend({
+  host: HostSchema.extend({
+    exactTestedVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
+  }),
+});
 
 /**
  * Minimal stub bodies for the handful of runtime *value* imports the
@@ -158,7 +167,7 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       const manifestText = await Bun.file(ACCEPTANCE_FIXTURE_MANIFEST).text();
       const parsedManifest = parseJsonValue(manifestText);
       if (parsedManifest.isErr()) throw new Error(parsedManifest.error.message);
-      const manifestResult = AcceptanceManifestSchema.safeParse(
+      const manifestResult = HistoricalAcceptanceManifestSchema.safeParse(
         parsedManifest.value,
       );
       if (!manifestResult.success)
@@ -169,6 +178,9 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
       expect(manifestJson.host.package).toBe(HOST_PACKAGE_NAME);
       expect(manifestJson.host.floorVersion.length).toBeGreaterThan(0);
       expect(manifestJson.host.supportedRange).toContain(">=0.81.1");
+      expect(isSupportedHostVersion(manifestJson.host.exactTestedVersion)).toBe(
+        true,
+      );
 
       const smokeText = await Bun.file(ACCEPTANCE_FIXTURE_SMOKE).text();
       expect(smokeText).toContain("S001");
