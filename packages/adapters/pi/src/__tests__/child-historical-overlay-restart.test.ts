@@ -117,7 +117,9 @@ describe("createPiExtension: historical native overlay after a parent restart", 
     readonly host: RecordingFakePiHost;
     readonly customBefore: number;
     readonly editorCallsBefore: number;
-    readonly editorOwnerBefore: unknown;
+    readonly editorOwnerBefore: ReturnType<
+      RecordingFakePiHost["getEditorComponentForTest"]
+    >;
   }> {
     const fs = createBunPiNativeSessionFs();
     const nativeHost = createPiNativeSessionHost(SessionManager);

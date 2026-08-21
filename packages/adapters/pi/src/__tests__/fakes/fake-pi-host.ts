@@ -222,6 +222,18 @@ export interface FakePiHostOptions {
  * test double for this adapter's own `PiExtensionApi`/`PiSessionContext`
  * ports, which is what `src/extension.ts` adapts the real host into.
  */
+type FakeEditorFactory = ReturnType<
+  NonNullable<PiUiPort["getEditorComponent"]>
+>;
+
+type FakeEditorFactoryValue = NonNullable<FakeEditorFactory>;
+
+function isFakeEditorFactory<TValue>(
+  value: TValue,
+): value is TValue & FakeEditorFactoryValue {
+  return typeof value === "function";
+}
+
 export class RecordingFakePiHost {
   readonly registerCommandCalls: RecordedCommandRegistration[] = [];
   readonly registerShortcutCalls: RecordedShortcutRegistration[] = [];
@@ -332,7 +344,7 @@ export class RecordingFakePiHost {
     | undefined;
   readonly interventionCalls: unknown[] = [];
   readonly editorFactoryCalls: unknown[] = [];
-  private editorFactory: unknown;
+  private editorFactory: FakeEditorFactory = undefined;
   readonly appendedEntries: {
     readonly type: string;
     readonly data: unknown;
@@ -817,7 +829,7 @@ export class RecordingFakePiHost {
       getEditorComponent: () => this.editorFactory,
       setEditorComponent: (factory) => {
         this.editorFactoryCalls.push(factory);
-        this.editorFactory = factory;
+        this.editorFactory = isFakeEditorFactory(factory) ? factory : undefined;
       },
       custom: async (factory) => {
         this.customCalls.push(factory);
@@ -1085,11 +1097,11 @@ export class RecordingFakePiHost {
     return ctx;
   }
 
-  setEditorComponentForTest(factory: unknown): void {
+  setEditorComponentForTest(factory: FakeEditorFactory): void {
     this.editorFactory = factory;
   }
 
-  getEditorComponentForTest(): unknown {
+  getEditorComponentForTest(): FakeEditorFactory {
     return this.editorFactory;
   }
 

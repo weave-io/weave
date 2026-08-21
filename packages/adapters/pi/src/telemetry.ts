@@ -24,6 +24,7 @@ import {
   BunRuntimeLogFileSystem,
   createExecutionLeaseId,
   createRotatingRuntimeLogSink,
+  createUsageObservationId,
   createWorkflowInstanceId,
   type JournalSeverity,
   type JsonObject,
@@ -36,6 +37,7 @@ import {
 } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import pino from "pino";
+import { z } from "zod";
 import {
   makeInvariantViolationFailure,
   makeJournalWriteFailedFailure,
@@ -153,44 +155,40 @@ const PI_PROVIDER_FAST_SEVERITY: Readonly<
   unsupported: "warn",
 });
 
-function isProviderFastState(value: unknown): value is ProviderFastState {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_STATES.includes(value as ProviderFastState)
-  );
+const ProviderFastStateSchema = z.enum(PROVIDER_FAST_STATES);
+const ProviderFastEvidenceKindSchema = z.enum(PROVIDER_FAST_EVIDENCE_KINDS);
+const ProviderFastEvidenceOutcomeSchema = z.enum(
+  PROVIDER_FAST_EVIDENCE_OUTCOMES,
+);
+const ProviderFastReasonSchema = z.enum(PROVIDER_FAST_REASONS);
+const ProviderFastRuleIdSchema = z
+  .string()
+  .refine((value): value is ProviderFastRuleId => isProviderFastRuleId(value));
+const ProviderFastJournalDataKeySchema = z.enum(
+  PI_PROVIDER_FAST_JOURNAL_DATA_KEYS,
+);
+const ProviderFastJournalDataValueSchema = z.union([
+  ProviderFastStateSchema,
+  ProviderFastEvidenceKindSchema,
+  ProviderFastEvidenceOutcomeSchema,
+  ProviderFastReasonSchema,
+  ProviderFastRuleIdSchema,
+]);
+type ProviderFastJournalDataValue = z.infer<
+  typeof ProviderFastJournalDataValueSchema
+>;
+
+function invalidProviderFastState(): Result<
+  PiProviderFastJournalData,
+  PiAdapterFailure
+> {
+  return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
 }
 
-function isProviderFastEvidenceKind(
-  value: unknown,
-): value is ProviderFastEvidenceKind {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_EVIDENCE_KINDS.includes(value as ProviderFastEvidenceKind)
-  );
-}
-
-function isProviderFastEvidenceOutcome(
-  value: unknown,
-): value is ProviderFastEvidenceOutcome {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_EVIDENCE_OUTCOMES.includes(
-      value as ProviderFastEvidenceOutcome,
-    )
-  );
-}
-
-function isProviderFastReason(value: unknown): value is ProviderFastReason {
-  return (
-    typeof value === "string" &&
-    PROVIDER_FAST_REASONS.includes(value as ProviderFastReason)
-  );
-}
-
-function readOwnDataDescriptor(
-  record: object,
-  key: string,
-): Result<unknown, PiAdapterFailure> {
+function readProviderFastField(
+  record: ProviderFastPublicSnapshot,
+  key: PiProviderFastJournalDataKey,
+): Result<ProviderFastJournalDataValue, PiAdapterFailure> {
   const descriptor = Object.getOwnPropertyDescriptor(record, key);
   if (
     descriptor === undefined ||
@@ -199,80 +197,86 @@ function readOwnDataDescriptor(
   ) {
     return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
   }
-  return ok(descriptor.value);
+  const parsed = ProviderFastJournalDataValueSchema.safeParse(descriptor.value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
 }
 
 const inspectProviderFastPublicState = Result.fromThrowable(
-  (input: unknown): Result<PiProviderFastJournalData, PiAdapterFailure> => {
-    if (typeof input !== "object" || input === null || Array.isArray(input)) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
-    }
+  (
+    input: ProviderFastPublicSnapshot,
+  ): Result<PiProviderFastJournalData, PiAdapterFailure> => {
+    if (Array.isArray(input)) return invalidProviderFastState();
+
     const prototype = Object.getPrototypeOf(input);
     if (prototype !== Object.prototype && prototype !== null) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+      return invalidProviderFastState();
     }
     const ownKeys = Reflect.ownKeys(input);
     if (
       ownKeys.length < PI_PROVIDER_FAST_JOURNAL_REQUIRED_DATA_KEYS.length ||
       ownKeys.length > PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.length
     ) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+      return invalidProviderFastState();
     }
-    for (const key of ownKeys) {
-      if (
-        typeof key !== "string" ||
-        !PI_PROVIDER_FAST_JOURNAL_DATA_KEYS.includes(
-          key as PiProviderFastJournalDataKey,
-        )
-      ) {
-        return err(
-          makeJournalWriteFailedFailure("invalid-provider-fast-state"),
-        );
-      }
+    const parsedKeys = ownKeys.map((key) =>
+      ProviderFastJournalDataKeySchema.safeParse(key),
+    );
+    if (parsedKeys.some((parsed) => !parsed.success)) {
+      return invalidProviderFastState();
     }
 
-    const state = readOwnDataDescriptor(input, "state");
-    const evidenceKind = readOwnDataDescriptor(input, "evidenceKind");
-    const evidenceOutcome = readOwnDataDescriptor(input, "evidenceOutcome");
-    const reason = readOwnDataDescriptor(input, "reason");
+    const state = readProviderFastField(input, "state");
+    const evidenceKind = readProviderFastField(input, "evidenceKind");
+    const evidenceOutcome = readProviderFastField(input, "evidenceOutcome");
+    const reason = readProviderFastField(input, "reason");
     if (
       state.isErr() ||
       evidenceKind.isErr() ||
       evidenceOutcome.isErr() ||
       reason.isErr()
     ) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+      return invalidProviderFastState();
     }
+    const parsedState = ProviderFastStateSchema.safeParse(state.value);
+    const parsedEvidenceKind = ProviderFastEvidenceKindSchema.safeParse(
+      evidenceKind.value,
+    );
+    const parsedEvidenceOutcome = ProviderFastEvidenceOutcomeSchema.safeParse(
+      evidenceOutcome.value,
+    );
+    const parsedReason = ProviderFastReasonSchema.safeParse(reason.value);
     if (
-      !isProviderFastState(state.value) ||
-      !isProviderFastEvidenceKind(evidenceKind.value) ||
-      !isProviderFastEvidenceOutcome(evidenceOutcome.value) ||
-      !isProviderFastReason(reason.value)
+      !parsedState.success ||
+      !parsedEvidenceKind.success ||
+      !parsedEvidenceOutcome.success ||
+      !parsedReason.success
     ) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
+      return invalidProviderFastState();
     }
     const carriesRuleId = ownKeys.includes("ruleId");
     if (!carriesRuleId) {
       return ok(
         Object.freeze({
-          state: state.value,
-          evidenceKind: evidenceKind.value,
-          evidenceOutcome: evidenceOutcome.value,
-          reason: reason.value,
+          state: parsedState.data,
+          evidenceKind: parsedEvidenceKind.data,
+          evidenceOutcome: parsedEvidenceOutcome.data,
+          reason: parsedReason.data,
         }),
       );
     }
-    const ruleId = readOwnDataDescriptor(input, "ruleId");
-    if (ruleId.isErr() || !isProviderFastRuleId(ruleId.value)) {
-      return err(makeJournalWriteFailedFailure("invalid-provider-fast-state"));
-    }
+    const ruleId = readProviderFastField(input, "ruleId");
+    if (ruleId.isErr()) return invalidProviderFastState();
+    const parsedRuleId = ProviderFastRuleIdSchema.safeParse(ruleId.value);
+    if (!parsedRuleId.success) return invalidProviderFastState();
     return ok(
       Object.freeze({
-        state: state.value,
-        evidenceKind: evidenceKind.value,
-        evidenceOutcome: evidenceOutcome.value,
-        reason: reason.value,
-        ruleId: ruleId.value,
+        state: parsedState.data,
+        evidenceKind: parsedEvidenceKind.data,
+        evidenceOutcome: parsedEvidenceOutcome.data,
+        reason: parsedReason.data,
+        ruleId: parsedRuleId.data,
       }),
     );
   },
@@ -313,7 +317,7 @@ export function renderProviderFastStatusLine(
   snapshot: ProviderFastPublicSnapshot | undefined,
 ): Result<string | undefined, PiAdapterFailure> {
   if (snapshot === undefined) {
-    return ok(undefined);
+    return ok(void 0);
   }
   return projectProviderFastJournalData(snapshot).map((data) => {
     const details: string[] = [];
@@ -340,42 +344,60 @@ const DIAGNOSTIC_FORBIDDEN_FIELD_PATTERN =
   /^(prompt|prompts|transcript|transcripts|message|messages|content|contents|assistant|thinking|reasoningtext|tool|tools|toolresult|toolresults|task|output|text|path|absolutepath|sessionpath)$/iu;
 
 const ABSOLUTE_PATH_LIKE = /(?:^|[\s"'])(?:\/|[A-Za-z]:\\|\\\\)/u;
+const PiDiagnosticJsonSchema: z.ZodType<JsonValue> = z.json();
 
 /**
  * Recursively strips transcript-like keys and absolute filesystem path strings
  * from a diagnostic value. Used by the child doctor report assembler.
  */
-export function sanitizeDiagnosticValue(value: unknown): unknown {
-  if (typeof value === "string") {
+function sanitizeParsedDiagnosticValue(value: JsonValue): JsonValue {
+  const stringValue = z.string().safeParse(value);
+  if (stringValue.success) {
     if (
-      value.startsWith("/") ||
-      value.startsWith("\\\\") ||
-      /^[A-Za-z]:[\\/]/u.test(value) ||
-      ABSOLUTE_PATH_LIKE.test(value)
+      stringValue.data.startsWith("/") ||
+      stringValue.data.startsWith("\\\\") ||
+      /^[A-Za-z]:[\\/]/u.test(stringValue.data) ||
+      ABSOLUTE_PATH_LIKE.test(stringValue.data)
     ) {
       return "[omitted]";
     }
-    return value;
+    return stringValue.data;
   }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    value === null
-  ) {
-    return value;
+
+  const arrayValue = z.array(PiDiagnosticJsonSchema).safeParse(value);
+  if (arrayValue.success) {
+    return arrayValue.data.map((entry) => sanitizeParsedDiagnosticValue(entry));
   }
-  if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeDiagnosticValue(entry));
-  }
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value)) {
+
+  const objectValue = z
+    .record(z.string(), PiDiagnosticJsonSchema)
+    .safeParse(value);
+  if (objectValue.success) {
+    const out: Record<string, JsonValue> = {};
+    for (const [key, nested] of Object.entries(objectValue.data)) {
       if (DIAGNOSTIC_FORBIDDEN_FIELD_PATTERN.test(key)) continue;
-      out[key] = sanitizeDiagnosticValue(nested);
+      out[key] = sanitizeParsedDiagnosticValue(nested);
     }
     return out;
   }
-  return undefined;
+
+  return value;
+}
+
+const parseDiagnosticValue = Result.fromThrowable(
+  (value: JsonValue | undefined): JsonValue | undefined => {
+    const parsed = PiDiagnosticJsonSchema.safeParse(value);
+    return parsed.success
+      ? sanitizeParsedDiagnosticValue(parsed.data)
+      : undefined;
+  },
+  () => void 0,
+);
+
+export function sanitizeDiagnosticValue(
+  value: JsonValue | undefined,
+): JsonValue | undefined {
+  return parseDiagnosticValue(value).unwrapOr(void 0);
 }
 
 export interface PiJournalEventInput {
@@ -410,6 +432,12 @@ export interface PiAssistantUsageInput {
 }
 
 export type PiUsageRecordOutcome = "inserted" | "noop";
+
+type PiUsageJournalData = {
+  source: PiAssistantUsageSource;
+  agentName?: string;
+  model?: string;
+};
 
 /** Injected journal-write seam. Satisfied by `RuntimeJournalWriter.write`. */
 export type PiJournalPort = Pick<RuntimeJournalWriter, "write">;
@@ -462,56 +490,82 @@ function failureScopeKey(failure: PiAdapterFailure): string {
  * cacheRead,cacheWrite}`, `message.usage.cost.total`) without ever
  * returning the message text itself.
  */
+const PiObservedJsonSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z
+      .number()
+      .or(z.literal(Number.POSITIVE_INFINITY))
+      .or(z.literal(Number.NEGATIVE_INFINITY))
+      .or(z.nan()),
+    z.boolean(),
+    z.null(),
+    z.array(PiObservedJsonSchema),
+    z.record(z.string(), PiObservedJsonSchema),
+  ]),
+);
+const PiObservedRecordSchema = z.record(z.string(), PiObservedJsonSchema);
+const NonNegativeFiniteNumberSchema = z.number().finite().nonnegative();
+
+const parseAssistantUsageRecord = Result.fromThrowable(
+  (
+    record: Record<string, JsonValue>,
+  ):
+    | { id: string; usage: Omit<PiAssistantUsageInput, "id" | "source"> }
+    | undefined => {
+    const messageResult = PiObservedRecordSchema.safeParse(record.message);
+    if (!messageResult.success) return undefined;
+    const messageRecord = messageResult.data;
+    if (!z.literal("assistant").safeParse(messageRecord.role).success) {
+      return undefined;
+    }
+    const idResult = z
+      .string()
+      .min(1)
+      .safeParse(messageRecord.id ?? messageRecord.responseId);
+    if (!idResult.success) return undefined;
+    const id = idResult.data;
+    const usageResult = PiObservedRecordSchema.safeParse(messageRecord.usage);
+    if (!usageResult.success) return { id, usage: {} };
+    const usageRecord = usageResult.data;
+    return {
+      id,
+      usage: {
+        inputTokens: safeNonNegativeNumber(usageRecord.input),
+        outputTokens: safeNonNegativeNumber(usageRecord.output),
+        cacheReadTokens: safeNonNegativeNumber(usageRecord.cacheRead),
+        cacheWriteTokens: safeNonNegativeNumber(usageRecord.cacheWrite),
+        cost: extractSafeCostTotal(usageRecord.cost),
+      },
+    };
+  },
+  () => void 0,
+);
+
 export function extractAssistantUsageFromMessage(
   record: Record<string, JsonValue>,
 ):
   | { id: string; usage: Omit<PiAssistantUsageInput, "id" | "source"> }
   | undefined {
-  const message = record.message;
-  if (typeof message !== "object" || message === null || Array.isArray(message))
-    return undefined;
-  const messageRecord = message as Record<string, JsonValue>;
-  if (messageRecord.role !== "assistant") return undefined;
-  const idCandidate = messageRecord.id ?? messageRecord.responseId;
-  if (typeof idCandidate !== "string" || idCandidate.length === 0)
-    return undefined;
-  const id = idCandidate;
-  const usageValue = messageRecord.usage;
-  if (
-    typeof usageValue !== "object" ||
-    usageValue === null ||
-    Array.isArray(usageValue)
-  ) {
-    return { id, usage: {} };
-  }
-  const usageRecord = usageValue as Record<string, JsonValue>;
-  return {
-    id,
-    usage: {
-      inputTokens: safeNonNegativeNumber(usageRecord.input),
-      outputTokens: safeNonNegativeNumber(usageRecord.output),
-      cacheReadTokens: safeNonNegativeNumber(usageRecord.cacheRead),
-      cacheWriteTokens: safeNonNegativeNumber(usageRecord.cacheWrite),
-      cost: extractSafeCostTotal(usageRecord.cost),
-    },
-  };
+  return parseAssistantUsageRecord(record).unwrapOr(void 0);
 }
 
 function safeNonNegativeNumber(
   value: JsonValue | undefined,
 ): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-    return undefined;
-  return value;
+  const parsed = NonNegativeFiniteNumberSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function extractSafeCostTotal(
   value: JsonValue | undefined,
 ): number | undefined {
-  if (typeof value === "number") return safeNonNegativeNumber(value);
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return undefined;
-  return safeNonNegativeNumber((value as Record<string, JsonValue>).total);
+  const direct = safeNonNegativeNumber(value);
+  if (direct !== undefined) return direct;
+  const objectResult = PiObservedRecordSchema.safeParse(value);
+  return objectResult.success
+    ? safeNonNegativeNumber(objectResult.data.total)
+    : undefined;
 }
 
 export interface PiTelemetryOptions {
@@ -645,9 +699,9 @@ export class PiTelemetry implements PiTelemetryUsageSink {
       event: "telemetry-activated",
       severity: "info",
     })
-      .orElse(() => okAsync(undefined))
+      .orElse(() => okAsync(void 0))
       .andThen(() => this.retention.onActivation())
-      .map(() => undefined)
+      .andThen(() => okAsync(void 0))
       .mapErr((cause) => makeRetentionFailedFailure(safeStoreErrorType(cause)));
   }
 
@@ -663,7 +717,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(input.event)) {
       return errAsync(makeJournalWriteFailedFailure("invalid-event-name"));
     }
-    const data: JsonObject = { ...(input.data ?? {}) };
+    const data: JsonObject = input.data === undefined ? {} : { ...input.data };
     return this.journal
       .write({
         source: { kind: "adapter", name: "pi" },
@@ -689,7 +743,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
           return okAsync(null);
         }),
       )
-      .map(() => undefined)
+      .andThen(() => okAsync(void 0))
       .mapErr((cause) =>
         makeJournalWriteFailedFailure(safeStoreErrorType(cause)),
       );
@@ -706,7 +760,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     input: PiAssistantUsageInput,
   ): ResultAsync<PiUsageRecordOutcome, PiAdapterFailure> {
     const observation: UsageObservation = {
-      id: input.id as UsageObservation["id"],
+      id: createUsageObservationId(input.id),
       timestamp: this.resolveUsageTimestamp(input.id, input.timestamp),
       source: {
         kind: "adapter",
@@ -736,15 +790,18 @@ export class PiTelemetry implements PiTelemetryUsageSink {
           severity: "info",
           workflowInstanceId: input.workflowInstanceId,
           stepId: input.stepId,
-          data: {
-            source: input.source,
-            ...(input.agentName !== undefined
-              ? { agentName: input.agentName }
-              : {}),
-            ...(input.model !== undefined ? { model: input.model } : {}),
-          },
+          data: (() => {
+            const data: PiUsageJournalData = { source: input.source };
+            if (input.agentName !== undefined) {
+              data.agentName = input.agentName;
+            }
+            if (input.model !== undefined) {
+              data.model = input.model;
+            }
+            return data;
+          })(),
         })
-          .orElse(() => okAsync(undefined))
+          .orElse(() => okAsync(void 0))
           .map(() => "inserted" as const);
       })
       .mapErr((cause: RuntimeStoreError) => {
@@ -805,7 +862,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
         phase: failure.phase,
         impact: failure.impact,
       },
-    }).orElse(() => okAsync(undefined));
+    }).orElse(() => okAsync(void 0));
   }
 
   /** Stops retention scheduling and releases the rotating log sink. Idempotent. */
@@ -815,7 +872,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
     this.notified.clear();
     this.usageTimestamps.clear();
     this.providerFastReported.clear();
-    this.shutdownOperation = this.disposeLogSink?.() ?? okAsync(undefined);
+    this.shutdownOperation = this.disposeLogSink?.() ?? okAsync(void 0);
     return this.shutdownOperation;
   }
 }
@@ -854,8 +911,14 @@ export function createPiTelemetryLogger(options: {
       const destination = asPinoDestination(sink);
       const root = pino({ name: "weave", level: "info" }, destination);
       const scoped = root.child({ module: "adapter-pi" });
+      const logger: PiAdapterLogger = {
+        debug: (obj, msg) => scoped.debug(obj, msg),
+        info: (obj, msg) => scoped.info(obj, msg),
+        warn: (obj, msg) => scoped.warn(obj, msg),
+        error: (obj, msg) => scoped.error(obj, msg),
+      };
       return {
-        logger: scoped as unknown as PiAdapterLogger,
+        logger,
         dispose: () =>
           sink.close().mapErr((cause) => makeLogWriteFailedFailure(cause.type)),
       };

@@ -66,6 +66,13 @@ export const PiDoctorCheckSchema = z
   .strict();
 
 export type PiDoctorCheck = z.infer<typeof PiDoctorCheckSchema>;
+type PiDoctorCheckDraft = {
+  id: PiDoctorCheckId;
+  status: z.infer<typeof DoctorCheckStatusSchema>;
+  detail?: string;
+  code?: z.infer<typeof PiDiagnosticCodeSchema>;
+};
+type PiDoctorResultCheck = PiDoctorResult["checks"][number];
 
 /** Closed outcome one isolated check may return. */
 export type PiDoctorCheckOutcome = {
@@ -150,27 +157,30 @@ function truncateDetail(detail: string | undefined): string | undefined {
   return detail.slice(0, PI_DOCTOR_BOUNDS.maxDetailCharacters);
 }
 
-function sanitizeCheck(check: PiDoctorCheck): PiDoctorCheck {
-  const cleaned = sanitizeDiagnosticValue(check) as {
-    readonly id?: unknown;
-    readonly status?: unknown;
-    readonly detail?: unknown;
-    readonly code?: unknown;
+function sanitizeCheck(check: PiDoctorCheckDraft): PiDoctorCheck {
+  const parsed = PiDoctorCheckSchema.safeParse(sanitizeDiagnosticValue(check));
+  if (!parsed.success) {
+    return {
+      id: check.id,
+      status: "fail",
+      detail: "check outcome failed sanitization",
+    };
+  }
+  const cleaned: PiDoctorCheckDraft = {
+    id: parsed.data.id,
+    status: parsed.data.status,
   };
-  const parsed = PiDoctorCheckSchema.safeParse({
-    id: cleaned.id ?? check.id,
-    status: cleaned.status ?? "fail",
-    ...(typeof cleaned.detail === "string"
-      ? { detail: truncateDetail(cleaned.detail) }
-      : {}),
-    ...(typeof cleaned.code === "string" ? { code: cleaned.code } : {}),
-  });
-  if (parsed.success) return parsed.data;
-  return {
-    id: check.id,
-    status: "fail",
-    detail: "check outcome failed sanitization",
-  };
+  const detail = truncateDetail(parsed.data.detail);
+  if (detail !== undefined) cleaned.detail = detail;
+  if (parsed.data.code !== undefined) cleaned.code = parsed.data.code;
+  const validated = PiDoctorCheckSchema.safeParse(cleaned);
+  return validated.success
+    ? validated.data
+    : {
+        id: check.id,
+        status: "fail",
+        detail: "check outcome failed sanitization",
+      };
 }
 
 function aggregateStatus(
@@ -188,22 +198,23 @@ function runIsolatedCheck(
   return Promise.resolve(run()).then(
     (result) =>
       result.match(
-        (outcome): PiDoctorCheck =>
-          sanitizeCheck({
-            id,
-            status: outcome.status,
-            ...(outcome.detail === undefined
-              ? {}
-              : { detail: truncateDetail(outcome.detail) }),
-            ...(outcome.code === undefined ? {} : { code: outcome.code }),
-          }),
-        (failure): PiDoctorCheck =>
-          sanitizeCheck({
+        (outcome): PiDoctorCheck => {
+          const draft: PiDoctorCheckDraft = { id, status: outcome.status };
+          const detail = truncateDetail(outcome.detail);
+          if (detail !== undefined) draft.detail = detail;
+          if (outcome.code !== undefined) draft.code = outcome.code;
+          return sanitizeCheck(draft);
+        },
+        (failure): PiDoctorCheck => {
+          const draft: PiDoctorCheckDraft = {
             id,
             status: "fail",
-            detail: truncateDetail(failure.message),
-            ...(failure.code === undefined ? {} : { code: failure.code }),
-          }),
+          };
+          const detail = truncateDetail(failure.message);
+          if (detail !== undefined) draft.detail = detail;
+          if (failure.code !== undefined) draft.code = failure.code;
+          return sanitizeCheck(draft);
+        },
       ),
     (): PiDoctorCheck => ({
       id,
@@ -227,34 +238,36 @@ export function runChildDoctor(
       ),
     ),
   ).map((settled) => {
+    const checks = settled.map((check): PiDoctorResultCheck => {
+      const result: PiDoctorResultCheck = {
+        id: check.id,
+        status: check.status,
+      };
+      if (check.detail !== undefined) result.detail = check.detail;
+      return result;
+    });
     const report: PiDoctorResult = {
       kind: "doctor",
       status: aggregateStatus(settled),
-      checks: settled.map((check) => ({
-        id: check.id,
-        status: check.status,
-        ...(check.detail === undefined ? {} : { detail: check.detail }),
-      })),
-      ...(input.diagnostic === true
-        ? {
-            diagnostics: {
-              healthOnly: input.healthOnly === true ? "true" : "false",
-              orphanPageSize: String(PI_DOCTOR_BOUNDS.orphanPageSize),
-              checkCount: String(settled.length),
-            },
-          }
-        : {}),
+      checks,
     };
+    if (input.diagnostic === true) {
+      report.diagnostics = {
+        healthOnly: input.healthOnly === true ? "true" : "false",
+        orphanPageSize: String(PI_DOCTOR_BOUNDS.orphanPageSize),
+        checkCount: String(settled.length),
+      };
+    }
     const sanitized = sanitizeDiagnosticValue(report);
     const parsed = PiDoctorResultSchema.safeParse(sanitized);
     if (!parsed.success) {
       return {
-        kind: "doctor" as const,
-        status: "unavailable" as const,
+        kind: "doctor",
+        status: "unavailable",
         checks: [
           {
             id: PI_DOCTOR_CHECK_IDS.capabilities,
-            status: "fail" as const,
+            status: "fail",
             detail: "doctor report failed schema validation",
           },
         ],
@@ -284,12 +297,14 @@ export function createPiDoctorPort(options: {
 }): PiAdapterDoctorPort {
   return {
     run(input) {
+      const healthOnly = options.healthOnly?.() === true;
+      if (input.diagnostic === undefined) {
+        return runChildDoctor({ ports: options.ports, healthOnly });
+      }
       return runChildDoctor({
         ports: options.ports,
-        ...(input.diagnostic === undefined
-          ? {}
-          : { diagnostic: input.diagnostic }),
-        healthOnly: options.healthOnly?.() === true,
+        diagnostic: input.diagnostic,
+        healthOnly,
       });
     },
   };
@@ -310,11 +325,9 @@ export function failedDoctorCheck(
   detail: string,
   code?: z.infer<typeof PiDiagnosticCodeSchema>,
 ): PiDoctorCheckOutcome {
-  return {
-    status: "fail",
-    detail: truncateDetail(detail) ?? detail,
-    ...(code === undefined ? {} : { code }),
-  };
+  const bounded = truncateDetail(detail) ?? detail;
+  if (code === undefined) return { status: "fail", detail: bounded };
+  return { status: "fail", detail: bounded, code };
 }
 
 /**
@@ -457,10 +470,7 @@ export function createStoreBackedDoctorCheckPorts(options: {
   >;
   readonly listSessionsByRef?: (
     refs: readonly string[],
-  ) => ResultAsync<
-    readonly { readonly state: string }[],
-    unknown
-  >;
+  ) => ResultAsync<readonly { readonly state: string }[], unknown>;
   readonly cacheMode?: "active" | "degraded";
   readonly listMetadata?: () => ResultAsync<
     readonly {
@@ -478,11 +488,12 @@ export function createStoreBackedDoctorCheckPorts(options: {
     capabilities: options.capabilities ?? skipped.capabilities,
     permissions: options.permissions ?? skipped.permissions,
     sessions: () => {
-      if (options.readRefs === undefined || options.listSessionsByRef === undefined) {
+      const readRefs = options.readRefs;
+      const listSessionsByRef = options.listSessionsByRef;
+      if (readRefs === undefined || listSessionsByRef === undefined) {
         return skipped.sessions();
       }
-      return options
-        .readRefs()
+      return readRefs()
         .mapErr(
           (): PiDoctorCheckFailure => ({
             type: "CheckFailed",
@@ -494,7 +505,7 @@ export function createStoreBackedDoctorCheckPorts(options: {
           const refs = scan.refs
             .slice(0, PI_DOCTOR_BOUNDS.orphanPageSize)
             .map((row) => row.sessionRef);
-          return options.listSessionsByRef!(refs).mapErr(
+          return listSessionsByRef(refs).mapErr(
             (): PiDoctorCheckFailure => ({
               type: "CheckFailed",
               message: "session list failed",

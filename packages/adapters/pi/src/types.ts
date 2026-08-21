@@ -14,6 +14,9 @@
  */
 
 import { err, ok, Result } from "neverthrow";
+import { z } from "zod";
+import type { PiAdapterFailure } from "./errors.js";
+import type { JsonValue } from "./strict-json.js";
 
 export type {
   PiChildSessionEvent,
@@ -142,68 +145,82 @@ export type PiProviderEventProjectionError = {
   readonly type: "UnsupportedProviderEvent";
 };
 
+const PiProviderHookNameSchema = z.enum([
+  "before_provider_request",
+  "before_provider_headers",
+  "after_provider_response",
+]);
+const PiProviderStatusSchema = z.number();
+
+const projectedProviderRequest = (): PiBeforeProviderRequestEvent => ({
+  type: "before_provider_request",
+});
+const projectedProviderHeaders = (): PiBeforeProviderHeadersEvent => ({
+  type: "before_provider_headers",
+});
+const projectedProviderResponse = (
+  status: number,
+): PiAfterProviderResponseEvent => ({
+  type: "after_provider_response",
+  status,
+});
+const unsupportedProviderEvent = (): PiProviderEventProjectionError => ({
+  type: "UnsupportedProviderEvent",
+});
+
 /**
  * Project a host provider hook into the adapter-owned shape. Copies only the
  * event name and, for responses, the integer status. Payload, headers, and
  * other harness fields stay behind this boundary.
  */
-export function projectPiProviderEvent(
-  event: unknown,
+export function projectPiProviderEvent<TEvent>(
+  event: TEvent,
 ): Result<PiProviderEventProjection, PiProviderEventProjectionError> {
-  const projected = Result.fromThrowable(
-    () => {
-      if (typeof event !== "object" || event === null) {
-        return err({ type: "UnsupportedProviderEvent" } as const);
-      }
+  const projected = Result.fromThrowable(() => {
+    const candidate = new Object(event);
+    if (candidate !== event) return err(unsupportedProviderEvent());
 
-      const prototype = Object.getPrototypeOf(event);
-      if (prototype !== Object.prototype && prototype !== null) {
-        return err({ type: "UnsupportedProviderEvent" } as const);
-      }
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return err(unsupportedProviderEvent());
+    }
 
-      const descriptors = Object.create(null) as Record<
-        string,
-        PropertyDescriptor
-      >;
-      for (const key of Reflect.ownKeys(event)) {
-        if (typeof key !== "string") {
-          return err({ type: "UnsupportedProviderEvent" } as const);
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(event, key);
-        if (
-          descriptor === undefined ||
-          !("value" in descriptor) ||
-          descriptor.enumerable !== true ||
-          descriptor.writable !== true ||
-          descriptor.configurable !== true
-        ) {
-          return err({ type: "UnsupportedProviderEvent" } as const);
-        }
-        descriptors[key] = descriptor;
+    const descriptors: Record<string, PropertyDescriptor> = Object.create(null);
+    for (const key of Reflect.ownKeys(candidate)) {
+      const stringKey = String(key);
+      if (key !== stringKey) return err(unsupportedProviderEvent());
+      const descriptor = Object.getOwnPropertyDescriptor(candidate, stringKey);
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true ||
+        descriptor.writable !== true ||
+        descriptor.configurable !== true
+      ) {
+        return err(unsupportedProviderEvent());
       }
+      descriptors[stringKey] = descriptor;
+    }
 
-      const type = descriptors.type?.value;
-      if (typeof type !== "string") {
-        return err({ type: "UnsupportedProviderEvent" } as const);
-      }
-      if (type === "before_provider_request") {
-        return ok({ type: "before_provider_request" } as const);
-      }
-      if (type === "before_provider_headers") {
-        return ok({ type: "before_provider_headers" } as const);
-      }
-      if (type !== "after_provider_response") {
-        return err({ type: "UnsupportedProviderEvent" } as const);
-      }
+    const parsedType = PiProviderHookNameSchema.safeParse(
+      descriptors.type?.value,
+    );
+    if (!parsedType.success) return err(unsupportedProviderEvent());
+    if (parsedType.data === "before_provider_request") {
+      return ok(projectedProviderRequest());
+    }
+    if (parsedType.data === "before_provider_headers") {
+      return ok(projectedProviderHeaders());
+    }
 
-      const status = descriptors.status?.value;
-      if (typeof status !== "number" || !Number.isInteger(status)) {
-        return err({ type: "UnsupportedProviderEvent" } as const);
-      }
-      return ok({ type: "after_provider_response", status } as const);
-    },
-    () => ({ type: "UnsupportedProviderEvent" }) as const,
-  )();
+    const parsedStatus = PiProviderStatusSchema.safeParse(
+      descriptors.status?.value,
+    );
+    if (!parsedStatus.success || !Number.isInteger(parsedStatus.data)) {
+      return err(unsupportedProviderEvent());
+    }
+    return ok(projectedProviderResponse(parsedStatus.data));
+  }, unsupportedProviderEvent)();
 
   return projected.andThen((result) => result);
 }
@@ -352,6 +369,48 @@ export type PiTerminalInputHandler = (data: string) =>
     }
   | undefined;
 
+type PiUiHostCallable =
+  | ((...args: never[]) => void)
+  | ((...args: never[]) => PiUiHostValue);
+type PiUiKeybindingConfig = Readonly<
+  Record<string, string | readonly string[] | undefined>
+>;
+interface PiUiHostObject {
+  readonly width?: number;
+  readonly requestRender?: () => void;
+  readonly terminal?: { readonly rows?: number };
+  readonly matches?: (...args: never[]) => boolean;
+  readonly getKeys?: (...args: never[]) => readonly string[] | undefined;
+  readonly getEffectiveConfig?: (...args: never[]) => PiUiKeybindingConfig;
+}
+type PiUiHostValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | PiUiHostCallable
+  | readonly PiUiHostValue[]
+  | PiUiHostObject;
+type PiEditorFactory = (...args: never[]) => object;
+type PiUiWidgetValue =
+  | string
+  | readonly string[]
+  | (() => PiToolRenderComponent)
+  | undefined;
+type PiEventHandlerNoValue = ReturnType<() => void>;
+type PiEventHandlerResult =
+  | { readonly action: "continue" | "handled" }
+  | { readonly cancel: true }
+  | { readonly systemPrompt: string }
+  | undefined
+  | PiEventHandlerNoValue;
+
+interface PiUiCustomComponent {
+  render(width: number): string[];
+  invalidate?(): void;
+}
+
 export interface PiUiPort {
   readonly theme?: PiUiThemePort;
   notify(message: string, level?: PiUiNotifyLevel): void;
@@ -372,23 +431,23 @@ export interface PiUiPort {
   setStatus(key: string, value: string | undefined): void;
   setWidget(
     key: string,
-    value: unknown,
+    value: PiUiWidgetValue,
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void;
   /**
-   * Mirrors Pi's own `ctx.ui.getEditorComponent()`. Deliberately typed
-   * `unknown` - the concrete `EditorFactory`/`CustomEditor` shape is owned
-   * by the real `@earendil-works/pi-coding-agent`/`@earendil-works/pi-tui`
-   * packages, which this narrow port does not depend on. Only
-   * `src/extension.ts` (the real adapter boundary) casts through this.
+   * Mirrors Pi's own `ctx.ui.getEditorComponent()`. The concrete
+   * `EditorFactory`/`CustomEditor` shape is owned by the real
+   * `@earendil-works/pi-coding-agent`/`@earendil-works/pi-tui` packages, so
+   * this port keeps only the callable identity needed to restore the prior
+   * editor. `src/extension.ts` is the real adapter boundary.
    */
-  getEditorComponent?(): unknown;
+  getEditorComponent?(): PiEditorFactory | undefined;
   /** Mirrors Pi's own `ctx.ui.setEditorComponent()`; pass `undefined` to restore the host default editor. */
-  setEditorComponent?(factory: unknown): void;
+  setEditorComponent?<TFactory>(factory: TFactory): void;
   /** Pi's real custom UI boundary for complex interactive components. */
   custom?<T>(
     factory: (
-      tui: unknown,
+      tui: PiUiHostValue,
       /**
        * Pi hands the factory its `Theme`, a colour palette. Components that
        * need an `EditorTheme` (a record of styling functions) must build one
@@ -396,9 +455,9 @@ export interface PiUiPort {
        * a styling record belongs fails only at render time.
        */
       theme: PiUiThemePort,
-      keybindings: unknown,
+      keybindings: PiUiHostValue,
       done: (value: T) => void,
-    ) => unknown,
+    ) => PiUiCustomComponent,
     options?: PiUiCustomOptions,
   ): Promise<T>;
   /**
@@ -488,10 +547,10 @@ export interface PiCommandRegistration {
 }
 
 /** Lifecycle event handler signature used by `pi.on(...)`. */
-export type PiEventHandler = (
-  event: unknown,
+export type PiEventHandler = <TEvent>(
+  event: TEvent,
   ctx: PiSessionContext,
-) => unknown | Promise<unknown>;
+) => PiEventHandlerResult | Promise<PiEventHandlerResult>;
 
 /**
  * A single content block returned from a registered tool's `execute()`.
@@ -519,8 +578,10 @@ export interface PiToolRenderOptions {
   readonly isPartial: boolean;
 }
 
+type PiToolArguments = Readonly<Record<string, JsonValue>>;
+
 export interface PiToolRenderContext {
-  readonly args?: Record<string, unknown>;
+  readonly args?: PiToolArguments;
   readonly lastComponent?: PiToolRenderComponent;
   /**
    * Pi's own `ToolRenderContext.executionStarted`. A call renderer uses it to
@@ -550,7 +611,7 @@ export interface PiToolRegistration {
    */
   readonly renderShell?: "default" | "self";
   readonly renderCall?: (
-    args: Record<string, unknown>,
+    args: PiToolArguments,
     theme: PiUiThemePort,
     context: PiToolRenderContext,
   ) => PiToolRenderComponent;
@@ -560,9 +621,9 @@ export interface PiToolRegistration {
     theme: PiUiThemePort,
     context: PiToolRenderContext,
   ) => PiToolRenderComponent;
-  execute(
+  execute<TParams>(
     toolCallId: string,
-    params: Record<string, unknown>,
+    params: TParams,
     signal: AbortSignal | undefined,
     onUpdate: ((update: PiToolResult) => void) | undefined,
     ctx: PiSessionContext,
@@ -583,7 +644,7 @@ export interface PiExtensionApi {
     options?: { readonly deliverAs?: "steer" | "followUp" },
   ): void;
   /** Appends a custom entry to the current Pi session branch. */
-  appendEntry(type: string, data: unknown): void;
+  appendEntry<TEntry>(type: string, data: TEntry): void;
   /** Reads and changes Pi's active tool list. */
   getActiveTools(): readonly string[];
   setActiveTools(names: readonly string[]): void;
@@ -618,7 +679,7 @@ export interface PiExtensionApi {
    * `unknown` deliberately — its full shape belongs to `@earendil-works/pi-ai`,
    * and this adapter only ever passes back a wrapped copy of the host's own.
    */
-  registerProvider?: (provider: unknown) => void;
+  registerProvider?: <TProvider>(provider: TProvider) => void;
   /**
    * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
    * an invalid or unauthenticated model. May also *resolve* to `false`
@@ -631,9 +692,7 @@ export interface PiExtensionApi {
   /** Reads Pi's current-session thinking level (`ExtensionAPI.getThinkingLevel`). */
   getThinkingLevel?: () => string;
   /** Applies Pi's current-session thinking level (`ExtensionAPI.setThinkingLevel`). */
-  setThinkingLevel?: (
-    level: string,
-  ) => void | undefined | Promise<void | undefined>;
+  setThinkingLevel?: (level: string) => void | Promise<void>;
   /**
    * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Pi adapter contract
    *). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
@@ -673,11 +732,21 @@ export interface IdGenerator {
 }
 
 /** Minimal structural logger port compatible with the shared pino instance. */
+type PiLogJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly PiLogJsonValue[]
+  | { readonly [key: string]: PiLogJsonValue };
+type PiLogValue = PiLogJsonValue | PiAdapterFailure | Error | undefined;
+type PiLogFields = { readonly [key: string]: PiLogValue };
+
 export interface PiAdapterLogger {
-  debug(obj: Record<string, unknown>, msg?: string): void;
-  info(obj: Record<string, unknown>, msg?: string): void;
-  warn(obj: Record<string, unknown>, msg?: string): void;
-  error(obj: Record<string, unknown>, msg?: string): void;
+  debug(obj: PiLogFields, msg?: string): void;
+  info(obj: PiLogFields, msg?: string): void;
+  warn(obj: PiLogFields, msg?: string): void;
+  error(obj: PiLogFields, msg?: string): void;
 }
 
 export type {

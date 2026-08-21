@@ -93,6 +93,7 @@ import {
   PiExtensionUiResponseSchema,
   projectAssistantUsageFacts,
 } from "./child-session-events.js";
+import type { JsonValue } from "./strict-json.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -246,7 +247,7 @@ const labelToken = z
  * provider, or model label is a short readable word list; anything that looks
  * like a secret is rejected rather than truncated.
  */
-const SECRET_SHAPED_LABEL =
+const SECRET_LIKE_LABEL =
   /sk-|pk-|rk-|\b(?:token|key|apikey|secret|bearer|password|passwd|credential|credentials|session|cookie|signature|auth)\b|[A-Za-z0-9_-]{24,}/iu;
 
 /**
@@ -255,7 +256,7 @@ const SECRET_SHAPED_LABEL =
  * pass-through of provider output cannot widen the projection.
  */
 export const TrustedLabelSchema = labelToken.refine(
-  (value) => !SECRET_SHAPED_LABEL.test(value),
+  (value) => !SECRET_LIKE_LABEL.test(value),
   "secret-shaped label",
 );
 
@@ -329,45 +330,71 @@ const CLEARED: PiChildProviderErrorAbsence = { type: "ProviderErrorCleared" };
 export const CHILD_PROVIDER_ERROR_REPLAY_FIELD = "weaveProviderError";
 
 // ---------------------------------------------------------------------------
-// Safe record access
+// Host value contracts and safe record access
 // ---------------------------------------------------------------------------
 
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+/** A host value that has not yet been accepted by a Pi event schema. */
+type PiHostCallable = (...args: PiHostValue[]) => PiHostValue;
+type PiHostValue = JsonValue | undefined | bigint | symbol | PiHostCallable;
 
-/**
- * Read one property without trusting the descriptor. A hostile or exotic host
- * object can expose a throwing getter or a throwing Proxy trap, so the read is
- * wrapped and a throw is reported as an absent value. The whole projection is
- * additionally wrapped (see `guard`), so even a throw from a path this
- * helper does not cover cannot escape.
- */
-const readProperty = Result.fromThrowable(
-  (record: Record<string, unknown>, key: string): unknown => record[key],
-  () => UNAVAILABLE,
-);
+/** A host record whose property reads are narrowed at the use site. */
+interface PiHostRecord {
+  readonly [key: string]: PiHostValue;
+}
 
-const field = (
-  record: Record<string, unknown> | undefined,
-  key: string,
-): unknown => {
-  if (record === undefined) return undefined;
-  const read = readProperty(record, key);
-  return read.isOk() ? read.value : undefined;
+type PiHostRecordLike<T> = T & PiHostRecord;
+
+const PiStringSchema = z.string();
+const PiFiniteNumberSchema = z.number().finite();
+const PiBooleanSchema = z.boolean();
+const PROPERTY_READ_FAILED = Symbol("property-read-failed");
+
+/** Narrow an arbitrary host value to an object-shaped property container. */
+const isHostRecord = <T>(value: T): value is PiHostRecordLike<T> => {
+  const boxed = new Object(value);
+  if (boxed !== value || Array.isArray(value)) return false;
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(boxed),
+    () => PROPERTY_READ_FAILED,
+  )();
+  return prototype.isOk() && prototype.value !== Function.prototype;
 };
 
-const stringField = (
-  record: Record<string, unknown> | undefined,
+/** Read a property without trusting inheritance or a throwing getter. */
+const readProperty = <T>(
+  record: PiHostRecordLike<T>,
+  key: string,
+): PiHostValue | undefined => {
+  const own = Result.fromThrowable(
+    () => Object.hasOwn(record, key),
+    () => PROPERTY_READ_FAILED,
+  )();
+  if (own.isOk() && own.value === false) return undefined;
+  const read = Result.fromThrowable(
+    () => record[key],
+    () => PROPERTY_READ_FAILED,
+  )();
+  if (read.isErr() || read.value === PROPERTY_READ_FAILED) return undefined;
+  return read.value;
+};
+
+const field = <T>(
+  record: PiHostRecordLike<T> | undefined,
+  key: string,
+): PiHostValue | undefined => {
+  if (record === undefined) return;
+  return readProperty(record, key);
+};
+
+const stringField = <T>(
+  record: PiHostRecordLike<T> | undefined,
   key: string,
 ): string | undefined => {
-  const value = field(record, key);
-  return typeof value === "string" ? value : undefined;
+  const parsed = PiStringSchema.safeParse(field(record, key));
+  return parsed.success ? parsed.data : undefined;
 };
 
-const trustedLabel = (value: unknown): string | undefined => {
-  if (typeof value !== "string") return undefined;
+const trustedLabel = (value: PiHostValue | undefined): string | undefined => {
   const parsed = TrustedLabelSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 };
@@ -387,21 +414,22 @@ const ANCHORED_STATUS = /^(\d{3})(?=$|[\s{[,;:])/u;
 const BARE_CODE_BODY = /^([A-Za-z][A-Za-z0-9_]{2,47})\.?$/u;
 
 const SAFE_CODE_SET: ReadonlySet<string> = new Set(PI_CHILD_SAFE_ERROR_CODES);
+const PiChildSafeErrorCodeSchema = z.enum(PI_CHILD_SAFE_ERROR_CODES);
 
 const allowlistedCode = (token: string): PiChildSafeErrorCode | undefined => {
   const normalized = token.toLowerCase();
   if (normalized.length > MAX_CHILD_ERROR_CODE_LENGTH) return undefined;
-  return SAFE_CODE_SET.has(normalized)
-    ? (normalized as PiChildSafeErrorCode)
-    : undefined;
+  if (!SAFE_CODE_SET.has(normalized)) return undefined;
+  const parsed = PiChildSafeErrorCodeSchema.safeParse(normalized);
+  return parsed.success ? parsed.data : undefined;
 };
 
 /** The admissible evidence one `errorMessage` yields. */
 interface AnchoredEvidence {
-  readonly httpStatus?: number;
-  readonly code?: PiChildSafeErrorCode;
+  httpStatus?: number;
+  code?: PiChildSafeErrorCode;
   /** True when the value carried any text at all, status or not. */
-  readonly present: boolean;
+  present: boolean;
 }
 
 const NO_EVIDENCE: AnchoredEvidence = { present: false };
@@ -437,21 +465,12 @@ function anchoredEvidence(raw: string | undefined): AnchoredEvidence {
   ).replace(/^\s+/u, "");
 
   // JSON-shaped remainder is never inspected for type/code/status members.
-  if (body.startsWith("{") || body.startsWith("[")) {
-    return {
-      ...(httpStatus === undefined ? {} : { httpStatus }),
-      present: true,
-    };
-  }
-
-  return {
-    ...(httpStatus === undefined ? {} : { httpStatus }),
-    ...(() => {
-      const code = anchoredBareCode(body);
-      return code === undefined ? {} : { code };
-    })(),
-    present: true,
-  };
+  const evidence: AnchoredEvidence = { present: true };
+  if (httpStatus !== undefined) evidence.httpStatus = httpStatus;
+  if (body.startsWith("{") || body.startsWith("[")) return evidence;
+  const code = anchoredBareCode(body);
+  if (code !== undefined) evidence.code = code;
+  return evidence;
 }
 
 /**
@@ -549,16 +568,16 @@ const build = (
   const provider = trustedLabel(descriptor?.provider);
   const model = trustedLabel(descriptor?.model);
   const projected: PiChildProviderError = {
-    ...(source === undefined ? {} : { source }),
-    ...(provider === undefined ? {} : { provider }),
-    ...(model === undefined ? {} : { model }),
     class: cls,
-    ...(evidence.httpStatus === undefined
-      ? {}
-      : { httpStatus: evidence.httpStatus }),
-    ...(evidence.code === undefined ? {} : { code: evidence.code }),
     message: CHILD_ERROR_CANONICAL_MESSAGE[cls],
   };
+  if (source !== undefined) projected.source = source;
+  if (provider !== undefined) projected.provider = provider;
+  if (model !== undefined) projected.model = model;
+  if (evidence.httpStatus !== undefined) {
+    projected.httpStatus = evidence.httpStatus;
+  }
+  if (evidence.code !== undefined) projected.code = evidence.code;
   // Re-validate: only a schema-valid, bounded, closed record leaves here.
   const parsed = PiChildProviderErrorSchema.safeParse(projected);
   return parsed.success ? ok(parsed.data) : err(UNAVAILABLE);
@@ -574,10 +593,10 @@ const build = (
  * tampered or stale saved value cannot widen the model.
  */
 const preProjected = (
-  message: Record<string, unknown> | undefined,
+  message: PiHostRecord,
 ): Result<PiChildProviderError, PiChildProviderErrorAbsence> | undefined => {
   const carried = field(message, CHILD_PROVIDER_ERROR_REPLAY_FIELD);
-  if (carried === undefined) return undefined;
+  if (carried === undefined) return;
   const parsed = PiChildProviderErrorSchema.safeParse(carried);
   return parsed.success ? ok(parsed.data) : err(UNAVAILABLE);
 };
@@ -618,27 +637,26 @@ const guardValue = <A>(work: () => A, fallback: A): A => {
  * helpers, so no caller outside this package can feed arbitrary unknown input
  * into the projection.
  */
-export function projectAssistantProviderError(
-  message: unknown,
+function projectAssistantProviderRecord<T>(
+  record: T,
   descriptor?: PiChildProviderErrorDescriptor,
 ): Result<PiChildProviderError, PiChildProviderErrorAbsence> {
-  return guard(() => {
-    const record = asRecord(message);
-    if (record === undefined) return err(UNAVAILABLE);
-    const role = field(record, "role");
-    if (typeof role === "string" && role !== "assistant") {
-      return err(UNAVAILABLE);
-    }
+  if (!isHostRecord(record)) return err(UNAVAILABLE);
+  const role = stringField(record, "role");
+  if (role !== undefined && role !== "assistant") return err(UNAVAILABLE);
+  const stopReason = stringField(record, "stopReason");
+  if (stopReason === undefined) return err(UNAVAILABLE);
+  if (stopReason !== "error") return err(CLEARED);
+  const carried = preProjected(record);
+  if (carried !== undefined) return carried;
+  return build(stringField(record, "errorMessage"), descriptor);
+}
 
-    const stopReason = field(record, "stopReason");
-    if (typeof stopReason !== "string") return err(UNAVAILABLE);
-    if (stopReason !== "error") return err(CLEARED);
-
-    const carried = preProjected(record);
-    if (carried !== undefined) return carried;
-
-    return build(stringField(record, "errorMessage"), descriptor);
-  });
+export function projectAssistantProviderError<T>(
+  message: T,
+  descriptor?: PiChildProviderErrorDescriptor,
+): Result<PiChildProviderError, PiChildProviderErrorAbsence> {
+  return guard(() => projectAssistantProviderRecord(message, descriptor));
 }
 
 /**
@@ -653,10 +671,7 @@ export function parsePiChildProviderError(
   descriptor?: PiChildProviderErrorDescriptor,
 ): Result<PiChildProviderError, PiChildProviderErrorAbsence> {
   if (event.type !== "message_end") return err(UNAVAILABLE);
-  return guard(() => {
-    const record = event as unknown as Record<string, unknown>;
-    return projectAssistantProviderError(field(record, "message"), descriptor);
-  });
+  return guard(() => projectAssistantProviderRecord(event.message, descriptor));
 }
 
 // ---------------------------------------------------------------------------
@@ -674,29 +689,25 @@ export const SAFE_ASSISTANT_MESSAGE_FIELDS = [
   "timestamp",
 ] as const;
 
-const ownDataField = (
-  record: Record<string, unknown> | undefined,
+const ownDataField = <T>(
+  record: T | undefined,
   key: string,
-): unknown => {
-  if (record === undefined) return undefined;
-  const descriptor = Result.fromThrowable(
-    () => Object.getOwnPropertyDescriptor(record, key),
-    () => undefined,
-  )();
-  if (descriptor.isErr() || descriptor.value === undefined) return undefined;
-  return "value" in descriptor.value ? descriptor.value.value : undefined;
+): PiHostValue | undefined => {
+  if (record === undefined || !isHostRecord(record)) return;
+  return field(record, key);
 };
 
 const SENSITIVE_REPLAY_TEXT =
   /(?:SENTINEL|https?:\/\/|\bBearer\s|\bCookie\s*:|\b(?:api[-_ ]?key|secret|token)\s*[:=]|(?:^|\s)\/(?:Users|home|private|tmp)\/|\b[A-Za-z]:\\)/iu;
 
-const boundedString = (
-  value: unknown,
+const boundedString = <T>(
+  value: T,
   maxLength = MAX_CHILD_EVENT_STRING,
-): string | undefined =>
-  typeof value === "string" && !SENSITIVE_REPLAY_TEXT.test(value)
-    ? value.slice(0, maxLength)
-    : undefined;
+): string | undefined => {
+  const parsed = PiStringSchema.safeParse(value);
+  if (!parsed.success || SENSITIVE_REPLAY_TEXT.test(parsed.data)) return;
+  return parsed.data.slice(0, maxLength);
+};
 
 export const TOOL_RESULT_DETAILS_UNAVAILABLE =
   "Tool result details unavailable.";
@@ -715,24 +726,32 @@ const HIGH_ENTROPY_HEX = /\b[0-9a-f]{24,}\b/iu;
 const HIGH_ENTROPY_BASE64 =
   /\b(?=[A-Za-z0-9+/_-]{24,}={0,2}\b)(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z0-9+/_-]+={0,2}\b/u;
 
-const safeToolText = (value: unknown): string | undefined => {
-  if (typeof value !== "string") return undefined;
-  if (value.length === 0 || value.length > MAX_SAFE_TOOL_TEXT_LENGTH)
-    return undefined;
-  if (!SAFE_TOOL_TEXT_CHARACTERS.test(value)) return undefined;
-  if (UNSAFE_TOOL_TEXT_MARKER.test(value)) return undefined;
-  if (JWT_LIKE_TEXT.test(value)) return undefined;
-  if (HIGH_ENTROPY_HEX.test(value)) return undefined;
-  if (HIGH_ENTROPY_BASE64.test(value)) return undefined;
-  return value;
+const safeToolText = <T>(value: T): string | undefined => {
+  const parsed = PiStringSchema.safeParse(value);
+  if (!parsed.success) return;
+  const text = parsed.data;
+  if (text.length === 0 || text.length > MAX_SAFE_TOOL_TEXT_LENGTH) return;
+  if (!SAFE_TOOL_TEXT_CHARACTERS.test(text)) return;
+  if (UNSAFE_TOOL_TEXT_MARKER.test(text)) return;
+  if (JWT_LIKE_TEXT.test(text)) return;
+  if (HIGH_ENTROPY_HEX.test(text)) return;
+  if (HIGH_ENTROPY_BASE64.test(text)) return;
+  return text;
 };
 
-const boundedNumber = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+const boundedNumber = <T>(value: T): number | undefined => {
+  const parsed = PiFiniteNumberSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+};
 
-const copyString = (
-  target: Record<string, unknown>,
-  source: Record<string, unknown> | undefined,
+type PiReplayValue = JsonValue | PiChildProviderError;
+interface PiReplayRecord {
+  [key: string]: PiReplayValue;
+}
+
+const copyString = <T>(
+  target: PiReplayRecord,
+  source: T | undefined,
   key: string,
   maxLength = MAX_CHILD_EVENT_STRING,
 ): void => {
@@ -740,22 +759,22 @@ const copyString = (
   if (value !== undefined) target[key] = value;
 };
 
-const copyNumber = (
-  target: Record<string, unknown>,
-  source: Record<string, unknown> | undefined,
+const copyNumber = <T>(
+  target: PiReplayRecord,
+  source: T | undefined,
   key: string,
 ): void => {
   const value = boundedNumber(ownDataField(source, key));
   if (value !== undefined) target[key] = value;
 };
 
-const copyBoolean = (
-  target: Record<string, unknown>,
-  source: Record<string, unknown> | undefined,
+const copyBoolean = <T>(
+  target: PiReplayRecord,
+  source: T | undefined,
   key: string,
 ): void => {
-  const value = ownDataField(source, key);
-  if (typeof value === "boolean") target[key] = value;
+  const parsed = PiBooleanSchema.safeParse(ownDataField(source, key));
+  if (parsed.success) target[key] = parsed.data;
 };
 
 const SAFE_TOOL_VALUE_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
@@ -765,91 +784,127 @@ const UNSAFE_TOOL_VALUE_KEY =
 const safeValueKey = (key: string): boolean =>
   SAFE_TOOL_VALUE_KEY.test(key) && !UNSAFE_TOOL_VALUE_KEY.test(key);
 
-const hasPlainPrototype = (value: object, array: boolean): boolean => {
-  const prototype = guardValue(() => Object.getPrototypeOf(value), undefined);
+const PROTOTYPE_READ_FAILED = Symbol("prototype-read-failed");
+
+const hasPlainPrototype = (
+  value: PiHostRecord | PiHostValue[],
+  array: boolean,
+): boolean => {
+  const prototype = Result.fromThrowable(
+    () => Object.getPrototypeOf(value),
+    () => PROTOTYPE_READ_FAILED,
+  )();
+  if (prototype.isErr() || prototype.value === PROTOTYPE_READ_FAILED) {
+    return false;
+  }
   return array
-    ? prototype === Array.prototype
-    : prototype === Object.prototype || prototype === null;
+    ? prototype.value === Array.prototype
+    : prototype.value === Object.prototype || prototype.value === null;
 };
 
 /** Closed JSON projection for reducer-visible tool and extension UI values. */
 const projectReducerValue = (
-  value: unknown,
+  value: PiHostValue | undefined,
   placeholder = TOOL_RESULT_DETAILS_UNAVAILABLE,
   depth = 0,
-): unknown => {
-  if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string") return safeToolText(value) ?? placeholder;
-  if (typeof value === "number")
-    return Number.isFinite(value) ? value : placeholder;
+): PiReplayValue => {
+  const nullValue = z.null().safeParse(value);
+  if (nullValue.success) return nullValue.data;
+  const booleanValue = PiBooleanSchema.safeParse(value);
+  if (booleanValue.success) return booleanValue.data;
+  const stringValue = safeToolText(value);
+  if (stringValue !== undefined) return stringValue;
+  const numberValue = PiFiniteNumberSchema.safeParse(value);
+  if (numberValue.success) return numberValue.data;
   if (depth >= MAX_SAFE_TOOL_VALUE_DEPTH) return placeholder;
   if (Array.isArray(value)) {
     if (!hasPlainPrototype(value, true)) return placeholder;
-    const length = guardValue(() => value.length, -1);
+    const length = value.length;
     if (
       !Number.isSafeInteger(length) ||
       length < 0 ||
       length > MAX_SAFE_TOOL_VALUE_MEMBERS
     )
       return placeholder;
-    const result: unknown[] = [];
-    const source = value as unknown as Record<string, unknown>;
+    const result: JsonValue[] = [];
     for (let index = 0; index < length; index += 1) {
-      const descriptor = guardValue(
-        () => Object.getOwnPropertyDescriptor(source, String(index)),
-        undefined,
-      );
-      if (descriptor === undefined || !("value" in descriptor)) {
+      const descriptor = Result.fromThrowable(
+        () => Object.getOwnPropertyDescriptor(value, String(index)),
+        () => PROTOTYPE_READ_FAILED,
+      )();
+      if (
+        descriptor.isErr() ||
+        descriptor.value === undefined ||
+        !("value" in descriptor.value)
+      ) {
         result.push(placeholder);
         continue;
       }
       result.push(
-        projectReducerValue(descriptor.value, placeholder, depth + 1),
+        projectReducerValue(descriptor.value.value, placeholder, depth + 1),
       );
     }
     return result;
   }
-  const record = asRecord(value);
-  if (record === undefined || !hasPlainPrototype(record, false))
+  if (!isHostRecord(value) || !hasPlainPrototype(value, false)) {
     return placeholder;
-  const keys = guardValue(() => Object.keys(record), [] as string[]);
-  if (keys.length > MAX_SAFE_TOOL_VALUE_MEMBERS) return placeholder;
-  const result: Record<string, unknown> = {};
-  for (const key of keys) {
+  }
+  const keys = Result.fromThrowable(
+    () => Object.keys(value),
+    () => PROTOTYPE_READ_FAILED,
+  )();
+  if (keys.isErr()) return placeholder;
+  if (keys.value.length > MAX_SAFE_TOOL_VALUE_MEMBERS) return placeholder;
+  const result: PiReplayRecord = {};
+  for (const key of keys.value) {
     if (!safeValueKey(key)) continue;
-    const descriptor = guardValue(
-      () => Object.getOwnPropertyDescriptor(record, key),
-      undefined,
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(value, key),
+      () => PROTOTYPE_READ_FAILED,
+    )();
+    if (
+      descriptor.isErr() ||
+      descriptor.value === undefined ||
+      !("value" in descriptor.value)
+    ) {
+      result[key] = placeholder;
+      continue;
+    }
+    result[key] = projectReducerValue(
+      descriptor.value.value,
+      placeholder,
+      depth + 1,
     );
-    result[key] =
-      descriptor !== undefined && "value" in descriptor
-        ? projectReducerValue(descriptor.value, placeholder, depth + 1)
-        : placeholder;
   }
   return result;
 };
 
-const projectContentBlock = (value: unknown): unknown => {
-  if (typeof value === "string") return boundedString(value);
-  const source = asRecord(value);
-  if (source === undefined) return undefined;
-  const block: Record<string, unknown> = {};
-  for (const key of ["type", "text", "thinking", "mimeType"] as const)
-    copyString(block, source, key);
-  for (const key of ["id", "toolCallId", "toolUseId", "tool_use_id"] as const)
-    copyString(block, source, key, 256);
-  for (const key of ["name", "toolName"] as const)
-    copyString(block, source, key, 128);
-  copyBoolean(block, source, "isError");
-  copyBoolean(block, source, "is_error");
-  const blockType = ownDataField(source, "type");
+const projectContentBlock = <T>(
+  value: T,
+): PiReplayRecord | string | undefined => {
+  const stringValue = boundedString(value);
+  if (stringValue !== undefined) return stringValue;
+  if (!isHostRecord(value)) return;
+  const block: PiReplayRecord = {};
+  for (const key of ["type", "text", "thinking", "mimeType"] as const) {
+    copyString(block, value, key);
+  }
+  for (const key of ["id", "toolCallId", "toolUseId", "tool_use_id"] as const) {
+    copyString(block, value, key, 256);
+  }
+  for (const key of ["name", "toolName"] as const) {
+    copyString(block, value, key, 128);
+  }
+  copyBoolean(block, value, "isError");
+  copyBoolean(block, value, "is_error");
+  const blockType = ownDataField(value, "type");
   if (
     blockType === "tool_call" ||
     blockType === "tool_use" ||
     blockType === "toolCall"
   ) {
     for (const key of ["arguments", "input", "args"] as const) {
-      const raw = ownDataField(source, key);
+      const raw = ownDataField(value, key);
       if (raw === undefined) continue;
       block[key] = projectReducerValue(raw);
     }
@@ -857,51 +912,61 @@ const projectContentBlock = (value: unknown): unknown => {
   return Object.keys(block).length > 0 ? block : undefined;
 };
 
-const projectContent = (value: unknown): unknown => {
-  if (typeof value === "string") return boundedString(value);
-  if (!Array.isArray(value)) return undefined;
-  const blocks: unknown[] = [];
-  const source = value as unknown as Record<string, unknown>;
+const projectContent = <T>(value: T): JsonValue | undefined => {
+  const stringValue = boundedString(value);
+  if (stringValue !== undefined) return stringValue;
+  if (!Array.isArray(value)) return;
+  const blocks: JsonValue[] = [];
   for (
     let index = 0;
     index < Math.min(value.length, MAX_CHILD_EVENT_ITEMS);
     index += 1
   ) {
-    const block = projectContentBlock(ownDataField(source, String(index)));
+    const descriptor = Result.fromThrowable(
+      () => Object.getOwnPropertyDescriptor(value, String(index)),
+      () => PROTOTYPE_READ_FAILED,
+    )();
+    if (
+      descriptor.isErr() ||
+      descriptor.value === undefined ||
+      !("value" in descriptor.value)
+    ) {
+      continue;
+    }
+    const block = projectContentBlock(descriptor.value.value);
     if (block !== undefined) blocks.push(block);
   }
   return blocks;
 };
 
-const projectMessage = (
-  value: unknown,
-): Record<string, unknown> | undefined => {
-  const source = asRecord(value);
-  if (source === undefined) return undefined;
-  const message: Record<string, unknown> = {};
-  for (const key of ["id", "messageId"] as const)
-    copyString(message, source, key, 256);
-  copyString(message, source, "role", 32);
-  copyString(message, source, "stopReason", 32);
-  copyString(message, source, "text");
-  copyNumber(message, source, "timestamp");
+const projectMessage = <T>(value: T): PiReplayRecord | undefined => {
+  if (!isHostRecord(value)) return;
+  const message: PiReplayRecord = {};
+  for (const key of ["id", "messageId"] as const) {
+    copyString(message, value, key, 256);
+  }
+  copyString(message, value, "role", 32);
+  copyString(message, value, "stopReason", 32);
+  copyString(message, value, "text");
+  copyNumber(message, value, "timestamp");
   // A `message_end` can carry a pi-ai `ToolResultMessage` rather than an
   // assistant turn, and its correlation lives on the MESSAGE. Dropping these
   // three fields left the reducer with an answer it could not attribute, so a
   // finished call kept printing `running` and the answer's own text appeared
   // under an assistant reply header instead.
-  copyString(message, source, "toolCallId", 256);
-  copyString(message, source, "toolName", 128);
-  copyBoolean(message, source, "isError");
-  const content = projectContent(ownDataField(source, "content"));
+  copyString(message, value, "toolCallId", 256);
+  copyString(message, value, "toolName", 128);
+  copyBoolean(message, value, "isError");
+  const content = projectContent(ownDataField(value, "content"));
   if (content !== undefined) message.content = content;
-  const usageFacts = projectAssistantUsageFacts(source);
+  const usageFacts = projectAssistantUsageFacts(value);
   const usage = assistantUsagePayload(usageFacts);
   if (usage !== undefined) message.usage = usage;
-  if (usageFacts?.contextUsage !== undefined)
+  if (usageFacts?.contextUsage !== undefined) {
     message.contextUsage = usageFacts.contextUsage;
+  }
   if (usageFacts?.model !== undefined) message.model = usageFacts.model;
-  const projected = projectAssistantProviderError(source);
+  const projected = projectAssistantProviderError(value);
   if (projected.isOk())
     message[CHILD_PROVIDER_ERROR_REPLAY_FIELD] = projected.value;
   return message;
@@ -912,26 +977,29 @@ const projectMessage = (
  * the host's own `cost.total`, in the exact nesting pi-ai uses, so the shared
  * usage narrow reads a replayed report the same way it reads a live one.
  */
-const assistantUsagePayload = (
+function assistantUsagePayload(
   facts: PiAssistantUsageFacts | undefined,
-): Record<string, unknown> | undefined => {
-  if (facts === undefined) return undefined;
-  if (facts.usage === undefined && facts.costTotal === undefined)
-    return undefined;
-  return {
-    ...(facts.usage ?? {}),
-    ...(facts.costTotal === undefined
-      ? {}
-      : { cost: { total: facts.costTotal } }),
-  };
-};
+): PiReplayRecord | undefined {
+  if (facts === undefined) return;
+  if (facts.usage === undefined && facts.costTotal === undefined) return;
+  const payload: PiReplayRecord = {};
+  if (facts.usage !== undefined) {
+    for (const [key, value] of Object.entries(facts.usage)) {
+      payload[key] = value;
+    }
+  }
+  if (facts.costTotal !== undefined) {
+    payload.cost = { total: facts.costTotal };
+  }
+  return payload;
+}
 
-const projectDelta = (value: unknown): Record<string, unknown> | undefined => {
-  const source = asRecord(value);
-  if (source === undefined) return undefined;
-  const delta: Record<string, unknown> = {};
-  for (const key of ["id", "messageId", "type"] as const)
-    copyString(delta, source, key, 256);
+const projectDelta = <T>(value: T): PiReplayRecord | undefined => {
+  if (!isHostRecord(value)) return;
+  const delta: PiReplayRecord = {};
+  for (const key of ["id", "messageId", "type"] as const) {
+    copyString(delta, value, key, 256);
+  }
   for (const key of [
     "text",
     "delta",
@@ -939,28 +1007,34 @@ const projectDelta = (value: unknown): Record<string, unknown> | undefined => {
     "thinkingDelta",
     "markdown",
     "markdownDelta",
-  ] as const)
-    copyString(delta, source, key);
+  ] as const) {
+    copyString(delta, value, key);
+  }
   return Object.keys(delta).length > 0 ? delta : undefined;
 };
 
-const projectUsageEvent = (
-  source: Record<string, unknown>,
-): Record<string, unknown> => {
-  const rawUsage = asRecord(ownDataField(source, "usage"));
+const projectUsageEvent = (source: PiHostRecord): PiReplayRecord => {
+  const rawUsageValue = ownDataField(source, "usage");
+  const rawUsage = isHostRecord(rawUsageValue) ? rawUsageValue : undefined;
+  const contextValue =
+    ownDataField(rawUsage, "context") ?? ownDataField(rawUsage, "contextUsage");
+  const modelValue =
+    ownDataField(source, "model") ?? ownDataField(rawUsage, "model");
   const facts = projectAssistantUsageFacts({
     usage: rawUsage,
-    contextUsage:
-      ownDataField(rawUsage, "context") ??
-      ownDataField(rawUsage, "contextUsage"),
-    model: ownDataField(source, "model") ?? ownDataField(rawUsage, "model"),
+    contextUsage: contextValue,
+    model: modelValue,
   });
-  const event: Record<string, unknown> = { type: "usage" };
+  const event: PiReplayRecord = { type: "usage" };
   const usage = assistantUsagePayload(facts);
   if (usage !== undefined) event.usage = usage;
   if (facts?.contextUsage !== undefined) {
-    const usage = asRecord(event.usage) ?? {};
-    event.usage = { ...usage, context: facts.contextUsage };
+    if (usage !== undefined) {
+      usage.context = facts.contextUsage;
+      event.usage = usage;
+    } else {
+      event.usage = { context: facts.contextUsage };
+    }
   }
   if (facts?.model !== undefined) event.model = facts.model;
   return event;
@@ -972,16 +1046,15 @@ const invalidReplayEvent = (): PiChildSessionEvent =>
     originalType: "redacted-invalid-event",
   });
 
-const parseRebuiltEvent = (value: unknown): PiChildSessionEvent => {
+const parseRebuiltEvent = <T>(value: T): PiChildSessionEvent => {
   const parsed = PiChildSessionEventSchema.safeParse(value);
   return parsed.success ? parsed.data : invalidReplayEvent();
 };
 
-const safeUiRequestId = (value: unknown): string | undefined => {
+const safeUiRequestId = <T>(value: T): string | undefined => {
   const candidate = safeToolText(value);
-  return candidate !== undefined && candidate.length <= 256
-    ? candidate
-    : undefined;
+  if (candidate === undefined || candidate.length > 256) return;
+  return candidate;
 };
 
 /** Rebuild one parser-approved event through a closed reducer allowlist. */
@@ -989,10 +1062,10 @@ export function redactProviderErrorFromEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent {
   return guardValue(() => {
-    const source = asRecord(event);
-    if (source === undefined) return invalidReplayEvent();
+    if (!isHostRecord(event)) return invalidReplayEvent();
+    const source = event;
     const type = boundedString(ownDataField(source, "type"), 64) ?? "unknown";
-    const rebuilt: Record<string, unknown> = { type };
+    const rebuilt: PiReplayRecord = { type };
     switch (type) {
       case "message_start": {
         const message = projectMessage(ownDataField(source, "message"));
@@ -1042,9 +1115,11 @@ export function redactProviderErrorFromEvent(
         if (type === "tool_error") {
           for (const key of ["error", "message"] as const) {
             const raw = ownDataField(source, key);
-            if (typeof raw === "string")
+            const parsed = PiStringSchema.safeParse(raw);
+            if (parsed.success) {
               rebuilt[key] =
-                safeToolText(raw) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+                safeToolText(parsed.data) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+            }
           }
         }
         break;
@@ -1087,8 +1162,11 @@ export function redactProviderErrorFromEvent(
           rebuilt.response = projectReducerValue(response);
         copyBoolean(rebuilt, source, "cancelled");
         const error = ownDataField(source, "error");
-        if (typeof error === "string")
-          rebuilt.error = safeToolText(error) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+        const parsedError = PiStringSchema.safeParse(error);
+        if (parsedError.success) {
+          rebuilt.error =
+            safeToolText(parsedError.data) ?? TOOL_ERROR_DETAILS_UNAVAILABLE;
+        }
         return PiExtensionUiResponseSchema.safeParse(rebuilt).success
           ? parseRebuiltEvent(rebuilt)
           : invalidReplayEvent();
@@ -1131,29 +1209,32 @@ const StopReasonSchema = z.enum(PI_STOP_REASONS);
  * `undefined` means the persisted message carried no authoritative terminal
  * stop reason, so the rebuilt event stays exactly as it was.
  */
-export function historicalProviderErrorFacts(message: unknown):
-  | {
-      readonly stopReason: (typeof PI_STOP_REASONS)[number];
-      readonly providerError?: PiChildProviderError;
-    }
-  | undefined {
-  return guardValue<
-    | {
-        readonly stopReason: (typeof PI_STOP_REASONS)[number];
-        readonly providerError?: PiChildProviderError;
-      }
-    | undefined
-  >(() => {
-    const record = asRecord(message);
-    if (record === undefined) return undefined;
-    const stopReason = StopReasonSchema.safeParse(field(record, "stopReason"));
-    if (!stopReason.success) return undefined;
-    const projected = projectAssistantProviderError(message);
-    return {
-      stopReason: stopReason.data,
-      ...(projected.isOk() ? { providerError: projected.value } : {}),
-    };
-  }, undefined);
+export interface PiHistoricalProviderErrorFacts {
+  readonly stopReason: (typeof PI_STOP_REASONS)[number];
+  providerError?: PiChildProviderError;
+}
+
+export function historicalProviderErrorFacts<T>(
+  message: T,
+): PiHistoricalProviderErrorFacts | undefined {
+  const result = Result.fromThrowable(
+    () => {
+      if (!isHostRecord(message)) return;
+      const stopReason = StopReasonSchema.safeParse(
+        field(message, "stopReason"),
+      );
+      if (!stopReason.success) return;
+      const projected = projectAssistantProviderError(message);
+      const facts: PiHistoricalProviderErrorFacts = {
+        stopReason: stopReason.data,
+      };
+      if (projected.isOk()) facts.providerError = projected.value;
+      return facts;
+    },
+    () => UNAVAILABLE,
+  )();
+  if (result.isErr()) return;
+  return result.value;
 }
 
 /**
@@ -1165,23 +1246,23 @@ export function historicalProviderErrorFacts(message: unknown):
  * (`stopReason` verbatim plus the canonical error projection). The raw
  * `errorMessage` is deliberately left behind — it never enters overlay state.
  */
-export function historicalAssistantMessageFields(
-  message: unknown,
-): Record<string, unknown> {
-  return guardValue<Record<string, unknown>>(() => {
+export function historicalAssistantMessageFields<T>(
+  message: T,
+): PiReplayRecord {
+  return guardValue(() => {
     const usageFacts = projectAssistantUsageFacts(message);
     const usage = assistantUsagePayload(usageFacts);
     const facts = historicalProviderErrorFacts(message);
-    return {
-      ...(usage === undefined ? {} : { usage }),
-      ...(usageFacts?.contextUsage === undefined
-        ? {}
-        : { contextUsage: usageFacts.contextUsage }),
-      ...(usageFacts?.model === undefined ? {} : { model: usageFacts.model }),
-      ...(facts === undefined ? {} : { stopReason: facts.stopReason }),
-      ...(facts?.providerError === undefined
-        ? {}
-        : { [CHILD_PROVIDER_ERROR_REPLAY_FIELD]: facts.providerError }),
-    };
+    const fields: PiReplayRecord = {};
+    if (usage !== undefined) fields.usage = usage;
+    if (usageFacts?.contextUsage !== undefined) {
+      fields.contextUsage = usageFacts.contextUsage;
+    }
+    if (usageFacts?.model !== undefined) fields.model = usageFacts.model;
+    if (facts !== undefined) fields.stopReason = facts.stopReason;
+    if (facts?.providerError !== undefined) {
+      fields[CHILD_PROVIDER_ERROR_REPLAY_FIELD] = facts.providerError;
+    }
+    return fields;
   }, {});
 }

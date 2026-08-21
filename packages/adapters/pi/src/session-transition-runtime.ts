@@ -13,7 +13,10 @@
  * extension-local closures, so generation isolation stays a property of the
  * ports rather than of accidental capture.
  */
-import { okAsync, ResultAsync } from "neverthrow";
+
+import type { PlanStateProvider } from "@weaveio/weave-engine";
+import { okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   clearChildOverlayGeneration,
   clearThreadSources,
@@ -24,6 +27,7 @@ import {
   type PiDelegationControllerCell,
   type PiThreadSourcesCell,
 } from "./child-inspection-runtime.js";
+import type { PiChildRecoveryCoordinator } from "./child-recovery.js";
 import { ROOT_NODE_ID } from "./child-tree.js";
 import type {
   PiShutdownReport,
@@ -33,6 +37,9 @@ import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import type { PiGenerationResourceOwner } from "./generation-resources.js";
+import type { JsonValue } from "./strict-json.js";
+import type { PiTelemetry } from "./telemetry.js";
 import type {
   PiEventHandler,
   PiExtensionApi,
@@ -52,6 +59,13 @@ export const SESSION_TRANSITION_PROMPT_FAILED_NOTICE =
   "Weave: the session-transition prompt failed, so the transition was refused.";
 export const SESSION_TRANSITION_GUARD_FAILED_NOTICE =
   "Weave: the session-transition guard failed, so the transition was refused.";
+
+const SessionTransitionEventSchema = z.object({
+  reason: z.string().optional(),
+  position: z.string().optional(),
+});
+type PiSessionTransitionEvent = z.infer<typeof SessionTransitionEventSchema>;
+type PiSessionTransitionField = keyof PiSessionTransitionEvent;
 
 /** Narrow UI port the guard needs: dialog select plus error notify. */
 export interface PiSessionTransitionUiPort {
@@ -102,31 +116,35 @@ export function notifySessionTransition(
 ): void {
   if (ctx === undefined) return;
   void ResultAsync.fromPromise(
-    Promise.resolve(ctx.ui.notify(notice, "error")),
-    () => undefined,
+    Promise.resolve().then(() => ctx.ui.notify(notice, "error")),
+    () => null,
   );
 }
 
-/** Narrows an event payload to a plain record, or `undefined`. Never throws. */
-function asJsonRecord(event: unknown): Record<string, unknown> | undefined {
-  if (typeof event !== "object" || event === null || Array.isArray(event)) {
-    return undefined;
-  }
-  return event as Record<string, unknown>;
+/** Parses the bounded fields needed from one JSON transition event. */
+function parseTransitionEvent(
+  event: JsonValue,
+): PiSessionTransitionEvent | undefined {
+  const parsed = Result.fromThrowable(
+    () => SessionTransitionEventSchema.safeParse(event),
+    () => null,
+  )();
+  if (parsed.isErr() || !parsed.value.success) return;
+  return parsed.value.data;
 }
 
-/** Reads one string field from an event payload, or `undefined`. Never throws. */
+/** Reads one bounded string field from an event payload, or `undefined`. */
 export function readTransitionEventString(
-  event: unknown,
-  field: string,
+  event: JsonValue,
+  field: PiSessionTransitionField,
 ): string | undefined {
-  const record = asJsonRecord(event);
-  const value = record?.[field];
-  return typeof value === "string" ? value : undefined;
+  const parsed = parseTransitionEvent(event);
+  if (parsed === undefined) return;
+  return field === "reason" ? parsed.reason : parsed.position;
 }
 
 /** Labels a `session_before_switch` event for the Stay/Proceed prompt. */
-export function labelSessionBeforeSwitch(event: unknown): string {
+export function labelSessionBeforeSwitch(event: JsonValue): string {
   return readTransitionEventString(event, "reason") ?? "new session";
 }
 
@@ -134,14 +152,14 @@ export function labelSessionBeforeSwitch(event: unknown): string {
  * Labels a `session_before_fork` event. Pi uses `position: "at"` for `/clone`
  * and every other position for `/fork`.
  */
-export function labelSessionBeforeFork(event: unknown): string {
+export function labelSessionBeforeFork(event: JsonValue): string {
   return readTransitionEventString(event, "position") === "at"
     ? "clone"
     : "fork";
 }
 
 /** Labels a `session_before_tree` event for the Stay/Proceed prompt. */
-export function labelSessionBeforeTree(_event: unknown): string {
+export function labelSessionBeforeTree(_event: JsonValue): string {
   return "tree navigation";
 }
 
@@ -237,12 +255,19 @@ export async function guardSessionTransition(
  */
 export function createGuardedTransitionHook(
   deps: PiSessionTransitionGuardDeps,
-  surface: (event: unknown) => string,
+  surface: (event: PiSessionTransitionEvent) => string,
 ): PiEventHandler {
   return async (
-    event: unknown,
-    ctx?: PiSessionContext,
+    ...args: Parameters<PiEventHandler>
   ): Promise<PiSessionTransitionHookResult> => {
+    const rawEvent = args[0];
+    const ctx = args[1];
+    const parsed = Result.fromThrowable(
+      () => SessionTransitionEventSchema.safeParse(rawEvent),
+      () => null,
+    )();
+    const event =
+      parsed.isOk() && parsed.value.success ? parsed.value.data : {};
     const guarded = await ResultAsync.fromPromise(
       guardSessionTransition(deps, surface(event), ctx),
       () => SESSION_TRANSITION_GUARD_FAILED_NOTICE,
@@ -327,8 +352,8 @@ export interface PiSessionShutdownTelemetryPort {
     readonly family: "generation";
     readonly event: "shutdown";
     readonly severity: "info";
-  }): ResultAsync<unknown, unknown>;
-  shutdown(): ResultAsync<unknown, unknown>;
+  }): ResultAsync<void, PiAdapterFailure>;
+  shutdown(): ResultAsync<void, PiAdapterFailure>;
 }
 
 /** Generation resource owner dispose seam. */
@@ -393,7 +418,7 @@ export interface PiGenerationRevokePorts {
   /** Captures then clears the generation resource owner. */
   readonly takeResources: () => PiSessionShutdownResourcesPort | undefined;
   /** Cancels an in-flight direct-step child, if any. */
-  readonly cancelDirectStep: () => ResultAsync<unknown, unknown>;
+  readonly cancelDirectStep: () => ResultAsync<void, PiAdapterFailure>;
 }
 
 /**
@@ -426,8 +451,8 @@ export function revokeGenerationAuthority(
   ports.resetTreeSelection();
   const cancelDirectStep = ports.cancelDirectStep();
   void cancelDirectStep.match(
-    () => undefined,
-    () => undefined,
+    () => void 0,
+    () => void 0,
   );
   return {
     shuttingDelegation,
@@ -462,8 +487,8 @@ export function finalizeBoundedShutdown(
       const shuttingDelegation = snapshot.shuttingDelegation;
       if (shuttingDelegation !== undefined) {
         await shuttingDelegation.shutdownWithinBudget().match(
-          () => undefined,
-          () => undefined,
+          () => void 0,
+          () => void 0,
         );
       }
 
@@ -492,17 +517,17 @@ export function finalizeBoundedShutdown(
             event: "shutdown",
             severity: "info",
           })
-          .orElse(() => okAsync(undefined));
+          .orElse(() => okAsync(void 0));
       }
       if (snapshot.shuttingResources !== undefined) {
         await snapshot.shuttingResources.dispose();
       } else if (snapshot.shuttingTelemetry !== undefined) {
         await snapshot.shuttingTelemetry
           .shutdown()
-          .orElse(() => okAsync(undefined));
+          .orElse(() => okAsync(void 0));
       }
     })(),
-  ).map(() => undefined);
+  ).andThen(() => okAsync(void 0));
 }
 
 /**
@@ -560,14 +585,14 @@ export function revokeGenerationForReplacement(
     void priorResources.dispose();
   } else if (priorTelemetry !== undefined) {
     void priorTelemetry.shutdown().match(
-      () => undefined,
-      () => undefined,
+      () => void 0,
+      () => void 0,
     );
   }
   const cancelDirectStep = ports.cancelDirectStep();
   void cancelDirectStep.match(
-    () => undefined,
-    () => undefined,
+    () => void 0,
+    () => void 0,
   );
 }
 
@@ -594,13 +619,13 @@ export interface PiSessionTransitionShutdownCells {
         }
       | undefined;
   };
-  readonly recoveryCoordinatorCell: { coordinator: unknown };
-  readonly planStateProviderCell: { value: unknown };
-  readonly telemetryCell: {
-    telemetry: PiSessionShutdownTelemetryPort | undefined;
+  readonly recoveryCoordinatorCell: {
+    coordinator: PiChildRecoveryCoordinator | undefined;
   };
+  readonly planStateProviderCell: { value: PlanStateProvider | undefined };
+  readonly telemetryCell: { telemetry: PiTelemetry | undefined };
   readonly generationResourcesCell: {
-    owner: PiSessionShutdownResourcesPort | undefined;
+    owner: PiGenerationResourceOwner | undefined;
   };
 }
 
@@ -622,7 +647,7 @@ export interface PiSessionTransitionShutdownHostHooks {
     | undefined;
   readonly setThreadSourcesRequired: (required: boolean) => void;
   readonly clearCurrentWorkflows: () => void;
-  readonly cancelDirectStep: () => ResultAsync<unknown, unknown>;
+  readonly cancelDirectStep: () => ResultAsync<void, PiAdapterFailure>;
   /** Clears plan widget/footer surfaces that the extension owns. */
   readonly clearActivePlanSurfaces: (ctx: PiSessionContext | undefined) => void;
   readonly restoreEditor: () => void;
@@ -666,7 +691,7 @@ export function buildGenerationRevokePorts(
     takeWorkflowInstance: () => {
       const shutting = deps.activeWorkflowInstanceCell.value;
       deps.activeWorkflowInstanceCell.value = undefined;
-      if (shutting === undefined) return undefined;
+      if (shutting === undefined) return;
       return {
         workflowInstanceId: shutting.workflowInstanceId,
         leaseId: shutting.leaseId,
