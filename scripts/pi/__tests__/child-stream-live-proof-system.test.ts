@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type BoundedProcess,
   createLiveProofSystem,
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
   isLiveProofStreamOverflow,
   MAX_LIVE_PROOF_LINE_BYTES,
   MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM,
+  runBoundedProcess,
 } from "../child-stream-live-proof-system.js";
 
 const REPO_ROOT = process.cwd();
@@ -18,6 +21,33 @@ function spawnShell(script: string) {
     cwd: REPO_ROOT,
     env: { PATH: "/usr/bin:/bin" },
   });
+}
+
+function streamFromChunks(
+  chunks: readonly Uint8Array<ArrayBuffer>[],
+): ReadableStream<Uint8Array<ArrayBuffer>> {
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}
+
+function fakeProcess(input: {
+  readonly stdout?: ReadableStream<Uint8Array<ArrayBuffer>>;
+  readonly stderr?: ReadableStream<Uint8Array<ArrayBuffer>>;
+  readonly exited?: PromiseLike<number>;
+  readonly onKill?: (signal: "SIGTERM" | "SIGKILL") => void;
+}): BoundedProcess {
+  return {
+    stdout: input.stdout ?? new ReadableStream<Uint8Array<ArrayBuffer>>(),
+    stderr: input.stderr ?? new ReadableStream<Uint8Array<ArrayBuffer>>(),
+    exited: input.exited ?? Promise.resolve(0),
+    exitCode: null,
+    signalCode: null,
+    kill: (signal) => input.onKill?.(signal),
+  };
 }
 
 describe("live proof system timers", () => {
@@ -45,6 +75,148 @@ describe("live proof system timers", () => {
     await sleep(40);
 
     expect(fired).toBe(0);
+  });
+});
+
+describe("shared bounded verifier process runner", () => {
+  const limits = {
+    ...DEFAULT_BOUNDED_PROCESS_LIMITS,
+    spawnMs: 25,
+    firstOutputMs: 25,
+    totalReadMs: 100,
+    gracefulTermMs: 15,
+    postKillMs: 15,
+    cleanupMs: 100,
+    maxCaptureBytes: 4 * 1024,
+  };
+
+  it("drains stderr while stdout is quiet and returns normal success", async () => {
+    const result = await runBoundedProcess({
+      cmd: ["/bin/sh", "-c", "printf 'stderr-only\\n' >&2"],
+      cwd: REPO_ROOT,
+      env: { PATH: "/usr/bin:/bin" },
+      limits,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({ exitCode: 0, stdout: "" });
+  });
+
+  it("drains simultaneous stdout and stderr floods without deadlock", async () => {
+    const result = await runBoundedProcess({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `(yes stdout | head -c 200000) & (yes stderr | head -c 200000 >&2) & wait`,
+      ],
+      cwd: REPO_ROOT,
+      env: { PATH: "/usr/bin:/bin" },
+      limits,
+    });
+
+    expect(result.isErr()).toBe(true);
+  });
+
+  it("closes when stdout ends but stderr remains open", async () => {
+    const started = Date.now();
+    const result = await runBoundedProcess({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        "exec 1>&-; while true; do printf x >&2; sleep 0.01; done",
+      ],
+      cwd: REPO_ROOT,
+      env: { PATH: "/usr/bin:/bin" },
+      limits,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("accepts split UTF-8 and rejects an overlong newline-free buffer", async () => {
+    const emoji = new Uint8Array([0xf0, 0x9f, 0x98, 0x80, 0x0a]);
+    const success = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits,
+      spawn: () =>
+        fakeProcess({
+          stdout: streamFromChunks([
+            emoji.slice(0, 1),
+            emoji.slice(1, 3),
+            emoji.slice(3),
+          ]),
+          stderr: streamFromChunks([]),
+        }),
+    });
+    expect(success.isOk()).toBe(true);
+    expect(success._unsafeUnwrap().stdout).toBe("😀\n");
+
+    const overlong = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits,
+      spawn: () =>
+        fakeProcess({
+          stdout: streamFromChunks([
+            new Uint8Array(MAX_LIVE_PROOF_LINE_BYTES + 1).fill(0x78),
+          ]),
+          stderr: streamFromChunks([]),
+        }),
+    });
+    expect(overlong.isErr()).toBe(true);
+  });
+
+  it("observes spawn and reader rejection without leaking host text", async () => {
+    const spawnFailure = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits,
+      spawn: () => Promise.reject(new Error("secret spawn detail")),
+    });
+    expect(spawnFailure.isErr()).toBe(true);
+    expect(JSON.stringify(spawnFailure)).not.toContain("secret");
+
+    const rejectedStream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      pull: () => Promise.reject(new Error("secret reader detail")),
+    });
+    const readerFailure = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits,
+      spawn: () =>
+        fakeProcess({
+          stdout: rejectedStream,
+          stderr: streamFromChunks([]),
+        }),
+    });
+    expect(readerFailure.isErr()).toBe(true);
+    expect(JSON.stringify(readerFailure)).not.toContain("secret");
+  });
+
+  it("bounds TERM and KILL when exit never resolves", async () => {
+    const signals: string[] = [];
+    const started = Date.now();
+    const result = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits,
+      spawn: () =>
+        fakeProcess({
+          onKill: (signal) => signals.push(signal),
+          exited: new Promise<number>(() => undefined),
+        }),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });
 

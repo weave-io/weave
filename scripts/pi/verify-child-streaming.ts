@@ -24,6 +24,10 @@ import {
 } from "./child-stream-capture.js";
 import { runLiveProofCommand } from "./child-stream-live-proof-command.js";
 import { LIVE_PROOF_COMMAND } from "./child-stream-live-proof-contract.js";
+import {
+  DEFAULT_BOUNDED_PROCESS_LIMITS,
+  runBoundedProcess,
+} from "./child-stream-live-proof-system.js";
 
 const EXTENSION_RELATIVE_PATH =
   "packages/adapters/pi/dist/extension.js" as const;
@@ -33,7 +37,7 @@ const MANIFEST_RELATIVE_PATH = join(
 );
 const IDENTITY_OUTPUTS = piIdentityOutputFiles();
 const PROBE_TIMEOUT_MS = 20_000;
-const PROBE_KILL_WAIT_MS = 1_000;
+const PROBE_FIRST_OUTPUT_TIMEOUT_MS = 10_000;
 const MAX_PROBE_OUTPUT_CHARS = 32 * 1024;
 const MAX_IDENTITY_PROBE_ENV_VALUE_CHARS = 4_096;
 const IDENTITY_PROBE_CLEANUP_ATTEMPTS = 40;
@@ -501,24 +505,16 @@ function runCommand(
   { readonly exitCode: number; readonly stdout: string },
   VerifyChildStreamingFailure
 > {
-  const spawned = Result.fromThrowable(
-    () =>
-      Bun.spawn({
-        cmd: [...command],
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
-    () => blocked("probe-failed"),
-  )();
-  if (spawned.isErr()) return errAsync(spawned.error);
-  return ResultAsync.fromPromise(
-    Promise.all([
-      spawned.value.exited,
-      new Response(spawned.value.stdout).text(),
-    ]),
-    () => blocked("probe-failed"),
-  ).map(([exitCode, stdout]) => ({ exitCode, stdout }));
+  return runBoundedProcess({
+    cmd: command,
+    cwd,
+    env: {
+      PATH: typeof Bun.env.PATH === "string" ? Bun.env.PATH : "/usr/bin:/bin",
+    },
+    limits: DEFAULT_BOUNDED_PROCESS_LIMITS,
+  })
+    .mapErr(() => blocked("probe-failed"))
+    .map(({ exitCode, stdout }) => ({ exitCode, stdout }));
 }
 
 function readGitIdentity(
@@ -625,13 +621,6 @@ function collectOutputs(
   return result;
 }
 
-function appendProbeOutput(current: string, chunk: string): string {
-  const next = `${current}${chunk}`;
-  return next.length <= MAX_PROBE_OUTPUT_CHARS
-    ? next
-    : next.slice(next.length - MAX_PROBE_OUTPUT_CHARS);
-}
-
 function findIdentityProof(
   output: string,
 ): Result<ExtensionBuildIdentityProof, VerifyChildStreamingFailure> {
@@ -648,43 +637,6 @@ function findIdentityProof(
   return err(blocked("probe-failed"));
 }
 
-async function readProofFromProcess(
-  process: ReturnType<typeof Bun.spawn>,
-): Promise<Result<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>> {
-  const stdout = process.stdout;
-  const stderr = process.stderr;
-  if (
-    stdout === undefined ||
-    stderr === undefined ||
-    typeof stdout === "number" ||
-    typeof stderr === "number"
-  ) {
-    return err(blocked("probe-failed"));
-  }
-  const decoder = new TextDecoder();
-  let output = "";
-  const absorb = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
-    const reader = stream.getReader();
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) return;
-      output = appendProbeOutput(
-        output,
-        decoder.decode(chunk.value, { stream: true }),
-      );
-    }
-  };
-  void Promise.all([absorb(stdout), absorb(stderr)]);
-  const deadline = Date.now() + PROBE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const proof = findIdentityProof(output);
-    if (proof.isOk()) return proof;
-    if (process.exitCode !== null) return err(blocked("probe-failed"));
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 25));
-  }
-  return err(blocked("probe-failed"));
-}
-
 function createIdentityProbeIsolationPaths(): Result<
   IdentityProbeIsolationPaths,
   VerifyChildStreamingFailure
@@ -695,26 +647,32 @@ function createIdentityProbeIsolationPaths(): Result<
 
 function runIdentityProbeFilesystemCommand(
   command: readonly string[],
-): Result<void, VerifyChildStreamingFailure> {
-  const spawned = Result.fromThrowable(
-    () =>
-      Bun.spawnSync({
-        cmd: [...command],
-        stdout: "ignore",
-        stderr: "ignore",
-      }),
-    () => blocked("probe-failed"),
-  )();
-  if (spawned.isErr()) return err(spawned.error);
-  return spawned.value.exitCode === 0
-    ? ok(undefined)
-    : err(blocked("probe-failed"));
+): ResultAsync<void, VerifyChildStreamingFailure> {
+  const path =
+    typeof Bun.env.PATH === "string" ? Bun.env.PATH : "/usr/bin:/bin";
+  return runBoundedProcess({
+    cmd: command,
+    cwd: ".",
+    env: { PATH: path },
+    limits: {
+      ...DEFAULT_BOUNDED_PROCESS_LIMITS,
+      firstOutputMs: 1_000,
+      totalReadMs: 5_000,
+      maxCaptureBytes: 4 * 1024,
+    },
+  })
+    .mapErr(() => blocked("probe-failed"))
+    .andThen(({ exitCode }) =>
+      exitCode === 0
+        ? okAsync<void, VerifyChildStreamingFailure>(undefined)
+        : errAsync(blocked("probe-failed")),
+    );
 }
 
 function prepareIdentityProbeIsolation(
   paths: IdentityProbeIsolationPaths,
 ): ResultAsync<void, VerifyChildStreamingFailure> {
-  const prepared = runIdentityProbeFilesystemCommand([
+  return runIdentityProbeFilesystemCommand([
     "mkdir",
     "-p",
     paths.home,
@@ -724,7 +682,6 @@ function prepareIdentityProbeIsolation(
     paths.cache,
     paths.temporary,
   ]);
-  return prepared.isOk() ? okAsync(undefined) : errAsync(prepared.error);
 }
 
 async function removeIdentityProbeIsolation(
@@ -736,7 +693,7 @@ async function removeIdentityProbeIsolation(
     attempt < IDENTITY_PROBE_CLEANUP_ATTEMPTS;
     attempt += 1
   ) {
-    const removed = runIdentityProbeFilesystemCommand([
+    const removed = await runIdentityProbeFilesystemCommand([
       "rm",
       "-rf",
       paths.root,
@@ -745,7 +702,7 @@ async function removeIdentityProbeIsolation(
       await new Promise<void>((resolveDelay) =>
         setTimeout(resolveDelay, IDENTITY_PROBE_CLEANUP_DELAY_MS),
       );
-      const stable = runIdentityProbeFilesystemCommand([
+      const stable = await runIdentityProbeFilesystemCommand([
         "rm",
         "-rf",
         paths.root,
@@ -793,7 +750,8 @@ export function probePiIdentity(
         if (environment.isErr()) {
           result = err(environment.error);
         } else {
-          const child = Bun.spawn({
+          let proof: ExtensionBuildIdentityProof | undefined;
+          const ran = await runBoundedProcess({
             // Keep the caller's exact executable and Bun/PATH lookup. No shell
             // or alternate Pi resolution is allowed at this boundary.
             cmd: [
@@ -808,29 +766,23 @@ export function probePiIdentity(
             cwd: repoRoot,
             env: environment.value,
             stdin: "pipe",
-            stdout: "pipe",
-            stderr: "pipe",
+            limits: {
+              ...DEFAULT_BOUNDED_PROCESS_LIMITS,
+              firstOutputMs: PROBE_FIRST_OUTPUT_TIMEOUT_MS,
+              totalReadMs: PROBE_TIMEOUT_MS,
+              maxCaptureBytes: MAX_PROBE_OUTPUT_CHARS,
+            },
+            onLine: (_stream, line) => {
+              const parsed = findIdentityProof(line);
+              if (parsed.isErr()) return undefined;
+              proof = parsed.value;
+              return true;
+            },
           });
-          try {
-            result = await readProofFromProcess(child);
-          } finally {
-            Result.fromThrowable(
-              () => child.kill("SIGTERM"),
-              () => undefined,
-            )();
-            await Promise.race([
-              child.exited,
-              new Promise<void>((resolveDelay) =>
-                setTimeout(resolveDelay, PROBE_KILL_WAIT_MS),
-              ),
-            ]);
-            if (child.exitCode === null) {
-              Result.fromThrowable(
-                () => child.kill("SIGKILL"),
-                () => undefined,
-              )();
-              await child.exited;
-            }
+          if (ran.isOk() && proof !== undefined) {
+            result = ok(proof);
+          } else {
+            result = err(blocked("probe-failed"));
           }
         }
       } finally {
