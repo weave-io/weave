@@ -917,3 +917,172 @@ runtime output changed between `f6f06e04` C2 and `c3282f90` D1.
 Task 11 remains unchecked in `.weave/plans/pi-child-streaming-remediation.md`.
 The authoritative C2 Herdr evidence at the byte-identical runtime artifact
 remains intact and unchanged. Weft and Warp remain pending.
+
+## Task 11 post-Warp proof E3: pinned-runtime verifier and terminal-artifact continuity (2026-08-21)
+
+This final append-only section records E1 for the exact subject below and the
+post-Warp E2 terminal-evidence outcome. It does not revise any earlier RED
+section or the authoritative C2 section. It contains only bounded identity
+values, closed statuses, counts, and digests. It contains no reasoning prose,
+assistant text, tool payload, prompt, credential, capture, transcript,
+scrollback, screenshot, exception text, absolute path, or content-derived hash.
+
+### Exact final subject and complete pinned runtime identity
+
+| Fact | Bounded value |
+| --- | --- |
+| Final subject | `d4d3be762d05287925aafde8119e9cd6f669cbf4` |
+| Git dirty | `false` |
+| Build input count | `149` |
+| Build output count | `10` |
+| Build binding | `635788a942903eea3fc68688e148b19f46225c05b5cac6ffb7c5bf79fd0bdbff` |
+| Build completion | `2026-08-20T23:54:00.050Z` |
+| Build-manifest SHA-256 | `311fce3cb233cb85de0e90f88ca9177438ad6c197e1a81644299ae27d7361f6f` |
+| Extension artifact SHA-256 | `2ef80dd525645433cad9907051e4c2f3bc83c61c6ca073cc68f425bc88eb5413` |
+| Pi host | `0.84.2` |
+| Pi package SHA-256 | `820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0` |
+| Pi CLI SHA-256 | `840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521` |
+| pi-ai package SHA-256 | `9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9` |
+| pi-ai entry SHA-256 | `2317a3ec8d3b0474e45d6c5cca04c71d3795c21bf83c08008c5a0869f9f33d95` |
+| pi-tui package SHA-256 | `2c19fb7e3d1e83a461b6f020b2ffc118b435dcd78a07af8c8def72864cd09e6e` |
+| pi-tui entry SHA-256 | `538865edfcda57a05a1886255700088458f03d47ab079e2dc4c66b6a65473fff` |
+| E1 identity verifier | **PASS** — `current`; command exit `0`; child streaming permitted |
+
+The complete E1 built output graph was:
+
+| Output | SHA-256 |
+| --- | --- |
+| `cli` | `9d39ca336f49291f24964e5de2a3890d9c0410cc9ca48736de00fcecac1a418a` |
+| `cli-declarations` | `5984be53878a216ed0a054094be409679635219c00519c70e86b6c853369b9e8` |
+| `extension` | `2ef80dd525645433cad9907051e4c2f3bc83c61c6ca073cc68f425bc88eb5413` |
+| `extension-build-identity` | `af59484ac5d35fe99bd81a0c81cb6cfa82d28754ee238b2b63e68398ce9d76fe` |
+| `extension-declarations` | `3373de113af5f106448d6adc21b21632a7995da0db9b2af6fb641cac942fe009` |
+| `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| `extension-impl-declarations` | `9d0bc04746083de67d4a6cc54c6c9634f1a5439fa9ddf5bef0a5da581ca6d36a` |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` |
+| `index` | `7c3dc0175c841616733304eeee8da525a9a7d9901a9db25be53a72047567afbc` |
+| `index-declarations` | `efe4a81c7f88927567352edfb2f06fc827d6e8b84c32fa1f6b12abfdb0c2f481` |
+
+The four outputs evaluated by the pinned loader were the same four outputs
+checked by E1. The entry, identity helper, implementation, and host-loader
+bytes all matched the current manifest before the fresh parent started.
+
+### E1 executable verifier and adversarial controls
+
+E1 used the real installed Pi `0.84.2` executable. It required a current build,
+a fresh parent, all four lanes, a content-free report, and no screen capture.
+The bounded report was mode `0600`, `699` bytes, and was removed after
+verification.
+
+| E1 gate | Bounded result |
+| --- | --- |
+| Command exit | **PASS** — `0` |
+| Current identity | **PASS** — `current` |
+| Fresh parent | **PASS** — `fresh`; started after the current identity gate |
+| Requested lanes | **PASS** — `4/4` |
+| Parent raw reasoning lane | **PASS** |
+| Inspector raw reasoning lane | **PASS** |
+| Inspector tool-details lane | **PASS** |
+| Inspector assistant-reply lane | **PASS** |
+| Isolation | **PASS** — `isolated` |
+| Settlement | **PASS** — one authoritative settlement |
+| Registry | **PASS** — empty; all registry and retained-byte counts `0` |
+| Diagnostics | **PASS** — `clean` |
+| Cleanup | **PASS** — `complete` |
+| Failures | **PASS** — none |
+
+The identity and swap controls were adversarial and fail-closed:
+
+| Control | Bounded result |
+| --- | --- |
+| Build A loaded, build B on disk | **PASS** — `stale-on-disk`; later execution was refused |
+| Implementation swapped while the thin entry stayed unchanged | **PASS** — `stale-on-disk`; later execution was refused |
+| Valid sidecar with a wrong output digest | **PASS** — `manifest-mismatch`; later execution was refused |
+| Missing, malformed, or stale sidecar/output/binding | **PASS** — `unverifiable`; later execution was refused |
+| `/reload` adoption of build B | **PASS** — `current` only after B was loaded; reload was not fresh-parent proof |
+
+The identity probe used exactly the explicit environment allowlist: `PATH`,
+`BUN_INSTALL`, `VOLTA_HOME`, `HOME`, `USERPROFILE`, `PI_CODING_AGENT_DIR`,
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `TMPDIR`, `TMP`, `TEMP`,
+`LANG`, `LC_ALL`, and `WEAVE_PI_BUILD_IDENTITY_PROOF`. No ambient environment
+was forwarded. Hostile names, sentinel values, and credential-shaped
+accessors did not cross the boundary; required accessor reads remained `0`.
+
+The silent-parent and stream-bound controls also failed closed:
+
+| Control | Bounded result |
+| --- | --- |
+| Silent parent with no output | **PASS** — closed `timeout`; process terminated once and the iterator closed |
+| Parent that yielded once and then went silent | **PASS** — closed `timeout`; late output was ignored |
+| Newline-free stdout flood | **PASS** — closed `overflow` beyond the `64 KiB` line/undecoded bound |
+| Newline-free stderr flood | **PASS** — closed `overflow` beyond the `64 KiB` line/undecoded bound |
+| Multiline stdout, stderr, and mixed short-line flood | **PASS** — closed `overflow` beyond `256` queued lines per stream |
+| Split multibyte line | **PASS** — bounded UTF-8 line remained intact |
+
+Every overflow and timeout path terminated the owned process, closed its
+iterator, observed late reader failures, and retained no output in the report.
+
+### E1 full test and documentation gates
+
+| Gate | Bounded result |
+| --- | --- |
+| Full Bun test suite | **PASS** — `11,233` passed; `11` skipped; `0` failed; `11,244` tests across `373` files; `902,638` expectations; `2` snapshots |
+| Documentation links | **PASS** — `bun run docs:check-links` |
+| Proof content scan | **PASS** — no raw reasoning, assistant text, tool payload, credential, exception text, or content-derived hash |
+| Proof path scan | **PASS** — no absolute path |
+
+### Post-Warp E2 Herdr evidence status
+
+Three new Herdr driver attempts were made after Warp. They produced **no
+admissible terminal evidence**. They are not E2 passes, and no terminal lane,
+TUI status, or terminal rendering result is inferred from them. Their owned
+processes, sessions, temporary resources, reports, and panes were cleaned.
+
+| E2 fact | Bounded result |
+| --- | --- |
+| New Herdr attempts | `3` |
+| Admissible terminal evidence | `0` |
+| E2 passing attempts claimed | `0` |
+| Cleanup | **PASS** — complete |
+
+### Runtime-artifact continuity from authoritative C2 to E1
+
+The authoritative C2 subject was
+`f6f06e04ab455b2af86ecee8dd3cf2b8e5673912`. The comparison is limited to the
+four runtime-loaded outputs. It does not treat declarations, package-only
+entries, the new preloader, or the new verifier as terminal evidence.
+
+| Runtime-loaded output | C2 SHA-256 | E1 SHA-256 | Result |
+| --- | --- | --- | --- |
+| `extension` | `b2e07958a856bc56288f97181eb1c5b1b46d88dc972faf7d93cb62daa193b74a` | `2ef80dd525645433cad9907051e4c2f3bc83c61c6ca073cc68f425bc88eb5413` | **CHANGED** |
+| `extension-build-identity` | `8a7d95ec596de94b6f25a1228262829c85e415199952a38d884b9ac7046c869d` | `af59484ac5d35fe99bd81a0c81cb6cfa82d28754ee238b2b63e68398ce9d76fe` | **CHANGED** |
+| `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` | **PASS** — byte-identical |
+| `host-module-loader` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` | `fedc62ca7752a2c8460e66cf9c1660be6b44fe98d3402a46461bae7ed23f9356` | **PASS** — byte-identical |
+
+Exactly two of the four runtime-loaded outputs changed: `extension` and
+`extension-build-identity`. The TUI-behavior implementation payload
+`extension-impl` is byte-identical to authoritative C2 at the exact digest
+shown above. Therefore C2 is retained only as continuity evidence for terminal
+rendering of that shared implementation payload. E1, not C2, proves the new
+pinned preloader, the current complete runtime graph, the fresh installed Pi
+identity, and the final executable verifier. No post-Warp E2 terminal result is
+substituted for either proof.
+
+### Final cleanup and restoration
+
+| Gate | Bounded result |
+| --- | --- |
+| Global config | **PASS** — SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; mode `0644`; size `2857` |
+| Exact mode-`0600` config backup | **PASS** — live bytes matched the config before removal; backup then removed |
+| Pi settings | **PASS** — SHA-256 `c887067f200cdd21e7a6a96c196021c5714deb2bf065ceb666d2d23be191722a`; mode `0644`; size `973` |
+| Pi launcher | **PASS** — SHA-256 `c7649907a34aea371063932324a613a6fb2add4cd1ed01d50c7b54807d596d6a`; mode `0755`; size `416` |
+| Adapter symlink | **PASS** — original canonical main-worktree target restored |
+| Runtime Store | **PASS** — no active lease; `0` workflow instances; schema `6` |
+| Child/provider/proof processes | **PASS** — none remained |
+| Temporary proof resources and reports | **PASS** — none remained |
+| Proof-owned Herdr panes | **PASS** — none remained |
+| Documentation and content/path scans | **PASS** |
+
+The previous authoritative C2 section remains unchanged. Task 11 remains
+unchecked in `.weave/plans/pi-child-streaming-remediation.md`. The focused
+proof update is the only intended source change for this record.
