@@ -1235,3 +1235,70 @@ report, or any other runtime output or artifact. No new Herdr claim is made.
 | Documentation links | **PASS** — `bun run docs:check-links` |
 | Content/path scans | **PASS** — no prohibited content or absolute path was retained |
 | Resources and reports | **PASS** — no child, provider, proof, pane, lease, temporary resource, or report remained |
+
+## Task 11 final proof I2 (2026-08-21)
+
+This append-only section records the final proof for subject
+`e46f68d5d3ea751bfd91d16295d87878a554ee41`. It preserves all earlier proof
+history and leaves the Task 11 plan checkbox unchanged. I1a is bounded
+validation evidence. I1b is an executable live result; no new Herdr result is
+claimed.
+
+### I1a validation and bounded-control gates
+
+| Gate | Bounded result |
+| --- | --- |
+| Focused suite | **PASS** — `958` |
+| Pi suite | **PASS** — `4230` |
+| Repository suite | **PASS** — `11291`; `11` skipped |
+| Build | **PASS** |
+| Typecheck | **PASS** |
+| Lint | **PASS** |
+| Config validation | **PASS** |
+| Documentation checks | **PASS** |
+| Affected modules | **PASS** — maximum `793` lines in one affected module |
+| Replay | **PASS** — `5` reds / `4` lanes |
+| Runtime Store lease | **PASS** — none |
+
+### I1b executable live proof
+
+The live command returned the bounded results below. This is not a new Herdr
+observation or a terminal UI result.
+
+| Gate | Bounded result |
+| --- | --- |
+| Runtime identity | **PASS** — `current` |
+| Live command exit | **PASS** — `0` |
+| Requested lanes | **PASS** — `4/4` |
+| Isolation | **PASS** — `isolated` |
+| Settlement | **PASS** — one settlement |
+| Registry | **PASS** — `0` |
+| Diagnostics | **PASS** — `0` |
+| Cleanup failures | **PASS** — `0` |
+| Residual resources | **PASS** — `0` |
+| Bounded report | **PASS** — mode `0600`, `699` bytes, removed |
+| Restorations | **PASS** — `4/4` |
+
+### Current runtime implementation and terminal-continuity boundary
+
+| Digest fact | SHA-256 / result |
+| --- | --- |
+| Current built `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Authoritative C2 `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Equality | **PASS** — byte-identical |
+
+Terminal continuity is limited to the byte-identical `extension-impl`
+implementation payload shown above. This section makes no continuity claim for
+the extension entry, build-identity sidecar, host loader, preloader, verifier,
+report, or any other runtime output or artifact. No new Herdr claim is made.
+
+### Preservation, cleanup, and scan record
+
+| Gate | Bounded result |
+| --- | --- |
+| Earlier proof history | **PRESERVED** — all earlier sections remain unchanged |
+| Temporary config backup | **PASS** — bytes matched the restored config; mode `0600`; removed |
+| Content/path scans | **PASS** — no prohibited content or absolute path was retained |
+| Documentation links | **PASS** — `bun run docs:check-links` |
+| Proof commit scope | **PASS** — proof record plus required metadata only |
+| Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |

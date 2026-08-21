@@ -787,8 +787,8 @@
   - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
   - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
   - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
-  - function readBoundedIdentityBytes: (path, maxBytes, failure) => ResultAsync<Uint8Array, ExtensionBuildIdentityError>
-  - function readArtifactSha256: (path) => ResultAsync<string, ExtensionBuildIdentityError>
+  - function readBoundedIdentityBytes: (path, maxBytes, failure, expectedCanonicalRoot?) => ResultAsync<Uint8Array, ExtensionBuildIdentityError>
+  - function readArtifactSha256: (path, expectedCanonicalRoot?) => ResultAsync<string, ExtensionBuildIdentityError>
   - function parseExtensionBuildManifestText: (text) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
 - `packages/adapters/pi/src/extension-build-identity-proof.ts`
   - function renderExtensionBuildIdentityHealthLine: (health) => string
@@ -940,14 +940,24 @@
   - function createPiNativeSessionHost: (SessionManager) => PiNativeSessionHostPort
   - interface PiSessionManagerStatic
   - interface PiSessionManagerInstance
-- `packages/adapters/pi/src/path-containment.ts`
+- `packages/adapters/pi/src/path-containment-bounded-read.ts` — function readAbsoluteFileBounded: (path, maxBytes, expectedCanonicalRoot?) => ResultAsync<Uint8Array, BoundedAbsoluteFileReadError>
+- `packages/adapters/pi/src/path-containment-lexical.ts`
   - function isLexicallyContained: (relativePath) => boolean
-  - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
-  - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
-  - function readAbsoluteFileBounded: (path, maxBytes) => ResultAsync<Uint8Array, BoundedAbsoluteFileReadError>
+  - function pathSegments: (relativePath) => readonly string[]
+  - function toResultAsync: (result, E>) => ResultAsync<T, E>
+  - function canonicalRelativeSegments: (root, target) => Result<readonly string[], PathContainmentError>
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
   - class BunPathContainmentPort
-  - _...13 more_
+  - _...2 more_
+- `packages/adapters/pi/src/path-containment-nofollow.ts`
+  - function cstr: (value) => Uint8Array
+  - function loadNoFollowLibc: () => Result<
+  - function isMissingComponentErrno: (errnoValue) => boolean
+  - function canonicalizeExistingPath: (libc, path, failure) => Result<string, PathContainmentError>
+  - function openNoFollowDirectoryChain: (libc, canonicalRoot, segments) => Result<number, PathContainmentError>
+  - function absoluteNoFollowSegments: (path) => Result<readonly string[], NoFollowInspectionError>
+  - _...3 more_
+- `packages/adapters/pi/src/path-containment-relative-files.ts` — class BunSecureRelativeFileProvider, class FakeSecureRelativeFileProvider
 - `packages/adapters/pi/src/pi-config-ui.ts`
   - function mergePiConfigEntries: (entries, record) => readonly PiConfigExtensionEntry[]
   - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
@@ -1879,14 +1889,53 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
-- `scripts/build-public-packages.ts`
+- `scripts/bounded-process/contract.ts`
+  - function boundedProcessFailure: (code) => BoundedProcessFailure
+  - interface BoundedProcessFailure
+  - interface BoundedProcessSpawnInput
+  - interface BoundedProcessStdin
+  - interface BoundedProcess
+  - interface BoundedProcessLimits
+  - _...7 more_
+- `scripts/bounded-process/control.ts`
+  - function normalizedBoundedProcessLimits: (supplied) => BoundedProcessLimits
+  - function observeBoundedPromise: (promiseLike, timeoutMs?) => Promise<BoundedWaitOutcome<T>>
+  - function terminateBoundedProcess: (process, limits) => Promise<boolean>
+  - type BoundedWaitOutcome
+- `scripts/bounded-process/runner.ts` — function spawnBoundedInteractiveProcess: (input) => Result<BoundedProcess, BoundedProcessFailure>, function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, BoundedProcessFailure>
+- `scripts/bounded-process/stream.ts`
+  - function isBoundedProcessStreamOverflow: (value) => value is typeof BOUNDED_PROCESS_STREAM_OVERFLOW
+  - function readProcessLines: (process, "stdout" | "stderr">) => AsyncIterable<string>
+  - const MAX_BOUNDED_PROCESS_LINE_BYTES
+  - const MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES
+  - const MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM
+  - const MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM
+  - _...4 more_
+- `scripts/build-public-packages-builder.ts` — class PublicPackageBuilder
+- `scripts/build-public-packages-filesystem.ts` — class BunPublicPackageFileSystem
+- `scripts/build-public-packages-git.ts`
+  - function runGit: (command, reason, options) => ResultAsync<string, PublicPackageBuildError>
+  - function parseGitBuildIdentity: (subject, status) => Result<
+  - function readGitBuildIdentity: (probe) => ResultAsync<
+  - type GitBuildReason
+  - type GitProcessOptions
+  - type GitBuildProbe
+  - _...1 more_
+- `scripts/build-public-packages-pi.ts`
   - function piOutputName: (path) => string
   - function piIdentityOutputFiles: () => readonly
   - function writePiExtensionBuildIdentityManifest: (input) => ResultAsync<void, PublicPackageBuildError>
+  - function emitPiBuildIdentityArtifacts: (input) => void
+  - const PI_EXTENSION_IDENTITY_SOURCE
+  - const PI_EXTENSION_IDENTITY_OUTPUT
+  - _...2 more_
+- `scripts/build-public-packages-shared.ts`
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
   - function hasRuntimeRelativeImport: (contents) => boolean
-  - _...5 more_
+  - interface PublicPackageFileSystem
+  - type PublicPrivatePackageName
+  - type PublicPackageBuildError
 - `scripts/ci/verify-action-pins.ts`
   - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
   - function loadActionFiles: (root) => Promise<Record<string, string>>
@@ -1943,15 +1992,6 @@
   readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
 - `scripts/pi/child-stream-identity-probe.ts` — function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>, function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
 - `scripts/pi/child-stream-identity-report.ts` — function renderIdentityVerification: (result, VerifyChildStreamingFailure>) => string
-- `scripts/pi/child-stream-live-proof-bounded-runner.ts` — function spawnBoundedInteractiveProcess: (input) => Result<BoundedProcess, LiveProofSystemFailure>, function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, LiveProofSystemFailure>
-- `scripts/pi/child-stream-live-proof-bounded-stream.ts`
-  - function isLiveProofStreamOverflow: (value) => value is typeof LIVE_PROOF_STREAM_OVERFLOW
-  - function readProcessLines: (process, "stdout" | "stderr">) => AsyncIterable<string>
-  - const MAX_LIVE_PROOF_LINE_BYTES
-  - const MAX_LIVE_PROOF_UNDECODED_BUFFER_BYTES
-  - const MAX_LIVE_PROOF_QUEUED_LINES_PER_STREAM
-  - const MAX_LIVE_PROOF_QUEUED_BYTES_PER_STREAM
-  - _...4 more_
 - `scripts/pi/child-stream-live-proof-command.ts`
   - function liveProofReportPassed: (report) => boolean
   - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
@@ -1985,11 +2025,6 @@
   - function createLiveProofPort: (config) => LiveProofPort
   - interface LiveProofGuardedResource
   - interface LiveProofPortConfig
-- `scripts/pi/child-stream-live-proof-process-control.ts`
-  - function normalizedBoundedProcessLimits: (supplied) => BoundedProcessLimits
-  - function observeBoundedPromise: (promiseLike, timeoutMs?) => Promise<BoundedWaitOutcome<T>>
-  - function terminateBoundedProcess: (process, limits) => Promise<boolean>
-  - type BoundedWaitOutcome
 - `scripts/pi/child-stream-live-proof-report-writer.ts` — function writeLiveProofReport: (input) => ResultAsync<number, LiveProofWriteFailure>, interface LiveProofWriteFailure
 - `scripts/pi/child-stream-live-proof-runner.ts`
   - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
@@ -2002,11 +2037,11 @@
 - `scripts/pi/child-stream-live-proof-system-contract.ts`
   - function systemFailure: (code) => LiveProofSystemFailure
   - interface LiveProofSystemFailure
-  - interface LiveProofSpawnInput
   - interface LiveProofProcess
   - interface LiveProofTimer
   - interface LiveProofCommandOutput
-  - _...11 more_
+  - interface LiveProofSystem
+  - _...2 more_
 - `scripts/pi/child-stream-verify-args.ts` — function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
 - `scripts/pi/child-stream-verify-capture-command.ts`
   - function runCaptureCommand: (input) => ResultAsync<CaptureCommandSuccess, VerifyChildStreamingFailure>

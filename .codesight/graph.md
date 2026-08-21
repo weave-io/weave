@@ -11,8 +11,8 @@
 - `packages/adapters/pi/src/child-timer.ts` — imported by **22** files
 - `packages/adapters/pi/src/errors.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `scripts/release/constants.ts` — imported by **21** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `scripts/release/constants.ts` — imported by **20** files
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
@@ -34,4 +34,4 @@
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +17 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
+- `scripts/release/constants.ts` ← `scripts/build-public-packages-pi.ts`, `scripts/release/__tests__/changelog-format.test.ts`, `scripts/release/__tests__/changeset-consumption.test.ts`, `scripts/release/__tests__/channel-versions.test.ts`, `scripts/release/__tests__/consumption-ledger.test.ts` +16 more
