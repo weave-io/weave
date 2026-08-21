@@ -49,13 +49,13 @@ class FakeOutputPort implements PiChildOutputPort {
     if (this.nextError !== undefined) {
       const error = this.nextError;
       this.nextError = undefined;
-      return { committed: false, result: errAsync(error), cancel: () => {} };
+      return { result: errAsync(error), cancel: () => "committed" };
     }
     const text = new TextDecoder().decode(bytes);
     for (const line of text.split("\n")) {
       if (line.length > 0) this.lines.push(JSON.parse(line));
     }
-    return { committed: true, result: okAsync(undefined), cancel: () => {} };
+    return { result: okAsync(undefined), cancel: () => "committed" };
   }
 }
 
@@ -647,7 +647,7 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
     );
   });
 
-  it("allows a settlement retry after a failed output write without skipping its authenticated sequence", async () => {
+  it("consumes a failed output sequence before retrying settlement", async () => {
     const { runtime, output } = await buildActivatedRuntime();
     output.failNextWrite({
       type: "ChildOutputWriteFailed",
@@ -665,7 +665,10 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
     });
     expect(second.isOk()).toBe(true);
     expect(output.lines).toHaveLength(2);
-    expect((output.lines.at(-1) as Record<string, unknown>).sequence).toBe(2);
+    // The failed write was submitted to the output boundary, so its
+    // authenticated sequence remains consumed even though no line was
+    // observed by this fake.
+    expect((output.lines.at(-1) as Record<string, unknown>).sequence).toBe(3);
   });
 
   it("reports settlement exactly once - a second call is rejected rather than sending a duplicate envelope", async () => {
