@@ -434,7 +434,7 @@ All Pi-specific behavior stays in the Pi adapter. The engine, core, config schem
   - **Acceptance**:
     - Weft returns approval for the exact range used to build the Task 15 artifact.
 
-- [ ] 15. Prove the reviewed artifact on real installed Pi 0.84.2
+- [x] 15. Prove the reviewed artifact on real installed Pi 0.84.2
   - **What**: Run the release smoke against the exact reviewed packed adapter and collect ephemeral evidence of the real public lifecycle.
   - **Files**: No committed files. Use a temporary isolated Pi home, temporary packed artifact location, and temporary sanitized report directory.
   - **Depends on**: Task 14.
