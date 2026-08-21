@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { MODEL_TRANSITION_SCHEMA_VERSION } from "../child-control-bodies.js";
 import {
   appendPiModelFailoverRecord,
+  MAX_MODEL_FAILOVER_NATIVE_HISTORY_ENTRIES,
   MODEL_FAILOVER_RECORD_SCHEMA_VERSION,
   modelFailoverRecordFromTransition,
   PI_MODEL_FAILOVER_ENTRY_TYPE,
@@ -235,6 +236,60 @@ describe("durable model-failover record", () => {
     expect(afterReload.isOk()).toBe(true);
     expect(afterReload._unsafeUnwrap().status).toBe("duplicate");
     expect(entries).toHaveLength(1);
+  });
+
+  it("rejects oversized native history before reading or materializing entries", () => {
+    let entryReads = 0;
+    const oversized = new Array<unknown>(
+      MAX_MODEL_FAILOVER_NATIVE_HISTORY_ENTRIES + 1,
+    );
+    Object.defineProperty(oversized, 0, {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        entryReads += 1;
+        return nativeEntry();
+      },
+    });
+    const result = appendPiModelFailoverRecord(
+      {
+        getEntries: () => oversized,
+        appendEntry: () => {
+          throw new Error("append must not run for oversized history");
+        },
+      },
+      RECORD,
+      true,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toMatchObject({
+        type: "PiModelFailoverAppendFailed",
+        reason: "history-unreadable",
+      });
+    }
+    expect(entryReads).toBe(0);
+
+    const iterableOnly = {
+      [Symbol.iterator]: () => {
+        throw new Error("unbounded iteration must not run");
+      },
+    } as unknown as readonly unknown[];
+    const iterableResult = appendPiModelFailoverRecord(
+      {
+        getEntries: () => iterableOnly,
+        appendEntry: () => undefined,
+      },
+      RECORD,
+      true,
+    );
+    expect(iterableResult.isErr()).toBe(true);
+    if (iterableResult.isErr()) {
+      expect(iterableResult.error).toMatchObject({
+        type: "PiModelFailoverAppendFailed",
+        reason: "history-unreadable",
+      });
+    }
   });
 
   it("keeps distinct transitions in order across a serialized restart", () => {

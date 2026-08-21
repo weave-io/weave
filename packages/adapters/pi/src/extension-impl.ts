@@ -478,6 +478,8 @@ const TAPESTRY_PRIMARY_AGENT_NAME = "tapestry";
 
 type PiModelTransitionFacts = Omit<PiModelTransitionBody, "phase">;
 
+const MAX_CHILD_MODEL_TRANSITION_REPORT_ATTEMPTS = 2;
+
 type PiModelIdentityLike = {
   readonly provider: string;
   readonly id: string;
@@ -526,14 +528,29 @@ function modelTransitionFactsFromAppliedEvent(
   return facts;
 }
 
+type PiModelFailoverEntryFilter = NonNullable<
+  PiModelFailoverAppendPort["shouldIgnoreEntry"]
+>;
+
+type MutablePiModelFailoverAppendPort = {
+  appendEntry: PiModelFailoverAppendPort["appendEntry"];
+  getEntries: NonNullable<PiModelFailoverAppendPort["getEntries"]>;
+  shouldIgnoreEntry?: PiModelFailoverEntryFilter;
+};
+
 function createPiModelFailoverAppendPort(
   pi: Pick<PiExtensionApi, "appendEntry">,
   readEntries: () => readonly unknown[] | undefined,
+  shouldIgnoreEntry?: PiModelFailoverEntryFilter,
 ): PiModelFailoverAppendPort {
-  return {
+  const port: MutablePiModelFailoverAppendPort = {
     appendEntry: (type, data) => pi.appendEntry(type, data),
     getEntries: () => readEntries() ?? [],
   };
+  if (shouldIgnoreEntry !== undefined) {
+    port.shouldIgnoreEntry = shouldIgnoreEntry;
+  }
+  return port;
 }
 
 /** Appends only authenticated recovery facts; applied-only phases are ignored. */
@@ -2045,6 +2062,34 @@ async function activateChildModeIfApplicable(
   let fallbackGate: PiChildFallbackSettlementGate | undefined;
   let childModelTransitionFacts: PiModelTransitionFacts | undefined;
   let childModelTransitionReportTail: Promise<boolean> = Promise.resolve(true);
+  let childModelTransitionDeliveryFailure:
+    | "applied"
+    | "recovery-confirmed"
+    | undefined;
+
+  const reportChildModelTransitionWithRetry = async (
+    transition: PiModelTransitionBody,
+  ): Promise<boolean> => {
+    let lastErrorType: string | undefined;
+    for (
+      let attempt = 0;
+      attempt < MAX_CHILD_MODEL_TRANSITION_REPORT_ATTEMPTS;
+      attempt += 1
+    ) {
+      const reported = await runtime.reportModelTransition(transition);
+      if (reported.isOk()) return true;
+      lastErrorType = reported.error.type;
+    }
+    deps.logger.warn(
+      {
+        childId: state.childId,
+        attempts: MAX_CHILD_MODEL_TRANSITION_REPORT_ATTEMPTS,
+        errorType: lastErrorType,
+      },
+      "child model transition reporting exhausted",
+    );
+    return false;
+  };
 
   const queueChildModelTransition = (
     phase: PiModelTransitionBody["phase"],
@@ -2053,7 +2098,8 @@ async function activateChildModeIfApplicable(
     if (facts === undefined) return;
     const generation = state.bootstrapGeneration;
     const previous = childModelTransitionReportTail;
-    childModelTransitionReportTail = previous
+    const transition = { ...facts, phase };
+    const queued = previous
       .then(async (priorSucceeded) => {
         if (state.bootstrapGeneration !== generation) return false;
         // A recovery claim is valid only when its paired applied fact reached
@@ -2067,24 +2113,21 @@ async function activateChildModeIfApplicable(
           // claim as well.
           appendPiModelFailoverTransition(
             modelFailoverAppendPort,
-            { ...facts, phase },
+            transition,
             deps.logger,
           );
         }
-        const reported = await runtime.reportModelTransition({
-          ...facts,
-          phase,
-        });
-        if (reported.isErr()) {
-          deps.logger.warn(
-            { childId: state.childId, errorType: reported.error.type },
-            "child model transition reporting failed",
-          );
-          return false;
-        }
-        return true;
+        return reportChildModelTransitionWithRetry(transition);
       })
       .catch(() => false);
+    childModelTransitionReportTail = queued;
+    if (phase === "applied") {
+      void queued.then((succeeded) => {
+        if (succeeded || state.bootstrapGeneration !== generation) return;
+        childModelTransitionDeliveryFailure = "applied";
+        void reportChildFailure("model-transition-applied-report-failed");
+      });
+    }
   };
 
   const claimTerminalSettlement = (): boolean => {
@@ -2103,9 +2146,8 @@ async function activateChildModeIfApplicable(
   const reportChildFailure = async (reason: string): Promise<void> => {
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (!claimTerminalSettlement()) return;
-    // Do not let a terminal failure overtake an already-admitted applied
-    // transition. A transport failure still resolves the queue and degrades to
-    // the ordinary sanitized settlement below.
+    // A failed applied transition is terminal. Do not let a later fallback
+    // success settle the child while the parent still lacks the model truth.
     await childModelTransitionReportTail;
     await reportSettlement("failed", { reason });
   };
@@ -2167,9 +2209,18 @@ async function activateChildModeIfApplicable(
     if (!claimTerminalSettlement()) return;
     // Model-transition reports are nonterminal, but the terminal settlement
     // must not overtake a recovery claim that the child has already admitted.
-    // Awaiting the bounded local queue preserves the authenticated sequence
-    // and lets a failed report degrade to an ordinary settlement.
-    await childModelTransitionReportTail;
+    // Awaiting the bounded local queue preserves the authenticated sequence.
+    const transitionReported = await childModelTransitionReportTail;
+    if (!transitionReported) {
+      if (state.directStep !== undefined) state.directStep.windowOpen = false;
+      await reportSettlement("failed", {
+        reason:
+          childModelTransitionDeliveryFailure === "applied"
+            ? "model-transition-applied-report-failed"
+            : "model-transition-recovery-confirmed-report-failed",
+      });
+      return;
+    }
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (state.directStep !== undefined) {
       const candidate = state.directStep.recorder.take();
@@ -3983,14 +4034,14 @@ export function createPiExtension(
       {
         appendEntry: (type, data) => currentPrimaryPi?.appendEntry(type, data),
       },
-      () => {
-        const entries = latestSessionCtx?.sessionManager?.getEntries?.();
-        if (entries === undefined) return undefined;
-        return entries.filter((entry) => {
-          const parsed = parsePiModelFailoverNativeEntry(entry);
-          if (parsed.isErr() || parsed.value === undefined) return true;
-          return !childObserverTransitionIds.has(parsed.value.transitionId);
-        });
+      () => latestSessionCtx?.sessionManager?.getEntries?.(),
+      (entry) => {
+        const parsed = parsePiModelFailoverNativeEntry(entry);
+        return (
+          parsed.isOk() &&
+          parsed.value !== undefined &&
+          childObserverTransitionIds.has(parsed.value.transitionId)
+        );
       },
     );
   let primaryModelFailoverAppendPort = createPrimaryModelFailoverAppendPort();

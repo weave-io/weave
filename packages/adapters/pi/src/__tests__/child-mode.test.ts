@@ -741,6 +741,79 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(host.appendedEntries).toHaveLength(1);
   });
 
+  it("retries a failed applied-transition delivery twice and settles terminally", async () => {
+    const origin: PiModelInfo = {
+      provider: "origin",
+      id: "first",
+      name: "First",
+    };
+    const fallback: PiModelInfo = {
+      provider: "fallback",
+      id: "second",
+      name: "Second",
+    };
+    const recoveryCtx = fakeCtx({
+      model: origin,
+      modelRegistry: { getAvailable: () => [origin, fallback] },
+      hasPendingMessages: () => false,
+    });
+    const { host, output, secretBytes } =
+      await buildChildExtension(recoveryCtx);
+    await deliverEnvelope(
+      host,
+      await signedBootstrap(secretBytes, {
+        models: ["origin/first", "fallback/second"],
+      }),
+      recoveryCtx,
+    );
+
+    const failedMessage = {
+      role: "assistant",
+      id: "failed-applied-delivery",
+      stopReason: "error",
+      error: { status: 503, message: "provider unavailable" },
+      content: [{ type: "text", text: "partial output" }],
+    } as const;
+    const deferred = host.deferNextSetModel();
+    await host.fire(
+      "message_end",
+      { type: "message_end", message: failedMessage },
+      recoveryCtx,
+    );
+    const fallbackSettlement = host.fire(
+      "agent_settled",
+      { type: "agent_settled" },
+      recoveryCtx,
+    );
+    await deferred.called;
+    await host.fire(
+      "model_select",
+      { type: "model_select", model: fallback },
+      recoveryCtx,
+    );
+
+    const attemptsBeforeDelivery = output.writeAttempts;
+    output.failWritesRemaining = 2;
+    deferred.settle(true);
+    await fallbackSettlement;
+    await waitFor(() => output.lines.some((line) => line.kind === "settled"));
+
+    const settled = output.lines.filter((line) => line.kind === "settled");
+    expect(settled).toHaveLength(1);
+    expect((settled[0]?.body as Record<string, unknown>).outcome).toBe(
+      "failed",
+    );
+    expect((settled[0]?.body as Record<string, unknown>).reason).toBe(
+      "model-transition-applied-report-failed",
+    );
+    expect(
+      output.lines.filter((line) => line.kind === "model-transition"),
+    ).toHaveLength(0);
+    expect(
+      output.writeAttempts - attemptsBeforeDelivery,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it.each([
     {
       label: "delegated",

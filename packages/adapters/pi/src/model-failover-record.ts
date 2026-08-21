@@ -16,6 +16,8 @@ export const PI_MODEL_FAILOVER_ENTRY_TYPE = "weave.model-failover" as const;
 export const MODEL_FAILOVER_RECORD_SCHEMA_VERSION = 1 as const;
 /** Maximum canonical JSON size of one durable fallback record. */
 export const MAX_MODEL_FAILOVER_RECORD_BYTES = 4 * 1_024;
+/** Maximum native history entries inspected for restart-safe deduplication. */
+export const MAX_MODEL_FAILOVER_NATIVE_HISTORY_ENTRIES = 4_096;
 /** Maximum code points and UTF-8 bytes of one identity field. */
 export const MAX_MODEL_FAILOVER_FIELD_LENGTH = 256;
 /** Maximum UTF-8 bytes of a native session timestamp. */
@@ -62,6 +64,8 @@ export type PiModelFailoverAppendError =
 export interface PiModelFailoverAppendPort {
   readonly appendEntry: (type: string, data: unknown) => void;
   readonly getEntries?: () => readonly unknown[];
+  /** Source-scoped history entries that do not belong to this append port. */
+  readonly shouldIgnoreEntry?: (entry: unknown) => boolean;
 }
 
 export interface PiModelFailoverAppendResult {
@@ -412,16 +416,54 @@ export function appendPiModelFailoverRecord(
             },
       );
     }
-    const history = Result.fromThrowable(
-      () => Array.from(entries.value as Iterable<unknown>),
+    const nativeEntries = entries.value;
+    const historyLength = Result.fromThrowable(
+      () => {
+        // The host contract is an array, not an arbitrary iterable. Check its
+        // bound before any copy or iteration so a hostile/native history cannot
+        // turn deduplication into an unbounded materialization.
+        if (!Array.isArray(nativeEntries)) return undefined;
+        const length = nativeEntries.length;
+        return Number.isSafeInteger(length) &&
+          length >= 0 &&
+          length <= MAX_MODEL_FAILOVER_NATIVE_HISTORY_ENTRIES
+          ? length
+          : undefined;
+      },
       (): PiModelFailoverAppendError => ({
         type: "PiModelFailoverAppendFailed",
         reason: "history-unreadable",
       }),
     )();
-    if (history.isErr()) return err(history.error);
-    for (const entry of history.value) {
-      const existing = parsePiModelFailoverNativeEntry(entry);
+    if (historyLength.isErr() || historyLength.value === undefined) {
+      return err(
+        historyLength.isErr()
+          ? historyLength.error
+          : {
+              type: "PiModelFailoverAppendFailed",
+              reason: "history-unreadable",
+            },
+      );
+    }
+    for (let index = 0; index < historyLength.value; index += 1) {
+      const entry = Result.fromThrowable(
+        () => nativeEntries[index],
+        (): PiModelFailoverAppendError => ({
+          type: "PiModelFailoverAppendFailed",
+          reason: "history-unreadable",
+        }),
+      )();
+      if (entry.isErr()) return err(entry.error);
+      const ignored = Result.fromThrowable(
+        () => port.shouldIgnoreEntry?.(entry.value) === true,
+        (): PiModelFailoverAppendError => ({
+          type: "PiModelFailoverAppendFailed",
+          reason: "history-unreadable",
+        }),
+      )();
+      if (ignored.isErr()) return err(ignored.error);
+      if (ignored.value) continue;
+      const existing = parsePiModelFailoverNativeEntry(entry.value);
       if (existing.isErr()) return err(existing.error);
       if (existing.value?.transitionId === record.transitionId) {
         seen.add(record.transitionId);

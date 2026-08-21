@@ -452,6 +452,42 @@ function validateExactDurableHistory(
   return ok(undefined);
 }
 
+function validateParentToolPendingAcrossChildTimeline(
+  child: FixtureSnapshot,
+  parent: FixtureSnapshot,
+): Result<void, SmokeFailure> {
+  const startedAt = parent.parentToolStartedAtMs;
+  const endedAt = parent.parentToolEndedAtMs;
+  const childTimeline = [
+    ...child.lifecycle.contextRepairTimesMs,
+    ...child.lifecycle.modelSelectTimesMs,
+    ...child.lifecycle.markerMessageStartTimesMs,
+    ...child.lifecycle.settlementTimesMs,
+  ];
+  if (
+    startedAt === undefined ||
+    endedAt === undefined ||
+    !Number.isFinite(startedAt) ||
+    !Number.isFinite(endedAt) ||
+    startedAt >= endedAt ||
+    childTimeline.length === 0 ||
+    childTimeline.some(
+      (timestamp) =>
+        !Number.isFinite(timestamp) ||
+        timestamp < startedAt ||
+        timestamp > endedAt,
+    )
+  ) {
+    return err(
+      failure(
+        "ProviderContextViolation",
+        "parent tool pending interval does not enclose the child fallback timeline",
+      ),
+    );
+  }
+  return ok(undefined);
+}
+
 function validateProviderDurableCommonFacts(
   provider: FixtureMessageFacts,
   history: FixtureHistoryFacts,
@@ -662,6 +698,11 @@ export function validateFallbackFacts(input: {
       ),
     );
   }
+  const pendingTimeline = validateParentToolPendingAcrossChildTimeline(
+    child,
+    parent,
+  );
+  if (pendingTimeline.isErr()) return err(pendingTimeline.error);
   const identity = child.lifecycle.appliedIdentity;
   if (identity?.provider !== "smoke" || identity.id !== "second")
     return err(

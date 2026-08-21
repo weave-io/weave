@@ -670,13 +670,13 @@ function successfulFallbackInput() {
     }),
     parentToolCallIdHash: "1".repeat(64),
     parentToolEndCallIdHash: "1".repeat(64),
-    parentToolStartedAtMs: 100,
-    parentToolEndedAtMs: 112,
-    parentToolPendingMs: 12,
+    parentToolStartedAtMs: 1_000,
+    parentToolEndedAtMs: 1_500,
+    parentToolPendingMs: 500,
     parentToolStartCount: 1,
     parentToolEndCount: 1,
-    parentToolStartTimesMs: [100],
-    parentToolEndTimesMs: [112],
+    parentToolStartTimesMs: [1_000],
+    parentToolEndTimesMs: [1_500],
   };
   return {
     observation: {
@@ -2090,6 +2090,34 @@ describe("Pi model-fallback release smoke", () => {
     expect(altered.isErr()).toBe(true);
     if (altered.isErr())
       expect(altered.error.type).toBe("UnexpectedEventCount");
+  });
+
+  it("fails closed when the parent tool interval misses child fallback evidence", () => {
+    const input = successfulFallbackInput();
+    const cases = [
+      {
+        name: "parent settles before marker admission",
+        parentToolEndedAtMs: 1_399,
+        parentToolPendingMs: 399,
+        parentToolEndTimesMs: [1_399],
+      },
+      {
+        name: "parent starts after context repair",
+        parentToolStartedAtMs: 1_101,
+        parentToolPendingMs: 399,
+        parentToolStartTimesMs: [1_101],
+      },
+    ] as const;
+    for (const candidate of cases) {
+      const { name, ...parentOverrides } = candidate;
+      const parent = { ...input.parent, ...parentOverrides };
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, input.child, parent),
+      );
+      expect(result.isErr(), name).toBe(true);
+      if (result.isErr())
+        expect(result.error.type, name).toBe("ProviderContextViolation");
+    }
   });
 
   it("fails closed for missing, reordered, duplicate, and wrong real context descriptors", () => {

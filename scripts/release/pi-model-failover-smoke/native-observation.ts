@@ -62,6 +62,19 @@ import {
 
 const MAX_NATIVE_SESSION_BYTES = MAX_CAPTURE_BYTES * 32;
 const MAX_NATIVE_SESSION_FILES = 8;
+const MAX_NATIVE_SESSION_RECORDS = MAX_HISTORY_DESCRIPTOR_COUNT + 1;
+
+/** Yields JSONL records without first materializing an unbounded line array. */
+function* nativeSessionLines(body: string): Generator<string> {
+  let lineStart = 0;
+  for (let index = 0; index <= body.length; index += 1) {
+    if (index < body.length && body[index] !== "\n") continue;
+    const lineEnd =
+      index > lineStart && body[index - 1] === "\r" ? index - 1 : index;
+    yield body.slice(lineStart, lineEnd);
+    lineStart = index + 1;
+  }
+}
 
 async function directoryExists(
   path: string,
@@ -348,8 +361,13 @@ export async function readNativeSessionSnapshots(
       }
       const body = new TextDecoder().decode(bytes.value);
       const records: Record<string, unknown>[] = [];
-      for (const line of body.split(/\r?\n/u)) {
+      for (const line of nativeSessionLines(body)) {
         if (line.trim().length === 0) continue;
+        if (records.length >= MAX_NATIVE_SESSION_RECORDS) {
+          return err(
+            failure("CaptureMalformed", "native history entry bound exceeded"),
+          );
+        }
         const parsed = Result.fromThrowable(
           () => JSON.parse(line) as unknown,
           () =>
