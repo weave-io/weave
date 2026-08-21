@@ -114,11 +114,15 @@ export type PiMessageUpdateCarrier =
  * `toolcall_*` are NOT: they are framing, and reporting them as reasoning made
  * the card say `reasoning` while the child was answering.
  */
-const RAW_REASONING_EVENT_TYPES: ReadonlySet<string> = new Set([
+export const PI_GENERIC_REASONING_ASSISTANT_EVENT_TYPES = [
   "thinking_start",
   "thinking_delta",
   "thinking_end",
-]);
+] as const;
+
+const RAW_REASONING_EVENT_TYPES: ReadonlySet<string> = new Set(
+  PI_GENERIC_REASONING_ASSISTANT_EVENT_TYPES,
+);
 
 /**
  * The ONE vocabulary of `assistantMessageEvent.type` values that state raw

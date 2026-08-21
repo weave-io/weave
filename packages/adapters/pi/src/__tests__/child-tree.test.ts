@@ -14,6 +14,7 @@ import {
   subtreeIds,
   truncateLatestOutput,
 } from "../child-tree.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 
 function node(
   overrides: Partial<PiChildTreeNode> & { id: string },
@@ -452,6 +453,37 @@ describe("PiChildInspectionRegistry persistence", () => {
     );
   });
 
+  it("diagnoses a transcript listener failure without rejecting the checkpoint", async () => {
+    const diagnostics = createChildUiEventDiagnostics();
+    const registry = new PiChildInspectionRegistry(undefined, diagnostics);
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => node({ id: "child" }),
+    });
+    registry.onTranscriptUpdate(() => {
+      throw new Error("tree callback secret");
+    });
+
+    const result = await registry.checkpointEvent("child", {
+      type: "text",
+      text: "event payload",
+    });
+    expect(result.isOk()).toBe(true);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(
+      "tree callback secret",
+    );
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "tree-projection",
+        reason: "callback-failed",
+        disposition: "failed",
+      }),
+    );
+  });
+
   it("keeps intermediate latestOutput out of finalOutput and persists terminal output", async () => {
     const { port, records } = recordingHistoryPort();
     const registry = new PiChildInspectionRegistry(port);
@@ -516,25 +548,29 @@ describe("PiChildInspectionRegistry persistence queue", () => {
       reason: "unavailable" as const,
     };
     let checkpointCalls = 0;
-    const registry = new PiChildInspectionRegistry({
-      register: () => {
-        calls.push("register");
-        return okAsync(undefined);
+    const diagnostics = createChildUiEventDiagnostics();
+    const registry = new PiChildInspectionRegistry(
+      {
+        register: () => {
+          calls.push("register");
+          return okAsync(undefined);
+        },
+        checkpoint: () => {
+          calls.push("checkpoint");
+          checkpointCalls += 1;
+          return checkpointCalls === 1 ? errAsync(failure) : okAsync(undefined);
+        },
+        interrupted: () => {
+          calls.push("interrupted");
+          return okAsync(undefined);
+        },
+        terminal: (_id, _snapshot, output) => {
+          calls.push(`terminal:${output ?? ""}`);
+          return okAsync(undefined);
+        },
       },
-      checkpoint: () => {
-        calls.push("checkpoint");
-        checkpointCalls += 1;
-        return checkpointCalls === 1 ? errAsync(failure) : okAsync(undefined);
-      },
-      interrupted: () => {
-        calls.push("interrupted");
-        return okAsync(undefined);
-      },
-      terminal: (_id, _snapshot, output) => {
-        calls.push(`terminal:${output ?? ""}`);
-        return okAsync(undefined);
-      },
-    });
+      diagnostics,
+    );
     const snapshot = () => node({ id: "child", status: "completed" });
     await registry.register({
       id: "child",
@@ -558,5 +594,12 @@ describe("PiChildInspectionRegistry persistence queue", () => {
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr()).toEqual(failure);
     expect(registry.snapshotLive()).toHaveLength(0);
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "checkpoint",
+        reason: "checkpoint-failed",
+        disposition: "failed",
+      }),
+    );
   });
 });

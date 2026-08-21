@@ -660,6 +660,49 @@ export const PiChildSessionEventSchema = z.discriminatedUnion("type", [
 export type PiChildSessionEvent = z.infer<typeof PiChildSessionEventSchema>;
 export type PiChildEventType = PiChildSessionEvent["type"];
 
+/**
+ * A parser-approved event that came from Pi's native tool lifecycle.  This is
+ * deliberately a non-enumerable process-local mark: it is useful to the
+ * inspector reducer, but it cannot become transcript JSON, parent-card facts,
+ * or a durable replay field.
+ */
+const AUTHORITATIVE_TOOL_EVENT = Symbol("pi-authoritative-tool-event");
+
+const isToolEventType = (type: PiChildEventType): boolean =>
+  type === "tool_call" ||
+  type === "tool_partial_result" ||
+  type === "tool_result" ||
+  type === "tool_error";
+
+export function markPiAuthoritativeToolEvent(
+  event: PiChildSessionEvent,
+): PiChildSessionEvent {
+  if (!isToolEventType(event.type)) return event;
+  const marked = Result.fromThrowable(
+    () => {
+      Object.defineProperty(event, AUTHORITATIVE_TOOL_EVENT, {
+        configurable: false,
+        enumerable: false,
+        value: true,
+        writable: false,
+      });
+      return event;
+    },
+    () => undefined,
+  )();
+  return marked.isOk() ? marked.value : event;
+}
+
+export function isPiAuthoritativeToolEvent(
+  event: PiChildSessionEvent,
+): boolean {
+  return (
+    isToolEventType(event.type) &&
+    (event as unknown as Record<symbol, unknown>)[AUTHORITATIVE_TOOL_EVENT] ===
+      true
+  );
+}
+
 /** How deep a preserved payload may nest before it states nothing. */
 const MAX_PRESERVED_PAYLOAD_DEPTH = 32;
 
@@ -907,28 +950,56 @@ const KNOWN_CHILD_EVENT_TYPES = new Set([
   "extension_ui_response",
 ]);
 
+/**
+ * Pi lifecycle frames that can carry a complete assistant message.
+ *
+ * These host events are intentionally still parsed as bounded `unknown`
+ * values, because the adapter does not consume a lifecycle payload. They must
+ * not cross a retention boundary, though: on Pi 0.84 the terminal frame can
+ * repeat the assistant's thinking blocks, and retaining its unknown payload
+ * would bypass the shared raw-reasoning redaction rule. The lifecycle fact is
+ * already represented by the adapter's own settlement and message events.
+ */
+const NON_RETAINABLE_UNKNOWN_EVENT_TYPES = new Set(["turn_end", "agent_end"]);
+
 const MAX_CHILD_EVENT_DEPTH = 16;
+const NATIVE_TOOL_REDACTED = "[redacted]";
+const NATIVE_TOOL_SENSITIVE_KEY =
+  /(?:authorization|bearer|cookie|credential|password|secret|token|api[-_ ]?key)/iu;
+const NATIVE_TOOL_SENSITIVE_VALUE =
+  /(?:SENTINEL|\bBearer\s|\b(?:api[-_ ]?key|secret|token|password|credential)\s*[:=]|(?:ghp_|github_pat_|xox[bp]-|sk-))/iu;
 
 const boundNativeToolValue = (value: unknown, depth = 0): unknown => {
-  if (typeof value === "string") return value.slice(0, MAX_CHILD_EVENT_STRING);
+  if (typeof value === "string") {
+    return NATIVE_TOOL_SENSITIVE_VALUE.test(value)
+      ? NATIVE_TOOL_REDACTED
+      : value.slice(0, MAX_CHILD_EVENT_STRING);
+  }
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "boolean" || value === null) return value;
   if (depth >= MAX_CHILD_EVENT_DEPTH) return "[truncated]";
   if (Array.isArray(value)) {
-    return value
-      .slice(0, MAX_CHILD_EVENT_ITEMS)
-      .map((item) => boundNativeToolValue(item, depth + 1))
-      .filter((item) => item !== undefined);
+    const size = Math.min(value.length, MAX_CHILD_EVENT_ITEMS);
+    const items: unknown[] = [];
+    for (let index = 0; index < size; index += 1) {
+      const item = value[index];
+      const boundedItem = boundNativeToolValue(item, depth + 1);
+      if (boundedItem !== undefined) items.push(boundedItem);
+    }
+    return items;
   }
   if (typeof value !== "object") return undefined;
 
   const bounded = emptyMaterializedRecord();
-  for (const [key, item] of Object.entries(value)) {
+  for (const key of Object.keys(value)) {
     if (Object.keys(bounded).length >= MAX_CHILD_EVENT_KEYS) break;
     if (isPrototypePollutionKey(key)) continue;
     const boundedKey = key.slice(0, 256);
     if (!boundedKey || isPrototypePollutionKey(boundedKey)) continue;
-    const boundedItem = boundNativeToolValue(item, depth + 1);
+    const item = (value as Record<string, unknown>)[key];
+    const boundedItem = NATIVE_TOOL_SENSITIVE_KEY.test(key)
+      ? NATIVE_TOOL_REDACTED
+      : boundNativeToolValue(item, depth + 1);
     if (boundedItem === undefined) continue;
     const defined = defineCopiedDataProperty(bounded, boundedKey, boundedItem);
     if (defined.isErr()) continue;
@@ -936,8 +1007,13 @@ const boundNativeToolValue = (value: unknown, depth = 0): unknown => {
   return bounded;
 };
 
+const nativeToolText = (value: string): string => {
+  const bounded = boundNativeToolValue(value);
+  return typeof bounded === "string" ? bounded : NATIVE_TOOL_REDACTED;
+};
+
 const nativeToolErrorMessage = (value: unknown): string | undefined => {
-  if (typeof value === "string") return value.slice(0, MAX_CHILD_EVENT_STRING);
+  if (typeof value === "string") return nativeToolText(value);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;
   }
@@ -945,23 +1021,20 @@ const nativeToolErrorMessage = (value: unknown): string | undefined => {
   const content = record["content"];
   if (Array.isArray(content)) {
     for (const item of content) {
-      if (typeof item === "string")
-        return item.slice(0, MAX_CHILD_EVENT_STRING);
+      if (typeof item === "string") return nativeToolText(item);
       if (typeof item !== "object" || item === null || Array.isArray(item)) {
         continue;
       }
       const text = (item as Record<string, unknown>)["text"];
-      if (typeof text === "string")
-        return text.slice(0, MAX_CHILD_EVENT_STRING);
+      if (typeof text === "string") return nativeToolText(text);
     }
   }
-  if (typeof content === "string")
-    return content.slice(0, MAX_CHILD_EVENT_STRING);
+  if (typeof content === "string") return nativeToolText(content);
   // A tool that reports its own failure prose rather than a content block.
   for (const key of ["error", "message", "output"] as const) {
     const text = record[key];
     if (typeof text === "string" && text.length > 0)
-      return text.slice(0, MAX_CHILD_EVENT_STRING);
+      return nativeToolText(text);
   }
   return undefined;
 };
@@ -991,6 +1064,24 @@ const nativeToolEndIsError = (record: Record<string, unknown>): boolean => {
     ownTrueFlag(result.value, "isError") ||
     ownTrueFlag(result.value, "is_error")
   );
+};
+
+/** The host may repeat the authoritative id on the wrapped result message. */
+const nativeToolCallId = (record: Record<string, unknown>): unknown => {
+  const outer = ownEnumerableDataValue(record, "toolCallId");
+  if (outer.isOk() && typeof outer.value === "string") return outer.value;
+  for (const carrier of ["result", "partialResult", "content"] as const) {
+    const nested = ownEnumerableDataValue(record, carrier);
+    if (
+      nested.isErr() ||
+      typeof nested.value !== "object" ||
+      nested.value === null
+    )
+      continue;
+    const id = ownEnumerableDataValue(nested.value, "toolCallId");
+    if (id.isOk() && typeof id.value === "string") return id.value;
+  }
+  return undefined;
 };
 
 /**
@@ -1056,7 +1147,7 @@ const normalizeNativeToolEvent = (
     case "tool_execution_start":
       return {
         type: "tool_call",
-        toolCallId: record["toolCallId"],
+        toolCallId: nativeToolCallId(record),
         toolName: record["toolName"],
         arguments: boundNativeToolValue(record["args"]),
       };
@@ -1067,7 +1158,7 @@ const normalizeNativeToolEvent = (
       // event still named the arguments.
       return {
         type: "tool_partial_result",
-        toolCallId: record["toolCallId"],
+        toolCallId: nativeToolCallId(record),
         toolName: record["toolName"],
         arguments: boundNativeToolValue(record["args"]),
         partialResult: boundNativeToolValue(record["partialResult"]),
@@ -1076,14 +1167,14 @@ const normalizeNativeToolEvent = (
       if (nativeToolEndIsError(record)) {
         return {
           type: "tool_error",
-          toolCallId: record["toolCallId"],
+          toolCallId: nativeToolCallId(record),
           toolName: record["toolName"],
           error: nativeToolErrorMessage(record["result"]),
         };
       }
       return {
         type: "tool_result",
-        toolCallId: record["toolCallId"],
+        toolCallId: nativeToolCallId(record),
         toolName: record["toolName"],
         result: boundNativeToolValue(record["result"]),
       };
@@ -1108,6 +1199,15 @@ const parseChildSessionEvent = (value: unknown) => {
   const typeRead = ownEventTypeString(record);
   if (typeRead.isErr()) return unreadableChildEvent();
   const eventType = typeRead.value;
+  // The live stream parses a parser-approved normalized event one more time.
+  // Carry the process-local native mark through that bounded re-parse without
+  // making it enumerable or serializable.
+  const carriedAuthoritative = ownDescriptor(record, AUTHORITATIVE_TOOL_EVENT);
+  const isCarriedAuthoritative =
+    carriedAuthoritative.isOk() &&
+    carriedAuthoritative.value !== undefined &&
+    "value" in carriedAuthoritative.value &&
+    carriedAuthoritative.value.value === true;
   // After this copy, Zod and the normalizer never see the observed object.
   const materialized = materializeObservedEventRecord(record, eventType);
   if (materialized.isErr()) return unreadableChildEvent();
@@ -1120,7 +1220,14 @@ const parseChildSessionEvent = (value: unknown) => {
 
   const normalized = normalizeNativeToolEvent(materialized.value, eventType);
   const parsed = PiChildSessionEventSchema.safeParse(normalized);
-  if (parsed.success) return parsed;
+  if (parsed.success) {
+    return eventType === "tool_execution_start" ||
+      eventType === "tool_execution_update" ||
+      eventType === "tool_execution_end" ||
+      isCarriedAuthoritative
+      ? { ...parsed, data: markPiAuthoritativeToolEvent(parsed.data) }
+      : parsed;
+  }
   if (!KNOWN_CHILD_EVENT_TYPES.has(eventType)) {
     return {
       success: true as const,
@@ -1546,15 +1653,53 @@ export function canonicalReasoningMessageUpdate(): PiChildSessionEvent {
  * nothing observed.
  *
  * Everything else is retained exactly as `redactRawReasoningFromEvent`
- * describes: an unambiguous answer and pure framing unchanged.
+ * describes: an unambiguous answer and pure framing unchanged. The two host
+ * terminal lifecycle wrappers named above are the explicit exception: they
+ * carry no adapter-owned fact and are dropped before retention.
+ *
+ * This is the durable Weave boundary. Standard session observers and every
+ * checkpoint caller must use this projection; the live reasoning projector is
+ * a separate UI-only branch and never changes this return shape.
  */
 export function retainedChildSessionEvent(
   event: PiChildSessionEvent,
 ): PiChildSessionEvent | undefined {
-  // The marker is durable control history, not a transcript fact. Suppress
-  // only its exact custom type; unrelated custom entries remain retained.
+  // Read the discriminant and the terminal kind through the same own-data
+  // descriptor boundary as the parser. This function is also called directly
+  // by replay and test seams; a forged accessor must not be invoked to decide
+  // whether an unknown payload is safe to retain. An unreadable unknown event
+  // is dropped rather than passed on to a later serializer.
+  const eventType = ownEnumerableDataValue(event as object, "type");
+  if (eventType.isErr() || typeof eventType.value !== "string") {
+    return undefined;
+  }
+  // The model failover marker is durable control history, not a transcript
+  // fact. Suppress only its exact custom type.
   if (isPiModelFailoverHiddenMarker(event)) return undefined;
-  if (event.type === "message_update") {
+  if (eventType.value === "unknown") {
+    const originalType = ownEnumerableDataValue(
+      event as object,
+      "originalType",
+    );
+    if (
+      originalType.isErr() ||
+      typeof originalType.value !== "string" ||
+      originalType.value.length === 0 ||
+      originalType.value.length > 256
+    ) {
+      return undefined;
+    }
+    // Pi's terminal lifecycle wrappers are parser-approved unknown events, but
+    // their payload may repeat a complete AssistantMessage, including raw
+    // thinking blocks. The adapter has no lifecycle fact to retain; dropping
+    // it here keeps every retention entrance fail-closed without changing the
+    // live-only reasoning projectors or weakening sink detection.
+    if (NON_RETAINABLE_UNKNOWN_EVENT_TYPES.has(originalType.value)) {
+      return undefined;
+    }
+    return event;
+  }
+  if (eventType.value === "message_update") {
     const carrier = classifyPiMessageUpdate(event);
     if (carrier.kind === "rejected") return undefined;
     if (carrier.kind === "reasoning") return canonicalReasoningMessageUpdate();

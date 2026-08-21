@@ -258,9 +258,9 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     expect(has("❯ loom → shuttle delegation prompt")).toBe(true);
     expect(has("  summarize the failing suite")).toBe(true);
 
-    // -- reasoning summary (never a thought stream) ------------------------
-    expect(has("✻ reasoning · SUMMARY")).toBe(true);
-    expect(has("  check the suite, then read the reporter")).toBe(true);
+    // -- retained reasoning markers render no rows -------------------------
+    expect(has("✻ reasoning · SUMMARY")).toBe(false);
+    expect(has("  check the suite, then read the reporter")).toBe(false);
 
     // -- tool call, progress, result ---------------------------------------
     expect(has("⚙ read(")).toBe(true);
@@ -278,7 +278,7 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     expect(has("retry · attempt 2")).toBe(true);
 
     // -- streaming assistant reply ----------------------------------------
-    expect(has("● shuttle · streaming reply")).toBe(true);
+    expect(has("shuttle · streaming reply")).toBe(true);
     expect(has("  the reporter drops rows")).toBe(true);
 
     // -- and NONE of the diagnostic strings the old renderer emitted -------
@@ -318,7 +318,8 @@ describe("live transcript rows match the prototype's renderPiNative design", () 
     }
     const rows = transcriptRows(component);
     expect(rows.some((r) => r.includes("▍"))).toBe(false);
-    expect(rows.some((r) => r.includes("● shuttle · reply"))).toBe(true);
+    expect(rows.some((r) => r.includes("shuttle · reply"))).toBe(true);
+    expect(rows.some((r) => r.includes("● shuttle · reply"))).toBe(false);
     expect(rows.some((r) => r.includes("  the suite is green"))).toBe(true);
   });
 });
@@ -474,17 +475,17 @@ describe("every streamed event kind matches its prototype fixture", () => {
     ]);
   });
 
-  it("reasoning summary", async () => {
+  it("legacy reasoning summaries render zero rows", async () => {
     expect(
       await rowsFor([{ type: "reasoning_summary", text: "read the reporter" }]),
-    ).toEqual(["✻ reasoning · SUMMARY", "  read the reporter", ""]);
+    ).toEqual([]);
   });
 
-  it("raw reasoning is a content-free marker, never a summary", async () => {
+  it("retained raw reasoning markers render zero rows", async () => {
     const rows = await rowsFor([
       { type: "thinking", text: "RAW_CHAIN_OF_THOUGHT" },
     ]);
-    expect(rows).toEqual(["✻ reasoning", ""]);
+    expect(rows).toEqual([]);
     expect(rows.join("\n")).not.toContain("RAW_CHAIN_OF_THOUGHT");
     expect(rows.join("\n")).not.toContain("SUMMARY");
   });
@@ -592,7 +593,7 @@ describe("every streamed event kind matches its prototype fixture", () => {
       { type: "message_update", delta: { text: "half an answer" } },
     ]);
     expect(streaming).toEqual([
-      "● shuttle · streaming reply",
+      "shuttle · streaming reply",
       "  half an answer",
       "",
     ]);
@@ -612,7 +613,8 @@ describe("every streamed event kind matches its prototype fixture", () => {
         },
       },
     ]);
-    expect(ended).toEqual(["● shuttle · reply", "  the whole answer", ""]);
+    expect(ended).toEqual(["shuttle · reply", "  the whole answer", ""]);
+    expect(ended.some((row) => row.startsWith("●"))).toBe(false);
   });
 
   it("usage report", async () => {

@@ -3181,8 +3181,9 @@ describe("createChildOverlayCustomComponent", () => {
     expect(lines.length).toBeGreaterThan(0);
     const joined = lines.join("\n");
     expect(joined).toContain("LIVE");
-    // Native components render content (not kind labels): thinking text + tool name.
-    expect(joined).toContain("pondering");
+    // Retained reasoning summaries render no historical row; native output
+    // still renders the correlated tool fact.
+    expect(joined).not.toContain("pondering");
     expect(joined).toContain("read");
     expect(joined).toContain("e-text-");
     expect(joined).not.toContain("/Users/");
@@ -3425,12 +3426,16 @@ describe("createChildOverlayCustomComponent", () => {
       `${parkedCue} newer line(s) below`,
     );
 
-    // Several live events land below the viewport before the next render.
+    // Several live tool facts land below the viewport before the next render.
+    // Legacy reasoning markers intentionally render zero rows, so they cannot
+    // be used to measure tail growth.
     for (let step = 0; step < 3; step += 1) {
       controller
         .applyLiveEvent({
-          type: "reasoning_summary",
-          text: `live-tail-row-${step}`,
+          type: "tool_call",
+          toolCallId: `live-tail-call-${step}`,
+          toolName: `live-tail-row-${step}`,
+          arguments: {},
         })
         ._unsafeUnwrap();
     }
@@ -3450,7 +3455,10 @@ describe("createChildOverlayCustomComponent", () => {
       `${grownView.scrollOffset} newer line(s) below`,
     );
     // The new rows are off-screen below, not painted over the parked body.
-    expect(grownFrame.join("\n")).not.toContain("live-tail-row-2");
+    const grownTranscript = grownFrame
+      .map((line) => line.split("│")[1] ?? line)
+      .join("\n");
+    expect(grownTranscript).not.toContain("live-tail-row-2");
 
     // Returning to the tail exposes them.
     component.handleInput(END);

@@ -977,6 +977,160 @@ const parseRebuiltEvent = (value: unknown): PiChildSessionEvent => {
   return parsed.success ? parsed.data : invalidReplayEvent();
 };
 
+/**
+ * Reports a successful tool-detail projection that replaced real detail with
+ * the closed privacy placeholder. The comparison is intentionally made at the
+ * projection seam: later rows only see the placeholder and cannot identify
+ * which earlier stage omitted the detail. No value visited here is retained.
+ */
+const TOOL_DETAIL_METADATA_KEYS = new Set([
+  "byteLength",
+  "contentIndex",
+  "details",
+  "id",
+  "isError",
+  "is_error",
+  "lineCount",
+  "marker",
+  "mimeType",
+  "name",
+  "role",
+  "timestamp",
+  "toolCallId",
+  "toolName",
+  "toolUseId",
+  "tool_use_id",
+  "truncated",
+  "type",
+]);
+const MAX_TOOL_DETAIL_SCAN_DEPTH = 8;
+const MAX_TOOL_DETAIL_SCAN_NODES = 128;
+
+type ToolDetailTextPredicate = (value: string) => boolean;
+
+interface ToolDetailScan {
+  nodes: number;
+}
+
+function walkToolDetail(
+  value: unknown,
+  predicate: ToolDetailTextPredicate,
+  scan: ToolDetailScan,
+  depth: number,
+  skipMetadata: boolean,
+): boolean {
+  if (scan.nodes >= MAX_TOOL_DETAIL_SCAN_NODES) return false;
+  scan.nodes += 1;
+  if (typeof value === "string") return predicate(value);
+  if (value === null || depth >= MAX_TOOL_DETAIL_SCAN_DEPTH) return false;
+  if (Array.isArray(value)) {
+    if (!hasPlainPrototype(value, true)) return false;
+    const length = guardValue(() => value.length, -1);
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > MAX_SAFE_TOOL_VALUE_MEMBERS
+    )
+      return false;
+    const source = value as unknown as Record<string, unknown>;
+    for (let index = 0; index < length; index += 1) {
+      if (
+        walkToolDetail(
+          ownDataField(source, String(index)),
+          predicate,
+          scan,
+          depth + 1,
+          skipMetadata,
+        )
+      )
+        return true;
+    }
+    return false;
+  }
+  const record = asRecord(value);
+  if (record === undefined || !hasPlainPrototype(record, false)) return false;
+  const keys = guardValue(() => Object.keys(record), [] as string[]);
+  for (const key of keys.slice(0, MAX_SAFE_TOOL_VALUE_MEMBERS)) {
+    if (skipMetadata && TOOL_DETAIL_METADATA_KEYS.has(key)) continue;
+    if (
+      walkToolDetail(
+        ownDataField(record, key),
+        predicate,
+        scan,
+        depth + 1,
+        skipMetadata,
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
+function toolDetailValues(event: PiChildSessionEvent): readonly unknown[] {
+  const source = asRecord(event);
+  if (source === undefined) return [];
+  const values: unknown[] = [];
+  const add = (key: string): void => {
+    const value = ownDataField(source, key);
+    if (value !== undefined) values.push(value);
+  };
+  switch (event.type) {
+    case "tool_partial_result":
+      add("partialResult");
+      add("content");
+      break;
+    case "tool_result":
+      add("result");
+      add("content");
+      break;
+    case "tool_error":
+      add("error");
+      add("message");
+      break;
+    default:
+      break;
+  }
+  return values;
+}
+
+export function toolDetailProjectionLossKey(
+  original: PiChildSessionEvent,
+  projected: PiChildSessionEvent,
+): string | undefined {
+  return guardValue(() => {
+    if (
+      (original.type !== "tool_partial_result" &&
+        original.type !== "tool_result" &&
+        original.type !== "tool_error") ||
+      original.type !== projected.type
+    )
+      return undefined;
+    const marker =
+      original.type === "tool_error"
+        ? TOOL_ERROR_DETAILS_UNAVAILABLE
+        : TOOL_RESULT_DETAILS_UNAVAILABLE;
+    const sourceHasDetail = toolDetailValues(original).some((value) =>
+      walkToolDetail(
+        value,
+        (text) => text.length > 0 && text !== marker,
+        { nodes: 0 },
+        0,
+        true,
+      ),
+    );
+    if (!sourceHasDetail) return undefined;
+    const projectedHasMarker = toolDetailValues(projected).some((value) =>
+      walkToolDetail(value, (text) => text === marker, { nodes: 0 }, 0, false),
+    );
+    if (!projectedHasMarker) return undefined;
+    const source = asRecord(original);
+    const toolCallId = ownDataField(source, "toolCallId");
+    return typeof toolCallId === "string" && toolCallId.length > 0
+      ? toolCallId.slice(0, 256)
+      : "";
+  }, undefined);
+}
+
 const safeUiRequestId = (value: unknown): string | undefined => {
   const candidate = safeToolText(value);
   return candidate !== undefined && candidate.length <= 256

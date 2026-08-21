@@ -36,6 +36,11 @@ import {
 import type { ChildCompactRunAction } from "./child-compact-render.js";
 import type { PiModelTransitionBody } from "./child-control-bodies.js";
 import {
+  PiLiveReasoningProjector,
+  type PiLiveReasoningRegistry,
+  type PiLiveReasoningUpdate,
+} from "./child-live-reasoning.js";
+import {
   CHILD_CARD_NATIVE_RENDER_FAILED,
   degradedPiChildCardComponent,
   renderPiChildCardComponent,
@@ -45,6 +50,11 @@ import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildSessionEvent } from "./child-session-events.js";
 import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import { MAX_FINAL_OUTPUT_BYTES, truncateFinalOutput } from "./child-tree.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  recordChildUiEventFailure,
+  recordChildUiEventInvalid,
+} from "./child-ui-event-diagnostics.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -259,6 +269,14 @@ export interface PiDelegationToolDeps {
    * adapter logger.
    */
   readonly onCompactRenderFailure?: (code: string) => void;
+  /** Content-free aggregate sink for card fanout and native rendering. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
+  /** One generation-scoped card-only projector registry, keyed by toolCallId. */
+  readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
+  /** Resolves the active generation identity at execution time. */
+  readonly getGenerationId?: () => string | undefined;
+  /** Test/embedding fallback when a generation getter is not available. */
+  readonly generationId?: string;
   /**
    * The required-capability gate for persistent session mutation. Omitted
    * only by call sites that predate the gate; a missing gate fails closed.
@@ -833,6 +851,8 @@ export interface PiDelegationCardStreamConfig
   readonly onUpdate?: (update: PiToolResult) => void;
   readonly timerPort: TimerPort;
   readonly refreshIntervalMs?: number;
+  /** UI-only reasoning projector owned by this host tool row. */
+  readonly liveReasoningProjector?: PiLiveReasoningProjector;
 }
 
 /**
@@ -852,10 +872,14 @@ export class PiDelegationCardStream {
     string,
     PiModelTransitionBody["phase"]
   >();
+  private readonly diagnostics: ChildUiEventDiagnosticsSink | undefined;
+  private readonly liveReasoningProjector: PiLiveReasoningProjector | undefined;
 
   constructor(config: PiDelegationCardStreamConfig) {
     this.projection = new PiChildCardProjection(config);
     this.onUpdate = config.onUpdate;
+    this.diagnostics = config.diagnostics;
+    this.liveReasoningProjector = config.liveReasoningProjector;
     this.coalescer = new PiCardUpdateCoalescer(
       () => this.emit(),
       config.timerPort,
@@ -865,7 +889,7 @@ export class PiDelegationCardStream {
 
   /** Publishes the opening frame. Always immediate: the entry must not sit blank. */
   start(): void {
-    this.coalescer.request("immediate");
+    this.request("immediate");
   }
 
   /**
@@ -886,19 +910,21 @@ export class PiDelegationCardStream {
     // A strictly newer run clears settlement and reopens the card; anything
     // else leaves a settled run settled and must not repaint it.
     if (wasSettled && this.projection.isSettled()) return;
-    this.coalescer.request("immediate");
+    this.request("immediate");
   }
 
   applyEvent(event: PiChildSessionEvent): void {
     if (this.projection.isSettled()) return;
-    this.projection.applySessionEvent(event);
-    this.coalescer.request(eventPriority(event));
+    this.projection.applySessionEventResult(event).match(
+      () => this.request(eventPriority(event)),
+      () => undefined,
+    );
   }
 
   applyProviderError(error: PiChildProviderError): void {
     if (this.projection.isSettled()) return;
     this.projection.applyProviderError(error);
-    this.coalescer.request("immediate");
+    this.request("immediate");
   }
 
   /** Applies one authenticated model transition as an immediate card update. */
@@ -927,8 +953,11 @@ export class PiDelegationCardStream {
    */
   settle(settlement: PiChildSettlement): PiDelegationCardDetails | undefined {
     if (this.projection.isSettled()) return this.details();
+    // Clear first so the final host render can never replay a live reasoning
+    // sentinel from the prior partial frame.
+    this.clearLiveReasoning();
     this.projection.settle(settlement);
-    this.coalescer.flush();
+    this.flush();
     return this.details();
   }
 
@@ -941,17 +970,62 @@ export class PiDelegationCardStream {
   }
 
   dispose(): void {
+    this.clearLiveReasoning();
     this.coalescer.dispose();
   }
 
-  private emit(): void {
-    const facts = this.projection.facts();
-    this.onUpdate?.(
-      toolResult(
-        modelVisibleActivity(facts),
-        boundDelegationCardDetails(facts),
-      ),
+  private clearLiveReasoning(): void {
+    this.liveReasoningProjector?.clear().match(
+      () => undefined,
+      () => undefined,
     );
+  }
+
+  private request(priority: UiUpdatePriority): void {
+    Result.fromThrowable(
+      () => this.coalescer.request(priority),
+      () => "card_request_failed" as const,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
+  }
+
+  private flush(): void {
+    Result.fromThrowable(
+      () => this.coalescer.flush(),
+      () => "card_flush_failed" as const,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "fanout",
+          "callback-failed",
+        ),
+    );
+  }
+
+  private emit(): void {
+    const result = Result.fromThrowable(
+      () => {
+        const facts = this.projection.facts();
+        const update = toolResult(
+          modelVisibleActivity(facts),
+          boundDelegationCardDetails(facts),
+        );
+        this.onUpdate?.(update);
+      },
+      () => "card_fanout_failed" as const,
+    )();
+    if (result.isErr()) {
+      recordChildUiEventFailure(this.diagnostics, "fanout", "callback-failed");
+    }
   }
 }
 
@@ -960,8 +1034,10 @@ export class PiDelegationCardStream {
  * card chrome. The card is for the human reading the terminal; the model reads
  * this line and, at the end, the structured result.
  */
-function modelVisibleActivity(facts: PiDelegationCardFacts): string {
-  return facts.activity.text.length > 0 ? facts.activity.text : "…";
+function modelVisibleActivity(_facts: PiDelegationCardFacts): string {
+  // Partial tool updates are adapter-authored and content-free. The live raw
+  // reasoning line exists only in the renderer's process-memory projection.
+  return "…";
 }
 
 /**
@@ -1238,28 +1314,162 @@ function parseRelaySettlement(body: JsonValue): PiChildSettlement | undefined {
  * theme that cannot paint both end at the same honest fallback card, reported
  * through the caller's own failure reporter.
  */
+interface PiCardRenderRowState {
+  readonly reasoningProjector?: PiLiveReasoningProjector;
+  readonly reasoningInvalidation?: () => void;
+}
+
+function cardRenderRowState(
+  context: PiToolRenderContext,
+): PiCardRenderRowState {
+  if (typeof context.state !== "object" || context.state === null) {
+    return {};
+  }
+  return context.state as PiCardRenderRowState;
+}
+
+function mutableCardRenderRowState(
+  context: PiToolRenderContext,
+): Record<string, unknown> | undefined {
+  if (typeof context.state !== "object" || context.state === null) {
+    return undefined;
+  }
+  return context.state as Record<string, unknown>;
+}
+
+/**
+ * Reads the one generation-local card projector and wires one host invalidation
+ * callback for this Pi row. No callback or reasoning text enters the result.
+ */
+function liveReasoningLineForCard(
+  context: PiToolRenderContext,
+  registry: PiLiveReasoningRegistry | undefined,
+): () => string {
+  const key = context.toolCallId;
+  const projector =
+    typeof key === "string" && key.length > 0 ? registry?.get(key) : undefined;
+  if (projector === undefined) return () => "";
+
+  const prior = cardRenderRowState(context);
+  const state = mutableCardRenderRowState(context);
+  if (state !== undefined && prior.reasoningProjector !== projector) {
+    if (prior.reasoningProjector !== undefined && prior.reasoningInvalidation) {
+      prior.reasoningProjector.unregisterInvalidation(
+        prior.reasoningInvalidation,
+      );
+    }
+    const invalidation = context.invalidate;
+    if (typeof invalidation === "function") {
+      projector.registerInvalidation(invalidation).match(
+        () => undefined,
+        () => undefined,
+      );
+      state.reasoningProjector = projector;
+      state.reasoningInvalidation = invalidation;
+    }
+  }
+
+  return () => {
+    const snapshot = projector.snapshot();
+    return snapshot.active ? snapshot.parentCardLine : "";
+  };
+}
+
 export function renderDelegationCardResult(
   result: PiToolResult,
   options: PiToolRenderOptions,
   theme: PiUiThemePort,
-  _context: PiToolRenderContext,
+  context: PiToolRenderContext,
   onCardRenderFailure?: (code: string) => void,
+  diagnostics?: ChildUiEventDiagnosticsSink,
+  liveReasoningRegistry?: PiLiveReasoningRegistry,
 ): PiToolRenderComponent {
-  const parsed = parseDelegationCardDetails(result.details);
+  const parsed = Result.fromThrowable(
+    () => parseDelegationCardDetails(result.details),
+    () => "details_parse_failed" as const,
+  )();
   if (parsed.isErr()) {
-    onCardRenderFailure?.(CARD_DETAILS_INVALID_CODE);
-    return degradedPiChildCardComponent(parsed.error.reason);
+    recordChildUiEventInvalid(
+      diagnostics,
+      "native-render",
+      "render-input-invalid",
+    );
+    reportCardRenderFailure(
+      onCardRenderFailure,
+      diagnostics,
+      CARD_DETAILS_INVALID_CODE,
+    );
+    return degradedPiChildCardComponent("render_failed");
   }
-  return renderPiChildCardComponent(
-    parsed.value.facts,
-    { expanded: options.expanded, onFailure: onCardRenderFailure },
-    theme,
-  ).match(
+  const cardDetails = parsed.value;
+  if (cardDetails.isErr()) {
+    recordChildUiEventInvalid(
+      diagnostics,
+      "native-render",
+      "render-input-invalid",
+    );
+    reportCardRenderFailure(
+      onCardRenderFailure,
+      diagnostics,
+      CARD_DETAILS_INVALID_CODE,
+    );
+    return degradedPiChildCardComponent(cardDetails.error.reason);
+  }
+  const rendered = Result.fromThrowable(
+    () =>
+      renderPiChildCardComponent(
+        cardDetails.value.facts,
+        {
+          expanded: options.expanded,
+          liveReasoningLine: liveReasoningLineForCard(
+            context,
+            liveReasoningRegistry,
+          ),
+          onFailure: (code) =>
+            reportCardRenderFailure(onCardRenderFailure, diagnostics, code),
+        },
+        theme,
+      ),
+    () => "native_render_failed" as const,
+  )();
+  if (rendered.isErr()) {
+    recordChildUiEventFailure(
+      diagnostics,
+      "native-render",
+      "native-render-failed",
+    );
+    reportCardRenderFailure(
+      onCardRenderFailure,
+      diagnostics,
+      CARD_RENDER_FAILED_CODE,
+    );
+    return degradedPiChildCardComponent("render_failed");
+  }
+  return rendered.value.match(
     (component) => component,
     (code) => {
-      onCardRenderFailure?.(code);
+      recordChildUiEventFailure(
+        diagnostics,
+        "native-render",
+        "native-render-failed",
+      );
+      reportCardRenderFailure(onCardRenderFailure, diagnostics, code);
       return degradedPiChildCardComponent("render_failed");
     },
+  );
+}
+
+function reportCardRenderFailure(
+  callback: ((code: string) => void) | undefined,
+  diagnostics: ChildUiEventDiagnosticsSink | undefined,
+  code: string,
+): void {
+  Result.fromThrowable(
+    () => callback?.(code),
+    () => "card_failure_callback_failed" as const,
+  )().match(
+    () => undefined,
+    () => recordChildUiEventFailure(diagnostics, "fanout", "callback-failed"),
   );
 }
 
@@ -1272,11 +1482,23 @@ const CARD_EMPTY_COMPONENT: PiToolRenderComponent = {
   invalidate: () => undefined,
 };
 
-function callRowPaint(theme: PiUiThemePort): Paint {
-  return Result.fromThrowable(
+function callRowPaint(
+  theme: PiUiThemePort,
+  diagnostics?: ChildUiEventDiagnosticsSink,
+): Paint {
+  const result = Result.fromThrowable(
     () => makePaint(theme),
     () => undefined,
-  )().unwrapOr(plainPaint());
+  )();
+  if (result.isErr()) {
+    recordChildUiEventFailure(
+      diagnostics,
+      "native-render",
+      "native-render-failed",
+    );
+    return plainPaint();
+  }
+  return result.value;
 }
 
 /**
@@ -1288,18 +1510,28 @@ function callRowPaint(theme: PiUiThemePort): Paint {
 function delegationCallComponent(
   theme: PiUiThemePort,
   label: string,
+  diagnostics?: ChildUiEventDiagnosticsSink,
 ): PiToolRenderComponent {
-  const paint = callRowPaint(theme);
+  const paint = callRowPaint(theme, diagnostics);
   const bounded = Array.from(label)
     .slice(0, MAX_CALL_LABEL_CODE_POINTS)
     .join("");
   return {
     render(width) {
       const w = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
-      return Result.fromThrowable(
+      const result = Result.fromThrowable(
         () => [emit(clipRow([seg("muted", bounded)], w), w, paint)],
         () => "call_render_failed",
-      )().unwrapOr([]);
+      )();
+      if (result.isErr()) {
+        recordChildUiEventFailure(
+          diagnostics,
+          "native-render",
+          "native-render-failed",
+        );
+        return [];
+      }
+      return result.value;
     },
     invalidate: () => undefined,
   };
@@ -1320,6 +1552,7 @@ function renderDelegationCall(
     readonly model?: string;
     readonly reasoningLevel?: string;
   },
+  diagnostics?: ChildUiEventDiagnosticsSink,
 ): PiToolRenderComponent {
   if (context.executionStarted === true) return CARD_EMPTY_COMPONENT;
   const agent = typeof args.agent === "string" ? args.agent : "delegate";
@@ -1331,32 +1564,35 @@ function renderDelegationCall(
   return delegationCallComponent(
     theme,
     `${WEAVE_DELEGATION_TOOL_NAME} · ${target}${suffix === "" ? "" : ` ${suffix}`}`,
+    diagnostics,
   );
+}
+
+/** Releases the row-local card projector when a resumed call aborts. */
+function watchForAbortCleanup(
+  signal: AbortSignal,
+  cleanup: () => void,
+): () => void {
+  const onAbort = (): void => {
+    Result.fromThrowable(cleanup, () => undefined)().match(
+      () => undefined,
+      () => undefined,
+    );
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  return () => signal.removeEventListener("abort", onAbort);
 }
 
 /**
  * Wires the root tool's own Pi-supplied `AbortSignal` to
- * `controller.cancelSubtree(childId)` (Pi adapter contract cooperative
- * cancellation) so aborting the `weave_delegate` call - app-level
- * interrupt/escape - immediately cancels the exact generated child
- * subtree rather than only after it settles on its own.
- *
- * Returns a promise that resolves *only* if the abort-triggered
- * `cancelSubtree()` itself fails - never if it succeeds. A successful
- * cancellation must never "win" any race it is placed in: the delegated
- * child's own eventual `{ outcome: "cancelled" }` settlement (observed via
- * `controller.delegate()`'s own promise) is always the result that
- * actually resolves the tool call in that case. This is what lets the
- * caller safely `Promise.race` this against `controller.delegate()`
- * without a merely-successful cancellation ever short-circuiting past the
- * settlement the child itself reports - while a *failed* cancellation
- * still resolves promptly instead of leaving the tool hanging behind a
- * child that may now never settle.
+ * `controller.cancelSubtree(childId)` and reports only cancellation failure.
  */
 function watchForCancelSubtreeFailure(
   signal: AbortSignal,
   controller: PiDelegationController,
   childId: string,
+  onAbortCleanup?: () => void,
 ): {
   readonly failure: Promise<{ content: readonly PiToolResultContent[] }>;
   readonly unwire: () => void;
@@ -1370,6 +1606,7 @@ function watchForCancelSubtreeFailure(
     resolveFailure = resolve;
   });
   const onAbort = (): void => {
+    onAbortCleanup?.();
     void controller.cancelSubtree(childId).match(
       // A successful cancellation must never resolve this promise - only
       // `controller.delegate()`'s own settlement (racing alongside this)
@@ -1492,6 +1729,30 @@ function readInvocationContext(
   };
 }
 
+function createCardReasoningProjector(
+  deps: PiDelegationToolDeps,
+  toolCallId: string,
+  childId: string,
+): PiLiveReasoningProjector | undefined {
+  const registry = deps.liveReasoningRegistry;
+  const generationId = deps.getGenerationId?.() ?? deps.generationId;
+  if (
+    registry === undefined ||
+    toolCallId.length === 0 ||
+    generationId === undefined ||
+    generationId.length === 0
+  ) {
+    return undefined;
+  }
+  return new PiLiveReasoningProjector({
+    childId,
+    generationId,
+    registry,
+    registryKey: toolCallId,
+    diagnostics: deps.diagnostics,
+  });
+}
+
 /** Builds the one Weave-owned delegation tool with runtime-scoped primary eligibility. */
 export function buildDelegationToolRegistration(
   deps: PiDelegationToolDeps,
@@ -1508,7 +1769,13 @@ export function buildDelegationToolRegistration(
     // The card owns its own frame, so Pi's coloured tool shell must stand down.
     renderShell: "self",
     renderCall: (args, theme, context) =>
-      renderDelegationCall(args, theme, context, deps.resolveAgentRuntime),
+      renderDelegationCall(
+        args,
+        theme,
+        context,
+        deps.resolveAgentRuntime,
+        deps.diagnostics,
+      ),
     renderResult: (result, options, theme, context) =>
       renderDelegationCardResult(
         result,
@@ -1516,8 +1783,10 @@ export function buildDelegationToolRegistration(
         theme,
         context,
         deps.onCompactRenderFailure,
+        deps.diagnostics,
+        deps.liveReasoningRegistry,
       ),
-    execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
+    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       // The required-capability gate runs before everything else, including
       // the persistent-parent guard: when the host cannot prove
       // descriptor-relative native session I/O, delegation must fail without
@@ -1565,8 +1834,10 @@ export function buildDelegationToolRegistration(
           parsed.kind === "retry" ? parsed.instruction : parsed.task;
         const timerPort = resolveCardTimerPort(deps, controller);
         let stream: PiDelegationCardStream | undefined;
+        let liveReasoningProjector: PiLiveReasoningProjector | undefined;
         let assignedAgent = "delegate";
         let assignedRun = 1;
+        let unwireAbort = (): void => undefined;
         return controller
           .resumeThread({
             threadId: parsed.threadId,
@@ -1582,6 +1853,11 @@ export function buildDelegationToolRegistration(
             onRunAssigned: (assignment) => {
               assignedAgent = assignment.agentName;
               assignedRun = assignment.runNumber;
+              liveReasoningProjector = createCardReasoningProjector(
+                deps,
+                toolCallId,
+                assignment.childId,
+              );
               stream = new PiDelegationCardStream({
                 threadId: assignment.threadId,
                 agentName: assignment.agentName,
@@ -1589,9 +1865,19 @@ export function buildDelegationToolRegistration(
                 runNumber: assignment.runNumber,
                 action: assignment.action,
                 ...(onUpdate === undefined ? {} : { onUpdate }),
+                diagnostics: deps.diagnostics,
                 timerPort,
+                ...(liveReasoningProjector === undefined
+                  ? {}
+                  : { liveReasoningProjector }),
               });
               stream.start();
+              if (signal !== undefined) {
+                unwireAbort();
+                unwireAbort = watchForAbortCleanup(signal, () =>
+                  stream?.dispose(),
+                );
+              }
             },
             onSessionEvent: (event: PiChildSessionEvent) => {
               stream?.applyEvent(event);
@@ -1599,9 +1885,16 @@ export function buildDelegationToolRegistration(
             onModelTransition: (transition: PiModelTransitionBody) => {
               stream?.applyModelTransition(transition);
             },
+            onParentCardReasoning: (update: PiLiveReasoningUpdate) => {
+              liveReasoningProjector?.apply(update).match(
+                () => undefined,
+                () => undefined,
+              );
+            },
           })
           .match(
             (outcome) => {
+              unwireAbort();
               const card = settleCardStream(stream, outcome.settlement, {
                 threadId: parsed.threadId,
                 agentName: assignedAgent,
@@ -1612,7 +1905,11 @@ export function buildDelegationToolRegistration(
               });
               return threadResult(outcome, card);
             },
-            (failure) => threadFailureResult(parsed.threadId, failure),
+            (failure) => {
+              unwireAbort();
+              stream?.dispose();
+              return threadFailureResult(parsed.threadId, failure);
+            },
           );
       }
       // The one and only target gate: the live invocation context, then an
@@ -1646,6 +1943,11 @@ export function buildDelegationToolRegistration(
       }
       // Root start: child id is also the opaque thread id (controller provision).
       const timerPort = resolveCardTimerPort(deps, controller);
+      const liveReasoningProjector = createCardReasoningProjector(
+        deps,
+        toolCallId,
+        childId,
+      );
       const cardConfig: PiDelegationCardStreamConfig = {
         threadId: childId,
         agentName: parsed.agent,
@@ -1653,7 +1955,11 @@ export function buildDelegationToolRegistration(
         runNumber: 1,
         action: "start",
         ...(onUpdate === undefined ? {} : { onUpdate }),
+        diagnostics: deps.diagnostics,
         timerPort,
+        ...(liveReasoningProjector === undefined
+          ? {}
+          : { liveReasoningProjector }),
       };
       const stream = new PiDelegationCardStream(cardConfig);
       // The first update is published before this call awaits anything, so Pi
@@ -1683,6 +1989,16 @@ export function buildDelegationToolRegistration(
         onModelTransition: (transition: PiModelTransitionBody) => {
           stream.applyModelTransition(transition);
         },
+        ...(liveReasoningProjector === undefined
+          ? {}
+          : {
+              onParentCardReasoning: (update: PiLiveReasoningUpdate) => {
+                liveReasoningProjector.apply(update).match(
+                  () => undefined,
+                  () => undefined,
+                );
+              },
+            }),
         childId,
       };
       const settlement = controller.delegate(request).match(
@@ -1708,6 +2024,7 @@ export function buildDelegationToolRegistration(
         signal,
         controller,
         childId,
+        () => stream.dispose(),
       );
       try {
         return await Promise.race([settlement, cancelFailure]);
@@ -1743,6 +2060,8 @@ export interface PiRelayedDelegationToolDeps {
    * tool; never receives paths or exception text.
    */
   readonly onCompactRenderFailure?: (code: string) => void;
+  /** Content-free aggregate sink for relayed card fanout and rendering. */
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
   /** Same fail-closed required-capability gate contract as the root tool. */
   readonly sessionMutationGate?: PiSessionMutationGate;
   /** Same injected card-refresh timer contract as the root tool. */
@@ -1794,7 +2113,7 @@ export function buildRelayedDelegationToolRegistration(
     // Same contract as the root tool: this tool draws its own frame.
     renderShell: "self",
     renderCall: (args, theme, context) =>
-      renderDelegationCall(args, theme, context),
+      renderDelegationCall(args, theme, context, undefined, deps.diagnostics),
     renderResult: (result, options, theme, context) =>
       renderDelegationCardResult(
         result,
@@ -1802,6 +2121,7 @@ export function buildRelayedDelegationToolRegistration(
         theme,
         context,
         deps.onCompactRenderFailure,
+        deps.diagnostics,
       ),
     execute: async (_toolCallId, params, _signal, onUpdate) => {
       const capability = requireSessionMutationCapability(
@@ -1865,6 +2185,7 @@ export function buildRelayedDelegationToolRegistration(
         runNumber: 1,
         action: "start",
         ...(onUpdate === undefined ? {} : { onUpdate }),
+        diagnostics: deps.diagnostics,
         timerPort: resolveCardTimerPort(deps),
       };
       const stream = new PiDelegationCardStream(cardConfig);

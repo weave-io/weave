@@ -20,19 +20,14 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import {
-  type ChildCompactState,
-  createChildCompactState,
   mapPiChildSessionEventToCompactInput,
-  reduceChildCompactSafe,
+  reduceChildCompact,
 } from "./child-compact-render.js";
 import {
-  boundText,
   degradedCapacityEntry,
   liveAssistantLifecyclePhase,
   mergeReplaySteps,
-  messageText,
   projectLiveEntry,
-  transcriptFromOverlayEntries,
 } from "./child-overlay-replay.js";
 import {
   anchorFromScroll,
@@ -41,9 +36,6 @@ import {
   markTailGrowth,
   maxScrollRows,
   type OverlayLayoutSpan,
-  type OverlayScrollState,
-  restoreAfterOlderEntries,
-  restoreScrollAnchor,
   scrollDelta,
 } from "./child-overlay-scroll.js";
 import {
@@ -60,7 +52,6 @@ import {
   deriveChildOverlayIdentity,
   deriveChildOverlayTelemetry,
   latestUsageInWindow,
-  NO_TERMINAL_ERROR_EVIDENCE,
   pageEvidence,
   readChildOverlayPlanContext,
   terminalErrorOf,
@@ -68,7 +59,6 @@ import {
 import {
   boundOverlayText,
   CHILD_OVERLAY_BOUNDS,
-  type ChildOverlayAnchor,
   type ChildOverlayChild,
   ChildOverlayChildSchema,
   type ChildOverlayConfig,
@@ -79,7 +69,6 @@ import {
   type ChildOverlayInputOutcome,
   type ChildOverlayMutationPort,
   type ChildOverlayPage,
-  type ChildOverlayReplayStep,
   type ChildOverlaySourceError,
   type ChildOverlaySourcePort,
   type ChildOverlayView,
@@ -89,6 +78,7 @@ import {
 import {
   appendLiveAssistantDelta,
   appendOverlayPage,
+  ChildOverlayLiveReasoningOwner,
   childOverlayFallbackRequired,
   dedupEntries,
   emptySaved,
@@ -101,11 +91,16 @@ import {
   syncTranscriptFromEntries,
 } from "./child-overlay-window.js";
 import {
-  type PiChildUsageReport,
+  isPiAuthoritativeToolEvent,
   parsePiChildSessionEvent,
   parsePiChildUsageReport,
 } from "./child-session-events.js";
 import { reducePiChildTranscript } from "./child-transcript.js";
+import {
+  type ChildOverlayUiDiagnostics,
+  type ChildUiEventDiagnosticsSink,
+  createChildOverlayUiDiagnostics,
+} from "./child-ui-event-diagnostics.js";
 import { messageUpdateAnswerText } from "./message-update-carrier.js";
 
 // ---------------------------------------------------------------------------
@@ -121,6 +116,8 @@ export class ChildOverlayController {
   private readonly maxSearchPages: number;
   private readonly saved = new Map<string, SavedChildState>();
   private readonly planContext: ChildOverlayPlanContextPort | undefined;
+  private readonly diagnostics: ChildOverlayUiDiagnostics;
+  readonly liveReasoning: ChildOverlayLiveReasoningOwner;
   private openChild: ChildOverlayChild | undefined;
   private clock = 0;
   /**
@@ -137,10 +134,17 @@ export class ChildOverlayController {
     config: ChildOverlayConfig = {},
     mutations?: ChildOverlayMutationPort,
     planContext?: ChildOverlayPlanContextPort,
+    diagnostics?: ChildUiEventDiagnosticsSink,
   ) {
     this.source = source;
     this.mutations = mutations;
     this.planContext = planContext;
+    this.diagnostics = createChildOverlayUiDiagnostics(diagnostics);
+    this.liveReasoning = new ChildOverlayLiveReasoningOwner({
+      generationId: config.liveReasoningGenerationId,
+      registry: config.liveReasoningRegistry,
+      diagnostics,
+    });
     this.pageSize = clampPageSize(
       config.pageSize ?? CHILD_OVERLAY_BOUNDS.defaultPageSize,
     );
@@ -183,31 +187,11 @@ export class ChildOverlayController {
     return this.openChild?.childId;
   }
 
-  /**
-   * The epoch of the reading and the search a late answer must still belong to.
-   *
-   * The smallest fact that can be published about the committed search: one
-   * monotonic number, read-only, moved by nothing but a new reading or an
-   * invalidation. The surface carries it inside its own run token so the jump
-   * and the fallback IT owns are bound to the same reading the controller
-   * binds its writes to — including the reopens the surface never sees, since
-   * walking to a child, closing the overlay and re-opening the SAME child all
-   * happen here and all move this on.
-   */
   searchEpoch(): number {
     return this.committedSearch.epoch();
   }
 
-  /**
-   * Retires every committed search still in flight, and nothing else.
-   *
-   * The query the rail prints and the matches it counts are left exactly as
-   * they are: re-opening search to EDIT a committed query, and closing search
-   * to answer a cancel confirmation, both drop the reader's licence to the
-   * pages still on their way without pretending the reader retyped anything.
-   * Re-matching here would silently shrink the counter to the loaded window,
-   * dropping every match the committed search already paged in.
-   */
+  /** Retires in-flight search pages without changing the committed query. */
   abandonCommittedSearch(): void {
     this.committedSearch.invalidate();
   }
@@ -229,6 +213,7 @@ export class ChildOverlayController {
     // the same child identity and a different reading — abandons every page
     // still in flight for the search the reader left behind.
     this.committedSearch.invalidate();
+    this.liveReasoning.release();
     if (this.openChild !== undefined && this.openChild.childId !== childId) {
       this.persistOpen();
     }
@@ -261,6 +246,7 @@ export class ChildOverlayController {
         const state = existing ?? emptySaved(child.threadId, this.clock);
         if (existing === undefined) this.saved.set(child.childId, state);
         this.openChild = child;
+        this.liveReasoning.mount(child);
         this.evictLru();
         if (state.entries.length > 0) {
           return okAsync(this.toView(child, state));
@@ -367,7 +353,15 @@ export class ChildOverlayController {
             type: "OverlayNotOpen",
           });
         }
+        const prior = this.openChild;
         this.openChild = parsed.data;
+        if (
+          prior?.childId !== parsed.data.childId ||
+          prior?.generationId !== parsed.data.generationId ||
+          prior?.status !== parsed.data.status
+        ) {
+          this.liveReasoning.mount(parsed.data);
+        }
         this.catchUpLiveAnswer(parsed.data, state);
         return okAsync(this.toView(parsed.data, state));
       });
@@ -485,6 +479,7 @@ export class ChildOverlayController {
    */
   markOpenChildReadOnly(): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
+      this.liveReasoning.release();
       if (isReadOnly(child)) return this.toView(child, state);
       const orphaned: ChildOverlayChild = { ...child, status: "orphan" };
       this.openChild = orphaned;
@@ -493,10 +488,10 @@ export class ChildOverlayController {
   }
 
   close(): Result<void, ChildOverlayError> {
+    this.liveReasoning.release();
     if (this.openChild === undefined) return err({ type: "OverlayNotOpen" });
     this.persistOpen();
     this.openChild = undefined;
-    // Nothing may land in a window the reader has closed.
     this.committedSearch.invalidate();
     return ok(undefined);
   }
@@ -596,48 +591,50 @@ export class ChildOverlayController {
     if (child.status !== "live") {
       return ok(this.toView(child, state));
     }
-
     const parsed = parsePiChildSessionEvent(event);
-    if (!parsed.success) return ok(this.toView(child, state));
-    const applied = applyProviderErrorEvent(state.evidence, parsed.data);
+    if (!parsed.success) {
+      this.diagnostics.invalidEvent();
+      return ok(this.toView(child, state));
+    }
+    const applied = isPiAuthoritativeToolEvent(parsed.data)
+      ? { event: parsed.data, evidence: state.evidence }
+      : applyProviderErrorEvent(state.evidence, parsed.data);
     const sessionEvent = applied.event;
     state.evidence = applied.evidence;
-
-    const mapped = mapPiChildSessionEventToCompactInput(sessionEvent);
-    if (mapped.isOk() && mapped.value !== undefined) {
-      state.compact = reduceChildCompactSafe(state.compact, mapped.value);
-    }
-
-    // Latest-wins: a parsed report replaces the prior one outright, while an
-    // unparsable one carries no information and leaves it untouched.
+    this.diagnostics.toolDetailLoss(
+      "toolDetailLossKey" in applied ? applied.toolDetailLossKey : undefined,
+      child.childId,
+    );
+    const mapResultOr = this.diagnostics.mappingResultOr;
+    const reduceResultOr = this.diagnostics.reductionResultOr;
+    const mapped = mapResultOr(
+      mapPiChildSessionEventToCompactInput(sessionEvent),
+      undefined,
+    );
+    if (mapped !== undefined)
+      state.compact = reduceResultOr(
+        reduceChildCompact(state.compact, mapped),
+        state.compact,
+      );
+    // Latest-wins usage report.
     const usage = parsePiChildUsageReport(sessionEvent);
     if (usage.isOk()) state.usage = usage.value;
-
-    // Project first so the transcript reduce can be told which overlay entry
-    // this event belongs to. Reducing first would label rendered rows with
-    // reducer-local ids (`thinking-0`) while the overlay window uses overlay
-    // ids (`live-thinking-0`), and the viewport anchor would lose its entry.
-    // Projection is pure, so ordering it earlier changes nothing else.
-    // Real Pi 0.84 assistant lifecycle identity. `AssistantMessage` has no
-    // `id`, and `state.entries.length` changes between `message_start` and
-    // `message_end`, so one stable overlay id is allocated at start and reused
-    // for every update/end of that lifecycle even when thinking and tool
-    // entries interleave. A lifecycle that arrives without its start
-    // (historical, truncated, or unusual host sequence) allocates on first
-    // sight, so update/end still share one entry instead of fanning out.
+    // Project first so transcript and window share one assistant lifecycle id.
     const phase = liveAssistantLifecyclePhase(sessionEvent);
     const assistantEntryId =
       phase === undefined ? undefined : resolveLiveAssistantEntry(state, phase);
 
-    let projected = projectLiveEntry(
-      sessionEvent,
-      state.entries.length,
-      state.globalExpanded,
-      assistantEntryId,
+    let projected = this.diagnostics.mappingCallOr(
+      () =>
+        projectLiveEntry(
+          sessionEvent,
+          state.entries.length,
+          state.globalExpanded,
+          assistantEntryId,
+        ),
+      undefined,
     );
-    // A streamed delta states one fragment; the window keeps the whole answer.
-    // Writing the accumulated text (and one canonical replay step) here is what
-    // lets a rebuilt window still hold an unfinished answer.
+    // The window keeps the accumulated streamed answer and one replay step.
     if (phase === "continue" && assistantEntryId !== undefined) {
       const delta = messageUpdateAnswerText(sessionEvent);
       if (delta !== undefined) {
@@ -668,7 +665,10 @@ export class ChildOverlayController {
       ...(overlayEntryId === undefined ? {} : { overlayEntryId }),
     });
     if (transcriptNext.isOk()) state.transcript = transcriptNext.value;
-
+    else {
+      reduceResultOr(transcriptNext, state.transcript);
+      if (isPiAuthoritativeToolEvent(sessionEvent)) projected = undefined;
+    }
     if (projected !== undefined) {
       this.mergeEntry(state, projected);
       // The new rows land below a manually scrolled viewport; hold position
@@ -1091,6 +1091,7 @@ export class ChildOverlayController {
       const next = [...state.entries];
       const mergedReplay = mergeReplaySteps(existing?.replay, entry.replay);
       if (mergedReplay.isErr()) {
+        this.diagnostics.capacityExceeded();
         next[index] = degradedCapacityEntry(
           entry.id,
           entry.sequence,
@@ -1162,6 +1163,7 @@ export class ChildOverlayController {
       anchor: state.anchor,
       compact: state.compact,
       transcript: state.transcript,
+      liveReasoning: this.liveReasoning.snapshot(),
       telemetry: deriveChildOverlayTelemetry(state.usage, child),
       identity: deriveChildOverlayIdentity(child),
       planContext: readChildOverlayPlanContext(this.planContext),
@@ -1190,6 +1192,8 @@ export function createChildOverlayController(
   config?: ChildOverlayConfig,
   mutations?: ChildOverlayMutationPort,
   planContext?: ChildOverlayPlanContextPort,
+  diagnostics?: ChildUiEventDiagnosticsSink,
 ): ChildOverlayController {
-  return new ChildOverlayController(source, config, mutations, planContext);
+  const args = [source, config, mutations, planContext, diagnostics] as const;
+  return new ChildOverlayController(...args);
 }

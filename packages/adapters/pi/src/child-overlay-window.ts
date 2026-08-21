@@ -8,11 +8,21 @@
  * state: it never touches the source port, the harness, or the filesystem.
  */
 
+import { err, type Result } from "neverthrow";
 import { appendAssistantStreamDelta } from "./assistant-stream-text.js";
 import {
   type ChildCompactState,
   createChildCompactState,
 } from "./child-compact-render.js";
+import {
+  createPiLiveReasoningProjector,
+  emptyPiLiveReasoningSnapshot,
+  type PiLiveReasoningProjector,
+  type PiLiveReasoningRegistry,
+  type PiLiveReasoningRejection,
+  type PiLiveReasoningSnapshot,
+  type PiLiveReasoningUpdate,
+} from "./child-live-reasoning.js";
 import {
   allocateLiveAssistantEntryId,
   boundText,
@@ -47,6 +57,66 @@ import {
   createPiChildTranscriptState,
   type PiChildTranscriptState,
 } from "./child-transcript.js";
+import type { ChildUiEventDiagnosticsSink } from "./child-ui-event-diagnostics.js";
+
+export interface ChildOverlayLiveReasoningOwnerConfig {
+  readonly generationId?: string;
+  readonly registry?: PiLiveReasoningRegistry;
+  readonly diagnostics?: ChildUiEventDiagnosticsSink;
+}
+
+/** Owns the one mounted-only inspector reasoning projector. */
+export class ChildOverlayLiveReasoningOwner {
+  private readonly generationId: string | undefined;
+  private readonly registry: PiLiveReasoningRegistry | undefined;
+  private readonly diagnostics: ChildUiEventDiagnosticsSink | undefined;
+  private projector: PiLiveReasoningProjector | undefined;
+
+  constructor(config: ChildOverlayLiveReasoningOwnerConfig) {
+    this.generationId = config.generationId;
+    this.registry = config.registry;
+    this.diagnostics = config.diagnostics;
+  }
+
+  mount(child: ChildOverlayChild): void {
+    this.release();
+    if (child.status !== "live") return;
+    const generationId = child.generationId ?? this.generationId;
+    if (generationId === undefined || generationId.length === 0) return;
+    this.projector = createPiLiveReasoningProjector({
+      childId: child.childId,
+      generationId,
+      registry: this.registry,
+      registryKey: `inspector:${child.childId}`,
+      diagnostics: this.diagnostics,
+    });
+  }
+
+  release(): void {
+    const projector = this.projector;
+    this.projector = undefined;
+    projector?.clear().match(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  snapshot(): PiLiveReasoningSnapshot {
+    return (
+      this.projector?.snapshot() ??
+      emptyPiLiveReasoningSnapshot(this.registry?.size() ?? 0)
+    );
+  }
+
+  apply(
+    update: PiLiveReasoningUpdate,
+  ): Result<PiLiveReasoningSnapshot, PiLiveReasoningRejection> {
+    return (
+      this.projector?.apply(update) ??
+      err({ type: "PiLiveReasoningRejected", reason: "disposed" })
+    );
+  }
+}
 
 export interface SavedChildState extends OverlayScrollState {
   draft: string;

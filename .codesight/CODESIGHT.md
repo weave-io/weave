@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 330 lib files | 40 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~36,700 tokens. Without it, AI exploration would cost ~104,800 tokens. **Saves ~68,100 tokens per conversation.**
-> **Last scanned:** 2026-08-18 16:41 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 471 lib files | 59 env vars | 11 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~57,100 tokens. Without it, AI exploration would cost ~144,200 tokens. **Saves ~87,100 tokens per conversation.**
+> **Last scanned:** 2026-08-21 20:42 — re-run after significant changes
 
 ---
 
@@ -120,6 +120,12 @@
   - function renderActiveAgentBadge: (agentName, theme?) => string
   - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
   - _...1 more_
+- `packages/adapters/pi/src/agent-display-name.ts`
+  - function formatAgentDisplayName: (agentName) => string
+  - function formatDelegationAgentName: (agentName) => string
+  - const AGENT_DISPLAY_INITIALISMS
+  - const AGENT_DISPLAY_NAME_MAX
+  - const formatDisplayAgentName
 - `packages/adapters/pi/src/artifact-provider.ts`
   - function createPiSanitizedChildIndex: (entries) => Result<PiSanitizedChildIndex, PiSanitizedChildIndexError>
   - class PiSanitizedChildIndexExporter
@@ -129,14 +135,22 @@
   - interface PiArtifactDigest
   - _...9 more_
 - `packages/adapters/pi/src/assistant-stream-text.ts` — function appendAssistantStreamDelta: (accumulated, delta) => string
+- `packages/adapters/pi/src/bounded-file-read.ts`
+  - function captureBoundedFileIdentity: (value) => Result<BoundedFileIdentity, BoundedFileReadError>
+  - function sameBoundedFileIdentity: (left, right) => boolean
+  - function readBoundedFileObject: (file, maxBytes) => ResultAsync<Uint8Array, BoundedFileReadError>
+  - interface BoundedFileStat
+  - interface BoundedFile
+  - interface BoundedFileIdentity
+  - _...1 more_
 - `packages/adapters/pi/src/capability-prober.ts`
-  - function probeAgentRecoveryExhaustedFeature: (host) => Result<boolean, AgentRecoveryExhaustedProbeError>
+  - function describeRuntimeModelFallbackPresence: (answers, boolean>>) => RuntimeModelFallbackPresence
   - function describeDelegationReadinessGap: (requiredGaps) => PiDelegationReadinessReason
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
   - interface PiCandidatePlanContext
-  - _...10 more_
+  - _...13 more_
 - `packages/adapters/pi/src/catalog-cell.ts`
   - function createPiCatalogCell: (seed) => PiCatalogCell
   - function derivePiCatalogSeedManifest: (input) => PiConfigSourceManifest | undefined
@@ -152,15 +166,15 @@
   - function projectDelegationCardFacts: (state) => PiDelegationCardFacts
   - function formatElapsed: (ms) => string
   - function formatTokens: (count) => string
-  - _...34 more_
+  - _...38 more_
 - `packages/adapters/pi/src/child-card-render.ts`
   - function renderDelegationCard: (facts, options) => string[]
-  - function composeDelegationCard: (facts, width, expanded) => readonly PiCardRow[]
+  - function composeDelegationCard: (facts, width, expanded, liveReasoningLine) => readonly PiCardRow[]
   - function degradedDelegationCard: (reason, options, paint) => void
   - function cardEdge: (width, open, left, right) => Row
   - function cardBody: (width, content) => Row
   - function ruleRow: (width) => PiCardRow
-  - _...36 more_
+  - _...37 more_
 - `packages/adapters/pi/src/child-compact-render.ts`
   - function createChildCompactState: (threadId) => ChildCompactState
   - function sanitizeChildCompactText: (value) => string
@@ -171,20 +185,20 @@
   - _...19 more_
 - `packages/adapters/pi/src/child-compaction-settlement.ts`
   - class PiChildAbortSettlementGate
+  - class PiChildFallbackSettlementGate
   - interface DeferredChildFailure
   - interface ChildTurnEpoch
   - interface PiChildAbortSettlementGateOptions
-  - type AbortSettlementDecision
-  - type SettlementAdmission
-  - _...2 more_
+  - interface ChildFallbackEpoch
+  - _...9 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
+  - function modelIdentityBodiesEqual: (left, right) => boolean
+  - function modelTransitionFactsEqual: (left, right) => boolean
   - function makeCancelBody: (reason) => void
   - function makeErrorBody: (reason) => void
   - function parseControlBody: (kind, body) => void
-  - interface HostModelIdentity
-  - type PiBootstrapBody
-  - _...22 more_
+  - _...26 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -294,6 +308,35 @@
   - interface PiChildLifecycleSettingsIssue
   - const DEFAULT_PI_CHILD_LIFECYCLE_SETTINGS
   - const MAX_PI_CHILD_LIFECYCLE_SETTINGS
+- `packages/adapters/pi/src/child-live-reasoning-carrier.ts`
+  - function readPiLiveReasoningCarrier: (value) => Result<PiLiveReasoningCarrier | undefined, PiLiveReasoningRejectionReason>
+  - function readPiLiveReasoningUpdate: (value) => Result<PiLiveReasoningUpdate, PiLiveReasoningRejectionReason>
+  - function makePiLiveReasoningRejection: (reason) => PiLiveReasoningRejection
+- `packages/adapters/pi/src/child-live-reasoning-display.ts`
+  - function normalizeTerminalText: (value) => PiLiveReasoningNormalizedText
+  - function normalizeTerminalFragment: (value) => PiLiveReasoningNormalizedText
+  - function newestWithMarker: (value, maxCodePoints) => string
+  - function markerWithinCodePointBound: (value, maxCodePoints) => string
+  - function newestUtf8: (value, maxBytes) => void
+  - function reconcileEnd: (current, ending) => string
+  - _...6 more_
+- `packages/adapters/pi/src/child-live-reasoning-fanout.ts`
+  - function notifyPiLiveReasoningObserver: (observer, update, diagnostics) => void
+  - function invalidatePiLiveReasoningObservers: (observers) => void
+  - type PiLiveReasoningDiagnosticsProvider
+- `packages/adapters/pi/src/child-live-reasoning-projector.ts`
+  - function createPiLiveReasoningProjector: (config) => PiLiveReasoningProjector
+  - function projectPiLiveReasoningUpdate: (event, identity) => Result<PiLiveReasoningUpdate | undefined, PiLiveReasoningRejection>
+  - class PiLiveReasoningProjector
+- `packages/adapters/pi/src/child-live-reasoning-registry.ts` — function createPiLiveReasoningRegistry: () => PiLiveReasoningRegistry, class PiLiveReasoningRegistry
+- `packages/adapters/pi/src/child-live-reasoning-types.ts`
+  - function emptyPiLiveReasoningSnapshot: (registryEntries) => PiLiveReasoningSnapshot
+  - interface PiLiveReasoningUpdate
+  - interface PiLiveReasoningRejection
+  - interface PiLiveReasoningSnapshot
+  - interface PiLiveReasoningProjectorConfig
+  - type PiLiveReasoningPhase
+  - _...15 more_
 - `packages/adapters/pi/src/child-metadata-cache.ts`
   - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
   - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
@@ -341,7 +384,7 @@
   - function toChildOverlayEditorTheme: (theme) => EditorTheme
   - function createChildOverlayDraftEditor: (tui, theme, keybindings) => CustomEditor
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?) => ChildOverlayController, class ChildOverlayController
+- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?, planContext?, diagnostics?) => ChildOverlayController, class ChildOverlayController
 - `packages/adapters/pi/src/child-overlay-facts.ts`
   - function formatOverlayTokenCount: (count) => string | undefined
   - function formatOverlayElapsed: (elapsedMs) => string | undefined
@@ -390,16 +433,35 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+- `packages/adapters/pi/src/child-overlay-pi-native-assistant.ts`
+  - function renderPromptEntry: (paint, entry, input, width) => string[]
+  - function renderTextEntry: (paint, entry, input, width) => string[]
+  - function renderAssistantEntry: (paint, entry, input, width, finalAssistantId) => string[]
+  - function finalAssistantEntryId: (input) => string | undefined
+- `packages/adapters/pi/src/child-overlay-pi-native-entry.ts` — function renderEntryRows: (paint, entry, input, width, finalAssistantId) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-layout.ts`
+  - function headRow: (text, width) => string
+  - function bodyRows: (text, width, maxRows, ink) => void
+  - function continuationRows: (text, width, maxRows, ink) => void
+  - function withCaret: (paint, rows, width) => string[]
+  - function dividerRow: (paint, label, width) => string
+  - function gutter: (paint, family, tone) => string
+  - _...6 more_
+- `packages/adapters/pi/src/child-overlay-pi-native-tool.ts` — function renderToolEntry: (paint, entry, width) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-values.ts`
   - function normalizeOverlayPayload: (value, stripBookkeeping, depth) => unknown
   - function summarizeOverlayValue: (value, depth) => string
   - function overlayPayloadText: (value) => string
   - function overlayToolResultText: (value) => string
   - function overlayToolTarget: (entry) => string
   - function overlayToolArgs: (entry) => string
-  - _...14 more_
+  - _...2 more_
+- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+  - function renderOverlayPiNative: (paint, input, width) => OverlayPiNativePane
+  - function overlayTranscriptSearchIndex: (pane, "plain" | "spans" | "transientLines">) => Map<string, string>
+  - function renderOverlayTranscript: (paint, input, width) => OverlayTranscriptRender
 - `packages/adapters/pi/src/child-overlay-replay.ts`
-  - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
+  - function pushReplayEvent: (steps, candidate, authoritativeTool) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
   - function mapNativeSessionEntryToOverlay: (entry, sequence) => Result<ChildOverlayEntry | undefined, ChildOverlayMappingError>
   - function transcriptFromOverlayEntries: (entries) => PiChildTranscriptState
@@ -461,7 +523,7 @@
   - function prependOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function appendOverlayPage: (state, page, incoming, priorAnchor, windowCap) => void
   - function resolveLiveAssistantEntry: (state, phase) => string
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/child-overlay.ts`
   - function mapPiDelegationFailureToOverlaySourceError: (failure, childId) => ChildOverlaySourceError
   - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
@@ -490,11 +552,11 @@
 - `packages/adapters/pi/src/child-provider-error.ts`
   - function projectAssistantProviderError: (message, descriptor?) => Result<PiChildProviderError, PiChildProviderErrorAbsence>
   - function parsePiChildProviderError: (event, descriptor?) => Result<PiChildProviderError, PiChildProviderErrorAbsence>
+  - function toolDetailProjectionLossKey: (original, projected) => string | undefined
   - function redactProviderErrorFromEvent: (event) => PiChildSessionEvent
   - function historicalProviderErrorFacts: (message) => |
   - function historicalAssistantMessageFields: (message) => Record<string, unknown>
-  - interface PiChildProviderErrorDescriptor
-  - _...22 more_
+  - _...23 more_
 - `packages/adapters/pi/src/child-recovery.ts`
   - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildRecoveryRecord[]
   - function boundedRecoveryOutput: (value) => string
@@ -509,9 +571,9 @@
   - function authorizeChildAccess: (childId, state, operation) => Result<void, PiChildAccessDenial>
   - class PiChildRuntime
   - interface PiChildOutputTransfer
+  - interface PiChildOutputWrite
   - interface PiChildOutputPort
-  - interface PiChildRuntimeDeps
-  - _...7 more_
+  - _...9 more_
 - `packages/adapters/pi/src/child-session-checkpoint.ts`
   - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
   - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
@@ -523,11 +585,11 @@
 - `packages/adapters/pi/src/child-session-events.ts`
   - function parsePiChildUsageReport: (event) => Result<PiChildUsageReport, PiChildUsageError>
   - function projectAssistantUsageFacts: (message) => PiAssistantUsageFacts | undefined
+  - function markPiAuthoritativeToolEvent: (event) => PiChildSessionEvent
+  - function isPiAuthoritativeToolEvent: (event) => boolean
   - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
   - function redactRawReasoningFromEvent: (event) => PiChildSessionEvent
-  - function canonicalReasoningMessageUpdate: () => PiChildSessionEvent
-  - function retainedChildSessionEvent: (event) => PiChildSessionEvent | undefined
-  - _...15 more_
+  - _...17 more_
 - `packages/adapters/pi/src/child-session-launch.ts`
   - function createPiChildSessionLaunchAuthority: (input) => Result<PiChildSessionLaunchAuthority, PiChildSessionLaunchRejection>
   - function isPiChildSessionLaunchAuthority: (value) => value is PiChildSessionLaunchAuthority
@@ -612,6 +674,18 @@
   - function truncateLatestOutput: (text) => string
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - _...20 more_
+- `packages/adapters/pi/src/child-ui-event-diagnostics.ts`
+  - function createChildUiEventDiagnostics: (config) => ChildUiEventDiagnostics
+  - function recordChildUiEventDiagnostic: (sink, outcome, "classification" | "disposition"
+  > &
+    Partial<
+      Pick<ChildUiEventDiagnosticOutcome, "classification" | "disposition">
+    >) => void
+  - function recordChildUiEventDrop: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventInvalid: (sink, stage, reason, atMs?) => void
+  - function recordChildUiEventFailure: (sink, stage, reason, atMs?) => void
+  - function childUiEventResultOr: (result, E>, sink, stage, reason, fallback) => T
+  - _...29 more_
 - `packages/adapters/pi/src/codex-fast/attempt.ts`
   - function createCodexFastAttempt: (eligibility) => CodexFastAttempt
   - type CodexFastState
@@ -707,13 +781,13 @@
   - interface PiThreadRunRequest
   - _...12 more_
 - `packages/adapters/pi/src/delegation-tool.ts`
-  - function formatDelegationAgentName: (agentName) => string
   - function parseDelegationCardDetails: (details) => Result<PiDelegationCardDetails, PiDelegationCardDetailsError>
   - function boundDelegationCardDetails: (facts) => PiDelegationCardDetails | undefined
-  - function renderDelegationCardResult: (result, options, theme, _context, onCardRenderFailure?) => void
+  - function renderDelegationCardResult: (result, options, theme, context, onCardRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
-  - _...15 more_
+  - class PiCardUpdateCoalescer
+  - _...14 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function validateDirectNativeSession: (childId, session) => Result<PiDirectNativeSession, PiAdapterFailure>
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
@@ -744,14 +818,59 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeConfigRefreshFailedFailure: (reason) => PiAdapterFailure
   - _...95 more_
+- `packages/adapters/pi/src/extension-build-identity-binding.ts` — function computeExtensionBuildBinding: (input) => Result<string, ExtensionBuildIdentityError>, function sha256Hex: (bytes) => Result<string, ExtensionBuildIdentityError>
+- `packages/adapters/pi/src/extension-build-identity-manifest.ts`
+  - function parseExtensionBuildManifest: (value) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function renderExtensionBuildManifest: (manifest) => Result<string, ExtensionBuildIdentityError>
+  - function createExtensionBuildManifest: (input) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+  - function readBoundedIdentityBytes: (path, maxBytes, failure, expectedCanonicalRoot?) => ResultAsync<Uint8Array, ExtensionBuildIdentityError>
+  - function readArtifactSha256: (path, expectedCanonicalRoot?) => ResultAsync<string, ExtensionBuildIdentityError>
+  - function parseExtensionBuildManifestText: (text) => Result<ExtensionBuildIdentityManifest, ExtensionBuildIdentityError>
+- `packages/adapters/pi/src/extension-build-identity-proof.ts`
+  - function renderExtensionBuildIdentityHealthLine: (health) => string
+  - function renderExtensionBuildIdentityProofLine: (identity) => string
+  - function parseExtensionBuildIdentityProof: (value) => Result<ExtensionBuildIdentityProof, ExtensionBuildIdentityError>
+  - function maybeWriteExtensionBuildIdentityProofLine: (identity, options, string | undefined>>;
+    readonly proofWrite?) => void
+- `packages/adapters/pi/src/extension-build-identity-runtime.ts`
+  - function extensionProcessStartMs: () => number
+  - function unverifiableExtensionLoadIdentity: (reason) => ExtensionLoadedIdentity
+  - function evaluateExtensionBuildIdentity: (input) => ExtensionBuildIdentityHealth
+  - function readExtensionBuildIdentityHealth: (loaded) => ResultAsync<ExtensionBuildIdentityHealth, never>
+- `packages/adapters/pi/src/extension-build-identity-validation.ts`
+  - function isRecord: (value) => value is Record<string, unknown>
+  - function isSha256: (value) => value is string
+  - function isBoundedString: (value, maxLength) => value is string
+  - function isGitSubject: (value) => value is string
+  - function isSafeTimestamp: (value) => value is string
+  - function isSafeMilliseconds: (value) => value is number
+  - _...8 more_
 - `packages/adapters/pi/src/extension-impl.ts`
+  - function setLoadedPiExtensionIdentity: (identity) => void
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function resolveAgentRuntimeMeta: (descriptorsByName, AgentDescriptor>, agentName, ctx?) => void
   - function resolveDelegationInvocationContext: (source, currentGenerationId) => |
   - function delegationControllerGenerationsAgree: (controllerGenerationId, activeSessionGenerationId, currentGenerationId) => boolean
-  - function readOverlaySessionEntryPage: (deps, childId, options) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>
-  - _...15 more_
+  - _...16 more_
+- `packages/adapters/pi/src/extension-preloader-factory.ts` — function createWeaveAdapterExtension: (pi, embeddedBinding, entryPath) => Promise<void>
+- `packages/adapters/pi/src/extension-preloader-loader.ts` — function installPinnedModulePlugin: (state) => boolean
+- `packages/adapters/pi/src/extension-preloader-manifest.ts`
+  - function isSafeAbsolutePath: (value) => value is string
+  - function modulePathFor: (artifactPath, fileName) => string
+  - function digestBytes: (bytes) => string | undefined
+  - function decodeUtf8: (bytes) => string | undefined
+  - function encodeUtf8: (value) => Uint8Array | undefined
+  - function readBytes: (path, maxBytes) => Promise<Uint8Array | undefined>
+  - _...4 more_
+- `packages/adapters/pi/src/extension-preloader-pinned-runtime.ts`
+  - function loaderState: () => GlobalLoaderState
+  - function readExtensionPreloaderRetentionForTesting: () => ExtensionPreloaderRetentionSnapshot
+  - function beginLoad: (state) => LoadSlot | undefined
+  - function finishLoad: (state, slot) => void
+  - function recordPreloaderFailure: (state, reason) => void
+  - function recordPreloaderLoaded: (state, pinned) => void
+  - _...2 more_
 - `packages/adapters/pi/src/foreground-plan-display.ts`
   - function parseForegroundPlanRequest: (text) => Result<string, ForegroundPlanRequestRejection>
   - function isSafeForegroundPlanName: (value) => value is string
@@ -761,11 +880,13 @@
   - interface ForegroundPlanDisplayState
   - _...7 more_
 - `packages/adapters/pi/src/generation-resources.ts`
+  - function createModelFailoverCoordinatorCell: () => PiModelFailoverCoordinatorCell
+  - function shutdownModelFailoverCoordinator: (cell) => void
   - function createGenerationSessionCtxCell: () => PiGenerationSessionCtxCell
   - function readSessionManagerEntries: (ctx, report) => void
   - class PiGenerationResourceOwner
-  - interface PiGenerationSessionCtxCell
-  - type PiChildRefEntryReadDegradation
+  - interface PiGenerationModelFailoverPort
+  - _...3 more_
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
   - interface PiHostSurfaceDeclaration
@@ -781,15 +902,15 @@
   - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
   - function resolveReportedHostIdentity: (input) => ReportedHostIdentity
   - function renderHostRuntimeHealthLine: (input) => string
-  - _...14 more_
+  - _...15 more_
 - `packages/adapters/pi/src/host-inventory.ts`
   - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
   - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
   - function safeReadHostSurfaceReport: (reader, input) => ResultAsync<PiHostSurfaceReport, never>
   - function buildHostSurfaceGapDiagnostics: (report, hostVersion) => readonly HostCapabilityGapDiagnostic[]
   - function selectsCustomEditorFallback: (report) => boolean
-  - function createDefaultPiHostProbePort: (input) => PiHostProbePort
-  - _...11 more_
+  - function isRuntimeModelFallbackEnabled: (report) => boolean
+  - _...12 more_
 - `packages/adapters/pi/src/host-module-loader.ts`
   - function resolveHostModuleProvenance: (specifier, outcome) => PiHostModuleProvenance
   - function escapeExactPathRegExp: (value) => string
@@ -813,15 +934,63 @@
   - function messageUpdateObservesRawReasoning: (record) => boolean
   - type PiMessageUpdateRejection
   - type PiMessageUpdateCarrier
-  - _...2 more_
+  - _...3 more_
+- `packages/adapters/pi/src/model-failover-context.ts`
+  - function repairPiFailoverContext: (input) => Result<readonly unknown[], PiFailoverContextRepairError>;
+  - function repairPiFailoverContext: (messages, token, fingerprint) => Result<readonly unknown[], PiFailoverContextRepairError>;
+  - function repairPiFailoverContext: (inputOrMessages, token?, fingerprint?) => Result<readonly unknown[], PiFailoverContextRepairError>
+  - function canRepairPiFailoverContext: (input) => boolean
+  - interface PiFailoverContextRepairInput
+  - type PiFailoverContextRepairError
+  - _...3 more_
+- `packages/adapters/pi/src/model-failover-contract.ts`
+  - function readPiOwnEnumerableData: (target, key) => PiOwnDataRead
+  - function classifyPiFailure: (messageOrEvent) => PiFailureClassification | undefined
+  - function classifyPiMessageEndFailure: (event) => PiFailureClassification | undefined
+  - function isPiPayloadlessAgentSettledEvent: (event) => event is
+  - function isPiFailureAdvanceEligible: (failureClass, unknownAdvancesUsed) => boolean
+  - function consumePiFailureAdvance: (failureClass, unknownAdvancesUsed) => PiFailoverAdvanceState
+  - _...55 more_
+- `packages/adapters/pi/src/model-failover-coordinator.ts`
+  - function isPiModelFailoverTransitionLegal: (from, to) => boolean
+  - function transitionPiModelFailoverState: (from, to) => Result<PiModelFailoverState, PiModelFailoverStateTransitionError>
+  - function createPiModelFailoverCoordinator: (options) => PiModelFailoverCoordinator
+  - class PiModelFailoverCoordinator
+  - interface PiAppliedModel
+  - interface PiModelFailoverScope
+  - _...27 more_
+- `packages/adapters/pi/src/model-failover-preflight.ts`
+  - function checkPiFailoverPreflight: (input) => Result<PiFailoverPreflightOutcome, PiFailoverPreflightError>
+  - function preflightPiFailoverCandidate: (input) => ResultAsyncType<PiFailoverPreflightOutcome, PiFailoverPreflightError>
+  - function createPiModelFailoverPreflight: () => PiModelFailoverPreflightPort
+  - function mapPiCandidatePreflightOutcome: (outcome) => PiFailoverPreflightOutcome
+  - function mapPiFailoverPreflightError: (error) => PiCandidatePreflightError
+  - function isPiFailoverCandidatePreflightEligible: (input) => boolean
+  - _...17 more_
+- `packages/adapters/pi/src/model-failover-record.ts`
+  - function parsePiModelFailoverRecord: (value) => Result<PiModelFailoverRecord, PiModelFailoverRecordError>
+  - function modelFailoverRecordFromTransition: (transition) => Result<PiModelFailoverRecord | undefined, PiModelFailoverRecordError>
+  - function parsePiModelFailoverNativeEntry: (value) => Result<PiModelFailoverRecord | undefined, PiModelFailoverRecordError>
+  - function isPiModelFailoverHiddenCustomType: (value) => boolean
+  - function isPiModelFailoverHiddenMarker: (value) => boolean
+  - function appendPiModelFailoverRecord: (port, value, contextRepaired) => Result<PiModelFailoverAppendResult, PiModelFailoverAppendError>
+  - _...18 more_
+- `packages/adapters/pi/src/model-fallback-event-render.ts`
+  - function modelFallbackWidthBand: (width) => ModelFallbackWidthBand
+  - function renderModelFallbackEvent: (value, width, paint) => readonly string[]
+  - function modelFallbackRowWidths: (value, width) => readonly number[]
+  - interface PiReadOnlyEntryRenderer
+  - type ModelFallbackWidthBand
+  - const MODEL_FALLBACK_WIDE_MIN
+  - _...7 more_
 - `packages/adapters/pi/src/model-resolution.ts`
+  - function resolvePiOrderedDistinctModels: (modelIntent, availableModels) => readonly PiOrderedModelResolution[]
   - class PiModelResolver
   - class PiModelActivator
   - interface PiModelApplyPort
   - interface PiThinkingApplyPort
-  - type PiModelResolutionSource
-  - type PiModelResolution
-  - _...2 more_
+  - type PiModelInfo
+  - _...8 more_
 - `packages/adapters/pi/src/native-session-fs.ts`
   - function setForcedPreadByteLimitForTests: (limit) => void
   - function createBunPiNativeSessionFs: () => PiNativeSessionFsPort
@@ -840,14 +1009,24 @@
   - function createPiNativeSessionHost: (SessionManager) => PiNativeSessionHostPort
   - interface PiSessionManagerStatic
   - interface PiSessionManagerInstance
-- `packages/adapters/pi/src/path-containment.ts`
+- `packages/adapters/pi/src/path-containment-bounded-read.ts` — function readAbsoluteFileBounded: (path, maxBytes, expectedCanonicalRoot?) => ResultAsync<Uint8Array, BoundedAbsoluteFileReadError>
+- `packages/adapters/pi/src/path-containment-lexical.ts`
   - function isLexicallyContained: (relativePath) => boolean
-  - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
-  - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
+  - function pathSegments: (relativePath) => readonly string[]
+  - function toResultAsync: (result, E>) => ResultAsync<T, E>
+  - function canonicalRelativeSegments: (root, target) => Result<readonly string[], PathContainmentError>
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
   - class BunPathContainmentPort
-  - class NullPathContainmentPort
-  - _...11 more_
+  - _...2 more_
+- `packages/adapters/pi/src/path-containment-nofollow.ts`
+  - function cstr: (value) => Uint8Array
+  - function loadNoFollowLibc: () => Result<
+  - function isMissingComponentErrno: (errnoValue) => boolean
+  - function canonicalizeExistingPath: (libc, path, failure) => Result<string, PathContainmentError>
+  - function openNoFollowDirectoryChain: (libc, canonicalRoot, segments) => Result<number, PathContainmentError>
+  - function absoluteNoFollowSegments: (path) => Result<readonly string[], NoFollowInspectionError>
+  - _...3 more_
+- `packages/adapters/pi/src/path-containment-relative-files.ts` — class BunSecureRelativeFileProvider, class FakeSecureRelativeFileProvider
 - `packages/adapters/pi/src/pi-config-ui.ts`
   - function mergePiConfigEntries: (entries, record) => readonly PiConfigExtensionEntry[]
   - function buildPiConfigRows: (entries) => readonly PiConfigRow[]
@@ -864,7 +1043,7 @@
   - function createPiExtensionInventoryHost: (input) => BunPiExtensionInventoryHost
   - function resolveOwnExtensionEntryPath: (input) => Promise<string | undefined>
   - function collectPiExtensionInventoryFromHost: (input) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
-  - _...15 more_
+  - _...16 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry
@@ -926,10 +1105,10 @@
   - function isProviderFastRuleId: (value) => value is ProviderFastRuleId
   - function projectCodexFastSnapshot: (snapshot) => ProviderFastPublicSnapshot | undefined
   - function classifyProviderFastIntent: (intent) => ProviderFastClassification
+  - function recomputeProviderFastAfterAppliedModel: (intent) => ProviderFastClassification
   - type ProviderFastState
   - type ProviderFastReason
-  - type ProviderFastEvidenceKind
-  - _...13 more_
+  - _...14 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -1009,7 +1188,7 @@
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
-  - _...22 more_
+  - _...27 more_
 - `packages/adapters/pi/src/thread-sources.ts`
   - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
   - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
@@ -1031,7 +1210,7 @@
   - interface PiModelInfo
   - interface PiModelRegistry
   - interface PiSkillInfo
-  - _...39 more_
+  - _...40 more_
 - `packages/adapters/pi/src/ui-paint.ts`
   - function makePaint: (theme) => Paint
   - function plainPaint: () => Paint
@@ -1779,12 +1958,52 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
-- `scripts/build-public-packages.ts`
+- `scripts/bounded-process/contract.ts`
+  - function boundedProcessFailure: (code) => BoundedProcessFailure
+  - interface BoundedProcessFailure
+  - interface BoundedProcessSpawnInput
+  - interface BoundedProcessStdin
+  - interface BoundedProcess
+  - interface BoundedProcessLimits
+  - _...7 more_
+- `scripts/bounded-process/control.ts`
+  - function normalizedBoundedProcessLimits: (supplied) => BoundedProcessLimits
+  - function observeBoundedPromise: (promiseLike, timeoutMs?) => Promise<BoundedWaitOutcome<T>>
+  - function terminateBoundedProcess: (process, limits) => Promise<boolean>
+  - type BoundedWaitOutcome
+- `scripts/bounded-process/runner.ts` — function spawnBoundedInteractiveProcess: (input) => Result<BoundedProcess, BoundedProcessFailure>, function runBoundedProcess: (input) => ResultAsync<BoundedProcessOutput, BoundedProcessFailure>
+- `scripts/bounded-process/stream.ts`
+  - function isBoundedProcessStreamOverflow: (value) => value is typeof BOUNDED_PROCESS_STREAM_OVERFLOW
+  - function readProcessLines: (process, "stdout" | "stderr">) => AsyncIterable<string>
+  - const MAX_BOUNDED_PROCESS_LINE_BYTES
+  - const MAX_BOUNDED_PROCESS_UNDECODED_BUFFER_BYTES
+  - const MAX_BOUNDED_PROCESS_QUEUED_LINES_PER_STREAM
+  - const MAX_BOUNDED_PROCESS_QUEUED_BYTES_PER_STREAM
+  - _...4 more_
+- `scripts/build-public-packages-builder.ts` — class PublicPackageBuilder
+- `scripts/build-public-packages-filesystem.ts` — class BunPublicPackageFileSystem
+- `scripts/build-public-packages-git.ts`
+  - function runGit: (command, reason, options) => ResultAsync<string, PublicPackageBuildError>
+  - function parseGitBuildIdentity: (subject, status) => Result<
+  - function readGitBuildIdentity: (probe) => ResultAsync<
+  - type GitBuildReason
+  - type GitProcessOptions
+  - type GitBuildProbe
+  - _...1 more_
+- `scripts/build-public-packages-pi.ts`
+  - function piOutputName: (path) => string
+  - function piIdentityOutputFiles: () => readonly
+  - function writePiExtensionBuildIdentityManifest: (input) => ResultAsync<void, PublicPackageBuildError>
+  - function emitPiBuildIdentityArtifacts: (input) => void
+  - const PI_EXTENSION_IDENTITY_SOURCE
+  - const PI_EXTENSION_IDENTITY_OUTPUT
+  - _...2 more_
+- `scripts/build-public-packages-shared.ts`
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
-  - class BunPublicPackageFileSystem
-  - class PublicPackageBuilder
+  - function hasRuntimeRelativeImport: (contents) => boolean
   - interface PublicPackageFileSystem
+  - type PublicPrivatePackageName
   - type PublicPackageBuildError
 - `scripts/ci/verify-action-pins.ts`
   - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
@@ -1804,6 +2023,115 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/pi/child-stream-capture-contract.ts`
+  - function blocked: (type) => CaptureFailure
+  - function invalidFixture: (type) => FixtureValidationFailure
+  - interface CaptureManifestBounds
+  - interface CaptureFailure
+  - interface FixtureValidationFailure
+  - interface SanitizedEvent
+  - _...24 more_
+- `scripts/pi/child-stream-capture-harness.ts` — function verifyPiVersion: (pi, requiredVersion) => ResultAsync<string, CaptureFailure>, function captureChildEvents: (input) => ResultAsync<CaptureSuccess, CaptureFailure>
+- `scripts/pi/child-stream-capture-replay.ts` — function injectControlledReasoningInMemory: (payload, unknown>, ordinalId) => Record<string, unknown>, function replayFixtureThroughAdapter: (fixture, options) => Result<ReplayFacts, FixtureValidationFailure>
+- `scripts/pi/child-stream-capture-sanitizer.ts`
+  - function isRecord: (value) => value is Record<string, unknown>
+  - function utf8Bytes: (value) => number
+  - function sha256HexOfText: (text) => string
+  - function containsForbiddenContent: (value) => boolean
+  - function omitReasoningProse: (rawEvent) => Result<unknown, CaptureFailure>
+  - function createOrdinalState: (toolCallIds, string>) => void
+  - _...7 more_
+- `scripts/pi/child-stream-capture-verifier.ts`
+  - function serializeFixture: (events) => string
+  - function buildCaptureManifest: (input) => CaptureManifest
+  - function verifyCaptureManifest: (fixtureText, manifestText) => Result<
+  - function validateFixtureStructure: (fixture) => Result<FixtureStructuralFacts, FixtureValidationFailure>
+  - function runFixtureRedControls: (fixtureText, manifestText) => Result<
+  - function deriveManifestPath: (fixturePath) => string
+  - _...1 more_
+- `scripts/pi/child-stream-identity-environment.ts`
+  - function identityProbeIsolationPaths: (root) => Result<IdentityProbeIsolationPaths, VerifyChildStreamingFailure>
+  - function buildIdentityProbeEnvironment: (source, unknown>>, isolationRoot) => Result<Record<string, string>, VerifyChildStreamingFailure>
+  - const IDENTITY_PROBE_ENV_ALLOWLIST
+- `scripts/pi/child-stream-identity-evaluation.ts`
+  - function verifyIdentityFacts: (input) => Result<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+  - function runAfterIdentity: (identity, VerifyChildStreamingFailure>, check) => void
+  - function classifyChildStreamingEvidence: (input, VerifyChildStreamingFailure
+  >;
+  readonly uiLanes?) => ChildStreamingEvidenceClass | "blocked"
+- `scripts/pi/child-stream-identity-probe.ts` — function probePiIdentity: (repoRoot, pi, environmentSource, unknown>>) => ResultAsync<ExtensionBuildIdentityProof, VerifyChildStreamingFailure>, function verifyCurrentBuildIdentity: (input) => ResultAsync<IdentityVerificationSuccess, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-identity-report.ts` — function renderIdentityVerification: (result, VerifyChildStreamingFailure>) => string
+- `scripts/pi/child-stream-live-proof-command.ts`
+  - function liveProofReportPassed: (report) => boolean
+  - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
+  - interface LiveProofCommandOutcome
+  - interface LiveProofCommandInput
+- `scripts/pi/child-stream-live-proof-contract-args.ts`
+  - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
+  - const LIVE_PROOF_FLAGS
+  - const LIVE_PROOF_FORBIDDEN_SCREEN_FLAGS
+  - const MAX_LIVE_PROOF_ARGUMENTS
+  - const MAX_LIVE_PROOF_ARGUMENT_BYTES
+  - const MAX_LIVE_PROOF_LANE_LIST_BYTES
+  - _...2 more_
+- `scripts/pi/child-stream-live-proof-contract-counters.ts`
+  - function saturatingIncrement: (value, amount) => number
+  - const MAX_LIVE_PROOF_COUNTER
+  - const saturatingAdd
+  - const incrementSaturatedCounter
+- `scripts/pi/child-stream-live-proof-contract-report-validation.ts` — function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
+- `scripts/pi/child-stream-live-proof-contract-serialization.ts`
+  - function serializeLiveProofReport: (input) => Result<string, LiveProofSerializationFailure>
+  - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
+  - const safeSerializeLiveProofReport
+  - const parseSerializedLiveProofReport
+- `scripts/pi/child-stream-live-proof-host.ts`
+  - function safeProofEnvironment: (source, string>>) => Record<string, string>
+  - function createLiveProofSystem: () => LiveProofSystem
+  - function workspacePath: (root, name) => string
+- `scripts/pi/child-stream-live-proof-observer.ts` — function createLiveProofObserver: (sentinel) => LiveProofObserver, class LiveProofObserver
+- `scripts/pi/child-stream-live-proof-port.ts`
+  - function createLiveProofPort: (config) => LiveProofPort
+  - interface LiveProofGuardedResource
+  - interface LiveProofPortConfig
+- `scripts/pi/child-stream-live-proof-report-writer.ts` — function writeLiveProofReport: (input) => ResultAsync<number, LiveProofWriteFailure>, interface LiveProofWriteFailure
+- `scripts/pi/child-stream-live-proof-runner.ts`
+  - function runLiveProof: (input) => ResultAsync<LiveProofReport, never>
+  - interface LiveProofPortFailure
+  - interface LiveProofResourceContext
+  - interface LiveProofCurrentIdentityObservation
+  - interface LiveProofFreshParentLaunch
+  - interface LiveProofDeterministicChildRequest
+  - _...14 more_
+- `scripts/pi/child-stream-live-proof-system-contract.ts`
+  - function systemFailure: (code) => LiveProofSystemFailure
+  - interface LiveProofSystemFailure
+  - interface LiveProofProcess
+  - interface LiveProofTimer
+  - interface LiveProofCommandOutput
+  - interface LiveProofSystem
+  - _...2 more_
+- `scripts/pi/child-stream-verify-args.ts` — function parseVerifyChildStreamingArgs: (argv) => Result<VerifyChildStreamingArgs, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-verify-capture-command.ts`
+  - function runCaptureCommand: (input) => ResultAsync<CaptureCommandSuccess, VerifyChildStreamingFailure>
+  - function runReplayCommand: (input) => ResultAsync<ReplayCommandSuccess, VerifyChildStreamingFailure>
+  - interface CaptureCommandInput
+  - interface ReplayCommandInput
+  - interface ReplayCommandSuccess
+  - type CaptureCommandSuccess
+- `scripts/pi/child-stream-verify-cli.ts` — function runCommandLine: (argv) => Promise<void>
+- `scripts/pi/child-stream-verify-process.ts`
+  - function runVerifierProcess: (input) => ReturnType<typeof runBoundedProcess>
+  - function runVerifierCommand: (command, cwd) => ResultAsync<VerifierCommandOutput, VerifyChildStreamingFailure>
+  - function runIdentityProbeFilesystemCommand: (command) => ResultAsync<void, VerifyChildStreamingFailure>
+- `scripts/pi/child-stream-verify-types.ts`
+  - function blocked: (type, state?, "current">) => VerifyChildStreamingFailure
+  - interface IdentityVerificationSuccess
+  - interface IdentityVerificationFacts
+  - interface VerifyCurrentBuildIdentityInput
+  - interface IdentityProbeIsolationPaths
+  - type VerifyChildStreamingArgs
+  - _...3 more_
 - `scripts/pi/verify-host-singleton.ts`
   - function parseVerifyArgs: (argv) => Result<VerifyArgs, VerifyFailure>
   - function decideSkip: (presence, allowSkip) => SkipDecision
@@ -1811,17 +2139,73 @@
   - function parseProofLine: (line) => Result<ParsedHostModuleProof, VerifyFailure>
   - function extractProofLineFromOutput: (output) => Result<ParsedHostModuleProof, VerifyFailure>
   - function parseLsofFnOutput: (output) => readonly string[]
-  - _...31 more_
+  - _...37 more_
 - `scripts/release/acceptance-manifest.ts`
   - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
   - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
     checklistResults, SmokeChecklistResult>;
   }) => Promise<EvidenceVerificationReport>
   - function buildAcceptanceManifest: (input) => AcceptanceManifest
-  - class BunEvidenceFileReader
-  - interface ClosedSetSpec
-  - interface EvidenceFileReader
-  - _...18 more_
+  - function parseAdapterHostMatrices: (candidate) => Result<AdapterHostMatrices, AdapterHostMatrixError[]>
+  - function validateAdapterHostMatrices: (matrices) => Result<AdapterHostMatrices, AdapterHostMatrixError[]>
+  - function requiredHostSlots: (adapter, matrices) => Result<
+  - _...31 more_
+- `scripts/release/ai/audit-metadata.ts`
+  - function validateAiAuditMetadata: (input) => Result<AiAuditMetadata, AiAuditError>
+  - function createAiAuditMetadata: (provenance) => Result<AiAuditMetadata, AiAuditError>
+  - function digestChangelogSubmission: (submission) => string
+  - function aiAuditDigest: (audit) => string
+  - function serializeAiAuditMetadata: (audit) => Result<string, AiAuditError>
+  - function parseAiAuditMetadata: (text) => Result<AiAuditMetadata, AiAuditError>
+  - _...28 more_
+- `scripts/release/ai/changelog-agent.ts`
+  - function runChangelogAgent: (input) => ResultAsync<ChangelogAgentResult, ChangelogAgentError>
+  - function buildChangelogPrompt: (input) => Result<string, ChangelogAgentError>
+  - interface ChangelogAgentVersion
+  - interface ChangelogAgentInput
+  - interface RenderedPackageChangelog
+  - interface ChangelogAgentResult
+  - _...4 more_
+- `scripts/release/ai/evidence.ts`
+  - function validateEvidenceInput: (input) => Result<EvidenceAssemblyInput, EvidenceInputError>
+  - function assembleEvidence: (input) => Result<BoundedEvidence, EvidenceAssemblyError>
+  - function digestEvidence: (payload) => EvidenceDigest
+  - function evidenceItemBytes: (item) => number
+  - interface EvidenceBudgets
+  - interface EvidenceChangeset
+  - _...25 more_
+- `scripts/release/ai/headless-session.ts`
+  - function createChangelogSessionConfig: (input) => Result<IsolatedHeadlessSessionConfig, HeadlessSessionConfigError>
+  - function createDocsAuditSessionConfig: (input) => Result<IsolatedHeadlessSessionConfig, HeadlessSessionConfigError>
+  - function toPiCreateAgentSessionOptions: (config) => IsolatedPiSessionOptions
+  - function isThinkingLevel: (value) => value is HeadlessThinkingLevel
+  - interface IsolatedHeadlessDiscovery
+  - interface IsolatedHeadlessTools
+  - _...22 more_
+- `scripts/release/ai/submission-schema.ts`
+  - function validateChangelogSubmission: (input, context) => Result<ValidatedChangelogSubmission, ChangelogSubmissionError>
+  - interface SubmissionIdentityRequirement
+  - interface ChangelogSubmissionIssue
+  - interface SubmissionValidationContext
+  - interface ValidatedChangelogSubmission
+  - interface ChangelogVersionDocument
+  - _...11 more_
+- `scripts/release/api-reports.ts`
+  - function compareApiReportText: (before, after, input) => ApiReportComparison
+  - function validateApiReportCompatibility: (input) => Result<void, ApiReportsError>
+  - function parseApiChangeset: (path, contents) => Result<ApiChangeset, ApiReportsError>
+  - function loadApiChangesets: (root) => ResultAsync<readonly ApiChangeset[], ApiReportsError>
+  - function generateApiReports: (root, "../..") => void
+  - function checkApiReports: (root, "../..") => void
+  - _...9 more_
+- `scripts/release/api-surface-map.ts`
+  - function enumeratePackageExports: (input) => Result<readonly PublicPackageExport[], ApiSurfaceMapError>
+  - function enumeratePublicTypeExports: (manifests) => Result<readonly PublicPackageExport[], ApiSurfaceMapError>
+  - function discoverApiExtractorConfigPaths: (root) => Result<readonly string[], ApiSurfaceMapError>
+  - function discoverApiReportPaths: (root) => Result<readonly string[], ApiSurfaceMapError>
+  - function validateApiSurfaceMap: (input) => Result<void, ApiSurfaceMapError>
+  - function validateRepositoryApiSurfaceMap: (root, options) => ResultAsync<void, ApiSurfaceMapError>
+  - _...12 more_
 - `scripts/release/artifact-binding.ts`
   - function bindArtifactsToPlan: (input) => Result<PlanBoundArtifact, PlanBindingError>
   - function verifyPlanBoundArtifact: (bound, plan) => Result<ReleasePlanBinding, PlanBindingError>
@@ -1837,11 +2221,48 @@
   - function verifyManifestAgainstPlan: (manifest, plan) => Result<ArtifactManifest, PlanArtifactError>
   - type ArtifactManifestError
   - type PlanArtifactError
+- `scripts/release/attest-main.ts`
+  - function validateAttestMainRequest: (input) => Result<AttestMainRequest, AttestMainError>
+  - function verifyAttestationIdentity: (requestInput, observed) => Result<AttestationVerification, AttestMainError>
+  - function buildAttestationCheck: (requestInput, verification, subjectPaths, string>>, checkRunId) => Result<AttestationCheckReport, AttestMainError>
+  - function runAttestMain: (argv, files) => void
+  - function parseAttestArgs: (argv) => ResultType<AttestMainArgs, AttestArgsError>
+  - interface AttestationObservedIdentity
+  - _...14 more_
+- `scripts/release/await-attest-main.ts`
+  - function parseAwaitAttestInput: (input) => Result<AwaitAttestInput, AwaitAttestError>
+  - function runAwaitAttestation: (input, port, options?) => ResultAsync<AttestationCheckResult, AwaitAttestError>
+  - function parseAwaitAttestArgs: (argv) => Result<
+  - function readAwaitAttestInput: (path) => ResultAsync<AwaitAttestInput, AwaitAttestError>
+  - interface AwaitAttestInput
+  - type AwaitAttestError
 - `scripts/release/bind-artifacts.ts`
   - function parseBindingCliInput: (env, string | undefined>) => Result<ArtifactBindingCliInput, BindingCliError>
   - function bindArtifacts: (input, dependencies) => ResultAsync<void, BindingCliError>
   - interface BindingCliDependencies
   - type BindingCliError
+- `scripts/release/build-bind-main.ts`
+  - function runBuildBind: (input) => Result<BuildBindResult, BuildBindError>
+  - function runBuildBindFromFiles: (planPath, releasedSha, outputPath?) => ResultAsync<BuildBindFileResult, BuildBindError>
+  - function parseBuildBindArgs: (argv) => Result<
+  - interface BuildBindResult
+  - interface BuildBindFileResult
+  - type BuildBindError
+- `scripts/release/chain-step-support.ts`
+  - function parseNamedPathArgs: (argv, command, required) => Result<Record<string, string>, ChainStepInputError>
+  - function readJsonFile: (path) => ResultAsyncType<unknown, ChainStepInputError>
+  - function writeJsonFile: (path, value) => ResultAsyncType<void, ChainStepInputError>
+  - function canonicalJson: (value) => string
+  - type ChainStepInputError
+  - const CHAIN_STEP_INPUT_LIMIT_BYTES
+- `scripts/release/changed-adapters.ts`
+  - function isAdapterPackage: (packageName) => packageName is AdapterPackageName
+  - function adaptersInPublishSet: (publishSet) => readonly AdapterPackageName[]
+  - function resolveChangedAdapters: (input) => Result<ChangedAdapterSet, ChangedAdapterError>
+  - function resolveStableChangedAdapters: (closure) => Result<ChangedAdapterSet, ChangedAdapterError>
+  - function resolveNextChangedAdapters: (closure) => Result<ChangedAdapterSet, ChangedAdapterError>
+  - function resolveNightlyChangedAdapters: (input) => ResultAsync<ChangedAdapterSet, ChangedAdapterError>
+  - _...6 more_
 - `scripts/release/changelog-format.ts`
   - function renderChangelog: (document, evidence) => Result<string, ChangelogFormatError>
   - function parseChangelog: (source, evidence) => Result<ParsedChangelog, ChangelogFormatError>
@@ -1850,6 +2271,14 @@
   - interface ChangelogVersion
   - interface ChangelogDocument
   - _...11 more_
+- `scripts/release/changeset-cleanup.ts`
+  - function changesetCleanupBranch: (releasedSha) => string
+  - function consumedChangesetPath: (id) => string
+  - function planChangesetCleanup: (input) => Result<ChangesetCleanupPlan |
+  - class ChangesetCleanupController
+  - interface ChangesetCleanupGitHub
+  - interface ChangesetCleanupInput
+  - _...5 more_
 - `scripts/release/changeset-consumption.ts`
   - function subtractConsumedLedger: (input) => PendingChangesetSet
   - function assertNoModifiedConsumption: (set) => Result<void, ChangesetConsumptionError>
@@ -1866,11 +2295,26 @@
   - function requireChangesetCoverage: (input) => Result<PublicImpact, readonly ChangesetPolicyError[]>
   - class BunChangesetFileSystem
   - _...21 more_
+- `scripts/release/channel-versions.ts`
+  - function computeWouldBeNextStableVersions: (input) => Result<Readonly<Record<PublicPackageName, string>>, ChannelVersionError>
+  - function renderChannelVersion: (input) => Result<string, ChannelVersionError>
+  - function computeChannelVersions: (input) => ResultAsync<ChannelVersionPlan, ChannelVersionError>
+  - function computeNightlyAffectedSet: (input) => ResultAsync<NightlyAffectedSet, ChannelVersionError>
+  - function computeNightlyVersions: (input) => ResultAsync<ChannelVersionPlan, ChannelVersionError>
+  - function asChannelRegistry: (client) => ChannelRegistry
+  - _...17 more_
 - `scripts/release/clock.ts` — class SystemClock, interface Clock
 - `scripts/release/command-runner.ts`
   - class BunCommandRunner
   - interface CommandResult
   - interface CommandRunner
+- `scripts/release/consumer-proof-main.ts`
+  - function validateConsumerProof: (input) => Result<ConsumerProof, ConsumerProofError>
+  - function assertConsumerProofDigest: (proof, expected) => Result<ConsumerProof, ConsumerProofError>
+  - function parseConsumerProofArgs: (argv) => Result<
+  - function readConsumerProof: (path) => ResultAsync<ConsumerProof, ConsumerProofError>
+  - type ConsumerProof
+  - type ConsumerProofError
 - `scripts/release/consumption-ledger.ts`
   - function renderLedgerBlock: (block) => Result<string, LedgerBlockError>
   - function parseConsumptionLedger: (sources) => Result<ConsumptionLedger, ConsumptionLedgerError>
@@ -1879,6 +2323,87 @@
   - interface ConsumedChangeset
   - interface ConsumptionLedger
   - _...8 more_
+- `scripts/release/docs-audit/agent.ts`
+  - function runDocsAuditAgent: (input) => ResultAsync<DocsAuditAgentResult, DocsAuditAgentError>
+  - function validateDocsAuditSubmission: (input, workspace) => ResultAsync<
+  - function buildDocsAuditPrompt: (input) => Result<string, DocsAuditAgentError>
+  - function docsAuditToolNames: () => readonly string[]
+  - function dirnameOf: (path) => string
+  - class DocsAuditWorkspace
+  - _...13 more_
+- `scripts/release/docs-audit/audit-main.ts`
+  - function runAuditMain: (input, dependencies) => ResultAsync<AuditMainArtifact, AuditMainError>
+  - function validateAuditMainInput: (input) => Result<AuditMainInput, AuditMainError>
+  - function deterministicAuditArtifact: (auditedSha, result) => DeterministicAuditArtifact
+  - function agentAuditArtifact: (auditedSha, result) => AgentAuditArtifact
+  - function parseAuditMainArgs: (argv) => Result<AuditMainInput, AuditMainError>
+  - interface AuditMainInput
+  - _...10 more_
+- `scripts/release/docs-audit/deterministic.ts`
+  - function runDeterministicDocsCheck: (contentRoot) => ResultAsync<DeterministicDocsCheckResult, DeterministicDocsCheckError>
+  - function evaluateDeterministicDocsTree: (files, string>>) => DeterministicDocsCheckResult
+  - function docsAuditDigest: (value) => string
+  - function docsAuditBytesDigest: (value) => string
+  - function canonicalJson: (value) => string
+  - interface DeterministicDocsIssue
+  - _...4 more_
+- `scripts/release/docs-audit/followup-main.ts`
+  - function validateFollowUpControllerContext: (input) => Result<FollowUpControllerContext, FollowUpMainError>
+  - function parseFollowUpPrNumber: (value) => Result<
+  - function parsePullRequestMetadata: (value) => Result<PullRequestMetadata, FollowUpMainError>
+  - function inspectForkArchive: (archive) => Result<readonly FollowUpArchiveEntry[], FollowUpArchiveError>
+  - function materializeForkArchive: (archive, dataRoot, writer) => void
+  - function classifyPublicImpact: (paths) => "public-impact" | "no-impact"
+  - _...35 more_
+- `scripts/release/docs-audit/gate-main.ts`
+  - function evaluateDocsAuditGate: (value) => Result<DocsAuditGateMainResult, GateMainError>
+  - function evaluateParsedGate: (input) => Result<DocsAuditGateMainResult, GateMainError>
+  - function aiStatusFromJob: (jobResult, artifactPresent) => DocsAuditAiStatusInput
+  - function followUpStatusFromJob: (jobResult, artifactPresent) => DocsAuditFollowUpStatus
+  - function buildPrimaryGateInput: (input) => Result<DocsAuditGateInputRecord, GateMainError>
+  - function buildGateInputFromArtifacts: (source) => Result<DocsAuditGateInputRecord, GateMainError>
+  - _...11 more_
+- `scripts/release/docs-audit/gate.ts`
+  - function combineDocsAuditGate: (input) => Result<DocsAuditGateSuccess, DocsAuditGateError>
+  - function parseDocsAuditOutcome: (value) => Result<ReleaseDocsAudit,
+  - function docsAuditOutcomeDigest: (outcome) => string
+  - function isDocsAuditAiStatus: (value) => value is (typeof DOCS_AUDIT_AI_STATUSES)[number]
+  - function isMissingRequiredAiStatus: (status) => boolean
+  - interface DocsAuditPublicImpactInput
+  - _...9 more_
+- `scripts/release/docs-audit/patches.ts`
+  - function validateDocsAuditPatch: (patch, original) => Result<ParsedUnifiedDiff, DocsAuditPatchError>
+  - function applyDocsAuditPatches: (input, string | undefined>;
+  approval) => Result<readonly AppliedDocsAuditPatch[], DocsAuditPatchError>
+  - function writeAppliedDocsAuditPatches: (input) => ResultAsync<void, DocsAuditPatchError>
+  - function parseUnifiedDiff: (patch) => Result<ParsedUnifiedDiff, DocsAuditPatchError>
+  - function applyParsedDiff: (original, parsed) => Result<string, DocsAuditPatchError>
+  - function patchParentDirectory: (path) => string
+  - _...5 more_
+- `scripts/release/docs-audit/policy.ts`
+  - function isBlockingKind: (kind) => kind is DocsAuditBlockingKind
+  - function isWarningKind: (kind) => kind is DocsAuditWarningKind
+  - function isSafeRelativePath: (path) => boolean
+  - function publicPackageReadmePaths: () => readonly string[]
+  - function allowedPackageReadmePaths: () => readonly string[]
+  - function isAllowedDocsPatchPath: (path) => boolean
+  - _...21 more_
+- `scripts/release/doctor.ts`
+  - function validateDoctorSnapshot: (input) => Result<DoctorSnapshot, DoctorVerificationError>
+  - function parseDoctorMode: (argv) => Result<DoctorMode, DoctorVerificationError>
+  - function parseTrustedPublisherResponse: (input) => Result<
+  - function validateTrustedPublisherConfiguration: (value) => Result<TrustedPublisherConfiguration, TrustedPublisherParseError>
+  - function verifyDoctorSnapshot: (snapshot, modeInput) => Result<DoctorSuccess, DoctorVerificationError>
+  - function runDoctorWithPort: (modeInput, port) => ResultAsync<DoctorSuccess, DoctorVerificationError | DoctorPortError>
+  - _...40 more_
+- `scripts/release/entrypoint-inventory.ts`
+  - function validateEntrypointInventory: (entries) => Result<readonly ProductionEntrypoint[], EntrypointInventoryError>
+  - function inventoriedPaths: (entries) => readonly string[]
+  - function registeredProductionPaths: (entries) => readonly string[]
+  - function isTestOnlyRoot: (path) => boolean
+  - function isClassifiedReleaseEntrypoint: (path) => boolean
+  - function isRegisteredProductionEntrypoint: (path) => boolean
+  - _...28 more_
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
 - `scripts/release/generate-acceptance-manifest.ts`
   - function generateAcceptanceManifest: (root) => ResultAsync<
@@ -1891,7 +2416,38 @@
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - _...16 more_
+  - _...23 more_
+- `scripts/release/harness-proof-main.ts`
+  - function validateHarnessProof: (input) => Result<HarnessProofRecord, HarnessProofMainError>
+  - function assertHarnessProofDigest: (input, expected) => Result<HarnessProofRecord, HarnessProofMainError>
+  - function parseHarnessProofArgs: (argv) => Result<
+  - function readHarnessProof: (path) => ResultAsync<HarnessProofRecord, HarnessProofMainError>
+  - type HarnessProofRecord
+  - type HarnessProofMainError
+- `scripts/release/harness-proof.ts`
+  - function validateProofCredentials: (credentials) => Result<readonly HarnessApiKeyCredential[], ProofCredentialError>
+  - function recordProofMarker: (payload) => void
+  - function boundTarballDigest: (binding, packageName) => Result<
+  - function boundEntryDigests: (binding, packageName) => Result<
+  - function runHarnessProof: (input) => ResultAsync<HarnessProofPassRecord, HarnessProofError>
+  - function runCleanConsumer: (input) => ResultAsync<CleanConsumerPassRecord, CleanConsumerError>
+  - _...31 more_
+- `scripts/release/incident-main.ts`
+  - function validateIncidentMainInput: (input) => ResultType<IncidentMainInput, IncidentMainError>
+  - function runIncidentMain: (input, registry, completion) => ResultAsyncType<IncidentMainResult, IncidentMainError>
+  - function parseIncidentArgs: (argv) => ResultType<
+  - type IncidentMainInput
+  - type IncidentMainError
+  - type IncidentMainResult
+  - _...2 more_
+- `scripts/release/incident-resolution.ts`
+  - function validateIncidentAuthorizationRecord: (input) => Result<IncidentAuthorizationRecord, IncidentResolutionError>
+  - function assertIncidentAuthorized: (actor) => Result<void, IncidentResolutionError>
+  - function incidentNoticeFor: (releasedSha) => string
+  - function shellEscapeDeprecatedMessage: (message) => Result<string, IncidentResolutionError>
+  - function generateDeprecationCommand: (input) => Result<GeneratedDeprecationCommand, IncidentResolutionError>
+  - function generateIncidentResolution: (request, registry) => ResultAsync<IncidentGenerateResult, IncidentResolutionError>
+  - _...18 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
@@ -1916,13 +2472,43 @@
   - type MetadataReplayRecord
   - const FullShaSchema
   - _...22 more_
+- `scripts/release/next-main.ts`
+  - function parseNextInput: (input) => Result<NextInput, NextInputError>
+  - function parseNextEnvironment: (env, string | undefined>>) => Result<NextInput, NextInputError>
+  - function selectNextPackages: (input) => Result<readonly PublicPackageName[], NextInputError>
+  - function nextSelectionSeed: (selected) => SelectionSeed
+  - function explainNextClosure: (closure) => string
+  - function validateNextRouteEvent: (input) => Result<ValidatedNextRoute, NextRouteError>
+  - _...57 more_
+- `scripts/release/nightly-main.ts`
+  - function parseNightlyInput: (input) => Result<NightlyInput, NightlyInputError>
+  - function validateNightlyRouteEvent: (input) => Result<ValidatedNightlyRoute, NightlyRouteError>
+  - function parseNightlyRouteEnvironment: (env, string | undefined>>) => Result<ValidatedNightlyRoute, NightlyRouteError>
+  - function authorizeNightlyRoute: (input, authorization) => ResultAsync<ValidatedNightlyRoute, NightlyAuthorizationError>
+  - function evaluateNightlyRollout: (input) => Result<NightlyRolloutDecision, NightlyRolloutError>
+  - function renderNightlyScratchChangelogs: (input) => Result<readonly NightlyScratchChangelog[], ScratchChangelogError>
+  - _...50 more_
 - `scripts/release/nightly-plan.ts`
   - function runPreflight: (environment, string | undefined>) => Promise<number>
   - class NightlyPlanner
   - interface NightlyPlanInput
   - type NightlyPlan
   - type NightlyPlanError
-- `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
+- `scripts/release/notes-wrapper.ts`
+  - function unscopedPackageName: (packageName) => string
+  - function releaseTagName: (packageName, version) => string
+  - function releaseInstallCommand: (packageName, version) => string
+  - function releaseSourceComparisonUrl: (input) => string
+  - function releaseProvenanceUrl: (packageName, version) => string
+  - function extractChangelogSection: (changelog, version) => Result<string, NotesWrapperError>
+  - _...4 more_
+- `scripts/release/npm-registry-client.ts`
+  - function publishedTarballUrl: (packageName, version) => string
+  - class NpmCliRegistryClient
+  - interface PublishRegistry
+  - interface NpmRegistryClient
+  - type PublishTag
+  - type PublishedTarballState
 - `scripts/release/package-policy.ts`
   - function publishablePackageNames: () => readonly PublicPackageName[]
   - function resolvePublishablePackage: (packageName) => Result<PublicPackageName, PublishabilityError>
@@ -1932,13 +2518,13 @@
   - class PackagePolicyValidator
   - _...3 more_
 - `scripts/release/packager.ts`
+  - function stageWithVersionOverrides: (scratchDir, overrides, string>> | ScratchOverrideCarrier, options) => ResultAsync<readonly OverrideProvenance[], PackagerError>
+  - function stageWithDependencyRangeOverrides: (scratchDir, overrides, Readonly<Record<string, string>>>>, options) => ResultAsync<readonly OverrideProvenance[], PackagerError>
+  - function stageWithChangelogOverride: (scratchDir, packageName, content, options) => ResultAsync<OverrideProvenance, PackagerError>
+  - function buildReleaseStagingBinding: (builtSha, records) => Result<ReleaseStagingBinding, PackagerError>
   - function stablePackageVersions: (versions, string>> | undefined) => Readonly<Record<string, string>> | undefined
   - class BunReleaseCheckout
-  - class BunPackageCommandRunner
-  - class PublicPackagePackager
-  - interface ReleaseCheckout
-  - interface PackageCommandRunner
-  - _...2 more_
+  - _...14 more_
 - `scripts/release/pi-child-inspection-smoke.ts`
   - function validateSmokeBinding: (binding) => Result<SmokeBinding, SmokeValidationError>
   - function validateLargeOutputSmoke: (run) => void
@@ -1947,6 +2533,115 @@
   - function runAutonomousSmoke: (input) => void
   - interface SmokeBinding
   - _...5 more_
+- `scripts/release/pi-model-failover-smoke/command-runner.ts`
+  - function createCleanupResourceTracker: (root) => CleanupResourceTracker
+  - function signalPidQuietly: (pid, signal) => void
+  - function createCleanupClock: () => CleanupClock
+  - function waitForHandles: (handles, milliseconds, clock) => Promise<void>
+  - function runBoundedCommand: (args, options, string>;
+    readonly timeoutMs?) => Promise<Result<CommandResult, SmokeFailure>>
+  - function runWithCleanup: (input) => void
+  - _...1 more_
+- `scripts/release/pi-model-failover-smoke/contract.ts`
+  - function failure: (type, detail?) => SmokeFailure
+  - function artifactDigest: (bytes) => string
+  - function hashDescriptorPart: (namespace, value) => string
+  - function fixtureCorrelationHash: (fact) => string
+  - function fixtureRoleHash: (role) => string
+  - function fixtureCustomTypeHash: (customType) => string
+  - _...150 more_
+- `scripts/release/pi-model-failover-smoke/environment.ts`
+  - function isEphemeralPath: (path) => boolean
+  - function containsPathControlCharacter: (path) => boolean
+  - function validateEphemeralReportPath: (path) => Result<string, SmokeFailure>
+  - function validateReportTargetPath: (path) => Promise<Result<string, SmokeFailure>>
+  - function pathWithin: (path, parent) => boolean
+  - function safeAbsolutePath: (path) => boolean
+  - _...14 more_
+- `scripts/release/pi-model-failover-smoke/fallback-validation.ts` — function validateFallbackFacts: (input) => Result<FallbackScenarioFacts, SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/fixture-files.ts`
+  - function shellSafePath: (path) => string
+  - function commandOk: (args, cwd, env, string>, timeoutMs, resources?) => Promise<Result<void, SmokeFailure>>
+  - function makeDirectory: (path, cwd, env, string>, timeoutMs, resources?) => Promise<Result<void, SmokeFailure>>
+  - function fixturePackageJson: () => string
+  - function weaveSmokeConfig: () => string
+  - function settingsJson: () => string
+  - _...9 more_
+- `scripts/release/pi-model-failover-smoke/fixture-sources.ts`
+  - function fixtureSource: () => string
+  - function controlObserverSource: () => string
+  - function rollbackShimSource: () => string
+  - function validateRollbackShimSource: (source) => Result<string, SmokeFailure>
+  - function validateFixtureSourceBoundary: (source) => Result<string, SmokeFailure>
+  - function validateControlObserverSource: (source) => Result<string, SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/health-observation.ts`
+  - function normalizedTuiOutput: (output) => string
+  - function visibleEventCount: (output) => number
+  - function parseHealthFacts: (output) => Result<HealthFacts, SmokeFailure>
+  - function validateHealthObservation: (health) => Result<HealthFacts, SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/native-observation.ts`
+  - function buildNativeHistoryFacts: (input) => FixtureHistoryFacts
+  - function readNativeSessionSnapshots: (paths, resources?) => Promise<Result<readonly NativeSessionObservation[], SmokeFailure>>
+  - function mergeNativeSessionObservations: (before, after) => Result<readonly NativeSessionObservation[], SmokeFailure>
+  - function assembleSnapshots: (captures, nativeSessions) => Result<readonly FixtureSnapshot[], SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/observation-comparison.ts`
+  - function sameDescriptor: (left, right, includeOrdinal) => boolean
+  - function sameHistoryDescriptor: (left, right) => boolean
+  - function sameContextDescriptor: (left, right) => boolean
+  - function sameMessageFacts: (left, right) => boolean
+  - function sameHistoryFacts: (left, right) => boolean
+  - function sameIdentity: (left, right) => boolean
+  - _...1 more_
+- `scripts/release/pi-model-failover-smoke/observation-validation.ts`
+  - function validateObservedSources: (input, "all">;
+}) => Result<void, SmokeFailure>
+  - const MAX_NATIVE_INITIAL_MODEL_ENTRIES
+  - const MAX_NATIVE_MODEL_TIMELINE_ENTRIES
+- `scripts/release/pi-model-failover-smoke/process-observer.ts` — function defaultObserveProcesses: (input, string>;
+  readonly tracker) => Promise<Result<CleanupProcessObservation, CleanupDiagnosticCode>>
+- `scripts/release/pi-model-failover-smoke/provenance.ts`
+  - function verifyArtifactDigest: (actual, expected) => Result<string, SmokeFailure>
+  - function validatePiVersion: (output, expected) => Result<string, SmokeFailure>
+  - function verifyArtifactFileUnchanged: (path, expectedSha256) => Promise<Result<string, SmokeFailure>>
+  - function inspectPackedArtifact: (path, expectedSha256) => Promise<Result<PackedArtifact, SmokeFailure>>
+  - function verifyInstalledAdapterPackage: (input) => Promise<Result<InstalledAdapterProvenance, SmokeFailure>>
+  - function inspectPiCliProvenance: (cliPath, options) => Promise<Result<PiCliProvenance, SmokeFailure>>
+  - _...3 more_
+- `scripts/release/pi-model-failover-smoke/provider-observation.ts`
+  - function hasOnlyKeys: (value, unknown>, allowed) => boolean
+  - function descriptorFactsFromDescriptors: (descriptors) => Pick<
+  - function boundedTimestamp: (value) => value is number
+  - function readCaptureSnapshots: (captureDirectory) => Promise<Result<RawFixtureCaptures, SmokeFailure>>
+  - interface RawFixtureCaptures
+  - const MESSAGE_DESCRIPTOR_KEYS
+  - _...1 more_
+- `scripts/release/pi-model-failover-smoke/pty-runner.ts` — function runPty: (paths, env, string>, smokeCase, "all">, timeoutMs, resources?) => Promise<Result<CommandResult, SmokeFailure>>
+- `scripts/release/pi-model-failover-smoke/release-orchestrator.ts` — function runReleaseSmoke: (args) => Promise<Result<SmokeReport, SmokeFailure>>
+- `scripts/release/pi-model-failover-smoke/report-projection.ts`
+  - function projectSanitizedSmokeReport: (report, forbidden) => Result<SanitizedSmokeReport, SmokeFailure>
+  - function validateReportSafety: (report, forbidden) => Result<SanitizedSmokeReport, SmokeFailure>
+  - function serializeSmokeReport: (report) => Result<string, SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/report-safety.ts`
+  - function reportMalformed: (detail) => SmokeFailure
+  - function reportTooLarge: (detail) => SmokeFailure
+  - function safeReportDataEntries: (value) => Result<readonly ReportDataEntry[], SmokeFailure>
+  - function inspectReportGraph: (report) => Result<void, SmokeFailure>
+  - function scanReportForForbiddenContent: (report, forbidden) => Result<void, SmokeFailure>
+  - function validateReportShape: (report) => Result<void, SmokeFailure>
+  - _...1 more_
+- `scripts/release/pi-model-failover-smoke/report-writer.ts` — function writeSmokeReportAtomically: (path, report) => Promise<Result<void, SmokeFailure>>
+- `scripts/release/pi-model-failover-smoke/rollback-validation.ts` — function validateRollbackFacts: (input) => Result<RollbackScenarioFacts, SmokeFailure>
+- `scripts/release/pi-model-failover-smoke/scenario-runner.ts` — function runScenario: (artifact, smokeCase, "all">, timeoutMs) => Promise<
+- `scripts/release/pi-model-failover-smoke/scenario-setup.ts` — function setupScenario: (artifact, smokeCase, "all">, timeoutMs) => Promise<
+- `scripts/release/pi-model-failover-smoke/verified-cleanup.ts` — function verifiedCleanup: (observation) => Result<CleanupVerification, SmokeFailure>, function cleanupRoot: (root, cwd, env, string>, timeoutMs, options) => Promise<Result<CleanupVerification, SmokeFailure>>
+- `scripts/release/prepare-main.ts`
+  - function parsePrepareInput: (input) => Result<StablePrepareInput, PrepareInputError>
+  - function parsePrepareEnvironment: (env, string | undefined>>) => Result<StablePrepareInput, PrepareInputError>
+  - function selectPackages: (input, "cli" | "opencode" | "claudeCode" | "pi">) => Result<readonly PublicPackageName[], PrepareInputError>
+  - function runPrepareMain: (input, actor, dependencies) => ResultAsync<PrepareMainSuccess, PrepareMainError>
+  - function runPreparedCreation: (request) => void
+  - function prepareAt: (input, dependencies) => ResultAsync<PreparedRelease, PrepareStageError>
+  - _...30 more_
 - `scripts/release/promotion-commands.ts`
   - function promotionCommands: (authorization, priorLatestVersions?, string>>) => Result<PromotionCommandSummary,
   - function promotionCommandsFromRegistry: (authorization, registry) => ResultAsync<PromotionCommandSummary, PromotionCommandError>
@@ -1958,6 +2653,58 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/publish-chain.ts`
+  - function verifyAttestationResult: (input, expected) => Result<AttestationCheckResult, AttestationGateError>
+  - function awaitAttestation: (request, port, options) => ResultAsync<AttestationCheckResult, AttestationGateError>
+  - function assertStableChainOrder: (needs, readonly StablePublishChainStep[]>>
+  >) => Result<void,
+  - function publishMayRun: (input) => Result<boolean, AttestationGateError |
+  - interface AttestationExpectation
+  - interface AttestationPollPort
+  - _...7 more_
+- `scripts/release/publish-executor.ts`
+  - function publishTagForChannel: (channel) => PublishTag
+  - function requiresHarnessProof: (packageName) => boolean
+  - function validatePublicationProofChain: (input) => Result<PublicationProofChain, PublicationError>
+  - function validatePublicationReport: (input) => Result<PublicationReport, PublicationError>
+  - function parsePublicationReport: (text) => Result<PublicationReport, PublicationError>
+  - function serializePublicationReport: (report) => Result<string, PublicationError>
+  - _...18 more_
+- `scripts/release/publish-main.ts`
+  - function parsePublishMainArgs: (argv) => Result<PublishMainArgs, PublicationError>
+  - function runPublishMain: (argv, env, string | undefined>>, deps) => ResultAsync<PublicationReport, PublicationError>
+  - function readPersistedReport: (text) => Result<PublicationReport, PublicationError>
+  - interface PublishMainArgs
+  - interface PublishMainDependencies
+- `scripts/release/publish-reachability.ts`
+  - function parseWorkflowShape: (path, text) => Result<WorkflowShape, PublishReachabilityError>
+  - function lintWorkflowPermissions: (workflows) => Result<void, PublishReachabilityError>
+  - function lintPhaseCSecurity: (workflows) => Result<void, PublishReachabilityError>
+  - function assertStableWorkflowGraph: (workflow) => Result<void, PublishReachabilityError>
+  - function assertAttestationWorkflowContract: (workflow) => Result<void, PublishReachabilityError>
+  - function scanReleaseCommands: (origin, command, workflowOrigin) => Result<void, PublishReachabilityError>
+  - _...31 more_
+- `scripts/release/refs-cleanup-main.ts`
+  - function validateRefsCleanupInput: (input) => Result<RefsCleanupInput, RefsCleanupError>
+  - function parseRefsCleanupArgs: (argv) => Result<
+  - function runRefsCleanupFromFiles: (inputPath, outputPath?) => ResultAsync<RefsCleanupInput, RefsCleanupError>
+  - type RefsCleanupInput
+  - type RefsCleanupError
+  - const RefsCleanupInputSchema
+- `scripts/release/regenerate-main.ts`
+  - function parseRegenerationPlanArtifact: (input) => Result<RegenerationPlanArtifact, RegenerationArtifactError>
+  - function parseRegenerationChangelogArtifact: (input) => Result<RegenerationChangelogArtifact, RegenerationArtifactError>
+  - function parseRegenerationEvent: (input) => Result<RegenerationEventInput, RegenerationEventError>
+  - function parseRegenerationEnvironment: (env, string | undefined>>) => Result<RegenerationEventInput, RegenerationEventError>
+  - function classifyRegenerationEvent: (input) => Result<RegenerationRunDecision | RegenerationSkip, RegenerationEventError>
+  - function isSelfReleaseMergeMessage: (message) => boolean
+  - _...44 more_
+- `scripts/release/registry-verify-main.ts`
+  - function validateRegistryVerification: (input) => Result<readonly z.infer<typeof MemberSchema>[], RegistryVerifyError>
+  - function verifyRegistryMembers: (members, registry) => ResultAsync<void, RegistryVerifyError>
+  - function parseRegistryVerifyArgs: (argv) => Result<
+  - function readRegistryVerification: (path) => ResultAsync<readonly z.infer<typeof MemberSchema>[], RegistryVerifyError>
+  - type RegistryVerifyError
 - `scripts/release/release-fixtures.ts`
   - function archive: () => Uint8Array
   - function nightlyFixture: () => void
@@ -1981,15 +2728,99 @@
   - function parseReleasePlan: (text) => Result<ReleasePlan, ReleasePlanError>
   - function serializeReleasePlanArtifact: (plan) => Result<string, ReleasePlanError>
   - function parseReleasePlanArtifact: (text) => Result<ReleasePlanArtifact, ReleasePlanError>
-  - _...50 more_
-- `scripts/release/release-pr.ts`
+  - _...51 more_
+- `scripts/release/release-policy-check.ts`
+  - function validateReleasePolicyInput: (input) => Result<ReleasePolicyMetadataInput, ReleasePolicyInputError>
+  - function checkReleasePolicy: (input) => Result<ReleasePolicySuccess, ReleasePolicyError>
+  - function extractPlanDigest: (body) => string | undefined
+  - function parseDocsAuditMetadata: (input) => Result<
+  - function runReleasePolicyCheck: (environment) => ResultAsync<ReleasePolicyCheckResult, ReleasePolicyError>
+  - interface ReleasePolicyMetadataInput
+  - _...18 more_
+- `scripts/release/release-pr-contract.ts`
   - function markerRefPath: () => string
   - function classifyReleaseCompletionState: (state) => Result<"terminal" | "blocking", ReleasePrError>
   - function validateReleasePrDiff: (changes) => Result<void, ReleasePrError>
   - function validateCleanupPrDiff: (input) => Result<void, ReleasePrError>
   - function entryIdentityKey: (sources) => string
   - function evidenceDigest: (evidence) => string
-  - _...51 more_
+  - _...67 more_
+- `scripts/release/release-pr-creation.ts` — class ReleasePrCreationLifecycle, interface ReleasePrCreationContext
+- `scripts/release/release-pr-metadata.ts`
+  - class ReleasePrMetadataLifecycle
+  - interface ReleasePrMetadataContext
+  - interface PublishedPrAuthority
+  - interface PublishedPrMetadata
+  - interface ReconciledPrMetadata
+  - interface ReleasePrMetadataPort
+- `scripts/release/release-pr-regeneration.ts` — class ReleasePrRegenerationLifecycle, interface ReleasePrRegenerationContext
+- `scripts/release/release-pr.ts` — class StableReleasePrManager
+- `scripts/release/release-refs.ts`
+  - function isRefsReadyMember: (member) => boolean
+  - function assertRefsPublicationGate: (input, "channel" | "releasedSha" | "closure" | "report"
+  >) => Result<void, ReleaseRefsError>
+  - function assertReleasedShaTarget: (input, "releasedSha" | "tagTargetSha" | "baseSha" | "builtSha" | "headSha"
+  >) => Result<void, ReleaseRefsError>
+  - class ReleaseRefsController
+  - interface ReleasePackageVersion
+  - interface ExistingGitTag
+  - _...7 more_
+- `scripts/release/release-route-main.ts`
+  - function cleanupSettledMarker: (route, "markerCleanupRequired">, port) => ResultAsync<MarkerCleanupResult, never>
+  - function runStableRoute: (input, marker?) => ResultAsync<StableRouteControllerResult, RolloutGateError>
+  - function createGitHubMarkerCleanupPort: (input) => MarkerCleanupPort
+  - interface MarkerCleanupPort
+  - interface MarkerCleanupResult
+  - interface StableRouteControllerResult
+  - _...1 more_
+- `scripts/release/release-state.ts`
+  - function isTerminalPrimaryState: (state) => boolean
+  - function blocksPreparation: (state) => boolean
+  - function validateReleaseAuthority: (input) => Result<ReleaseAuthority, ReleaseStateError>
+  - function classifyPostMergeState: (input) => Result<PostMergeReleaseState, ReleaseStateError>
+  - function unreproducibleMembers: (members) => readonly UnreproducibleMember[]
+  - function isMarkerCleanupPending: (authority) => boolean
+  - _...20 more_
+- `scripts/release/resume-main.ts`
+  - function validateResumeMainInput: (input) => ResultType<ResumeMainInput, ResumeMainError>
+  - function runResumeMain: (input, ports) => ResultAsync<ResumeResult, ResumeMainError>
+  - function parseDiscoveredRelease: (input) => ResultType<DiscoveredRelease, ResumeMainError>
+  - function parseResumeArgs: (argv) => ResultType<
+  - function readResumeInput: (path, files) => ResultAsyncType<ResumeMainInput, ResumeMainError>
+  - interface ResumeMainFilePort
+  - _...4 more_
+- `scripts/release/resume.ts`
+  - function remainingTransitions: (primary, markerCleanupPending) => readonly ResumeTransitionName[]
+  - function resumeRelease: (request, ports) => ResultAsync<ResumeResult, ResumeError>
+  - function acquireArtifacts: (authority, ports, "readCache" | "rebuildAt">) => ResultAsync<ReleaseAuthority, ResumeError>
+  - function creationCleanupOwnershipMatches: (input) => Result<void, ResumeError>
+  - interface ArtifactCache
+  - interface ArtifactAcquisitionResult
+  - _...5 more_
+- `scripts/release/rollout-gate.ts`
+  - function validateStableRouteEvent: (input) => Result<StableRoute, RolloutGateError>
+  - function evaluateRolloutGate: (input) => Result<RolloutDecision, RolloutGateError>
+  - function guardStableRoute: (input) => Result<GuardedStableRoute, RolloutGateError>
+  - function readLocalWorkflowTopology: (root) => ResultAsyncType<WorkflowTopology, LocalTopologyReadError>
+  - function parseStableRouteEnvironment: (env, string | undefined>>) => Result<StableRouteEvent, RolloutGateError>
+  - interface StableRoute
+  - _...8 more_
+- `scripts/release/rollout-stage.ts`
+  - function parseReleaseRolloutMode: (value) => Result<ReleaseRolloutMode, RolloutTupleError>
+  - function validateRolloutStageDeclaration: (input) => Result<RolloutStageDeclaration, RolloutTupleError>
+  - function validateWorkflowTopology: (input) => Result<WorkflowTopology, RolloutTupleError>
+  - function validateRolloutTuple: (declarationInput, modeInput, topologyInput) => Result<RolloutTuple, RolloutTupleError>
+  - function isPublicationCapableTuple: (tuple) => boolean
+  - function createRolloutFreezeRecord: (input) => Result<RolloutFreezeRecord, RolloutTupleError>
+  - _...22 more_
+- `scripts/release/scratch-changelog.ts`
+  - function renderScratchChangelog: (input) => Result<string, ScratchChangelogError>
+  - function scratchChangelogNotice: (purpose) => string
+  - interface ScratchHistoryEntry
+  - interface ScratchChangesetIdentity
+  - interface ScratchChangelogInput
+  - type ScratchChangelogPurpose
+  - _...4 more_
 - `scripts/release/selection-closure.ts`
   - function computeSelectionClosure: (input) => Result<SelectionClosure, SelectionClosureError>
   - interface WorkspaceManifest
@@ -2016,17 +2847,34 @@
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
   - _...13 more_
 - `scripts/release/tar-inspector.ts`
+  - function expectedPublicPackageInventory: (packageName) => readonly string[]
+  - function sha256Digest: (value) => string
   - class TarInspector
   - interface TarEntry
-  - type TarInspectionError
+  - interface TarFileDigest
+  - interface PublicPackageInventory
+  - _...1 more_
+- `scripts/release/validation-report.ts`
+  - function validateAttestationWorkflowContract: (input) => Result<typeof RELEASE_ATTESTATION_CONTRACT, ValidationReportError>
+  - function validateReleaseAttestationRequest: (input) => Result<ReleaseAttestationRequest, ValidationReportError>
+  - function validateValidationReport: (input) => Result<ValidationReport, ValidationReportError>
+  - function composeValidationReport: (input) => Result<ValidationReport, ValidationReportError>
+  - function serializeValidationReport: (input) => Result<string, ValidationReportError>
+  - function parseValidationReport: (text) => Result<ValidationReport, ValidationReportError>
+  - _...21 more_
 - `scripts/release/verification-harness.ts`
   - function runScenarios: (runner, scenarios) => void
+  - function runChannelProofGate: (input) => Result<ChannelProofPass, ChannelProofBlocker>
   - class FixtureRegistry
   - interface ScenarioResult
   - const FIXTURE_CLOCK
   - const FIXTURE_VERSIONS
+  - _...1 more_
 - `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha, stableTrainText) => ResultAsync<void, ManifestWriteError>
-- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
+- `scripts/validate-api-extractor-configs.ts`
+  - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
+  - function validateApiExtractorConfigs: () => Result<
+  - const CONFIG_PATHS
 
 ---
 
@@ -2035,16 +2883,31 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
+- `BUN_CLI` **required** — scripts/release/pi-model-failover-smoke/scenario-setup.ts
+- `BUN_INSTALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `GH_TOKEN` (has default) — scripts/release/docs-audit/followup-main.ts
+- `GITHUB_EVENT_NAME` (has default) — scripts/release/release-policy-check.ts
+- `GITHUB_EVENT_PATH` **required** — scripts/release/release-policy-check.ts
+- `GITHUB_MAIN_SHA` **required** — scripts/release/release-policy-check.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
+- `GITHUB_SHA` (has default) — scripts/release/release-policy-check.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
+- `LANG` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `LC_ALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
 - `PI_BIN` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CHILD_SMOKE_DEBUG` **required** — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CHILD_SMOKE_RUN_ATTEMPT` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `PI_CODING_AGENT_DIR` (has default) — scripts/release/pi-child-inspection-smoke.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PI_MODEL_SMOKE_CAPTURE_DIR` (has default) — scripts/release/pi-model-failover-smoke/fixture-sources.ts
+- `PI_MODEL_SMOKE_CASE` **required** — scripts/release/__tests__/pi-model-failover-smoke.test.ts
+- `PI_MODEL_SMOKE_EXPECTED_EXTENSION_SHA256` (has default) — scripts/release/pi-model-failover-smoke/fixture-sources.ts
+- `PI_MODEL_SMOKE_EXPECTED_PACKAGE_ROOT` (has default) — scripts/release/pi-model-failover-smoke/fixture-sources.ts
+- `PI_MODEL_SMOKE_EXPECTED_PACKAGE_VERSION` (has default) — scripts/release/pi-model-failover-smoke/fixture-sources.ts
+- `PI_SESSION_FILE` **required** — scripts/release/pi-model-failover-smoke/scenario-setup.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
@@ -2066,12 +2929,16 @@
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
+- `SECRET_VALUE` **required** — scripts/pi/__tests__/child-stream-capture.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` (has default) — packages/adapters/pi/src/config-source-digests.ts
 - `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `WEAVE_CHILD_ID` **required** — scripts/release/pi-model-failover-smoke/fixture-sources.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_PI_REAL_HOST_BIN` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `WEAVE_PI_REAL_HOST_REGRESSION` **required** — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `WEAVE_PI_UNSAFE_ENABLE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
@@ -2083,21 +2950,24 @@
 
 # Middleware
 
-## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
-- migrate — `packages/cli/src/commands/migrate.ts`
-- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
-
 ## custom
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - runtime-directory-guard.d — `packages/engine/src/runtime/sqlite/runtime-directory-guard.d.ts`
 - runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
 - generate-acceptance-manifest.test — `scripts/release/__tests__/generate-acceptance-manifest.test.ts`
+- regenerate-main.test — `scripts/release/__tests__/regenerate-main.test.ts`
+
+## validation
+- migrate — `packages/cli/src/commands/migrate.ts`
+- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
 - authorization — `packages/engine/src/execution-lifecycle/authorization.ts`
+
+## logging
+- regenerate-main — `scripts/release/regenerate-main.ts`
 
 ---
 
@@ -2105,39 +2975,39 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/adapters/pi/src/types.ts` — imported by **59** files
+- `packages/adapters/pi/src/types.ts` — imported by **57** files
+- `scripts/release/constants.ts` — imported by **54** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **28** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **36** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **32** files
+- `scripts/release/model.ts` — imported by **31** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
+- `scripts/release/package-policy.ts` — imported by **28** files
+- `scripts/release/errors.ts` — imported by **26** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
-- `packages/adapters/pi/src/ui-paint.ts` — imported by **24** files
+- `packages/adapters/pi/src/child-timer.ts` — imported by **25** files
 - `packages/adapters/pi/src/errors.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
-- `packages/adapters/pi/src/child-timer.ts` — imported by **21** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **20** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
-- `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
-- `scripts/release/constants.ts` — imported by **18** files
-- `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `scripts/release/errors.ts` — imported by **17** files
-- `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **16** files
-- `scripts/release/stable-train.ts` — imported by **16** files
+- `scripts/release/filesystem.ts` — imported by **19** files
+- `scripts/release/npm-registry-client.ts` — imported by **19** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **18** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
 
 ## Import Map (who imports what)
 
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +54 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +52 more
+- `scripts/release/constants.ts` ← `scripts/build-public-packages-pi.ts`, `scripts/release/__tests__/changed-adapters.test.ts`, `scripts/release/__tests__/changelog-format.test.ts`, `scripts/release/__tests__/changeset-cleanup.test.ts`, `scripts/release/__tests__/changeset-consumption.test.ts` +49 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +23 more
+- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +31 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +27 more
+- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/__tests__/release-plan.test.ts` +26 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
+- `scripts/release/package-policy.ts` ← `scripts/release/__tests__/fixture-seam-isolation.test.ts`, `scripts/release/__tests__/packager.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/pi-adapter-fake-host-consumer.test.ts`, `scripts/release/__tests__/pi-adapter-packed.test.ts` +23 more
+- `scripts/release/errors.ts` ← `scripts/release/__tests__/bind-artifacts.test.ts`, `scripts/release/__tests__/changeset-cleanup.test.ts`, `scripts/release/__tests__/changeset-consumption.test.ts`, `scripts/release/__tests__/consumption-ledger.test.ts`, `scripts/release/__tests__/github-client.test.ts` +21 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
-- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +19 more
-- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
-- `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +16 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/adapter.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
 
 ---
 
@@ -2160,20 +3030,26 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 368 test files found
+> 450 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (4 workflows)
+## GitHub Actions (10 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 2 | — | — |
-| CI | push, pull_request | 1 | — | — |
+| CI | push, pull_request | 3 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
+| Docs audit follow-up | workflow_dispatch | 4 | — | release-ai, release-app, docs-audit-patch |
+| Docs audit | pull_request | 4 | — | release-ai |
 | Publish control plane | schedule, workflow_dispatch | 8 | — | ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' \|\| '' }}, release, release-refs |
+| Attest stable release artifacts | workflow_dispatch | 1 | — | — |
+| Publish stable release | pull_request, workflow_dispatch | 10 | — | ${{ inputs.channel == 'nightly' && '' \|\| 'release-app' }}, ${{ inputs.channel == 'nightly' && '' \|\| 'harness-proof' }}, ${{ inputs.channel == 'next' && 'prerelease' \|\| (inputs.channel == 'nightly' && '' \|\| 'release') }} |
+| Prepare stable release PR | workflow_dispatch | 14 | — | release-app, release-ai |
+| Regenerate stable release PR | push, workflow_dispatch | 7 | — | release-app, release-ai |
 
 ### Agent Evals
 
@@ -2184,6 +3060,22 @@
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+
+### CI
+
+> `.github/workflows/ci.yml`
+
+> Concurrency: `${{ github.workflow }}-${{ github.ref }}`
+
+- **ci** on `ubuntu-latest` — 11 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **release-policy** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **api-reports** on `ubuntu-latest` — 5 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 
 ### Deploy Docs
 
@@ -2198,6 +3090,46 @@
   - `actions/upload-pages-artifact@b8130d9ab958b325bbde9786d62f2c97a9885a0e`
 - **deploy** on `ubuntu-latest` — 1 steps (needs: build)
   - `actions/deploy-pages@1f0c5cde4bc74cd7e1254d0cb4de8d49e9068c7d`
+
+### Docs audit follow-up
+
+> `.github/workflows/docs-audit-followup.yml`
+
+- **followup-audit** on `ubuntu-latest` — 5 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **followup-post** on `ubuntu-latest` — 5 steps (needs: followup-audit)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **docs-audit** on `ubuntu-latest` — 5 steps (needs: followup-audit, followup-post)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **apply-patches** on `ubuntu-latest` — 6 steps (needs: followup-audit)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+
+### Docs audit
+
+> `.github/workflows/docs-audit.yml`
+
+- **docs-deterministic** on `ubuntu-latest` — 5 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-ai-audit** on `ubuntu-latest` — 5 steps (needs: docs-deterministic)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-ai-fork-skip** on `ubuntu-latest` — 1 steps (needs: docs-deterministic)
+- **docs-audit** on `ubuntu-latest` — 6 steps (needs: docs-deterministic, docs-ai-audit)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
 
 ### Publish control plane
 
@@ -2239,14 +3171,167 @@
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
 
+### Publish stable release
+
+> `.github/workflows/release-publish.yml`
+
+> Concurrency: `release-publish-${{ inputs.channel || 'stable' }}`
+
+- **route** on `ubuntu-latest` — 5 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **recompute** on `ubuntu-latest` — 6 steps (needs: route)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **build-bind** on `ubuntu-latest` — 6 steps (needs: recompute)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **await-attest** on `ubuntu-latest` — 6 steps (needs: build-bind)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **consumer-proof** on `ubuntu-latest` — 5 steps (needs: await-attest)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **harness-proof** on `ubuntu-latest` — 5 steps (needs: consumer-proof)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **release-approval** on `ubuntu-latest` — 6 steps (needs: harness-proof)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **publish** on `ubuntu-latest` — 6 steps (needs: release-approval)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **registry-verification** on `ubuntu-latest` — 5 steps (needs: publish)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **refs-cleanup** on `ubuntu-latest` — 5 steps (needs: registry-verification)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+
+### Prepare stable release PR
+
+> `.github/workflows/release-stable-prepare.yml`
+
+- **authorize** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **plan** on `ubuntu-latest` — 5 steps (needs: authorize)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-release-audit** on `ubuntu-latest` — 6 steps (needs: plan)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **changelog-ai** on `ubuntu-latest` — 7 steps (needs: plan, docs-release-audit)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **open-pr** on `ubuntu-latest` — 7 steps (needs: authorize, plan, docs-release-audit, changelog-ai)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **plan-2** on `ubuntu-latest` — 5 steps (needs: open-pr)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-release-audit-2** on `ubuntu-latest` — 6 steps (needs: plan-2)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **changelog-ai-2** on `ubuntu-latest` — 7 steps (needs: plan-2, docs-release-audit-2)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **open-pr-2** on `ubuntu-latest` — 7 steps (needs: plan-2, docs-release-audit-2, changelog-ai-2)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **plan-3** on `ubuntu-latest` — 5 steps (needs: open-pr-2)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-release-audit-3** on `ubuntu-latest` — 6 steps (needs: plan-3)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **changelog-ai-3** on `ubuntu-latest` — 7 steps (needs: plan-3, docs-release-audit-3)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **open-pr-3** on `ubuntu-latest` — 7 steps (needs: plan-3, docs-release-audit-3, changelog-ai-3)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **recovery-summary** on `ubuntu-latest` — 1 steps (needs: authorize, plan, docs-release-audit, changelog-ai, open-pr, plan-2, docs-release-audit-2, changelog-ai-2, open-pr-2, plan-3, docs-release-audit-3, changelog-ai-3, open-pr-3)
+
+### Regenerate stable release PR
+
+> `.github/workflows/release-stable-regenerate.yml`
+
+- **manual-authorize** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **detect** on `ubuntu-latest` — 5 steps (needs: manual-authorize)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **plan** on `ubuntu-latest` — 5 steps (needs: detect)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **docs-release-audit** on `ubuntu-latest` — 6 steps (needs: plan)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **changelog-ai** on `ubuntu-latest` — 7 steps (needs: plan, docs-release-audit)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **update-pr** on `ubuntu-latest` — 7 steps (needs: detect, plan, docs-release-audit, changelog-ai)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **recovery-summary** on `ubuntu-latest` — 1 steps (needs: manual-authorize, detect, plan, docs-release-audit, changelog-ai, update-pr)
+
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
 - `RELEASE_APP_TOKEN`
+- `WEAVE_RELEASE_AI_API_KEY`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/docs-audit-followup.yml, .github/workflows/docs-audit.yml, .github/workflows/publish.yml, .github/workflows/release-attest.yml, .github/workflows/release-publish.yml, .github/workflows/release-stable-prepare.yml, .github/workflows/release-stable-regenerate.yml_
 _Generated by codesight-cicd-plugin_
 
 ---

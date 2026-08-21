@@ -12,18 +12,20 @@ Every live row runs in a fresh Herdr pane that the test creates and closes, with
 isolated Pi config, data, session, and project roots. The driver records the
 exact subject, artifact and dist hashes, package provenance, Pi version,
 commands, observations, and cleanup.
+[Spec 33](33-spec-pi-adapter.md) and the geometry, drop order, honesty rules,
+and raw-reasoning contract fixed by the [Weave UI design record](33-weave-ui-design.md).
+Every live row runs in a fresh Herdr pane that the test creates and closes, with
+isolated Pi config, data, session, and project roots. The driver records the
+exact subject, source-input and artifact digests, path-free build manifest,
+loaded artifact and process identity, package provenance, Pi version, commands,
+observations, and cleanup.
 
-Rows citing [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md)
-were proven on Pi `0.84.2` under an explicit user-approved version deviation,
-because Pi `0.83` was unavailable. That record concludes `PASS` across two
-attempts: the retry ran at subject `7596103` and observed sixteen of its
-seventeen matrix items there, while the failed-settlement item is carried over
-from the first attempt at `600bd88` and is marked as such wherever it is cited.
-The user explicitly accepted that carry-over, because the repair between the two
-subjects does not touch provider-error projection, settlement recording, or
-failed-card rendering. No row below claims the failed card was observed at the
-final bytes. `Partial` means part of the row was observed live and the rest was
-not; the proof record names exactly which part.
+Pi `0.84.2` is the required live target. Earlier redesign proof records remain
+historical evidence for geometry and unrelated controls only. They do not prove
+the user-approved raw-live-reasoning contract, and no fresh green Herdr proof
+exists for that contract in this checklist. The full 2026-08-18 run is
+preserved as a RED reproduction in
+[`33-child-streaming-remediation-proof.md`](33-proofs/33-child-streaming-remediation-proof.md).
 
 ## Optional runtime model fallback (Pi 0.84.2)
 
@@ -61,20 +63,23 @@ payloadless settlement is not proof.
 
 This section preserves the historical/native-session contract and its proof
 references. It is not evidence for the optional runtime model fallback.
+## Pi 0.84.2 native-session contract
 
-Pi `0.84.1` provides native path sessions through `SessionManager.create` and
+Pi `0.84.2` provides native path sessions through `SessionManager.create` and
 `SessionManager.open`. The adapter validates Pi's generated path, ID, parent,
 working directory, and exact v3 header; exclusively writes the deferred header;
 reopens and revalidates it; launches with both `--session` and `--session-dir`;
 and removes inherited `PI_CODING_AGENT_SESSION_DIR`. Paths remain adapter-private.
+Pi's host-managed native child session is outside the Weave persistence boundary:
+Pi may persist reasoning under its own rules, while Weave never duplicates raw
+reasoning into its stores or evidence.
 
-Readiness exposes only `delegated-specialist-execution`. There is no descriptor
-capability, `path-only-session-api` reason, or unsafe flag. A generation enters
+Readiness exposes only `delegated-specialist-execution`. A generation enters
 health-only mode before mutation when the real preflight yields
 `pi-session-api-unavailable`, `pi-session-root-unavailable`,
-`pi-session-root-unsafe`, or `pi-process-unavailable`. The proof should exercise
-each closed reason where a deterministic isolated fixture can do so without
-altering the global Pi install.
+`pi-session-root-unsafe`, or `pi-process-unavailable`. The proof exercises each
+closed reason where a deterministic isolated fixture can do so without altering
+the global Pi install.
 
 The earlier Pi `0.83.0` descriptor-only acceptance model and its fail-closed
 proofs are historical. Their observations remain intact, but their readiness
@@ -91,24 +96,35 @@ custom-editor fallback, and the parent-facing summary;
 a later success must clear it. Raw input and sentinel values must remain absent.
 General DLP for secret-shaped tool call IDs and credentials in ordinary tool
 output is outside this acceptance scope.
+Controlled child events cover 429, 500 with no body, connection/timeout, and
+unknown JSON without an actual provider outage or credential use. The canonical
+bounded provider-error line must agree on the delegation card, the live and
+historical child inspector, the custom-editor fallback, and the parent-facing
+summary; a later success must clear it. Raw input and sentinel values remain
+absent. General DLP for secret-shaped tool call IDs and credentials in ordinary
+tool output is outside this acceptance scope.
 
 ## Weave UI redesign surfaces (rows S040–S043, S076–S077, S078–S080)
 
-Version 7 replaces the three-line compact `weave_delegate` block with the inline
-**delegation card** and the earlier overlay chrome with the **child inspector**.
-The surfaces a proof must name are:
+Version 8 carries forward the inline **delegation card** and **child
+inspector**, with the user-approved live raw-reasoning projection. The surfaces
+a proof must name are:
 
 - **Delegation card** (§6): one framed card per run, status-first ten-column
-  rail, one assignment row, one Native Line, and a balanced edge footer whose
-  right side prints `Ctrl+O expand · Alt+I inspect child`. Expanded, one
-  interior rule, one status strip, and nine literal bottom transcript rows.
-  Settlement rewrites the rail word, the Native Line, and the footer verb
-  (`expand` → `details`) and adds no row.
+  rail, one assignment row, and one live child-activity row exactly
+  `↪ reasoning • <text>`. It hides assistant and tool activity and uses the
+  4 KiB / 240-code-point / 100 ms bounds. Its right footer prints
+  `Ctrl+O expand · Alt+I inspect child`. Expanded, one interior rule, one
+  status strip, and nine literal bottom card rows with no child assistant/tool
+  payload. Settlement rewrites
+  the rail and footer verb (`expand` → `details`) and adds no row.
 - **Child inspector** (§7): one titled outer frame with the live state marker;
   a two-row session header (badge · agent · model · role · bounded title, then
   `delegated by <PARENT>` · plan › task › subtask); a Pi-native transcript pane
-  left; a Status Matrix rail right grouped lifecycle · work · spend; and a
-  primary-like editor with one muted key row below.
+  left showing the exact reasoning row, bounded sanitized correlated tools, and
+  live assistant reply; a Status Matrix rail right grouped lifecycle · work ·
+  spend; and a primary-like editor with one muted key row below. The inspector
+  uses the 4 KiB / three-row / 50 ms bounds.
 - **Keys** (§8.1): `Alt+I` picker, `Alt+1..9`, sibling navigation on `Alt+H` /
   `Alt+L` with the arrow forms normally skipped by conflict detection, empty
   `Backspace` parent-or-close, the six scroll keys, `Enter` steer and
@@ -132,6 +148,11 @@ loaded `dist/extension.js` and `dist/index.js` SHA-256 values and package
 provenance. Delegate
 one child that produces enough output to overflow the viewport, and open it with
 `Alt+I`.
+Run every step in one fresh Pi `0.84.2` TUI on a real PTY, through the exact
+packaged adapter artifact, after the independent identity gate confirms the
+source input, manifest, on-disk outputs, loaded outputs, load time, and process
+start. Delegate one child that produces enough output to overflow the viewport,
+and open it with `Alt+I`.
 
 1. **Scroll (`S070`).** Press PageUp, PageDown, Shift+Up, Shift+Down, Home, and
    End. Expect: PageUp and Shift+Up move the viewport toward older output;
@@ -178,19 +199,26 @@ one child that produces enough output to overflow the viewport, and open it with
    the `ctrl+f` search alias is reported as skipped and that `/` still opens
    rail search on an empty draft.
 9. **Delegation card (`S078`).** In the parent transcript, watch one
-   `weave_delegate` call from bootstrap through reasoning, a tool call, and a
-   tool result. Expect exactly one framed card with one top and one bottom edge,
-   a ten-column status-first rail, one assignment row, one Native Line, and a
-   footer ending in `Ctrl+O expand · Alt+I inspect child`. Press `Ctrl+O`; expect
-   one interior rule, one status strip, and nine transcript rows. Press `Ctrl+O`
-   again to collapse. Narrow the terminal to about 50 columns and expect the
-   state word, the assignment, and `Alt+I` to survive.
+   `weave_delegate` call from bootstrap through generic thinking, a tool call,
+   and a tool result. Expect exactly one framed card with one top and one bottom
+   edge, a ten-column status-first rail, one assignment row, and one live
+   child-activity row formatted exactly as `↪ reasoning • <text>`. The card
+   hides assistant and tool activity, arguments, results, stdout, and stderr.
+   Its parent line is one 240-code-point row backed by a 4 KiB UTF-8 buffer and
+   a 100 ms repaint coalescer. Press `Ctrl+O`; expect one interior rule, one
+   status strip, and nine card-owned rows with no child assistant/tool
+   payload. Press `Ctrl+O` again to collapse.
+   Narrow the terminal to about 50 columns and expect the state word, the
+   assignment, and `Alt+I` to survive.
 10. **Card settlement (`S079`).** Observe a completed, a failed, and a cancelled
     run. Expect the settled card to have the same row count as the running card,
-    the rail word and Native Line rewritten from the authoritative settlement,
-    the footer verb reading `details`, and no added row, banner, or border
-    verdict. Expect no stack frame, absolute path, or provider payload on the
-    failed card, and no success claim on the cancelled one.
+    the rail word and settlement framing rewritten from the authoritative
+    settlement, the footer verb reading `details`, and no added row, banner, or
+    border verdict. Expect the reasoning registry to be empty after settlement;
+    no raw reasoning, assistant activity, tool activity, stdout, stderr, or
+    inspector payload may appear in card facts, `content`, `details`, replay,
+    or the final card. Expect no stack frame, absolute path, or provider payload
+    on the failed card, and no success claim on the cancelled one.
 11. **Plan Rail (`S080`).** Confirm the Plan Rail is visible above the parent
     editor with the selected agent, the `Alt+A cycle` hint, the plan, the task
     marks, `now`, and `next`. Press `Alt+A` and expect the agent to cycle and the
@@ -200,6 +228,87 @@ one child that produces enough output to overflow the viewport, and open it with
 12. **Cleanup.** Close the overlay, quit Pi, and confirm no residual child process
     and no active Runtime Store lease. Close the pane the test created.
 
+
+## Child-streaming remediation procedure (Task 10/11)
+
+This procedure is separate from the historical redesign rows. It is the
+required proof for the user-approved raw-live-reasoning contract.
+
+1. Build the exact subject in an isolated worktree. Record the source-input
+   digest, built `dist` output digests, path-free sidecar manifest, Git subject
+   and dirty state, Pi `0.84.2` version, and artifact completion time. The
+   manifest must contain no paths, source text, user data, or reasoning text.
+2. Run the independent identity verifier. It must match the on-disk output,
+   manifest output, loaded artifact digest, extension load time, and process
+   start time before a live assertion. Run the stale A/B control (build A
+   loaded while build B is on disk), the corrupt manifest/output controls, and
+   the `/reload` adoption control. Exit those processes and use a new parent
+   for live evidence. Modification time is ordering evidence only.
+3. Capture Pi `0.84.2` through real session/RPC/extension machinery at the
+   public event boundary. Keep generic `thinking_start` /
+   `thinking_delta` / `thinking_end` shape, own enumerable field names, value
+   kinds, order, lifecycle, tool correlation, bounded sanitized tool data, and
+   incremental assistant order. Omit thinking text online before any fixture,
+   manifest, report, snapshot, or failure output is written. Keep only
+   content-free counts and truncation state. In-memory replay may inject a
+   controlled string; no reasoning prose belongs in evidence.
+4. Run deterministic replay and red controls for stale generation, wrong child,
+   malformed thinking lifecycle, bounds and truncation, terminal controls,
+   swallowed mapper/reducer failures, sink leakage, late updates after close or
+   settlement, missing assistant deltas, broken tool correlation, and duplicate
+   tool terminal events. Diagnostics must contain only closed stage/reason
+   codes, saturated counts, and bounded times.
+5. In a fresh identity-proven Herdr parent, delegate exactly one deterministic
+   `shuttle-mini` child. While it runs, open the active child with `Alt+I` and
+   Enter. Check these four lanes independently:
+
+   | Lane | Required live assertion | Current preserved run |
+   | --- | --- | --- |
+   | Parent raw reasoning live | The card shows only `↪ reasoning • <text>` for child activity and hides assistant/tool activity. | FAIL |
+   | Inspector raw reasoning live | The focused inspector shows the same exact row with no blank reasoning row. | FAIL |
+   | Inspector tool details | One correlated bash row shows bounded command and result, without duplicate running/done rows. | FAIL |
+   | Inspector assistant reply live | Indented assistant text appears and grows under `shuttle · streaming reply` before settlement. | FAIL |
+
+6. Observe raw reasoning only on the live TUI. Disable TUI write logs. Do not
+   save pane captures, screenshots, terminal transcripts, scrollback exports,
+   or reasoning text. The verifier may hold text in memory only long enough for
+   bounded assertions and then emits lane status, identity facts, closed
+   reason codes, saturated counts, and cleanup facts.
+7. Inspect parent card facts, partial tool updates, persisted `details`, parent
+   messages, Runtime Store records, checkpoints, transcript/replay/search
+   state, diagnostics, logs, fixture files, and proof output for the forbidden
+   reasoning sentinel and assistant/tool activity. The settled tool API result
+   may still carry authoritative child output; the custom card must not render
+   it as activity. Treat Pi native child-session persistence as the host
+   boundary and do not copy it into Weave evidence.
+8. Confirm both transient registries are empty after settlement/close, no active
+   Runtime Store lease or child process remains, no temporary provider/workspace
+   remains, and the test-created Herdr pane is closed.
+
+### Preserved RED reproduction: 2026-08-18
+
+The full post-build Herdr run is recorded in
+[`33-child-streaming-remediation-proof.md`](33-proofs/33-child-streaming-remediation-proof.md).
+A new Pi parent delegated one `shuttle-mini` task. The parent card showed
+`▸ shuttle-mini is writing`, then `⏵ bash · running`, and never showed live raw
+reasoning. `Alt+I` opened the picker and Enter selected the active child. The
+live inspector showed an empty `✻ reasoning` row and a timeout-only bash row;
+the command was absent. Completion added separate bash `running` and `done`
+rows, still without command or stdout/result detail. During `live streaming
+reply`, the inspector showed the assistant header with only a cursor; after
+approximately two seconds it changed to a final response. The final parent
+card rendered the child answer. Cleanup succeeded: `weave runtime status`
+reported no active lease and the created Herdr pane was closed.
+
+The product reversal accounts only for the empty reasoning row. It does not
+account for missing tool command/result detail or blank incremental assistant
+text. Those are separate reducer, correlation, or event-projection defects.
+The run is RED evidence, not a passing proof. No observed reasoning prose is
+recorded here or in the proof file.
+
+The deterministic Task 9 parser, projector, sink-isolation, card, inspector,
+and four-lane test gates are recorded separately from live Herdr status. They
+do not promote this reproduction to a fresh live pass.
 
 Rows `S057`, `S063`, `S064`, and `S067` were re-run live against the final
 fail-closed head `9a8c64683f3e159a587119ee045dc60ae5a62e86` on Pi `0.83.0`, and
@@ -213,10 +322,10 @@ including their formerly passing mutation rows.
 
 | ID | Requirement | Spec | Result | Proof |
 |---|---|---|---|---|
-| S040 | The delegation card shows the status-first rail, the assignment row, and one Native Line carrying the latest meaningful activity while running | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `a` |
-| S041 | The authoritative settlement rewrites the rail word, the Native Line, and the footer verb without changing the row count or adding chrome, and freezes prior-run cards | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `e` at the retry bytes; item `d` carried over from the first attempt at `600bd88` |
+| S040 | The delegation card shows the status-first rail, the assignment row, and exactly one live `↪ reasoning • <text>` child-activity row while running; assistant and tool activity stay out of the card | §6, §2.6a | FAIL | [`33-child-streaming-remediation-proof.md`](33-proofs/33-child-streaming-remediation-proof.md), 2026-08-18 RED reproduction |
+| S041 | The authoritative settlement rewrites the rail word and footer verb without changing row count or adding chrome, clears the transient card reasoning buffer, and freezes prior-run cards | §6 | Pending | historical geometry evidence does not prove the new live reasoning boundary |
 | S042 | The card renders safely at narrow widths keeping state, assignment and `Alt+I`, sanitizes terminal control sequences, and degrades instead of failing | §6 | Partial | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `g` proves the 48-column render; control-sequence sanitization was not exercised live |
-| S043 | The child inspector's titled outer frame leaves the parent UI visible, renders the live child transcript with the Status Matrix rail, and supports live-tail, resize, and PageUp/PageDown/Shift+Up/Shift+Down/Home/End with Kitty press frames but no release repeats | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `h` proves the frame, transcript, and rail; item `i` proves all six scroll gestures, including the Kitty event-type shift arrows |
+| S043 | The child inspector's titled outer frame leaves the parent UI visible, renders the live raw-reasoning row, one detailed correlated tool row, and incremental assistant reply, and supports the live-tail and scroll controls | §7, §2.6a | FAIL | [`33-child-streaming-remediation-proof.md`](33-proofs/33-child-streaming-remediation-proof.md), 2026-08-18 RED reproduction |
 | S044 | The owned native editor shows its cursor and border, supports cursor movement and multiline input, steers with `Enter`, and queues a follow-up with `Alt+Enter` | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
 | S045 | Overlay renders a historical child after parent restart with bounded pagination and search | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `o` |
 | S046 | A terminal of 12 rows or fewer keeps the owned editor and bottom border visible; settled children remain read-only and focused input never reaches the primary editor | §7 | Pass | [`33-true-overlay-owned-editor-proof.md`](33-proofs/33-true-overlay-owned-editor-proof.md) |
@@ -251,7 +360,7 @@ including their formerly passing mutation rows.
 | S075 | The Status Matrix rail shows lifecycle, work, and spend for a reporting child, and `—` for every field the host did not report; the session header shows the model once and carries no telemetry row and no child ID | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `h` |
 | S076 | Empty-draft `/` opens rail search with the transcript marker gutter; `n`/`N` and `j`/`k` move, `Enter` latches the jump, and `Escape` closes search before the overlay, on live and historical children | §7, §8.1 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `j` (live) and `o` (historical). Search matches the ANSI-free rendered rows, so text that exists only in a tool row matches |
 | S077 | A host that already owns an overlay key keeps it: the route is skipped, unadvertised, and reported once; Weave registers no binding for `Ctrl+O` | §8.1 | Pending | superseded surface; [`33-overlay-ux-live-proof.md`](33-proofs/33-overlay-ux-live-proof.md) records the removed `Ctrl+O` conflict route |
-| S078 | The delegation card is one framed card with one top and one bottom edge at every width, expands to a status strip over nine literal bottom transcript rows, and prints `Ctrl+O expand · Alt+I inspect child` | §6 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `b`, `g` |
+| S078 | The delegation card is one framed card with one top and one bottom edge at every width, expands to a status strip over nine literal bottom card rows without child assistant/tool payload, and prints `Ctrl+O expand · Alt+I inspect child` | §6 | Pending | historical geometry evidence does not prove the new parent-card isolation boundary |
 | S079 | Completed, failed, and cancelled cards keep the running row count, print the authoritative settlement text, expose no stack frame, path, or provider payload, and never claim unverified success | §6, §10 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) items `c`, `e` at the retry bytes; the failed card is item `d`, carried over from the first attempt at `600bd88` |
 | S080 | The Plan Rail above the parent editor shows agent, `Alt+A cycle`, plan, task marks, `now`, and `next`; `Alt+A` cycles; it survives `Escape`; and it prints no child-operational fact and no duplicate task footer | §7 | Pass | Pi `0.84.2`: [`33-weave-ui-redesign-live-proof.md`](33-proofs/33-weave-ui-redesign-live-proof.md) item `q` proves the plan name, marks, ordinal, `now`, `next`, `Alt+A` cycling, and the absence of a duplicate footer |
 
@@ -264,23 +373,22 @@ pane. Every proof cited above records those fields.
 no live scenario for them, and their automated coverage alone cannot close a
 live row.
 
-`S040`–`S043`, `S045`, `S049`, and `S075`–`S080` are closed by the Pi `0.84.2`
-redesign proof, whose retry ran at subject `7596103`. One qualification stands:
-the failed-settlement card (`S041`, `S079`) was observed only in that record's
-first attempt, at subject `600bd88`; the retry could not induce a genuine
-terminal provider failure and says so. Those two rows pass on evidence the user
-explicitly accepted as chained across the two subjects, on the ground that the
-repair leaves the provider-error, settlement, and failed-card paths unchanged —
-not on a re-observation at the final bytes. `S042` stays `Partial` because
-control-sequence sanitization was never exercised live, and `S077` stays
-`Pending` because its `Ctrl+O` conflict route was removed with the old chrome.
+`S041`–`S043`, `S045`, `S049`, and `S075`–`S080` retain historical geometry,
+navigation, and telemetry evidence where their rows say so. The earlier
+redesign proof does not close the new raw-reasoning, tool-detail, or incremental
+assistant requirements. `S040` and `S043` therefore remain the current RED
+reproduction's failed live rows. `S041` remains pending until settlement and
+lifecycle release are observed with the new card projection. `S042` remains
+partial because control-sequence sanitization was not exercised live, and
+`S077` remains pending because its old conflict route was removed with the old
+chrome.
 
 `S051` and `S070`–`S074` cite the exact-subject evidence and the overlay key
 matrix in `33-proofs/33-overlay-ux-live-proof.md`.
 
-The rows marked `historical` stay `Pending` for a different reason: they need a
-persistent child spawn or a native session mutation, which Pi `0.83.0` fails
-closed. They cannot pass on this host.
+The rows marked `historical` stay `Pending` because they need a persistent
+child spawn or a native session mutation. Their prior observations do not close
+those rows for this contract.
 
 Because of both groups, `PI-INS`, `PI-INT`, `PI-PRI`, `PI-BND`, `PI-OVR`,
 `PI-SET`, `PI-RCV`, `PI-DEL`, `PI-LIF`, and `PI-QUO` are `pending` in

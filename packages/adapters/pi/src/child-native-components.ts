@@ -14,7 +14,6 @@ import {
   type DefaultTextStyle,
   Markdown,
   type MarkdownTheme,
-  Text,
   type TUI,
 } from "@earendil-works/pi-tui";
 import { err, type Result as NeverthrowResult, Result } from "neverthrow";
@@ -227,6 +226,8 @@ const FALLBACK_MARKDOWN_THEME: MarkdownTheme = {
 export interface PiChildCardComponentOptions {
   /** Pi's own expanded flag for this tool entry. */
   readonly expanded: boolean;
+  /** TUI-only raw reasoning line, read at render time. */
+  readonly liveReasoningLine?: () => string;
   /**
    * Reports a stable render-failure code. Never receives paths, exception
    * text, or child content.
@@ -285,6 +286,7 @@ export function renderPiChildCardComponent(
         width: CARD_PROBE_WIDTH,
         expanded,
         paint,
+        liveReasoningLine: options.liveReasoningLine?.(),
       });
       return { paint, probe };
     },
@@ -293,18 +295,36 @@ export function renderPiChildCardComponent(
   )();
   if (built.isErr()) return err(built.error);
   const { paint, probe } = built.value;
-  let cache: { readonly width: number; readonly lines: string[] } | undefined =
-    {
-      width: CARD_PROBE_WIDTH,
-      lines: probe,
-    };
+  let cache:
+    | {
+        readonly width: number;
+        readonly liveReasoningLine: string;
+        readonly lines: string[];
+      }
+    | undefined = {
+    width: CARD_PROBE_WIDTH,
+    liveReasoningLine: options.liveReasoningLine?.() ?? "",
+    lines: probe,
+  };
   return Result.fromThrowable(
     (): PiToolRenderComponent => ({
       render(width) {
         const w = normalizeComponentWidth(width);
-        if (cache !== undefined && cache.width === w) return cache.lines;
+        const liveReasoningLine = options.liveReasoningLine?.() ?? "";
+        if (
+          cache !== undefined &&
+          cache.width === w &&
+          cache.liveReasoningLine === liveReasoningLine
+        )
+          return cache.lines;
         const drawn = Result.fromThrowable(
-          () => renderDelegationCard(facts, { width: w, expanded, paint }),
+          () =>
+            renderDelegationCard(facts, {
+              width: w,
+              expanded,
+              paint,
+              liveReasoningLine,
+            }),
           (): typeof CHILD_CARD_NATIVE_RENDER_FAILED =>
             CHILD_CARD_NATIVE_RENDER_FAILED,
         )();
@@ -313,7 +333,7 @@ export function renderPiChildCardComponent(
           cache = undefined;
           return degradedPiChildCardComponent("render_failed").render(w);
         }
-        cache = { width: w, lines: drawn.value };
+        cache = { width: w, liveReasoningLine, lines: drawn.value };
         return drawn.value;
       },
       invalidate() {

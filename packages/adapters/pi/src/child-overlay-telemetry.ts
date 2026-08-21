@@ -26,6 +26,7 @@ import {
   type PiChildProviderError,
   parsePiChildProviderError,
   redactProviderErrorFromEvent,
+  toolDetailProjectionLossKey,
 } from "./child-provider-error.js";
 import {
   type PiChildSessionEvent,
@@ -238,14 +239,17 @@ export function applyProviderErrorEvent(
 ): {
   readonly event: PiChildSessionEvent;
   readonly evidence: ChildTerminalErrorEvidence;
+  readonly toolDetailLossKey?: string;
 } {
   const redacted = redactProviderErrorFromEvent(event);
+  const toolDetailLossKey = toolDetailProjectionLossKey(event, redacted);
   return {
     event: redacted,
     evidence: adoptNewerEvidence(
       previous,
       eventEvidence(redacted) ?? NO_TERMINAL_ERROR_EVIDENCE,
     ),
+    ...(toolDetailLossKey === undefined ? {} : { toolDetailLossKey }),
   };
 }
 

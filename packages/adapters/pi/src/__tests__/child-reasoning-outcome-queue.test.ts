@@ -1,14 +1,15 @@
 /**
  * Three UI-boundary contracts, proven at the surfaces a reader actually sees.
  *
- * 1. RAW REASONING NEVER RENDERS. A `thinking_delta`, a `delta.thinking`, a
- *    standalone `thinking` event and a persisted `thinking` content block are
- *    all raw chain-of-thought. They may prove THAT the child reasoned; their
- *    text may never reach the overlay, the delegation card's model-visible
- *    activity line, the card's persisted rows, or the transcript reducer's own
- *    state. Only an explicit `reasoning_summary` — a structurally distinct
- *    host surface — may print prose, and it is never derived by truncating or
- *    relabelling raw reasoning.
+ * 1. RAW REASONING STAYS OUT OF DURABLE AND REPLAY SURFACES. A
+ *    `thinking_delta`, a `delta.thinking`, a standalone `thinking` event and a
+ *    persisted `thinking` content block are all raw chain-of-thought. They may
+ *    drive a separate transient renderer, but their text may never reach the
+ *    overlay transcript, the delegation card's model-visible activity line,
+ *    card details, or the transcript reducer's own state. Only an explicit
+ *    `reasoning_summary` — a structurally distinct host surface — may print
+ *    prose in the inspector; it is never derived by truncating or relabelling
+ *    raw reasoning.
  *
  * 2. THE TERMINAL OUTCOME IS CARRIED, NOT GUESSED. `completed`, `failed` and
  *    `cancelled` travel from the settlement authority through the descriptor
@@ -227,23 +228,24 @@ describe("raw reasoning never reaches a reader-visible or persisted surface", ()
     expect(JSON.stringify(entry)).not.toContain(RAW);
   });
 
-  it("renders an explicit host reasoning summary and calls it a summary", async () => {
+  it("renders no rows for an explicit legacy host reasoning summary", async () => {
     const view = await openView({}, [
       { type: "reasoning_summary", text: "weighed two fixes" },
     ]);
     const rows = overlayRows(view);
-    expect(rows).toContain("reasoning · SUMMARY");
-    expect(rows).toContain("weighed two fixes");
+    expect(rows).not.toContain("reasoning · SUMMARY");
+    expect(rows).not.toContain("weighed two fixes");
   });
 
-  it("renders a host reasoning summary on the parent card", () => {
+  it("keeps a host reasoning summary out of the parent card", () => {
     const mapped = mapPiChildSessionEventToCompactInput({
       type: "reasoning_summary",
       text: "weighed two fixes",
     } as never)._unsafeUnwrap();
     const { facts } = cardAfter(mapped);
-    expect(facts.activity.kind).toBe("think");
-    expect(facts.activity.text).toBe("summary · weighed two fixes");
+    expect(facts.activity).toEqual({ kind: "boot", text: "", live: false });
+    expect(facts.viewport).toEqual({ rows: [], above: 0, atBottom: true });
+    expect(JSON.stringify(facts)).not.toContain("weighed two fixes");
   });
 
   it("never promotes a raw thinking record to a summary at the parse boundary", () => {

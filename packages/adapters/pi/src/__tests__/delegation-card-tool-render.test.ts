@@ -24,6 +24,10 @@ import {
 } from "../child-card-model.js";
 import { CARD_MIN_WIDTH } from "../child-card-render.js";
 import {
+  createPiLiveReasoningRegistry,
+  PiLiveReasoningProjector,
+} from "../child-live-reasoning.js";
+import {
   boundDelegationCardDetails,
   buildDelegationToolRegistration,
   buildRelayedDelegationToolRegistration,
@@ -39,6 +43,7 @@ import { createOpenSessionMutationGate } from "../required-capability-gate.js";
 import type { PiChildSettlement } from "../rpc-child.js";
 import type {
   PiSessionContext,
+  PiToolRenderContext,
   PiToolResult,
   PiUiThemePort,
 } from "../types.js";
@@ -68,6 +73,19 @@ const TARGETS: readonly DelegationTarget[] = [
 
 function ctx(): PiSessionContext {
   return { cwd: "/repo" } as PiSessionContext;
+}
+
+function renderContext(
+  overrides: Partial<PiToolRenderContext> = {},
+): PiToolRenderContext {
+  return {
+    args: { agent: "shuttle" },
+    toolCallId: "tool-test",
+    state: {},
+    lastComponent: undefined,
+    invalidate: () => undefined,
+    ...overrides,
+  };
 }
 
 function facts(
@@ -141,9 +159,12 @@ function render(
 ): string[] {
   return (
     registration
-      .renderResult?.(result, { expanded, isPartial: false }, theme, {
-        args: { agent: "shuttle" },
-      })
+      .renderResult?.(
+        result,
+        { expanded, isPartial: false },
+        theme,
+        renderContext(),
+      )
       .render(80) ?? []
   );
 }
@@ -174,9 +195,11 @@ describe("weave_delegate renderCall", () => {
     const registration = buildDelegationToolRegistration(rootDeps());
     const lines =
       registration
-        .renderCall?.({ agent: "shuttle", task: "do it" }, THEME, {
-          args: { agent: "shuttle" },
-        })
+        .renderCall?.(
+          { agent: "shuttle", task: "do it" },
+          THEME,
+          renderContext(),
+        )
         .render(80) ?? [];
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(WEAVE_DELEGATION_TOOL_NAME);
@@ -191,7 +214,7 @@ describe("weave_delegate renderCall", () => {
     const registration = buildDelegationToolRegistration(rootDeps());
     const lines =
       registration
-        .renderCall?.({ agent: "shuttle" }, THEME, { args: {} })
+        .renderCall?.({ agent: "shuttle" }, THEME, renderContext({ args: {} }))
         .render(10) ?? [];
     expect(lines).toHaveLength(1);
     expect(lines[0]?.length).toBeLessThanOrEqual(10);
@@ -207,10 +230,11 @@ describe("weave_delegate renderCall", () => {
     for (const registration of [root, relayed]) {
       expect(
         registration
-          .renderCall?.({ agent: "shuttle" }, THEME, {
-            args: { agent: "shuttle" },
-            executionStarted: true,
-          })
+          .renderCall?.(
+            { agent: "shuttle" },
+            THEME,
+            renderContext({ executionStarted: true }),
+          )
           .render(80),
       ).toEqual([]);
     }
@@ -473,7 +497,13 @@ describe("weave_delegate details payload", () => {
     for (const update of updates) {
       const text = (update.content[0] as { text: string }).text;
       const payload = update.details as PiDelegationCardDetails;
-      expect(text).toBe(payload.facts.activity.text);
+      expect(text).toBe("…");
+      expect(payload.facts.activity).toEqual({
+        kind: "boot",
+        text: "",
+        live: false,
+      });
+      expect(payload.facts.viewport.rows).toEqual([]);
       for (const frameGlyph of FRAME_GLYPHS)
         expect(text).not.toContain(frameGlyph);
     }
@@ -495,7 +525,7 @@ describe("weave_delegate renderResult", () => {
       result,
       { expanded: false, isPartial: true },
       THEME,
-      { args: { agent: "shuttle" } },
+      renderContext(),
     );
     expect(component).toBeDefined();
     for (const width of [12, 40, 80, 160]) {
@@ -511,8 +541,101 @@ describe("weave_delegate renderResult", () => {
       for (const line of lines)
         expect(line.length).toBeLessThanOrEqual(normalizedWidth);
     }
-    expect((component?.render(80) ?? []).join("\n")).toContain(
-      "reading delegation-tool.ts",
+    const rendered = (component?.render(80) ?? []).join("\n");
+    expect(rendered).not.toContain("reading delegation-tool.ts");
+    expect(rendered).not.toContain("reading");
+  });
+
+  it("reads one generation-local projector and registers one invalidation callback per row", () => {
+    const registry = createPiLiveReasoningRegistry();
+    const projector = new PiLiveReasoningProjector({
+      childId: "child-1",
+      generationId: "generation-1",
+      registry,
+      registryKey: "tool-live",
+    });
+    projector
+      .apply({
+        childId: "child-1",
+        generationId: "generation-1",
+        lifecycleEpoch: 1,
+        phase: "start",
+        contentIndex: 0,
+        text: "",
+      })
+      ._unsafeUnwrap();
+    projector
+      .apply({
+        childId: "child-1",
+        generationId: "generation-1",
+        lifecycleEpoch: 1,
+        phase: "delta",
+        contentIndex: 0,
+        text: "RAW_REASONING_RENDER_ONLY_SENTINEL",
+      })
+      ._unsafeUnwrap();
+
+    let invalidations = 0;
+    const state: Record<string, unknown> = {};
+    const context = renderContext({
+      toolCallId: "tool-live",
+      state,
+      invalidate: () => {
+        invalidations += 1;
+      },
+    });
+    const registration = buildDelegationToolRegistration(
+      rootDeps({
+        liveReasoningRegistry: registry,
+        generationId: "generation-1",
+      }),
+    );
+    const result: PiToolResult = {
+      content: [{ type: "text", text: "authoritative settled output" }],
+      details: details(),
+    };
+    const first = registration.renderResult?.(
+      result,
+      { expanded: false, isPartial: true },
+      THEME,
+      context,
+    );
+    const second = registration.renderResult?.(
+      result,
+      { expanded: false, isPartial: true },
+      THEME,
+      context,
+    );
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(JSON.stringify(result)).not.toContain(
+      "RAW_REASONING_RENDER_ONLY_SENTINEL",
+    );
+    expect(first?.render(100).join("\n")).toContain(
+      "↪ reasoning • RAW_REASONING_RENDER_ONLY_SENTINEL",
+    );
+
+    projector
+      .apply({
+        childId: "child-1",
+        generationId: "generation-1",
+        lifecycleEpoch: 1,
+        phase: "delta",
+        contentIndex: 0,
+        text: " next",
+      })
+      ._unsafeUnwrap();
+    expect(invalidations).toBe(1);
+
+    projector.clear()._unsafeUnwrap();
+    expect(invalidations).toBe(2);
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+    expect(first?.render(100).join("\n")).not.toContain(
+      "RAW_REASONING_RENDER_ONLY_SENTINEL",
+    );
+    expect(second?.render(100).join("\n")).not.toContain(
+      "RAW_REASONING_RENDER_ONLY_SENTINEL",
     );
   });
 
@@ -614,16 +737,19 @@ describe("weave_delegate renderResult", () => {
     expect(parsed.isOk()).toBe(true);
     const relayedLines =
       relayed
-        .renderResult?.(result, { expanded: false, isPartial: false }, THEME, {
-          args: { agent: "shuttle" },
-        })
+        .renderResult?.(
+          result,
+          { expanded: false, isPartial: false },
+          THEME,
+          renderContext(),
+        )
         .render(80) ?? [];
     const rootLines = render(
       buildDelegationToolRegistration(rootDeps()),
       result,
     );
     expect(relayedLines).toEqual(rootLines);
-    expect(relayedLines.join("\n")).toContain("nested");
+    expect(relayedLines.join("\n")).not.toContain("nested-final");
   });
 });
 
@@ -677,7 +803,12 @@ describe("weave_delegate relayed updates", () => {
     expect(bootstrapFacts.terminal).toBeUndefined();
     // Model-visible text is the bounded activity line, with no card chrome.
     const bootstrapText = (bootstrap.content[0] as { text: string }).text;
-    expect(bootstrapText).toBe(bootstrapFacts.activity.text);
+    expect(bootstrapText).toBe("…");
+    expect(bootstrapFacts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
     for (const frameGlyph of FRAME_GLYPHS)
       expect(bootstrapText).not.toContain(frameGlyph);
 
@@ -693,13 +824,16 @@ describe("weave_delegate relayed updates", () => {
     expect(finalFacts.run.number).toBe(bootstrapFacts.run.number);
     const relayedLines =
       relayed
-        .renderResult?.(result, { expanded: false, isPartial: false }, THEME, {
-          args: { agent: "shuttle" },
-        })
+        .renderResult?.(
+          result,
+          { expanded: false, isPartial: false },
+          THEME,
+          renderContext(),
+        )
         .render(80) ?? [];
     expect(relayedLines).toEqual(
       render(buildDelegationToolRegistration(rootDeps()), result),
     );
-    expect(relayedLines.join("\n")).toContain("nested");
+    expect(relayedLines.join("\n")).not.toContain("nested-final");
   });
 });

@@ -37,6 +37,7 @@ import {
   type ChildExtensionSelectionDecodeReason,
   decodeChildExtensionSelection,
   isSafeChildExtensionPath,
+  MAX_CHILD_EXTENSION_ENTRIES,
   PI_PREFERENCE_NAMESPACE,
   resolveChildExtensionPlan,
 } from "./child-extension-selection.js";
@@ -599,9 +600,78 @@ export function renderChildExtensionArgs(
   return args;
 }
 
+function fallbackResolution(
+  fallbackChildExtensionPaths: readonly string[] | undefined,
+  diagnostics?: ChildExtensionArgsDiagnostics,
+): ChildExtensionArgsResolution {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const path of fallbackChildExtensionPaths ?? []) {
+    if (!isSafeChildExtensionPath(path) || seen.has(path)) continue;
+    seen.add(path);
+    paths.push(path);
+    if (paths.length >= MAX_CHILD_EXTENSION_ENTRIES + 1) break;
+  }
+  if (paths.length === 0) {
+    return diagnostics === undefined ? INHERIT_ALL : { args: [], diagnostics };
+  }
+  const args = renderChildExtensionArgs({
+    mode: "explicit",
+    paths,
+    diagnostics: [],
+  });
+  return diagnostics === undefined ? { args } : { args, diagnostics };
+}
+
+/**
+ * Derives the parent's explicit extension paths for an isolated child.
+ *
+ * Pi does not propagate a parent's `--no-extensions -e ...` flags to a child
+ * when the child receives an empty extension-argument slice. Keep the loader's
+ * own entry first, then carry the other safe absolute `-e` paths that the
+ * parent itself received. The child preloader still attests the Weave graph;
+ * this function only reconstructs argv and never reads or evaluates a path.
+ */
+export function deriveChildExtensionFallbackPaths(
+  argv: readonly string[],
+  ownEntryPath: string | undefined,
+): readonly string[] {
+  if (
+    !argv.includes("--no-extensions") ||
+    ownEntryPath === undefined ||
+    !isSafeChildExtensionPath(ownEntryPath)
+  ) {
+    return [];
+  }
+  const paths: string[] = [ownEntryPath];
+  const seen = new Set<string>(paths);
+  for (let index = 0; index + 1 < argv.length; index += 1) {
+    if (argv[index] !== "-e") continue;
+    const path = argv[index + 1];
+    if (
+      !isSafeChildExtensionPath(path) ||
+      seen.has(path) ||
+      paths.length >= MAX_CHILD_EXTENSION_ENTRIES + 1
+    ) {
+      continue;
+    }
+    seen.add(path);
+    paths.push(path);
+  }
+  return paths;
+}
+
 export interface ResolveChildExtensionSpawnArgsInput {
   /** The trusted project's already-open Runtime Store. */
   readonly store: Pick<RuntimeStore, "preferences">;
+  /**
+   * The loader and other explicit entries when the parent was launched with
+   * `--no-extensions`. In that mode Pi cannot inherit the parent's `-e`
+   * arguments, so the child must receive these paths explicitly. The loader
+   * path is still verified by the pinned preloader in the child; these values
+   * only choose the child argv.
+   */
+  readonly fallbackChildExtensionPaths?: readonly string[];
   /**
    * Collects the live inventory. Injected so this resolution is testable
    * without a host, and called only when an explicit selection is stored.
@@ -621,10 +691,13 @@ interface GatheredInventory {
  * Resolves this generation's child-extension argv exactly once.
  *
  * Every step is fail-open: a store failure, undecodable stored text, a
- * degraded inventory, or an underivable Weave entry all keep today's
- * inherit-all argv rather than spawning a child that is missing the Weave
- * adapter. The inventory is collected only when an explicit selection is
- * actually stored, so the default costs exactly one preference read.
+ * degraded inventory, or an underivable Weave entry keeps the safe fallback.
+ * Normally that fallback is today's inherit-all argv. When the parent was
+ * launched with `--no-extensions`, it is the parent's explicit entry list,
+ * with the pinned loader first, passed explicitly so Pi does not start a
+ * child without the Weave adapter or the parent's provider seams. The
+ * inventory is collected only when an explicit selection is actually stored,
+ * so the default still costs exactly one preference read.
  */
 export function resolveChildExtensionSpawnArgs(
   input: ResolveChildExtensionSpawnArgsInput,
@@ -635,10 +708,11 @@ export function resolveChildExtensionSpawnArgs(
     .orElse(() => okAsync(undefined))
     .andThen((valueJson) => {
       if (valueJson === undefined) {
-        return okAsync({
-          args: [],
-          diagnostics: { fallback: "preference-read-failed" as const },
-        });
+        return okAsync(
+          fallbackResolution(input.fallbackChildExtensionPaths, {
+            fallback: "preference-read-failed" as const,
+          }),
+        );
       }
       const decoded = decodeChildExtensionSelection(valueJson);
       // Undecodable text always decodes to the inherit-all default, so a
@@ -647,8 +721,8 @@ export function resolveChildExtensionSpawnArgs(
         const decode = decoded.diagnostic?.reason;
         return okAsync(
           decode === undefined
-            ? INHERIT_ALL
-            : { args: [], diagnostics: { decode } },
+            ? fallbackResolution(input.fallbackChildExtensionPaths)
+            : fallbackResolution(input.fallbackChildExtensionPaths, { decode }),
         );
       }
       const record = decoded.record;
@@ -672,13 +746,10 @@ export function resolveChildExtensionSpawnArgs(
           (entry) => entry.mandatory && isSafeChildExtensionPath(entry.path),
         );
         if (weaveEntry === undefined) {
-          return {
-            args: [],
-            diagnostics: {
-              ...degraded,
-              fallback: "weave-entry-unresolved" as const,
-            },
-          };
+          return fallbackResolution(input.fallbackChildExtensionPaths, {
+            ...degraded,
+            fallback: "weave-entry-unresolved" as const,
+          });
         }
         const plan = resolveChildExtensionPlan({
           record,

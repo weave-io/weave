@@ -33,6 +33,10 @@ import {
 import { getKeybindings, TUI } from "@earendil-works/pi-tui";
 import { err, type Result, ResultAsync } from "neverthrow";
 import {
+  createPiLiveReasoningRegistry,
+  type PiLiveReasoningUpdate,
+} from "../child-live-reasoning.js";
+import {
   createChildOverlayController,
   createChildOverlayCustomComponent,
   createChildOverlayLiveStream,
@@ -40,6 +44,8 @@ import {
   type MemoryOverlaySourceChild,
   mergeChildOverlayReplaySteps,
 } from "../child-overlay.js";
+import { childOverlayTranscriptInput } from "../child-overlay-facts.js";
+import { renderOverlayPiNative } from "../child-overlay-pi-native.js";
 import { transcriptFromOverlayEntries } from "../child-overlay-replay.js";
 import {
   CHILD_OVERLAY_BURST_REPAINT_CEILING,
@@ -57,7 +63,9 @@ import {
 import { preserveUnknownChildEvent } from "../child-session-events.js";
 import type { TimerHandle, TimerPort } from "../child-timer.js";
 import type { PiChildTranscriptState } from "../child-transcript.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type { PiUiThemePort } from "../types.js";
+import { plainPaint } from "../ui-paint.js";
 
 initTheme("default");
 
@@ -251,9 +259,10 @@ function testKeybindings(): KeybindingsManager {
 
 function mountPane(
   controller: ReturnType<typeof createChildOverlayController>,
+  rows = ROWS,
 ) {
   return createChildOverlayCustomComponent(
-    testTui(),
+    testTui(rows),
     TEST_THEME,
     testKeybindings(),
     controller,
@@ -381,15 +390,18 @@ interface StreamHarness {
   invalidates: number;
   generation: string;
   liveChildren: Set<string>;
+  diagnostics: ReturnType<typeof createChildUiEventDiagnostics>;
 }
 
 async function harness(
   child: MemoryOverlaySourceChild = liveChild(),
   others: readonly MemoryOverlaySourceChild[] = [],
+  config: Parameters<typeof createChildOverlayController>[1] = {},
 ): Promise<StreamHarness> {
-  const { controller } = openLive(child, others);
+  const { controller } = openLive(child, others, config);
   expect((await controller.open(child.childId)).isOk()).toBe(true);
   const timer = new ScriptedTimerPort();
+  const diagnostics = createChildUiEventDiagnostics();
   const state: StreamHarness = {
     controller,
     timer,
@@ -401,6 +413,7 @@ async function harness(
         .filter((candidate) => candidate.status === "live")
         .map((candidate) => candidate.childId),
     ),
+    diagnostics,
     stream: undefined as never,
   };
   // The harness IS the mutable state the stream reads: a copy would let the
@@ -420,6 +433,7 @@ async function harness(
     currentGenerationId: () => state.generation,
     resolveLiveThreadId: (childId) =>
       state.liveChildren.has(childId) ? childId : undefined,
+    diagnostics,
   });
   return state;
 }
@@ -436,6 +450,37 @@ function drops(
   );
 }
 
+function reasoningUpdate(
+  phase: PiLiveReasoningUpdate["phase"],
+  text: string,
+  options: {
+    readonly childId?: string;
+    readonly generationId?: string;
+    readonly lifecycleEpoch?: number;
+    readonly contentIndex?: number;
+  } = {},
+): PiLiveReasoningUpdate {
+  return {
+    childId: options.childId ?? CHILD_ID,
+    generationId: options.generationId ?? GENERATION,
+    lifecycleEpoch: options.lifecycleEpoch ?? 1,
+    phase,
+    contentIndex: options.contentIndex ?? 0,
+    text,
+  };
+}
+
+function nativeRows(
+  controller: ReturnType<typeof createChildOverlayController>,
+): string[] {
+  const view = controller.view()._unsafeUnwrap();
+  return renderOverlayPiNative(
+    plainPaint(),
+    childOverlayTranscriptInput(view),
+    WIDTH,
+  ).plain.map((row) => row.replace(/\s+$/u, ""));
+}
+
 describe("the live stream drops what must not reach the pane", () => {
   it("applies an event for the focused live child", async () => {
     const h = await harness();
@@ -445,6 +490,91 @@ describe("the live stream drops what must not reach the pane", () => {
     });
     expect(outcome.kind).toBe("applied");
     expect(h.controller.view()._unsafeUnwrap().entries).toHaveLength(1);
+  });
+
+  it("shows the first authoritative text delta through the full live path", async () => {
+    const h = await harness();
+    const ingest = (event: unknown): void => {
+      expect(h.stream.ingest(CHILD_ID, event)).toEqual({ kind: "applied" });
+    };
+
+    // Pre-fix red evidence from Pi 0.84.2: parser, fanout, overlay mapping,
+    // reduction and replay all returned content, but native-render printed
+    // `● shuttle · streaming reply` with only `  ▍` after message_start. The
+    // first content-free contract failure was therefore the renderer seam,
+    // not message correlation or a missing text delta.
+    ingest({
+      type: "message_start",
+      message: { role: "assistant", model: "test-model", content: [] },
+    });
+    expect(nativeRows(h.controller)).not.toContain("shuttle · streaming reply");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 1 },
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    expect(nativeRows(h.controller)).not.toContain("shuttle · streaming reply");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 1 },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: "first valid fragment",
+      },
+    });
+    expect(nativeRows(h.controller)).toContain("shuttle · streaming reply");
+    expect(nativeRows(h.controller)).toContain("  first valid fragment");
+    expect(nativeRows(h.controller)).not.toContain(
+      "● shuttle · streaming reply",
+    );
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 2 },
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 1,
+        delta: " and the next fragment",
+      },
+    });
+    const growing = nativeRows(h.controller);
+    expect(
+      growing.filter((row) => row === "shuttle · streaming reply"),
+    ).toHaveLength(1);
+    expect(growing).toContain("  first valid fragment and the next fragment");
+
+    ingest({
+      type: "message_update",
+      usage: { input: 1, output: 3 },
+      assistantMessageEvent: {
+        type: "text_end",
+        contentIndex: 1,
+        content: "first valid fragment and the next fragment",
+      },
+    });
+    ingest({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        model: "test-model",
+        content: [
+          { type: "text", text: "first valid fragment and the next fragment" },
+        ],
+      },
+    });
+    const settled = nativeRows(h.controller);
+    expect(settled.some((row) => row === "shuttle · streaming reply")).toBe(
+      false,
+    );
+    expect(
+      settled.filter((row) =>
+        row.includes("first valid fragment and the next fragment"),
+      ),
+    ).toHaveLength(1);
+    h.stream.dispose();
   });
 
   it("drops an event addressed to a child the reader is not looking at", async () => {
@@ -470,6 +600,30 @@ describe("the live stream drops what must not reach the pane", () => {
     expect(drops([outcome])).toEqual(["stale-generation"]);
     expect(entrySnapshot(h.controller.view()._unsafeUnwrap())).toEqual(before);
     expect(h.repaints).toBe(0);
+  });
+
+  it("returns a typed stream failure when overlay application rejects", async () => {
+    const h = await harness();
+    const originalApply = h.controller.applyLiveEvent;
+    h.controller.applyLiveEvent = () => err({ type: "OverlayNotOpen" });
+    const outcome = h.stream.ingest(CHILD_ID, {
+      type: "thinking",
+      text: "rejected",
+    });
+    h.controller.applyLiveEvent = originalApply;
+
+    expect(outcome).toEqual({
+      kind: "failed",
+      stage: "stream-ingest",
+      reason: "stream-apply-failed",
+    });
+    expect(h.diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "stream-ingest",
+        reason: "stream-apply-failed",
+        disposition: "failed",
+      }),
+    );
   });
 
   it("drops every event that arrives after the focused child settled", async () => {
@@ -520,6 +674,316 @@ describe("the live stream drops what must not reach the pane", () => {
     expect(
       drops([h.stream.ingest(CHILD_ID, { type: "thinking", text: "x" })]),
     ).toEqual(["stream-disposed"]);
+    expect(h.diagnostics.snapshot().buckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "overlay-closed" }),
+        expect.objectContaining({ reason: "stream-disposed" }),
+      ]),
+    );
+  });
+
+  it("renders only the dedicated live reasoning lane and releases it on close", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const pane = mountPane(h.controller);
+    const raw = "RAW_REASONING_SENTINEL";
+
+    expect(registry.size()).toBe(1);
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(pane.render(WIDTH).join("\n")).not.toContain("↪ reasoning •");
+    expect(h.stream.ingestReasoning(reasoningUpdate("delta", raw)).kind).toBe(
+      "applied",
+    );
+    // The real stream wires this invalidation to the mounted component. Keep
+    // the test's render port explicit so it proves the cache is refreshed.
+    pane.invalidate();
+
+    const live = h.controller.view()._unsafeUnwrap();
+    expect(live.liveReasoning?.text).toBe(raw);
+    expect(live.liveReasoning?.inspectorRows).toEqual([raw]);
+    expect(live.entries).toHaveLength(0);
+    expect(JSON.stringify(live.transcript)).not.toContain(raw);
+    expect(JSON.stringify(live.entries)).not.toContain(raw);
+    expect(pane.render(WIDTH).join("\n")).toContain(`↪ reasoning • ${raw}`);
+    expect(pane.render(WIDTH).join("\n")).not.toContain("✻ reasoning");
+    expect(pane.render(WIDTH).join("\n")).not.toContain("reasoning · SUMMARY");
+
+    // The first update paints immediately; the next one is folded into the
+    // same 50 ms window and paints exactly once when that window closes.
+    expect(h.repaints).toBe(1);
+    expect(h.timer.delays).toEqual([CHILD_OVERLAY_REPAINT_INTERVAL_MS]);
+    h.timer.fire();
+    expect(h.repaints).toBe(2);
+    expect(h.invalidates).toBe(2);
+
+    expect(h.controller.close().isOk()).toBe(true);
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+    expect(h.controller.liveReasoning.snapshot()).toMatchObject({
+      text: "",
+      inspectorRows: [],
+      retainedBytes: 0,
+      active: false,
+      registryEntries: 0,
+    });
+    const saved = (h.controller as unknown as { saved: Map<string, unknown> })
+      .saved;
+    expect(JSON.stringify(saved)).not.toContain(raw);
+
+    expect((await h.controller.open(CHILD_ID)).isOk()).toBe(true);
+    const reopened = h.controller.view()._unsafeUnwrap();
+    expect(reopened.liveReasoning?.text).toBe("");
+    expect(reopened.liveReasoning?.inspectorRows).toEqual([]);
+    pane.invalidate();
+    expect(pane.render(WIDTH).join("\n")).not.toContain(raw);
+  });
+
+  it("renders one indented assistant row without a dot prefix before and after settlement", async () => {
+    const { controller } = openLive();
+    expect((await controller.open(CHILD_ID)).isOk()).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_start",
+          message: { role: "assistant", model: "test-model", content: [] },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          usage: { input: 1, output: 1 },
+          assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_update",
+          usage: { input: 1, output: 1 },
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 1,
+            delta: "INCREMENTAL_ASSISTANT_FRAGMENT",
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    const pane = mountPane(controller, 60);
+    pane.invalidate();
+    expect(controller.view()._unsafeUnwrap().transcript.entries).toContainEqual(
+      expect.objectContaining({ text: "INCREMENTAL_ASSISTANT_FRAGMENT" }),
+    );
+    expect(controller.view()._unsafeUnwrap().entries).toContainEqual(
+      expect.objectContaining({ text: "INCREMENTAL_ASSISTANT_FRAGMENT" }),
+    );
+    const streaming = pane.render(WIDTH).join("\n");
+    expect(streaming).toContain("shuttle · streaming reply");
+    expect(streaming).toContain("  INCREMENTAL_ASSISTANT_FRAGMENT");
+    expect(streaming).not.toContain("● shuttle · streaming reply");
+
+    expect(
+      controller
+        .applyLiveEvent({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "INCREMENTAL_ASSISTANT_FRAGMENT" }],
+          },
+        })
+        .isOk(),
+    ).toBe(true);
+    expect(controller.markOpenChildReadOnly().isOk()).toBe(true);
+    pane.invalidate();
+    const terminal = pane.render(WIDTH).join("\n");
+    expect(terminal).toContain("shuttle · final response");
+    expect(terminal).toContain("  INCREMENTAL_ASSISTANT_FRAGMENT");
+    expect(terminal).not.toContain("● shuttle · final response");
+  });
+
+  it("keeps the inspector reasoning row out of transcript, replay and search", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const pane = mountPane(h.controller);
+    const sentinel = "SEARCH_REPLAY_REASONING_SENTINEL";
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(
+      h.stream.ingestReasoning(reasoningUpdate("delta", sentinel)).kind,
+    ).toBe("applied");
+    pane.invalidate();
+    const live = h.controller.view()._unsafeUnwrap();
+    expect(pane.render(WIDTH).join("\n")).toContain(
+      "↪ reasoning • SEARCH_REPLA",
+    );
+    expect(JSON.stringify(live.entries)).not.toContain(sentinel);
+    expect(JSON.stringify(live.transcript)).not.toContain(sentinel);
+    expect(JSON.stringify(live.liveReasoning)).toContain(sentinel);
+    const searched = await h.controller.search(sentinel);
+    expect(searched.isOk()).toBe(true);
+    if (searched.isOk()) {
+      expect(searched.value.searchMatches).toEqual([]);
+      expect(JSON.stringify(searched.value.entries)).not.toContain(sentinel);
+      expect(JSON.stringify(searched.value.transcript)).not.toContain(sentinel);
+    }
+    expect(h.controller.close().isOk()).toBe(true);
+    expect(registry.size()).toBe(0);
+    expect(h.controller.liveReasoning.snapshot().text).toBe("");
+  });
+
+  it("keeps the inspector to three rows and marks omitted non-empty text", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const pane = mountPane(h.controller);
+    const long = [
+      "first reasoning row",
+      "second reasoning row",
+      "third reasoning row",
+      "fourth reasoning row",
+    ].join("\n");
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(h.stream.ingestReasoning(reasoningUpdate("delta", long)).kind).toBe(
+      "applied",
+    );
+
+    const snapshot = h.controller.liveReasoning.snapshot();
+    expect(snapshot.inspectorRows).toHaveLength(3);
+    expect(snapshot.inspectorRows.at(-1)).toEndWith("… [truncated]");
+    expect(pane.render(WIDTH).join("\n")).toContain(
+      "↪ reasoning • second reasoning row",
+    );
+    expect(pane.render(WIDTH).join("\n")).toContain("… [truncated]");
+    expect(registry.retainedBytes()).toBeGreaterThan(0);
+  });
+
+  it("rejects stale, wrong, closed and settled reasoning updates without content diagnostics", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [liveChild(OTHER_CHILD_ID)], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const raw = "DROP_REASONING_SENTINEL";
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(h.stream.ingestReasoning(reasoningUpdate("delta", raw)).kind).toBe(
+      "applied",
+    );
+
+    h.generation = "generation-2";
+    expect(
+      drops([h.stream.ingestReasoning(reasoningUpdate("delta", raw))]),
+    ).toEqual(["stale-generation"]);
+    expect(h.controller.liveReasoning.snapshot().text).toBe("");
+    expect(registry.retainedBytes()).toBe(0);
+
+    h.generation = GENERATION;
+    // An authenticated resolver that cannot resolve the child is not allowed
+    // to fall back to the caller-supplied child id.
+    h.liveChildren.delete(OTHER_CHILD_ID);
+    expect(
+      drops([
+        h.stream.ingestReasoning(
+          reasoningUpdate("start", "", { childId: OTHER_CHILD_ID }),
+        ),
+      ]),
+    ).toEqual(["unfocused-child"]);
+    expect(registry.size()).toBe(0);
+
+    const closedRegistry = createPiLiveReasoningRegistry();
+    const closed = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: closedRegistry,
+    });
+    expect(closedRegistry.size()).toBe(1);
+    expect(closed.controller.close().isOk()).toBe(true);
+    expect(
+      drops([closed.stream.ingestReasoning(reasoningUpdate("delta", raw))]),
+    ).toEqual(["overlay-closed"]);
+    expect(closed.controller.liveReasoning.snapshot().text).toBe("");
+    expect(closedRegistry.size()).toBe(0);
+    expect(closedRegistry.retainedBytes()).toBe(0);
+
+    const settledRegistry = createPiLiveReasoningRegistry();
+    const settled = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: settledRegistry,
+    });
+    expect(
+      settled.stream.ingestReasoning(reasoningUpdate("start", "")).kind,
+    ).toBe("applied");
+    settled.stream.settle(CHILD_ID);
+    expect(
+      drops([settled.stream.ingestReasoning(reasoningUpdate("delta", raw))]),
+    ).toEqual(["settled"]);
+    expect(settled.controller.liveReasoning.snapshot().text).toBe("");
+    expect(settledRegistry.size()).toBe(0);
+
+    const diagnostics = h.diagnostics.snapshot();
+    expect(diagnostics.buckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "stale-generation" }),
+        expect.objectContaining({ reason: "unfocused-child" }),
+      ]),
+    );
+    expect(JSON.stringify(diagnostics)).not.toContain(raw);
+  });
+
+  it("clears the projector on focus changes, orphaning and component disposal", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const h = await harness(liveChild(), [liveChild(OTHER_CHILD_ID)], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    const raw = "LIFECYCLE_REASONING_SENTINEL";
+    expect(h.stream.ingestReasoning(reasoningUpdate("start", "")).kind).toBe(
+      "applied",
+    );
+    expect(h.stream.ingestReasoning(reasoningUpdate("delta", raw)).kind).toBe(
+      "applied",
+    );
+    expect(h.controller.liveReasoning.snapshot().text).toBe(raw);
+
+    expect((await h.controller.open(OTHER_CHILD_ID)).isOk()).toBe(true);
+    expect(h.controller.liveReasoning.snapshot().text).toBe("");
+    expect(registry.size()).toBe(1);
+
+    expect(h.controller.markOpenChildReadOnly().isOk()).toBe(true);
+    expect(h.controller.liveReasoning.snapshot().text).toBe("");
+    expect(registry.size()).toBe(0);
+
+    const reopened = await harness(liveChild(), [], {
+      liveReasoningGenerationId: GENERATION,
+      liveReasoningRegistry: registry,
+    });
+    expect(
+      reopened.stream.ingestReasoning(reasoningUpdate("start", "")).kind,
+    ).toBe("applied");
+    expect(
+      reopened.stream.ingestReasoning(reasoningUpdate("delta", raw)).kind,
+    ).toBe("applied");
+    const pane = mountPane(reopened.controller);
+    pane.handleInput("\x1b");
+    expect(reopened.controller.liveReasoning.snapshot().text).toBe("");
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+    expect(pane.render(WIDTH).join("\n")).not.toContain(raw);
   });
 });
 
@@ -756,7 +1220,7 @@ describe("malformed events never reach the pane as prose", () => {
         .isOk(),
     ).toBe(true);
     const rendered = pane.render(WIDTH).join("\n");
-    expect(rendered).toContain("VISIBLE_REASONING");
+    expect(rendered).not.toContain("VISIBLE_REASONING");
     expect(rendered).not.toContain("LEAKED_RAW_PROSE");
     expect(rendered).not.toContain("totally_unheard_of_host_event");
   });

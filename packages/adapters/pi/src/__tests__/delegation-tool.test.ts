@@ -9,7 +9,14 @@ import {
   MODEL_TRANSITION_SCHEMA_VERSION,
   type PiModelTransitionBody,
 } from "../child-control-bodies.js";
+import {
+  createPiLiveReasoningRegistry,
+  PI_LIVE_REASONING_PARENT_PREFIX,
+  PI_LIVE_REASONING_UNPRINTABLE_MARKER,
+  PiLiveReasoningProjector,
+} from "../child-live-reasoning.js";
 import type { PiChildRefStatus } from "../child-session-refs.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -37,6 +44,7 @@ import { createOpenSessionMutationGate } from "../required-capability-gate.js";
 import type { PiChildSettlement } from "../rpc-child.js";
 import type {
   PiSessionContext,
+  PiToolRenderContext,
   PiToolResult,
   PiUiThemePort,
 } from "../types.js";
@@ -198,6 +206,19 @@ function agentParameter(registration: { readonly parameters: unknown }): {
   ).properties.agent;
 }
 
+function renderContext(
+  overrides: Partial<PiToolRenderContext> = {},
+): PiToolRenderContext {
+  return {
+    args: { agent: "shuttle" },
+    toolCallId: "tool-test",
+    state: {},
+    lastComponent: undefined,
+    invalidate: () => undefined,
+    ...overrides,
+  };
+}
+
 function ctx(): PiSessionContext {
   return {
     mode: "tui",
@@ -278,7 +299,7 @@ describe("buildDelegationToolRegistration", () => {
     const renderCall = registration.renderCall;
     expect(renderCall).toBeDefined();
     const render = (agent: string) =>
-      renderCall?.({ agent, task: "do it" }, theme, {})
+      renderCall?.({ agent, task: "do it" }, theme, renderContext())
         .render(80)
         .join("\n")
         .trimEnd();
@@ -474,15 +495,23 @@ describe("buildDelegationToolRegistration", () => {
     const live = updates[updates.length - 1];
     const liveDetails = live?.details as PiDelegationCardDetails;
     expect(liveDetails?.kind).toBe("weave-delegation-card");
-    expect(liveDetails?.facts.activity.text).toContain(
-      "Inspecting the adapter",
-    );
-    // Model-visible content stays the activity line, never card chrome.
+    expect(liveDetails?.facts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
+    expect(liveDetails?.facts.viewport.rows).toEqual([]);
+    // Partial model-visible content is adapter-authored and content-free. The
+    // renderer-only reasoning seam is deliberately not part of this update.
     expect(live?.content[0]?.type).toBe("text");
-    expect((live?.content[0] as { text: string }).text).toBe(
-      liveDetails.facts.activity.text,
-    );
-    for (const frame of ["\u256d", "\u2570", "\u2502", "\u2500"]) {
+    expect((live?.content[0] as { text: string }).text).toBe("…");
+    for (const frame of [
+      "\u256d",
+      "\u2570",
+      "\u2502",
+      "\u2500",
+      "Inspecting the adapter",
+    ]) {
       expect((live?.content[0] as { text: string }).text).not.toContain(frame);
     }
 
@@ -490,7 +519,11 @@ describe("buildDelegationToolRegistration", () => {
     const finalDetails = result.details as PiDelegationCardDetails;
     expect(finalDetails?.kind).toBe("weave-delegation-card");
     expect(finalDetails?.facts.settled).toBe(true);
-    expect(finalDetails?.facts.activity.text).toContain("done");
+    expect(finalDetails?.facts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
       ok: true,
       settlement: {
@@ -502,117 +535,295 @@ describe("buildDelegationToolRegistration", () => {
 
     const renderer = registration.renderResult;
     expect(renderer).toBeDefined();
+    if (live === undefined || renderer === undefined) {
+      throw new Error("live delegation result was not published");
+    }
     const theme: PiUiThemePort = {
       fg: (_color, text) => text,
       bold: (text) => text,
     };
-    const collapsedLines =
-      renderer?.(live!, { expanded: false, isPartial: true }, theme, {
-        args: { agent: "shuttle", task: "do it" },
-      }).render(80) ?? [];
+    const collapsedLines = renderer(
+      live,
+      { expanded: false, isPartial: true },
+      theme,
+      renderContext({ args: { agent: "shuttle", task: "do it" } }),
+    ).render(80);
     expect(collapsedLines[0]?.startsWith("\u256d")).toBe(true);
     expect(collapsedLines.at(-1)?.startsWith("\u2570")).toBe(true);
-    expect(collapsedLines.join("\n")).toContain("Inspecting the adapter");
+    expect(collapsedLines.join("\n")).not.toContain("Inspecting the adapter");
+    expect(collapsedLines.join("\n")).not.toContain("done");
 
-    const expandedLines =
-      renderer?.(live!, { expanded: true, isPartial: true }, theme, {
-        args: { agent: "shuttle", task: "do it" },
-      }).render(80) ?? [];
+    const expandedLines = renderer(
+      live,
+      { expanded: true, isPartial: true },
+      theme,
+      renderContext({ args: { agent: "shuttle", task: "do it" } }),
+    ).render(80);
     expect(expandedLines.length).toBeGreaterThan(collapsedLines.length);
 
     const call = registration
-      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
-        args: { agent: "shuttle", task: "do it" },
-      })
+      .renderCall?.(
+        { agent: "shuttle", task: "do it" },
+        theme,
+        renderContext({ args: { agent: "shuttle", task: "do it" } }),
+      )
       ?.render(80)
       .join("\n");
     expect(call).toContain("Shuttle");
   });
 
-  it("execute: projects one confirmed model fallback from authenticated phases", async () => {
+  it("execute: keeps raw reasoning in the TUI-only row and preserves settlement", async () => {
+    const registry = createPiLiveReasoningRegistry();
     let capturedRequest: PiDelegationRequest | undefined;
-    let resolveSettlement!: (
-      result: Result<PiChildSettlement, PiAdapterFailure>,
-    ) => void;
-    const settlement = new ResultAsync<PiChildSettlement, PiAdapterFailure>(
-      new Promise((resolve) => {
-        resolveSettlement = resolve;
-      }),
-    );
-    const updates: PiToolResult[] = [];
-    const timers: (() => void)[] = [];
-    const timerPort = {
-      schedule: (callback: () => void) => {
-        timers.push(callback);
-        return { cancel: () => undefined };
-      },
-    };
-    const fireRefreshWindow = (): void => {
-      const pending = timers.splice(0, timers.length);
-      for (const tick of pending) tick();
-    };
+    let invalidations = 0;
     const registration = buildDelegationToolRegistration(
       baseDeps({
-        timerPort,
+        generationId: "generation-card-contract",
+        liveReasoningRegistry: registry,
         getController: () =>
           fakeController((request) => {
             capturedRequest = request;
-            return settlement;
+            return okAsync({
+              outcome: "completed",
+              assistantOutput: "AUTHORITATIVE_SETTLED_OUTPUT",
+            } as PiChildSettlement);
           }),
       }),
     );
     const executePromise = registration.execute(
-      "call-1",
+      "tool-call-contract",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    capturedRequest?.onParentCardReasoning?.({
+      childId: "child-1",
+      generationId: "generation-card-contract",
+      lifecycleEpoch: 1,
+      phase: "start",
+      contentIndex: 0,
+      text: "",
+    });
+    capturedRequest?.onParentCardReasoning?.({
+      childId: "child-1",
+      generationId: "generation-card-contract",
+      lifecycleEpoch: 1,
+      phase: "delta",
+      contentIndex: 0,
+      text: "TUI_ONLY_REASONING_SENTINEL",
+    });
+    expect(registry.size()).toBe(1);
+    const result: PiToolResult = {
+      content: [{ type: "text", text: "model-visible-placeholder" }],
+      details: cardDetails(),
+    };
+    const component = registration.renderResult?.(
+      result,
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({
+        toolCallId: "tool-call-contract",
+        invalidate: () => {
+          invalidations += 1;
+        },
+      }),
+    );
+    const rendered = component?.render(120).join("\n") ?? "";
+    expect(rendered).toContain("↪ reasoning • TUI_ONLY_REASONING_SENTINEL");
+    expect(JSON.stringify(result)).not.toContain("TUI_ONLY_REASONING_SENTINEL");
+    expect(invalidations).toBe(0);
+
+    const settled = await executePromise;
+    expect(
+      JSON.parse((settled.content[0] as { text: string }).text),
+    ).toMatchObject({
+      ok: true,
+      settlement: {
+        finalOutput: "AUTHORITATIVE_SETTLED_OUTPUT",
+      },
+    });
+    expect(JSON.stringify(settled)).not.toContain(
+      "TUI_ONLY_REASONING_SENTINEL",
+    );
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+  });
+
+  it("execute: renders control-only reasoning only on the active parent card", async () => {
+    const registry = createPiLiveReasoningRegistry();
+    const diagnostics = createChildUiEventDiagnostics();
+    const updates: PiToolResult[] = [];
+    const controlOnly = "\u001b[31m\u0000\u001b[0m";
+    const serializedControlOnly = JSON.stringify(controlOnly);
+    const liveLine = `${PI_LIVE_REASONING_PARENT_PREFIX}${PI_LIVE_REASONING_UNPRINTABLE_MARKER}`;
+    const { settlement, resolveCancelled } = pendingSettlement();
+    let capturedRequest: PiDelegationRequest | undefined;
+    let sourceProjector: PiLiveReasoningProjector | undefined;
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        generationId: "generation-control-only-card",
+        diagnostics,
+        liveReasoningRegistry: registry,
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            sourceProjector = new PiLiveReasoningProjector({
+              childId: "child-1",
+              generationId: "generation-control-only-card",
+              parentCardObserver: (update) => {
+                request.onParentCardReasoning?.(update);
+              },
+            });
+            expect(
+              sourceProjector
+                .accept({
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_start",
+                    contentIndex: 0,
+                  },
+                })
+                .isOk(),
+            ).toBe(true);
+            expect(
+              sourceProjector
+                .accept({
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_delta",
+                    contentIndex: 0,
+                    delta: controlOnly,
+                  },
+                })
+                .isOk(),
+            ).toBe(true);
+            return settlement;
+          }),
+      }),
+    );
+
+    const executePromise = registration.execute(
+      "tool-call-control-only",
       { agent: "shuttle", task: "do it" },
       undefined,
       (update) => updates.push(update),
       ctx(),
     );
-    const applied: PiModelTransitionBody = {
-      schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
-      transitionId: "123e4567-e89b-42d3-a456-426614174000",
-      failureClass: "provider_unavailable",
-      from: { provider: "origin", id: "model-a" },
-      to: { provider: "fallback", id: "model-b" },
-      phase: "applied",
-    };
-    const confirmed: PiModelTransitionBody = {
-      ...applied,
-      phase: "recovery-confirmed",
-    };
-    expect(capturedRequest?.onModelTransition).toBeDefined();
-    capturedRequest?.onModelTransition?.(applied);
-    capturedRequest?.onModelTransition?.(confirmed);
-    capturedRequest?.onModelTransition?.(confirmed);
-    fireRefreshWindow();
+    expect(capturedRequest?.onParentCardReasoning).toBeDefined();
+    const live = updates.at(-1);
+    if (live === undefined)
+      throw new Error("live card update was not published");
 
-    const fallbackUpdates = updates.filter(
-      (update) =>
-        (update.details as PiDelegationCardDetails | undefined)?.facts.activity
-          .kind === "fallback",
-    );
-    expect(fallbackUpdates).toHaveLength(1);
-    const fallbackDetails = fallbackUpdates[0]
-      ?.details as PiDelegationCardDetails;
-    expect(fallbackDetails.facts.fallback).toMatchObject({
-      transitionId: applied.transitionId,
-      from: applied.from,
-      to: applied.to,
+    const state: Record<string, unknown> = {};
+    const liveContext = renderContext({
+      toolCallId: "tool-call-control-only",
+      state,
     });
-    expect(fallbackDetails.facts.activity.text).toBe(
-      "model fallback · fallback/model-b",
+    const liveComponent = registration.renderResult?.(
+      live,
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      liveContext,
+    );
+    if (liveComponent === undefined)
+      throw new Error("live card renderer was not registered");
+    const liveOutput = liveComponent.render(120).join("\n");
+    const reasoningRows = liveOutput
+      .split("\n")
+      .filter((line) => line.includes("↪ reasoning"));
+    expect(reasoningRows).toHaveLength(1);
+    expect(reasoningRows[0]).toContain(liveLine);
+
+    // The marker and its control-only source stay out of every parent-facing
+    // and durable surface. Only the renderer reads the process-memory row.
+    const parentContext = updates
+      .flatMap((update) => update.content.map((part) => part.text))
+      .join("\n");
+    const durableState = JSON.stringify(
+      updates.map((update) => update.details ?? null),
+    );
+    expect(parentContext).not.toContain(liveLine);
+    expect(parentContext).not.toContain(controlOnly);
+    expect(durableState).not.toContain(liveLine);
+    expect(durableState).not.toContain(serializedControlOnly);
+    expect(JSON.stringify(capturedRequest?.bootstrap)).not.toContain(liveLine);
+    expect(JSON.stringify(capturedRequest?.bootstrap)).not.toContain(
+      serializedControlOnly,
+    );
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(liveLine);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(
+      serializedControlOnly,
     );
 
-    resolveSettlement(
-      ok({
-        outcome: "completed",
-        assistantOutput: "done",
-      } as PiChildSettlement),
+    sourceProjector?.dispose();
+    resolveCancelled();
+    const settled = await executePromise;
+    const settledOutput = JSON.stringify(settled);
+    expect(settledOutput).not.toContain(liveLine);
+    expect(settledOutput).not.toContain(serializedControlOnly);
+    expect(JSON.stringify(updates)).not.toContain(liveLine);
+    expect(JSON.stringify(updates)).not.toContain(serializedControlOnly);
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
+
+    // The same component and a fresh final render both lose the live row; the
+    // released projector cannot replay its last marker.
+    expect(liveComponent.render(120).join("\n")).not.toContain(liveLine);
+    const finalComponent = registration.renderResult?.(
+      settled,
+      { expanded: false, isPartial: false },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({
+        toolCallId: "tool-call-control-only",
+        state,
+        lastComponent: liveComponent,
+      }),
     );
-    const result = await executePromise;
-    expect((result.details as PiDelegationCardDetails).facts.settled).toBe(
-      true,
+    expect(finalComponent?.render(120).join("\n")).not.toContain(liveLine);
+  });
+
+  it("renderResult: rejects a stale toolCallId instead of reading another row", () => {
+    const registry = createPiLiveReasoningRegistry();
+    const projector = new PiLiveReasoningProjector({
+      childId: "child-stale-call",
+      generationId: "generation-stale-call",
+      registry,
+      registryKey: "tool-call-current",
+    });
+    projector
+      .apply({
+        childId: "child-stale-call",
+        generationId: "generation-stale-call",
+        lifecycleEpoch: 1,
+        phase: "start",
+        contentIndex: 0,
+        text: "",
+      })
+      ._unsafeUnwrap();
+    projector
+      .apply({
+        childId: "child-stale-call",
+        generationId: "generation-stale-call",
+        lifecycleEpoch: 1,
+        phase: "delta",
+        contentIndex: 0,
+        text: "STALE_TOOL_CALL_REASONING_SENTINEL",
+      })
+      ._unsafeUnwrap();
+    const registration = buildDelegationToolRegistration(
+      baseDeps({ liveReasoningRegistry: registry }),
     );
+    const component = registration.renderResult?.(
+      { content: [{ type: "text", text: "x" }], details: cardDetails() },
+      { expanded: false, isPartial: true },
+      { fg: (_color, text) => text, bold: (text) => text },
+      renderContext({ toolCallId: "tool-call-other" }),
+    );
+    expect(component?.render(120).join("\n")).not.toContain(
+      "STALE_TOOL_CALL_REASONING_SENTINEL",
+    );
+    projector.dispose();
   });
 
   it("renderResult: degrades a foreign (older compact) details payload", () => {
@@ -641,7 +852,7 @@ describe("buildDelegationToolRegistration", () => {
         },
         { expanded: false, isPartial: true },
         theme,
-        { args: { agent: "shuttle" } },
+        renderContext({ args: { agent: "shuttle" } }),
       )
       ?.render(80)
       .join("\n");
@@ -653,8 +864,10 @@ describe("buildDelegationToolRegistration", () => {
 
   it("renderResult: degrades when the theme helper throws", () => {
     const codes: string[] = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const registration = buildDelegationToolRegistration(
       baseDeps({
+        diagnostics,
         onCompactRenderFailure: (code) => {
           codes.push(code);
         },
@@ -674,13 +887,22 @@ describe("buildDelegationToolRegistration", () => {
         },
         { expanded: false, isPartial: false },
         theme,
-        { args: {} },
+        renderContext({ args: {} }),
       )
       ?.render(80)
       .join("\n");
     expect(rendered).toContain("delegation card unavailable");
     expect(codes).toEqual([CARD_RENDER_FAILED_CODE]);
     expect(JSON.stringify(codes)).not.toContain("/secret");
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "native-render",
+        classification: "application-failure",
+        reason: "native-render-failed",
+        disposition: "failed",
+      }),
+    );
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain("/secret");
   });
 
   it("renderCall: names the agent with the model and reasoning level it will run on", () => {
@@ -697,9 +919,11 @@ describe("buildDelegationToolRegistration", () => {
       bold: (text) => text,
     };
     const rendered = registration
-      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
-        args: { agent: "shuttle", task: "do it" },
-      })
+      .renderCall?.(
+        { agent: "shuttle", task: "do it" },
+        theme,
+        renderContext({ args: { agent: "shuttle", task: "do it" } }),
+      )
       ?.render(80)
       .join("\n");
     expect(rendered).toContain("Shuttle gpt-5.6-terra high");
@@ -712,9 +936,11 @@ describe("buildDelegationToolRegistration", () => {
       bold: (text) => text,
     };
     const rendered = registration
-      .renderCall?.({ agent: "shuttle", task: "do it" }, theme, {
-        args: { agent: "shuttle", task: "do it" },
-      })
+      .renderCall?.(
+        { agent: "shuttle", task: "do it" },
+        theme,
+        renderContext({ args: { agent: "shuttle", task: "do it" } }),
+      )
       ?.render(80)
       .join("\n");
     expect(rendered?.trim()).toBe(
@@ -1065,18 +1291,29 @@ describe("buildDelegationToolRegistration", () => {
     });
   });
 
-  it("execute: carries the closed spawn reason so the caller can tell why the child never started", async () => {
+  it("execute: carries the closed spawn reason and releases the live card registry", async () => {
+    const registry = createPiLiveReasoningRegistry();
     const registration = buildDelegationToolRegistration(
       baseDeps({
+        liveReasoningRegistry: registry,
+        generationId: "generation-1",
         getController: () =>
-          fakeController(() =>
-            errAsync(
+          fakeController((request) => {
+            request.onParentCardReasoning?.({
+              childId: "child-1",
+              generationId: "generation-1",
+              lifecycleEpoch: 1,
+              phase: "start",
+              contentIndex: 0,
+              text: "SPAWN_REASONING_SENTINEL",
+            });
+            return errAsync(
               makeChildSpawnFailedFailure(
                 "child-1",
                 "invalid session spawn configuration: base command contains a session flag",
               ),
-            ),
-          ),
+            );
+          }),
       }),
     );
     const result = await registration.execute(
@@ -1095,6 +1332,9 @@ describe("buildDelegationToolRegistration", () => {
     expect(text.message).toBe(
       "Weave could not start the delegated child process.",
     );
+    expect(JSON.stringify(result)).not.toContain("SPAWN_REASONING_SENTINEL");
+    expect(registry.size()).toBe(0);
+    expect(registry.retainedBytes()).toBe(0);
   });
 
   it("execute: surfaces a ChildResponseMissing result failure as retryable structured output, never as transport corruption", async () => {
@@ -1276,6 +1516,91 @@ describe("buildDelegationToolRegistration", () => {
     // has nothing left to cancel.
     abortController.abort();
     expect(cancelSubtreeCalls).toBe(0);
+  });
+  it("execute: projects one confirmed model fallback from authenticated phases", async () => {
+    let capturedRequest: PiDelegationRequest | undefined;
+    let resolveSettlement!: (
+      result: Result<PiChildSettlement, PiAdapterFailure>,
+    ) => void;
+    const settlement = new ResultAsync<PiChildSettlement, PiAdapterFailure>(
+      new Promise((resolve) => {
+        resolveSettlement = resolve;
+      }),
+    );
+    const updates: PiToolResult[] = [];
+    const timers: (() => void)[] = [];
+    const timerPort = {
+      schedule: (callback: () => void) => {
+        timers.push(callback);
+        return { cancel: () => undefined };
+      },
+    };
+    const fireRefreshWindow = (): void => {
+      const pending = timers.splice(0, timers.length);
+      for (const tick of pending) tick();
+    };
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        timerPort,
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return settlement;
+          }),
+      }),
+    );
+    const executePromise = registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      (update) => updates.push(update),
+      ctx(),
+    );
+    const applied: PiModelTransitionBody = {
+      schemaVersion: MODEL_TRANSITION_SCHEMA_VERSION,
+      transitionId: "123e4567-e89b-42d3-a456-426614174000",
+      failureClass: "provider_unavailable",
+      from: { provider: "origin", id: "model-a" },
+      to: { provider: "fallback", id: "model-b" },
+      phase: "applied",
+    };
+    const confirmed: PiModelTransitionBody = {
+      ...applied,
+      phase: "recovery-confirmed",
+    };
+    expect(capturedRequest?.onModelTransition).toBeDefined();
+    capturedRequest?.onModelTransition?.(applied);
+    capturedRequest?.onModelTransition?.(confirmed);
+    capturedRequest?.onModelTransition?.(confirmed);
+    fireRefreshWindow();
+
+    const fallbackUpdates = updates.filter(
+      (update) =>
+        (update.details as PiDelegationCardDetails | undefined)?.facts.activity
+          .kind === "fallback",
+    );
+    expect(fallbackUpdates).toHaveLength(1);
+    const fallbackDetails = fallbackUpdates[0]
+      ?.details as PiDelegationCardDetails;
+    expect(fallbackDetails.facts.fallback).toMatchObject({
+      transitionId: applied.transitionId,
+      from: applied.from,
+      to: applied.to,
+    });
+    expect(fallbackDetails.facts.activity.text).toBe(
+      "model fallback · fallback/model-b",
+    );
+
+    resolveSettlement(
+      ok({
+        outcome: "completed",
+        assistantOutput: "done",
+      } as PiChildSettlement),
+    );
+    const result = await executePromise;
+    expect((result.details as PiDelegationCardDetails).facts.settled).toBe(
+      true,
+    );
   });
 });
 
@@ -1772,7 +2097,11 @@ describe("weave_delegate thread lifecycle", () => {
     const details = result.details as PiDelegationCardDetails;
     expect(details.kind).toBe("weave-delegation-card");
     expect(details.facts.settled).toBe(true);
-    expect(details.facts.activity.text).toBe("retry done");
+    expect(details.facts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
     expect(
       JSON.parse((result.content[0] as { text: string }).text),
     ).toMatchObject({
@@ -1813,7 +2142,11 @@ describe("weave_delegate thread lifecycle", () => {
     expect(details.facts.settled).toBe(true);
     expect(details.facts.status).toBe("completed");
     expect(details.facts.run).toMatchObject({ number: 1, action: "start" });
-    expect(details.facts.activity.text).toBe("nested-final");
+    expect(details.facts.activity).toEqual({
+      kind: "boot",
+      text: "",
+      live: false,
+    });
     expect(JSON.stringify(details)).not.toContain("/sessions");
     // Structured model output unchanged.
     expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
@@ -1829,13 +2162,16 @@ describe("weave_delegate thread lifecycle", () => {
     };
     const rendered =
       registration
-        .renderResult?.(result, { expanded: false, isPartial: false }, theme, {
-          args: { agent: "shuttle" },
-        })
+        .renderResult?.(
+          result,
+          { expanded: false, isPartial: false },
+          theme,
+          renderContext({ args: { agent: "shuttle" } }),
+        )
         ?.render(80) ?? [];
     expect(rendered[0]?.startsWith("\u256d")).toBe(true);
     expect(rendered.at(-1)?.startsWith("\u2570")).toBe(true);
-    expect(rendered.join("\n")).toContain("nested-final");
+    expect(rendered.join("\n")).not.toContain("nested-final");
     expect(registration.renderShell).toBe("self");
   });
 });

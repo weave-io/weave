@@ -11,8 +11,14 @@ import {
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
+import { PiLiveReasoningRegistry } from "../child-live-reasoning.js";
+import {
+  isPiAuthoritativeToolEvent,
+  type PiChildSessionEvent,
+} from "../child-session-events.js";
 import { encodeTransferChunks } from "../child-transfer.js";
 import type { PiChildTreeNode } from "../child-tree.js";
+import { createChildUiEventDiagnostics } from "../child-ui-event-diagnostics.js";
 import { modelFailoverRecordFromTransition } from "../model-failover-record.js";
 import {
   encodePromptChunks,
@@ -3104,14 +3110,135 @@ describe("PiRpcChild", () => {
     expect(JSON.stringify(child.snapshot())).not.toContain("next thought");
   });
 
+  it("fans out bounded live reasoning while the standard observer receives retention-safe events", async () => {
+    const processPort = new FakeChildProcessPort();
+    const registry = new PiLiveReasoningRegistry();
+    const parentUpdates: string[] = [];
+    const inspectorUpdates: string[] = [];
+    const sessionEvents: unknown[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      liveReasoningRegistry: registry,
+      onParentCardReasoning: (update) => parentUpdates.push(update.text),
+      onInspectorReasoning: (update) => inspectorUpdates.push(update.text),
+      sessionObserver: {
+        onEvent: (event) => {
+          sessionEvents.push(event);
+          return ok(undefined);
+        },
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const sentinel = "LIVE-REASONING-SENTINEL";
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: sentinel,
+      },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: " tail",
+      },
+    });
+    expect(parentUpdates.at(-1)).toBe(`${sentinel} tail`);
+    expect(inspectorUpdates.at(-1)).toBe(`${sentinel} tail`);
+    expect(JSON.stringify(sessionEvents)).not.toContain(sentinel);
+    expect(JSON.stringify(child.snapshot())).not.toContain(sentinel);
+    expect(child.liveReasoningSnapshot().text).toBe(`${sentinel} tail`);
+    expect(registry.size()).toBe(1);
+
+    child.dispose();
+    expect(child.liveReasoningSnapshot().text).toBe("");
+    expect(child.liveReasoningSnapshot().retainedBytes).toBe(0);
+    expect(registry.size()).toBe(0);
+  });
+
+  it("keeps live-reasoning fanout exactly once and isolates a rejecting sink", async () => {
+    const processPort = new FakeChildProcessPort();
+    const diagnostics = createChildUiEventDiagnostics();
+    const registry = new PiLiveReasoningRegistry();
+    const inspectorUpdates: string[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      diagnostics,
+      liveReasoningRegistry: registry,
+      onParentCardReasoning: () => {
+        throw new Error("RAW_REASONING_SINK_FAILURE");
+      },
+      onInspectorReasoning: (update) => {
+        inspectorUpdates.push(update.text);
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const sentinel = "INDEPENDENT_REASONING_SINK_SENTINEL";
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_start",
+        contentIndex: 0,
+        content: sentinel,
+      },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 0,
+        delta: " tail",
+      },
+    });
+
+    expect(inspectorUpdates).toEqual([sentinel, `${sentinel} tail`]);
+    expect(registry.size()).toBe(1);
+    expect(JSON.stringify(child.snapshot())).not.toContain(sentinel);
+    const failure = diagnostics
+      .snapshot()
+      .buckets.find(
+        (bucket) =>
+          bucket.stage === "fanout" && bucket.reason === "callback-failed",
+      );
+    expect(failure?.count).toBe(2);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(sentinel);
+    child.dispose();
+    expect(registry.size()).toBe(0);
+  });
+
   it("refuses a frame that carries answer text and raw reasoning at once", async () => {
     const processPort = new FakeChildProcessPort();
+    const diagnostics = createChildUiEventDiagnostics();
     const streamingUpdates: PiChildTreeNode[] = [];
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
+      diagnostics,
       onStreamingUpdate: (snapshot) => streamingUpdates.push(snapshot),
     });
     const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
@@ -3135,6 +3262,43 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().reasoningObserved).toBe(false);
     expect(JSON.stringify(child.snapshot())).not.toContain("SECRET-COT");
     expect(JSON.stringify(streamingUpdates)).not.toContain("SECRET-COT");
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "live-reasoning-projection",
+        classification: "invalid-input",
+        reason: "mapping-invalid",
+        disposition: "rejected",
+        count: 1,
+      }),
+    );
+
+    // A schema rejection is the first loss. It must not also be reported as a
+    // later reasoning projection rejection for the same native frame.
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        delta: "x".repeat(16_385),
+      },
+    });
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "rpc-parse",
+        classification: "application-failure",
+        reason: "parser-failed",
+        disposition: "failed",
+        count: 1,
+      }),
+    );
+    expect(
+      diagnostics
+        .snapshot()
+        .buckets.find(
+          (bucket) =>
+            bucket.stage === "live-reasoning-projection" &&
+            bucket.reason === "mapping-invalid",
+        )?.count,
+    ).toBe(1);
 
     // The unambiguous frame that follows is published normally.
     spawned.emitLine({
@@ -3416,9 +3580,11 @@ describe("PiRpcChild", () => {
   it("forwards every bounded session event through the observer in wire order", async () => {
     const processPort = new FakeChildProcessPort();
     const observed: string[] = [];
+    const observedEvents: PiChildSessionEvent[] = [];
     const observer: PiChildSessionObserver = {
       onEvent: (event) => {
         observed.push(event.type);
+        observedEvents.push(event);
         return ok(undefined);
       },
     };
@@ -3528,6 +3694,27 @@ describe("PiRpcChild", () => {
       "extension_ui_request",
       "unknown",
     ]);
+    const nativeCall = observedEvents.find(
+      (event) => event.type === "tool_call" && event.toolCallId === "native-1",
+    );
+    expect(nativeCall).toMatchObject({
+      type: "tool_call",
+      toolCallId: "native-1",
+      toolName: "read",
+      arguments: { path: "README.md" },
+    });
+    expect(
+      nativeCall === undefined ? false : isPiAuthoritativeToolEvent(nativeCall),
+    ).toBe(true);
+    const nativeResult = observedEvents.find(
+      (event) =>
+        event.type === "tool_result" && event.toolCallId === "native-1",
+    );
+    expect(nativeResult).toMatchObject({
+      type: "tool_result",
+      toolCallId: "native-1",
+      result: { content: [{ type: "text", text: "done" }] },
+    });
   });
 
   it("accepts a native assistant record over 1 MiB before settlement", async () => {
@@ -3604,14 +3791,16 @@ describe("PiRpcChild", () => {
     expect(JSON.stringify(result)).not.toContain(rawPayload);
   });
 
-  it("turns observer failures into safe typed child failures without logging payloads", async () => {
+  it("keeps observer failures isolated and records only a bounded outcome", async () => {
     const processPort = new FakeChildProcessPort();
     const logs: Array<Record<string, unknown>> = [];
+    const diagnostics = createChildUiEventDiagnostics();
     const rawPayload = "observer-secret-payload";
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
+      diagnostics,
       logger: {
         debug: () => undefined,
         info: () => undefined,
@@ -3619,8 +3808,9 @@ describe("PiRpcChild", () => {
         error: () => undefined,
       },
       sessionObserver: {
-        onEvent: () => {
-          throw new Error(rawPayload);
+        onEvent: (event) => {
+          if (event.type === "text") throw new Error(rawPayload);
+          return ok(undefined);
         },
       },
     });
@@ -3637,15 +3827,28 @@ describe("PiRpcChild", () => {
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
     await waitFor(() => child.snapshot().status === "running");
     spawned.emitLine({ type: "text", text: rawPayload });
+    spawned.emitLine(terminalAssistantMessage("safe answer"));
+    await responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", assistantOutput: "safe answer" },
+      secretBytes,
+    );
 
     const result = await runPromise;
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.code).toBe("ChildInteractionUnavailable");
-      expect(result.error.safeMessage).not.toContain(rawPayload);
-    }
+    expect(result.isOk()).toBe(true);
     expect(JSON.stringify(logs)).not.toContain(rawPayload);
-    expect(child.snapshot().status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain(rawPayload);
+    expect(JSON.stringify(diagnostics.snapshot())).not.toContain(rawPayload);
+    expect(diagnostics.snapshot().buckets).toContainEqual(
+      expect.objectContaining({
+        stage: "fanout",
+        classification: "application-failure",
+        reason: "fanout-failed",
+        disposition: "failed",
+        count: 1,
+      }),
+    );
     expect(spawned.forceKilled).toBe(true);
   });
 

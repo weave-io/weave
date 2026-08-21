@@ -17,10 +17,14 @@ function hasStaticImplImport(source: string): boolean {
 }
 
 describe("Pi extension entry artifact invariants", () => {
-  it("keeps the loader source free of Pi imports and a static impl import", async () => {
+  it("keeps the preloader free of Pi imports and static attested imports", async () => {
     const source = await Bun.file(LOADER_SOURCE_URL).text();
     expect(hasBarePiImport(source)).toBe(false);
     expect(hasStaticImplImport(source)).toBe(false);
+    expect(source).not.toMatch(
+      /from\s+["']\.\/(?:extension-build-identity|host-module-loader)\.js["']/,
+    );
+    expect(source).toContain("WEAVE_PI_EMBEDDED_BUILD_BINDING");
   });
 
   it("registers only the loader in package pi.extensions", async () => {

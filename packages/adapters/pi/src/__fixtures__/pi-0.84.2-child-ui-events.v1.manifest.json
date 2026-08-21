@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "sanitizerVersion": "1.1.0",
+  "piVersion": "0.84.2",
+  "piExecutableSha256": "c7649907a34aea371063932324a613a6fb2add4cd1ed01d50c7b54807d596d6a",
+  "piPackageSha256": "820f4adc6d61f2cefbc29ce17e9dfd9aa482248d54be5d0dfa2a868ca000c7b0",
+  "piAiVersion": "0.84.2",
+  "piAiPackageSha256": "9575365ce609dca8e1fd4fa72471d55006e1e0f81310c0808f93abc4bc14bbf9",
+  "eventCount": 47,
+  "fixtureBytes": 34706,
+  "captureTimeMs": 1117,
+  "captureCompletedAt": "2026-08-18T21:57:30.890Z",
+  "fixtureSha256": "7aab9c3d4b41baca5b2297564a831221e7b4f37b9d3120130164f616234b5d45",
+  "omitReasoningContent": true,
+  "idEncoding": "ordinals",
+  "bounds": {
+    "maxEvents": 1000,
+    "maxDepth": 32,
+    "maxKeys": 128,
+    "maxArrayLength": 256,
+    "maxStringBytes": 4096,
+    "maxPreviewBytes": 512,
+    "maxTotalBytes": 524288
+  }
+}

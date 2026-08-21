@@ -1,11 +1,59 @@
 import { describe, expect, it } from "bun:test";
+import fixture from "../__fixtures__/pi-0.84.2-child-ui-events.v1.json";
 import {
+  isPiAuthoritativeToolEvent,
+  type PiChildSessionEvent,
   PiChildSessionEventSchema,
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
+  retainedChildSessionEvent,
 } from "../child-session-events.js";
 
 describe("Pi child session event protocol", () => {
+  it("replays every captured Pi 0.84.2 event through the parser boundary", () => {
+    const events = (
+      fixture as {
+        readonly events: readonly {
+          readonly payload: Record<string, unknown>;
+        }[];
+      }
+    ).events;
+    expect(events.length).toBeGreaterThan(0);
+    const parsedTypes: string[] = [];
+    for (const captured of events) {
+      const parsed = parsePiChildSessionEvent(captured.payload);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      parsedTypes.push(parsed.data.type);
+    }
+    expect(parsedTypes).toContain("message_update");
+    expect(parsedTypes).toContain("tool_call");
+    expect(parsedTypes).toContain("tool_result");
+    expect(parsedTypes).toContain("message_end");
+  });
+
+  it("rejects a descriptor mutation instead of invoking its accessor", () => {
+    let reads = 0;
+    const event: Record<string, unknown> = {
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0 },
+    };
+    Object.defineProperty(event.assistantMessageEvent as object, "delta", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return "must not be read";
+      },
+    });
+    const parsed = parsePiChildSessionEvent(event);
+    expect(parsed.success).toBe(true);
+    expect(reads).toBe(0);
+    if (parsed.success) {
+      expect(parsed.data).toEqual({ type: "message_update" });
+      expect(JSON.stringify(parsed.data)).not.toContain("must not be read");
+    }
+  });
+
   it("parses every specified observed event kind", () => {
     const kinds = [
       "message_start",
@@ -110,6 +158,32 @@ describe("Pi child session event protocol", () => {
         error: "command failed",
       });
     }
+
+    const nested = parsePiChildSessionEvent({
+      type: "tool_execution_end",
+      toolName: "bash",
+      result: {
+        toolCallId: "nested-call",
+        stdout: "SENTINEL output",
+        stderr: "password=hidden",
+      },
+      isError: false,
+    });
+    expect(nested.success).toBe(true);
+    if (nested.success) {
+      expect(nested.data).toMatchObject({
+        type: "tool_result",
+        toolCallId: "nested-call",
+        result: {
+          toolCallId: "nested-call",
+          stdout: "[redacted]",
+          stderr: "[redacted]",
+        },
+      });
+      expect(isPiAuthoritativeToolEvent(nested.data)).toBe(true);
+      expect(JSON.stringify(nested.data)).not.toContain("SENTINEL");
+      expect(JSON.stringify(nested.data)).not.toContain("password=hidden");
+    }
   });
 
   it("bounds oversized Pi native tool results without losing their event kind", () => {
@@ -143,12 +217,14 @@ describe("Pi child session event protocol", () => {
       value: "ok",
     });
     expect(parsed.success).toBe(true);
-    if (parsed.success)
+    if (parsed.success) {
       expect(parsed.data).toEqual({
         type: "unknown",
         originalType: "future_event",
         payload: { value: "ok" },
       });
+      expect(retainedChildSessionEvent(parsed.data)).toEqual(parsed.data);
+    }
   });
 
   it("keeps known-schema failures closed and bounds unknown payloads", () => {
@@ -166,6 +242,62 @@ describe("Pi child session event protocol", () => {
       expect(oversizedUnknown.data.originalType).toHaveLength(256);
       expect(Object.keys(oversizedUnknown.data.payload ?? {})).toHaveLength(64);
     }
+  });
+
+  it.each([
+    "turn_end",
+    "agent_end",
+  ] as const)("drops raw reasoning from terminal lifecycle events before retention (%s)", (type) => {
+    const sentinel = "LIVE-TERMINAL-REASONING";
+    const parsed = parsePiChildSessionEvent(
+      type === "turn_end"
+        ? {
+            type,
+            message: {
+              role: "assistant",
+              content: [{ type: "thinking", thinking: sentinel }],
+            },
+            toolResults: [],
+          }
+        : {
+            type,
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "thinking", thinking: sentinel }],
+              },
+            ],
+            willRetry: false,
+          },
+    );
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    // The parser deliberately keeps the bounded host payload as an unknown
+    // event. The retention boundary, not a sentinel-specific observer,
+    // removes this real Pi terminal carrier.
+    expect(JSON.stringify(parsed.data).includes(sentinel)).toBe(true);
+    expect(retainedChildSessionEvent(parsed.data)).toBeUndefined();
+  });
+
+  it("fails closed without invoking an unknown-event originalType accessor", () => {
+    let reads = 0;
+    const event = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(event, "type", {
+      enumerable: true,
+      value: "unknown",
+    });
+    Object.defineProperty(event, "originalType", {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return "turn_end";
+      },
+    });
+
+    expect(
+      retainedChildSessionEvent(event as unknown as PiChildSessionEvent),
+    ).toBeUndefined();
+    expect(reads).toBe(0);
   });
 
   it("rejects unbounded event strings and validates the UI response envelope", () => {

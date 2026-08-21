@@ -1,31 +1,34 @@
 /**
- * Thin Pi extension loader (Pi adapter contract).
+ * Trusted Pi extension preloader entry.
  *
- * Resolves the host-module singleton before evaluating the implementation
- * so a native Bun import of this entry cannot load a nested Pi runtime.
- * This file must not statically import the implementation or any module
- * that imports a Pi package.
+ * This module imports only build-bundled preloader orchestration. The build
+ * emits one self-contained extension.js, so these source seams never become
+ * runtime files that could evaluate before the pinned graph is verified.
  *
- * It also records one fact only this module can know: the absolute path Pi
- * loaded this adapter from. `import.meta.path` is absent on a host module
- * loader that does not provide it, and the accessor stores nothing in that
- * case rather than inventing a path.
+ * The build replaces this fixed-width value after it has emitted the other
+ * runtime outputs. Keeping the value in the entry binds an already-running
+ * entry module to the build that produced its sibling files: an old entry
+ * cannot accept a newer sidecar.
  */
-import {
-  BunPiHostModuleEnvironment,
-  recordHostModuleOutcome,
-  recordPiExtensionEntryPath,
-  resolveHostModules,
-} from "./host-module-loader.js";
+import type { EXTENSION_BUILD_BINDING_PLACEHOLDER } from "./extension-build-identity-types.js";
+import { createWeaveAdapterExtension } from "./extension-preloader-factory.js";
 
-export default async function weaveAdapterExtension(
-  pi: unknown,
-): Promise<void> {
-  recordPiExtensionEntryPath(import.meta.path as unknown);
-  const outcome = await resolveHostModules(new BunPiHostModuleEnvironment());
-  const impl = await import("./extension-impl.js");
-  if (outcome.isOk()) {
-    recordHostModuleOutcome(outcome.value);
-  }
-  return (impl.default as (host: unknown) => void)(pi);
+const WEAVE_PI_EMBEDDED_BUILD_BINDING =
+  "0000000000000000000000000000000000000000000000000000000000000000";
+
+/** Compile-time equality check for the build replacement sentinel. */
+function embeddedBuildBinding(): string {
+  const binding: typeof EXTENSION_BUILD_BINDING_PLACEHOLDER =
+    WEAVE_PI_EMBEDDED_BUILD_BINDING;
+  return binding;
+}
+
+export { readExtensionPreloaderRetentionForTesting } from "./extension-preloader-pinned-runtime.js";
+
+export default function weaveAdapterExtension(pi: unknown): Promise<void> {
+  return createWeaveAdapterExtension(
+    pi,
+    embeddedBuildBinding(),
+    import.meta.path,
+  );
 }

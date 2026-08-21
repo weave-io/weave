@@ -302,6 +302,66 @@ function rowsOf(state: PiChildTranscriptState): readonly string[] {
 // ---------------------------------------------------------------------------
 
 describe("native session messages produce one call entry per tool call", () => {
+  it("keeps useful read, edit, bash, and other-tool previews in replay", () => {
+    const messages = [
+      assistantMessage(
+        [
+          toolCallBlock("read-replay", "read", {
+            path: "src/main.ts",
+            startLine: 4,
+            endLine: 9,
+          }),
+        ],
+        USAGE_REPORTS[0],
+        "toolUse",
+      ),
+      toolResultMessage("read-replay", "read", "lines 4-9", false),
+      assistantMessage(
+        [
+          toolCallBlock("edit-replay", "edit", {
+            path: "src/main.ts",
+            operation: "replace",
+            oldText: "private sentinel",
+          }),
+        ],
+        USAGE_REPORTS[1],
+        "toolUse",
+      ),
+      toolResultMessage("edit-replay", "edit", "edited 1 occurrence", false),
+      assistantMessage(
+        [
+          toolCallBlock("other-replay", "question", {
+            question: "which check?",
+            options: ["unit", "integration"],
+          }),
+        ],
+        USAGE_REPORTS[2],
+        "toolUse",
+      ),
+      toolResultMessage("other-replay", "question", "unit", false),
+    ];
+    const entries: ChildOverlayEntry[] = [];
+    messages.forEach((message, index) => {
+      const mapped = mapNativeSessionEntryToOverlay(
+        { type: "message", id: `replay-${index}`, message },
+        index,
+      );
+      expect(mapped.isOk()).toBe(true);
+      if (mapped.isOk() && mapped.value !== undefined)
+        entries.push(mapped.value);
+    });
+    const joined = rowsOf(transcriptFromOverlayEntries(entries)).join("\n");
+    expect(joined).toContain(
+      "⚙ read(path: src/main.ts, startLine: 4, endLine: 9)",
+    );
+    expect(joined).toContain("⎿ lines 4-9");
+    expect(joined).toContain("⚙ edit(path: src/main.ts, operation: replace)");
+    expect(joined).toContain("⎿ edited 1 occurrence");
+    expect(joined).toContain("⚙ question(question: which check?");
+    expect(joined).toContain("⎿ unit");
+    expect(joined).not.toContain("private sentinel");
+  });
+
   for (const [label, build] of [
     ["native session entries", nativeTranscript],
     ["the live message stream", liveTranscript],
@@ -338,7 +398,8 @@ describe("native session messages produce one call entry per tool call", () => {
       const rows = rowsOf(build());
       const joined = rows.join("\n");
       expect(joined.match(/shuttle · /gu)?.length).toBe(1);
-      expect(joined).toContain("● shuttle · final response");
+      expect(joined).toContain("shuttle · final response");
+      expect(joined).not.toContain("● shuttle · final response");
       expect(joined).toContain("all three checks ran");
       // The bash tool's own empty-output sentence is a TOOL RESULT. It may
       // never wear an assistant reply header.

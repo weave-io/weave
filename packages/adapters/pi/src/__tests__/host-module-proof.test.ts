@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, type ResultAsync } from "neverthrow";
 import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 import {
+  EXTENSION_BUILD_IDENTITY_PROOF_ENV,
+  maybeWriteExtensionBuildIdentityProofLine,
+} from "../extension-build-identity.js";
+import {
   MAX_HOST_MODULE_PROOF_LINE_LENGTH,
   maybeWriteHostModuleProofLine,
   type PiHostModuleEnvironmentError,
@@ -204,6 +208,32 @@ describe("maybeWriteHostModuleProofLine", () => {
       JSON.parse(renderHostModuleProofLine(outcome)),
     );
   });
+
+  it("does not share an env gate with extension build identity proof", () => {
+    const written: string[] = [];
+    const write = (line: string): void => {
+      written.push(line);
+    };
+    expect(EXTENSION_BUILD_IDENTITY_PROOF_ENV).not.toBe(
+      WEAVE_PI_HOST_MODULE_PROOF_ENV,
+    );
+    expect(
+      maybeWriteHostModuleProofLine(sampleOutcome(), {
+        env: { [EXTENSION_BUILD_IDENTITY_PROOF_ENV]: "1" },
+        proofWrite: write,
+      }),
+    ).toBe(false);
+    expect(
+      maybeWriteExtensionBuildIdentityProofLine(
+        { processStartMs: 1, artifactSha256: "a".repeat(64) },
+        {
+          env: { [WEAVE_PI_HOST_MODULE_PROOF_ENV]: "1" },
+          proofWrite: write,
+        },
+      ),
+    ).toBe(false);
+    expect(written).toEqual([]);
+  });
 });
 
 describe("resolveHostModules proof gating", () => {
@@ -248,5 +278,8 @@ describe("capability declarations", () => {
     );
     expect(ids).not.toContain("host-runtime-duplicate");
     expect(ids.some((id) => id.includes("host-runtime"))).toBe(false);
+    expect(ids.some((id) => id.includes("extension-build-identity"))).toBe(
+      false,
+    );
   });
 });

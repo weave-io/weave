@@ -229,8 +229,9 @@ Structure:
   only droppable cell.
 - The right body carries one **assignment** row — one imperative sentence in the
   parent's own words, with no provenance prefix, acceptance clause, scope field,
-  or routing rationale — and beneath it exactly one **Native Line**: a semantic
-  glyph plus the single most meaningful thing the child has produced.
+  or routing rationale — and beneath it exactly one **Native Line**. During live
+  child work that line is the raw reasoning projection
+  `↪ reasoning • <text>`; it is absent when no printable reasoning is available.
 - The bottom edge is a **balanced edge footer**: run, lifecycle phase, elapsed,
   tokens, and cost on the left, and `Ctrl+O expand · Alt+I inspect child` on the
   right. The action side is measured first, so an affordance always outlives a
@@ -239,30 +240,36 @@ Structure:
 - Expanded, the card adds one interior rule and a fixed-height **child
   viewport**: one status strip reading `LIVE · following bottom` while the child
   can still act and `AT BOTTOM · child settled` once it cannot, plus
-  `↑ N rows above` when scrollback exists, over exactly nine transcript rows
-  taken as a literal bottom slice. Nothing in the viewport is summarized,
-  grouped, or relabelled.
+  `↑ N rows above` when scrollback exists, over exactly nine literal bottom
+  card rows. The viewport contains only card-owned assignment, lifecycle,
+  terminal framing, and the live reasoning projection; child assistant/tool
+  activity and payload are never shown or relabelled there.
 
 Behavior:
 
 - The card registers no keybinding. `Ctrl+O` is Pi's own tool-expand action and
   `Alt+I` is the existing Weave picker action (§8.1); both are printed as hints
   only. The expand verb is `expand` while running and `details` once settled.
-- While running, the Native Line shows only the latest meaningful non-whitespace
-  activity. Whitespace-only and control-only fragments are skipped. Reasoning is
-  rendered as a bounded summary only; raw chain-of-thought never reaches the
-  card.
-- Tool activity is the tool NAME plus its CANONICAL STATE — `running`, `done`,
-  or `failed` — derived from the event type. A tool result, partial result, or
-  tool error payload is never read into the card, so command output, file
-  content, raw provider bodies, and exception text cannot reach the Native Line,
-  a viewport row, the settled evidence line, the model-visible
-  `content[0].text`, or the persisted `details`. That payload stays in the child
-  overlay and the child transcript, which the reader opens deliberately.
+- While running, the Native Line is the only child-activity projection and is
+  exactly `↪ reasoning • <text>`. The source is parser-approved generic Pi
+  `thinking_start`, `thinking_delta`, and `thinking_end` text. The card hides
+  assistant output, tool names and status, arguments, results, stdout, stderr,
+  and inspector payload. It uses one TUI-only, process-memory buffer capped at
+  `4 KiB` UTF-8, one parent line capped at `240` code points, and the `100 ms`
+  repaint coalescer. Terminal-control normalization is the only text filter.
+  Non-empty omitted text ends with `… [truncated]`; non-printable input uses
+  `[unprintable reasoning]`; no blank reasoning row is emitted.
+- The settled `weave_delegate` tool result still carries the authoritative child
+  output and the §10 failure semantics. That API result is not a live card
+  activity projection. Raw reasoning never enters tool-result `content`, card
+  `details`, parent messages, or parent model input. The card's persisted view
+  contains only bounded content-free facts and card framing; bounded sanitized
+  tool arguments/results and live assistant text remain inspector-only.
 - Settlement is **native**: the authoritative settlement rewrites the rail state
-  word, the Native Line, and the footer verb, and adds no row, banner, border
-  verdict, or action deck. Nothing on the card ever offers retry, steer, resume,
-  or cancel, in any state.
+  word and footer verb, clears the transient reasoning line, and adds no
+  assistant/tool row, banner, border verdict, or action deck. The authoritative
+  child output remains in the settled tool API result, not as card activity.
+  Nothing on the card ever offers retry, steer, resume, or cancel, in any state.
 - Settlement is the only completion authority. A `message_end` never produces a
   completed card, a settled state, or a success glyph; the final text comes only
   from the §10 result contract.
@@ -282,45 +289,42 @@ Behavior:
   event flow, with stable per-item IDs, placeholder slots for out-of-order
   arrival, and duplicate suppression only where the host states an event's
   identity. Matching text is never treated as identity, so a repeated answer
-  delta is kept. Streamed deltas are accumulated as the exact ordered
-  concatenation of what the child sent, bounded to the shared 4 KiB preview
-  budget, and sanitized once for display, so the card and the inspector cannot
-  disagree about the answer. Updates are coalesced through the injected timer
-  port, and run start, tool error, provider error, queue change, and settlement
-  always publish immediately. Settlement drains final events before
-  classification and always flushes.
+  delta is kept. Inspector assistant deltas are accumulated as the exact ordered
+  concatenation of what the child sent, bounded to the shared preview budget,
+  and sanitized once for display. Reasoning uses a separate live-only buffer and
+  must not share the assistant or durable reducer state. Updates are coalesced
+  through the injected timer port, and run start, tool error, provider error,
+  queue change, and settlement always publish immediately. Settlement drains
+  final events before classification and always flushes.
 - What one `message_update` states is decided by a single mutually exclusive
-  classification shared by every consumer: answer text, the content-free
-  reasoning fact, framing that states nothing, or a typed rejection. A frame
-  that declares an answer carrier and a raw-reasoning carrier at once is
-  rejected fail-closed — it produces no text and no reasoning claim on any
-  surface. A carrier is judged by what it HOLDS, not by the type it declares:
-  prose under a `thinking` / `reasoning` member, or in a nested thinking
-  content block, makes a `text_delta` or `answer` frame a raw-reasoning carrier
-  too, and a carrier the bounded descriptor-safe scan cannot read is rejected.
-- Every path that retains a child event asks ONE shared retention decision and
-  retains the SAME parser-approved event: the transcript reducer, the live
-  overlay projection, the replay-step builder, and the durable child-history
-  port. A `message_update` the classification REJECTED is retained nowhere: it
-  appends no history event, projects no entry, pushes no replay step, and hands
-  the history port no payload, because redaction can only blank the fields a
-  carrier declared and a rejected frame is precisely one whose carriers could
-  not be read — including a thought hidden under an undeclared member, past the
-  bounded scan's depth, or behind enough padding to exhaust it. A
-  `message_update` the classification called REASONING is retained as ONE
-  canonical event the adapter builds — `{ type: "message_update",
-  assistantMessageEvent: { type: "thinking_delta" } }` — and never as the
-  observed frame: blanking the fields a carrier declared still kept the host's
-  own object, and a reasoning frame may state prose in a member no field list
-  names (`metadata`, `provenance`, a `usage` subobject, an unknown key). No
-  nested member, string, block, partial, usage subobject, accessor, or unknown
-  field of such a frame survives into transcript history, replay steps, a
-  rebuild, a search, serialization, or the durable history checkpoint. The
-  canonical event classifies as reasoning again, so a rebuild is a fixed point
-  and the reader still learns exactly one fact: the child reasoned. An
-  unambiguous answer and pure framing are retained unchanged. An event the
-  parser refuses is likewise retained nowhere — history records the checkpoint
-  with no payload.
+  classification shared by every consumer: answer text, a live-only reasoning
+  update plus its content-free retained fact, framing that states nothing, or a
+  typed rejection. A frame that declares an answer carrier and a raw-reasoning
+  carrier at once is rejected fail-closed — it produces no text or live
+  reasoning update on any surface. A carrier is judged by what it HOLDS, not by
+  the type it declares: prose under a `thinking` / `reasoning` member, or in a
+  nested thinking content block, makes a `text_delta` or `answer` frame a
+  raw-reasoning carrier too, and a carrier the bounded descriptor-safe scan
+  cannot read is rejected. Only generic `thinking_start` / `thinking_delta` /
+  `thinking_end` carries live reasoning; no summary type or derived summary is
+  a substitute.
+- Every Weave-owned durable path asks one shared retention decision and keeps
+  the same parser-approved content-free event for generic thinking: the
+  transcript reducer, replay-step builder, rebuild, search, serialization, and
+  native-session read path used by Weave. The live reasoning projector is a
+  separate authenticated fanout before retention; it alone receives the bounded
+  display text. A `message_update` the classification REJECTED is retained
+  nowhere: it appends no history event, projects no retained entry, pushes no
+  replay step, and hands no payload to the history port. A classified reasoning
+  frame becomes only the canonical content-free event
+  `{ type: "message_update", assistantMessageEvent: { type: "thinking_delta" } }`
+  on those durable paths. No nested member, string, block, partial, usage
+  subobject, accessor, or unknown field survives there. An unambiguous answer
+  and pure framing are retained unchanged. An event the parser refuses is
+  likewise retained nowhere — history records the checkpoint with no payload.
+  The live text is never copied into Weave Runtime Store records, checkpoints,
+  transcript/replay/search state, parent messages or model input, card details,
+  logs, diagnostics, artifacts, reports, or files.
 - All child-sourced text is sanitized for terminal control sequences before
   render, and box-drawing glyphs are reachable only through the frame
   primitives, so child text structurally cannot forge a frame.
@@ -352,13 +356,14 @@ Required structure, in order:
   immediately after the child's name and appears exactly once. Growth is
   two-row before the title is dropped; row 2 sheds subtask first, then plan.
 - A **Pi-native transcript pane** on the left: role gutters, understated read /
-  edit / bash calls and results, reasoning as a bounded summary only, and plain
-  streaming and final assistant responses. Raw chain-of-thought is never
-  rendered. Required content, in order: the originating prompt first, then user
-  messages, assistant text, reasoning summaries, tool calls and results, errors,
-  retry dividers, and images, composed with native components through the opaque
-  TUI/theme port. The child ID may appear only on the transcript's bootstrap
-  row.
+  edit / bash calls and results, the live raw-reasoning row, and plain streaming
+  and final assistant responses. Generic Pi `thinking_start`, `thinking_delta`,
+  and `thinking_end` text renders only through the bounded live projector as
+  `↪ reasoning • <text>`. Required content, in order: the originating prompt
+  first, then user messages, live reasoning, tool calls and results, the live
+  assistant reply, errors, retry dividers, and images, composed with the opaque
+  TUI/theme port. The child ID may appear only on the transcript's
+  bootstrap row. Retained generic-thinking events remain content-free.
 - A **Status Matrix rail** on the right: an aligned key/value matrix grouped
   into lifecycle, work, and spend, with an inverse alert pair above the matrix
   when a tool fails. The rail is the only place child telemetry appears. Below
@@ -373,9 +378,11 @@ Required structure, in order:
 
 Required behavior:
 
-- Live children stream through the §6 event reducer; historical children load
-  bounded pages from the native session file with cursors in both directions.
-  The overlay must never load an entire large transcript.
+- Live children stream through the §6 event reducer and a separate transient
+  reasoning projector; historical children load bounded pages from the native
+  session file with cursors in both directions. The overlay must never load an
+  entire large transcript or reconstruct raw reasoning from native-session
+  history.
 - Search is **rail search**: `/` on an empty draft prepends a SEARCH section to
   the Status Matrix, the transcript grows a two-column marker gutter, `n` / `N`
   (aliases `j` / `k`) move the rail cursor, and the shared transcript window
@@ -428,7 +435,11 @@ Required behavior:
 - Settlement adds no chrome. The authoritative final response, the safe failure
   line, the cancellation record, and the retry record are ordinary transcript
   events. Recovery stays live, and its attempt lineage is read in the transcript
-  and on the rail.
+  and on the rail. The inspector keeps one live reasoning buffer capped at
+  `4 KiB` UTF-8, renders at most three reasoning rows, and coalesces repaints at
+  `50 ms`. It uses terminal-control normalization only; non-empty omitted text
+  ends with `… [truncated]`, non-printable text uses `[unprintable reasoning]`,
+  and no blank reasoning row is rendered.
 - The overlay row budget matches Pi's percentage floor, vertical margins, and
   top-only `maxHeight` truncation. It removes transcript rows before the owned
   editor or bottom border can be clipped on a short terminal. A narrow or short
@@ -472,7 +483,16 @@ Required behavior:
   request with its own session context, so a refresh belonging to a replaced
   session can never clear or drop a newer session's queued repaint.
 - A renderer failure falls back to the existing custom-editor inspection path
-  with the same transcript.
+  with the same transcript. The inspector shows raw reasoning, bounded sanitized
+  correlated tool arguments/results, and the live assistant reply. One tool
+  call updates one row from running to terminal state; the tool and assistant
+  reducers remain independent of reasoning success.
+- The inspector reasoning buffer exists only in process memory and is cleared on
+  focus change, close, settlement, generation replacement, component disposal,
+  and session shutdown. Saved state, source ports, replay, search, checkpoints,
+  Runtime Store, logs, diagnostics, proof output, and files contain no raw
+  reasoning. Pi's host-managed native child session may retain it under Pi's
+  rules, but Weave never duplicates that host data.
 - Pi does not enable terminal mouse reporting, so wheel events cannot reach the
   overlay. Mouse-wheel scrolling is outside this contract until Pi exposes a
   mouse input surface.
@@ -692,7 +712,9 @@ session path, branch payload, or raw event.
 The following values are private to the adapter and must never cross into the
 parent model, controller/workflow result, Runtime Store, journal, logs, health,
 failures, telemetry, diagnostics, acceptance proof, smoke artifacts, package
-exports, or network/remote sync:
+exports, or network/remote sync. The sole live exception is the bounded
+process-memory reasoning projection defined in §6 and §7; it is UI-only and is
+released at its lifecycle edges:
 
 - full raw transcript and intermediate assistant messages
 - thinking text
@@ -801,6 +823,8 @@ log file.
   `0.84.2` is not a proven fallback host. Historical native-session proof
   material may name Pi `0.84.1`; it does not define the current fallback
   contract.
+- Host version floor stays `0.81.1`, with no maximum. The Pi-native live proof
+  target is Pi `0.84.2`.
 - Required probes: persistent RPC session and restore, `appendEntry`,
   `get_entries`/`get_tree`, and custom session directory support.
 - Pi addresses native sessions by filesystem path. Containment is proven by the
@@ -892,6 +916,37 @@ health ready and uses legacy visible and child settlement. It does not enter
 health-only mode and does not select the overlay fallback. The `0.81.1` floor
 remains supported through the legacy path. The adapter makes no proven fallback
 host claim for Pi `0.84.2` until Task 15's exact real-host proof passes.
+### 16.1 Child-streaming verification boundary
+
+The final live proof must use an exact identity gate before it asserts a UI
+lane. Independently verify the source-input digest, built output digests,
+path-free build manifest, loaded artifact digest, extension load time, and
+process start time. A loaded process is current only when those values agree
+with the on-disk artifact and manifest. The gate rejects stale-on-disk,
+manifest-mismatch, corrupt, missing, and otherwise unverifiable states; file
+modification time alone is not identity evidence. A build-A-loaded/build-B-on-
+disk control, a corrupted manifest or output control, and a fresh-process
+control are required.
+
+The Pi `0.84.2` fixture is captured at Pi's public extension/RPC event boundary
+through real Pi session machinery. It preserves event kind, own enumerable key
+shape, value kind, ordering, lifecycle phase, tool correlation, bounded tool
+arguments/results, and incremental assistant ordering. The capture omits generic
+thinking text online before any write. It retains only the `thinking_start` /
+`thinking_delta` / `thinking_end` structure, saturated byte/line counts, and a
+truncation flag. No reasoning prefix, suffix, hash, encoded value, exception,
+transcript, screenshot, or terminal capture is proof data. Replay may inject a
+controlled reasoning string in memory only.
+
+Diagnostics are content-free aggregates: closed stage and reason codes,
+saturated counts, and bounded first/last times. They contain no reasoning,
+assistant text, tool payload, credentials, paths, prompts, or exception text.
+Replay and red controls cover stale identity, malformed or mixed carriers,
+stale generation and wrong-child updates, bounds and truncation honesty,
+terminal-control safety, durable-sink isolation, lifecycle release, missing
+assistant deltas, broken tool correlation, duplicate terminal tools, and parent
+card leakage. The four live lanes are parent raw reasoning live, inspector raw
+reasoning live, inspector tool details, and inspector assistant reply live.
 
 ## 17. Superseded rules
 
@@ -904,7 +959,7 @@ implementation may apply a superseded rule alongside its replacement.
 | Persist an adapter-owned JSONL store with `index.v1.json`, per-child `checkpoint.v1.json`, quotas, trimming, quarantine, and orphan pruning. | Native session files plus bounded parent refs (§4) and a derivative metadata cache (§5); explicit cleanup with tombstones only (§2). |
 | Migrate or quarantine prior V1 history. | No migration (ADR 0014). Weave neither reads nor deletes prior JSONL history. |
 | Expose only a transient 4 KiB inspector view and discard child history. | Delegation card (§6), child inspector overlay (§7), picker and keys (§8). |
-| Render each delegation run as a fixed three-line compact tool block with an expanded current item. | One framed inline delegation card with a status-first rail, an assignment row, a Native Line, a balanced edge footer, and a nine-row expanded child viewport (§6). |
+| Render each delegation run as a fixed three-line compact tool block with an expanded current item. | One framed inline delegation card with a status-first rail, an assignment row, the live `↪ reasoning • <text>` Native Line, a balanced edge footer, and a nine-row expanded card viewport with no child assistant/tool payload (§6). |
 | Offer a per-child overlay view mode of `full` or `compact`, toggled in-overlay by `Ctrl+O`. | Removed. The overlay has one view; `Ctrl+O` is Pi's own tool-expand action for the §6 card and is never registered by Weave (§7, §8.1). |
 | Render a header telemetry row for the focused child in the overlay. | Telemetry lives only on the Status Matrix rail; the header carries identity and parent context (§7). |
 | Reach in-overlay search through `Ctrl+F` as the primary opener. | Rail search through empty-draft `/`, with `n` / `N` movement and `Enter` accept. `Ctrl+F` survives only as a conflict-checked alias that is normally skipped (§7, §8.1). |

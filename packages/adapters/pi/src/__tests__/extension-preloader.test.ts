@@ -1,0 +1,525 @@
+import { describe, expect, it } from "bun:test";
+import { readExtensionPreloaderRetentionForTesting } from "../extension.js";
+import {
+  computeExtensionBuildBinding,
+  createExtensionBuildManifest,
+  EXTENSION_BUILD_BINDING_PLACEHOLDER,
+  EXTENSION_RUNTIME_OUTPUT_NAMES,
+  MAX_EXTENSION_IN_FLIGHT_PINNED_BYTES,
+  renderExtensionBuildManifest,
+  sha256Hex,
+} from "../extension-build-identity.js";
+import {
+  makeRealTempRoot,
+  removeRealTempRoot,
+} from "./fakes/real-temp-root.js";
+
+const SUBJECT = "1".repeat(40);
+const BUILD_COMPLETED_AT = "1970-01-01T00:00:00.100Z";
+const EVALUATED_KEY = "__weaveExtensionPreloaderTestEvaluated";
+const GATE_KEY = "__weaveExtensionPreloaderTestGate";
+
+type Fixture = {
+  readonly directory: string;
+  readonly entryPath: string;
+  readonly implementationPath: string;
+};
+
+function digest(contents: string): string {
+  return sha256Hex(new TextEncoder().encode(contents))._unsafeUnwrap();
+}
+
+function expectNoPinnedRuntime(): void {
+  expect(readExtensionPreloaderRetentionForTesting()).toMatchObject({
+    retainedPinnedBytes: 0,
+    retainedPinnedEntries: 0,
+    inFlightLoadCount: 0,
+    inFlightPinnedBytes: 0,
+    activeLoaderRegistrations: 0,
+  });
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 100; index += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("test setup: condition did not settle");
+}
+
+async function compileLoader(entryPath: string): Promise<string> {
+  const slash = entryPath.lastIndexOf("/");
+  const result = await Bun.build({
+    entrypoints: [new URL("../extension.ts", import.meta.url).pathname],
+    outdir: entryPath.slice(0, slash),
+    target: "bun",
+    format: "esm",
+  });
+  if (!result.success) {
+    throw new Error(result.logs.map((log) => log.message).join("\n"));
+  }
+  const output = result.outputs[0];
+  if (output === undefined) throw new Error("loader output missing");
+  return new Response(output).text();
+}
+
+function replaceEmbeddedBinding(source: string, binding: string): string {
+  const pattern = new RegExp(
+    `((?:const|var)\\s+WEAVE_PI_EMBEDDED_BUILD_BINDING\\s*=\\s*")${EXTENSION_BUILD_BINDING_PLACEHOLDER}("\\s*;)`,
+    "u",
+  );
+  const replaced = source.replace(pattern, `$1${binding}$2`);
+  if (replaced === source) throw new Error("loader binding marker missing");
+  return replaced;
+}
+
+function digestForRuntimeOutput(
+  name: string,
+  loader: string,
+  identity: string,
+  implementation: string,
+  host: string,
+): string {
+  switch (name) {
+    case "extension":
+      return digest(loader);
+    case "extension-build-identity":
+      return digest(identity);
+    case "extension-impl":
+      return digest(implementation);
+    case "host-module-loader":
+      return digest(host);
+    default:
+      return digest(host);
+  }
+}
+
+function implementationSource(): string {
+  return `
+    import "./extension-build-identity.js";
+    import "./host-module-loader.js";
+    globalThis[${JSON.stringify(EVALUATED_KEY)}] =
+      Number(globalThis[${JSON.stringify(EVALUATED_KEY)}] ?? 0) + 1;
+    export function setLoadedPiExtensionIdentity(_identity) {}
+    export default (pi) => { pi.invoked = true; };
+  `;
+}
+
+function identitySource(swapPath: string | undefined, swapped: string): string {
+  const swap =
+    swapPath === undefined
+      ? ""
+      : `await Bun.write(${JSON.stringify(swapPath)}, ${JSON.stringify(swapped)});`;
+  return `
+    ${swap}
+    export function extensionProcessStartMs() { return 1; }
+    export function maybeWriteExtensionBuildIdentityProofLine() { return false; }
+  `;
+}
+
+function hostSource(): string {
+  return `
+    export class BunPiHostModuleEnvironment {}
+    export function recordHostModuleOutcome(_outcome) {}
+    export function recordPiExtensionEntryPath(_path) {}
+    export function resolveHostModules() {
+      return Promise.resolve({ isOk: () => true, value: {} });
+    }
+  `;
+}
+
+async function createFixture(
+  options: {
+    readonly identitySource?: string | ((implementationPath: string) => string);
+    readonly implementationSource?:
+      | string
+      | ((input: {
+          readonly directory: string;
+          readonly implementationPath: string;
+        }) => string);
+    readonly hostSource?: string;
+  } = {},
+): Promise<Fixture> {
+  const directory = await makeRealTempRoot("weave-preloader-test");
+  const entryPath = `${directory}/extension.js`;
+  const identityPath = `${directory}/extension-build-identity.js`;
+  const implementationPath = `${directory}/extension-impl.js`;
+  const hostPath = `${directory}/host-module-loader.js`;
+  const loaderPlaceholder = await compileLoader(entryPath);
+  const identity =
+    typeof options.identitySource === "function"
+      ? options.identitySource(implementationPath)
+      : (options.identitySource ??
+        identitySource(undefined, "export default 0;"));
+  const implementation =
+    typeof options.implementationSource === "function"
+      ? options.implementationSource({ directory, implementationPath })
+      : (options.implementationSource ?? implementationSource());
+  const host = options.hostSource ?? hostSource();
+  const placeholderDigests = EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+    name,
+    sha256: digestForRuntimeOutput(
+      name,
+      loaderPlaceholder,
+      identity,
+      implementation,
+      host,
+    ),
+  }));
+  const binding = computeExtensionBuildBinding({
+    subject: SUBJECT,
+    dirty: false,
+    buildInputs: ["a".repeat(64)],
+    runtimeOutputs: placeholderDigests,
+    buildCompletedAt: BUILD_COMPLETED_AT,
+  })._unsafeUnwrap();
+  const loader = replaceEmbeddedBinding(loaderPlaceholder, binding);
+  const finalOutputs = EXTENSION_RUNTIME_OUTPUT_NAMES.map((name) => ({
+    name,
+    sha256: digestForRuntimeOutput(
+      name,
+      loader,
+      identity,
+      implementation,
+      host,
+    ),
+  }));
+  const manifest = createExtensionBuildManifest({
+    subject: SUBJECT,
+    dirty: false,
+    buildBinding: binding,
+    buildInputs: ["a".repeat(64)],
+    outputs: finalOutputs,
+    buildCompletedAt: BUILD_COMPLETED_AT,
+  })._unsafeUnwrap();
+  await Bun.write(entryPath, loader);
+  await Bun.write(identityPath, identity);
+  await Bun.write(implementationPath, implementation);
+  await Bun.write(hostPath, host);
+  await Bun.write(
+    `${directory}/extension-build-identity.json`,
+    renderExtensionBuildManifest(manifest)._unsafeUnwrap(),
+  );
+  return { directory, entryPath, implementationPath };
+}
+
+async function loadFixture(
+  fixture: Fixture,
+): Promise<(pi: unknown) => Promise<void>> {
+  const extension = (await import(
+    `${fixture.entryPath}?test=${crypto.randomUUID()}`
+  )) as { default: (pi: unknown) => Promise<void> };
+  return extension.default;
+}
+
+async function invokeFixture(fixture: Fixture): Promise<{ invoked: boolean }> {
+  (globalThis as Record<string, unknown>)[EVALUATED_KEY] = 0;
+  const pi: { invoked?: boolean } = {};
+  await (await loadFixture(fixture))(pi);
+  return { invoked: pi.invoked === true };
+}
+
+async function copyFixtureFiles(from: Fixture, to: Fixture): Promise<void> {
+  for (const fileName of [
+    "extension.js",
+    "extension-build-identity.js",
+    "extension-impl.js",
+    "host-module-loader.js",
+    "extension-build-identity.json",
+  ]) {
+    await Bun.write(
+      `${to.directory}/${fileName}`,
+      await Bun.file(`${from.directory}/${fileName}`).arrayBuffer(),
+    );
+  }
+}
+
+describe("trusted extension preloader", () => {
+  it("accepts repeated valid loads and releases all pinned bytes after each graph", async () => {
+    const fixture = await createFixture();
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        expect(await invokeFixture(fixture)).toEqual({ invoked: true });
+        expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(1);
+        expectNoPinnedRuntime();
+        const health = readExtensionPreloaderRetentionForTesting();
+        expect(JSON.stringify(health)).not.toContain(fixture.directory);
+        expect(JSON.stringify(health)).not.toContain("export default");
+      }
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("rejects excess concurrent loads without a second pinned graph", async () => {
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    (globalThis as Record<string, unknown>)[GATE_KEY] = { wait: gate };
+    const fixture = await createFixture({
+      identitySource: `
+        await globalThis[${JSON.stringify(GATE_KEY)}].wait;
+        ${identitySource(undefined, "export default 0;")}
+      `,
+    });
+    try {
+      const extension = await loadFixture(fixture);
+      const firstPi: { invoked?: boolean } = {};
+      const first = extension(firstPi);
+      await waitFor(() => {
+        const snapshot = readExtensionPreloaderRetentionForTesting();
+        return (
+          snapshot.inFlightLoadCount === 1 &&
+          snapshot.retainedPinnedEntries === 4
+        );
+      });
+
+      const secondPi: { invoked?: boolean } = {};
+      await extension(secondPi);
+      expect(secondPi.invoked).toBeUndefined();
+      const during = readExtensionPreloaderRetentionForTesting();
+      expect(during.inFlightLoadCount).toBe(1);
+      expect(during.inFlightPinnedBytes).toBeGreaterThan(0);
+      expect(during.inFlightPinnedBytes).toBeLessThanOrEqual(
+        MAX_EXTENSION_IN_FLIGHT_PINNED_BYTES,
+      );
+      expect(during.retainedPinnedEntries).toBe(4);
+      expect(during.activeLoaderRegistrations).toBe(1);
+
+      releaseGate();
+      await first;
+      expect(firstPi.invoked).toBe(true);
+      expectNoPinnedRuntime();
+    } finally {
+      releaseGate();
+      delete (globalThis as Record<string, unknown>)[GATE_KEY];
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("rejects a late loader callback after disposal", async () => {
+    const fixture = await createFixture({
+      implementationSource: `
+        export function setLoadedPiExtensionIdentity(_identity) {}
+        export default async (pi) => {
+          try {
+            await import("./late-runtime.js");
+            pi.lateAccess = true;
+          } catch {
+            pi.lateAccess = false;
+          }
+          pi.invoked = true;
+        };
+      `,
+    });
+    await Bun.write(
+      `${fixture.directory}/late-runtime.js`,
+      "export default { late: true };",
+    );
+    try {
+      const pi: { invoked?: boolean; lateAccess?: boolean } = {};
+      await (await loadFixture(fixture))(pi);
+      expect(pi).toEqual({ invoked: true, lateAccess: false });
+      expectNoPinnedRuntime();
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("releases pinned bytes when post-graph activation fails", async () => {
+    const identityFailure = await createFixture({
+      identitySource: identitySource(undefined, "export default 0;").replace(
+        "return 1",
+        "return -1",
+      ),
+    });
+    const hostFailure = await createFixture({
+      hostSource: `
+        export class BunPiHostModuleEnvironment {}
+        export function recordHostModuleOutcome(_outcome) {}
+        export function recordPiExtensionEntryPath(_path) {}
+        export function resolveHostModules() {
+          throw new Error("host resolution failed");
+        }
+      `,
+    });
+    try {
+      expect(await invokeFixture(identityFailure)).toEqual({ invoked: false });
+      expectNoPinnedRuntime();
+      expect(await invokeFixture(hostFailure)).toEqual({ invoked: false });
+      expectNoPinnedRuntime();
+    } finally {
+      await removeRealTempRoot(identityFailure.directory);
+      await removeRealTempRoot(hostFailure.directory);
+    }
+  });
+
+  it("blocks an implementation replaced before factory evaluation", async () => {
+    const fixture = await createFixture();
+    try {
+      await Bun.write(
+        fixture.implementationPath,
+        "export default (pi) => { pi.invoked = true; };",
+      );
+      expect(await invokeFixture(fixture)).toEqual({ invoked: false });
+      expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(0);
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("serves pinned bytes when disk swaps after verification and before import", async () => {
+    const swapped = "export default (pi) => { pi.invoked = false; };";
+    const fixture = await createFixture({
+      identitySource: (implementationPath) =>
+        identitySource(implementationPath, swapped),
+    });
+    try {
+      expect(await invokeFixture(fixture)).toEqual({ invoked: true });
+      expect(await Bun.file(fixture.implementationPath).text()).toBe(swapped);
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("rejects a stale entry when a newer manifest is installed", async () => {
+    const fixture = await createFixture();
+    try {
+      const manifestPath = `${fixture.directory}/extension-build-identity.json`;
+      const manifest = (await Bun.file(manifestPath).json()) as Record<
+        string,
+        unknown
+      >;
+      await Bun.write(
+        manifestPath,
+        JSON.stringify({ ...manifest, buildBinding: "f".repeat(64) }),
+      );
+      expect(await invokeFixture(fixture)).toEqual({ invoked: false });
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("keeps an old parent stale and reloads a complete new build", async () => {
+    const oldBuild = await createFixture();
+    const newBuild = await createFixture({
+      implementationSource: `${implementationSource()}\n// newer build`,
+    });
+    try {
+      const oldExtension = await loadFixture(oldBuild);
+      await copyFixtureFiles(newBuild, oldBuild);
+
+      (globalThis as Record<string, unknown>)[EVALUATED_KEY] = 0;
+      const oldParentPi: { invoked?: boolean } = {};
+      await oldExtension(oldParentPi);
+      expect(oldParentPi.invoked).toBeUndefined();
+      expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(0);
+
+      (globalThis as Record<string, unknown>)[EVALUATED_KEY] = 0;
+      const reloadedPi: { invoked?: boolean } = {};
+      await (await loadFixture(oldBuild))(reloadedPi);
+      expect(reloadedPi.invoked).toBe(true);
+      expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(1);
+    } finally {
+      await removeRealTempRoot(oldBuild.directory);
+      await removeRealTempRoot(newBuild.directory);
+    }
+  });
+
+  it("fails closed for malformed pinned source and replaced identity or host bytes", async () => {
+    const malformed = await createFixture({
+      implementationSource: "export default (",
+    });
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        expect(await invokeFixture(malformed)).toEqual({ invoked: false });
+        expectNoPinnedRuntime();
+      }
+    } finally {
+      await removeRealTempRoot(malformed.directory);
+    }
+
+    for (const fileName of [
+      "extension-build-identity.js",
+      "host-module-loader.js",
+    ]) {
+      const fixture = await createFixture();
+      try {
+        await Bun.write(
+          `${fixture.directory}/${fileName}`,
+          "export const corrupt = true;",
+        );
+        expect(await invokeFixture(fixture)).toEqual({ invoked: false });
+        expectNoPinnedRuntime();
+      } finally {
+        await removeRealTempRoot(fixture.directory);
+      }
+    }
+
+    const missing = await createFixture();
+    try {
+      await Bun.file(`${missing.directory}/host-module-loader.js`).delete();
+      expect(await invokeFixture(missing)).toEqual({ invoked: false });
+      expectNoPinnedRuntime();
+    } finally {
+      await removeRealTempRoot(missing.directory);
+    }
+
+    const malformedManifest = await createFixture();
+    try {
+      await Bun.write(
+        `${malformedManifest.directory}/extension-build-identity.json`,
+        "{ malformed",
+      );
+      expect(await invokeFixture(malformedManifest)).toEqual({
+        invoked: false,
+      });
+      expectNoPinnedRuntime();
+    } finally {
+      await removeRealTempRoot(malformedManifest.directory);
+    }
+  });
+
+  it("fails closed when the verified graph requests an unpinned local module", async () => {
+    const fixture = await createFixture({
+      implementationSource: `
+        import "./mutable-runtime.js";
+        ${implementationSource()}
+      `,
+    });
+    try {
+      expect(await invokeFixture(fixture)).toEqual({ invoked: false });
+      expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(0);
+    } finally {
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+
+  it("fails closed for a mutable parent-relative module", async () => {
+    const fixture = await createFixture({
+      implementationSource: ({ directory }) => {
+        const directoryName = directory.slice(directory.lastIndexOf("/") + 1);
+        return `
+          import "../${directoryName}-mutable-runtime.js";
+          ${implementationSource()}
+        `;
+      },
+    });
+    const directoryName = fixture.directory.slice(
+      fixture.directory.lastIndexOf("/") + 1,
+    );
+    const mutablePath = `${fixture.directory}/../${directoryName}-mutable-runtime.js`;
+    await Bun.write(
+      mutablePath,
+      `globalThis[${JSON.stringify(EVALUATED_KEY)}] = 99; export default {};`,
+    );
+    try {
+      expect(await invokeFixture(fixture)).toEqual({ invoked: false });
+      expect((globalThis as Record<string, unknown>)[EVALUATED_KEY]).toBe(0);
+    } finally {
+      await Bun.file(mutablePath).delete();
+      await removeRealTempRoot(fixture.directory);
+    }
+  });
+});

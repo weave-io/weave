@@ -10,13 +10,12 @@ import {
   errAsync,
   ok,
   okAsync,
-  type Result,
+  Result,
   type ResultAsync,
 } from "neverthrow";
 import type { PiModelIdentityBody } from "./child-control-bodies.js";
 import {
   parsePiChildSessionEvent,
-  preserveUnknownChildEvent,
   retainedChildSessionEvent,
 } from "./child-session-events.js";
 import {
@@ -24,6 +23,11 @@ import {
   PiChildTranscriptReducer,
   type PiChildTranscriptState,
 } from "./child-transcript.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  recordChildUiEventFailure,
+  recordChildUiEventInvalid,
+} from "./child-ui-event-diagnostics.js";
 import type { JsonValue } from "./strict-json.js";
 
 export const ROOT_NODE_ID = "root";
@@ -109,8 +113,46 @@ export class PiChildInspectionRegistry {
   private tail: ResultAsync<void, PiChildInspectionHistoryError> =
     okAsync(undefined);
   private firstFailure: PiChildInspectionHistoryError | undefined;
+  private readonly diagnostics: ChildUiEventDiagnosticsSink | undefined;
 
-  constructor(private readonly history?: PiChildInspectionHistoryPort) {}
+  constructor(
+    private readonly history?: PiChildInspectionHistoryPort,
+    diagnostics?: ChildUiEventDiagnosticsSink,
+  ) {
+    this.diagnostics = diagnostics;
+  }
+
+  private invokeInterruptedCallback(callback: (() => void) | undefined): void {
+    if (callback === undefined) return;
+    Result.fromThrowable(callback, () => undefined)().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "tree-projection",
+          "callback-failed",
+        ),
+    );
+  }
+
+  private invokeTerminalCallback(
+    callback: ((snapshot: PiChildTreeNode) => void) | undefined,
+    snapshot: PiChildTreeNode,
+  ): void {
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => callback(snapshot),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () =>
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "tree-projection",
+          "callback-failed",
+        ),
+    );
+  }
 
   private enqueue(
     operation: () => ResultAsync<void, PiChildInspectionHistoryError>,
@@ -125,7 +167,14 @@ export class PiChildInspectionRegistry {
       })
       .andThen(operation)
       .mapErr((failure) => {
-        this.firstFailure ??= failure;
+        if (this.firstFailure === undefined) {
+          this.firstFailure = failure;
+          recordChildUiEventFailure(
+            this.diagnostics,
+            "checkpoint",
+            "checkpoint-failed",
+          );
+        }
         return failure;
       });
     this.tail = next;
@@ -222,15 +271,51 @@ export class PiChildInspectionRegistry {
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     if (!this.live.has(id)) return okAsync(undefined);
     const parsed = parsePiChildSessionEvent(event);
+    if (!parsed.success) {
+      recordChildUiEventInvalid(
+        this.diagnostics,
+        "durable-normalization",
+        "event-invalid",
+      );
+    }
     const retained = parsed.success
       ? retainedChildSessionEvent(parsed.data)
       : undefined;
     if (retained !== undefined) {
       const reducer =
         this.transcriptStates.get(id) ?? new PiChildTranscriptReducer();
-      reducer.applyEvent(retained);
+      const reduced = Result.fromThrowable(
+        () => reducer.applyEvent(retained),
+        () => undefined,
+      )();
+      if (reduced.isErr() || reduced.value.isErr()) {
+        recordChildUiEventFailure(
+          this.diagnostics,
+          "checkpoint",
+          "checkpoint-failed",
+        );
+        // An impossible native tool event is not a durable fact. Keeping it in
+        // history after the reducer rejected it would let replay manufacture
+        // the same invalid row later. Keep the queue ordered while making the
+        // checkpoint an honest no-op.
+        return this.enqueue(() => okAsync(undefined));
+      }
       this.transcriptStates.set(id, reducer);
-      this.transcriptListener?.(id);
+      const listener = this.transcriptListener;
+      if (listener !== undefined) {
+        Result.fromThrowable(
+          () => listener(id),
+          () => undefined,
+        )().match(
+          () => undefined,
+          () =>
+            recordChildUiEventFailure(
+              this.diagnostics,
+              "tree-projection",
+              "callback-failed",
+            ),
+        );
+      }
     }
     return this.enqueue(() =>
       (this.history?.checkpoint?.(id, retained) ?? okAsync(undefined)).map(
@@ -326,7 +411,7 @@ export class PiChildInspectionRegistry {
       (this.history?.interrupted?.(id) ?? okAsync(undefined)).map(() => {
         const snapshot = registration.snapshot();
         this.records.set(id, { ...snapshot, status: "cancelled" });
-        registration.onInterrupted?.();
+        this.invokeInterruptedCallback(registration.onInterrupted);
         return undefined;
       }),
     );
@@ -347,7 +432,7 @@ export class PiChildInspectionRegistry {
       ).map(() => {
         this.records.set(id, terminal);
         this.live.delete(id);
-        registration?.onTerminal?.(terminal);
+        this.invokeTerminalCallback(registration?.onTerminal, terminal);
         return undefined;
       }),
     );

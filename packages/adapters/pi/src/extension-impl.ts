@@ -128,6 +128,10 @@ import {
   type PiInspectorChild,
   type PiInspectorView,
 } from "./child-inspector.js";
+import {
+  createPiLiveReasoningRegistry,
+  type PiLiveReasoningRegistry,
+} from "./child-live-reasoning.js";
 import type { PiChildMetadataCache } from "./child-metadata-cache.js";
 import type {
   PiNativeSessionEntryPage,
@@ -225,6 +229,12 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
+import {
+  type ChildUiEventDiagnosticsSink,
+  type ChildUiEventDiagnosticsSnapshot,
+  createChildUiEventDiagnostics,
+  EMPTY_CHILD_UI_EVENT_DIAGNOSTICS,
+} from "./child-ui-event-diagnostics.js";
 import type {
   CodexFastAttemptSink,
   CodexFastIntent,
@@ -282,6 +292,13 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  type ExtensionBuildIdentityHealth,
+  type ExtensionLoadedIdentity,
+  evaluateExtensionBuildIdentity,
+  readExtensionBuildIdentityHealth,
+  unverifiableExtensionLoadIdentity,
+} from "./extension-build-identity.js";
+import {
   createForegroundPlanDisplayState,
   FOREGROUND_PLAN_ENTRY_TYPE,
   foregroundPlanEntry,
@@ -301,6 +318,7 @@ import {
   BunHostPackageReader,
   type HostPackageReader,
   hostRuntimeHealthLineFromOutcome,
+  renderExtensionIdentityHealthLine,
   renderHostCapabilityGapDiagnostic,
 } from "./host-compatibility.js";
 import {
@@ -314,6 +332,7 @@ import {
 import {
   getHostModuleOutcome,
   getHostModuleProvenance,
+  getPiExtensionEntryPath,
   type PiHostModuleProvenance,
 } from "./host-module-loader.js";
 import { CODEX_PROVIDER_SUBPATH_SPECIFIER } from "./host-module-redirect.js";
@@ -369,6 +388,7 @@ import type {
 import {
   type ChildExtensionArgsResolution,
   collectPiExtensionInventoryFromHost,
+  deriveChildExtensionFallbackPaths,
   resolveChildExtensionSpawnArgs,
 } from "./pi-extension-inventory-port.js";
 import {
@@ -650,6 +670,20 @@ function registerPrimaryModelFallbackRenderer(
   );
 }
 
+let loadedPiExtensionIdentity: ExtensionLoadedIdentity =
+  unverifiableExtensionLoadIdentity();
+
+/**
+ * Called by the thin loader after it hashes the complete runtime output graph.
+ * The setter is intentionally narrow: the implementation owns the generation
+ * snapshot, while the loader owns the load-time facts.
+ */
+export function setLoadedPiExtensionIdentity(
+  identity: ExtensionLoadedIdentity,
+): void {
+  loadedPiExtensionIdentity = identity;
+}
+
 type PiPrimarySwitchFailure =
   | { readonly type: "PrimarySwitchUnavailable" }
   | { readonly type: "DirectStepActive" }
@@ -852,6 +886,8 @@ export interface PiExtensionDeps {
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
   readonly logger: PiAdapterLogger;
+  /** Optional test/verifier sink; production uses one bounded generation sink. */
+  readonly childUiEventDiagnostics?: ChildUiEventDiagnosticsSink;
   readonly logRedirector: PiSharedLogRedirector;
   readonly configActivator: PiConfigActivator;
   readonly envPort: PiEnvPort;
@@ -873,6 +909,14 @@ export interface PiExtensionDeps {
    * and the real launching executable.
    */
   readonly childCommand: readonly string[];
+  /**
+   * The loader and other explicit extension entries to pass to children when
+   * this parent was launched with `--no-extensions`. Pi does not inherit a
+   * parent's explicit `-e` flags, so the child needs these paths explicitly
+   * to reach the authenticated bootstrap seam and the same provider seams.
+   * Absent means ordinary host extension discovery remains unchanged.
+   */
+  readonly childExtensionFallbackPaths?: readonly string[];
   readonly childOutputPort: PiChildOutputPort;
   /**
    * Timer seam for the private child's bounded abort/compaction settlement
@@ -991,6 +1035,11 @@ export interface PiExtensionDeps {
    * default; tests set `0` so every boundary probes deterministically.
    */
   readonly configRefreshMinIntervalMs?: number;
+  /**
+   * Test-only loaded-artifact identity. Production omits this; the thin
+   * loader calls `setLoadedPiExtensionIdentity` before the factory runs.
+   */
+  readonly loadedExtensionIdentity?: ExtensionLoadedIdentity;
   /**
    * Host probes for the wrapped `openai-codex` provider registration
    * (`docs/specs/fast-provider-acceleration-contract.md`, OD-4). Production
@@ -1130,6 +1179,10 @@ class SystemClock implements Clock {
 export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   const log = logger.child({ module: "adapter-pi" });
   const envPort = new BunEnvPort();
+  const childExtensionFallbackPaths = deriveChildExtensionFallbackPaths(
+    Bun.argv,
+    getPiExtensionEntryPath(),
+  );
   return {
     hostPackageReader: new BunHostPackageReader({
       provenVersion: getHostModuleOutcome()?.hostVersion,
@@ -1161,6 +1214,9 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     hmacPort: new WebCryptoHmacPort(),
     processPort: new BunPiChildProcessPort(),
     childCommand: buildDefaultPiChildCommand(envPort),
+    ...(childExtensionFallbackPaths.length === 0
+      ? {}
+      : { childExtensionFallbackPaths }),
     childOutputPort: new StdoutChildOutputPort(),
     childTimerPort: new SystemTimerPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
@@ -1888,6 +1944,8 @@ async function applyChildBootstrap(
       onCompactRenderFailure: (code) => {
         deps.logger.warn({ code }, "weave_delegate compact render failed");
       },
+      diagnostics:
+        deps.childUiEventDiagnostics ?? createChildUiEventDiagnostics(),
     }),
     // Only a direct-step child (Pi adapter contract) ever receives
     // `weave_complete_step`; nested helpers it may itself spawn always use
@@ -3244,6 +3302,18 @@ function effectiveHealthOnly(generation: {
  */
 const MAX_RENDERED_HOST_SURFACE_GAPS = 10;
 
+function renderChildUiEventDiagnostics(
+  snapshot: ChildUiEventDiagnosticsSnapshot,
+): string {
+  const buckets = snapshot.buckets
+    .map(
+      (bucket) =>
+        `${bucket.stage}/${bucket.classification}/${bucket.reason}/${bucket.disposition}:${bucket.count}${bucket.saturated ? "!" : ""}@${bucket.firstAtMs}-${bucket.lastAtMs}`,
+    )
+    .join(",");
+  return `child-ui-event-diagnostics: bytes=${snapshot.serializedBytes}/${snapshot.maxSerializedBytes} omitted=${snapshot.omittedBuckets} buckets=${buckets || "none"}`;
+}
+
 function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
@@ -3254,6 +3324,13 @@ function renderHealthMessage(
    * reads the fallback cause from here.
    */
   overlayKeyDiagnostics: readonly string[] = [],
+  extensionIdentityHealth: ExtensionBuildIdentityHealth = evaluateExtensionBuildIdentity(
+    {
+      loaded: unverifiableExtensionLoadIdentity(),
+      manifestReason: "artifact-path-missing",
+    },
+  ),
+  childUiEventDiagnostics: ChildUiEventDiagnosticsSnapshot = EMPTY_CHILD_UI_EVENT_DIAGNOSTICS.snapshot(),
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
@@ -3269,6 +3346,8 @@ function renderHealthMessage(
   const mode = effectiveHealthOnly(generation) ? "health-only" : "ready";
   const result = [`Weave adapter mode: ${mode}`, ...lines];
   result.push(hostRuntimeHealthLineFromOutcome(getHostModuleOutcome()));
+  result.push(renderExtensionIdentityHealthLine(extensionIdentityHealth));
+  result.push(renderChildUiEventDiagnostics(childUiEventDiagnostics));
 
   for (const diagnostic of generation.preflight.hostSurfaceGapDiagnostics.slice(
     0,
@@ -3839,6 +3918,10 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
   readonly providerFastLatestForTest: () =>
     | ProviderFastPublicSnapshot
     | undefined;
+  /** The loader fact captured for the current factory generation. */
+  readonly loadedPiExtensionIdentityForTest: () => ExtensionLoadedIdentity;
+  /** The latest bounded disk/manifest identity health snapshot. */
+  readonly extensionBuildIdentityHealthForTest: () => ExtensionBuildIdentityHealth;
   /**
    * The generation's published catalog cell, or `undefined` before boot
    * activation and after every revoke. Exposed so tests can publish a
@@ -3852,6 +3935,15 @@ export type PiExtensionInstance = ((pi: PiExtensionApi) => void) & {
    * boundary attempt the triggers run, without spawning a child process.
    */
   readonly configRefreshForTest: () => PiConfigRefreshCoordinator | undefined;
+  /** Bounded diagnostics for verifier/health assertions; never a card input. */
+  readonly childUiEventDiagnosticsForTest: () => ChildUiEventDiagnosticsSnapshot;
+  /** Content-free live reasoning ownership counts for cleanup assertions. */
+  readonly liveReasoningCountsForTest: () => {
+    readonly registryEntries: number;
+    readonly retainedBytes: number;
+    readonly inspectorRegistryEntries: number;
+    readonly inspectorRetainedBytes: number;
+  };
 };
 
 export function createPiExtension(
@@ -3874,6 +3966,8 @@ export function createPiExtension(
       ? { configSourceFsPort: undefined }
       : {}),
   };
+  const childUiEventDiagnostics =
+    deps.childUiEventDiagnostics ?? createChildUiEventDiagnostics();
   // A custom logger denotes an embedding/test-owned sink. Production uses
   // the shared logger and must redirect it before any session log can reach
   // Pi's stdout. Supplying a redirector explicitly opts back into this path.
@@ -3889,6 +3983,17 @@ export function createPiExtension(
   // The generation the held controller belongs to stays beside the instance
   // so replacement and authority checks can never drift apart.
   const delegationControllerCell = createDelegationControllerCell();
+  /** One generation-local card projector registry, keyed by Pi toolCallId. */
+  const liveReasoningRegistryCell: {
+    value: PiLiveReasoningRegistry | undefined;
+  } = { value: undefined };
+  const clearLiveReasoningRegistry = (): void => {
+    liveReasoningRegistryCell.value?.clear().match(
+      () => undefined,
+      () => undefined,
+    );
+    liveReasoningRegistryCell.value = undefined;
+  };
   /**
    * The single generation-scoped native-session authority (Spec 33 §5.6).
    *
@@ -4095,6 +4200,7 @@ export function createPiExtension(
     configRefreshCell.coordinator?.dispose();
     configRefreshCell.coordinator = undefined;
     clearPiCatalogCell(catalogCellHolder);
+    clearLiveReasoningRegistry();
   };
   /**
    * Runs the boundary refresh for the live generation. Total: an absent
@@ -4105,6 +4211,29 @@ export function createPiExtension(
     configRefreshCell.coordinator?.ensureFresh() ??
     okAsync<void, never>(undefined);
   let activeSession: PiActiveSession | undefined;
+  /**
+   * Identity is captured once per factory invocation and snapshotted again for
+   * each generation. Health re-reads the disk artifact and sidecar on demand;
+   * it never trusts a modification time or a sidecar digest by itself.
+   */
+  const resolveLoadedIdentity = (): ExtensionLoadedIdentity =>
+    deps.loadedExtensionIdentity ?? loadedPiExtensionIdentity;
+  let generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+  const extensionBuildIdentityHealthCell: {
+    value: ExtensionBuildIdentityHealth;
+  } = {
+    value: evaluateExtensionBuildIdentity({
+      loaded: generationLoadedPiExtensionIdentity,
+      manifestReason: "artifact-path-missing",
+    }),
+  };
+  const refreshExtensionBuildIdentityHealth = (): ResultAsync<void, never> =>
+    readExtensionBuildIdentityHealth(generationLoadedPiExtensionIdentity).map(
+      (health) => {
+        extensionBuildIdentityHealthCell.value = health;
+        return undefined;
+      },
+    );
   /**
    * The reconstruction summary the *current* generation and *live* parent may
    * read. Everything else reads as absent, so a stale callback or a
@@ -4995,7 +5124,10 @@ export function createPiExtension(
           }
         }
         const targets = [...targetsByName.values()];
+        clearLiveReasoningRegistry();
         if (targets.length === 0) return [];
+        const liveReasoningRegistry = createPiLiveReasoningRegistry();
+        liveReasoningRegistryCell.value = liveReasoningRegistry;
 
         return [
           buildDelegationToolRegistration({
@@ -5032,6 +5164,8 @@ export function createPiExtension(
               )
                 ? delegationControllerCell.controller
                 : undefined,
+            liveReasoningRegistry,
+            getGenerationId: () => controller.getCurrentGeneration()?.id,
             parentId: ROOT_NODE_ID,
             parentDepth: 0,
             parentAgentName: primary.name,
@@ -5071,6 +5205,7 @@ export function createPiExtension(
                 "weave_delegate compact render failed",
               );
             },
+            diagnostics: childUiEventDiagnostics,
           }),
         ];
       },
@@ -5936,12 +6071,15 @@ export function createPiExtension(
     // Health is the one command that must remain available when boot failed
     // before a generation could retain authority. It reads diagnostics only.
     if (name === "weave:health") {
+      await refreshExtensionBuildIdentityHealth();
       ctx.ui.notify(
         renderHealthMessage(
           controller,
           activeSession,
           lastBootActivationFailure,
           overlayKeysCell.diagnostics,
+          extensionBuildIdentityHealthCell.value,
+          childUiEventDiagnostics.snapshot(),
         ),
         "info",
       );
@@ -7132,6 +7270,13 @@ export function createPiExtension(
       deps.logger,
       primaryFallbackRendererRegistration,
     );
+    // The loader calls its setter before invoking this factory. Snapshot that
+    // fact now so a later reload or test embedding cannot mutate this parent.
+    generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+    extensionBuildIdentityHealthCell.value = evaluateExtensionBuildIdentity({
+      loaded: generationLoadedPiExtensionIdentity,
+      manifestReason: generationLoadedPiExtensionIdentity.loadReason,
+    });
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
       description: "Cycle Weave primary agent",
       handler: async (ctx: PiSessionContext) => {
@@ -7390,9 +7535,13 @@ export function createPiExtension(
       sessionTransitionRuntime.revokeForReplacement((prior) => {
         (prior as PiDelegationController).disposeAll();
       });
+      clearLiveReasoningRegistry();
       const startupSequence = sessionStartSequence;
       const startupStillCurrent = (): boolean =>
         sessionStartSequence === startupSequence;
+      generationLoadedPiExtensionIdentity = resolveLoadedIdentity();
+      await refreshExtensionBuildIdentityHealth();
+      if (!startupStillCurrent()) return;
       ctx.ui.setStatus("weave", "starting");
 
       // First statement of the generation, before log redirect, child-mode
@@ -7527,9 +7676,18 @@ export function createPiExtension(
       const startupHandle = startupOperation.value;
       const startupOwnsGeneration = (): boolean =>
         startupStillCurrent() && startupHandle.assertStillCurrent().isOk();
+      const generationCardReasoningRegistry = liveReasoningRegistryCell.value;
       const generationResources = new PiGenerationResourceOwner(
         generation.id,
-        () => generationSessionCtxCell.clear(generation.id),
+        () => {
+          generationSessionCtxCell.clear(generation.id);
+          if (
+            generationCardReasoningRegistry !== undefined &&
+            liveReasoningRegistryCell.value === generationCardReasoningRegistry
+          ) {
+            clearLiveReasoningRegistry();
+          }
+        },
       );
       const generationTelemetryCell: { telemetry: PiTelemetry | undefined } = {
         telemetry: undefined,
@@ -7620,8 +7778,10 @@ export function createPiExtension(
       // Child-extension selection is resolved exactly once per generation,
       // only after the Runtime Store is open, and never per spawn: a child
       // must not pay for a preference read, an inventory scan, or a directory
-      // walk. Absent an explicit stored selection this stays empty, which
-      // makes child argv byte-identical to a spawn with no provider at all.
+      // walk. Absent an explicit stored selection normally stays empty. A
+      // parent launched with `--no-extensions` instead carries its pinned
+      // explicit entries as the inherit-all fallback, because Pi cannot
+      // inherit the parent's `-e` arguments.
       let childExtensionArgs: readonly string[] = EMPTY_CHILD_EXTENSION_ARGS;
       if (runtimeStore !== undefined) {
         // The resolution is typed as infallible: every failure inside it
@@ -7629,6 +7789,11 @@ export function createPiExtension(
         const resolved: ChildExtensionArgsResolution =
           await resolveChildExtensionSpawnArgs({
             store: runtimeStore,
+            ...(deps.childExtensionFallbackPaths === undefined
+              ? {}
+              : {
+                  fallbackChildExtensionPaths: deps.childExtensionFallbackPaths,
+                }),
             // Every public host surface the inventory can read is wired
             // here: loaded commands and tools, Pi's own configured-package
             // evidence, the agent directory, and this loader's own entry
@@ -7907,7 +8072,14 @@ export function createPiExtension(
       // Durable child records live in the parent session's child-ref ledger
       // and the native session tree, so the registry keeps no adapter-owned
       // persistence port of its own.
-      const inspectionRegistry = new PiChildInspectionRegistry();
+      childUiEventDiagnostics.clear().match(
+        () => undefined,
+        () => undefined,
+      );
+      const inspectionRegistry = new PiChildInspectionRegistry(
+        undefined,
+        childUiEventDiagnostics,
+      );
       inspectionRegistryCell.registry = inspectionRegistry;
       ctx.ui.setStatus(
         "weave",
@@ -8159,6 +8331,7 @@ export function createPiExtension(
             idGenerator: deps.idGenerator,
             logger: deps.logger,
             processPort: deps.processPort,
+            timerPort: deps.childTimerPort,
             sessionStorageAuthority: sessionAuthority,
             randomPort: deps.randomPort,
             hmacPort: deps.hmacPort,
@@ -8237,13 +8410,40 @@ export function createPiExtension(
             },
             onPrivateOutput: deps.onChildPrivateOutput,
             inspectionRegistry,
+            diagnostics: childUiEventDiagnostics,
+            liveReasoningRegistry: liveReasoningRegistryCell.value,
             // One gate, one pipeline. Focus, generation, settlement and
             // repaint coalescing all live in `ChildOverlayLiveStream`; this
             // callback only hands it the event.
             onChildSessionEvent: (childId, event) => {
               if (!startupOwnsGeneration()) return;
               if (childOverlayCell.generationId !== generation.id) return;
-              childOverlayLiveStream?.ingest(childId, event);
+              const outcome = childOverlayLiveStream?.ingest(childId, event);
+              if (outcome === undefined) return;
+              // The stream owns diagnosis and repaint policy. The extension
+              // consumes every closed outcome without retrying, cancelling, or
+              // reclassifying a healthy child.
+              switch (outcome.kind) {
+                case "applied":
+                case "dropped":
+                case "failed":
+                  return;
+              }
+            },
+            // The child runtime's authenticated projector is the only source
+            // of raw reasoning. Keep this callback on its separate inspector
+            // lane; it never re-enters the durable session-event reducer.
+            onInspectorReasoning: (update) => {
+              if (!startupOwnsGeneration()) return;
+              if (childOverlayCell.generationId !== generation.id) return;
+              const outcome = childOverlayLiveStream?.ingestReasoning(update);
+              if (outcome === undefined) return;
+              switch (outcome.kind) {
+                case "applied":
+                case "dropped":
+                case "failed":
+                  return;
+              }
             },
             // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
             // populated once the Runtime Store opens successfully, below -
@@ -8299,7 +8499,10 @@ export function createPiExtension(
                   options,
                 ),
             }),
-            {},
+            {
+              liveReasoningGenerationId: generation.id,
+              liveReasoningRegistry: liveReasoningRegistryCell.value,
+            },
             {
               steer: (childId, generationId, text) => {
                 if (
@@ -8330,6 +8533,7 @@ export function createPiExtension(
             // active-plan view `active-plan-ui-state.ts` owns, and never starts
             // a plan lookup of its own from a repaint.
             () => readActivePlanBreadcrumb(activePlanUiState.view()),
+            childUiEventDiagnostics,
           );
           childOverlayLiveStream?.dispose();
           childOverlayLiveStream = createChildOverlayLiveStream({
@@ -8351,6 +8555,7 @@ export function createPiExtension(
               delegationControllerCell.controller?.resolveThreadIdForLiveChild(
                 childId,
               ),
+            diagnostics: childUiEventDiagnostics,
           });
         }
 
@@ -9354,6 +9559,9 @@ export function createPiExtension(
     sessionTransitionRuntime.register(pi);
 
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
+      // Release transient card reasoning before any asynchronous shutdown
+      // work. A stale renderer can therefore only observe an empty registry.
+      clearLiveReasoningRegistry();
       // Revoke synchronously, clear UI, then await bounded child stop. The
       // runtime owns the order so a replacement startup can publish new state
       // while best-effort cleanup continues on the captured snapshot.
@@ -9362,8 +9570,24 @@ export function createPiExtension(
   };
   piAdapterExtension.providerFastLatestForTest = () =>
     resolveProviderFastState();
+  piAdapterExtension.loadedPiExtensionIdentityForTest = () =>
+    generationLoadedPiExtensionIdentity;
+  piAdapterExtension.extensionBuildIdentityHealthForTest = () =>
+    extensionBuildIdentityHealthCell.value;
   piAdapterExtension.catalogCellForTest = () => catalogCellHolder.cell;
   piAdapterExtension.configRefreshForTest = () => configRefreshCell.coordinator;
+  piAdapterExtension.childUiEventDiagnosticsForTest = () =>
+    childUiEventDiagnostics.snapshot();
+  piAdapterExtension.liveReasoningCountsForTest = () => {
+    const view = childOverlayCell.controller?.view();
+    const liveReasoning = view?.isOk() ? view.value.liveReasoning : undefined;
+    return {
+      registryEntries: liveReasoningRegistryCell.value?.size() ?? 0,
+      retainedBytes: liveReasoningRegistryCell.value?.retainedBytes() ?? 0,
+      inspectorRegistryEntries: liveReasoning?.registryEntries ?? 0,
+      inspectorRetainedBytes: liveReasoning?.retainedBytes ?? 0,
+    };
+  };
   return piAdapterExtension;
 }
 

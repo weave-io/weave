@@ -4,6 +4,11 @@
 
 ```ts
 
+// Warning: (ae-forgotten-export) The symbol "ExtensionPreloaderRetentionSnapshot" needs to be exported by the entry point extension.d.ts
+//
+// @public
+export function readExtensionPreloaderRetentionForTesting(): ExtensionPreloaderRetentionSnapshot;
+
 // @public (undocumented)
 function weaveAdapterExtension(pi: unknown): Promise<void>;
 export default weaveAdapterExtension;

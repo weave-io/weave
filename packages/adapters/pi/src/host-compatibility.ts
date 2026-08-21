@@ -13,6 +13,10 @@ import {
   makeHostVersionUnsupportedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import {
+  type ExtensionBuildIdentityHealth,
+  renderExtensionBuildIdentityHealthLine,
+} from "./extension-build-identity.js";
 
 /** The one compatible host package. Upstream `@mariozechner/pi-coding-agent` is a different identity. */
 export const HOST_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
@@ -247,6 +251,13 @@ export function hostRuntimeHealthLineFromOutcome(
     provenVersion: outcome?.hostVersion,
     redirectedCount: outcome?.redirected.length ?? 0,
   });
+}
+
+/** Path-free identity health is rendered beside host-module health. */
+export function renderExtensionIdentityHealthLine(
+  health: ExtensionBuildIdentityHealth,
+): string {
+  return renderExtensionBuildIdentityHealthLine(health);
 }
 
 export class BunHostPackageReader implements HostPackageReader {

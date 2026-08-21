@@ -5,6 +5,7 @@ import {
 } from "./child-provider-error.js";
 import { formatPiChildProviderError } from "./child-provider-error-render.js";
 import {
+  isPiAuthoritativeToolEvent,
   type PiChildSessionEvent,
   retainedChildSessionEvent,
 } from "./child-session-events.js";
@@ -61,6 +62,16 @@ export type PiChildTranscriptError =
   | {
       readonly type: "TranscriptInvalidAction";
       readonly operation: string;
+    }
+  | {
+      /** One content-free rejection for a native tool lifecycle violation. */
+      readonly type: "TranscriptToolEventInvalid";
+      readonly operation: "tool-event";
+      readonly reason:
+        | "missing-tool-call-id"
+        | "tool-event-before-start"
+        | "tool-event-after-terminal"
+        | "duplicate-terminal";
     };
 
 export interface PiChildTranscriptVisibility {
@@ -1145,17 +1156,63 @@ function applyEventBody(
     const eventToolName =
       stringValue(eventRecord.toolName) ?? stringValue(eventRecord.name);
     const correlationId = toolEventCallId(eventRecord);
-    // Correlate by id first. Only an event that names no call at all falls
-    // back to the newest PENDING call, which is the one a terminal event can
-    // legitimately belong to; the previous fallback took the newest tool entry
-    // outright and could re-open a call that had already answered.
-    const fallbackIndex =
+    const authoritative = isPiAuthoritativeToolEvent(event);
+    const existingIndex =
       correlationId === undefined
-        ? (() => {
+        ? -1
+        : next.entries.findIndex(
+            (entry) =>
+              entry.kind === "tool" && entry.toolCallId === correlationId,
+          );
+    if (authoritative) {
+      if (correlationId === undefined) {
+        return err({
+          type: "TranscriptToolEventInvalid",
+          operation: "tool-event",
+          reason: "missing-tool-call-id",
+        });
+      }
+      const existing =
+        existingIndex >= 0 ? next.entries[existingIndex] : undefined;
+      if (eventType !== "tool_call" && existingIndex < 0) {
+        return err({
+          type: "TranscriptToolEventInvalid",
+          operation: "tool-event",
+          reason: "tool-event-before-start",
+        });
+      }
+      if (
+        existing?.kind === "tool" &&
+        (existing.state === "result" || existing.state === "error") &&
+        (eventType === "tool_result" || eventType === "tool_error")
+      ) {
+        return err({
+          type: "TranscriptToolEventInvalid",
+          operation: "tool-event",
+          reason: "duplicate-terminal",
+        });
+      }
+      if (
+        existing?.kind === "tool" &&
+        (existing.state === "result" || existing.state === "error")
+      ) {
+        return err({
+          type: "TranscriptToolEventInvalid",
+          operation: "tool-event",
+          reason: "tool-event-after-terminal",
+        });
+      }
+    }
+    // Legacy normalized events may omit the id. Keep their historical
+    // fallback for compatibility; native Pi lifecycle events are marked by
+    // the parser above and take the strict path instead.
+    const fallbackIndex =
+      authoritative || correlationId !== undefined
+        ? -1
+        : (() => {
             const pending = pendingToolIndex(next.entries, eventToolName);
             return eventType === "tool_call" ? -1 : pending;
-          })()
-        : -1;
+          })();
     const toolId =
       correlationId ??
       (fallbackIndex >= 0
@@ -1984,6 +2041,12 @@ function renderEntry(
   width: number,
   largeEvent: boolean,
 ): PiChildTranscriptRenderedRow[] {
+  if (entry.kind === "thinking" || entry.kind === "reasoning_summary") {
+    // Retained markers preserve reducer compatibility only. They never become
+    // historical inspector rows; the mounted projector is the sole reasoning
+    // display surface.
+    return [];
+  }
   if (largeEvent) {
     return [
       row(
@@ -2023,32 +2086,6 @@ function renderEntry(
         width,
       ),
     );
-    if (entry.thinkingVisible) {
-      // Only a host-published summary has text. Observed raw reasoning states
-      // itself and nothing more.
-      if (entry.reasoningSummary)
-        rows.push(
-          row(
-            entry.id,
-            entry.sequence,
-            entry.kind,
-            "thinking",
-            `reasoning summary: ${entry.reasoningSummary}`,
-            width,
-          ),
-        );
-      else if (entry.reasoningObserved)
-        rows.push(
-          row(
-            entry.id,
-            entry.sequence,
-            entry.kind,
-            "thinking",
-            "reasoning: [not summarized]",
-            width,
-          ),
-        );
-    } else rows.push(hiddenRow(entry, "thinking", "thinking", width));
     if (entry.markdown)
       rows.push(
         row(
@@ -2188,25 +2225,17 @@ function renderEntry(
           : hiddenRow(entry, "images", "tool images", width),
       );
     }
-  } else if (
-    entry.kind === "text" ||
-    entry.kind === "thinking" ||
-    entry.kind === "reasoning_summary" ||
-    entry.kind === "markdown"
-  ) {
-    if (entry.kind === "thinking" && !entry.thinkingVisible)
-      rows.push(hiddenRow(entry, "text", entry.kind, width));
-    else
-      rows.push(
-        row(
-          entry.id,
-          entry.sequence,
-          entry.kind,
-          "text",
-          `${entry.kind}: ${entry.text || "[empty]"}`,
-          width,
-        ),
-      );
+  } else if (entry.kind === "text" || entry.kind === "markdown") {
+    rows.push(
+      row(
+        entry.id,
+        entry.sequence,
+        entry.kind,
+        "text",
+        `${entry.kind}: ${entry.text || "[empty]"}`,
+        width,
+      ),
+    );
   } else if (entry.kind === "image") {
     rows.push(
       entry.imagesVisible
