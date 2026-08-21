@@ -34,11 +34,21 @@ function streamFromChunks(
   });
 }
 
+function trackedStream(
+  onCancel: () => void,
+): ReadableStream<Uint8Array<ArrayBuffer>> {
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
+    cancel() {
+      onCancel();
+    },
+  });
+}
+
 function fakeProcess(input: {
   readonly stdout?: ReadableStream<Uint8Array<ArrayBuffer>>;
   readonly stderr?: ReadableStream<Uint8Array<ArrayBuffer>>;
   readonly exited?: PromiseLike<number>;
-  readonly onKill?: (signal: "SIGTERM" | "SIGKILL") => void;
+  readonly onKill?: (signal: "SIGTERM" | "SIGKILL") => unknown;
 }): BoundedProcess {
   return {
     stdout: input.stdout ?? new ReadableStream<Uint8Array<ArrayBuffer>>(),
@@ -197,6 +207,135 @@ describe("shared bounded verifier process runner", () => {
     });
     expect(readerFailure.isErr()).toBe(true);
     expect(JSON.stringify(readerFailure)).not.toContain("secret");
+  });
+
+  it("terminates and cancels a process that resolves after spawn timeout", async () => {
+    const signals: string[] = [];
+    let stdoutCancellations = 0;
+    let stderrCancellations = 0;
+    let resolveExit: (code: number) => void = () => undefined;
+    const exited = new Promise<number>((resolve) => {
+      resolveExit = resolve;
+    });
+    const process = fakeProcess({
+      stdout: trackedStream(() => {
+        stdoutCancellations += 1;
+      }),
+      stderr: trackedStream(() => {
+        stderrCancellations += 1;
+      }),
+      exited,
+      onKill: (signal) => {
+        signals.push(signal);
+        if (signal === "SIGTERM") resolveExit(0);
+      },
+    });
+
+    const result = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits: { ...limits, spawnMs: 5 },
+      spawn: () =>
+        new Promise((resolve) => setTimeout(() => resolve(process), 25)),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    expect(signals).toEqual([]);
+
+    await sleep(100);
+
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(stdoutCancellations).toBe(1);
+    expect(stderrCancellations).toBe(1);
+  });
+
+  it("observes a spawn rejection that arrives after timeout", async () => {
+    const result = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits: { ...limits, spawnMs: 5 },
+      spawn: () =>
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("late spawn detail")), 25),
+        ),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    await sleep(100);
+    expect(JSON.stringify(result)).not.toContain("late spawn detail");
+  });
+
+  it("bounds late cleanup when stream cancellation, kill, and exit hang", async () => {
+    const signals: string[] = [];
+    const hangingStream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      cancel: () => new Promise<void>(() => undefined),
+    });
+    const process = fakeProcess({
+      stdout: hangingStream,
+      stderr: new ReadableStream<Uint8Array<ArrayBuffer>>({
+        cancel: () => new Promise<void>(() => undefined),
+      }),
+      exited: new Promise<number>(() => undefined),
+      onKill: (signal) => {
+        signals.push(signal);
+        return new Promise<void>(() => undefined);
+      },
+    });
+
+    const result = await runBoundedProcess({
+      cmd: ["fake"],
+      cwd: REPO_ROOT,
+      env: {},
+      limits: { ...limits, spawnMs: 5 },
+      spawn: () =>
+        new Promise((resolve) => setTimeout(() => resolve(process), 25)),
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("timeout");
+    await sleep(150);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("cleans up a real process resolved after a spawn timeout", async () => {
+    let child: Bun.Subprocess | undefined;
+    const result = await runBoundedProcess({
+      cmd: ["/bin/sleep", "10"],
+      cwd: REPO_ROOT,
+      env: { PATH: "/usr/bin:/bin" },
+      limits: { ...limits, spawnMs: 5 },
+      spawn: () =>
+        new Promise<BoundedProcess>((resolve) => {
+          setTimeout(() => {
+            child = Bun.spawn({
+              cmd: ["/bin/sleep", "10"],
+              cwd: REPO_ROOT,
+              env: { PATH: "/usr/bin:/bin" },
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            resolve(child as unknown as BoundedProcess);
+          }, 25);
+        }),
+    });
+
+    try {
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().code).toBe("timeout");
+      await sleep(100);
+      expect(child).toBeDefined();
+      expect(child?.exitCode !== null || child?.signalCode !== null).toBe(true);
+    } finally {
+      if (child !== undefined && child.exitCode === null) {
+        child.kill("SIGKILL");
+        await Promise.race([child.exited, sleep(500)]);
+      }
+    }
   });
 
   it("bounds TERM and KILL when exit never resolves", async () => {

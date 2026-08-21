@@ -52,13 +52,6 @@ export function observeBoundedPromise<T>(
       resolve(outcome);
     };
 
-    if (timeoutMs !== undefined) {
-      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        finish({ kind: "timeout" });
-        return;
-      }
-      timer = setTimeout(() => finish({ kind: "timeout" }), timeoutMs);
-    }
     const observed = Result.fromThrowable(
       () => Promise.resolve(promiseLike),
       () => undefined,
@@ -67,10 +60,20 @@ export function observeBoundedPromise<T>(
       finish({ kind: "rejected" });
       return;
     }
+    // Attach both settlement handlers before a nonpositive deadline can win.
+    // The caller may return immediately, but the host promise still needs an
+    // observer for any later fulfillment or rejection.
     observed.value.then(
       (value) => finish({ kind: "resolved", value }),
       () => finish({ kind: "rejected" }),
     );
+    if (timeoutMs !== undefined) {
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        finish({ kind: "timeout" });
+        return;
+      }
+      timer = setTimeout(() => finish({ kind: "timeout" }), timeoutMs);
+    }
   });
 }
 

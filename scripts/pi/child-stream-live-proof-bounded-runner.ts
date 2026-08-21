@@ -15,6 +15,7 @@ import {
   terminateBoundedProcess,
 } from "./child-stream-live-proof-process-control.js";
 import {
+  type BoundedProcess,
   type BoundedProcessLimits,
   type BoundedProcessOutput,
   type BoundedProcessRunnerInput,
@@ -351,6 +352,67 @@ async function observeBoundedBackgroundPromises(
   return outcome.kind === "resolved";
 }
 
+async function cancelLateProcessStream(
+  stream: ProcessByteStream,
+  timeoutMs: number,
+): Promise<boolean> {
+  const cancelled = Result.fromThrowable(
+    () => stream.cancel(),
+    () => undefined,
+  )();
+  if (cancelled.isErr()) return false;
+  const observed = Result.fromThrowable(
+    () => Promise.resolve(cancelled.value),
+    () => undefined,
+  )();
+  if (observed.isErr()) return false;
+  const outcome = await observeBoundedPromise(observed.value, timeoutMs);
+  return outcome.kind === "resolved";
+}
+
+/**
+ * A spawn deadline can win before the host hands us its process. Once that
+ * process arrives, cancel both inherited pipes and terminate it in one
+ * bounded, independently observed cleanup operation.
+ */
+async function cleanupLateBoundedProcess(
+  process: BoundedProcess,
+  limits: BoundedProcessLimits,
+): Promise<boolean> {
+  const streams = Result.fromThrowable(
+    () => [process.stdout, process.stderr],
+    () => undefined,
+  )();
+  const cancellations: Promise<boolean>[] = [];
+  if (streams.isOk()) {
+    for (const stream of streams.value) {
+      if (stream === undefined || typeof stream === "number") continue;
+      cancellations.push(cancelLateProcessStream(stream, limits.cleanupMs));
+    }
+  }
+
+  const termination = Result.fromThrowable(
+    () => terminateBoundedProcess(process, limits),
+    () => undefined,
+  )();
+  const observedTermination = termination.isErr()
+    ? Promise.resolve(false)
+    : observeBoundedPromise(termination.value, limits.cleanupMs).then(
+        (outcome) => outcome.kind === "resolved" && outcome.value,
+        () => false,
+      );
+  const outcomes = await Promise.all([
+    ...cancellations.map((cancellation) =>
+      cancellation.then(
+        (result) => result,
+        () => false,
+      ),
+    ),
+    observedTermination,
+  ]);
+  return streams.isOk() && outcomes.every((outcome) => outcome);
+}
+
 async function runBoundedProcessValue(
   input: BoundedProcessRunnerInput,
 ): Promise<Result<BoundedProcessOutput, LiveProofSystemFailure>> {
@@ -374,10 +436,50 @@ async function runBoundedProcessValue(
     () => undefined,
   )();
   if (spawnedPromise.isErr()) return err(systemFailure("spawn-failed"));
+
+  // Keep this continuation attached before the deadline race. A late
+  // fulfillment owns a real process even though the caller has already
+  // received its timeout, so it must be cleaned up independently. The
+  // post-race check covers the narrow turn where both handlers run before the
+  // await continuation records the timeout winner.
+  let spawnRaceFinished = false;
+  let spawnTimedOut = false;
+  let lateProcess: BoundedProcess | undefined;
+  let lateCleanupStarted = false;
+  const startLateCleanup = (process: BoundedProcess): void => {
+    if (lateCleanupStarted) return;
+    lateCleanupStarted = true;
+    const cleanup = Result.fromThrowable(
+      () => cleanupLateBoundedProcess(process, limits),
+      () => undefined,
+    )();
+    if (cleanup.isErr()) return;
+    void cleanup.value.then(
+      () => undefined,
+      () => undefined,
+    );
+  };
+  const spawnContinuation = spawnedPromise.value
+    .then(
+      (process) => {
+        lateProcess = process;
+        if (spawnRaceFinished && spawnTimedOut) startLateCleanup(process);
+        return process;
+      },
+      () => undefined,
+    )
+    .catch(() => undefined);
+  void spawnContinuation;
+
   const started = await observeBoundedPromise(
     spawnedPromise.value,
     limits.spawnMs,
   );
+  spawnRaceFinished = true;
+  if (started.kind === "timeout") {
+    spawnTimedOut = true;
+    if (lateProcess !== undefined) startLateCleanup(lateProcess);
+  }
   if (started.kind !== "resolved") {
     return err(
       systemFailure(started.kind === "timeout" ? "timeout" : "spawn-failed"),
