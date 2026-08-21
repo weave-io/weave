@@ -318,6 +318,7 @@ import {
 import {
   getHostModuleOutcome,
   getHostModuleProvenance,
+  getPiExtensionEntryPath,
   type PiHostModuleProvenance,
 } from "./host-module-loader.js";
 import { CODEX_PROVIDER_SUBPATH_SPECIFIER } from "./host-module-redirect.js";
@@ -348,6 +349,7 @@ import type {
 import {
   type ChildExtensionArgsResolution,
   collectPiExtensionInventoryFromHost,
+  deriveChildExtensionFallbackPaths,
   resolveChildExtensionSpawnArgs,
 } from "./pi-extension-inventory-port.js";
 import {
@@ -698,6 +700,14 @@ export interface PiExtensionDeps {
    * and the real launching executable.
    */
   readonly childCommand: readonly string[];
+  /**
+   * The loader and other explicit extension entries to pass to children when
+   * this parent was launched with `--no-extensions`. Pi does not inherit a
+   * parent's explicit `-e` flags, so the child needs these paths explicitly
+   * to reach the authenticated bootstrap seam and the same provider seams.
+   * Absent means ordinary host extension discovery remains unchanged.
+   */
+  readonly childExtensionFallbackPaths?: readonly string[];
   readonly childOutputPort: PiChildOutputPort;
   /**
    * Timer seam for the private child's bounded abort/compaction settlement
@@ -901,6 +911,10 @@ class SystemClock implements Clock {
 export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   const log = logger.child({ module: "adapter-pi" });
   const envPort = new BunEnvPort();
+  const childExtensionFallbackPaths = deriveChildExtensionFallbackPaths(
+    Bun.argv,
+    getPiExtensionEntryPath(),
+  );
   return {
     hostPackageReader: new BunHostPackageReader({
       provenVersion: getHostModuleOutcome()?.hostVersion,
@@ -932,6 +946,9 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     hmacPort: new WebCryptoHmacPort(),
     processPort: new BunPiChildProcessPort(),
     childCommand: buildDefaultPiChildCommand(envPort),
+    ...(childExtensionFallbackPaths.length === 0
+      ? {}
+      : { childExtensionFallbackPaths }),
     childOutputPort: new StdoutChildOutputPort(),
     childTimerPort: new SystemTimerPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
@@ -6242,8 +6259,10 @@ export function createPiExtension(
       // Child-extension selection is resolved exactly once per generation,
       // only after the Runtime Store is open, and never per spawn: a child
       // must not pay for a preference read, an inventory scan, or a directory
-      // walk. Absent an explicit stored selection this stays empty, which
-      // makes child argv byte-identical to a spawn with no provider at all.
+      // walk. Absent an explicit stored selection normally stays empty. A
+      // parent launched with `--no-extensions` instead carries its pinned
+      // explicit entries as the inherit-all fallback, because Pi cannot
+      // inherit the parent's `-e` arguments.
       let childExtensionArgs: readonly string[] = EMPTY_CHILD_EXTENSION_ARGS;
       if (runtimeStore !== undefined) {
         // The resolution is typed as infallible: every failure inside it
@@ -6251,6 +6270,11 @@ export function createPiExtension(
         const resolved: ChildExtensionArgsResolution =
           await resolveChildExtensionSpawnArgs({
             store: runtimeStore,
+            ...(deps.childExtensionFallbackPaths === undefined
+              ? {}
+              : {
+                  fallbackChildExtensionPaths: deps.childExtensionFallbackPaths,
+                }),
             // Every public host surface the inventory can read is wired
             // here: loaded commands and tools, Pi's own configured-package
             // evidence, the agent directory, and this loader's own entry

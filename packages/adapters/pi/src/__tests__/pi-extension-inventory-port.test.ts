@@ -25,6 +25,7 @@ import {
   collectPiExtensionInventoryFromHost,
   createBunPiExtensionInventoryPort,
   createPiExtensionInventoryHost,
+  deriveChildExtensionFallbackPaths,
   MAX_OWN_ENTRY_IDENTITY_PROBES,
   projectConfiguredPackages,
   renderChildExtensionArgs,
@@ -128,6 +129,7 @@ function resolve(input: {
   readonly storeFails?: boolean;
   readonly collected?: PiExtensionInventory;
   readonly degradation?: PiExtensionInventoryDegradation;
+  readonly fallbackChildExtensionPaths?: readonly string[];
 }) {
   const preferences = new ScriptedPreferences(
     input.storeFails === true
@@ -137,6 +139,9 @@ function resolve(input: {
   let inventoryCalls = 0;
   const resolved = resolveChildExtensionSpawnArgs({
     store: { preferences },
+    ...(input.fallbackChildExtensionPaths === undefined
+      ? {}
+      : { fallbackChildExtensionPaths: input.fallbackChildExtensionPaths }),
     collectInventory: () => {
       inventoryCalls += 1;
       if (input.degradation !== undefined) return errAsync(input.degradation);
@@ -172,6 +177,37 @@ describe("renderChildExtensionArgs", () => {
   });
 });
 
+describe("deriveChildExtensionFallbackPaths", () => {
+  it("keeps the pinned loader first and carries safe explicit entries", () => {
+    expect(
+      deriveChildExtensionFallbackPaths(
+        [
+          "pi",
+          "--no-extensions",
+          "-e",
+          "/opt/provider/task11.js",
+          "-e",
+          WEAVE_PATH,
+          "-e",
+          "relative/provider.js",
+          "-e",
+          "/opt/provider/task11.js",
+        ],
+        WEAVE_PATH,
+      ),
+    ).toEqual([WEAVE_PATH, "/opt/provider/task11.js"]);
+  });
+
+  it("does not derive paths without isolated extension discovery", () => {
+    expect(
+      deriveChildExtensionFallbackPaths(
+        ["pi", "-e", "/opt/provider/task11.js"],
+        WEAVE_PATH,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("resolveChildExtensionSpawnArgs", () => {
   it("reads exactly the adapter-owned namespace and key", async () => {
     const run = resolve({});
@@ -185,6 +221,22 @@ describe("resolveChildExtensionSpawnArgs", () => {
     const run = resolve({});
     const resolution = (await run.resolved)._unsafeUnwrap();
     expect(resolution.args).toEqual([]);
+    expect(resolution.diagnostics).toBeUndefined();
+    expect(run.inventoryCalls()).toBe(0);
+  });
+
+  it("passes pinned entries when the parent isolated extension discovery", async () => {
+    const run = resolve({
+      fallbackChildExtensionPaths: [WEAVE_PATH, VIM_PATH],
+    });
+    const resolution = (await run.resolved)._unsafeUnwrap();
+    expect(resolution.args).toEqual([
+      "--no-extensions",
+      "-e",
+      WEAVE_PATH,
+      "-e",
+      VIM_PATH,
+    ]);
     expect(resolution.diagnostics).toBeUndefined();
     expect(run.inventoryCalls()).toBe(0);
   });
@@ -306,6 +358,26 @@ describe("resolveChildExtensionSpawnArgs", () => {
       expect(resolution.args).toEqual([]);
       expect(resolution.diagnostics?.fallback).toBe("weave-entry-unresolved");
     }
+  });
+
+  it("uses the pinned fallback when explicit inventory cannot prove Weave", async () => {
+    const run = resolve({
+      stored: storedRecord(
+        explicitRecord([
+          {
+            id: "npm:pi-vim",
+            source: "npm:pi-vim",
+            path: VIM_PATH,
+            label: "pi-vim",
+          },
+        ]),
+      ),
+      collected: inventory([VIM_ENTRY]),
+      fallbackChildExtensionPaths: [WEAVE_PATH],
+    });
+    const resolution = (await run.resolved)._unsafeUnwrap();
+    expect(resolution.args).toEqual(["--no-extensions", "-e", WEAVE_PATH]);
+    expect(resolution.diagnostics?.fallback).toBe("weave-entry-unresolved");
   });
 });
 
