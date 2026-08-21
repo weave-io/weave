@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 390 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~42,200 tokens. Without it, AI exploration would cost ~120,700 tokens. **Saves ~78,500 tokens per conversation.**
-> **Last scanned:** 2026-08-21 07:58 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 395 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~42,600 tokens. Without it, AI exploration would cost ~122,000 tokens. **Saves ~79,400 tokens per conversation.**
+> **Last scanned:** 2026-08-21 08:50 — re-run after significant changes
 
 ---
 
@@ -427,14 +427,33 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+- `packages/adapters/pi/src/child-overlay-pi-native-assistant.ts`
+  - function renderPromptEntry: (paint, entry, input, width) => string[]
+  - function renderTextEntry: (paint, entry, input, width) => string[]
+  - function renderAssistantEntry: (paint, entry, input, width, finalAssistantId) => string[]
+  - function finalAssistantEntryId: (input) => string | undefined
+- `packages/adapters/pi/src/child-overlay-pi-native-entry.ts` — function renderEntryRows: (paint, entry, input, width, finalAssistantId) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-layout.ts`
+  - function headRow: (text, width) => string
+  - function bodyRows: (text, width, maxRows, ink) => void
+  - function continuationRows: (text, width, maxRows, ink) => void
+  - function withCaret: (paint, rows, width) => string[]
+  - function dividerRow: (paint, label, width) => string
+  - function gutter: (paint, family, tone) => string
+  - _...6 more_
+- `packages/adapters/pi/src/child-overlay-pi-native-tool.ts` — function renderToolEntry: (paint, entry, width) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-values.ts`
   - function normalizeOverlayPayload: (value, stripBookkeeping, depth) => unknown
   - function summarizeOverlayValue: (value, depth) => string
   - function overlayPayloadText: (value) => string
   - function overlayToolResultText: (value) => string
   - function overlayToolTarget: (entry) => string
   - function overlayToolArgs: (entry) => string
-  - _...14 more_
+  - _...2 more_
+- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+  - function renderOverlayPiNative: (paint, input, width) => OverlayPiNativePane
+  - function overlayTranscriptSearchIndex: (pane, "plain" | "spans" | "transientLines">) => Map<string, string>
+  - function renderOverlayTranscript: (paint, input, width) => OverlayTranscriptRender
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function pushReplayEvent: (steps, candidate, authoritativeTool) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
@@ -2397,16 +2416,16 @@
 
 - `packages/adapters/pi/src/types.ts` — imported by **57** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **33** files
 - `packages/adapters/pi/src/strict-json.ts` — imported by **29** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
-- `packages/adapters/pi/src/ui-paint.ts` — imported by **27** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **22** files
 - `packages/adapters/pi/src/errors.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `scripts/release/constants.ts` — imported by **21** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/child-session-events.ts` — imported by **18** files
 - `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
@@ -2420,9 +2439,9 @@
 
 - `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +52 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +28 more
 - `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +24 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
-- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +22 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +17 more
 - `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/delegation-invocation-context.test.ts`, `packages/adapters/pi/src/__tests__/extension.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts` +17 more
@@ -2450,7 +2469,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 386 test files found
+> 390 test files found
 
 ---
 

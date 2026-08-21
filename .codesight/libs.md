@@ -416,14 +416,33 @@
   - function nonEmptyString: (value) => string | undefined
   - function boundLabel: (value) => string
   - _...5 more_
-- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+- `packages/adapters/pi/src/child-overlay-pi-native-assistant.ts`
+  - function renderPromptEntry: (paint, entry, input, width) => string[]
+  - function renderTextEntry: (paint, entry, input, width) => string[]
+  - function renderAssistantEntry: (paint, entry, input, width, finalAssistantId) => string[]
+  - function finalAssistantEntryId: (input) => string | undefined
+- `packages/adapters/pi/src/child-overlay-pi-native-entry.ts` — function renderEntryRows: (paint, entry, input, width, finalAssistantId) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-layout.ts`
+  - function headRow: (text, width) => string
+  - function bodyRows: (text, width, maxRows, ink) => void
+  - function continuationRows: (text, width, maxRows, ink) => void
+  - function withCaret: (paint, rows, width) => string[]
+  - function dividerRow: (paint, label, width) => string
+  - function gutter: (paint, family, tone) => string
+  - _...6 more_
+- `packages/adapters/pi/src/child-overlay-pi-native-tool.ts` — function renderToolEntry: (paint, entry, width) => string[]
+- `packages/adapters/pi/src/child-overlay-pi-native-values.ts`
   - function normalizeOverlayPayload: (value, stripBookkeeping, depth) => unknown
   - function summarizeOverlayValue: (value, depth) => string
   - function overlayPayloadText: (value) => string
   - function overlayToolResultText: (value) => string
   - function overlayToolTarget: (entry) => string
   - function overlayToolArgs: (entry) => string
-  - _...14 more_
+  - _...2 more_
+- `packages/adapters/pi/src/child-overlay-pi-native.ts`
+  - function renderOverlayPiNative: (paint, input, width) => OverlayPiNativePane
+  - function overlayTranscriptSearchIndex: (pane, "plain" | "spans" | "transientLines">) => Map<string, string>
+  - function renderOverlayTranscript: (paint, input, width) => OverlayTranscriptRender
 - `packages/adapters/pi/src/child-overlay-replay.ts`
   - function pushReplayEvent: (steps, candidate, authoritativeTool) => Result<void, ChildOverlayMappingError>
   - function mergeReplaySteps: (existing, incoming) => Result<
