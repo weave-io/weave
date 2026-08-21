@@ -46,7 +46,14 @@ export function verifyActionPins(
           file,
           owner: owner ?? "",
         });
+        continue;
       }
+      const actionName = `${owner}/${action[2]}`;
+      const requiredPin = Object.entries(REQUIRED_ARTIFACT_ACTION_PINS).find(
+        ([name]) => name === actionName,
+      )?.[1];
+      if (requiredPin !== undefined && action[3]?.toLowerCase() !== requiredPin)
+        errors.push({ type: "InvalidActionReference", file, value });
     }
     if (scannedActions === 0)
       errors.push({ type: "UnresolvedActionReference", file, value: "uses:" });

@@ -42,7 +42,7 @@ jobs:
           --content-root "$GITHUB_WORKSPACE"
           --audited-sha "$AUDITED_SHA"
           --output "$RUNNER_TEMP/docs-deterministic.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: docs-audit-deterministic-${{ github.run_id }}
@@ -80,7 +80,7 @@ jobs:
           --content-root "$GITHUB_WORKSPACE"
           --audited-sha "$AUDITED_SHA"
           --output "$RUNNER_TEMP/docs-ai.json"
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: docs-audit-ai-${{ github.run_id }}
