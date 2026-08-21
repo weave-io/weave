@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  LIVE_PROOF_FAILURE_CODES,
   LIVE_PROOF_LANE_NAMES,
   LIVE_PROOF_REPORT_BOUNDS,
   type LiveProofReport,
@@ -16,6 +17,14 @@ import {
   serializeLiveProofReport,
   validateLiveProofReport,
 } from "../child-stream-live-proof-contract.js";
+import { parseLiveProofArgs as parseLiveProofArgsDirect } from "../child-stream-live-proof-contract-args.js";
+import { saturatingIncrement as saturatingIncrementDirect } from "../child-stream-live-proof-contract-counters.js";
+import { validateLiveProofReport as validateLiveProofReportDirect } from "../child-stream-live-proof-contract-report-validation.js";
+import { serializeLiveProofReport as serializeLiveProofReportDirect } from "../child-stream-live-proof-contract-serialization.js";
+import {
+  LIVE_PROOF_FAILURE_CODES as LIVE_PROOF_FAILURE_CODES_DIRECT,
+  LIVE_PROOF_LANE_NAMES as LIVE_PROOF_LANE_NAMES_DIRECT,
+} from "../child-stream-live-proof-contract-types.js";
 
 const DOCUMENTED_LANES = LIVE_PROOF_LANE_NAMES.join(",");
 
@@ -313,7 +322,48 @@ describe("content-free live proof report", () => {
   });
 });
 
+describe("live proof contract façade", () => {
+  it("reexports the focused implementations without changing identities", () => {
+    expect(parseLiveProofArgs).toBe(parseLiveProofArgsDirect);
+    expect(saturatingIncrement).toBe(saturatingIncrementDirect);
+    expect(validateLiveProofReport).toBe(validateLiveProofReportDirect);
+    expect(serializeLiveProofReport).toBe(serializeLiveProofReportDirect);
+    expect(LIVE_PROOF_LANE_NAMES).toBe(LIVE_PROOF_LANE_NAMES_DIRECT);
+    expect(LIVE_PROOF_FAILURE_CODES).toBe(LIVE_PROOF_FAILURE_CODES_DIRECT);
+  });
+});
+
 describe("hostile report inputs", () => {
+  it("fails closed for cycles and nested accessors", () => {
+    const cyclic = validReport() as unknown as Record<string, unknown>;
+    const cyclicIdentity = {
+      currentBuild: "current",
+      freshParent: "fresh",
+    } as Record<string, unknown>;
+    cyclicIdentity.currentBuild = cyclicIdentity;
+    cyclic.identity = cyclicIdentity;
+    expect(() => validateLiveProofReport(cyclic)).not.toThrow();
+    expect(validateLiveProofReport(cyclic).isErr()).toBe(true);
+
+    const lane = {
+      ...validReport().lanes[0],
+    } as Record<string, unknown>;
+    Object.defineProperty(lane, "name", {
+      enumerable: true,
+      get: () => {
+        throw new Error("NESTED-SENTINEL");
+      },
+    });
+    const accessor = {
+      ...validReport(),
+      lanes: [lane, ...validReport().lanes.slice(1)],
+    };
+    expect(() => serializeLiveProofReport(accessor)).not.toThrow();
+    const result = serializeLiveProofReport(accessor);
+    expect(result.isErr()).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("NESTED-SENTINEL");
+  });
+
   it("fails closed for accessors and revoked proxies without invoking getters", () => {
     const accessor = { ...validReport() } as Record<string, unknown>;
     Object.defineProperty(accessor, "identity", {
