@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 395 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~42,600 tokens. Without it, AI exploration would cost ~122,000 tokens. **Saves ~79,400 tokens per conversation.**
-> **Last scanned:** 2026-08-21 08:50 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 395 lib files | 46 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~42,700 tokens. Without it, AI exploration would cost ~122,500 tokens. **Saves ~79,800 tokens per conversation.**
+> **Last scanned:** 2026-08-21 14:09 — re-run after significant changes
 
 ---
 
@@ -1003,7 +1003,7 @@
   - function createPiExtensionInventoryHost: (input) => BunPiExtensionInventoryHost
   - function resolveOwnExtensionEntryPath: (input) => Promise<string | undefined>
   - function collectPiExtensionInventoryFromHost: (input) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
-  - _...15 more_
+  - _...16 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry
@@ -2341,10 +2341,12 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
-- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture-harness.ts
+- `BUN_INSTALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
+- `LANG` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `LC_ALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
 - `PI_BIN` (has default) — scripts/release/pi-child-inspection-smoke.ts
@@ -2380,6 +2382,8 @@
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_PI_REAL_HOST_BIN` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `WEAVE_PI_REAL_HOST_REGRESSION` **required** — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `WEAVE_PI_UNSAFE_ENABLE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
@@ -2416,7 +2420,7 @@
 - `packages/adapters/pi/src/types.ts` — imported by **57** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/adapters/pi/src/ui-paint.ts` — imported by **33** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **29** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **30** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
 - `packages/adapters/pi/src/child-timer.ts` — imported by **22** files
@@ -2424,14 +2428,14 @@
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
 - `scripts/release/constants.ts` — imported by **21** files
 - `packages/adapters/pi/src/child-session-events.ts` — imported by **20** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **20** files
-- `packages/adapters/pi/src/rpc-child.ts` — imported by **18** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
 - `packages/adapters/pi/src/child-tree.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `scripts/release/errors.ts` — imported by **18** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **17** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `packages/adapters/pi/src/child-envelope.ts` — imported by **16** files
-- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 
 ## Import Map (who imports what)
@@ -2439,7 +2443,7 @@
 - `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +52 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +28 more
-- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +24 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +25 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more
 - `packages/adapters/pi/src/child-timer.ts` ← `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-render-parity.test.ts` +17 more
@@ -2468,7 +2472,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 390 test files found
+> 392 test files found
 
 ---
 

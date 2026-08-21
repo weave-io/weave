@@ -992,7 +992,7 @@
   - function createPiExtensionInventoryHost: (input) => BunPiExtensionInventoryHost
   - function resolveOwnExtensionEntryPath: (input) => Promise<string | undefined>
   - function collectPiExtensionInventoryFromHost: (input) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
-  - _...15 more_
+  - _...16 more_
 - `packages/adapters/pi/src/pi-extension-inventory.ts`
   - function collectPiExtensionInventory: (port, options) => ResultAsync<PiExtensionInventory, PiExtensionInventoryDegradation>
   - interface PiExtensionInventoryDirectoryEntry

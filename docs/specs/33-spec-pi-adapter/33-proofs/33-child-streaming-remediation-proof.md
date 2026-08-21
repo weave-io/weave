@@ -1302,3 +1302,123 @@ report, or any other runtime output or artifact. No new Herdr claim is made.
 | Documentation links | **PASS** — `bun run docs:check-links` |
 | Proof commit scope | **PASS** — proof record plus required metadata only |
 | Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |
+
+## Task 11 final proof L1: J8 live lanes plus K1 isolation gate (2026-08-21)
+
+This append-only section records the final evidence for exact clean subject
+`57355ca9f43676ee4e34b5dafffb533867c2e4fe`. It preserves every earlier RED
+section and leaves the Task 11 plan checkbox unchanged. The current built
+`extension-impl` is bound to SHA-256
+`20475f25a0b7fc3016cd7a54fee04c5439e42323ece72266af94b831c5384625`.
+J8 is the fresh normal-provider Herdr lane observation. K1 is the separate
+same-subject, same-digest isolation and registry verifier. They are recorded as
+separate gates; neither is inferred from the other.
+
+### L1 validation and exact implementation binding
+
+| Gate | Bounded result |
+| --- | --- |
+| Git subject | **PASS** — exact subject `57355ca9f43676ee4e34b5dafffb533867c2e4fe` |
+| Working tree at proof subject | **PASS** — clean |
+| Current `extension-impl` | **PASS** — SHA-256 `20475f25a0b7fc3016cd7a54fee04c5439e42323ece72266af94b831c5384625` |
+| Full repository suite | **PASS** — `11298` pass; `12` skipped |
+| Pi suite | **PASS** — `4237` pass |
+| Script suite | **PASS** — `182` pass; `1` skipped |
+| Build | **PASS** |
+| Typecheck | **PASS** |
+| Lint | **PASS** |
+| Config validation | **PASS** |
+| Documentation links | **PASS** — `bun run docs:check-links` |
+
+### J8 fresh normal-provider Herdr lane record
+
+J8 recorded a current identity and a fresh parent under the normal provider.
+The live observation remained content-free and retained no prompt, assistant
+text, tool payload, credential, or path.
+
+| J8 fact | Bounded result |
+| --- | --- |
+| Runtime identity / parent freshness | **PASS** — `current` / `fresh` |
+| Provider | **PASS** — normal provider; no deterministic provider |
+| Live proof lanes | **PASS** — `4/4` observed |
+| Children | `1` |
+| Parent live row | **PASS** — present |
+| Inspector | **PASS** — open; reasoning present |
+| Tool starts / results | `1 / 1` |
+| Duplicate terminals | `0` |
+| Assistant samples / growths | `2 / 1` |
+| Authenticated result chunks / commits | `1 / 1` |
+| Settlements | `1` — exactly one |
+| Retained registries / bytes | `0 / 0` |
+| Diagnostics | `0` |
+| Active leases / workflows | `0 / 0` |
+| Processes / panes | `0 / 0` |
+
+J8 also recorded the individual restoration and cleanup facts for config,
+settings, launcher, symlink, Runtime Store, workflow, process, pane, and
+temporary resources as true. Its aggregate cleanup flag was not complete,
+because the independent terminal-gate controls below were absent.
+
+J8 closed at `terminal-gates` with RED. It did not independently retain the
+authoritative parent-card/model, durable-sink, or registry-release control
+records after operator failure. Its terminal-gate reason is preserved exactly:
+
+> Authenticated child result-commit is present, but no authoritative parent-card/model, durable-sink, or registry-release control record is present; process exit and empty stores cannot prove isolation.
+
+The corresponding J8 control facts were `parent-card isolation: false`,
+`durable sinks clean: false`, `registries released: false`, and `isolation
+clean: false`. Empty process/store counts therefore remain cleanup facts only;
+they are not an isolation proof.
+
+### K1 separate same-subject/same-digest isolation and registry gate
+
+K1 is the separate authoritative verifier required for the plan's isolation,
+durable-sink, registry-release, and cleanup steps. It used the same subject and
+`extension-impl` digest recorded above. It did not replace J8's live lane
+observation or turn J8's process exit into an isolation claim.
+
+| K1 gate | Bounded result |
+| --- | --- |
+| Real Pi | **PASS** — `0.84.2`, exit `0` |
+| Requested lanes | **PASS** — `4/4` |
+| Bounded count tuple | `6/6/1/4` |
+| Events / dropped | `92/0` |
+| Repaints | `29` |
+| Diagnostics | `0` |
+| Isolation | **PASS** — isolated |
+| Child / tool terminal / settlement | `1/1/1` |
+| Card registry | `0/0` |
+| Inspector registry | `0/0` |
+| Cleanup | **PASS** — `4` attempts complete |
+| Bounded report | **PASS** — mode `0600`, `699` bytes, removed |
+
+### Why the two gates satisfy the separate plan steps
+
+The plan explicitly separates the fresh live-terminal observation from the
+persistence and lifecycle isolation controls. J8 supplies the former: current
+identity, a fresh normal-provider parent, the four live lane observations, the
+authenticated result path, and one settlement. J8's RED terminal gate remains
+honest and explicitly refuses to claim parent-card, durable-sink, or registry
+isolation.
+
+K1 supplies the latter: an independent real-Pi run bound to the same subject
+and implementation digest, with the four lane count, event/drop/repaint and
+diagnostic totals, isolated sink result, empty card and inspector registries,
+and complete cleanup/report removal. Therefore J8 live terminal lanes plus the
+separate K1 sink and registry gate cover the plan's explicitly separate proof
+steps. This conclusion does not claim that J8 proved isolation from process exit
+or empty stores; K1 is the isolation and registry authority.
+
+### Final cleanup, resources, and content/path checks
+
+| Gate | Bounded result |
+| --- | --- |
+| Runtime Store status | **PASS** — no active lease; `0` workflow instances; schema `6` |
+| Global config equality | **PASS** — restored bytes matched the temporary mode-`0600` backup; SHA-256 `734e649b5233e603363fbbd1f8096bd986bea2ae4641ba2a0ab63dedb02dfd75`; live mode `0644`; backup removed after verification |
+| J8/K1 resource cleanup | **PASS** — J8 resource counts are zero; K1 cleanup is complete; K1 report is removed |
+| Content scan | **PASS** — no raw prompt, assistant, tool, reasoning, credential, or child payload was retained |
+| Path scan | **PASS** — no absolute local path was retained |
+| Documentation links | **PASS** — checked after this append-only update |
+| Earlier RED history | **PRESERVED** — no earlier proof section was changed |
+| Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |
+| Proof scope | **PASS** — proof record plus hook-required metadata only |

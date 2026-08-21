@@ -3,10 +3,12 @@
 ## Environment Variables
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
-- `BUN_INSTALL` (has default) — scripts/pi/child-stream-capture-harness.ts
+- `BUN_INSTALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
+- `LANG` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `LC_ALL` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
 - `PI_BIN` (has default) — scripts/release/pi-child-inspection-smoke.ts
@@ -42,6 +44,8 @@
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_PI_DESCRIPTOR_RELATIVE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
+- `WEAVE_PI_REAL_HOST_BIN` (has default) — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
+- `WEAVE_PI_REAL_HOST_REGRESSION` **required** — scripts/pi/__tests__/pinned-child-bootstrap-real-host.test.ts
 - `WEAVE_PI_UNSAFE_ENABLE_SESSION_IO` **required** — packages/adapters/pi/src/__tests__/required-capability-gate.test.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
