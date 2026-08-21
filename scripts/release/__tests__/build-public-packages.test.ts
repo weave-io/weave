@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { basename, dirname, join, resolve } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import type { BoundedProcess } from "../../bounded-process/contract.js";
 import { MAX_BOUNDED_PROCESS_LINE_BYTES } from "../../bounded-process/stream.js";
@@ -72,6 +73,99 @@ const GIT_TEST_LIMITS = {
   postKillMs: 10,
   cleanupMs: 40,
 };
+
+const PRELOADER_BUILD_TEST_PARENT = "/tmp";
+const PRELOADER_BUILD_TEST_PREFIX = "weave-pi-preloader-build-";
+const PRELOADER_BUILD_TEST_ROOT_PATTERN = new RegExp(
+  `^${PRELOADER_BUILD_TEST_PREFIX}[A-Za-z0-9-]+$`,
+  "u",
+);
+
+function assertOwnedPreloaderBuildRoot(root: string): string {
+  const resolvedRoot = resolve(root);
+  if (
+    resolvedRoot !== root ||
+    dirname(resolvedRoot) !== PRELOADER_BUILD_TEST_PARENT ||
+    !PRELOADER_BUILD_TEST_ROOT_PATTERN.test(basename(resolvedRoot))
+  ) {
+    throw new Error(`refusing to remove unowned preloader build root: ${root}`);
+  }
+  return resolvedRoot;
+}
+
+async function mkdtempPreloaderBuildRoot(): Promise<string> {
+  const process = Bun.spawn(
+    [
+      "mktemp",
+      "-d",
+      `${PRELOADER_BUILD_TEST_PARENT}/${PRELOADER_BUILD_TEST_PREFIX}XXXXXXXX`,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`mkdtemp failed: ${stderr.trim()}`);
+  }
+  const root = stdout.trim();
+  if (root.length === 0) throw new Error("mkdtemp returned an empty path");
+  return assertOwnedPreloaderBuildRoot(root);
+}
+
+async function removeOwnedPreloaderBuildRoot(root: string): Promise<void> {
+  const ownedRoot = assertOwnedPreloaderBuildRoot(root);
+  const process = Bun.spawn(["rm", "-rf", "--", ownedRoot], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(
+      `preloader build root cleanup failed: ${stderr.trim() || stdout.trim()}`,
+    );
+  }
+}
+
+async function snapshotOwnedPreloaderBuildRoots(): Promise<string[]> {
+  const process = Bun.spawn(
+    [
+      "find",
+      "-H",
+      PRELOADER_BUILD_TEST_PARENT,
+      "-maxdepth",
+      "1",
+      "-mindepth",
+      "1",
+      "-type",
+      "d",
+      "-name",
+      `${PRELOADER_BUILD_TEST_PREFIX}*`,
+      "-print",
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`preloader build root snapshot failed: ${stderr.trim()}`);
+  }
+  return stdout
+    .split(/\r?\n/u)
+    .map((root) => root.trim())
+    .filter((root) => root.length > 0)
+    .map(assertOwnedPreloaderBuildRoot)
+    .sort();
+}
 
 describe("bounded Git build probes", () => {
   it("parses a normal subject and dirty status only after both probes succeed", async () => {
@@ -288,27 +382,96 @@ describe("public package build guard", () => {
   });
 
   it("bundles the preloader into one self-contained output", async () => {
-    expect(
-      hasRuntimeRelativeImport('import "./extension-preloader-factory.js";'),
-    ).toBe(true);
-    const outdir = `/tmp/weave-pi-preloader-build-${crypto.randomUUID()}`;
-    const result = await Bun.build({
-      entrypoints: ["packages/adapters/pi/src/extension.ts"],
-      outdir,
-      target: "bun",
-      format: "esm",
-    });
-    expect(result.success).toBe(true);
-    expect(result.outputs).toHaveLength(1);
-    const output = result.outputs[0];
-    if (output === undefined) throw new Error("preloader output missing");
-    const contents = await new Response(output).text();
-    expect(hasRuntimeRelativeImport(contents)).toBe(false);
-    expect(contents).not.toMatch(
-      /(?:from|import)\s*["']\.\/extension-preloader-/u,
-    );
-    await Bun.file(output.path).delete();
+    const before = await snapshotOwnedPreloaderBuildRoots();
+    expect(before).toEqual([]);
+    const outdir = await mkdtempPreloaderBuildRoot();
+    try {
+      expect(
+        hasRuntimeRelativeImport('import "./extension-preloader-factory.js";'),
+      ).toBe(true);
+      const result = await Bun.build({
+        entrypoints: ["packages/adapters/pi/src/extension.ts"],
+        outdir,
+        target: "bun",
+        format: "esm",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = result.outputs[0];
+      if (output === undefined) throw new Error("preloader output missing");
+      const contents = await new Response(output).text();
+      expect(hasRuntimeRelativeImport(contents)).toBe(false);
+      expect(contents).not.toMatch(
+        /(?:from|import)\s*["']\.\/extension-preloader-/u,
+      );
+    } finally {
+      await removeOwnedPreloaderBuildRoot(outdir);
+    }
+    const after = await snapshotOwnedPreloaderBuildRoots();
+    expect(after).toEqual(before);
+    expect(after).toEqual([]);
+    expect(after).not.toContain(outdir);
   });
+
+  const preloaderBuildFailureScenarios = [
+    {
+      name: "an assertion failure",
+      run: async (outdir: string): Promise<void> => {
+        const output = join(outdir, "nested", "output.js");
+        await Bun.write(output, "temporary output");
+        expect(await Bun.file(output).exists()).toBe(false);
+      },
+    },
+    {
+      name: "a build failure",
+      run: async (outdir: string): Promise<void> => {
+        const result = await Bun.build({
+          entrypoints: [join(outdir, "missing-entry.ts")],
+          outdir,
+          target: "bun",
+          format: "esm",
+        });
+        expect(result.success).toBe(false);
+        throw new Error("injected failure after the build failure");
+      },
+    },
+    {
+      name: "a write failure",
+      run: async (outdir: string): Promise<void> => {
+        const blocker = join(outdir, "write-blocker");
+        await Bun.write(blocker, "not a directory");
+        await Bun.write(join(blocker, "output.js"), "temporary output");
+      },
+    },
+    {
+      name: "an injected failure",
+      run: async (outdir: string): Promise<void> => {
+        await Bun.write(join(outdir, "output.js"), "temporary output");
+        throw new Error("injected preloader build failure");
+      },
+    },
+  ] as const;
+
+  for (const scenario of preloaderBuildFailureScenarios) {
+    it(`removes the complete root after ${scenario.name}`, async () => {
+      const before = await snapshotOwnedPreloaderBuildRoots();
+      expect(before).toEqual([]);
+      const outdir = await mkdtempPreloaderBuildRoot();
+      let failure: unknown;
+      try {
+        await scenario.run(outdir);
+      } catch (cause) {
+        failure = cause;
+      } finally {
+        await removeOwnedPreloaderBuildRoot(outdir);
+      }
+      expect(failure).toBeDefined();
+      const after = await snapshotOwnedPreloaderBuildRoots();
+      expect(after).toEqual(before);
+      expect(after).toEqual([]);
+      expect(after).not.toContain(outdir);
+    });
+  }
 
   it("keeps the three Pi host packages as public runtime externals", () => {
     expect(PUBLIC_RUNTIME_EXTERNALS).toContain(
