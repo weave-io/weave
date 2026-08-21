@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 378 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
-> **Token savings:** this file is ~41,400 tokens. Without it, AI exploration would cost ~117,600 tokens. **Saves ~76,200 tokens per conversation.**
-> **Last scanned:** 2026-08-21 04:52 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 381 lib files | 42 env vars | 10 middleware | 11 events | 0% test coverage
+> **Token savings:** this file is ~41,500 tokens. Without it, AI exploration would cost ~118,400 tokens. **Saves ~76,900 tokens per conversation.**
+> **Last scanned:** 2026-08-21 05:29 — re-run after significant changes
 
 ---
 
@@ -1959,14 +1959,25 @@
   - function runLiveProofCommand: (input) => ResultAsync<LiveProofCommandOutcome, never>
   - interface LiveProofCommandOutcome
   - interface LiveProofCommandInput
-- `scripts/pi/child-stream-live-proof-contract.ts`
+- `scripts/pi/child-stream-live-proof-contract-args.ts`
   - function parseLiveProofArgs: (argv) => Result<LiveProofArgs, LiveProofArgumentFailure>
-  - function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
+  - const LIVE_PROOF_FLAGS
+  - const LIVE_PROOF_FORBIDDEN_SCREEN_FLAGS
+  - const MAX_LIVE_PROOF_ARGUMENTS
+  - const MAX_LIVE_PROOF_ARGUMENT_BYTES
+  - const MAX_LIVE_PROOF_LANE_LIST_BYTES
+  - _...2 more_
+- `scripts/pi/child-stream-live-proof-contract-counters.ts`
   - function saturatingIncrement: (value, amount) => number
+  - const MAX_LIVE_PROOF_COUNTER
+  - const saturatingAdd
+  - const incrementSaturatedCounter
+- `scripts/pi/child-stream-live-proof-contract-report-validation.ts` — function validateLiveProofReport: (input) => Result<LiveProofReport, LiveProofReportValidationFailure>
+- `scripts/pi/child-stream-live-proof-contract-serialization.ts`
   - function serializeLiveProofReport: (input) => Result<string, LiveProofSerializationFailure>
   - function parseLiveProofReportJson: (input) => Result<LiveProofReport, LiveProofJsonFailure>
-  - interface LiveProofArgumentFailure
-  - _...56 more_
+  - const safeSerializeLiveProofReport
+  - const parseSerializedLiveProofReport
 - `scripts/pi/child-stream-live-proof-host.ts`
   - function safeProofEnvironment: (source, string>>) => Record<string, string>
   - function createLiveProofSystem: () => LiveProofSystem

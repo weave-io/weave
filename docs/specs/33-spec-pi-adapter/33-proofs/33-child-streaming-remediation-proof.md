@@ -1157,3 +1157,81 @@ output, loader, or identity artifact. No new Herdr result is claimed.
 | Runtime Store | **PASS** — no active lease and no workflow instance remained |
 | Reports | **PASS** — bounded report removed |
 | Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |
+
+## Task 11 final all-remediation proof G2 (2026-08-21)
+
+This append-only section records the final all-review remediation evidence for
+subject `a466ddd3462328d889c1c37060d60bef00facd29`. It preserves every earlier
+proof section and does not edit the Task 11 plan checkbox. G1b is an executable
+real-Pi result; no new Herdr result is claimed.
+
+### G1a review, validation, and bounded-control evidence
+
+| Gate or control | Bounded result |
+| --- | --- |
+| Focused suite | **PASS** — `520` |
+| Pi suite | **PASS** — `4213` |
+| Repository suite | **PASS** — `9713` |
+| Build | **PASS** |
+| Typecheck | **PASS** |
+| Lint | **PASS** |
+| Config validation | **PASS** |
+| Documentation checks | **PASS** |
+| Affected-module review | **PASS** — `34` modules; maximum `999` lines per module |
+| Pinned counters | **PASS** — all `0` |
+| Late-spawn control | **PASS** |
+| Dual-stream control | **PASS** |
+| Capture/host shared runner control | **PASS** |
+| Stale-runtime control | **PASS** |
+| Runtime-swap control | **PASS** |
+| Environment-boundary control | **PASS** |
+| Silent-parent control | **PASS** |
+| Flood controls | **PASS** |
+
+### G1b real-Pi executable proof
+
+The real installed Pi executable returned the bounded result below. This is
+not a new Herdr observation or a terminal UI result.
+
+| Gate | Bounded result |
+| --- | --- |
+| Real Pi command exit | **PASS** — `0` |
+| Runtime identity | **PASS** — `current` |
+| Parent freshness | **PASS** — `fresh` |
+| Requested lanes | **PASS** — `4/4` |
+| Isolation | **PASS** — `isolated` |
+| Settlement | **PASS** — one authoritative settlement |
+| Registry | **PASS** — empty |
+| Diagnostics | **PASS** — clean and content-free |
+| Cleanup | **PASS** — complete |
+| Bounded report | **PASS** — mode `0600`, `699` bytes, removed |
+| Resources | **PASS** — none remained |
+| Exact global config | **PASS** — original bytes restored; mode `0644`; size `2857`; temporary mode-`0600` backup removed |
+
+The real-Pi result also established that the four requested lanes passed under
+the current, fresh, isolated run. No Herdr pane, terminal lane, or terminal
+rendering result is inferred from it.
+
+### Runtime implementation digest and terminal-continuity boundary
+
+| Digest fact | SHA-256 / result |
+| --- | --- |
+| Current built `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Authoritative C2 `extension-impl` | `2771dfff0d13587a2db4f6c85adab91084c5e770207227dbfea53f0d18f253ea` |
+| Equality | **PASS** — byte-identical |
+
+Terminal continuity is limited to the byte-identical `extension-impl`
+implementation payload shown above. This section makes no continuity claim for
+the extension entry, build-identity sidecar, host loader, preloader, verifier,
+report, or any other runtime output or artifact. No new Herdr claim is made.
+
+### Preservation, cleanup, and scan record
+
+| Gate | Bounded result |
+| --- | --- |
+| Earlier proof history | **PRESERVED** — prior sections remain unchanged |
+| Task 11 plan state | **UNCHANGED** — checkbox remains unchecked |
+| Temporary config backup | **PASS** — verified against the restored config and removed |
+| Documentation links | **PASS** — `bun run docs:check-links` |
+| Content/path scans | **PASS** — no prohibited content or absolute path was retained |
+| Resources and reports | **PASS** — no child, provider, proof, pane, lease, temporary resource, or report remained |
