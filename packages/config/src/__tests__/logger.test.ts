@@ -19,7 +19,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logDestination, redirectLogsToFile } from "@weaveio/weave-engine";
+import { redirectLogsToFile } from "@weaveio/weave-engine";
 
 describe("config logger — shared destination invariant", () => {
   it("config logger writes to the engine logDestination (same MutableDestination)", async () => {
@@ -29,8 +29,8 @@ describe("config logger — shared destination invariant", () => {
 
     // The config logger must exist and be a pino logger.
     expect(configLogger).toBeDefined();
-    expect(typeof configLogger.info).toBe("function");
-    expect(typeof configLogger.child).toBe("function");
+    expect(configLogger.info).toEqual(expect.any(Function));
+    expect(configLogger.child).toEqual(expect.any(Function));
   });
 
   it("redirectLogsToFile redirects config logger output to file (shared destination)", async () => {

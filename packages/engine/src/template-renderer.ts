@@ -11,8 +11,12 @@
  * - Reject unsafe paths (prototype traversal: __proto__, prototype, constructor)
  * - Reject function/callable values in the template context
  * - Render with default HTML escaping (double braces) and raw output (triple braces)
- * - Post-render unresolved-tag check
  * - Restore escaped literal tags after rendering
+ *
+ * Validation is source-aware only: it inspects the parsed template tokens, never
+ * the rendered output. Interpolated context values are opaque payload — a
+ * category description like `Literal {{agent.name}} docs` must survive rendering
+ * verbatim, so the renderer never rescans its own output for Mustache syntax.
  *
  * This module has NO filesystem, environment, process, helper, lambda, or
  * partial-loading behavior. All functions return neverthrow Result types.
@@ -20,6 +24,7 @@
  * NOT exported from packages/engine/src/index.ts (internal module).
  */
 
+import type { TemplateSpans } from "mustache";
 import Mustache from "mustache";
 import { err, ok, type Result } from "neverthrow";
 
@@ -83,7 +88,7 @@ type MustacheToken = [
   startIndex: number,
   endIndex: number,
   children?: MustacheToken[],
-  ...rest: unknown[],
+  ...rest: (string | number | boolean)[],
 ];
 
 // ---------------------------------------------------------------------------
@@ -116,11 +121,6 @@ export type RendererError =
   | {
       type: "FunctionValue";
       path: string;
-      message: string;
-    }
-  | {
-      type: "UnresolvedTag";
-      tag: string;
       message: string;
     };
 
@@ -197,9 +197,26 @@ function escapeRegex(s: string): string {
  * Parse a Mustache template source string into tokens.
  * Returns a typed Result — never throws for expected parse failures.
  */
+function normalizeMustacheTokens(tokens: TemplateSpans): MustacheToken[] {
+  return tokens.map((token) => {
+    const [type, value, startIndex, endIndex] = token;
+    const children = token[4];
+    if ((type === "#" || type === "^") && Array.isArray(children)) {
+      return [
+        type,
+        value,
+        startIndex,
+        endIndex,
+        normalizeMustacheTokens(children),
+      ];
+    }
+    return [type, value, startIndex, endIndex];
+  });
+}
+
 function parseTemplate(source: string): Result<MustacheToken[], RendererError> {
   try {
-    const tokens = Mustache.parse(source) as MustacheToken[];
+    const tokens = normalizeMustacheTokens(Mustache.parse(source));
     return ok(tokens);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -225,7 +242,7 @@ function collectTokens(tokens: MustacheToken[]): MustacheToken[] {
     result.push(token);
     const children = token[4];
     if (Array.isArray(children) && children.length > 0) {
-      result.push(...collectTokens(children as MustacheToken[]));
+      result.push(...collectTokens(children));
     }
   }
   return result;
@@ -298,7 +315,7 @@ function validateTokens(
       const children = token[4];
       if (Array.isArray(children) && children.length > 0) {
         const childResult = validateTokens(
-          children as MustacheToken[],
+          children,
           allowedPaths,
           resolvedSectionPath,
         );
@@ -325,7 +342,7 @@ function validateTokens(
     }
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 /**
@@ -396,7 +413,7 @@ function validatePath(
   }
 
   // Full path must be explicitly in the allowed set
-  if (allowedPaths.has(path)) return ok(undefined);
+  if (allowedPaths.has(path)) return ok();
 
   return err({
     type: "UnknownPath",
@@ -409,15 +426,48 @@ function validatePath(
 // Function/callable value rejection
 // ---------------------------------------------------------------------------
 
+interface TemplateRecordCandidate {
+  readonly [key: string]: TemplateValueCandidate;
+}
+
+type TemplateCallable = (...args: never[]) => void;
+
+type TemplateValueCandidate =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | readonly TemplateValueCandidate[]
+  | TemplateRecordCandidate
+  | TemplateCallable;
+
+function isTemplateCallable(
+  value: TemplateValueCandidate,
+): value is TemplateCallable {
+  return value instanceof Function;
+}
+
+function isTemplateContextRecord(
+  value: TemplateValueCandidate,
+): value is TemplateRecordCandidate {
+  return (
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value) &&
+    !(value instanceof Function)
+  );
+}
+
 /**
  * Recursively scan a context value for any function or callable.
  * Returns an error if any callable is found.
  */
 function rejectFunctionValues(
-  value: unknown,
+  value: TemplateValueCandidate,
   path: string,
 ): Result<void, RendererError> {
-  if (typeof value === "function") {
+  if (isTemplateCallable(value)) {
     return err({
       type: "FunctionValue",
       path,
@@ -430,11 +480,11 @@ function rejectFunctionValues(
       const check = rejectFunctionValues(value[i], `${path}[${i}]`);
       if (check.isErr()) return check;
     }
-    return ok(undefined);
+    return ok();
   }
 
-  if (value !== null && typeof value === "object") {
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+  if (isTemplateContextRecord(value)) {
+    for (const [key, val] of Object.entries(value)) {
       const check = rejectFunctionValues(
         val,
         path === "" ? key : `${path}.${key}`,
@@ -443,7 +493,7 @@ function rejectFunctionValues(
     }
   }
 
-  return ok(undefined);
+  return ok();
 }
 
 /**
@@ -453,64 +503,6 @@ function validateNoFunctionValues(
   context: TemplateContext,
 ): Result<void, RendererError> {
   return rejectFunctionValues(context, "");
-}
-
-// ---------------------------------------------------------------------------
-// Post-render unresolved-tag check
-// ---------------------------------------------------------------------------
-
-/**
- * After rendering, scan for any remaining unresolved Mustache tags.
- *
- * Allows:
- * - Restored escaped literals (which produce literal `{{` or `{{{` text)
- *
- * Rejects:
- * - Any remaining `{{...}}` or `{{{...}}}` that were not resolved
- *
- * Strategy: after restoreEscapedLiterals(), the output may contain literal
- * `{{` sequences that came from escaped inputs. We need to distinguish those
- * from real unresolved tags.
- *
- * We do this by checking the rendered output BEFORE restoration for any
- * remaining `{{` patterns (excluding our placeholders).
- */
-function checkUnresolvedTags(
-  renderedBeforeRestore: string,
-): Result<void, RendererError> {
-  // After Mustache renders, any remaining {{ or {{{ are unresolved tags.
-  // Our placeholders don't contain {{ so they won't match.
-  //
-  // We use a precise regex that matches only Mustache-style identifiers:
-  // - Optional section/partial/comment prefix: #, ^, /, !, >, &
-  // - Followed by an identifier: letters, digits, underscores, dots, hyphens
-  //
-  // This avoids false positives from Mermaid hexagon node syntax like
-  // {{"weft"}} which contains quotes and is not a Mustache tag.
-  const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
-  const unresolvedMatch = renderedBeforeRestore.match(mustacheTagPattern);
-  if (unresolvedMatch !== null) {
-    const tag = unresolvedMatch[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  // Also check for triple-brace unresolved (same precision)
-  const mustacheTriplePattern = /\{\{\{[#^/!>&]?[\w.-][\w.-]*\}\}\}/;
-  const unresolvedTriple = renderedBeforeRestore.match(mustacheTriplePattern);
-  if (unresolvedTriple !== null) {
-    const tag = unresolvedTriple[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  return ok(undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -534,8 +526,13 @@ export interface RenderOptions {
  * 3. Validate tokens (unsupported features, unsafe paths, unknown paths)
  * 4. Validate no function/callable values in context
  * 5. Render with Mustache (HTML escaping for {{...}}, raw for {{{...}}})
- * 6. Check for unresolved tags in rendered output (before restoration)
- * 7. Restore escaped literal placeholders
+ * 6. Restore escaped literal placeholders
+ *
+ * There is deliberately no post-render scan of the output. Every tag that the
+ * template itself contains has already been validated against `allowedPaths`,
+ * so anything Mustache-shaped left in the output came from a context value and
+ * is preserved verbatim. Paths that are allowed but absent from the context
+ * render empty, by design.
  *
  * Returns Result<string, RendererError> — never throws for expected failures.
  */
@@ -575,11 +572,7 @@ export function renderTemplate(
     });
   }
 
-  // Step 6: Check for unresolved tags (before restoration)
-  const unresolvedCheck = checkUnresolvedTags(rendered);
-  if (unresolvedCheck.isErr()) return err(unresolvedCheck.error);
-
-  // Step 7: Restore escaped literals
+  // Step 6: Restore escaped literals
   const final = restoreEscapedLiterals(rendered);
 
   log.debug({ outputLength: final.length }, "Template rendered successfully");

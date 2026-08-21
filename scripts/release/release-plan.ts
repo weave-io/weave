@@ -28,7 +28,7 @@ import {
   errAsync,
   ok,
   okAsync,
-  Result,
+  type Result,
   type ResultAsync,
 } from "neverthrow";
 import { z } from "zod";
@@ -44,6 +44,7 @@ import type { ChangesetIdentity } from "./changeset-policy.js";
 import {
   NPM_DIGEST_PREFIX,
   PRIVATE_PACKAGE_NAMES,
+  PUBLIC_PACKAGE_NAMES,
   type PublicPackageName,
   RELEASE_CHANNELS,
   RELEASE_CONTROL_REF,
@@ -51,7 +52,22 @@ import {
   RELEASE_PR_MARKER_REF,
   type ReleaseChannel,
 } from "./constants.js";
-import { LedgerBlockSchema } from "./consumption-ledger.js";
+import {
+  LedgerChangesetIdentitySchema,
+  LedgerChangesetIdSchema,
+  LedgerPackageNameSchema,
+  LedgerSourceDigestSchema,
+  LedgerStableVersionSchema,
+} from "./consumption-ledger.js";
+import {
+  digestJson,
+  type JsonCanonicalizationError,
+  type JsonObject,
+  type JsonValue,
+  parseJsonValue,
+  sortJsonInput,
+  validateJsonValue,
+} from "./json.js";
 import { publishablePackageNames } from "./package-policy.js";
 import type {
   ChangedSourceName,
@@ -102,22 +118,26 @@ const RELEASE_STATE_DIRECTORY = ".release";
  * catalog, so the plan can never drift from what a changeset or a publishable
  * package is anywhere else in the pipeline.
  */
-const ChangesetIdentitySchema = LedgerBlockSchema.shape.changesets.element;
-const PublicPackageNameSchema = LedgerBlockSchema.shape.package;
-const StableVersionSchema = LedgerBlockSchema.shape.version;
+const ChangesetIdentitySchema = LedgerChangesetIdentitySchema;
+const PublicPackageNameSchema = LedgerPackageNameSchema;
+const StableVersionSchema = LedgerStableVersionSchema;
 
 const FullShaSchema = z.string().regex(FULL_SHA);
 const SemVerSchema = z.string().min(1).max(64).regex(SEMVER);
 const DigestSchema = z
   .string()
   .regex(new RegExp(`^${NPM_DIGEST_PREFIX}[0-9a-f]{64}$`));
-const CHANGED_SOURCE_NAMES: ChangedSourceName[] = [
-  ...publishablePackageNames(),
+const CHANGED_SOURCE_NAMES: readonly ChangedSourceName[] = [
+  ...PUBLIC_PACKAGE_NAMES,
   ...PRIVATE_PACKAGE_NAMES,
 ];
-const ChangedSourceNameSchema = z.enum(
-  CHANGED_SOURCE_NAMES as [ChangedSourceName, ...ChangedSourceName[]],
-);
+const ChangedSourceNameSchema = z
+  .string()
+  .refine(
+    (value): value is ChangedSourceName =>
+      CHANGED_SOURCE_NAMES.some((name) => name === value),
+    "unknown changed source",
+  );
 const RelativePathSchema = z
   .string()
   .min(1)
@@ -130,8 +150,8 @@ const RelativePathSchema = z
 
 const SharedChangesetEvidenceSchema = z
   .object({
-    changesetId: ChangesetIdentitySchema.shape.id,
-    sourceDigest: ChangesetIdentitySchema.shape.sourceDigest,
+    changesetId: LedgerChangesetIdSchema,
+    sourceDigest: LedgerSourceDigestSchema,
     trigger: PublicPackageNameSchema,
     members: z
       .array(PublicPackageNameSchema)
@@ -142,8 +162,8 @@ const SharedChangesetEvidenceSchema = z
 
 const ArtifactDependencyEvidenceSchema = z
   .object({
-    changesetId: ChangesetIdentitySchema.shape.id,
-    sourceDigest: ChangesetIdentitySchema.shape.sourceDigest,
+    changesetId: LedgerChangesetIdSchema,
+    sourceDigest: LedgerSourceDigestSchema,
     trigger: PublicPackageNameSchema,
     source: ChangedSourceNameSchema,
     relationship: z.enum([
@@ -463,7 +483,8 @@ export const ReleasePlanArtifactSchema = z
   })
   .strict()
   .superRefine((artifact, context) => {
-    if (artifact.planDigest !== releasePlanDigest(artifact.plan))
+    const expected = releasePlanDigest(artifact.plan);
+    if (expected.isErr() || artifact.planDigest !== expected.value)
       context.addIssue({
         code: "custom",
         path: ["planDigest"],
@@ -481,6 +502,11 @@ export type ReleaseDocsAudit = z.infer<typeof ReleaseDocsAuditSchema>;
 export type ReleaseProofMarker = z.infer<typeof ReleaseProofMarkerSchema>;
 export type ReleaseProofMarkers = z.infer<typeof ReleaseProofMarkersSchema>;
 export type ReleasePlanArtifact = z.infer<typeof ReleasePlanArtifactSchema>;
+interface ReleasePlanSerializationInput {
+  readonly schemaVersion: typeof RELEASE_PLAN_SCHEMA_VERSION;
+  readonly planDigest: string;
+  readonly plan: ReleasePlan;
+}
 
 type Assert<T extends true> = T;
 /** The plan carries Task 5's closure and Task 3's identities, not copies. */
@@ -524,6 +550,7 @@ export type ReleasePlanError =
     }
   /** Identity. */
   | { type: "PlanDigestMismatch"; expected: string; actual: string }
+  | { type: "CanonicalJsonFailed"; reason: string }
   | { type: "PlanDivergence"; path: string; expected: unknown; actual: unknown }
   /** Docs audit. */
   | { type: "MissingDocsAudit"; ref: string }
@@ -567,9 +594,15 @@ export type ReleasePlanError =
 // Validation, serialization, and identity
 // ---------------------------------------------------------------------------
 
+/** Input accepted by the release-plan schema boundary. */
+type ReleasePlanInput = Parameters<typeof ReleasePlanSchema.safeParse>[0];
+type ReleasePlanBindingInput = Parameters<
+  typeof ReleasePlanBindingSchema.safeParse
+>[0];
+
 /** Validates an untrusted value as a plan. Validation is not authority. */
 export function validateReleasePlan(
-  input: unknown,
+  input: ReleasePlanInput,
 ): Result<ReleasePlan, ReleasePlanError> {
   const parsed = ReleasePlanSchema.safeParse(input);
   if (!parsed.success)
@@ -582,7 +615,7 @@ export function validateReleasePlan(
 
 /** Validates an untrusted value as a workflow-artifact plan envelope. */
 export function validateReleasePlanArtifact(
-  input: unknown,
+  input: ReleasePlanInput,
 ): Result<ReleasePlanArtifact, ReleasePlanError> {
   const parsed = ReleasePlanArtifactSchema.safeParse(input);
   if (!parsed.success)
@@ -600,8 +633,8 @@ export function validateReleasePlanArtifact(
 export function serializeReleasePlan(
   plan: ReleasePlan,
 ): Result<string, ReleasePlanError> {
-  return validateReleasePlan(plan).map((validated) =>
-    JSON.stringify(sortValue(validated), null, 2),
+  return validateReleasePlan(plan).andThen((validated) =>
+    sortValue(validated).map((sorted) => JSON.stringify(sorted, null, 2)),
   );
 }
 
@@ -616,15 +649,13 @@ export function parseReleasePlan(
 export function serializeReleasePlanArtifact(
   plan: ReleasePlan,
 ): Result<string, ReleasePlanError> {
-  return validateReleasePlan(plan).map((validated) =>
-    JSON.stringify(
+  return validateReleasePlan(plan).andThen((validated) =>
+    releasePlanDigest(validated).andThen((planDigest) =>
       sortValue({
         schemaVersion: RELEASE_PLAN_SCHEMA_VERSION,
-        planDigest: releasePlanDigest(validated),
+        planDigest,
         plan: validated,
-      }),
-      null,
-      2,
+      }).map((sorted) => JSON.stringify(sorted, null, 2)),
     ),
   );
 }
@@ -637,8 +668,12 @@ export function parseReleasePlanArtifact(
 }
 
 /** The plan's identity: SHA-256 over its canonical bytes. */
-export function releasePlanDigest(plan: ReleasePlan): string {
-  return digestOf(JSON.stringify(sortValue(plan)));
+export function releasePlanDigest(
+  plan: ReleasePlan,
+): Result<string, ReleasePlanError> {
+  return validateJsonValue(plan)
+    .andThen((value) => digestJson(value))
+    .mapErr(canonicalJsonError);
 }
 
 /** Fails closed when a carried digest does not identify the carried plan. */
@@ -646,10 +681,11 @@ export function verifyReleasePlanDigest(
   plan: ReleasePlan,
   expected: string,
 ): Result<string, ReleasePlanError> {
-  const actual = releasePlanDigest(plan);
-  if (actual !== expected)
-    return err({ type: "PlanDigestMismatch", expected, actual });
-  return ok(actual);
+  return releasePlanDigest(plan).andThen((actual) =>
+    actual !== expected
+      ? err({ type: "PlanDigestMismatch" as const, expected, actual })
+      : ok(actual),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -809,9 +845,9 @@ function readMetadataBlock(
  */
 export function attachReleasePlanBinding(
   plan: ReleasePlan,
-  binding: unknown,
+  binding: ReleasePlanBindingInput,
 ): Result<ReleasePlan, ReleasePlanError> {
-  return validateBindingShape(binding)
+  return validateBindingRecord(binding)
     .andThen((validated) => checkBindingAgainstPlan(plan, validated))
     .andThen((validated) =>
       validateReleasePlan({ ...plan, binding: validated }),
@@ -826,18 +862,18 @@ export function attachReleasePlanBinding(
  */
 export function verifyReleasePlanBinding(
   plan: ReleasePlan,
-  candidate?: unknown,
+  candidate?: ReleasePlanBindingInput,
 ): Result<ReleasePlanBinding, ReleasePlanError> {
   const supplied = candidate ?? plan.binding;
   if (supplied === null || supplied === undefined)
     return err({ type: "MissingBinding" });
-  return validateBindingShape(supplied).andThen((validated) =>
+  return validateBindingRecord(supplied).andThen((validated) =>
     checkBindingAgainstPlan(plan, validated),
   );
 }
 
-function validateBindingShape(
-  binding: unknown,
+function validateBindingRecord(
+  binding: ReleasePlanBindingInput,
 ): Result<ReleasePlanBinding, ReleasePlanError> {
   const parsed = ReleasePlanBindingSchema.safeParse(binding);
   if (!parsed.success)
@@ -1018,7 +1054,7 @@ export interface RecomputePlanRequest {
   /** The exact commit whose tree the recomputation reads. */
   ref: string;
   /** The stored plan. Untrusted until this call returns. */
-  stored: unknown;
+  stored: ReleasePlanInput;
   mode: RecomputeMode;
 }
 
@@ -1190,8 +1226,8 @@ interface Divergence {
  * differ" cannot be acted on, while `closure.added.0.package` can.
  */
 export function firstDivergentPath(
-  expected: unknown,
-  actual: unknown,
+  expected: ReleasePlanInput,
+  actual: ReleasePlanInput,
   path = "",
 ): Divergence | null {
   if (Array.isArray(expected) || Array.isArray(actual)) {
@@ -1205,8 +1241,8 @@ export function firstDivergentPath(
     }
     return null;
   }
-  if (isPlainObject(expected) || isPlainObject(actual)) {
-    if (!isPlainObject(expected) || !isPlainObject(actual))
+  if (isPlainReleaseObject(expected) || isPlainReleaseObject(actual)) {
+    if (!isPlainReleaseObject(expected) || !isPlainReleaseObject(actual))
       return { path: path || "$", expected, actual };
     const keys = [
       ...new Set([...Object.keys(expected), ...Object.keys(actual)]),
@@ -1229,13 +1265,11 @@ export function firstDivergentPath(
 // Bounded JSON
 // ---------------------------------------------------------------------------
 
-const parseJson = Result.fromThrowable(
-  (source: string) => JSON.parse(source) as unknown,
-  (cause): ReleasePlanError => ({
-    type: "MalformedReleasePlanJson",
-    reason: cause instanceof Error ? cause.message : String(cause),
-  }),
-);
+const parseJson = (source: string): Result<JsonValue, ReleasePlanError> =>
+  parseJsonValue(source).mapErr((error) => ({
+    type: "MalformedReleasePlanJson" as const,
+    reason: error.message,
+  }));
 
 /**
  * Parses plan JSON under explicit bounds.
@@ -1246,7 +1280,7 @@ const parseJson = Result.fromThrowable(
  */
 export function parseBoundedJson(
   text: string,
-): Result<unknown, ReleasePlanError> {
+): Result<JsonValue, ReleasePlanError> {
   if (text.length > RELEASE_PLAN_LIMITS.carrierBytes)
     return err({
       type: "ReleasePlanTooLarge",
@@ -1322,7 +1356,7 @@ function scanJsonStructure(text: string): Result<void, ReleasePlanError> {
     }
     index += 1;
   }
-  return ok(undefined);
+  return ok();
 }
 
 function framePath(parent: ScanFrame | undefined): string {
@@ -1330,7 +1364,11 @@ function framePath(parent: ScanFrame | undefined): string {
   return parent.object ? join(parent.path, parent.lastKey) : `${parent.path}[]`;
 }
 
-const JSON_ESCAPES: Readonly<Record<string, string>> = {
+interface JsonEscapeMap {
+  readonly [escapeCode: string]: string;
+}
+
+const JSON_ESCAPES: JsonEscapeMap = {
   b: "\b",
   f: "\f",
   n: "\n",
@@ -1371,7 +1409,7 @@ function readJsonString(
 // Schema refinements
 // ---------------------------------------------------------------------------
 
-type PlanShape = {
+type PlanRecord = {
   channel: ReleaseChannel;
   seed: readonly string[];
   closure: {
@@ -1390,7 +1428,7 @@ type PlanShape = {
   binding: { builtSha: string } | null;
 };
 
-function validateSelection(plan: PlanShape, context: z.RefinementCtx): void {
+function validateSelection(plan: PlanRecord, context: z.RefinementCtx): void {
   requireUnique(plan.seed, context, ["seed"], "package");
   requireCatalogOrder(plan.seed, context, ["seed"]);
   requireCatalogOrder(plan.closure.selected, context, ["closure", "selected"]);
@@ -1412,7 +1450,7 @@ function validateSelection(plan: PlanShape, context: z.RefinementCtx): void {
   requireSameSequence(added, expected, context, ["closure", "added"]);
 }
 
-function validateVersions(plan: PlanShape, context: z.RefinementCtx): void {
+function validateVersions(plan: PlanRecord, context: z.RefinementCtx): void {
   requireSameSequence(
     plan.versions.map((entry) => entry.packageName),
     plan.closure.selected,
@@ -1453,7 +1491,7 @@ function validateVersions(plan: PlanShape, context: z.RefinementCtx): void {
   }
 }
 
-function validateConsumed(plan: PlanShape, context: z.RefinementCtx): void {
+function validateConsumed(plan: PlanRecord, context: z.RefinementCtx): void {
   const ids = plan.consumed.map((identity) => identity.id);
   requireUnique(ids, context, ["consumed"], "changeset");
   const sorted = [...ids].sort(compareText);
@@ -1465,7 +1503,7 @@ function validateConsumed(plan: PlanShape, context: z.RefinementCtx): void {
     });
 }
 
-function validateBinding(plan: PlanShape, context: z.RefinementCtx): void {
+function validateBinding(plan: PlanRecord, context: z.RefinementCtx): void {
   if (plan.releasedSha === null && plan.binding !== null)
     context.addIssue({
       code: "custom",
@@ -1517,7 +1555,7 @@ function requireCatalogOrder(
   context: z.RefinementCtx,
   path: readonly (string | number)[],
 ): void {
-  const catalog = publishablePackageNames() as readonly string[];
+  const catalog: readonly string[] = publishablePackageNames();
   const expected = catalog.filter((name) => values.includes(name));
   requireSameSequence(values, expected, context, path);
 }
@@ -1534,8 +1572,10 @@ function toPortError(failure: RecomputePortFailure): ReleasePlanError {
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isPlainReleaseObject(
+  value: ReleasePlanInput,
+): value is ReleasePlanInput & JsonObject {
+  return z.record(z.string(), z.unknown()).safeParse(value).success;
 }
 
 function join(path: string, segment: string | number): string {
@@ -1546,20 +1586,18 @@ function stripTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (!isPlainObject(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort(compareText)
-      .map((key) => [key, sortValue(value[key])]),
-  );
+function canonicalJsonError(
+  error: JsonCanonicalizationError,
+): ReleasePlanError {
+  return { type: "CanonicalJsonFailed", reason: error.reason };
 }
 
-function digestOf(value: string): string {
-  return `${NPM_DIGEST_PREFIX}${new Bun.CryptoHasher("sha256")
-    .update(value)
-    .digest("hex")}`;
+function sortValue(
+  value: ReleasePlan | ReleasePlanSerializationInput | JsonValue,
+): Result<JsonValue, ReleasePlanError> {
+  return validateJsonValue(value)
+    .andThen((bounded) => sortJsonInput(bounded))
+    .mapErr(canonicalJsonError);
 }
 
 function compareText(left: string, right: string): number {

@@ -1,4 +1,5 @@
 export { ClaudeCodeAdapter } from "./adapter.js";
+export { CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
 export { translateAgentToMarkdown } from "./agent-translation.js";
 export { getClaudeCodeToolClassifications } from "./tool-classification.js";
 export { discoverClaudeCodeSkills } from "./skill-discovery.js";

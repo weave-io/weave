@@ -13,14 +13,7 @@ const FULL_SHA = /^[a-f0-9]{40}$/i;
 export type ActionPinError =
   | { type: "InvalidActionReference"; file: string; value: string }
   | { type: "UnapprovedActionOwner"; file: string; owner: string }
-  | { type: "UnresolvedActionReference"; file: string; value: string }
-  | {
-      type: "UnsupportedArtifactActionPin";
-      file: string;
-      action: keyof typeof REQUIRED_ARTIFACT_ACTION_PINS;
-      value: string;
-      expected: string;
-    };
+  | { type: "UnresolvedActionReference"; file: string; value: string };
 
 export function verifyActionPins(
   files: Readonly<Record<string, string>>,
@@ -55,29 +48,18 @@ export function verifyActionPins(
         });
         continue;
       }
-      const actionName = `${owner}/${action[2] ?? ""}`;
-      const expectedArtifactPin =
-        REQUIRED_ARTIFACT_ACTION_PINS[
-          actionName as keyof typeof REQUIRED_ARTIFACT_ACTION_PINS
-        ];
-      if (
-        expectedArtifactPin !== undefined &&
-        action[3] !== expectedArtifactPin
-      ) {
-        errors.push({
-          type: "UnsupportedArtifactActionPin",
-          file,
-          action: actionName as keyof typeof REQUIRED_ARTIFACT_ACTION_PINS,
-          value,
-          expected: expectedArtifactPin,
-        });
-      }
+      const actionName = `${owner}/${action[2]}`;
+      const requiredPin = Object.entries(REQUIRED_ARTIFACT_ACTION_PINS).find(
+        ([name]) => name === actionName,
+      )?.[1];
+      if (requiredPin !== undefined && action[3]?.toLowerCase() !== requiredPin)
+        errors.push({ type: "InvalidActionReference", file, value });
     }
     if (scannedActions === 0)
       errors.push({ type: "UnresolvedActionReference", file, value: "uses:" });
   }
   if (errors.length > 0) return err(errors);
-  return ok(undefined);
+  return ok();
 }
 
 /** Returns undefined for non-uses lines, null for unresolved YAML scalar forms. */

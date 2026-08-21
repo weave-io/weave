@@ -16,13 +16,14 @@
  * - Effect projection seams (`effects`) carry `LifecycleEffect` values that
  *   adapters apply through their own projection behavior.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/types.ts — lifecycle I/O types
  * @see packages/engine/src/plan-state-provider.ts — plan existence/completion
  * @see packages/engine/src/runtime/store.ts — RuntimeStore
  */
 
+import type { WorkflowConfig } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import type { AdapterHealthReport } from "../capability-contract.js";
 import type {
@@ -336,7 +337,7 @@ export interface StartPlanInput {
    * Workflow registry — maps workflow names to workflow configs.
    * Required for validating that `workflowName` exists.
    */
-  readonly workflows: Record<string, unknown>;
+  readonly workflows: Record<string, WorkflowConfig>;
   /** Optional ISO-8601 timestamp override (for testing). */
   readonly now?: string;
 }
@@ -362,7 +363,7 @@ export interface RunNamedWorkflowInput {
    * Workflow registry — maps workflow names to workflow configs.
    * Required for validating that `workflowName` exists.
    */
-  readonly workflows: Record<string, unknown>;
+  readonly workflows: Record<string, WorkflowConfig>;
   /**
    * Optional plan state provider for `plan_created` / `plan_complete`
    * completion methods.
@@ -444,7 +445,7 @@ export interface AdvanceStepInput {
     readonly workflowName: string;
     readonly goal: string;
     readonly slug: string;
-    readonly workflows: Record<string, unknown>;
+    readonly workflows: Record<string, WorkflowConfig>;
   };
 }
 

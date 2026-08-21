@@ -36,7 +36,7 @@ export class BunFileSystem implements FileSystem {
     contents: string,
   ): ResultAsync<void, FileSystemError> {
     return ResultAsync.fromPromise(
-      Bun.write(path, contents).then(() => undefined),
+      Bun.write(path, contents).then(() => {}),
       (cause) => ({ type: "FileSystemError", path, message: String(cause) }),
     );
   }

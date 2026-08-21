@@ -1,0 +1,437 @@
+/**
+ * Adapter-owned artifact file I/O and digest computation (Pi adapter contract;
+ * docs/architecture/adapter-boundary.md "Artifact Integrity Metadata"). The engine only
+ * owns `ArtifactIntegrityMetadata`'s type/format/fail-closed comparison; it
+ * never reads artifact contents. This module reads bytes from a verified,
+ * contained, no-follow-checked path under the canonical project root and
+ * hashes those exact bytes - never a lexical-check-then-reopen. All
+ * filesystem side effects are Bun-native (`Bun.file`) or routed through the
+ * injected `PathContainmentPort` (`path-containment.ts`) - no `node:fs`.
+ */
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  Result,
+  type ResultAsync,
+} from "neverthrow";
+import { z } from "zod";
+import {
+  MAX_FINAL_OUTPUT_BYTES,
+  type PiChildStatus,
+  type PiChildUsageAggregate,
+} from "./child-tree.js";
+import {
+  makeArtifactDigestFailedFailure,
+  makeArtifactReadFailedFailure,
+  type PiAdapterFailure,
+} from "./errors.js";
+import {
+  BunSecureRelativeFileProvider,
+  isLexicallyContained,
+  type SecureRelativeFileProvider,
+} from "./path-containment.js";
+
+export const MAX_SANITIZED_CHILD_INDEX_ENTRIES = 1_024;
+export const MAX_SANITIZED_CHILD_EXPORT_BYTES = 256 * 1_024;
+const MAX_SANITIZED_IDENTIFIER_BYTES = 256;
+const MAX_SAFE_NUMBER = Number.MAX_SAFE_INTEGER;
+
+const boundedString = (maxBytes: number) =>
+  z
+    .string()
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= maxBytes,
+      `string exceeds ${maxBytes} UTF-8 bytes`,
+    );
+const boundedIdentifier = boundedString(MAX_SANITIZED_IDENTIFIER_BYTES).min(1);
+const boundedName = boundedIdentifier;
+const safeNumber = z.number().finite().nonnegative().max(MAX_SAFE_NUMBER);
+const safeInteger = safeNumber.refine(
+  Number.isSafeInteger,
+  "must be a safe integer",
+);
+const statusSchema = z.enum([
+  "queued",
+  "spawning",
+  "handshaking",
+  "bootstrapping",
+  "running",
+  "cancelling",
+  "completed",
+  "cancelled",
+  "failed",
+]);
+const kindSchema = z.enum(["ordinary", "nested", "workflow-step"]);
+
+export const PiSanitizedChildIndexEntrySchema = z
+  .object({
+    id: boundedIdentifier,
+    parentId: boundedIdentifier.optional(),
+    name: boundedName,
+    kind: kindSchema,
+    status: statusSchema,
+    workflow: z
+      .object({
+        workflow: boundedIdentifier.optional(),
+        step: boundedIdentifier.optional(),
+      })
+      .strict()
+      .optional(),
+    currentTurn: safeInteger,
+    startedAtMs: safeInteger,
+    elapsedMs: safeInteger,
+    usage: z
+      .object({
+        inputTokens: safeInteger,
+        outputTokens: safeInteger,
+        cacheReadTokens: safeInteger,
+        cacheWriteTokens: safeInteger,
+        cost: safeNumber,
+      })
+      .strict(),
+    finalOutput: boundedString(MAX_FINAL_OUTPUT_BYTES).optional(),
+    interventionCount: safeInteger,
+  })
+  .strict();
+
+export const PiSanitizedChildIndexSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    children: z
+      .array(PiSanitizedChildIndexEntrySchema)
+      .max(MAX_SANITIZED_CHILD_INDEX_ENTRIES),
+  })
+  .strict();
+
+export type PiSanitizedChildIndexEntry = z.infer<
+  typeof PiSanitizedChildIndexEntrySchema
+>;
+export type PiSanitizedChildIndex = z.infer<typeof PiSanitizedChildIndexSchema>;
+
+export interface PiArtifactReadInput {
+  readonly projectRoot: string;
+  readonly relativePath: string;
+}
+
+export interface PiArtifactDigest {
+  readonly algorithm: "sha256";
+  readonly digest: string;
+  readonly byteLength: number;
+}
+
+export type PiSanitizedChildIndexError =
+  | {
+      readonly type: "invalid-child-index";
+      readonly reason: "invalid-number" | "invalid-string" | "invalid-entry";
+    }
+  | { readonly type: "child-index-too-large" }
+  | { readonly type: "child-export-too-large" };
+
+/** Input is a projection source, never a durable child record. */
+export interface PiSanitizedChildIndexInput {
+  readonly id: string;
+  readonly parentId?: string;
+  readonly name: string;
+  readonly kind: "ordinary" | "nested" | "workflow-step";
+  readonly status: PiChildStatus;
+  readonly workflow?: { readonly workflow?: string; readonly step?: string };
+  readonly currentTurn: number;
+  readonly startedAtMs: number;
+  readonly elapsedMs: number;
+  readonly usage: PiChildUsageAggregate;
+  readonly finalOutput?: string;
+  readonly interventionCount: number;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.byteLength <= maxBytes) return value;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let low = 0;
+  let high = maxBytes;
+  while (low < high) {
+    const end = Math.ceil((low + high) / 2);
+    try {
+      decoder.decode(bytes.subarray(0, end));
+      low = end;
+    } catch {
+      high = end - 1;
+    }
+  }
+  return decoder.decode(bytes.subarray(0, low));
+}
+
+const sanitizedChildIndexInputSchema = z.object({
+  id: z.string(),
+  parentId: z.string().optional(),
+  name: z.string(),
+  kind: kindSchema,
+  status: statusSchema,
+  workflow: z
+    .object({
+      workflow: z.string().optional(),
+      step: z.string().optional(),
+    })
+    .optional(),
+  currentTurn: z.number(),
+  startedAtMs: z.number(),
+  elapsedMs: z.number(),
+  usage: z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadTokens: z.number(),
+    cacheWriteTokens: z.number(),
+    cost: z.number(),
+  }),
+  finalOutput: z.string().optional(),
+  interventionCount: z.number(),
+});
+
+interface PiSanitizedChildIndexWorkflowProjection {
+  workflow?: string;
+  step?: string;
+}
+
+interface PiSanitizedChildIndexEntryProjection {
+  id: string;
+  parentId?: string;
+  name: string;
+  kind: "ordinary" | "nested" | "workflow-step";
+  status: PiChildStatus;
+  workflow?: PiSanitizedChildIndexWorkflowProjection;
+  currentTurn: number;
+  startedAtMs: number;
+  elapsedMs: number;
+  usage: PiChildUsageAggregate;
+  finalOutput?: string;
+  interventionCount: number;
+}
+
+/** Explicitly projects allowlisted fields before bounded Zod validation. */
+function projectEntry(
+  value: PiSanitizedChildIndexInput,
+): PiSanitizedChildIndexEntryProjection {
+  const projection: PiSanitizedChildIndexEntryProjection = {
+    id: value.id,
+    name: value.name,
+    kind: value.kind,
+    status: value.status,
+    currentTurn: value.currentTurn,
+    startedAtMs: value.startedAtMs,
+    elapsedMs: value.elapsedMs,
+    usage: {
+      inputTokens: value.usage.inputTokens,
+      outputTokens: value.usage.outputTokens,
+      cacheReadTokens: value.usage.cacheReadTokens,
+      cacheWriteTokens: value.usage.cacheWriteTokens,
+      cost: value.usage.cost,
+    },
+    interventionCount: value.interventionCount,
+  };
+  if (value.parentId !== undefined) projection.parentId = value.parentId;
+  if (value.workflow !== undefined) {
+    const workflow: PiSanitizedChildIndexWorkflowProjection = {};
+    if (value.workflow.workflow !== undefined) {
+      workflow.workflow = value.workflow.workflow;
+    }
+    if (value.workflow.step !== undefined) {
+      workflow.step = value.workflow.step;
+    }
+    projection.workflow = workflow;
+  }
+  if (value.finalOutput !== undefined) {
+    projection.finalOutput = truncateUtf8(
+      value.finalOutput,
+      MAX_FINAL_OUTPUT_BYTES,
+    );
+  }
+  return projection;
+}
+
+const NUMERIC_SANITIZED_FIELDS = new Set([
+  "currentTurn",
+  "startedAtMs",
+  "elapsedMs",
+  "inputTokens",
+  "outputTokens",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "cost",
+  "interventionCount",
+]);
+
+type PiSanitizedChildIndexInvalidReason =
+  | "invalid-number"
+  | "invalid-string"
+  | "invalid-entry";
+
+function invalidChildIndexReason(
+  error: z.ZodError,
+): PiSanitizedChildIndexInvalidReason {
+  const issue = error.issues[0];
+  const field = issue?.path.at(-1);
+  const numericField = NUMERIC_SANITIZED_FIELDS.has(String(field));
+  const numberIssue =
+    numericField ||
+    (issue?.code === "invalid_type" && issue.expected === "number");
+  const stringIssue =
+    !numericField &&
+    issue?.code === "invalid_type" &&
+    issue.expected === "string";
+  if (numberIssue) return "invalid-number";
+  if (stringIssue || issue?.code === "too_big" || issue?.code === "custom") {
+    return "invalid-string";
+  }
+  return "invalid-entry";
+}
+
+/** Builds a bounded, versioned child export without reading or accepting raw history. */
+export function createPiSanitizedChildIndex(
+  entries: readonly PiSanitizedChildIndexInput[],
+): Result<PiSanitizedChildIndex, PiSanitizedChildIndexError> {
+  if (entries.length > MAX_SANITIZED_CHILD_INDEX_ENTRIES)
+    return err({ type: "child-index-too-large" });
+
+  const children: PiSanitizedChildIndexEntry[] = [];
+  for (const entry of entries) {
+    const parsedInput = sanitizedChildIndexInputSchema.safeParse(entry);
+    if (!parsedInput.success) {
+      return err({
+        type: "invalid-child-index",
+        reason: invalidChildIndexReason(parsedInput.error),
+      });
+    }
+    const parsedEntry = PiSanitizedChildIndexEntrySchema.safeParse(
+      projectEntry(parsedInput.data),
+    );
+    if (!parsedEntry.success) {
+      return err({
+        type: "invalid-child-index",
+        reason: invalidChildIndexReason(parsedEntry.error),
+      });
+    }
+    children.push(parsedEntry.data);
+  }
+
+  const result: PiSanitizedChildIndex = {
+    schemaVersion: 1,
+    children,
+  };
+  const serializedBytes = new TextEncoder().encode(
+    JSON.stringify(result),
+  ).byteLength;
+  if (serializedBytes > MAX_SANITIZED_CHILD_EXPORT_BYTES)
+    return err({ type: "child-export-too-large" });
+  return ok(result);
+}
+
+export class PiSanitizedChildIndexExporter {
+  export(
+    entries: readonly PiSanitizedChildIndexInput[],
+  ): Result<PiSanitizedChildIndex, PiSanitizedChildIndexError> {
+    return createPiSanitizedChildIndex(entries);
+  }
+}
+
+/**
+ * Adapter-owned artifact port (docs/architecture/adapter-boundary.md: "artifact digest
+ * computation ... = Adapter"). Production and fakes both implement this;
+ * `PiWorkflowController` never reads files itself.
+ */
+export interface PiArtifactProvider {
+  readAndDigest(
+    input: PiArtifactReadInput,
+  ): ResultAsync<PiArtifactDigest, PiAdapterFailure>;
+}
+
+/** Hashes bytes already read from the exact no-follow-verified path - pure, no reopen. */
+function hashBytes(
+  bytes: Uint8Array,
+  relativePath: string,
+): Result<PiArtifactDigest, PiAdapterFailure> {
+  // Fixed, bounded reason only - never the raw thrown `Error.message`/stack,
+  // which could otherwise carry absolute filesystem paths or other
+  // internal detail into a failure's `correlation` field.
+  const digestResult = Result.fromThrowable(
+    () => new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+    (): string => "digest-computation-failed",
+  )();
+  if (digestResult.isErr()) {
+    return err(
+      makeArtifactDigestFailedFailure(relativePath, digestResult.error),
+    );
+  }
+  return ok({
+    algorithm: "sha256" as const,
+    digest: digestResult.value,
+    byteLength: bytes.byteLength,
+  });
+}
+
+export class BunPiArtifactProvider implements PiArtifactProvider {
+  private readonly provider: SecureRelativeFileProvider;
+
+  constructor(
+    provider: SecureRelativeFileProvider = new BunSecureRelativeFileProvider(),
+  ) {
+    this.provider = provider;
+  }
+
+  readAndDigest(
+    input: PiArtifactReadInput,
+  ): ResultAsync<PiArtifactDigest, PiAdapterFailure> {
+    if (!isLexicallyContained(input.relativePath)) {
+      return errAsync(
+        makeArtifactReadFailedFailure(
+          input.relativePath,
+          "path escapes the project root",
+        ),
+      );
+    }
+    // Reads bytes and computes identity from one no-follow-verified
+    // descriptor chain (`SecureRelativeFileProvider.readFile`) - never a
+    // lexical check followed by a separate path-based reopen (Pi adapter contract
+    //).
+    return this.provider
+      .readFile(input.projectRoot, input.relativePath)
+      .mapErr((reason) =>
+        makeArtifactReadFailedFailure(input.relativePath, reason),
+      )
+      .andThen(({ bytes }) => hashBytes(bytes, input.relativePath));
+  }
+}
+
+/** In-memory fake for isolated tests - no real filesystem access. */
+export class FakePiArtifactProvider implements PiArtifactProvider {
+  constructor(private readonly files: ReadonlyMap<string, Uint8Array>) {}
+
+  readAndDigest(
+    input: PiArtifactReadInput,
+  ): ResultAsync<PiArtifactDigest, PiAdapterFailure> {
+    if (!isLexicallyContained(input.relativePath)) {
+      return errAsync(
+        makeArtifactReadFailedFailure(
+          input.relativePath,
+          "path escapes the project root",
+        ),
+      );
+    }
+    const bytes = this.files.get(input.relativePath);
+    if (bytes === undefined) {
+      return errAsync(
+        makeArtifactReadFailedFailure(
+          input.relativePath,
+          "path-component-missing",
+        ),
+      );
+    }
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    return okAsync({
+      algorithm: "sha256" as const,
+      digest,
+      byteLength: bytes.byteLength,
+    });
+  }
+}

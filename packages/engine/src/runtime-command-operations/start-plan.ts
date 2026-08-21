@@ -19,14 +19,13 @@
  *   returns a `command_validation` error without touching the store.
  * - `/start-work` is out of scope for this operation.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/runtime-command-operations/workflow-runner.ts
  * @see packages/engine/src/runtime-command-operations/types.ts
  * @see packages/engine/src/plan-state-provider.ts
  */
 
-import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
@@ -170,14 +169,33 @@ export function startPlan(
         } satisfies CommandValidationError;
       }
 
-      // ProviderUnavailable
+      if (providerError.type === "ProviderUnavailable") {
+        const causeMessage =
+          providerError.cause instanceof Error
+            ? providerError.cause.message
+            : providerError.cause.message;
+        log.warn(
+          { planName, cause: providerError.cause },
+          "start-plan: PlanStateProvider unavailable",
+        );
+        return {
+          type: "command_validation",
+          message: `PlanStateProvider is unavailable: ${causeMessage}`,
+          field: "planStateProvider",
+        } satisfies CommandValidationError;
+      }
+
+      const detail =
+        "reason" in providerError && providerError.reason !== undefined
+          ? providerError.reason
+          : providerError.type;
       log.warn(
-        { planName, cause: providerError.cause },
-        "start-plan: PlanStateProvider unavailable",
+        { planName, errorType: providerError.type, detail },
+        "start-plan: PlanStateProvider error",
       );
       return {
         type: "command_validation",
-        message: `PlanStateProvider is unavailable: ${providerError.cause.message}`,
+        message: `PlanStateProvider error: ${detail}`,
         field: "planStateProvider",
       } satisfies CommandValidationError;
     })
@@ -198,20 +216,13 @@ export function startPlan(
           "start-plan: plan exists — starting workflow lifecycle",
         );
 
-        // Cast workflows from the opaque `Record<string, unknown>` declared in
-        // StartPlanInput to the concrete `Record<string, WorkflowConfig>`
-        // required by runWorkflowLifecycle. The runner validates workflow
-        // existence before accessing any config fields, so an invalid entry
-        // produces a typed `workflow_not_found` error rather than a runtime crash.
-        const typedWorkflows = workflows as Record<string, WorkflowConfig>;
-
         return runWorkflowLifecycle({
           workflowName,
           goal,
           slug,
           ownerId,
           store,
-          workflows: typedWorkflows,
+          workflows,
           projectEffect,
           planStateProvider,
           now,

@@ -48,7 +48,7 @@
  */
 
 import { join, normalize, resolve, sep } from "node:path";
-import { err, ResultAsync } from "neverthrow";
+import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type {
   RawArtifactWriteError,
   RawCaseResultArtifact,
@@ -96,7 +96,7 @@ export interface RawFileWriter {
  */
 export const bunFileWriter: RawFileWriter = {
   write(path: string, content: string): Promise<void> {
-    return Bun.write(path, content).then(() => undefined);
+    return Bun.write(path, content).then(() => {});
   },
 };
 
@@ -481,20 +481,17 @@ export class RawArtifactsWriter {
 function assertPathContained(
   rawDir: string,
   filePath: string,
-): { isOk(): boolean; isErr(): boolean; error: string } {
+): Result<null, string> {
   const resolvedDir = resolve(rawDir) + sep;
   const resolvedFile = normalize(resolve(filePath));
   if (!resolvedFile.startsWith(resolvedDir)) {
-    return {
-      isOk: () => false,
-      isErr: () => true,
-      error:
-        `Path containment check failed: "${resolvedFile}" is outside the ` +
+    return err(
+      `Path containment check failed: "${resolvedFile}" is outside the ` +
         `allowed raw artifact directory "${rawDir}". ` +
         `The filename components may contain path traversal sequences.`,
-    };
+    );
   }
-  return { isOk: () => true, isErr: () => false, error: "" };
+  return ok(null);
 }
 
 /**
@@ -511,23 +508,20 @@ function assertPathContained(
 function assertRawContentPresent(
   json: string,
   context: string,
-): { isOk(): boolean; isErr(): boolean; error: string } {
+): Result<null, string> {
   const hasComposedPrompt = json.includes('"composedPrompt"');
   const hasRawContent = json.includes('"rawContent"');
 
   if (!hasComposedPrompt && !hasRawContent) {
-    return {
-      isOk: () => false,
-      isErr: () => true,
-      error:
-        `Raw artifact check failed for "${context}": ` +
+    return err(
+      `Raw artifact check failed for "${context}": ` +
         `the artifact JSON contains neither "composedPrompt" nor "rawContent". ` +
         `Raw artifacts must contain at least one raw content field. ` +
         `Verify the artifact was produced with rawArtifacts: true.`,
-    };
+    );
   }
 
-  return { isOk: () => true, isErr: () => false, error: "" };
+  return ok(null);
 }
 
 // ---------------------------------------------------------------------------

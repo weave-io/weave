@@ -320,6 +320,8 @@ function expectedInventory(packageName: PublicPackageName): Set<string> {
   if ("bootstrap" in build && build.bootstrap !== undefined)
     for (const file of build.bootstrap)
       files.add(`package/dist/bootstrap/${file}`);
+  if ("extraFiles" in build && build.extraFiles !== undefined)
+    for (const file of build.extraFiles) files.add(`package/${file}`);
   return files;
 }
 

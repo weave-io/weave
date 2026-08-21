@@ -282,10 +282,12 @@ describe("enforcePublishPolicy", () => {
   it("returns err(UnsanitizedBundleBlocked) when bundle contains composedPrompt", async () => {
     // Inject an unsanitized field directly into the bundle object
     const bundle = makeEvalBundle();
-    (bundle as unknown as Record<string, unknown>).composedPrompt =
-      "You are Loom...";
+    const bundleWithComposedPrompt = {
+      ...bundle,
+      composedPrompt: "You are Loom...",
+    };
 
-    const result = await enforcePublishPolicy(bundle);
+    const result = await enforcePublishPolicy(bundleWithComposedPrompt);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("UnsanitizedBundleBlocked");
@@ -296,10 +298,12 @@ describe("enforcePublishPolicy", () => {
 
   it("returns err(UnsanitizedBundleBlocked) when bundle contains rationale", async () => {
     const bundle = makeEvalBundle();
-    (bundle as unknown as Record<string, unknown>).rationale =
-      "The model was correct because...";
+    const bundleWithRationale = {
+      ...bundle,
+      rationale: "The model was correct because...",
+    };
 
-    const result = await enforcePublishPolicy(bundle);
+    const result = await enforcePublishPolicy(bundleWithRationale);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("UnsanitizedBundleBlocked");
@@ -307,9 +311,12 @@ describe("enforcePublishPolicy", () => {
 
   it("returns err(UnsanitizedBundleBlocked) when bundle contains transcript", async () => {
     const bundle = makeEvalBundle();
-    (bundle as unknown as Record<string, unknown>).transcript = [];
+    const bundleWithTranscript = {
+      ...bundle,
+      transcript: [],
+    };
 
-    const result = await enforcePublishPolicy(bundle);
+    const result = await enforcePublishPolicy(bundleWithTranscript);
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("UnsanitizedBundleBlocked");

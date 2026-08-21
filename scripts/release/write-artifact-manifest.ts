@@ -1,12 +1,19 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, Result, ResultAsync } from "neverthrow";
-import { RELEASE_INPUT_LIMITS } from "./constants.js";
+import { errAsync, ResultAsync } from "neverthrow";
+import { z } from "zod";
+import {
+  PUBLIC_MANIFEST_FIELDS,
+  RELEASE_INPUT_LIMITS,
+  RUNTIME_DEPENDENCY_FIELDS,
+} from "./constants.js";
+import { parseJsonValue } from "./json.js";
 import {
   ArtifactManifestSchema,
   FullShaSchema,
+  PackageNameSchema,
   packageArtifactFilename,
   ReleaseOperationSchema,
-  StableTrainRecordSchema,
+  SemVerSchema,
 } from "./model.js";
 
 const log = logger.child({ module: "release-artifact-manifest" });
@@ -16,27 +23,93 @@ type ManifestWriteError =
   | { type: "ArtifactDiscovery"; message: string }
   | { type: "InvalidManifest"; issues: readonly string[] };
 
+type DiscoveredPackage = {
+  name: string;
+  version: string;
+  artifact: {
+    filename: string;
+    checksumFilename: string;
+    sizeBytes: number;
+    sha256: string;
+  };
+};
+
+type ManifestDraft = {
+  schemaVersion: 1;
+  releaseSubjectSha: string;
+  channel: "nightly" | "stable";
+  packages: string[];
+  versions: Record<string, string>;
+  artifacts: DiscoveredPackage["artifact"][];
+};
+
+const STAGED_PACKAGE_COLLECTION_LIMIT = 128;
+const StagedManifestStringSchema = z
+  .string()
+  .max(RELEASE_INPUT_LIMITS.manifestBytes);
+const StagedDependencyMapSchema = z
+  .record(
+    z.string().max(RELEASE_INPUT_LIMITS.identifierLength),
+    StagedManifestStringSchema,
+  )
+  .superRefine((value, context) => {
+    if (Object.keys(value).length > STAGED_PACKAGE_COLLECTION_LIMIT)
+      context.addIssue({
+        code: "custom",
+        message: "manifest map has too many entries",
+      });
+    for (const name of Object.keys(value))
+      if (name.startsWith("@weaveio/"))
+        context.addIssue({
+          code: "custom",
+          message: "staged manifests cannot declare workspace dependencies",
+        });
+  });
+const StagedPackageSchema = z
+  .object({
+    name: PackageNameSchema,
+    version: SemVerSchema,
+  })
+  .catchall(z.json())
+  .superRefine((value, context) => {
+    for (const field of Object.keys(value))
+      if (
+        !PUBLIC_MANIFEST_FIELDS.some((allowed) => allowed === field) &&
+        !RUNTIME_DEPENDENCY_FIELDS.some((allowed) => allowed === field)
+      )
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "unknown staged manifest field",
+        });
+    for (const field of RUNTIME_DEPENDENCY_FIELDS) {
+      const dependencies = value[field];
+      if (dependencies === undefined) continue;
+      if (!StagedDependencyMapSchema.safeParse(dependencies).success)
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "invalid staged dependency map",
+        });
+    }
+  });
+
 /** Builds the payload manifest from the exact tarballs emitted by release validation. */
 export function writeArtifactManifest(
   operation: string | undefined,
   subjectSha: string | undefined,
-  stableTrainText = Bun.env.RELEASE_STABLE_TRAIN,
 ): ResultAsync<void, ManifestWriteError> {
   const parsedOperation = ReleaseOperationSchema.safeParse(operation);
   const parsedSubject = FullShaSchema.safeParse(subjectSha);
   if (!parsedOperation.success || !parsedSubject.success)
     return errAsync({ type: "InvalidInput" });
   const channel = parsedOperation.data === "nightly" ? "nightly" : "stable";
-  const stableTrain =
-    channel === "stable" ? parseStableTrain(stableTrainText) : undefined;
-  if (channel === "stable" && stableTrain === undefined)
-    return errAsync({ type: "InvalidInput" });
-  return ResultAsync.fromPromise(discoverPackages(channel), (cause) => ({
+  return ResultAsync.fromPromise(discoverPackages(channel), () => ({
     type: "ArtifactDiscovery" as const,
-    message: String(cause),
+    message: "artifact discovery failed",
   })).andThen((packages) => {
-    const manifest = {
-      schemaVersion: 1 as const,
+    const manifest: ManifestDraft = {
+      schemaVersion: 1,
       releaseSubjectSha: parsedSubject.data,
       channel,
       packages: packages.map((entry) => entry.name),
@@ -44,7 +117,6 @@ export function writeArtifactManifest(
         packages.map((entry) => [entry.name, entry.version]),
       ),
       artifacts: packages.map((entry) => entry.artifact),
-      ...(stableTrain === undefined ? {} : { stableTrain }),
     };
     const validated = ArtifactManifestSchema.safeParse(manifest);
     if (!validated.success)
@@ -56,24 +128,13 @@ export function writeArtifactManifest(
       Bun.write(
         ".release/manifest.json",
         `${JSON.stringify(validated.data)}\n`,
-      ).then(() => undefined),
-      (cause) => ({
+      ).then(() => Promise.resolve()),
+      () => ({
         type: "ArtifactDiscovery" as const,
-        message: String(cause),
+        message: "artifact manifest write failed",
       }),
     );
   });
-}
-
-function parseStableTrain(value: string | undefined): unknown | undefined {
-  if (value === undefined) return undefined;
-  const candidate = Result.fromThrowable(
-    () => JSON.parse(value) as unknown,
-    () => undefined,
-  )();
-  if (candidate.isErr()) return undefined;
-  const result = StableTrainRecordSchema.safeParse(candidate.value);
-  return result.success ? result.data : undefined;
 }
 
 async function discoverPackages(channel: "nightly" | "stable") {
@@ -88,32 +149,30 @@ async function discoverPackages(channel: "nightly" | "stable") {
       "release validation did not produce staged packages and tarballs",
     );
   const packages = await Promise.all(
-    stages.map(async (stage) => {
-      const packageJson = (await Bun.file(stage).json()) as {
-        name?: unknown;
-        version?: unknown;
-      };
-      if (
-        typeof packageJson.name !== "string" ||
-        typeof packageJson.version !== "string"
-      )
-        throw new Error(`invalid staged package manifest: ${stage}`);
+    stages.map(async (stage): Promise<DiscoveredPackage | null> => {
+      const stagedBytes = await Bun.file(stage).bytes();
+      if (stagedBytes.byteLength > RELEASE_INPUT_LIMITS.manifestBytes)
+        throw new Error("staged package manifest exceeds size limit");
+      const parsed = parseJsonValue(new TextDecoder().decode(stagedBytes));
+      if (parsed.isErr()) throw new Error("invalid staged package manifest");
+      const checked = StagedPackageSchema.safeParse(parsed.value);
+      if (!checked.success) throw new Error("invalid staged package manifest");
+      const packageJson = checked.data;
       if (
         channel === "stable" &&
         packageJson.name === "@weaveio/weave-adapter-claude-code"
       )
-        return undefined;
+        return null;
       const packageStem = packageJson.name
         .replace("@", "")
         .replaceAll("/", "-");
       const tarball = tarballs.find((path) =>
         path.endsWith(`${packageStem}-${packageJson.version}.tgz`),
       );
-      if (tarball === undefined)
-        throw new Error(`missing tarball for ${packageJson.name}`);
+      if (tarball === undefined) throw new Error("missing release tarball");
       const bytes = await Bun.file(tarball).bytes();
       if (bytes.length > RELEASE_INPUT_LIMITS.artifactBytes)
-        throw new Error(`tarball exceeds size limit: ${tarball}`);
+        throw new Error("release tarball exceeds size limit");
       const filename = packageArtifactFilename(
         packageJson.name,
         packageJson.version,
@@ -135,9 +194,7 @@ async function discoverPackages(channel: "nightly" | "stable") {
       };
     }),
   );
-  return packages.filter(
-    (entry): entry is NonNullable<typeof entry> => entry !== undefined,
-  );
+  return packages.filter((entry): entry is DiscoveredPackage => entry !== null);
 }
 
 if (import.meta.main) {

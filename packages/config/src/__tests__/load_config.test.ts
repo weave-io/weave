@@ -111,7 +111,7 @@ describe("loadConfig", () => {
     // The project override only sets temperature — the builtin inline prompt
     // should be preserved via merge.
     expect(loom?.prompt).toBeDefined();
-    expect(typeof loom?.prompt).toBe("string");
+    expect(loom?.prompt).toBeString();
     expect((loom?.prompt ?? "").length).toBeGreaterThan(0);
     // prompt_file should NOT be present — builtins now use inline prompt
     expect(loom?.prompt_file).toBeUndefined();
@@ -185,6 +185,76 @@ describe("loadConfig", () => {
     if (fe?.type === "FileReadError") {
       expect(fe.path).toBe(PROJECT_PATH);
     }
+  });
+
+  it("merges delegation limits across global and project scopes", async () => {
+    const reader = mockReader({
+      [GLOBAL_PATH]: `settings {
+  delegation { max_children 6 max_concurrency 3 max_depth 4 max_processes 12 }
+}`,
+      [PROJECT_PATH]: `settings {
+  delegation { max_concurrency 2 }
+}
+agent loom {
+  delegation { max_children 4 }
+}`,
+    });
+    const result = await withHome(() => loadConfig(PROJECT, reader));
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 2,
+      max_depth: 4,
+      max_processes: 12,
+    });
+    expect(config.agents.loom?.delegation?.max_children).toBe(4);
+  });
+
+  it("preserves omitted project concurrency when project narrows max_children", async () => {
+    const reader = mockReader({
+      [PROJECT_PATH]: `settings { delegation { max_children 2 } }`,
+    });
+    const result = await withHome(() => loadConfig(PROJECT, reader));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("succeeds when global concurrency equals project max_children", async () => {
+    const reader = mockReader({
+      [GLOBAL_PATH]: `settings { delegation { max_concurrency 2 } }`,
+      [PROJECT_PATH]: `settings { delegation { max_children 2 } }`,
+    });
+    const result = await withHome(() => loadConfig(PROJECT, reader));
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("succeeds when project agent concurrency narrows the default child cap", async () => {
+    const reader = mockReader({
+      [GLOBAL_PATH]: `settings { delegation { max_concurrency 5 } }`,
+      [PROJECT_PATH]: `agent loom { delegation { max_concurrency 4 } }`,
+    });
+    const result = await withHome(() => loadConfig(PROJECT, reader));
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns a typed merge error when project agent limits exceed global caps", async () => {
+    const reader = mockReader({
+      [GLOBAL_PATH]: `settings {
+  delegation { max_children 3 max_concurrency 2 }
+}`,
+      [PROJECT_PATH]: `agent loom {
+  delegation { max_children 4 }
+}`,
+    });
+    const result = await withHome(() => loadConfig(PROJECT, reader));
+    expect(result.isErr()).toBe(true);
+    const mergeError = result
+      ._unsafeUnwrapErr()
+      .find((error) => error.type === "MergeError");
+    expect(mergeError?.type).toBe("MergeError");
   });
 
   it("(g) all prompt_file values in returned config are absolute paths", async () => {

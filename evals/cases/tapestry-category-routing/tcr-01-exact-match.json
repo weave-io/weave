@@ -1,6 +1,6 @@
 {
   "id": "tcr-01-exact-match",
-  "description": "Route this task to the correct category shuttle. The user wants to update the settings panel styling in the file `src/4.Presentation/DST.Client/Components/Settings.tsx`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. Which shuttle agent should handle this work, and why?",
+  "description": "Route this task to the correct category shuttle. The user wants to update the settings panel styling in the file `src/4.Presentation/DST.Client/Components/Settings.tsx`. The active Weave config declares `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }`. Which shuttle agent should handle this work, and why?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "allowed_models": [

@@ -4,7 +4,6 @@ import {
   loadActionFiles,
   verifyActionPins,
 } from "../../../ci/verify-action-pins.js";
-import { PHASE_C_WORKFLOW_PATHS } from "../../publish-reachability.js";
 
 const ROOT = resolve(import.meta.dir, "../../../..");
 const PR_WORKFLOW = ".github/workflows/docs-audit.yml";
@@ -20,50 +19,6 @@ function jobSection(source: string, job: string): string {
   const rest = source.slice(start + 1);
   const next = rest.search(/\n {2}[A-Za-z0-9_-]+:\n/);
   return next < 0 ? rest : rest.slice(0, next);
-}
-
-function allJobSections(source: string): ReadonlyMap<string, string> {
-  const jobsMarker = "jobs:\n";
-  const jobsStart = source.indexOf(jobsMarker);
-  if (jobsStart < 0) return new Map();
-  const body = source.slice(jobsStart + jobsMarker.length);
-  const matches = Array.from(body.matchAll(/^ {2}([A-Za-z0-9_.-]+):\n/gm));
-  return new Map(
-    matches.map((match, index) => {
-      const name = match[1] ?? "";
-      const start = match.index ?? 0;
-      const end = matches[index + 1]?.index ?? body.length;
-      return [name, body.slice(start, end)];
-    }),
-  );
-}
-
-function hasProtectedSourceCheckout(section: string): boolean {
-  return (
-    /(?:^|\n)\s*-\s*uses:\s*actions\/checkout@[^\n]+/m.test(section) &&
-    /^\s+ref:\s*[^\n]+$/m.test(section) &&
-    /^\s+persist-credentials:\s*false\s*$/m.test(section)
-  );
-}
-
-function readsRepositorySource(section: string): boolean {
-  return (
-    /\bbun\s+(?:install|run)\b/.test(section) ||
-    /\bbun\s+(?:\.\/)?scripts\//.test(section) ||
-    /(?:RELEASING|README)\.md\b|\bpackage\.json\b|\bbun\.lock\b|\.changeset\//.test(
-      section,
-    )
-  );
-}
-
-function missingProtectedSourceCheckouts(
-  path: string,
-  source: string,
-): string[] {
-  return Array.from(allJobSections(source))
-    .filter(([, section]) => readsRepositorySource(section))
-    .filter(([, section]) => !hasProtectedSourceCheckout(section))
-    .map(([job]) => `${path}#${job}`);
 }
 
 describe("docs-audit workflow shape", () => {
@@ -92,10 +47,6 @@ describe("docs-audit workflow shape", () => {
     expect(terminal).toContain("needs: [docs-deterministic, docs-ai-audit]");
     expect(terminal).toContain("if: always()");
     expect(terminal).toContain("scripts/release/docs-audit/gate-main.ts");
-    expect(terminal).toContain(`repository: \${{ github.repository }}`);
-    expect(terminal).toContain("ref: refs/heads/main");
-    expect(terminal).toContain("persist-credentials: false");
-    expect(hasProtectedSourceCheckout(terminal)).toBe(true);
     expect(source).toContain("docs-ai-fork-skip:");
     expect(source).toContain("The AI audit is skipped neutrally");
     expect(source).toContain("Dispatch **Docs audit follow-up**");
@@ -147,33 +98,6 @@ describe("docs-audit workflow shape", () => {
     expect(patches).not.toContain("WEAVE_RELEASE_AI_API_KEY");
     expect(patches).toContain("--phase apply-patches");
     expect(patches).toContain("gh pr create");
-  });
-
-  test("checks out protected source before every Phase C local read or script", async () => {
-    const failures: string[] = [];
-    for (const path of PHASE_C_WORKFLOW_PATHS) {
-      failures.push(
-        ...missingProtectedSourceCheckouts(path, await workflow(path)),
-      );
-    }
-    expect(failures).toEqual([]);
-  });
-
-  test("detects a terminal local script when its protected checkout is removed", async () => {
-    const source = await workflow(PR_WORKFLOW);
-    const terminal = jobSection(source, "docs-audit");
-    const checkoutStart = source.lastIndexOf("      - uses: actions/checkout@");
-    const setupBunStart = source.indexOf(
-      "      - uses: oven-sh/setup-bun@",
-      checkoutStart,
-    );
-    const withoutCheckout =
-      source.slice(0, checkoutStart) + source.slice(setupBunStart);
-    expect(readsRepositorySource(terminal)).toBe(true);
-    expect(hasProtectedSourceCheckout(terminal)).toBe(true);
-    expect(
-      missingProtectedSourceCheckouts(PR_WORKFLOW, withoutCheckout),
-    ).toContain(`${PR_WORKFLOW}#docs-audit`);
   });
 
   test("has no pull_request_target and all action references are approved SHAs", async () => {

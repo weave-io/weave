@@ -16,13 +16,13 @@
  * - Active lease resolution is performed through the runtime store — the
  *   engine does not scan harness-owned directories.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/inspection.ts — inspectExecution
  * @see packages/engine/src/runtime-command-operations/types.ts
  */
 
-import { errAsync } from "neverthrow";
+import { errAsync, type ResultAsync } from "neverthrow";
 import { inspectExecution } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
 import type {
@@ -33,6 +33,10 @@ import type {
 } from "./types.js";
 
 const log = logger.child({ module: "inspect-status" });
+
+type MutableExecutionStatusData = {
+  -readonly [Key in keyof ExecutionStatusData]: ExecutionStatusData[Key];
+};
 
 // ---------------------------------------------------------------------------
 // § 1 — inspectStatus — command operation entry point
@@ -59,10 +63,7 @@ const log = logger.child({ module: "inspect-status" });
  */
 export function inspectStatus(
   input: InspectStatusInput,
-): import("neverthrow").ResultAsync<
-  ExecutionStatusData,
-  CommandOperationError
-> {
+): ResultAsync<ExecutionStatusData, CommandOperationError> {
   const { workflowInstanceId, store } = input;
 
   if (!workflowInstanceId) {
@@ -85,7 +86,7 @@ export function inspectStatus(
         return {
           type: "command_not_found",
           entity: "execution",
-          name: workflowInstanceId as string,
+          name: workflowInstanceId,
           message: lifecycleError.message,
         } satisfies CommandNotFoundError;
       }
@@ -100,8 +101,8 @@ export function inspectStatus(
         cause: lifecycleError,
       };
     })
-    .map(
-      (output): ExecutionStatusData => ({
+    .map((output): ExecutionStatusData => {
+      const result: MutableExecutionStatusData = {
         kind: "execution-status",
         workflowInstanceId: output.workflowInstanceId,
         status: output.status,
@@ -111,16 +112,17 @@ export function inspectStatus(
         createdAt: output.createdAt,
         updatedAt: output.updatedAt,
         hasActiveLease: output.hasActiveLease,
-        ...(output.currentStepName !== undefined
-          ? { currentStepName: output.currentStepName }
-          : {}),
-        ...(output.completedAt !== undefined
-          ? { completedAt: output.completedAt }
-          : {}),
-        ...(output.errorMessage !== undefined
-          ? { errorMessage: output.errorMessage }
-          : {}),
         raw: output,
-      }),
-    );
+      };
+      if (output.currentStepName !== undefined) {
+        result.currentStepName = output.currentStepName;
+      }
+      if (output.completedAt !== undefined) {
+        result.completedAt = output.completedAt;
+      }
+      if (output.errorMessage !== undefined) {
+        result.errorMessage = output.errorMessage;
+      }
+      return result;
+    });
 }

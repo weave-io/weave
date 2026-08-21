@@ -4,8 +4,6 @@
 
 ```ts
 
-import { Agent } from '@opencode-ai/sdk';
-import { AgentConfig } from '@opencode-ai/sdk';
 import type { Plugin as Plugin_2 } from '@opencode-ai/plugin';
 import { ResultAsync } from 'neverthrow';
 
@@ -22,8 +20,6 @@ export default WeavePlugin;
 
 // @public
 export interface WeavePluginOptions {
-    // Warning: (ae-forgotten-export) The symbol "OpenCodeClientFacade" needs to be exported by the entry point plugin.d.ts
-    readonly clientFacade?: OpenCodeClientFacade;
     // Warning: (ae-forgotten-export) The symbol "FileReader_2" needs to be exported by the entry point plugin.d.ts
     readonly fileReader?: FileReader_2;
 }

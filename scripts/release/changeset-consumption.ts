@@ -36,7 +36,14 @@
  */
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import {
   BunChangesetFileSystem,
   type ChangesetFileSystem,
@@ -51,6 +58,7 @@ import { PUBLIC_PACKAGES, type PublicPackageName } from "./constants.js";
 import type { ConsumptionLedger } from "./consumption-ledger.js";
 import type { CommandError, FileSystemError } from "./errors.js";
 import { BunFileSystem, type FileSystem } from "./filesystem.js";
+import { isJsonObject, isJsonString, parseJsonValue } from "./json.js";
 import {
   type PublishabilityError,
   publishablePackageNames,
@@ -75,6 +83,7 @@ export const DEFAULT_CHANGESET_CLI_PATH = join(
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const COMMAND_METACHARACTERS = /[;&|`$<>\n\r]/;
+const isStringJsonValue = isJsonString;
 
 /** A consumed changeset whose file on `main` no longer matches the ledger. */
 export interface ModifiedConsumedChangeset {
@@ -248,7 +257,7 @@ export function subtractConsumedLedger(input: {
 export function assertNoModifiedConsumption(
   set: PendingChangesetSet,
 ): Result<void, ChangesetConsumptionError> {
-  if (set.modified.length === 0) return ok(undefined);
+  if (set.modified.length === 0) return ok();
   return err({ type: "ConsumedChangesetModified", changesets: set.modified });
 }
 
@@ -307,7 +316,7 @@ export class BunScratchTreeFileSystem
     contents: Uint8Array,
   ): ResultAsync<void, FileSystemError> {
     return ResultAsync.fromPromise(
-      Bun.write(path, contents).then(() => undefined),
+      Bun.write(path, contents).then(() => {}),
       (cause) => ({ type: "FileSystemError", path, message: String(cause) }),
     );
   }
@@ -321,7 +330,7 @@ export class BunScratchTreeFileSystem
         message: "refused to remove a directory outside the staging tree",
       });
     return ResultAsync.fromPromise(
-      Bun.$`rm -rf ${path}`.quiet().then(() => undefined),
+      Bun.$`rm -rf ${path}`.quiet().then(() => {}),
       (cause) => ({ type: "FileSystemError", path, message: String(cause) }),
     );
   }
@@ -591,8 +600,7 @@ export class ChangesetConsumptionController {
         ),
         bytes: staged.bytes,
       });
-    let written: ResultAsync<void, ChangesetConsumptionError> =
-      okAsync(undefined);
+    let written: ResultAsync<void, ChangesetConsumptionError> = okAsync();
     for (const text of texts)
       written = written.andThen(() =>
         this.scratch
@@ -693,8 +701,7 @@ export class ChangesetConsumptionController {
     root: string,
     preserved: readonly StagedChangeset[],
   ): ResultAsync<void, ChangesetConsumptionError> {
-    let verified: ResultAsync<void, ChangesetConsumptionError> =
-      okAsync(undefined);
+    let verified: ResultAsync<void, ChangesetConsumptionError> = okAsync();
     for (const staged of preserved) {
       const path = join(
         root,
@@ -707,8 +714,8 @@ export class ChangesetConsumptionController {
           .mapErr((error) => scratchFailure("read", error))
           .andThen((bytes) => {
             const digest = digestOf(bytes);
-            if (digest === staged.identity.sourceDigest) return ok(undefined);
-            return err<void, ChangesetConsumptionError>({
+            if (digest === staged.identity.sourceDigest) return ok();
+            return err<never, ChangesetConsumptionError>({
               type: "PreservedChangesetMutated",
               changesetId: staged.identity.id,
               expected: staged.identity.sourceDigest,
@@ -726,7 +733,7 @@ export class ChangesetConsumptionController {
    * failure, so its own error is dropped deliberately.
    */
   private discard(root: string): ResultAsync<void, never> {
-    return this.scratch.removeTree(root).orElse(() => okAsync(undefined));
+    return this.scratch.removeTree(root).orElse(() => okAsync());
   }
 }
 
@@ -788,7 +795,7 @@ function planScratchRun(
 function validateBumpTargets(
   changeset: ValidatedChangeset,
 ): Result<void, ChangesetConsumptionError> {
-  if (changeset.kind === "empty") return ok(undefined);
+  if (changeset.kind === "empty") return ok();
   for (const packageName of changeset.releases.keys()) {
     const resolved = resolvePublishablePackage(packageName);
     if (resolved.isErr())
@@ -799,7 +806,7 @@ function validateBumpTargets(
         reason: resolved.error.type,
       });
   }
-  return ok(undefined);
+  return ok();
 }
 
 function resolveSelection(
@@ -910,10 +917,7 @@ function parseManifestVersion(
   packageName: PublicPackageName,
   contents: string,
 ): Result<string, ChangesetConsumptionError> {
-  const parsed = Result.fromThrowable(
-    () => JSON.parse(contents) as unknown,
-    (cause) => String(cause),
-  )();
+  const parsed = parseJsonValue(contents).mapErr((error) => error.message);
   if (parsed.isErr())
     return err({
       type: "ScratchManifestInvalid",
@@ -921,14 +925,14 @@ function parseManifestVersion(
       reason: parsed.error,
     });
   const manifest = parsed.value;
-  if (typeof manifest !== "object" || manifest === null)
+  if (!isJsonObject(manifest))
     return err({
       type: "ScratchManifestInvalid",
       packageName,
       reason: "manifest is not an object",
     });
-  const version = (manifest as { version?: unknown }).version;
-  if (typeof version !== "string" || !STABLE_VERSION.test(version))
+  const version = manifest.version;
+  if (!isStringJsonValue(version) || !STABLE_VERSION.test(version))
     return err({
       type: "ScratchManifestInvalid",
       packageName,
@@ -974,6 +978,13 @@ function changesetsConfig(): string {
   )}\n`;
 }
 
+interface ScratchPackageManifest {
+  readonly name: string;
+  readonly version: string;
+  readonly private: false;
+  dependencies?: Readonly<Record<string, string>>;
+}
+
 function packageManifest(scratchPackage: ResolvedScratchPackage): string {
   const dependencies = Object.fromEntries(
     scratchPackage.dependencies.map((dependency) => [
@@ -981,12 +992,13 @@ function packageManifest(scratchPackage: ResolvedScratchPackage): string {
       "workspace:*",
     ]),
   );
-  const manifest = {
+  const manifest: ScratchPackageManifest = {
     name: scratchPackage.packageName,
     version: scratchPackage.version,
     private: false,
-    ...(scratchPackage.dependencies.length > 0 ? { dependencies } : {}),
   };
+  if (scratchPackage.dependencies.length > 0)
+    manifest.dependencies = dependencies;
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 

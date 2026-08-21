@@ -1,4 +1,8 @@
-import type { AgentConfig, WeaveConfig } from "@weaveio/weave-core";
+import {
+  parseModelIntentEntry,
+  type AgentConfig,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 
 /** Error raised when an explicit agent collides with a generated review variant. */
@@ -35,7 +39,12 @@ export interface GeneratedReviewVariant {
  * reviewVariantName("weft", "org.model:v2")       // → "weft-org-model-v2"
  */
 export function reviewVariantName(agentName: string, model: string): string {
-  const safeModel = model.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const parsed = parseModelIntentEntry(model);
+  // Config validation rejects malformed suffixes. Keep this fallback because
+  // callers may construct descriptors that bypass validation; naming must not
+  // throw in that case, and the raw entry remains the safest identity input.
+  const baseModel = parsed.isOk() ? parsed.value.baseModel : model;
+  const safeModel = baseModel.replace(/[^a-zA-Z0-9_-]/g, "-");
   return `${agentName}-${safeModel}`;
 }
 
@@ -63,6 +72,8 @@ export function generateReviewVariants(
     if (config.disabled.agents.includes(agentName)) continue;
 
     for (const reviewModel of agent.review_models) {
+      // Name collisions are intentional and fail closed: thinking levels are
+      // runtime intent, not part of a review variant's stable identity.
       const variantName = reviewVariantName(agentName, reviewModel);
 
       if (config.agents[variantName] !== undefined) {

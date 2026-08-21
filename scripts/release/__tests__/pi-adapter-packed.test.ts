@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { isJsonObject, parseJsonValue } from "../json.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { TarInspector } from "../tar-inspector.js";
@@ -14,12 +15,6 @@ import { TarInspector } from "../tar-inspector.js";
  */
 describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
   it("packs @weaveio/weave-adapter-pi with an inventory-clean, policy-valid tarball", async () => {
-    // The integration branch carries the release contract and package
-    // metadata, not the Pi runtime work. The full package proof runs once the
-    // adapter source lands on the branch; release staging omits this package
-    // until then rather than manufacturing runtime bytes.
-    if (!(await Bun.file("packages/adapters/pi/src/index.ts").exists()))
-      return;
     const root = join(".release", `pi-pkg-packed-${crypto.randomUUID()}`);
     const packager = new PublicPackagePackager(
       new BunPackageCommandRunner(),
@@ -55,6 +50,8 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
           "package/dist/cli.js",
           "package/dist/extension.d.ts",
           "package/dist/extension.js",
+          "package/dist/extension-build-identity.js",
+          "package/dist/extension-build-identity.json",
           "package/dist/extension-impl.d.ts",
           "package/dist/extension-impl.js",
           "package/dist/host-module-loader.js",
@@ -67,10 +64,15 @@ describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
       const manifestEntry = inspected.value.find(
         (entry) => entry.path === "package/package.json",
       );
-      expect(manifestEntry).toBeDefined();
-      const manifest = JSON.parse(
-        new TextDecoder().decode(manifestEntry?.contents),
-      ) as Record<string, unknown>;
+      if (manifestEntry === undefined)
+        throw new Error("packed manifest entry is missing");
+      const parsedManifest = parseJsonValue(
+        new TextDecoder().decode(manifestEntry.contents),
+      );
+      if (parsedManifest.isErr()) throw new Error(parsedManifest.error.message);
+      if (!isJsonObject(parsedManifest.value))
+        throw new Error("packed manifest is not an object");
+      const manifest = parsedManifest.value;
 
       expect(manifest.name).toBe("@weaveio/weave-adapter-pi");
       expect(manifest.scripts).toBeUndefined();

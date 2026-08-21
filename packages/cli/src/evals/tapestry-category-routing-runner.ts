@@ -28,7 +28,7 @@
  *                                 Always computed locally; injected scorer's routing score is ignored.
  *   - `delegationCorrectness`   — rationale quality (route justification).
  *                                 Computed by injected scorer when present; local heuristic otherwise.
- *   - `executionCompleteness`   — path evidence present (file patterns, context).
+ *   - `executionCompleteness`   — task evidence present (task wording, cited files, domain terms).
  *                                 Computed by injected scorer when present; local heuristic otherwise.
  *   - `rationaleQuality`        — generic shuttle fallback appropriateness.
  *                                 Computed by injected scorer when present; local heuristic otherwise.
@@ -103,11 +103,13 @@ import type {
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
   RunnerError,
   RunnerResult,
   ScoringDimension,
+  ScoringError,
   TranscriptMessage,
 } from "./types.js";
 
@@ -559,8 +561,12 @@ export function scoreRoutingCorrectness(
  * Score `delegationCorrectness` (rationale quality for routing decision).
  *
  * Checks whether the model provided a rationale for why it chose the
- * specific category shuttle. Heuristic: looks for file-path patterns,
- * category keywords, or domain phrases in the content.
+ * specific category shuttle. Heuristic: looks for explanatory phrases that
+ * tie the task to a category description or trigger string.
+ *
+ * Routing correctness itself is decided by category descriptions and exact
+ * trigger strings. Cited task evidence is input evidence only; it never makes
+ * a route correct on its own.
  */
 export function scoreDelegationCorrectness(
   content: string,
@@ -611,16 +617,20 @@ export function scoreDelegationCorrectness(
 }
 
 /**
- * Score `executionCompleteness` (path/context evidence present).
+ * Score `executionCompleteness` (task evidence present).
  *
- * Checks whether the model referenced file patterns, directory paths, or
- * domain-specific evidence to justify the category routing. Recognizes:
+ * Checks whether the model grounded its routing decision in evidence taken
+ * from the task: files or directories the task names, or domain terms the
+ * task uses. This is input evidence for a description- and trigger-based
+ * routing decision. It is never a file-matching rule, and citing a file does
+ * not by itself select a category.
+ *
+ * Recognized evidence forms:
  *   - Windows absolute paths (`C:\app\screen.tsx`)
  *   - Windows relative paths (`src\components\Button.tsx`)
  *   - Unix forward-slash paths (`src/components/Button.tsx`)
- *   - Glob patterns (`*.tsx`, `**\/components\/**`)
  *   - Ordinary filenames with extensions (`screen.tsx`, `server.go`)
- *   - Domain keywords (`frontend`, `backend`, `api`, etc.)
+ *   - Domain terms (`frontend`, `backend`, `api`, etc.)
  */
 export function scoreExecutionCompleteness(
   content: string,
@@ -629,20 +639,19 @@ export function scoreExecutionCompleteness(
   if (analysis.classification === "extraction-miss") {
     return {
       score: 0.0,
-      rationale: "No routing decision to evaluate path evidence for.",
+      rationale: "No routing decision to evaluate task evidence for.",
       applicable: true,
     };
   }
 
   const lower = content.toLowerCase();
 
-  // File path patterns: Unix forward-slash paths, Windows backslash paths,
-  // glob patterns, and ordinary filenames with extensions.
-  const pathPatterns = [
+  // Task evidence shapes: Unix forward-slash paths, Windows backslash paths,
+  // ordinary filenames with extensions, and domain terms.
+  const evidencePatterns = [
     /\b\w+\/\w+/, // Unix path segment (src/api)
     /\b\w+\\\w+/, // Windows backslash path segment (src\api)
     /[A-Za-z]:\\\S+/, // Windows absolute path (C:\app\screen.tsx)
-    /\*\.\w{1,6}/, // glob *.ext
     /\b\w+\.\w{1,6}\b/, // filename.ext
     /\bsrc\b/,
     /\bcomponents?\b/,
@@ -656,13 +665,15 @@ export function scoreExecutionCompleteness(
     /\bclient\b/,
   ];
 
-  const hasPathEvidence = pathPatterns.some((pattern) => pattern.test(lower));
+  const hasTaskEvidence = evidencePatterns.some((pattern) =>
+    pattern.test(lower),
+  );
 
-  if (hasPathEvidence) {
+  if (hasTaskEvidence) {
     return {
       score: 1.0,
       rationale:
-        "Model referenced file patterns or domain context to justify routing.",
+        "Model cited task evidence (named files or domain terms) to support its routing decision.",
       applicable: true,
     };
   }
@@ -670,7 +681,7 @@ export function scoreExecutionCompleteness(
   return {
     score: 0.5,
     rationale:
-      "Model made a routing decision but no file path or domain evidence found.",
+      "Model made a routing decision but cited no task evidence to support it.",
     applicable: true,
   };
 }
@@ -702,7 +713,7 @@ export function scoreRationaleQuality(
         return {
           score: 1.0,
           rationale:
-            "Falling back to generic shuttle is correct here: no category pattern matched or the matching category is disabled.",
+            "Falling back to generic shuttle is correct here: no category description or trigger string covers the task, or the matching category is disabled.",
           applicable: true,
         };
       }
@@ -832,15 +843,12 @@ function buildErrorResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -890,15 +898,12 @@ function buildDryRunResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   // Derive `required` from the rubric when available; fall back to true
   // (conservative default) when no rubric is present for this case.
@@ -1055,9 +1060,37 @@ function buildUserMessage(evalCase: EvalCase): string {
   return `Task to route: ${evalCase.description}`;
 }
 
+function scorerDimensionForCase(evalCase: EvalCase): ScoringDimension {
+  switch (evalCase.expected_outcome.kind) {
+    case "agent_routing":
+      return "routingCorrectness";
+    case "delegation_chain":
+      return "delegationCorrectness";
+    case "task_completion":
+      return "executionCompleteness";
+    case "tool_call":
+      return "rationaleQuality";
+  }
+}
+
+function normalizeScorerError(
+  evalCase: EvalCase,
+  error: ScoringError,
+): Extract<ScoringError, { type: "ScorerAdapterError" }> {
+  return {
+    type: "ScorerAdapterError",
+    caseId: evalCase.id,
+    dimension:
+      error.type === "ScorerAdapterError"
+        ? error.dimension
+        : scorerDimensionForCase(evalCase),
+    message: error.message,
+  };
+}
+
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Record<ScoringDimension, { score: number; applicable: boolean }> {
+) {
   return {
     routingCorrectness: {
       score: dimensions.routingCorrectness.score,
@@ -1075,19 +1108,33 @@ function buildDimensionScoreSummary(
       score: dimensions.rationaleQuality.score,
       applicable: dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
+
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
 
 function buildDimensionRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dim] = score.rationale;
-    }
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
   return rationales;
 }
@@ -1172,7 +1219,7 @@ export interface TapestryCategoryRoutingRunRequest {
  * Evaluates Tapestry's category shuttle routing fidelity WITHOUT canonicalizing
  * `shuttle-{category}` names to `shuttle`. Category fidelity is scored on four
  * dimensions: routing correctness (exact/alternate/fallback/wrong), delegation
- * correctness (rationale quality), execution completeness (path evidence), and
+ * correctness (rationale quality), execution completeness (task evidence), and
  * rationale quality (fallback appropriateness).
  *
  * ## Scorer integration
@@ -1424,10 +1471,10 @@ export class TapestryCategoryRoutingRunner {
             systemPrompt,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return executeAll as ResultAsync<CaseResult[], never>;
+    return executeAll;
   }
 
   private executeSingleCase(
@@ -1472,11 +1519,12 @@ export class TapestryCategoryRoutingRunner {
               scoreRecord: NormalizedScoreRecord;
               composedPrompt: string;
             },
-            { type: string; message: string }
+            ScoringError
           >(
             Promise.resolve(
               err({
                 type: "RubricNotFound",
+                caseId: evalCase.id,
                 message: `No rubric found for case "${evalCase.id}" in suite "${evalCase.suite}".`,
               }),
             ),
@@ -1497,21 +1545,7 @@ export class TapestryCategoryRoutingRunner {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
             .score(runOutput, evalCase, rubrics)
-            .mapErr(
-              (
-                scoringError,
-              ): { type: string; message: string; dimension?: string } => ({
-                type: "ScorerAdapterError",
-                message:
-                  "message" in scoringError
-                    ? String(scoringError.message)
-                    : "Scorer returned an error.",
-                dimension:
-                  "dimension" in scoringError
-                    ? String((scoringError as { dimension: string }).dimension)
-                    : undefined,
-              }),
-            )
+            .mapErr((error) => normalizeScorerError(evalCase, error))
             .map((scorerRecord) => ({
               runOutput,
               scoreRecord: mergeWithScorerDimensions(
@@ -1583,18 +1617,10 @@ export class TapestryCategoryRoutingRunner {
           return { summary, rawArtifact };
         },
         (error) => {
-          const errorType =
-            "type" in error
-              ? String((error as { type: string }).type)
-              : "UnknownError";
+          const errorType = error.type;
           const dimension =
-            "dimension" in error
-              ? String((error as { dimension: string }).dimension)
-              : undefined;
-          const rawMessage =
-            "message" in error
-              ? String((error as { message: string }).message)
-              : undefined;
+            error.type === "ScorerAdapterError" ? error.dimension : undefined;
+          const rawMessage = error.message;
           return buildErrorResult(
             evalCase,
             modelId,
@@ -1643,7 +1669,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
     getPrompt: (agentName: string) => {
       const importPromise = ResultAsync.fromPromise(
         import("./prompt-snapshots.js"),
-        (cause): import("./types.js").ProvenanceError => ({
+        (cause): ProvenanceError => ({
           type: "PromptCompositionError",
           agentName,
           message: `Dynamic import of prompt-snapshots failed: ${String(cause)}`,
@@ -1652,7 +1678,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
 
       return importPromise.andThen(({ composeAgentSnapshots }) =>
         composeAgentSnapshots({ agentNames: [agentName], rawArtifacts: true })
-          .mapErr((provErr): import("./types.js").ProvenanceError => provErr)
+          .mapErr((provErr): ProvenanceError => provErr)
           .andThen((snapshotResult) => {
             const raw = snapshotResult.rawArtifacts.find(
               (a) => a.agentName === agentName,
@@ -1662,12 +1688,9 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
                 Promise.resolve(raw.composedPrompt),
               );
             }
-            return new ResultAsync<
-              string,
-              import("./types.js").ProvenanceError
-            >(
+            return new ResultAsync<string, ProvenanceError>(
               Promise.resolve(
-                err<string, import("./types.js").ProvenanceError>({
+                err<string, ProvenanceError>({
                   type: "PromptCompositionError",
                   agentName,
                   message: `No raw artifact found for agent "${agentName}" after composition.`,

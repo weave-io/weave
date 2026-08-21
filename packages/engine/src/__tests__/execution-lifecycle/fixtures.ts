@@ -48,6 +48,36 @@ export class MockPlanStateProvider implements PlanStateProvider {
     private readonly completeError?: PlanStateError,
   ) {}
 
+  readSnapshot(planName: string) {
+    if (this.existsError) return errAsync(this.existsError);
+    if (this.completeError) return errAsync(this.completeError);
+    const exists = this.existsMap[planName] ?? false;
+    if (!exists) return errAsync({ type: "PlanMissing" as const, planName });
+    const complete = this.completeMap[planName] ?? false;
+    return okAsync({
+      planName,
+      contentRevision: "mock-rev-1",
+      format: "canonical" as const,
+      parents: [
+        {
+          id: "1",
+          title: complete ? "done" : "todo",
+          state: complete ? ("completed" as const) : ("pending" as const),
+          children: [],
+        },
+      ],
+      totalParentCount: 1,
+      complete,
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
+
   planExists(planName: string) {
     if (this.existsError) return errAsync(this.existsError);
     const exists = this.existsMap[planName] ?? false;

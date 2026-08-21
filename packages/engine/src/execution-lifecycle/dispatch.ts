@@ -80,7 +80,7 @@ export function buildConfiguredRunAgentEffect(
   step: WorkflowStep,
   promptMetadata: { byteLength: number },
 ): RunAgentEffect {
-  const effectivePolicy = evaluateEffectiveToolPolicy(undefined);
+  const effectivePolicy = evaluateEffectiveToolPolicy(void 0);
 
   return {
     kind: "run-agent",
@@ -181,7 +181,7 @@ export function dispatchStep(
         input.leaseId,
       );
       if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
-      return okAsync(undefined);
+      return okAsync();
     })
     .andThen(() =>
       store.instances
@@ -192,7 +192,7 @@ export function dispatchStep(
             return errAsync(
               lifecycleNotFoundError(
                 "WorkflowInstance",
-                input.workflowInstanceId as string,
+                input.workflowInstanceId,
               ),
             );
           }
@@ -285,7 +285,12 @@ export function dispatchStep(
             artifactNames,
           );
           if (promptResult.isErr()) return errAsync(promptResult.error);
-          const promptMetadata = promptResult.value;
+          // Split the security contract at the source: only `byteLength`
+          // travels into the effect (`buildConfiguredRunAgentEffect`); the
+          // rendered `text` is threaded solely through the ephemeral
+          // top-level `stepPromptText` output field below.
+          const promptMetadata = { byteLength: promptResult.value.byteLength };
+          const stepPromptText = promptResult.value.text;
 
           const hasInputs = step.inputs && step.inputs.length > 0;
 
@@ -305,21 +310,25 @@ export function dispatchStep(
                   (storeError): LifecycleError => mapStoreError(storeError),
                 ),
             )
-            .map(
-              (): DispatchStepOutput => ({
+            .map((): DispatchStepOutput => {
+              const output = {
                 stepName: resolvedStepName,
                 effects: [
                   {
-                    kind: "dispatch-agent",
+                    kind: "dispatch-agent" as const,
                     runAgent: buildConfiguredRunAgentEffect(
                       step,
                       promptMetadata,
                     ),
                   },
                 ],
-                ...(hasInputs ? { artifactInputSummary } : {}),
-              }),
-            );
+                stepPromptText,
+              };
+              if (hasInputs) {
+                return { ...output, artifactInputSummary };
+              }
+              return output;
+            });
         }),
     );
 }

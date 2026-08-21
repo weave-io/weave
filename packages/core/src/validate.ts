@@ -3,27 +3,532 @@
  * returning a fully-typed `WeaveConfig` or an array of `ValidationError`s.
  */
 
-import { err, ok, type Result } from "neverthrow";
-import type { ZodError } from "zod";
-import type {
-  AstNode,
-  AstValue,
-  BlockValue,
-  IdentifierValue,
-  Property,
-} from "./ast.js";
+import { err, ok, Result } from "neverthrow";
+import { type ZodError, z } from "zod";
+import type { AstNode, AstValue, Property, StepBlock } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+  MAX_CONFIG_ERROR_PATH_LENGTH,
+} from "./config-error-policy.js";
 import type { ValidationError } from "./errors.js";
-import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
+import {
+  copySafeGraph,
+  MAX_SAFE_GRAPH_ARRAY_LENGTH,
+  MAX_SAFE_GRAPH_DEPTH,
+  MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT,
+  MAX_SAFE_GRAPH_STRING_LENGTH,
+  type SafeGraphCopyBudget,
+  type SafeGraphValue,
+} from "./safe-graph-copy.js";
+import { findSchemaOutputBlocker } from "./safe-schema-input.js";
+import {
+  type JsonValue,
+  type WeaveConfig,
+  WeaveConfigSchema,
+} from "./schema.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "./schema-common.js";
+
+// ---------------------------------------------------------------------------
+// Validation diagnostic and AST structure bounds
+// ---------------------------------------------------------------------------
+
+export const MAX_VALIDATION_ISSUES = MAX_CONFIG_ERROR_ISSUES;
+export const MAX_VALIDATION_PATH_LENGTH = MAX_CONFIG_ERROR_PATH_LENGTH;
+export const MAX_VALIDATION_MESSAGE_LENGTH = MAX_CONFIG_ERROR_FIELD_LENGTH;
+export const MAX_VALIDATION_DIAGNOSTIC_SIZE = MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE;
+export const VALIDATION_DIAGNOSTICS_TRUNCATED = CONFIG_ERRORS_TRUNCATED;
+
+/**
+ * AST graph capacity for one valid workflow. A maximal step can contain two
+ * 512-item artifact lists; each artifact contributes its block, two fields,
+ * values, and source positions after parser normalization. Thirty-two thousand
+ * values/properties per step is a conservative owner budget for that shape.
+ */
+const MAX_AST_VALUES_PER_WORKFLOW_STEP = 32_768;
+const MAX_AST_GRAPH_OVERHEAD = 1_024;
+export const MAX_VALIDATION_AST_NODES =
+  MAX_AST_GRAPH_OVERHEAD +
+  MAX_CONFIG_ARRAY_LENGTH * MAX_AST_VALUES_PER_WORKFLOW_STEP;
+export const MAX_VALIDATION_AST_PROPERTIES =
+  MAX_AST_GRAPH_OVERHEAD +
+  MAX_CONFIG_ARRAY_LENGTH * MAX_AST_VALUES_PER_WORKFLOW_STEP;
+
+const VALIDATION_AST_COPY_BUDGET: SafeGraphCopyBudget = {
+  // Keep the structural depth guard compatible with parser recovery; the
+  // schema's adapter-depth rule reports deeper but otherwise safe ASTs.
+  maxDepth: MAX_SAFE_GRAPH_DEPTH,
+  maxNodes: MAX_VALIDATION_AST_NODES,
+  maxProperties: MAX_VALIDATION_AST_PROPERTIES,
+  maxPropertiesPerObject: MAX_SAFE_GRAPH_PROPERTIES_PER_OBJECT,
+  maxArrayLength: MAX_SAFE_GRAPH_ARRAY_LENGTH,
+  // Aggregate string content scales with the 512-step workflow bound.
+  maxStringLength: MAX_SAFE_GRAPH_STRING_LENGTH * MAX_CONFIG_ARRAY_LENGTH,
+};
+
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const STRUCTURAL_ERROR_COLLECTION_LIMIT = MAX_VALIDATION_ISSUES + 1;
+
+type ValidatorJsonObject = {
+  [key: string]: JsonValue;
+};
+
+type DisabledItemsByTarget = {
+  [key: string]: string[];
+};
+
+type AstPlainConversion = {
+  plain: ValidatorJsonObject;
+  topLevelLogLevel: boolean;
+  hasInvalidSettingsValue: boolean;
+};
+
+const SourcePosSchema = z.object({
+  line: z.number(),
+  column: z.number(),
+});
+
+const PropertySchema: z.ZodType<Property> = z.lazy(() =>
+  z.object({
+    key: z.string(),
+    value: copiedAstValueSchema(),
+    pos: SourcePosSchema,
+    bare: z.literal(true).optional(),
+  }),
+);
+
+const AstValueSchema: z.ZodType<AstValue> = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("string"),
+      value: z.string(),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("number"),
+      value: z.number(),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("boolean"),
+      value: z.boolean(),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("null"),
+      value: z.null(),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("identifier"),
+      value: z.string(),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("array"),
+      elements: z.array(copiedAstValueSchema()),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      kind: z.literal("block"),
+      properties: z.array(copiedPropertySchema()),
+      pos: SourcePosSchema,
+    }),
+  ]),
+);
+
+function copiedPropertySchema(): z.ZodType<Property> {
+  return PropertySchema;
+}
+
+function copiedAstValueSchema(): z.ZodType<AstValue> {
+  return AstValueSchema;
+}
+
+const StepBlockSchema: z.ZodType<StepBlock> = z.object({
+  name: z.string(),
+  properties: z.array(PropertySchema),
+  pos: SourcePosSchema,
+  insert_before: z.string().optional(),
+  insert_after: z.string().optional(),
+});
+
+const CopiedAstNodeListSchema: z.ZodType<AstNode[]> = z.array(
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("agent"),
+      name: z.string(),
+      properties: z.array(PropertySchema),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      type: z.literal("category"),
+      name: z.string(),
+      properties: z.array(PropertySchema),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      type: z.literal("workflow"),
+      name: z.string(),
+      properties: z.array(PropertySchema),
+      steps: z.array(StepBlockSchema),
+      pos: SourcePosSchema,
+      extends: z.string().optional(),
+    }),
+    z.object({
+      type: z.literal("disable"),
+      target: z.enum(["agents", "hooks", "skills"]),
+      items: z.array(z.string()),
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      type: z.literal("setting"),
+      key: z.string(),
+      value: AstValueSchema,
+      pos: SourcePosSchema,
+    }),
+    z.object({
+      type: z.literal("extend_before_plan"),
+      steps: z.array(z.string()),
+      pos: SourcePosSchema,
+    }),
+  ]),
+);
+
+function boundValidationErrors(errors: ValidationError[]): ValidationError[] {
+  return boundConfigErrors<ValidationError>(errors, () => ({
+    type: "ValidationError",
+    path: "",
+    message: CONFIG_ERRORS_TRUNCATED,
+  }));
+}
+
+function appendOwn<T>(target: T[], value: T): void {
+  Object.defineProperty(target, String(target.length), {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function structuralError(
+  errors: ValidationError[],
+  path: string,
+  message: string,
+  property?: Property,
+): void {
+  if (errors.length >= STRUCTURAL_ERROR_COLLECTION_LIMIT) return;
+  const error: ValidationError = {
+    type: "ValidationError",
+    path,
+    message,
+  };
+  if (property !== undefined) {
+    defineOwnProperty(error, "line", property.pos.line);
+    defineOwnProperty(error, "column", property.pos.column);
+  }
+  appendOwn(errors, error);
+}
+
+function validatePropertyStructure(
+  properties: Property[],
+  path: string,
+  errors: ValidationError[],
+  triggerArrayOnly: boolean,
+  rejectBareFast: boolean,
+): void {
+  const seen = new Set<string>();
+  for (const property of properties) {
+    const propertyPath =
+      path.length > 0 ? `${path}.${property.key}` : property.key;
+    if (DANGEROUS_KEYS.has(property.key)) {
+      structuralError(
+        errors,
+        propertyPath,
+        `dangerous property key '${property.key}' is not allowed`,
+        property,
+      );
+      continue;
+    }
+    if (seen.has(property.key)) {
+      structuralError(
+        errors,
+        propertyPath,
+        `duplicate property '${property.key}'`,
+        property,
+      );
+      continue;
+    }
+    seen.add(property.key);
+
+    if (rejectBareFast && property.key === "fast" && property.bare === true) {
+      structuralError(
+        errors,
+        propertyPath,
+        "fast requires the explicit literal: fast true",
+        property,
+      );
+    }
+    if (
+      triggerArrayOnly &&
+      property.key === "triggers" &&
+      property.value.kind === "array"
+    ) {
+      for (const [index, element] of property.value.elements.entries()) {
+        if (element.kind !== "string") {
+          structuralError(
+            errors,
+            `${propertyPath}.${index}`,
+            "trigger entries must be quoted strings",
+            property,
+          );
+        }
+      }
+    }
+    if (property.value.kind === "block") {
+      if (property.key === "extension_points") {
+        const normalizedKeys = new Map<string, string>();
+        for (const nested of property.value.properties) {
+          const normalized =
+            nested.key === "before-plan" ? "before_plan" : nested.key;
+          const previous = normalizedKeys.get(normalized);
+          if (previous !== undefined && previous !== nested.key) {
+            structuralError(
+              errors,
+              `${propertyPath}.${nested.key}`,
+              `duplicate normalized property '${normalized}'`,
+              nested,
+            );
+          }
+          normalizedKeys.set(normalized, nested.key);
+        }
+      }
+      validatePropertyStructure(
+        property.value.properties,
+        propertyPath,
+        errors,
+        false,
+        false,
+      );
+    }
+  }
+}
+
+function validateDestinationOwnership(
+  properties: readonly Property[],
+  path: string,
+  errors: ValidationError[],
+  reservedDestinations: ReadonlySet<string>,
+  destinationOf: (property: Property) => string = (property) => property.key,
+): void {
+  const owners = new Map<string, Property>();
+  for (const property of properties) {
+    const destination = destinationOf(property);
+    if (reservedDestinations.has(destination)) {
+      structuralError(
+        errors,
+        `${path}.${property.key}`,
+        `property '${property.key}' collides with generated '${destination}'`,
+        property,
+      );
+      continue;
+    }
+    const previous = owners.get(destination);
+    if (previous !== undefined && previous.key !== property.key) {
+      structuralError(
+        errors,
+        `${path}.${property.key}`,
+        `properties '${previous.key}' and '${property.key}' both map to '${destination}'`,
+        property,
+      );
+    }
+    owners.set(destination, property);
+  }
+}
+
+function validateCompletionDestinationOwnership(
+  properties: readonly Property[],
+  path: string,
+  errors: ValidationError[],
+): void {
+  for (const property of properties) {
+    if (property.key !== "completion" || property.value.kind !== "block") {
+      continue;
+    }
+    const hasGeneratedMethod = property.value.properties.some(
+      (nested) => nested.key === "__name",
+    );
+    if (!hasGeneratedMethod) continue;
+    for (const nested of property.value.properties) {
+      if (nested.key === "method") {
+        structuralError(
+          errors,
+          `${path}.completion.method`,
+          "property 'method' collides with generated 'method'",
+          nested,
+        );
+      }
+    }
+  }
+}
+
+function validateAstStructure(nodes: AstNode[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const declarations = {
+    agent: new Set<string>(),
+    category: new Set<string>(),
+    workflow: new Set<string>(),
+  };
+  const settingKeys = new Set<string>();
+
+  for (const node of nodes) {
+    if (
+      node.type === "agent" ||
+      node.type === "category" ||
+      node.type === "workflow"
+    ) {
+      const declarationGroup =
+        node.type === "category" ? "categories" : `${node.type}s`;
+      const path = `${declarationGroup}.${node.name}`;
+      if (DANGEROUS_KEYS.has(node.name)) {
+        structuralError(
+          errors,
+          path,
+          `dangerous ${node.type} name '${node.name}' is not allowed`,
+        );
+      }
+      const names = declarations[node.type];
+      if (names.has(node.name)) {
+        structuralError(
+          errors,
+          path,
+          `duplicate ${node.type} declaration '${node.name}'`,
+        );
+      }
+      names.add(node.name);
+      validatePropertyStructure(
+        node.properties,
+        path,
+        errors,
+        node.type === "agent" || node.type === "category",
+        node.type === "agent" || node.type === "category",
+      );
+      if (node.type === "workflow") {
+        validateDestinationOwnership(
+          node.properties,
+          path,
+          errors,
+          new Set(["extends", "steps"]),
+        );
+        const stepNames = new Set<string>();
+        for (const step of node.steps) {
+          const stepPath = `${path}.steps.${step.name}`;
+          if (DANGEROUS_KEYS.has(step.name)) {
+            structuralError(
+              errors,
+              stepPath,
+              `dangerous step name '${step.name}' is not allowed`,
+            );
+          }
+          if (stepNames.has(step.name)) {
+            structuralError(
+              errors,
+              stepPath,
+              `duplicate step declaration '${step.name}'`,
+            );
+          }
+          stepNames.add(step.name);
+          validatePropertyStructure(
+            step.properties,
+            stepPath,
+            errors,
+            false,
+            false,
+          );
+          validateDestinationOwnership(
+            step.properties,
+            stepPath,
+            errors,
+            new Set(["insert_after", "insert_before", "name"]),
+            (property) =>
+              property.key === "name" ? "display_name" : property.key,
+          );
+          validateCompletionDestinationOwnership(
+            step.properties,
+            stepPath,
+            errors,
+          );
+        }
+      }
+      continue;
+    }
+    if (node.type === "setting") {
+      if (DANGEROUS_KEYS.has(node.key)) {
+        structuralError(
+          errors,
+          node.key,
+          `dangerous setting key '${node.key}' is not allowed`,
+        );
+      }
+      if (settingKeys.has(node.key)) {
+        structuralError(errors, node.key, `duplicate setting '${node.key}'`);
+      }
+      settingKeys.add(node.key);
+      if (node.value.kind === "block") {
+        validatePropertyStructure(
+          node.value.properties,
+          node.key,
+          errors,
+          false,
+          false,
+        );
+      }
+    }
+  }
+  return errors;
+}
 
 // ---------------------------------------------------------------------------
 // AST → plain object helpers
 // ---------------------------------------------------------------------------
 
+function emptyValidatorJsonObject(): ValidatorJsonObject {
+  return Object.setPrototypeOf({}, null);
+}
+
+function emptyDisabledItemsByTarget(): DisabledItemsByTarget {
+  return Object.setPrototypeOf({}, null);
+}
+
+function defineOwnProperty<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: T[K],
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function isValidatorJsonObject(value: JsonValue): value is ValidatorJsonObject {
+  if (value === null || Array.isArray(value)) return false;
+  return value instanceof Object || Object.getPrototypeOf(value) === null;
+}
+
 /**
  * Convert an `AstValue` into a plain JS value suitable for Zod parsing.
  */
-function astValueToPlain(value: AstValue): unknown {
+function astValueToPlain(value: AstValue): JsonValue {
   switch (value.kind) {
+    case "null":
+      return null;
     case "string":
       return value.value;
     case "number":
@@ -42,12 +547,28 @@ function astValueToPlain(value: AstValue): unknown {
 /**
  * Convert a `Property[]` array into a plain key-value object.
  */
-function propertiesToObject(props: Property[]): Record<string, unknown> {
-  const obj: Record<string, unknown> = {};
+function propertiesToObject(props: Property[]): ValidatorJsonObject {
+  const obj = emptyValidatorJsonObject();
   for (const prop of props) {
-    obj[prop.key] = astValueToPlain(prop.value);
+    defineOwnProperty(obj, prop.key, astValueToPlain(prop.value));
   }
   return obj;
+}
+
+function namedCompletionObject(
+  blockProperties: Property[],
+): ValidatorJsonObject {
+  const blockObj = propertiesToObject(blockProperties);
+  const completion = emptyValidatorJsonObject();
+  const methodRaw = blockObj.__name;
+  if (methodRaw !== undefined) {
+    defineOwnProperty(completion, "method", methodRaw);
+  }
+  for (const [key, value] of Object.entries(blockObj)) {
+    if (key === "__name") continue;
+    defineOwnProperty(completion, key, value);
+  }
+  return completion;
 }
 
 /**
@@ -64,30 +585,32 @@ function propertiesToObject(props: Property[]): Record<string, unknown> {
 function transformStepProperties(
   stepName: string,
   properties: Property[],
-): Record<string, unknown> {
-  const obj: Record<string, unknown> = {};
-  obj.name = stepName;
+): ValidatorJsonObject {
+  const obj = emptyValidatorJsonObject();
+  defineOwnProperty(obj, "name", stepName);
 
   for (const prop of properties) {
     if (prop.key === "name") {
-      obj.display_name = astValueToPlain(prop.value);
+      defineOwnProperty(obj, "display_name", astValueToPlain(prop.value));
       continue;
     }
 
     if (prop.key === "completion") {
       if (prop.value.kind === "identifier") {
-        const iv = prop.value as IdentifierValue;
-        obj.completion = { method: iv.value };
+        const completion = emptyValidatorJsonObject();
+        defineOwnProperty(completion, "method", prop.value.value);
+        defineOwnProperty(obj, "completion", completion);
       } else if (prop.value.kind === "block") {
-        const bv = prop.value as BlockValue;
-        const blockObj = propertiesToObject(bv.properties);
-        const { __name: methodRaw, ...params } = blockObj;
-        obj.completion = { method: methodRaw as string, ...params };
+        defineOwnProperty(
+          obj,
+          "completion",
+          namedCompletionObject(prop.value.properties),
+        );
       }
       continue;
     }
 
-    obj[prop.key] = astValueToPlain(prop.value);
+    defineOwnProperty(obj, prop.key, astValueToPlain(prop.value));
   }
 
   return obj;
@@ -106,12 +629,12 @@ function transformStepProperties(
  * This function converts the hyphenated key to the schema key `before_plan`.
  */
 function normalizeExtensionPoints(
-  raw: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  raw: ValidatorJsonObject,
+): ValidatorJsonObject {
+  const result = emptyValidatorJsonObject();
   for (const [key, value] of Object.entries(raw)) {
     const normalized = key === "before-plan" ? "before_plan" : key;
-    result[normalized] = value;
+    defineOwnProperty(result, normalized, value);
   }
   return result;
 }
@@ -122,66 +645,76 @@ function normalizeExtensionPoints(
  * Top-level `log_level` is rejected with a `ValidationError` — it must be
  * placed inside a `settings { log_level INFO }` block instead.
  */
-function astToPlainObject(nodes: AstNode[]): {
-  plain: Record<string, unknown>;
-  topLevelLogLevel: boolean;
-  invalidSettingsShape: boolean;
-} {
-  const agents: Record<string, unknown> = {};
-  const categories: Record<string, unknown> = {};
-  const disabled: Record<string, string[]> = {};
-  const workflows: Record<string, unknown> = {};
+function astToPlainObject(nodes: AstNode[]): AstPlainConversion {
+  const agents = emptyValidatorJsonObject();
+  const categories = emptyValidatorJsonObject();
+  const disabled = emptyDisabledItemsByTarget();
+  const workflows = emptyValidatorJsonObject();
   const extendBeforePlanSteps: string[] = [];
   const seenExtendBeforePlanSteps = new Set<string>();
-  let settingsBlock: Record<string, unknown> | undefined;
+  let settingsBlock: ValidatorJsonObject | undefined;
   let topLevelLogLevel = false;
-  let invalidSettingsShape = false;
+  let hasInvalidSettingsValue = false;
 
   for (const node of nodes) {
     switch (node.type) {
       case "agent":
-        agents[node.name] = propertiesToObject(node.properties);
+        defineOwnProperty(
+          agents,
+          node.name,
+          propertiesToObject(node.properties),
+        );
         break;
 
       case "category":
-        categories[node.name] = propertiesToObject(node.properties);
+        defineOwnProperty(
+          categories,
+          node.name,
+          propertiesToObject(node.properties),
+        );
         break;
 
       case "workflow": {
         const rawProps = propertiesToObject(node.properties);
-
-        // Normalise extension_points block: convert hyphenated keys to underscored.
+        const extensionPoints = rawProps.extension_points;
         if (
-          rawProps.extension_points !== null &&
-          typeof rawProps.extension_points === "object" &&
-          !Array.isArray(rawProps.extension_points)
+          extensionPoints !== undefined &&
+          isValidatorJsonObject(extensionPoints)
         ) {
-          rawProps.extension_points = normalizeExtensionPoints(
-            rawProps.extension_points as Record<string, unknown>,
+          defineOwnProperty(
+            rawProps,
+            "extension_points",
+            normalizeExtensionPoints(extensionPoints),
           );
         }
 
-        const workflowObj: Record<string, unknown> = {
-          ...rawProps,
-          steps: node.steps.map((s) => {
+        const workflowObj = emptyValidatorJsonObject();
+        for (const [key, value] of Object.entries(rawProps)) {
+          defineOwnProperty(workflowObj, key, value);
+        }
+        defineOwnProperty(
+          workflowObj,
+          "steps",
+          node.steps.map((s) => {
             const stepObj = transformStepProperties(s.name, s.properties);
             if (s.insert_before !== undefined)
-              stepObj.insert_before = s.insert_before;
+              defineOwnProperty(stepObj, "insert_before", s.insert_before);
             if (s.insert_after !== undefined)
-              stepObj.insert_after = s.insert_after;
+              defineOwnProperty(stepObj, "insert_after", s.insert_after);
             return stepObj;
           }),
-        };
-        if (node.extends !== undefined) workflowObj.extends = node.extends;
-        workflows[node.name] = workflowObj;
+        );
+        if (node.extends !== undefined)
+          defineOwnProperty(workflowObj, "extends", node.extends);
+        defineOwnProperty(workflows, node.name, workflowObj);
         break;
       }
 
       case "disable":
-        disabled[node.target] = [
+        defineOwnProperty(disabled, node.target, [
           ...(disabled[node.target] ?? []),
           ...node.items,
-        ];
+        ]);
         break;
 
       case "extend_before_plan":
@@ -190,7 +723,7 @@ function astToPlainObject(nodes: AstNode[]): {
         for (const step of node.steps) {
           if (!seenExtendBeforePlanSteps.has(step)) {
             seenExtendBeforePlanSteps.add(step);
-            extendBeforePlanSteps.push(step);
+            appendOwn(extendBeforePlanSteps, step);
           }
         }
         break;
@@ -204,7 +737,7 @@ function astToPlainObject(nodes: AstNode[]): {
           if (node.value.kind === "block") {
             settingsBlock = propertiesToObject(node.value.properties);
           } else {
-            invalidSettingsShape = true;
+            hasInvalidSettingsValue = true;
           }
         }
         // All other top-level settings are silently ignored (not part of schema)
@@ -212,16 +745,23 @@ function astToPlainObject(nodes: AstNode[]): {
     }
   }
 
-  const result: Record<string, unknown> = {};
-  if (Object.keys(agents).length > 0) result.agents = agents;
-  if (Object.keys(categories).length > 0) result.categories = categories;
-  if (Object.keys(disabled).length > 0) result.disabled = disabled;
-  if (Object.keys(workflows).length > 0) result.workflows = workflows;
+  const result = emptyValidatorJsonObject();
+  if (Object.keys(agents).length > 0)
+    defineOwnProperty(result, "agents", agents);
+  if (Object.keys(categories).length > 0)
+    defineOwnProperty(result, "categories", categories);
+  if (Object.keys(disabled).length > 0)
+    defineOwnProperty(result, "disabled", disabled);
+  if (Object.keys(workflows).length > 0)
+    defineOwnProperty(result, "workflows", workflows);
   if (extendBeforePlanSteps.length > 0)
-    result.extend_before_plan = { steps: extendBeforePlanSteps };
-  if (settingsBlock !== undefined) result.settings = settingsBlock;
+    defineOwnProperty(result, "extend_before_plan", {
+      steps: extendBeforePlanSteps,
+    });
+  if (settingsBlock !== undefined)
+    defineOwnProperty(result, "settings", settingsBlock);
 
-  return { plain: result, topLevelLogLevel, invalidSettingsShape };
+  return { plain: result, topLevelLogLevel, hasInvalidSettingsValue };
 }
 
 // ---------------------------------------------------------------------------
@@ -229,11 +769,124 @@ function astToPlainObject(nodes: AstNode[]): {
 // ---------------------------------------------------------------------------
 
 function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
-  return zodError.issues.map((issue) => ({
-    type: "ValidationError" as const,
-    path: issue.path.join("."),
-    message: issue.message,
-  }));
+  return boundValidationErrors(
+    zodError.issues
+      .slice(0, STRUCTURAL_ERROR_COLLECTION_LIMIT)
+      .map((issue) => ({
+        type: "ValidationError" as const,
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Opaque adapter settings validation
+// ---------------------------------------------------------------------------
+
+function canonicalAstJson(value: AstValue): string {
+  if (value.kind === "array")
+    return `[${value.elements.map(canonicalAstJson).join(",")}]`;
+  if (value.kind === "block") {
+    const entries = value.properties
+      .map(
+        (property) => [property.key, canonicalAstJson(property.value)] as const,
+      )
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, raw]) => `${JSON.stringify(key)}:${raw}`).join(",")}}`;
+  }
+  return JSON.stringify(astValueToPlain(value));
+}
+
+function validateAdapterAst(
+  value: AstValue,
+  path: string,
+  depth: number,
+  errors: ValidationError[],
+): void {
+  if (value.kind === "identifier") {
+    appendOwn(errors, {
+      type: "ValidationError",
+      path,
+      message: `adapter settings accept JSON values only; identifier '${value.value}' is not valid`,
+    });
+    return;
+  }
+  if (value.kind === "number" && !Number.isFinite(value.value)) {
+    appendOwn(errors, {
+      type: "ValidationError",
+      path,
+      message: "adapter settings numbers must be finite",
+    });
+    return;
+  }
+  if (depth > 4) {
+    appendOwn(errors, {
+      type: "ValidationError",
+      path,
+      message: "adapter setting nesting exceeds maximum depth of 4",
+    });
+    return;
+  }
+  if (value.kind === "array") {
+    value.elements.forEach((entry, index) => {
+      validateAdapterAst(entry, `${path}.${index}`, depth + 1, errors);
+    });
+    return;
+  }
+  if (value.kind !== "block") return;
+
+  const seen = new Set<string>();
+  for (const property of value.properties) {
+    const propertyPath = `${path}.${property.key}`;
+    if (seen.has(property.key)) {
+      appendOwn(errors, {
+        type: "ValidationError",
+        path: propertyPath,
+        message: `duplicate adapter setting key '${property.key}'`,
+      });
+      continue;
+    }
+    seen.add(property.key);
+    validateAdapterAst(property.value, propertyPath, depth + 1, errors);
+  }
+}
+
+function validateOpaqueAdapterSettings(ast: AstNode[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  for (const node of ast) {
+    if (node.type !== "setting" || node.key !== "settings") continue;
+    if (node.value.kind !== "block") continue;
+    const adapters = node.value.properties.find(
+      (property) => property.key === "adapters",
+    );
+    if (adapters === undefined || adapters.value.kind !== "block") continue;
+    const harnesses = new Set<string>();
+    for (const harness of adapters.value.properties) {
+      const path = `settings.adapters.${harness.key}`;
+      if (harnesses.has(harness.key)) {
+        appendOwn(errors, {
+          type: "ValidationError",
+          path,
+          message: `duplicate adapter setting key '${harness.key}'`,
+        });
+        continue;
+      }
+      harnesses.add(harness.key);
+      validateAdapterAst(harness.value, path, 0, errors);
+      const bytes = new TextEncoder().encode(
+        canonicalAstJson(harness.value),
+      ).byteLength;
+      if (bytes > 64 * 1024) {
+        appendOwn(errors, {
+          type: "ValidationError",
+          path,
+          message: `adapter settings exceed the 64 KiB canonical JSON limit (${bytes} bytes)`,
+        });
+      }
+    }
+  }
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,32 +900,56 @@ function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
  * Top-level `log_level` is rejected with a `ValidationError` — it must be
  * placed inside a `settings { log_level INFO }` block.
  */
-export function validate(
-  ast: AstNode[],
-): Result<WeaveConfig, ValidationError[]> {
-  const { plain, topLevelLogLevel, invalidSettingsShape } =
-    astToPlainObject(ast);
+function invalidAstError(message: string): ValidationError[] {
+  return boundValidationErrors([
+    {
+      type: "ValidationError",
+      path: "",
+      message,
+    },
+  ]);
+}
 
-  if (invalidSettingsShape) {
-    return err([
-      {
-        type: "ValidationError",
-        path: "settings",
-        message: "settings must be a block: settings { ... }",
-      },
-    ]);
+function validateCopiedAst(
+  safeAst: AstNode[],
+): Result<WeaveConfig, ValidationError[]> {
+  const structuralErrors = validateAstStructure(safeAst);
+  const adapterErrors = validateOpaqueAdapterSettings(safeAst);
+  if (structuralErrors.length > 0) {
+    return err(boundValidationErrors([...structuralErrors, ...adapterErrors]));
+  }
+
+  const { plain, topLevelLogLevel, hasInvalidSettingsValue } =
+    astToPlainObject(safeAst);
+
+  if (hasInvalidSettingsValue) {
+    return err(
+      boundValidationErrors([
+        {
+          type: "ValidationError",
+          path: "settings",
+          message: "settings must be a block: settings { ... }",
+        },
+      ]),
+    );
   }
 
   if (topLevelLogLevel) {
-    return err([
-      {
-        type: "ValidationError",
-        path: "log_level",
-        message:
-          "top-level log_level is not allowed; use settings { log_level INFO } instead",
-      },
-    ]);
+    return err(
+      boundValidationErrors([
+        ...adapterErrors,
+        {
+          type: "ValidationError",
+          path: "log_level",
+          message:
+            "top-level log_level is not allowed; use settings { log_level INFO } instead",
+        },
+      ]),
+    );
   }
+
+  if (adapterErrors.length > 0)
+    return err(boundValidationErrors(adapterErrors));
 
   const parsed = WeaveConfigSchema.safeParse(plain);
 
@@ -281,4 +958,50 @@ export function validate(
   }
 
   return ok(parsed.data);
+}
+
+const safelyValidateCopiedAst = Result.fromThrowable(validateCopiedAst, () =>
+  invalidAstError("AST input has an invalid shape"),
+);
+
+function parseCopiedAst(
+  value: SafeGraphValue,
+): Result<AstNode[], ValidationError[]> {
+  const outputBlockerKey = findSchemaOutputBlocker(CopiedAstNodeListSchema);
+  if (outputBlockerKey !== null) {
+    return err(
+      invalidAstError(
+        `AST schema output contains an inherited property that blocks safe materialization: ${outputBlockerKey}`,
+      ),
+    );
+  }
+
+  const parsed = CopiedAstNodeListSchema.safeParse(value);
+  if (!parsed.success) {
+    return err(invalidAstError("AST input has an invalid shape"));
+  }
+  return ok(parsed.data);
+}
+
+const safelyParseCopiedAst = Result.fromThrowable(parseCopiedAst, () =>
+  invalidAstError("AST input has an invalid shape"),
+);
+
+/**
+ * Direct AST input is copied first, then parsed into `AstNode[]`.
+ * Runtime callers still cross the descriptor-safe boundary before validation.
+ */
+export function validate(
+  ast: AstNode[],
+): Result<WeaveConfig, ValidationError[]> {
+  const copied = copySafeGraph(ast, VALIDATION_AST_COPY_BUDGET);
+  if (copied.isErr()) return err(invalidAstError(copied.error.message));
+  if (!Array.isArray(copied.value)) {
+    return err(invalidAstError("AST input must be an array"));
+  }
+  const parsedAst = safelyParseCopiedAst(copied.value);
+  if (parsedAst.isErr()) return err(parsedAst.error);
+  return parsedAst.value.andThen((value) =>
+    safelyValidateCopiedAst(value).andThen((result) => result),
+  );
 }

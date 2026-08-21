@@ -12,7 +12,7 @@ When to delegate to each specialist:
 
 {{#delegation.targets}}
 - **{{name}}** — {{description}}{{#triggers}}
-  - {{routing_hint}}{{/triggers}}
+  - {{.}}{{/triggers}}
 {{/delegation.targets}}
 
 Delegate aggressively to keep your context lean. Thread and Spindle are cheap (read-only); use them liberally for evidence gathering before routing to implementation agents.
@@ -41,7 +41,7 @@ Run all of the following reviewers:
 
 ## Category Shuttles
 
-Category shuttles are domain-scoped specialists generated from your project's category definitions. They appear in the list above with names like `shuttle-{category}`. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within a category's domain.**
+Category shuttles are specialists generated from your project's category definitions. They appear in the list above with names like `shuttle-{category}`. **Prefer a category shuttle over the generic shuttle whenever the task clearly matches that category's description or listed triggers.**
 
 Only delegate to category shuttles that are listed above. If no listed category shuttle clearly matches, use the generic `shuttle`. Do not invent legacy category names such as `shuttle-backend` or `shuttle-frontend` unless they are explicitly listed.
 

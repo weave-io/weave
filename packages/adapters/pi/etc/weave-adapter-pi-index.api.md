@@ -489,6 +489,9 @@ export const ChildOverlayChildSchema: z.ZodObject<{
 
 // @public (undocumented)
 export interface ChildOverlayConfig {
+    readonly liveReasoningGenerationId?: string;
+    // Warning: (ae-forgotten-export) The symbol "PiLiveReasoningRegistry" needs to be exported by the entry point index.d.ts
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
     // (undocumented)
     readonly maxLruChildren?: number;
     // (undocumented)
@@ -504,7 +507,8 @@ export function childOverlayConflictPortFromHost(keybindings: PiKeybindingsConfi
 
 // @public (undocumented)
 export class ChildOverlayController {
-    constructor(source: ChildOverlaySourcePort, config?: ChildOverlayConfig, mutations?: ChildOverlayMutationPort, planContext?: ChildOverlayPlanContextPort);
+    // Warning: (ae-forgotten-export) The symbol "ChildUiEventDiagnosticsSink" needs to be exported by the entry point index.d.ts
+    constructor(source: ChildOverlaySourcePort, config?: ChildOverlayConfig, mutations?: ChildOverlayMutationPort, planContext?: ChildOverlayPlanContextPort, diagnostics?: ChildUiEventDiagnosticsSink);
     abandonCommittedSearch(): void;
     applyLiveEvent(event: unknown): Result<ChildOverlayView, ChildOverlayError>;
     // (undocumented)
@@ -514,6 +518,10 @@ export class ChildOverlayController {
     handleInput(data: string): ResultAsync<ChildOverlayInputOutcome, ChildOverlayError>;
     // (undocumented)
     isOpen(): boolean;
+    // Warning: (ae-forgotten-export) The symbol "ChildOverlayLiveReasoningOwner" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly liveReasoning: ChildOverlayLiveReasoningOwner;
     // (undocumented)
     loadNewer(): ResultAsync<ChildOverlayView, ChildOverlayError>;
     // (undocumented)
@@ -534,6 +542,7 @@ export class ChildOverlayController {
     // (undocumented)
     scrollBy(delta: number): Result<ChildOverlayView, ChildOverlayError>;
     search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError>;
+    // (undocumented)
     searchEpoch(): number;
     setRenderedSearchText(index: ReadonlyMap<string, string>): Result<ChildOverlayView, ChildOverlayError>;
     // Warning: (ae-forgotten-export) The symbol "OverlayLayoutSpan" needs to be exported by the entry point index.d.ts
@@ -688,6 +697,10 @@ export type ChildOverlayLiveEventOutcome = {
 } | {
     readonly kind: "dropped";
     readonly reason: ChildOverlayLiveEventDrop;
+} | {
+    readonly kind: "failed";
+    readonly stage: "stream-ingest";
+    readonly reason: "stream-apply-failed";
 };
 
 // @public
@@ -695,6 +708,8 @@ export class ChildOverlayLiveStream {
     constructor(config: ChildOverlayLiveStreamConfig);
     dispose(): void;
     ingest(childId: string, event: unknown): ChildOverlayLiveEventOutcome;
+    // Warning: (ae-forgotten-export) The symbol "PiLiveReasoningUpdate" needs to be exported by the entry point index.d.ts
+    ingestReasoning(update: PiLiveReasoningUpdate): ChildOverlayLiveEventOutcome;
     isSettled(): boolean;
     noteTreeChanged(): void;
     settle(expectedChildId?: string): void;
@@ -706,6 +721,7 @@ export interface ChildOverlayLiveStreamConfig {
     // (undocumented)
     readonly controller: ChildOverlayController;
     readonly currentGenerationId: () => string | undefined;
+    readonly diagnostics?: ChildUiEventDiagnosticsSink;
     readonly generationId: string;
     // (undocumented)
     readonly intervalMs?: number;
@@ -918,6 +934,8 @@ export interface ChildOverlayView {
     // (undocumented)
     readonly height: number;
     readonly identity: ChildOverlayIdentity | undefined;
+    // Warning: (ae-forgotten-export) The symbol "PiLiveReasoningSnapshot" needs to be exported by the entry point index.d.ts
+    readonly liveReasoning?: PiLiveReasoningSnapshot;
     // (undocumented)
     readonly liveTail: boolean;
     // (undocumented)
@@ -1019,7 +1037,7 @@ export function createChildOverlayCell(): PiChildOverlayCell;
 export function createChildOverlayConflictPort(resolved: Readonly<Record<string, string | readonly string[] | undefined>>): PiChildOverlayKeybindingConflictPort;
 
 // @public (undocumented)
-export function createChildOverlayController(source: ChildOverlaySourcePort, config?: ChildOverlayConfig, mutations?: ChildOverlayMutationPort, planContext?: ChildOverlayPlanContextPort): ChildOverlayController;
+export function createChildOverlayController(source: ChildOverlaySourcePort, config?: ChildOverlayConfig, mutations?: ChildOverlayMutationPort, planContext?: ChildOverlayPlanContextPort, diagnostics?: ChildUiEventDiagnosticsSink): ChildOverlayController;
 
 // @public
 export function createChildOverlayCustomComponent(tui: TUI & {
@@ -1307,7 +1325,7 @@ export const defaultPiMaterializerPort: PiMaterializerPort;
 export function degradedPiChildCardComponent(reason: string): PiToolRenderComponent;
 
 // @public
-export const DELEGATION_CARD_DETAILS_VERSION = 1;
+export const DELEGATION_CARD_DETAILS_VERSION = 2;
 
 // @public
 export function describeChildSessionStorageUnavailable(failure: PiNativeSessionStorageUnavailable): string;
@@ -1344,7 +1362,7 @@ export function emit(row: Row, width: number, paint: Paint): string;
 // @public (undocumented)
 export const EMPTY_INSPECTOR_VIEW_STATE: PiInspectorViewState;
 
-// @public
+// @public (undocumented)
 export const EMPTY_PI_DISPATCH_SNAPSHOT: PiDispatchSnapshot;
 
 // @public (undocumented)
@@ -1462,6 +1480,9 @@ export type HostCompatibilityMatrixError = {
 } | {
     type: "SurfaceDrift";
     reason: string;
+} | {
+    type: "Malformed";
+    field: string;
 };
 
 // @public (undocumented)
@@ -1632,7 +1653,7 @@ export function isOwnSourceInfo(sourceInfo: PiSourceInfo): boolean;
 export function isPiChildOverlayActionId(value: string): value is PiChildOverlayActionId;
 
 // @public
-export function isPiSessionManagerStatic(value: unknown): value is PiSessionManagerStatic;
+export function isPiSessionManagerStatic<TCandidate>(value: TCandidate): value is TCandidate & PiSessionManagerStatic;
 
 // @public
 export function isProvenDurableChildTitle(stored: PiStoredChildTitle): boolean;
@@ -1646,8 +1667,10 @@ export function isRuntimeModelFallbackEnabled(report: PiHostSurfaceReport): bool
 // @public
 export function isSupportedHostVersion(version: string): boolean;
 
+// Warning: (ae-forgotten-export) The symbol "PiChildTitleProvenanceCandidate" needs to be exported by the entry point index.d.ts
+//
 // @public
-export function isTrustedChildTitleProvenance(value: unknown): value is PiChildTitleProvenance;
+export function isTrustedChildTitleProvenance(value: PiChildTitleProvenanceCandidate): value is PiChildTitleProvenance;
 
 // @public
 export function joinColumns(columns: ReadonlyArray<{
@@ -1865,8 +1888,10 @@ export type Paint = Readonly<Record<Ink, (text: string) => string>>;
 // @public
 export function paintTone(paint: Paint, tone: Tone, text: string): string;
 
+// Warning: (ae-forgotten-export) The symbol "PiChildMetadataRecordCandidate" needs to be exported by the entry point index.d.ts
+//
 // @public
-export function parseChildMetadataRecord(value: unknown): Result<PiChildMetadataRecord, PiChildMetadataCacheError>;
+export function parseChildMetadataRecord(value: PiJsonValue | PiChildMetadataRecordCandidate): Result<PiChildMetadataRecord, PiChildMetadataCacheError>;
 
 // @public
 export function parseChildOverlayKeyOverrides(raw: unknown, actions?: readonly PiChildOverlayActionDefinition[]): Result<ReadonlyMap<PiChildOverlayActionId, readonly PiChildOverlayKey[]>, PiChildOverlayKeyError>;
@@ -1874,10 +1899,10 @@ export function parseChildOverlayKeyOverrides(raw: unknown, actions?: readonly P
 // Warning: (ae-forgotten-export) The symbol "PiChildRefEnvelope" needs to be exported by the entry point index.d.ts
 //
 // @public
-export function parseChildRefEnvelope(value: unknown): Result<PiChildRefEnvelope, PiChildRefError>;
+export function parseChildRefEnvelope<T>(value: T): Result<PiChildRefEnvelope, PiChildRefError>;
 
 // @public
-export function parseChildRefRecord(value: unknown): Result<PiChildRefRecord, PiChildRefError>;
+export function parseChildRefRecord<T>(value: T): Result<PiChildRefRecord, PiChildRefError>;
 
 // @public
 export function parseDelegationCardDetails(details: unknown): Result<PiDelegationCardDetails, PiDelegationCardDetailsError>;
@@ -1889,7 +1914,7 @@ export function parseNpmSourceName(source: string): string | undefined;
 export function parsePiChildInspectionSettings(value: unknown): Result<PiChildInspectionSettings, readonly PiChildInspectionSettingsIssue[]>;
 
 // @public (undocumented)
-export function parsePiChildSessionCheckpoint(value: unknown): Result<PiChildSessionCheckpoint, PiChildCheckpointError>;
+export function parsePiChildSessionCheckpoint<T>(value: T): Result<PiChildSessionCheckpoint, PiChildCheckpointError>;
 
 // @public
 export const parsePiChildSessionEvent: (value: unknown) => z.ZodSafeParseResult<{
@@ -2639,6 +2664,7 @@ export interface PiChildBootstrapHandlers {
 // @public
 export interface PiChildCardComponentOptions {
     readonly expanded: boolean;
+    readonly liveReasoningLine?: () => string;
     readonly onFailure?: (code: string) => void;
 }
 
@@ -3054,12 +3080,16 @@ export type PiChildMetadataCacheRootViolation = "empty-home" | "relative-home" |
 
 // @public
 export interface PiChildMetadataDatabase {
+    // Warning: (ae-forgotten-export) The symbol "PiChildMetadataDbRow" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    all(sql: string, params?: readonly unknown[]): readonly unknown[];
+    all(sql: string, params?: readonly PiChildMetadataSqlValue[]): readonly PiChildMetadataDbRow[];
     // (undocumented)
     close(): void;
+    // Warning: (ae-forgotten-export) The symbol "PiChildMetadataSqlValue" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    run(sql: string, params?: readonly unknown[]): void;
+    run(sql: string, params?: readonly PiChildMetadataSqlValue[]): void;
 }
 
 // @public
@@ -3115,9 +3145,26 @@ export interface PiChildMetadataSource {
 }
 
 // @public (undocumented)
+export type PiChildOutputCancellation = "cancelled" | "committed";
+
+// @public (undocumented)
+export type PiChildOutputError = {
+    readonly type: "ChildOutputWriteFailed";
+    readonly reason: string;
+} | {
+    readonly type: "ChildOutputWriteCancelled";
+    readonly reason: string;
+};
+
+// @public (undocumented)
 export interface PiChildOutputPort {
-    // Warning: (ae-forgotten-export) The symbol "PiChildOutputError" needs to be exported by the entry point index.d.ts
-    writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError>;
+    writeLine(bytes: Uint8Array): PiChildOutputWrite;
+}
+
+// @public (undocumented)
+export interface PiChildOutputWrite {
+    readonly cancel: () => PiChildOutputCancellation;
+    readonly result: ResultAsync<void, PiChildOutputError>;
 }
 
 // @public (undocumented)
@@ -3638,9 +3685,9 @@ export const PiChildProviderErrorSchema: z.ZodObject<{
     class: z.ZodEnum<{
         unknown: "unknown";
         cancelled: "cancelled";
+        timeout: "timeout";
         "rate-limit": "rate-limit";
         auth: "auth";
-        timeout: "timeout";
         overload: "overload";
         connection: "connection";
         "malformed-response": "malformed-response";
@@ -3695,7 +3742,7 @@ export const PiChildProviderErrorSchema: z.ZodObject<{
 // @public
 export interface PiChildRefAppendPort {
     // (undocumented)
-    appendEntry(customType: string, data: unknown): void;
+    appendEntry(customType: string, data: PiChildRefEnvelope): void;
 }
 
 // Warning: (ae-forgotten-export) The symbol "PiChildRefEntryKindSchema" needs to be exported by the entry point index.d.ts
@@ -3990,6 +4037,8 @@ export class PiChildRuntime {
     reportBootstrapAck(body: PiBootstrapAckBody): ResultAsync<void, PiChildRuntimeError>;
     // (undocumented)
     reportCancelled(): ResultAsync<void, PiChildRuntimeError>;
+    // Warning: (ae-forgotten-export) The symbol "PiModelTransitionBody" needs to be exported by the entry point index.d.ts
+    reportModelTransition(body: PiModelTransitionBody): ResultAsync<void, PiChildRuntimeError>;
     // (undocumented)
     reportSettled(outcome: "completed" | "failed", detail: {
         assistantOutput?: string;
@@ -4047,7 +4096,7 @@ export type PiChildSessionCheckpoint = z.infer<typeof PiChildSessionCheckpointSc
 export type PiChildSessionCheckpointEntry = z.infer<typeof CheckpointEntrySchema>;
 
 // @public (undocumented)
-export const PiChildSessionCheckpointSchema: z.ZodObject<{
+export const PiChildSessionCheckpointSchema: z.ZodPreprocess<z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
     activeLeaf: z.ZodOptional<z.ZodString>;
     checkpointCursor: z.ZodNumber;
@@ -4059,7 +4108,7 @@ export const PiChildSessionCheckpointSchema: z.ZodObject<{
         cursor: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strict>>;
     updatedAt: z.ZodNumber;
-}, z.core.$strict>;
+}, z.core.$strict>>;
 
 // @public (undocumented)
 export type PiChildSessionEvent = z.infer<typeof PiChildSessionEventSchema>;
@@ -4240,7 +4289,7 @@ export interface PiChildSpawnInput {
 // @public (undocumented)
 export type PiChildStatus = "queued" | "spawning" | "handshaking" | "bootstrapping" | "running" | "cancelling" | "completed" | "cancelled" | "failed";
 
-// @public
+// @public (undocumented)
 export type PiChildTitleProvenance = (typeof PI_CHILD_TITLE_PROVENANCE_VALUES)[number];
 
 // @public
@@ -4786,6 +4835,7 @@ export class PiDelegationCardStream {
     constructor(config: PiDelegationCardStreamConfig);
     // (undocumented)
     applyEvent(event: PiChildSessionEvent): void;
+    applyModelTransition(transition: PiModelTransitionBody): void;
     // (undocumented)
     applyProviderError(error: PiChildProviderError): void;
     // (undocumented)
@@ -4808,6 +4858,8 @@ export class PiDelegationCardStream {
 //
 // @public (undocumented)
 export interface PiDelegationCardStreamConfig extends PiChildCardProjectionConfig {
+    // Warning: (ae-forgotten-export) The symbol "PiLiveReasoningProjector" needs to be exported by the entry point index.d.ts
+    readonly liveReasoningProjector?: PiLiveReasoningProjector;
     // Warning: (ae-forgotten-export) The symbol "PiToolResult" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -4827,6 +4879,8 @@ export class PiDelegationController {
     delegate(request: PiDelegationRequest): ResultAsync<PiChildSettlement, PiAdapterFailure>;
     // Warning: (ae-forgotten-export) The symbol "PiAuthenticatedDelegationRequest" needs to be exported by the entry point index.d.ts
     delegateFromAuthenticatedParent(request: PiAuthenticatedDelegationRequest): ResultAsync<PiChildSettlement, PiAdapterFailure>;
+    // Warning: (ae-forgotten-export) The symbol "ChildUiEventDiagnosticsSnapshot" needs to be exported by the entry point index.d.ts
+    diagnosticsSnapshot(): ChildUiEventDiagnosticsSnapshot;
     // (undocumented)
     disposeAll(): void;
     followUpChild(childId: string, text: string): ResultAsync<void, PiAdapterFailure>;
@@ -4876,6 +4930,7 @@ export interface PiDelegationControllerDeps {
     readonly currentDispatch?: () => PiDispatchSnapshot;
     // (undocumented)
     readonly currentEnv?: () => Readonly<Record<string, string>>;
+    readonly diagnostics?: ChildUiEventDiagnosticsSink;
     readonly ensureFreshCatalog?: () => ResultAsync<void, never>;
     // (undocumented)
     readonly generationId: string;
@@ -4885,11 +4940,16 @@ export interface PiDelegationControllerDeps {
     readonly idGenerator: IdGenerator;
     // (undocumented)
     readonly inspectionRegistry?: PiChildInspectionRegistry;
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
     // (undocumented)
     readonly logger: PiAdapterLogger;
     // (undocumented)
     readonly now?: () => number;
     readonly onChildSessionEvent?: (childId: string, event: PiChildSessionEvent) => void;
+    readonly onInspectorReasoning?: PiLiveReasoningObserver;
+    readonly onModelTransition?: (childId: string, transition: PiModelTransitionBody) => void;
+    // Warning: (ae-forgotten-export) The symbol "PiLiveReasoningObserver" needs to be exported by the entry point index.d.ts
+    readonly onParentCardReasoning?: PiLiveReasoningObserver;
     // Warning: (ae-forgotten-export) The symbol "PiChildSessionObserverResult" needs to be exported by the entry point index.d.ts
     readonly onPrivateOutput?: (childId: string, capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult;
     readonly onTreeChanged?: () => void;
@@ -4934,6 +4994,10 @@ export interface PiDelegationRequest {
     readonly cwd: string;
     // (undocumented)
     readonly env: Readonly<Record<string, string>>;
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
+    readonly onInspectorReasoning?: PiLiveReasoningObserver;
+    readonly onModelTransition?: (transition: PiModelTransitionBody) => void;
+    readonly onParentCardReasoning?: PiLiveReasoningObserver;
     readonly onSessionEvent?: (event: PiChildSessionEvent) => void;
     readonly onUpdate?: (snapshot: PiChildTreeNode) => void;
     readonly parentAgentName: string;
@@ -4952,12 +5016,16 @@ export interface PiDelegationToolDeps {
     readonly buildBootstrap: (target: DelegationTarget, task: string, childId: string, ctx: PiSessionContext, parentAgentName: string) => PiJsonValue;
     // (undocumented)
     readonly buildEnv: () => Record<string, string>;
+    readonly diagnostics?: ChildUiEventDiagnosticsSink;
     readonly ensureFresh?: () => Promise<void>;
+    readonly generationId?: string;
     readonly getController: () => PiDelegationController | undefined;
+    readonly getGenerationId?: () => string | undefined;
     // Warning: (ae-forgotten-export) The symbol "PiDelegationInvocationContext" needs to be exported by the entry point index.d.ts
     readonly getInvocationContext?: () => PiDelegationInvocationContext | undefined;
     readonly getParentSessionState: () => PiParentSessionState;
     readonly idGenerator: IdGenerator;
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
     readonly onCompactRenderFailure?: (code: string) => void;
     readonly parentAgentName: string;
     // (undocumented)
@@ -5233,10 +5301,12 @@ export interface PiExtensionDeps {
     readonly capabilityProber: PiCapabilityProbeSource;
     readonly childCancelGraceMs?: number;
     readonly childCommand: readonly string[];
+    readonly childExtensionFallbackPaths?: readonly string[];
     // (undocumented)
     readonly childOutputPort: PiChildOutputPort;
     readonly childResponseDrainMs?: number;
     readonly childTimerPort: TimerPort;
+    readonly childUiEventDiagnostics?: ChildUiEventDiagnosticsSink;
     // (undocumented)
     readonly clock: Clock;
     // Warning: (ae-forgotten-export) The symbol "PiCodexFastProviderSeam" needs to be exported by the entry point index.d.ts
@@ -5256,6 +5326,8 @@ export interface PiExtensionDeps {
     readonly hostSurfaceReader?: PiHostSurfaceReader;
     // (undocumented)
     readonly idGenerator: IdGenerator;
+    // Warning: (ae-forgotten-export) The symbol "ExtensionLoadedIdentity" needs to be exported by the entry point index.d.ts
+    readonly loadedExtensionIdentity?: ExtensionLoadedIdentity;
     // (undocumented)
     readonly logger: PiAdapterLogger;
     // Warning: (ae-forgotten-export) The symbol "PiSharedLogRedirector" needs to be exported by the entry point index.d.ts
@@ -6016,7 +6088,7 @@ export type PiNativeSessionGrantRefusal =
 
 // @public
 export interface PiNativeSessionHandle {
-    appendCustomEntry?(customType: string, data?: unknown): string;
+    appendCustomEntry?<TData>(customType: string, data?: TData): string;
     // (undocumented)
     getEntries(): readonly unknown[];
     // (undocumented)
@@ -6622,6 +6694,7 @@ export class PiRpcChild {
     isDisposed(): boolean;
     // (undocumented)
     isSettled(): boolean;
+    liveReasoningSnapshot(): PiLiveReasoningSnapshot;
     runTask(input: PiRpcChildSpawnInput, bootstrap: PiJsonValue): ResultAsync<PiChildSettlement, PiAdapterFailure>;
     sendDelegationResponse(correlationId: string, body: PiJsonValue): ResultAsync<void, PiAdapterFailure>;
     // Warning: (ae-forgotten-export) The symbol "PiExtensionUiResponseInput" needs to be exported by the entry point index.d.ts
@@ -6639,10 +6712,12 @@ export interface PiRpcChildDeps {
     readonly cancelGraceMs?: number;
     // (undocumented)
     readonly command?: readonly string[];
+    readonly diagnostics?: ChildUiEventDiagnosticsSink;
     // (undocumented)
     readonly handshakeTimeoutMs?: number;
     // (undocumented)
     readonly hmacPort: PiHmacPort;
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
     // (undocumented)
     readonly logger: PiAdapterLogger;
     // (undocumented)
@@ -6657,7 +6732,10 @@ export interface PiRpcChildDeps {
     }) => void;
     // Warning: (ae-forgotten-export) The symbol "PiDelegateRequestBody" needs to be exported by the entry point index.d.ts
     readonly onDelegationRequest?: (childId: string, correlationId: string, request: PiDelegateRequestBody) => void;
+    readonly onInspectorReasoning?: PiLiveReasoningObserver;
     readonly onInterventionCountChanged?: (count: number) => void;
+    readonly onModelTransition?: (childId: string, transition: PiModelTransitionBody) => void;
+    readonly onParentCardReasoning?: PiLiveReasoningObserver;
     readonly onPrivateOutput?: (capture: PiChildPrivateOutputCapture) => PiChildSessionObserverResult;
     // Warning: (ae-forgotten-export) The symbol "PiRestoreContextMetadata" needs to be exported by the entry point index.d.ts
     readonly onRestoreContextVerified?: (metadata: PiRestoreContextMetadata) => PiChildSessionObserverResult;
@@ -6888,7 +6966,7 @@ export interface PiSessionHeader {
 // @public
 export interface PiSessionManagerInstance {
     // (undocumented)
-    appendCustomEntry(customType: string, data?: unknown): string;
+    appendCustomEntry<TData>(customType: string, data?: TData): string;
     // (undocumented)
     getEntries(): readonly unknown[];
     // (undocumented)
@@ -6914,6 +6992,7 @@ export interface PiSessionManagerInstance {
 
 // @public
 export interface PiSessionManagerPort {
+    getEntries?(): readonly unknown[];
     getHeader?(): PiSessionHeader | null | undefined;
     // (undocumented)
     getSessionFile(): string | undefined;
@@ -7298,6 +7377,10 @@ export interface PiThreadRunRequest {
     // (undocumented)
     readonly initiator: PiThreadInitiator;
     readonly instruction?: string;
+    readonly liveReasoningRegistry?: PiLiveReasoningRegistry;
+    readonly onInspectorReasoning?: PiLiveReasoningObserver;
+    readonly onModelTransition?: (transition: PiModelTransitionBody) => void;
+    readonly onParentCardReasoning?: PiLiveReasoningObserver;
     readonly onRunAssigned?: (assignment: PiThreadRunAssignment) => void;
     readonly onSessionEvent?: (event: PiChildSessionEvent) => void;
     // (undocumented)
@@ -7584,7 +7667,7 @@ export function projectPiProviderEvent(event: unknown): Result<PiProviderEventPr
 
 // Warning: (ae-forgotten-export) The symbol "PiNativeSessionRootInput" needs to be exported by the entry point index.d.ts
 //
-// @public
+// @public (undocumented)
 export function provePiChildSessionRoot(input: PiNativeSessionRootInput & {
     readonly fs: PiNativeSessionFsPort;
     readonly root?: string;
@@ -7642,8 +7725,8 @@ export function registerSessionTransitionHandlers(pi: PiExtensionApi, handlers: 
 // @public
 export function renderChildInspection(input: PiChildInspectionRenderInput, width?: number): Result<PiChildInspectionRenderOutput, PiChildInspectionRenderError>;
 
-// @public
-export function renderDelegationCardResult(result: PiToolResult, options: PiToolRenderOptions, theme: PiUiThemePort, _context: PiToolRenderContext, onCardRenderFailure?: (code: string) => void): PiToolRenderComponent;
+// @public (undocumented)
+export function renderDelegationCardResult(result: PiToolResult, options: PiToolRenderOptions, theme: PiUiThemePort, context: PiToolRenderContext, onCardRenderFailure?: (code: string) => void, diagnostics?: ChildUiEventDiagnosticsSink, liveReasoningRegistry?: PiLiveReasoningRegistry): PiToolRenderComponent;
 
 // @public
 export function renderPiChildCardComponent(facts: PiDelegationCardFacts, options: PiChildCardComponentOptions, theme: PiUiThemePort): Result<PiToolRenderComponent, typeof CHILD_CARD_NATIVE_RENDER_FAILED>;
@@ -7839,6 +7922,10 @@ export type StrictJsonParseError = {
 } | {
     readonly type: "TrailingContent";
     readonly position: number;
+} | {
+    readonly type: "LimitExceeded";
+    readonly position: number;
+    readonly limit: "bytes" | "depth" | "nodes" | "properties" | "string";
 };
 
 // @public (undocumented)
@@ -7913,7 +8000,7 @@ export const UNKNOWN_PARENT_SESSION: PiParentSessionState;
 export function validateHostCompatibilityMatrix(matrix: PiHostCompatibilityMatrix): Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>;
 
 // @public
-export function validatePiNativeSessionHeader(candidate: unknown): Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>;
+export function validatePiNativeSessionHeader<TCandidate>(candidate: TCandidate): Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>;
 
 // @public
 export function validateRepeatedSettlements(options: PiRepeatedSettlementValidationOptions): ResultAsync<PiRepeatedSettlementValidationReport, PiRepeatedSettlementValidationError>;
@@ -7982,7 +8069,7 @@ export function wrapPlain(text: string, width: number, maxLines: number): string
 // dist-types/child-inspection-editor.d.ts:16:5 - (ae-forgotten-export) The symbol "PiChildInspectorKey" needs to be exported by the entry point index.d.ts
 // dist-types/child-native-session-contracts.d.ts:109:5 - (ae-forgotten-export) The symbol "PiNativeSessionStorageUnavailableReason" needs to be exported by the entry point index.d.ts
 // dist-types/child-overlay-keys.d.ts:60:5 - (ae-forgotten-export) The symbol "SlotIndex" needs to be exported by the entry point index.d.ts
-// dist-types/model-resolution.d.ts:125:5 - (ae-forgotten-export) The symbol "ThinkingLevelDecl" needs to be exported by the entry point index.d.ts
+// dist-types/model-resolution.d.ts:143:5 - (ae-forgotten-export) The symbol "ThinkingLevelDecl" needs to be exported by the entry point index.d.ts
 // dist-types/plan-render.d.ts:106:5 - (ae-forgotten-export) The symbol "PlanTaskSnapshot" needs to be exported by the entry point index.d.ts
 // dist-types/plan-render.d.ts:107:5 - (ae-forgotten-export) The symbol "ActivePlanTask" needs to be exported by the entry point index.d.ts
 

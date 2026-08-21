@@ -1,4 +1,4 @@
-/// <reference path="../../../types/md.d.ts" />
+import "../../../types/md.d.ts";
 
 import type { ConfigError, WeaveConfig } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
@@ -38,7 +38,19 @@ import weftPrompt from "../prompts/weft.md" with { type: "text" };
  * Used by `loader.ts` to inline prompt content into the builtin config
  * before merging, replacing `prompt_file` references with `prompt` values.
  */
-export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
+interface BuiltinPromptContents {
+  readonly [agentName: string]: string;
+  readonly loom: string;
+  readonly tapestry: string;
+  readonly shuttle: string;
+  readonly pattern: string;
+  readonly thread: string;
+  readonly spindle: string;
+  readonly weft: string;
+  readonly warp: string;
+}
+
+export const BUILTIN_PROMPT_CONTENTS: BuiltinPromptContents = {
   loom: loomPrompt,
   tapestry: tapestryPrompt,
   shuttle: shuttlePrompt,
@@ -69,7 +81,7 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {
-  description "Loom (Main Orchestrator)"
+  description "Main orchestrator: classifies open-ended requests, routes bounded work straight to specialists, and hands plan-sized work to pattern; may read, write, execute, and delegate; select for open-ended user requests that need coordination across several agents"
   prompt_file "loom.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -86,7 +98,7 @@ agent loom {
 
 
 agent tapestry {
-  description "Tapestry (Plan Execution)"
+  description "Plan execution coordinator: drives an existing plan file task by task, delegating every step and verifying acceptance criteria; may read, write, execute, and delegate, but never implements itself; select when an approved plan must be executed end to end"
   prompt_file "tapestry.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -102,7 +114,7 @@ agent tapestry {
 }
 
 agent shuttle {
-  description "Shuttle (Domain Specialist)"
+  description "General implementation worker: bounded coding, testing, debugging, and refactoring tasks; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the work"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -117,15 +129,14 @@ agent shuttle {
   }
 
   triggers [
-    { domain "Implementation" trigger "Bounded coding tasks, file edits, feature work" routing_hint "Use for single-file changes, bug fixes, or clearly scoped implementation tasks" }
-    { domain "Testing" trigger "Writing and running tests" routing_hint "Use when tests need to be written, updated, or debugged" }
-    { domain "Debugging" trigger "Diagnosing and fixing bugs in a specific area" routing_hint "Use when a bug needs investigation and fixing in a known area" }
-    { domain "Refactoring" trigger "Improving code structure without changing behavior" routing_hint "Use for code cleanup, renaming, or restructuring without functional changes" }
+    "Use for a scoped change only when no listed category shuttle clearly matches the work"
+    "Use when an edit crosses category boundaries and splitting it would cost more than doing it once"
+    "Use for build, script, CI, and manifest files that no category covers"
   ]
 }
 
 agent pattern {
-  description "Pattern (Strategic Planner)"
+  description "Strategic planner: turns a goal into a file-backed, sequenced plan with per-task acceptance criteria; writes plan files only, cannot execute commands or delegate; select before multi-file features or refactors that span five or more steps"
   prompt_file "pattern.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -140,14 +151,14 @@ agent pattern {
   }
 
   triggers [
-    { domain "Planning" trigger "Creating structured implementation plans before execution" routing_hint "Use for multi-file features, complex refactors, or work spanning 5+ steps" }
-    { domain "Architecture" trigger "Designing system structure, component boundaries, and data flow" routing_hint "Use when system design decisions need to be made before implementation" }
-    { domain "Decomposition" trigger "Breaking complex goals into discrete, sequenced tasks" routing_hint "Use when a large goal needs to be broken into an actionable plan" }
+    "Use for multi-file features, complex refactors, or work spanning 5+ steps"
+    "Use when system design decisions need to be made before implementation"
+    "Use when a large goal needs to be broken into an actionable plan"
   ]
 }
 
 agent thread {
-  description "Thread (Codebase Explorer)"
+  description "Codebase explorer: traces symbols, call graphs, and data flow to answer where-is and how-does-this-work questions with exact file and line evidence; read-only, cannot execute or delegate; select for cheap internal investigation before planning or editing"
   prompt_file "thread.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -162,14 +173,14 @@ agent thread {
   }
 
   triggers [
-    { domain "Exploration" trigger "Tracing symbols, call graphs, and data flow across the codebase" routing_hint "Use for fast codebase exploration — read-only and cheap" }
-    { domain "Discovery" trigger "Locating where a concept, pattern, or behavior is implemented" routing_hint "Use when answering 'where is X' or 'how does Y work' questions" }
-    { domain "Audit" trigger "Surveying existing code before planning a change" routing_hint "Use to gather evidence before routing to implementation agents" }
+    "Use for fast codebase exploration — read-only and cheap"
+    "Use when answering 'where is X' or 'how does Y work' questions"
+    "Use to gather evidence before routing to implementation agents"
   ]
 }
 
 agent spindle {
-  description "Spindle (External Researcher)"
+  description "External researcher: fetches and synthesizes official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision depends on facts outside this repository"
   prompt_file "spindle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -184,14 +195,14 @@ agent spindle {
   }
 
   triggers [
-    { domain "Research" trigger "Fetching external documentation, API references, or library guides" routing_hint "Use for external docs and research — read-only" }
-    { domain "Verification" trigger "Confirming facts, versions, or behaviors against authoritative sources" routing_hint "Use when facts need verification against official sources" }
-    { domain "Discovery" trigger "Finding relevant third-party tools, packages, or standards" routing_hint "Use when exploring external options, libraries, or standards" }
+    "Use for external docs and research — read-only"
+    "Use when facts need verification against official sources"
+    "Use when exploring external options, libraries, or standards"
   ]
 }
 
 agent weft {
-  description "Weft (Reviewer)"
+  description "Code reviewer: judges correctness, quality, and maintainability of a changeset and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select as a quality gate after non-trivial changes"
   prompt_file "weft.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -206,14 +217,14 @@ agent weft {
   }
 
   triggers [
-    { domain "Code Review" trigger "Reviewing code quality, correctness, and maintainability" routing_hint "Use after non-trivial changes (3+ files, or when quality matters)" }
-    { domain "Gate" trigger "Approving or requesting changes before a task is considered complete" routing_hint "Use as a quality gate before considering work complete" }
-    { domain "Feedback" trigger "Providing structured critique on a plan, design, or implementation" routing_hint "Use when structured feedback is needed on plans or designs" }
+    "Use after non-trivial changes (3+ files, or when quality matters)"
+    "Use as a quality gate before considering work complete"
+    "Use when structured feedback is needed on plans or designs"
   ]
 }
 
 agent warp {
-  description "Warp (Security Auditor)"
+  description "Security auditor: audits a changeset for vulnerabilities, unsafe patterns, and specification compliance, returning an approve or block verdict; read-only, cannot execute or delegate; select whenever changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -228,9 +239,9 @@ agent warp {
   }
 
   triggers [
-    { domain "Security" trigger "Auditing code for vulnerabilities, misconfigurations, or unsafe patterns" routing_hint "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation" }
-    { domain "Gate" trigger "Security approval checkpoint before shipping or merging" routing_hint "Use as security gate before shipping security-sensitive changes" }
-    { domain "Threat Modeling" trigger "Identifying attack surfaces and risk areas in a design or implementation" routing_hint "Use when security implications of a design need analysis" }
+    "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
+    "Use as security gate before shipping security-sensitive changes"
+    "Use when security implications of a design need analysis"
   ]
 }
 

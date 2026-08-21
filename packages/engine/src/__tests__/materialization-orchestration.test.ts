@@ -18,7 +18,6 @@ import { parseConfig } from "@weaveio/weave-core";
 import {
   type MaterializationError,
   type MaterializationPlan,
-  type MaterializedAgent,
   materializeAgents,
   resolveSkillsForConfig,
 } from "@weaveio/weave-engine";
@@ -289,7 +288,7 @@ describe("materialization orchestration", () => {
     it("spawns a generated shuttle-{name} agent when a category is configured", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       await orchestrate(config, adapter);
@@ -304,8 +303,8 @@ describe("materialization orchestration", () => {
     it("spawns multiple generated shuttles for multiple categories", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
+        category backend { description "Backend implementation work" models ["gpt-4o"] }
       `);
 
       await orchestrate(config, adapter);
@@ -320,7 +319,7 @@ describe("materialization orchestration", () => {
     it("does not spawn a category shuttle when the base shuttle is disabled", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
         disable agents ["shuttle"]
       `);
 
@@ -336,8 +335,8 @@ describe("materialization orchestration", () => {
     it("does not spawn a specific category shuttle when its name is in disabled.agents", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
+        category backend { description "Backend implementation work" models ["gpt-4o"] }
         disable agents ["shuttle-frontend"]
       `);
 
@@ -353,7 +352,7 @@ describe("materialization orchestration", () => {
     it("category shuttle descriptor carries category models", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       await orchestrate(config, adapter);
@@ -371,12 +370,10 @@ describe("materialization orchestration", () => {
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
           models ["model-frontend"]
         }
         category backend {
           description "Backend APIs"
-          patterns ["src/api/**"]
           models ["model-backend"]
         }
         disable agents ["warp", "shuttle-backend"]
@@ -406,7 +403,6 @@ describe("materialization orchestration", () => {
       expect(frontend?.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
-        patterns: ["src/components/**", "src/pages/**/*.tsx"],
       });
     });
 
@@ -414,7 +410,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
         agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       const plan = await orchestrate(config, adapter);
@@ -564,7 +560,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category lambda {
-          patterns ["src/lambda/**"]
+          description "Lambda implementation work"
           models ["model-lambda"]
           tool_policy {
             read  allow
@@ -591,7 +587,7 @@ describe("materialization orchestration", () => {
     it("category shuttle with no tool_policy: effectiveToolPolicy defaults all to ask", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category mu { patterns ["src/mu/**"] models ["model-mu"] }
+        category mu { description "Mu implementation work" models ["model-mu"] }
       `);
 
       await orchestrate(config, adapter);
@@ -610,7 +606,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category nu {
-          patterns ["src/nu/**"]
+          description "Nu implementation work"
           models ["model-nu"]
           tool_policy {
             read  allow
@@ -637,7 +633,7 @@ describe("materialization orchestration", () => {
     it("category shuttle with no tool_policy: rawToolPolicy is undefined", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category xi { patterns ["src/xi/**"] models ["model-xi"] }
+        category xi { description "Xi implementation work" models ["model-xi"] }
       `);
 
       await orchestrate(config, adapter);
@@ -652,7 +648,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category omicron {
-          patterns ["src/omicron/**"]
+          description "Omicron implementation work"
           models ["model-omicron"]
           tool_policy {
             read  allow
@@ -682,7 +678,6 @@ describe("materialization orchestration", () => {
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category frontend {
           description "Frontend UI, styling, accessibility"
-          patterns ["src/components/**", "**/*.tsx"]
           models ["model-frontend"]
         }
       `);
@@ -699,7 +694,6 @@ describe("materialization orchestration", () => {
       expect(shuttleDescriptor?.category).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
       });
       expect(workerDescriptor?.category).toBeUndefined();
     });
@@ -776,7 +770,7 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["tau-worker"];
+      const resolved = skillResult.value.skillsByAgent["tau-worker"];
       expect(resolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
     });
 
@@ -795,7 +789,7 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["upsilon-worker"];
+      const resolved = skillResult.value.skillsByAgent["upsilon-worker"];
       expect(resolved).toEqual([]);
     });
 
@@ -809,7 +803,7 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["phi-worker"];
+      const resolved = skillResult.value.skillsByAgent["phi-worker"];
       expect(resolved).toEqual([]);
     });
 
@@ -833,7 +827,7 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["chi-worker"];
+      const resolved = skillResult.value.skillsByAgent["chi-worker"];
       // tdd is disabled — only code-review should appear
       expect(resolved?.map((s) => s.name)).toEqual(["code-review"]);
     });
@@ -862,7 +856,7 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["psi-worker"];
+      const resolved = skillResult.value.skillsByAgent["psi-worker"];
       expect(resolved?.map((s) => s.name)).toEqual([
         "tdd",
         "code-review",
@@ -895,7 +889,7 @@ describe("materialization orchestration", () => {
       if (!skillResult.isOk()) return;
 
       // Engine resolved the skill using only adapter-provided context
-      const resolved = skillResult.value["omega-worker"];
+      const resolved = skillResult.value.skillsByAgent["omega-worker"];
       expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
       // loadAvailableSkills was called — adapter provided context explicitly
       expect(adapterWithSkills.callsTo("loadAvailableSkills")).toHaveLength(1);
@@ -918,7 +912,7 @@ describe("materialization orchestration", () => {
           models ["model-shuttle"]
           skills ["tdd"]
         }
-        category alpha-cat { patterns ["src/alpha/**"] models ["model-alpha"] }
+        category alpha-cat { description "Alpha category implementation work" models ["model-alpha"] }
       `);
 
       const availableSkills =
@@ -928,7 +922,7 @@ describe("materialization orchestration", () => {
       if (!skillResult.isOk()) return;
 
       // Generated shuttle inherits base shuttle skills
-      const resolved = skillResult.value["shuttle-alpha-cat"];
+      const resolved = skillResult.value.skillsByAgent["shuttle-alpha-cat"];
       expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
     });
 
@@ -943,8 +937,8 @@ describe("materialization orchestration", () => {
           models ["model-shuttle"]
           skills ["tdd", "code-review"]
         }
-        category beta-cat { patterns ["src/beta/**"] models ["model-beta"] }
-        category gamma-cat { patterns ["src/gamma/**"] models ["model-gamma"] }
+        category beta-cat { description "Beta category implementation work" models ["model-beta"] }
+        category gamma-cat { description "Gamma category implementation work" models ["model-gamma"] }
       `);
 
       const availableSkills =
@@ -953,8 +947,9 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const betaResolved = skillResult.value["shuttle-beta-cat"];
-      const gammaResolved = skillResult.value["shuttle-gamma-cat"];
+      const betaResolved = skillResult.value.skillsByAgent["shuttle-beta-cat"];
+      const gammaResolved =
+        skillResult.value.skillsByAgent["shuttle-gamma-cat"];
 
       expect(betaResolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
       expect(gammaResolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
@@ -991,11 +986,11 @@ describe("materialization orchestration", () => {
       if (!skillResult.isOk()) return;
 
       // active-agent is resolved
-      expect(skillResult.value["active-agent"]?.map((s) => s.name)).toEqual([
-        "tdd",
-      ]);
+      expect(
+        skillResult.value.skillsByAgent["active-agent"]?.map((s) => s.name),
+      ).toEqual(["tdd"]);
       // disabled-agent is excluded from resolution
-      expect(skillResult.value["disabled-agent"]).toBeUndefined();
+      expect(skillResult.value.skillsByAgent["disabled-agent"]).toBeUndefined();
     });
   });
 
@@ -1142,12 +1137,12 @@ describe("materialization orchestration", () => {
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
 
-      const resolved = skillResult.value["meta-worker"];
+      const resolved = skillResult.value.skillsByAgent["meta-worker"];
       expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
 
       // resolvedSkills names are strings — no objects, no metadata
       for (const skill of resolved ?? []) {
-        expect(typeof skill.name).toBe("string");
+        expect(skill.name).toBeDefined();
       }
 
       // Serialized skill names must not contain adapter metadata

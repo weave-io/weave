@@ -9,13 +9,16 @@ import type {
   WorkflowStep,
 } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
+import { errAsync, okAsync } from "neverthrow";
 
 import {
   type AppendCollision,
   type CategoryMetadata,
   composeAgentDescriptor,
   composeWorkflowStepPrompt,
+  defaultPromptFileReader,
   detectAppendCollisions,
+  type PromptFileReader,
 } from "../compose.js";
 import { generateCategoryShuttles } from "../descriptors.js";
 import { buildTemplateContext } from "../template-context.js";
@@ -54,6 +57,17 @@ async function descriptorFor(
 
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
+}
+
+function collisionAt(
+  collisions: readonly AppendCollision[],
+  index: number,
+): AppendCollision {
+  const collision = collisions[index];
+  if (collision === undefined) {
+    throw new Error(`expected collision at index ${index}`);
+  }
+  return collision;
 }
 
 beforeAll(async () => {
@@ -214,6 +228,51 @@ describe("composeAgentDescriptor", () => {
 
       expect(descriptor.composedPrompt).toBe(
         "Base prompt.\n\nAdditional guidance.",
+      );
+    });
+
+    it("Multiline_agent_and_category_appends_preserve_composed_order", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt """
+            Base "quoted" line.
+            Base {literal} [line].
+          """
+          prompt_append """
+            Agent append one.
+            Agent append two.
+          """
+        }
+        category frontend {
+          description "Frontend UI"
+          prompt_append """
+            Category append one.
+            Category append two.
+          """
+        }
+      `);
+      const generatedResult = generateCategoryShuttles(config);
+      expect(generatedResult.isOk()).toBe(true);
+      const generated = generatedResult._unsafeUnwrap()["shuttle-frontend"];
+      expect(generated).toBeDefined();
+      if (generated === undefined) {
+        throw new Error("expected generated frontend shuttle");
+      }
+
+      expect(generated.config.prompt_append).toBe(
+        "Agent append one.\nAgent append two.\nCategory append one.\nCategory append two.",
+      );
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        generated.config,
+        config,
+        { ...config.agents, "shuttle-frontend": generated.config },
+        generated.categoryMeta,
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        'Base "quoted" line.\nBase {literal} [line].\n\nAgent append one.\nAgent append two.\nCategory append one.\nCategory append two.',
       );
     });
 
@@ -683,7 +742,6 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI, styling, accessibility",
-          patterns: ["src/components/**", "**/*.tsx"],
           isCategory: true,
         },
       );
@@ -691,7 +749,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
       });
     });
 
@@ -727,7 +784,6 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI",
-          patterns: ["src/components/**"],
           isCategory: true,
         },
       );
@@ -1027,14 +1083,14 @@ describe("composeAgentDescriptor", () => {
             network deny
           }
           triggers [
-            { domain "Implementation" trigger "Build feature" }
+            "Build feature"
           ]
         }
         agent helper {
           description "Implementation helper"
           prompt "Help."
           triggers [
-            { domain "Code" trigger "Small implementation" }
+            "Small implementation"
           ]
         }
       `);
@@ -1074,9 +1130,76 @@ describe("composeAgentDescriptor", () => {
         {
           name: "helper",
           description: "Implementation helper",
-          triggers: [{ domain: "Code", trigger: "Small implementation" }],
+          triggers: ["Small implementation"],
           isCategory: false,
         },
+      ]);
+      expect(descriptor.fast).toBeUndefined();
+      expect("patterns" in (descriptor.category ?? {})).toBe(false);
+      expect(
+        descriptor.delegationTargets.every((target) =>
+          target.triggers.every((trigger) => trigger.length >= 0),
+        ),
+      ).toBe(true);
+    });
+
+    it("Ordinary_agent_fast_true_is_copied_as_neutral_intent", async () => {
+      const config = cfg(`
+        agent helper {
+          prompt "Help."
+          fast true
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "helper",
+        config.agents.helper,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.fast).toBe(true);
+      expect("service_tier" in descriptor).toBe(false);
+      expect("speed" in descriptor).toBe(false);
+    });
+
+    it("Delegation_targets_copy_string_triggers_in_declared_order", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Route."
+          tool_policy { delegate allow }
+        }
+        agent helper {
+          description "Implementation helper"
+          prompt "Help."
+          triggers ["review code", "fix tests", "audit APIs"]
+        }
+      `);
+      const source = config.agents.helper?.triggers;
+      expect(source).toEqual(["review code", "fix tests", "audit APIs"]);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const helper = descriptor.delegationTargets.find(
+        (target) => target.name === "helper",
+      );
+      expect(helper?.triggers).toEqual([
+        "review code",
+        "fix tests",
+        "audit APIs",
+      ]);
+      expect(helper?.triggers).not.toBe(source);
+
+      source?.push("mutated");
+      expect(helper?.triggers).toEqual([
+        "review code",
+        "fix tests",
+        "audit APIs",
       ]);
     });
 
@@ -1094,14 +1217,12 @@ describe("composeAgentDescriptor", () => {
         config,
         config.agents,
       );
-      const descriptorRecord = descriptor as unknown as Record<string, unknown>;
-
       expect(descriptor.composedPrompt).toBe(
         "Base prompt-source-check.\n\nAppend subagent.",
       );
-      expect("prompt" in descriptorRecord).toBe(false);
-      expect("prompt_file" in descriptorRecord).toBe(false);
-      expect("prompt_append" in descriptorRecord).toBe(false);
+      expect("prompt" in descriptor).toBe(false);
+      expect("prompt_file" in descriptor).toBe(false);
+      expect("prompt_append" in descriptor).toBe(false);
     });
 
     it("Descriptor_skills_are_requested_names_only", async () => {
@@ -1122,7 +1243,7 @@ describe("composeAgentDescriptor", () => {
 
       expect(descriptor.skills).toEqual(["tdd", "security-review"]);
       for (const skill of descriptor.skills) {
-        expect(typeof skill).toBe("string");
+        expect(skill).toBeDefined();
       }
       expect(serialized).not.toContain("prompt_file");
       expect(serialized).not.toContain("/skills/");
@@ -1140,7 +1261,6 @@ describe("composeAgentDescriptor", () => {
         }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
           models ["model-frontend"]
         }
       `);
@@ -1161,8 +1281,7 @@ describe("composeAgentDescriptor", () => {
         allAgents,
         {
           name: "frontend",
-          description: config.categories.frontend?.description,
-          patterns: config.categories.frontend?.patterns,
+          description: config.categories.frontend?.description ?? "Frontend UI",
           isCategory: true,
         },
       );
@@ -1171,7 +1290,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
-        patterns: ["src/components/**", "src/pages/**/*.tsx"],
       });
     });
 
@@ -1654,7 +1772,7 @@ describe("composeAgentDescriptor — trust boundary for prompt_append", () => {
 });
 
 // ---------------------------------------------------------------------------
-// composeWorkflowStepPrompt — Spec 22 Unit 4
+// composeWorkflowStepPrompt — execution lifecycle contract
 // ---------------------------------------------------------------------------
 
 /**
@@ -1662,7 +1780,7 @@ describe("composeAgentDescriptor — trust boundary for prompt_append", () => {
  * Uses a fixed agent name and default tool policy.
  */
 function makeStepTemplateContext(agentName = "shuttle") {
-  const effectiveToolPolicy = evaluateEffectiveToolPolicy(undefined);
+  const effectiveToolPolicy = evaluateEffectiveToolPolicy(void 0);
   const contextResult = buildTemplateContext({
     agentName,
     mode: "subagent",
@@ -1699,7 +1817,88 @@ function makeWorkflow(overrides: Partial<WorkflowConfig> = {}): WorkflowConfig {
   };
 }
 
-describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
+describe("composeWorkflowStepPrompt — execution lifecycle contract", () => {
+  describe("multiline inline prompts", () => {
+    it("renders Mustache tags and preserves non-tag braces at workflow and step scope", async () => {
+      const config = cfg(`workflow multiline {
+  version 1
+  prompt_append """
+    Workflow append for {{agent.name}}.
+    Keep {workflow} and }.
+  """
+
+  step fallback {
+    type autonomous
+    agent helper
+    prompt """
+      Fallback {{agent.name}}.
+      Keep {prompt} and ["array"].
+    """
+    completion agent_signal
+  }
+
+  step local {
+    type autonomous
+    agent helper
+    prompt """
+      Local {{agent.name}}.
+      Keep {"json": true}.
+    """
+    prompt_append """
+      Local append for {{agent.mode}}.
+      Keep {append} and }.
+    """
+    completion agent_signal
+  }
+}`);
+      const workflow = config.workflows.multiline;
+      const fallbackStep = workflow?.steps.find(
+        (step) => step.name === "fallback",
+      );
+      const localStep = workflow?.steps.find((step) => step.name === "local");
+      expect(workflow).toBeDefined();
+      expect(fallbackStep).toBeDefined();
+      expect(localStep).toBeDefined();
+      if (
+        workflow === undefined ||
+        fallbackStep === undefined ||
+        localStep === undefined
+      ) {
+        throw new Error("expected parsed multiline workflow fixtures");
+      }
+      const ctx = makeStepTemplateContext("composed-agent");
+
+      const fallbackResult = await composeWorkflowStepPrompt(
+        "fallback",
+        fallbackStep,
+        workflow,
+        ctx,
+      );
+      const localResult = await composeWorkflowStepPrompt(
+        "local",
+        localStep,
+        workflow,
+        ctx,
+      );
+
+      expect(fallbackResult.isOk()).toBe(true);
+      expect(localResult.isOk()).toBe(true);
+      if (fallbackResult.isErr() || localResult.isErr()) {
+        throw new Error("expected multiline workflow prompts to compose");
+      }
+      expect(fallbackResult.value).toEqual({
+        composedPrompt:
+          'Fallback composed-agent.\nKeep {prompt} and ["array"].\n\nWorkflow append for composed-agent.\nKeep {workflow} and }.',
+        appendScope: "workflow",
+      });
+      expect(localResult.value).toEqual({
+        composedPrompt:
+          'Local composed-agent.\nKeep {"json": true}.\n\nLocal append for subagent.\nKeep {append} and }.',
+        appendScope: "step",
+      });
+    });
+  });
+
   describe("no appends", () => {
     it("Step_with_no_appends_returns_step_prompt_unchanged", async () => {
       const step = makeStep({ prompt: "Do the work." });
@@ -1894,7 +2093,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
     });
   });
 
-  describe("step-local precedence (Spec 22 Unit 4 core rule)", () => {
+  describe("step-local precedence (execution lifecycle contract core rule)", () => {
     it("Step_scope_append_takes_precedence_over_workflow_scope_append", async () => {
       // Both scopes have an append — step-local wins
       const step = makeStep({
@@ -2065,7 +2264,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
 
   describe("trust boundary — bounded template context", () => {
     it("Append_cannot_reference_unknown_paths_outside_bounded_context", async () => {
-      // Spec 22 Unit 4: appends are rendered against bounded template context only
+      // execution lifecycle contract: appends are rendered against bounded template context only
       const step = makeStep({
         prompt: "Step prompt.",
         prompt_append: "Untrusted: {{artifact.contents}}.",
@@ -2443,7 +2642,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
 });
 
 // ---------------------------------------------------------------------------
-// detectAppendCollisions — Spec 22 Unit 4 collision surfacing
+// detectAppendCollisions — execution lifecycle contract collision surfacing
 // ---------------------------------------------------------------------------
 
 describe("detectAppendCollisions", () => {
@@ -2480,6 +2679,7 @@ describe("detectAppendCollisions", () => {
       const a = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2493,6 +2693,7 @@ describe("detectAppendCollisions", () => {
       const b = cfg(`
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2511,6 +2712,7 @@ describe("detectAppendCollisions", () => {
       const a = cfg(`
         workflow my-wf {
           version 1
+
           step step-a {
             name "Step A"
             type autonomous
@@ -2524,6 +2726,7 @@ describe("detectAppendCollisions", () => {
       const b = cfg(`
         workflow my-wf {
           version 1
+
           step step-b {
             name "Step B"
             type autonomous
@@ -2544,6 +2747,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2557,6 +2761,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2571,7 +2776,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("workflow");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBeUndefined();
@@ -2586,6 +2791,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2599,6 +2805,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2613,7 +2820,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("workflow");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.field).toBe("prompt_append_file");
@@ -2629,6 +2836,7 @@ describe("detectAppendCollisions", () => {
       const first = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2642,6 +2850,7 @@ describe("detectAppendCollisions", () => {
       const second = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2655,6 +2864,7 @@ describe("detectAppendCollisions", () => {
       const third = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2669,7 +2879,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([first, second, third]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.losingValue).toBe("Second guidance.");
       expect(collision.winningValue).toBe("Third guidance.");
       expect(collision.loserIndex).toBe(1);
@@ -2682,6 +2892,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2695,6 +2906,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2709,7 +2921,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("step");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBe("my-step");
@@ -2724,6 +2936,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2737,6 +2950,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2751,7 +2965,7 @@ describe("detectAppendCollisions", () => {
       const result = detectAppendCollisions([base, override]);
 
       expect(result).toHaveLength(1);
-      const collision = result[0] as AppendCollision;
+      const collision = collisionAt(result, 0);
       expect(collision.scope).toBe("step");
       expect(collision.workflowName).toBe("my-wf");
       expect(collision.stepName).toBe("my-step");
@@ -2766,6 +2980,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2780,6 +2995,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2817,6 +3033,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2828,6 +3045,7 @@ describe("detectAppendCollisions", () => {
         }
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2841,6 +3059,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2852,6 +3071,7 @@ describe("detectAppendCollisions", () => {
         }
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2882,6 +3102,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2894,6 +3115,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2914,6 +3136,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2927,6 +3150,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2942,6 +3166,336 @@ describe("detectAppendCollisions", () => {
       // prompt_append: only base defines it → no collision
       // prompt_append_file: only override defines it → no collision
       expect(result).toEqual([]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PromptFileReader — injectable prompt-source seam
+// ---------------------------------------------------------------------------
+
+/** A `PromptFileReader` stub that records every path it is asked to read. */
+interface SpyPromptFileReader extends PromptFileReader {
+  readonly calls: string[];
+}
+
+/**
+ * Build a reader that serves `contents` and fails for `failures`, recording
+ * every consulted path in call order. Unknown paths fail loudly so a test can
+ * never silently fall through to the filesystem.
+ */
+function spyReader(
+  contents: Record<string, string>,
+  failures: Record<string, string> = {},
+): SpyPromptFileReader {
+  const calls: string[] = [];
+
+  return {
+    calls,
+    read(path: string) {
+      calls.push(path);
+
+      const failure = failures[path];
+      if (failure !== undefined) return errAsync({ message: failure });
+
+      const content = contents[path];
+      if (content === undefined) {
+        return errAsync({ message: `unexpected path: ${path}` });
+      }
+
+      return okAsync(content);
+    },
+  };
+}
+
+// Virtual paths: they never exist on disk, so any real read would fail.
+const virtualPromptPath = "/weave-virtual/prompt.md";
+const virtualAppendPath = "/weave-virtual/append.md";
+
+describe("composeAgentDescriptor — injectable prompt file reader", () => {
+  describe("default behavior", () => {
+    it("Omitted_reader_still_reads_prompt_file_and_prompt_append_file_from_disk", async () => {
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt_file: tempPromptFilePath,
+        prompt_append_file: tempAppendFilePath,
+      };
+
+      const descriptor = await descriptorFor(
+        "default-reader-agent",
+        agentConfig,
+        config,
+        { "default-reader-agent": agentConfig },
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        "Prompt loaded from file.\n\nAppend loaded from file.",
+      );
+    });
+
+    it("Default_reader_returns_file_contents_and_a_non_empty_failure_message", async () => {
+      const ok = await defaultPromptFileReader.read(tempPromptFilePath);
+      expect(ok.isOk()).toBe(true);
+      if (ok.isErr()) throw new Error("expected ok");
+      expect(ok.value).toBe("Prompt loaded from file.");
+
+      const missingPath = join(
+        tmpdir(),
+        `weave-compose-default-reader-missing-${randomUUID()}.md`,
+      );
+      const failed = await defaultPromptFileReader.read(missingPath);
+      expect(failed.isErr()).toBe(true);
+      if (failed.isOk()) throw new Error("expected err");
+      expect(failed.error.message).toBeTypeOf("string");
+      expect(failed.error.message.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("injected reader", () => {
+    it("Injected_reader_supplies_prompt_file_contents", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "Injected prompt for {{agent.name}}.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = { prompt_file: virtualPromptPath };
+
+      const result = await composeAgentDescriptor(
+        "injected-prompt-agent",
+        agentConfig,
+        config,
+        { "injected-prompt-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Injected prompt for injected-prompt-agent.",
+      );
+      expect(reader.calls).toEqual([virtualPromptPath]);
+    });
+
+    it("Injected_reader_supplies_prompt_append_file_contents", async () => {
+      const reader = spyReader({
+        [virtualAppendPath]: "Injected append for {{agent.name}}.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-append-agent",
+        agentConfig,
+        config,
+        { "injected-append-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Base prompt.\n\nInjected append for injected-append-agent.",
+      );
+      expect(reader.calls).toEqual([virtualAppendPath]);
+    });
+
+    it("Injected_reader_serves_both_file_sources_in_one_composition", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "Injected prompt.",
+        [virtualAppendPath]: "Injected append.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt_file: virtualPromptPath,
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-both-agent",
+        agentConfig,
+        config,
+        { "injected-both-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Injected prompt.\n\nInjected append.",
+      );
+      expect(reader.calls).toEqual([virtualPromptPath, virtualAppendPath]);
+    });
+  });
+
+  describe("source selection is unchanged", () => {
+    it("Inline_prompt_and_prompt_append_win_and_the_reader_is_never_consulted", async () => {
+      const reader = spyReader({
+        [virtualPromptPath]: "File prompt.",
+        [virtualAppendPath]: "File append.",
+      });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Inline prompt.",
+        prompt_file: virtualPromptPath,
+        prompt_append: "Inline append.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "inline-wins-agent",
+        agentConfig,
+        config,
+        { "inline-wins-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) throw new Error(JSON.stringify(result.error));
+      expect(result.value.composedPrompt).toBe(
+        "Inline prompt.\n\nInline append.",
+      );
+      expect(reader.calls).toEqual([]);
+    });
+
+    it("Missing_prompt_and_prompt_file_still_returns_PromptSourceMissingError", async () => {
+      const reader = spyReader({});
+      const config = cfg();
+      const agentConfig: AgentConfig = { models: ["claude-sonnet-4-5"] };
+
+      const result = await composeAgentDescriptor(
+        "injected-missing-source-agent",
+        agentConfig,
+        config,
+        { "injected-missing-source-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected prompt source error");
+      expect(result.error).toEqual({
+        type: "PromptSourceMissingError",
+        agentName: "injected-missing-source-agent",
+        message:
+          'Agent "injected-missing-source-agent" must define either prompt or prompt_file.',
+      });
+      expect(reader.calls).toEqual([]);
+    });
+  });
+
+  describe("reader failures", () => {
+    it("Reader_failure_for_prompt_file_maps_to_PromptFileReadError", async () => {
+      const reader = spyReader({}, { [virtualPromptPath]: "reader exploded" });
+      const config = cfg();
+      const agentConfig: AgentConfig = { prompt_file: virtualPromptPath };
+
+      const result = await composeAgentDescriptor(
+        "injected-prompt-failure-agent",
+        agentConfig,
+        config,
+        { "injected-prompt-failure-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptFileReadError");
+      expect(result.error).toEqual({
+        type: "PromptFileReadError",
+        agentName: "injected-prompt-failure-agent",
+        promptFilePath: virtualPromptPath,
+        message: `Failed to read prompt file for agent "injected-prompt-failure-agent": ${virtualPromptPath}`,
+        fileErrorMessage: "reader exploded",
+      });
+    });
+
+    it("Reader_failure_for_prompt_append_file_maps_to_PromptFileReadError", async () => {
+      const reader = spyReader({}, { [virtualAppendPath]: "append exploded" });
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: virtualAppendPath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "injected-append-failure-agent",
+        agentConfig,
+        config,
+        { "injected-append-failure-agent": agentConfig },
+        undefined,
+        undefined,
+        reader,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptFileReadError");
+      expect(result.error).toEqual({
+        type: "PromptFileReadError",
+        agentName: "injected-append-failure-agent",
+        promptFilePath: virtualAppendPath,
+        message: `Failed to read prompt_append_file for "injected-append-failure-agent": ${virtualAppendPath}`,
+        fileErrorMessage: "append exploded",
+      });
+    });
+  });
+});
+
+describe("composeWorkflowStepPrompt — injectable prompt file reader", () => {
+  it("Injected_reader_supplies_the_effective_step_append_file", async () => {
+    const reader = spyReader({ [virtualAppendPath]: "Injected step append." });
+    const step = makeStep({ prompt_append_file: virtualAppendPath });
+    const workflow = makeWorkflow();
+
+    const result = await composeWorkflowStepPrompt(
+      "reader-step",
+      step,
+      workflow,
+      makeStepTemplateContext(),
+      reader,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    expect(result.value.composedPrompt).toBe(
+      "Execute the task.\n\nInjected step append.",
+    );
+    expect(result.value.appendScope).toBe("step");
+    expect(reader.calls).toEqual([virtualAppendPath]);
+  });
+
+  it("Injected_reader_failure_maps_to_PromptFileReadError_with_the_step_context_label", async () => {
+    const reader = spyReader({}, { [virtualAppendPath]: "step read failed" });
+    const step = makeStep();
+    const workflow = makeWorkflow({ prompt_append_file: virtualAppendPath });
+
+    const result = await composeWorkflowStepPrompt(
+      "reader-failure-step",
+      step,
+      workflow,
+      makeStepTemplateContext(),
+      reader,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) throw new Error("expected PromptFileReadError");
+    expect(result.error).toEqual({
+      type: "PromptFileReadError",
+      agentName: "workflow-step:reader-failure-step",
+      promptFilePath: virtualAppendPath,
+      message: `Failed to read prompt_append_file for "workflow-step:reader-failure-step": ${virtualAppendPath}`,
+      fileErrorMessage: "step read failed",
     });
   });
 });

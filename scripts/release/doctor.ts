@@ -12,7 +12,6 @@ import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
-  LEGACY_PREFLIGHT_RUN_NAME,
   PUBLIC_PACKAGES,
   type PublicPackageName,
   RELEASE_ATTEST_WORKFLOW_PATH,
@@ -23,13 +22,28 @@ import {
 } from "./constants.js";
 import { runDeterministicDocsCheck } from "./docs-audit/deterministic.js";
 import {
+  collectAuthoritativeReleaseLifecycle,
+  type DoctorCreationCleanupReader,
+  type DoctorMarkerObservation,
+  type DoctorMergedReleaseObservation,
+  type DoctorReleaseAuthorityReader,
+  type DoctorReleaseLifecycleObservation,
+  unavailableReleaseLifecycle,
+} from "./doctor-lifecycle.js";
+import {
+  boundedResponseBytes,
+  DOCTOR_TRANSPORT_LIMITS,
+  type DoctorPortError,
+  resolveGitHubApiUrl,
+  runBoundedProcess,
+  withDoctorTimeout,
+} from "./doctor-transports.js";
+import type { GitHubFetch } from "./github-client.js";
+import {
   type ReleasePrOwnership,
   TERMINAL_RELEASE_COMPLETION_STATES,
 } from "./release-pr-contract.js";
-import {
-  type DiscoveredRelease,
-  isTerminalPrimaryState,
-} from "./release-state.js";
+import { isTerminalPrimaryState } from "./release-state.js";
 import {
   NEW_PIPELINE_SCHEDULE,
   type ReleaseRolloutMode,
@@ -51,8 +65,6 @@ const OLD_WORKFLOW_API_PATHS = [
   `${RELEASE_WORKFLOW_PATH}@main`,
   `${RELEASE_REPOSITORY}/${RELEASE_WORKFLOW_PATH}@main`,
 ] as const;
-
-export { LEGACY_PREFLIGHT_RUN_NAME };
 
 export const DOCTOR_MODES = [
   "pre-cutover",
@@ -152,11 +164,19 @@ export type DoctorVerificationError =
     }
   | RolloutTupleError;
 
-export type DoctorPortError = {
-  readonly type: "DoctorPortFailed";
-  readonly operation: string;
-  readonly message: string;
+export type {
+  DoctorLifecycleCollectorInput,
+  DoctorReleaseAuthorityRequest,
+} from "./doctor-lifecycle.js";
+export type {
+  DoctorCreationCleanupReader,
+  DoctorMarkerObservation,
+  DoctorMergedReleaseObservation,
+  DoctorPortError,
+  DoctorReleaseAuthorityReader,
+  DoctorReleaseLifecycleObservation,
 };
+export { collectAuthoritativeReleaseLifecycle, unavailableReleaseLifecycle };
 
 export interface NpmPackageObservation {
   readonly packageName: PublicPackageName;
@@ -239,23 +259,15 @@ export interface OldSystemOperationalProof {
   readonly publicationPathEnabled: boolean;
   /** True only for an accepted recent scheduled run on protected main. */
   readonly recentSuccessfulRun: boolean;
-  /** True only for an accepted recent named read-only preflight run. */
-  readonly readOnlyPreflight: boolean;
   readonly runId?: number;
   readonly evidence?: string;
 }
 
-export type OldSystemRunEvidence =
-  | {
-      readonly kind: "scheduled";
-      readonly runId: number;
-      readonly evidence: string;
-    }
-  | {
-      readonly kind: "read-only-preflight";
-      readonly runId: number;
-      readonly evidence: string;
-    };
+export type OldSystemRunEvidence = {
+  readonly kind: "scheduled";
+  readonly runId: number;
+  readonly evidence: string;
+};
 
 export interface DoctorHarnessObservation {
   readonly binaries: Readonly<Record<string, boolean>>;
@@ -276,32 +288,13 @@ export interface DoctorPolicyObservation {
   readonly docsPolicyDetail?: string;
 }
 
-export interface DoctorMarkerObservation {
-  readonly present: boolean;
-  readonly markerSha?: string;
-  readonly ownerGeneration?: string;
-  readonly plannedBaseSha?: string;
-  readonly openReleasePr: boolean;
-  readonly associatedPullRequestSettled?: boolean;
-  readonly creationPollExhausted?: boolean;
-  readonly recordedCleanup?: ReleasePrOwnership | null;
-  readonly markerCleanupPending?: boolean;
-}
-
-export interface DoctorMergedReleaseObservation {
-  readonly state: string;
-  readonly url?: string;
-  readonly markerCleanupPending: boolean;
-  readonly incidentAuthorizationRecordPresent?: boolean;
-  readonly incidentDeprecatedVerified?: boolean;
-}
-
-export interface DoctorReleaseLifecycleObservation {
-  readonly authoritative: boolean;
-  readonly marker: DoctorMarkerObservation;
-  readonly mergedRelease?: DoctorMergedReleaseObservation | null;
-  /** Task 14's recomputed discovery is preferred over cached comments/artifacts. */
-  readonly discovered?: readonly DiscoveredRelease[];
+export interface DoctorCollectionOptions {
+  /** Injected only for bounded tests; production uses global fetch. */
+  readonly githubFetch?: GitHubFetch;
+  readonly githubApiUrl?: string;
+  readonly registryFetch?: GitHubFetch;
+  readonly readReleaseAuthority?: DoctorReleaseAuthorityReader;
+  readonly readCreationCleanupIdentity?: DoctorCreationCleanupReader;
 }
 
 /** All data needed by the pure verifier. No field contains a secret value. */
@@ -824,6 +817,12 @@ function verifyEnvironments(
         `${name}: environment is missing or unreadable`,
         `verify manually: in GitHub Settings → Environments → ${name}, create it with its protection rules; code cannot create secrets`,
       );
+    if (environment.protectionConfigured !== true)
+      return failCheck(
+        "github.environments",
+        `${name}: environment exists but names no required reviewer`,
+        `verify manually: in GitHub Settings → Environments → ${name}, add a required-reviewer protection rule naming at least one maintainer or team; an environment without reviewers gates nothing`,
+      );
   }
   return ok(undefined);
 }
@@ -1000,19 +999,13 @@ function verifyOldSystem(
     return failCheck(
       "release.old-system-operational",
       "old publication path is not authoritatively enabled",
-      "run the old workflow's read-only preflight or inspect a recent successful scheduled run on protected main",
+      "inspect a recent successful scheduled run on protected main",
     );
-  if (oldSystem.recentSuccessfulRun && oldSystem.readOnlyPreflight)
+  if (!oldSystem.recentSuccessfulRun)
     return failCheck(
       "release.old-system-operational",
-      "old-system run evidence is ambiguous: scheduled and preflight proofs were both asserted",
-      "keep exactly one positively identified recent scheduled or read-only preflight run in the doctor snapshot",
-    );
-  if (!oldSystem.recentSuccessfulRun && !oldSystem.readOnlyPreflight)
-    return failCheck(
-      "release.old-system-operational",
-      "no recent successful scheduled run or explicit read-only preflight was observed",
-      "dispatch the old workflow's read-only preflight or prove a recent successful scheduled run, then rerun this mode",
+      "no recent successful scheduled run was observed",
+      "prove a recent successful scheduled run on protected main, then rerun this mode",
     );
   if (
     oldSystem.runId === undefined ||
@@ -1024,11 +1017,9 @@ function verifyOldSystem(
     return failCheck(
       "release.old-system-operational",
       "accepted old-system proof is missing its authoritative run identity",
-      "capture the GitHub workflow run ID and exact scheduled/preflight evidence before rerunning the doctor",
+      "capture the GitHub workflow run ID and exact scheduled evidence before rerunning the doctor",
     );
-  const expectedEvidence = oldSystem.recentSuccessfulRun
-    ? `successful scheduled run ${oldSystem.runId} on protected main`
-    : `successful read-only preflight run ${oldSystem.runId} on protected main`;
+  const expectedEvidence = `successful scheduled run ${oldSystem.runId} on protected main`;
   if (oldSystem.evidence !== expectedEvidence)
     return failCheck(
       "release.old-system-operational",
@@ -1337,6 +1328,8 @@ function manualFixForCollectionError(id: string): string {
     return "authenticate as an npm maintainer and rerun the exact npm trust list query; manual inspection cannot satisfy trusted-publisher verification";
   if (id.startsWith("github"))
     return "read the setting through the GitHub API or inspect the exact GitHub Settings console path documented in docs/contributing/release-setup.md";
+  if (id === "release.lifecycle")
+    return `reread GitHub release and marker state, then run ${RESUME_RECOVERY_COMMAND} only after the Task 14 authority reader is available; doctor never trusts comments or artifacts`;
   return "rerun the bounded read-only doctor input and resolve the reported source error";
 }
 
@@ -1544,10 +1537,11 @@ function stringField(
 export function createDefaultDoctorPort(
   root: string,
   environment: Readonly<Record<string, string | undefined>> = Bun.env,
+  options: DoctorCollectionOptions = {},
 ): DoctorSnapshotPort {
   return {
     readSnapshot(mode) {
-      return collectSnapshot(root, mode, environment);
+      return collectSnapshot(root, mode, environment, options);
     },
   };
 }
@@ -1565,6 +1559,7 @@ function collectSnapshot(
   root: string,
   mode: DoctorMode,
   environment: Readonly<Record<string, string | undefined>>,
+  options: DoctorCollectionOptions = {},
 ): ResultAsync<DoctorSnapshot, DoctorPortError> {
   const collectionErrors: Record<string, string> = {};
   return ResultAsync.fromPromise(
@@ -1605,7 +1600,26 @@ function collectSnapshot(
           collectionErrors[`npm.trusted-publisher.${packageName}`] =
             trustResult.error.message;
       }
-      const github = await collectGitHub(environment, collectionErrors);
+      const github = await collectGitHub(
+        environment,
+        collectionErrors,
+        options,
+      );
+      const lifecycleResult = await collectAuthoritativeReleaseLifecycle({
+        token: environment.GITHUB_TOKEN,
+        fetchImpl: options.githubFetch,
+        apiUrl: options.githubApiUrl ?? environment.GITHUB_API_URL,
+        registryFetch: options.registryFetch,
+        readAuthority: options.readReleaseAuthority,
+        readCreationCleanupIdentity: options.readCreationCleanupIdentity,
+      });
+      const lifecycle = lifecycleResult.isOk()
+        ? lifecycleResult.value
+        : (() => {
+            collectionErrors["release.lifecycle"] =
+              lifecycleResult.error.message;
+            return unavailableReleaseLifecycle();
+          })();
       const policy = await collectPolicy(root);
       const attest = await readAttestationWorkflow(root);
       const oldSystem = await collectOldSystem(
@@ -1639,10 +1653,7 @@ function collectSnapshot(
         harness,
         model,
         policy,
-        lifecycle: {
-          authoritative: false,
-          marker: { present: false, openReleasePr: false },
-        },
+        lifecycle,
         collectionErrors,
       } satisfies DoctorSnapshot;
     })(),
@@ -1715,27 +1726,25 @@ function escapeRegExp(value: string): string {
   return value.replaceAll("*", "\\*");
 }
 
+/**
+ * Runs one bounded `npm` read.
+ *
+ * The registry is an external system that can hang or answer at length, so the
+ * subprocess is bounded by a wall clock and by stdout/stderr byte counts taken
+ * while the streams drain. Crossing any bound kills the child and fails the
+ * read rather than growing the doctor's heap or holding CI open.
+ */
 function runNpm(argv: readonly string[]): ResultAsync<string, DoctorPortError> {
-  return ResultAsync.fromPromise(
-    (async () => {
-      const child = Bun.spawn(["npm", ...argv], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        child.stdout === null ? "" : new Response(child.stdout).text(),
-        child.stderr === null ? "" : new Response(child.stderr).text(),
-      ]);
-      if (exitCode !== 0)
-        throw new Error(stderr.slice(0, 1_024) || `npm exited ${exitCode}`);
-      return stdout.slice(0, 256 * 1024);
-    })(),
-    (cause): DoctorPortError => ({
-      type: "DoctorPortFailed",
-      operation: `npm ${argv.join(" ")}`,
-      message: String(cause),
+  return ResultAsync.fromSafePromise(
+    runBoundedProcess(["npm", ...argv], {
+      timeoutMs: DOCTOR_TRANSPORT_LIMITS.processTimeoutMs,
+      maxStdoutBytes: DOCTOR_TRANSPORT_LIMITS.processStdoutBytes,
+      maxStderrBytes: DOCTOR_TRANSPORT_LIMITS.processStderrBytes,
     }),
+  ).andThen((result) =>
+    result.isErr()
+      ? errAsync<string, DoctorPortError>(result.error)
+      : okAsync<string, DoctorPortError>(result.value.stdout),
   );
 }
 
@@ -1776,7 +1785,6 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled: false,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
     };
   const text = await workflow.text();
   const hasSchedule = /(^|\n)\s*schedule\s*:/m.test(text);
@@ -1793,12 +1801,22 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
+    };
+  }
+  const oldSystemApiUrl = resolveGitHubApiUrl(environment.GITHUB_API_URL);
+  if (oldSystemApiUrl.isErr()) {
+    errors["release.old-system-operational"] = oldSystemApiUrl.error.message;
+    return {
+      authoritative: false,
+      publicationPathEnabled,
+      recentSuccessfulRun: false,
     };
   }
   const runs = await new GitHubReadClient(
     RELEASE_REPOSITORY,
     token,
+    undefined,
+    oldSystemApiUrl.value,
   ).readWorkflowRuns("publish.yml");
   if (runs.isErr()) {
     errors["release.old-system-operational"] = runs.error.message;
@@ -1806,7 +1824,6 @@ async function collectOldSystem(
       authoritative: false,
       publicationPathEnabled,
       recentSuccessfulRun: false,
-      readOnlyPreflight: false,
     };
   }
   const recent = recentSuccessfulOldRun(runs.value);
@@ -1814,7 +1831,6 @@ async function collectOldSystem(
     authoritative: hasSchedule && publicationPathEnabled,
     publicationPathEnabled,
     recentSuccessfulRun: recent?.kind === "scheduled",
-    readOnlyPreflight: recent?.kind === "read-only-preflight",
     ...(recent === null
       ? {}
       : { runId: recent.runId, evidence: recent.evidence }),
@@ -1822,10 +1838,10 @@ async function collectOldSystem(
 }
 
 /**
- * Selects only bounded, positively identified old-publisher evidence. The
- * workflow endpoint is already scoped to publish.yml; branch, repository, and
- * run-name checks below prevent an unrelated successful dispatch from becoming
- * operational proof.
+ * Selects only bounded, positively identified scheduled old-publisher
+ * evidence. The workflow endpoint is already scoped to publish.yml; branch,
+ * repository, and run-name checks below prevent an unrelated run from
+ * becoming operational proof.
  */
 export function recentSuccessfulOldRun(
   value: unknown,
@@ -1847,16 +1863,12 @@ export function recentSuccessfulOldRun(
     const runId = run.id;
     if (typeof runId !== "number" || !Number.isSafeInteger(runId) || runId <= 0)
       continue;
-    const kind = oldRunKind(run);
-    if (kind === undefined) continue;
+    if (run.event !== "schedule") continue;
     candidates.push({
-      kind,
+      kind: "scheduled",
       runId,
       time,
-      evidence:
-        kind === "scheduled"
-          ? `successful scheduled run ${runId} on protected main`
-          : `successful read-only preflight run ${runId} on protected main`,
+      evidence: `successful scheduled run ${runId} on protected main`,
     });
   }
   candidates.sort((left, right) => right.time - left.time);
@@ -1872,7 +1884,7 @@ export function recentSuccessfulOldRun(
 function isProtectedOldRun(run: Record<string, unknown>): boolean {
   if (
     run.conclusion !== "success" ||
-    (run.event !== "schedule" && run.event !== "workflow_dispatch") ||
+    run.event !== "schedule" ||
     run.head_branch !== "main"
   )
     return false;
@@ -1897,24 +1909,6 @@ function isProtectedOldRun(run: Record<string, unknown>): boolean {
   }
   if (typeof run.display_title !== "string") return false;
   return true;
-}
-
-function oldRunKind(
-  run: Record<string, unknown>,
-): OldSystemRunEvidence["kind"] | undefined {
-  if (run.event === "schedule") return "scheduled";
-  if (run.event !== "workflow_dispatch") return undefined;
-  const identity = oldRunIdentity(run);
-  if (identity !== LEGACY_PREFLIGHT_RUN_NAME) return undefined;
-  return "read-only-preflight";
-}
-
-function oldRunIdentity(run: Record<string, unknown>): string | undefined {
-  const displayTitle = run.display_title;
-  if (typeof displayTitle !== "string") return undefined;
-  const runName = run.run_name;
-  if (runName !== undefined && runName !== displayTitle) return undefined;
-  return displayTitle;
 }
 
 function runTimestamp(run: Record<string, unknown>): string | undefined {
@@ -1986,6 +1980,7 @@ async function collectPolicy(root: string): Promise<DoctorPolicyObservation> {
 async function collectGitHub(
   environment: Readonly<Record<string, string | undefined>>,
   errors: Record<string, string>,
+  options: DoctorCollectionOptions = {},
 ): Promise<DoctorGitHubObservation> {
   const token = environment.GITHUB_TOKEN;
   if (token === undefined || token.length === 0) {
@@ -1995,7 +1990,22 @@ async function collectGitHub(
   // The API is intentionally read-only. A malformed response is represented as
   // unavailable rather than guessed healthy. Detailed console paths are in the
   // verifier fixes above.
-  const api = new GitHubReadClient(RELEASE_REPOSITORY, token);
+  // The token is attached only after the origin proves it is the official
+  // GitHub API. An unusable GITHUB_API_URL makes GitHub state unavailable; it
+  // never causes a credentialed request to another origin.
+  const apiUrl = resolveGitHubApiUrl(
+    options.githubApiUrl ?? environment.GITHUB_API_URL,
+  );
+  if (apiUrl.isErr()) {
+    errors["github.api"] = apiUrl.error.message;
+    return unavailableGitHub();
+  }
+  const api = new GitHubReadClient(
+    RELEASE_REPOSITORY,
+    token,
+    options.githubFetch,
+    apiUrl.value,
+  );
   const [
     release,
     prerelease,
@@ -2029,7 +2039,10 @@ async function collectGitHub(
       name,
       exists: present,
       readable: present,
-      protectionConfigured: present,
+      // Existence is not protection. `{}` and an empty rule list are readable
+      // environments with no reviewer gate at all, so the observation reports
+      // protection only when GitHub names at least one required reviewer.
+      protectionConfigured: present && hasRequiredReviewerProtection(value),
     } satisfies DoctorEnvironmentObservation;
   };
   if (release.isErr())
@@ -2099,6 +2112,38 @@ async function collectGitHub(
       ),
     },
   };
+}
+
+/**
+ * Strictly parses GitHub's environment protection rules.
+ *
+ * The doctor accepts protection only when `protection_rules` contains a
+ * `required_reviewers` rule that names at least one reviewer with a usable
+ * identity. A missing key, a non-array, an empty array, a rule of another type,
+ * an empty reviewer list, or a malformed reviewer entry is not protection.
+ */
+export function hasRequiredReviewerProtection(value: unknown): boolean {
+  const record = asRecord(value);
+  if (record === undefined) return false;
+  const rules = record.protection_rules;
+  if (!Array.isArray(rules) || rules.length === 0 || rules.length > 32)
+    return false;
+  return rules.some((entry) => {
+    const rule = asRecord(entry);
+    if (rule === undefined || rule.type !== "required_reviewers") return false;
+    const reviewers = rule.reviewers;
+    if (!Array.isArray(reviewers) || reviewers.length === 0) return false;
+    if (reviewers.length > 64) return false;
+    return reviewers.every((candidate) => {
+      const reviewer = asRecord(candidate);
+      if (reviewer === undefined) return false;
+      if (reviewer.type !== "User" && reviewer.type !== "Team") return false;
+      const reviewerRecord = asRecord(reviewer.reviewer);
+      if (reviewerRecord === undefined) return false;
+      const id = reviewerRecord.id;
+      return typeof id === "number" && Number.isSafeInteger(id) && id > 0;
+    });
+  });
 }
 
 function unavailableGitHub(): DoctorGitHubObservation {
@@ -2382,7 +2427,8 @@ class GitHubReadClient {
   constructor(
     private readonly repository: string,
     private readonly token: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: GitHubFetch = fetch,
+    private readonly apiUrl = "https://api.github.com",
   ) {}
 
   readEnvironment(name: string): ResultAsync<unknown, DoctorPortError> {
@@ -2395,7 +2441,7 @@ class GitHubReadClient {
 
   readTeam(): ResultAsync<unknown, DoctorPortError> {
     return this.readAbsolute(
-      "https://api.github.com/orgs/weave-io/teams/release-maintainers",
+      `${this.apiUrl}/orgs/weave-io/teams/release-maintainers`,
     );
   }
 
@@ -2420,36 +2466,49 @@ class GitHubReadClient {
   }
 
   private read(path: string): ResultAsync<unknown, DoctorPortError> {
-    return this.readAbsolute(
-      `https://api.github.com/repos/${this.repository}${path}`,
-    );
+    return this.readAbsolute(`${this.apiUrl}/repos/${this.repository}${path}`);
   }
 
   private readAbsolute(url: string): ResultAsync<unknown, DoctorPortError> {
-    return ResultAsync.fromPromise<Response, DoctorPortError>(
-      this.fetchImpl(url, {
-        method: "GET",
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${this.token}`,
-        },
-      }),
+    return ResultAsync.fromThrowable(
+      () =>
+        withDoctorTimeout(
+          () =>
+            this.fetchImpl(url, {
+              method: "GET",
+              headers: {
+                accept: "application/vnd.github+json",
+                authorization: `Bearer ${this.token}`,
+              },
+            }),
+          DOCTOR_TRANSPORT_LIMITS.requestTimeoutMs,
+        ),
       (cause): DoctorPortError => ({
         type: "DoctorPortFailed",
         operation: url,
         message: String(cause),
       }),
-    ).andThen(
+    )().andThen(
       (response): ResultAsync<unknown, DoctorPortError> =>
         response.ok
-          ? ResultAsync.fromPromise<unknown, DoctorPortError>(
-              response.json() as Promise<unknown>,
+          ? ResultAsync.fromThrowable(
+              () =>
+                boundedResponseBytes(
+                  response,
+                  DOCTOR_TRANSPORT_LIMITS.jsonResponseBytes,
+                  DOCTOR_TRANSPORT_LIMITS.requestTimeoutMs,
+                ).then(
+                  (bytes) =>
+                    JSON.parse(
+                      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+                    ) as unknown,
+                ),
               (cause): DoctorPortError => ({
                 type: "DoctorPortFailed",
                 operation: url,
                 message: String(cause),
               }),
-            )
+            )()
           : errAsync<unknown, DoctorPortError>({
               type: "DoctorPortFailed",
               operation: url,
@@ -2465,8 +2524,12 @@ function isTerminalStateName(state: string): boolean {
   );
 }
 
-function isFullSha(value: string): boolean {
-  return /^[0-9a-f]{40}$/.test(value);
+function isFullSha(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{40}$/.test(value) &&
+    value !== "0".repeat(40)
+  );
 }
 
 function isOwnerGeneration(value: string): boolean {

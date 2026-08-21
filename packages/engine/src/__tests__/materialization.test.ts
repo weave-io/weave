@@ -1,13 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  type AgentConfig,
+  parseConfig,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
+import { errAsync, okAsync } from "neverthrow";
 
 import {
   composeAgentDescriptor,
-  type MaterializationError,
-  type MaterializationInput,
   type MaterializationPlan,
-  type MaterializedAgent,
   materializeAgents,
+  type PromptFileReader,
 } from "../index.js";
 
 function cfg(source: string): WeaveConfig {
@@ -27,18 +32,8 @@ function agentNames(plan: MaterializationPlan): string[] {
 }
 
 describe("materialization barrel exports", () => {
-  it("exports the public function and types", () => {
-    const publicFunction: typeof materializeAgents = materializeAgents;
-    const input = {} as MaterializationInput;
-    const agent = {} as MaterializedAgent;
-    const plan = {} as MaterializationPlan;
-    const error = {} as MaterializationError;
-
-    expect(publicFunction).toBe(materializeAgents);
-    expect(input).toBeDefined();
-    expect(agent).toBeDefined();
-    expect(plan).toBeDefined();
-    expect(error).toBeDefined();
+  it("exports the public function", () => {
+    expect(materializeAgents).toBeDefined();
   });
 });
 
@@ -115,7 +110,7 @@ describe("materializeAgents", () => {
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
         category frontend {
-          patterns ["src/**/*.tsx"]
+          description "Frontend implementation work"
           models ["model-frontend"]
         }
       `);
@@ -125,8 +120,7 @@ describe("materializeAgents", () => {
       expect(plan.agents[2]?.descriptor.mode).toBe("subagent");
       expect(plan.agents[2]?.descriptor.category).toEqual({
         name: "frontend",
-        description: undefined,
-        patterns: ["src/**/*.tsx"],
+        description: "Frontend implementation work",
       });
       expect(plan.agents[0]?.source).toBe("explicit");
       expect(plan.agents[1]?.source).toBe("explicit");
@@ -137,9 +131,9 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
-        category docs { patterns ["docs/**/*.md"] models ["model-docs"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
+        category docs { description "Documentation work" models ["model-docs"] }
       `);
 
       expect(agentNames(plan)).toEqual([
@@ -156,7 +150,6 @@ describe("materializeAgents", () => {
 
         category frontend {
           description "Frontend UI"
-          patterns ["src/**/*.tsx"]
           models ["model-frontend-a", "model-frontend-b"]
         }
       `);
@@ -194,7 +187,7 @@ describe("materializeAgents", () => {
         }
 
         category frontend {
-          patterns ["src/**/*.tsx"]
+          description "Frontend implementation work"
           models ["model-frontend"]
         }
 
@@ -224,8 +217,8 @@ describe("materializeAgents", () => {
         agent loom { prompt "Loom" models ["model-loom"] }
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
 
         disable agents ["shuttle"]
       `);
@@ -237,8 +230,8 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
 
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
 
         disable agents ["shuttle-frontend"]
       `);
@@ -267,7 +260,7 @@ describe("materializeAgents", () => {
         config: cfg(`
           agent loom { prompt "Loom" models ["model-loom"] }
           agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-          category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -295,8 +288,8 @@ describe("materializeAgents", () => {
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
         agent omega { prompt "Omega" models ["model-omega"] }
 
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
       `);
 
       expect(agentNames(plan)).toEqual([
@@ -314,9 +307,9 @@ describe("materializeAgents", () => {
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
         agent omega { prompt "Omega" models ["model-omega"] }
 
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
-        category docs { patterns ["docs/**/*.md"] models ["model-docs"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
+        category docs { description "Documentation work" models ["model-docs"] }
       `);
 
       const first = await materializeAgents({ config });
@@ -344,7 +337,7 @@ describe("materializeAgents", () => {
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
           agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
 
-          category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -411,7 +404,7 @@ describe("materializeAgents", () => {
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
           agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
 
-          category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+          category frontend { description "Frontend implementation work" models ["model-frontend"] }
         `),
       });
 
@@ -489,7 +482,7 @@ describe("materializeAgents", () => {
           agent shuttle-backend { prompt "Explicit backend" models ["model-explicit"] }
           agent loom { prompt "Loom" models ["model-loom"] mode primary }
 
-          category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+          category backend { description "Backend implementation work" models ["model-backend"] }
         `),
       });
 
@@ -578,7 +571,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["review-a", "review-b"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       // Order: explicit agents, category shuttles, review variants
@@ -652,7 +645,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       const sources = plan.agents.map((a) => a.source);
@@ -665,7 +658,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       const explicit = plan.agents.filter((a) => a.source === "explicit");
@@ -676,8 +669,8 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
-        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
+        category backend { description "Backend implementation work" models ["model-backend"] }
       `);
 
       const shuttles = plan.agents.filter(
@@ -718,7 +711,7 @@ describe("materializeAgents", () => {
       const plan = await materializeConfig(`
         agent loom { prompt "Loom" models ["model-loom"] mode primary }
         agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
-        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category frontend { description "Frontend implementation work" models ["model-frontend"] }
       `);
 
       for (const agent of plan.agents) {
@@ -770,5 +763,218 @@ describe("materializeAgents", () => {
         direct.value.effectiveToolPolicy,
       );
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MaterializationInput.promptFileReader — injectable prompt-source seam
+// ---------------------------------------------------------------------------
+
+/** A `PromptFileReader` stub that records every path it is asked to read. */
+interface SpyPromptFileReader extends PromptFileReader {
+  readonly calls: string[];
+}
+
+/**
+ * Build a reader that serves `contents` and fails for `failures`, recording
+ * every consulted path in call order. Unknown paths fail loudly so a test can
+ * never silently fall through to the filesystem.
+ */
+function spyReader(
+  contents: Record<string, string>,
+  failures: Record<string, string> = {},
+): SpyPromptFileReader {
+  const calls: string[] = [];
+
+  return {
+    calls,
+    read(path: string) {
+      calls.push(path);
+
+      const failure = failures[path];
+      if (failure !== undefined) return errAsync({ message: failure });
+
+      const content = contents[path];
+      if (content === undefined) {
+        return errAsync({ message: `unexpected path: ${path}` });
+      }
+
+      return okAsync(content);
+    },
+  };
+}
+
+/**
+ * Build a config whose agents carry absolute prompt paths.
+ *
+ * The DSL only accepts relative prompt paths; `resolvePromptPaths` in
+ * `@weaveio/weave-config` turns them into the absolute paths that reach
+ * materialization, which is what these tests exercise.
+ */
+function configWithAgents(agents: Record<string, AgentConfig>): WeaveConfig {
+  return { ...cfg(""), agents };
+}
+
+// Virtual paths: they never exist on disk, so any real read would fail.
+const virtualPromptPath = "/weave-virtual/materialization-prompt.md";
+const virtualAppendPath = "/weave-virtual/materialization-append.md";
+
+const tempMaterializationPromptPath = join(
+  tmpdir(),
+  "weave-materialization-default-prompt.md",
+);
+
+function promptOf(plan: MaterializationPlan, agentName: string): string {
+  const agent = plan.agents.find((entry) => entry.agentName === agentName);
+  if (agent === undefined) throw new Error(`agent not found: ${agentName}`);
+  return agent.descriptor.composedPrompt;
+}
+
+describe("materializeAgents — injectable prompt file reader", () => {
+  it("uses the injected reader for prompt_file and prompt_append_file", async () => {
+    const reader = spyReader({
+      [virtualPromptPath]: "Injected prompt for {{agent.name}}.",
+      [virtualAppendPath]: "Injected append.",
+    });
+
+    const config = configWithAgents({
+      "reader-agent": {
+        prompt_file: virtualPromptPath,
+        prompt_append_file: virtualAppendPath,
+        models: ["model-a"],
+      },
+    });
+
+    const result = await materializeAgents({
+      config,
+      promptFileReader: reader,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    expect(result.value.errors).toEqual([]);
+    expect(promptOf(result.value, "reader-agent")).toBe(
+      "Injected prompt for reader-agent.\n\nInjected append.",
+    );
+    expect([...reader.calls].sort()).toEqual([
+      virtualAppendPath,
+      virtualPromptPath,
+    ]);
+  });
+
+  it("consults each distinct path exactly once per materialization", async () => {
+    const reader = spyReader({
+      [virtualPromptPath]: "Shared prompt for {{agent.name}}.",
+      [virtualAppendPath]: "Shared append.",
+    });
+
+    const config = configWithAgents({
+      "first-agent": {
+        prompt_file: virtualPromptPath,
+        prompt_append_file: virtualAppendPath,
+        models: ["model-a"],
+      },
+      "second-agent": {
+        prompt_file: virtualPromptPath,
+        prompt_append_file: virtualAppendPath,
+        models: ["model-b"],
+      },
+      "third-agent": {
+        prompt_file: virtualPromptPath,
+        models: ["model-c"],
+      },
+    });
+
+    const result = await materializeAgents({
+      config,
+      promptFileReader: reader,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    expect(result.value.errors).toEqual([]);
+
+    // Five reads were requested across three agents; two distinct paths exist.
+    expect(
+      reader.calls.filter((path) => path === virtualPromptPath),
+    ).toHaveLength(1);
+    expect(
+      reader.calls.filter((path) => path === virtualAppendPath),
+    ).toHaveLength(1);
+    expect(reader.calls).toHaveLength(2);
+
+    // The shared bytes are still rendered per agent.
+    expect(promptOf(result.value, "first-agent")).toBe(
+      "Shared prompt for first-agent.\n\nShared append.",
+    );
+    expect(promptOf(result.value, "second-agent")).toBe(
+      "Shared prompt for second-agent.\n\nShared append.",
+    );
+    expect(promptOf(result.value, "third-agent")).toBe(
+      "Shared prompt for third-agent.",
+    );
+  });
+
+  it("surfaces reader failures as DescriptorCompositionFailure with a PromptFileReadError cause", async () => {
+    const reader = spyReader({}, { [virtualPromptPath]: "reader exploded" });
+
+    const config = configWithAgents({
+      "failing-agent": {
+        prompt_file: virtualPromptPath,
+        models: ["model-a"],
+      },
+      "healthy-agent": {
+        prompt: "Inline prompt.",
+        models: ["model-b"],
+      },
+    });
+
+    const result = await materializeAgents({
+      config,
+      promptFileReader: reader,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+
+    expect(result.value.errors).toEqual([
+      {
+        type: "DescriptorCompositionFailure",
+        agentName: "failing-agent",
+        cause: {
+          type: "PromptFileReadError",
+          agentName: "failing-agent",
+          promptFilePath: virtualPromptPath,
+          message: `Failed to read prompt file for agent "failing-agent": ${virtualPromptPath}`,
+          fileErrorMessage: "reader exploded",
+        },
+      },
+    ]);
+
+    // A failed read never blocks the rest of the plan.
+    expect(agentNames(result.value)).toEqual(["healthy-agent"]);
+  });
+
+  it("reads declared paths from disk when no reader is supplied", async () => {
+    await Bun.write(
+      tempMaterializationPromptPath,
+      "Default reader prompt for {{agent.name}}.",
+    );
+
+    const config = configWithAgents({
+      "default-reader-agent": {
+        prompt_file: tempMaterializationPromptPath,
+        models: ["model-a"],
+      },
+    });
+
+    const result = await materializeAgents({ config });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    expect(result.value.errors).toEqual([]);
+    expect(promptOf(result.value, "default-reader-agent")).toBe(
+      "Default reader prompt for default-reader-agent.",
+    );
   });
 });

@@ -42,16 +42,19 @@
       "package.json",
       "tsconfig.json",
       "!packages/**/dist",
-      "!packages/**/dist-types"
+      "!packages/**/dist-types",
+      "!packages/**/.astro"
     ]
   },
   "overrides": [
     {
-      "includes": ["scripts/**/*.ts"],
+      "includes": [
+        "packages/adapters/claude-code/src/__tests__/integration.test.ts"
+      ],
       "linter": {
         "rules": {
-          "suspicious": {
-            "noConsole": "off"
+          "style": {
+            "noNonNullAssertion": "off"
           }
         }
       }

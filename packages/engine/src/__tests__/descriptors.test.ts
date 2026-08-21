@@ -28,7 +28,7 @@ describe("generateCategoryShuttles", () => {
     it("(b) returns empty object when base shuttle agent is absent", () => {
       const result = shuttles(`
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           models ["gpt-5"]
         }
       `);
@@ -39,8 +39,8 @@ describe("generateCategoryShuttles", () => {
     it("(c) produces a shuttle-{name} key for each category", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
+        category backend { description "Backend implementation work" models ["gpt-4o"] }
       `);
 
       expect(Object.keys(result).sort()).toEqual([
@@ -52,7 +52,7 @@ describe("generateCategoryShuttles", () => {
     it("(d) generated descriptor name field matches the key", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       expect(result["shuttle-frontend"]?.config.name).toBe("shuttle-frontend");
@@ -63,7 +63,6 @@ describe("generateCategoryShuttles", () => {
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category frontend {
           description "Frontend UI, styling, accessibility"
-          patterns ["src/components/**", "**/*.tsx"]
           models ["gpt-5"]
         }
       `);
@@ -71,7 +70,6 @@ describe("generateCategoryShuttles", () => {
       expect(result["shuttle-frontend"]?.categoryMeta).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
         isCategory: true,
       });
     });
@@ -81,7 +79,6 @@ describe("generateCategoryShuttles", () => {
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
           models ["gpt-5"]
         }
       `);
@@ -92,10 +89,7 @@ describe("generateCategoryShuttles", () => {
         "shuttle-frontend",
       );
       expect(config.categories.frontend?.description).toBe("Frontend UI");
-      expect(config.categories.frontend?.patterns).toEqual([
-        "src/components/**",
-        "src/pages/**/*.tsx",
-      ]);
+      expect("patterns" in (config.categories.frontend ?? {})).toBe(false);
     });
   });
 
@@ -103,7 +97,7 @@ describe("generateCategoryShuttles", () => {
     it("(a) generated descriptor inherits base shuttle prompt", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle prompt." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] }
+        category frontend { description "Frontend implementation work" }
       `);
 
       expect(result["shuttle-frontend"]?.config.prompt).toBe(
@@ -122,7 +116,7 @@ describe("generateCategoryShuttles", () => {
             execute deny
           }
         }
-        category frontend { patterns ["src/components/**"] }
+        category frontend { description "Frontend implementation work" }
       `);
 
       expect(result["shuttle-frontend"]?.config.tool_policy).toEqual({
@@ -139,7 +133,7 @@ describe("generateCategoryShuttles", () => {
           models ["claude-sonnet-4-5"]
           mode all
         }
-        category frontend { patterns ["src/components/**"] }
+        category frontend { description "Frontend implementation work" }
       `);
 
       expect(result["shuttle-frontend"]?.config.mode).toBe("subagent");
@@ -150,10 +144,30 @@ describe("generateCategoryShuttles", () => {
     it("(a) category models replace the inherited models field", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       expect(result["shuttle-frontend"]?.config.models).toEqual(["gpt-5"]);
+    });
+
+    it("(a2) category description replaces the inherited base shuttle description", () => {
+      const result = shuttles(`
+        agent shuttle {
+          description "Shuttle (Domain Specialist)"
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+        }
+        category frontend {
+          description "Frontend UI, styling, accessibility"
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.description).toBe(
+        "Frontend UI, styling, accessibility",
+      );
+      expect(result["shuttle-frontend"]?.categoryMeta.description).toBe(
+        "Frontend UI, styling, accessibility",
+      );
     });
 
     it("(b) category temperature overrides base temperature", () => {
@@ -163,7 +177,7 @@ describe("generateCategoryShuttles", () => {
           models ["claude-sonnet-4-5"]
           temperature 0.2
         }
-        category frontend { patterns ["src/components/**"] temperature 0.7 }
+        category frontend { description "Frontend implementation work" temperature 0.7 }
       `);
 
       expect(result["shuttle-frontend"]?.config.temperature).toBe(0.7);
@@ -173,7 +187,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           prompt_append "Focus on accessibility."
         }
       `);
@@ -195,7 +209,7 @@ describe("generateCategoryShuttles", () => {
           }
         }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           tool_policy {
             write allow
             delegate deny
@@ -219,7 +233,7 @@ describe("generateCategoryShuttles", () => {
           prompt_append "Base append."
         }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           prompt_append "Focus on accessibility."
         }
       `);
@@ -233,7 +247,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           prompt_append_file "extra.md"
         }
       `);
@@ -247,7 +261,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
           prompt_append_file "category-extra.md"
         }
       `);
@@ -266,7 +280,7 @@ describe("generateCategoryShuttles", () => {
           prompt_append "Base append."
         }
         category frontend {
-          patterns ["src/components/**"]
+          description "Frontend implementation work"
         }
       `);
 
@@ -282,7 +296,7 @@ describe("generateCategoryShuttles", () => {
           models ["claude-sonnet-4-5"]
           temperature 0.2
         }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
       `);
 
       expect(result["shuttle-frontend"]?.config.temperature).toBe(0.2);
@@ -294,7 +308,7 @@ describe("generateCategoryShuttles", () => {
       const result = generateCategoryShuttles(
         cfg(`
           agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-          category frontend { patterns ["src/**"] models ["gpt-5"] }
+          category frontend { description "Frontend implementation work" models ["gpt-5"] }
           disable agents ["shuttle"]
         `),
       );
@@ -306,8 +320,8 @@ describe("generateCategoryShuttles", () => {
     it("(b) skips only the disabled category shuttle; others are still generated", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
+        category backend { description "Backend implementation work" models ["gpt-4o"] }
         disable agents ["shuttle-frontend"]
       `);
 
@@ -319,8 +333,8 @@ describe("generateCategoryShuttles", () => {
     it("(c) base shuttle disabled suppresses ALL category shuttles", () => {
       const result = shuttles(`
         agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Frontend implementation work" models ["gpt-5"] }
+        category backend { description "Backend implementation work" models ["gpt-4o"] }
         disable agents ["shuttle"]
       `);
 
@@ -334,7 +348,7 @@ describe("generateCategoryShuttles", () => {
         cfg(`
           agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
-          category frontend { patterns ["src/**"] models ["gpt-5"] }
+          category frontend { description "Frontend implementation work" models ["gpt-5"] }
         `),
       );
 
@@ -348,7 +362,7 @@ describe("generateCategoryShuttles", () => {
         cfg(`
           agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
-          category frontend { patterns ["src/**"] models ["gpt-5"] }
+          category frontend { description "Frontend implementation work" models ["gpt-5"] }
         `),
       );
 
@@ -363,7 +377,7 @@ describe("generateCategoryShuttles", () => {
         cfg(`
           agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
-          category frontend { patterns ["src/**"] models ["gpt-5"] }
+          category frontend { description "Frontend implementation work" models ["gpt-5"] }
         `),
       );
 
@@ -378,13 +392,219 @@ describe("generateCategoryShuttles", () => {
       const result = generateCategoryShuttles(
         cfg(`
           agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
-          category frontend { patterns ["src/**"] models ["gpt-5"] }
+          category frontend { description "Frontend implementation work" models ["gpt-5"] }
           disable agents ["shuttle-frontend"]
         `),
       );
 
       expect(result.isOk()).toBe(true);
       expect(result._unsafeUnwrap()).toEqual({});
+    });
+  });
+
+  describe("category trigger and fast inheritance", () => {
+    it("uses the category trigger list and does not inherit base Shuttle triggers", () => {
+      const result = shuttles(`
+        agent shuttle {
+          prompt "Base."
+          models ["claude-sonnet-4-5"]
+          triggers ["generic fallback", "repository tooling"]
+        }
+        category frontend {
+          description "Frontend implementation work"
+          triggers ["UI work", "accessibility"]
+        }
+        category backend {
+          description "Backend implementation work"
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.triggers).toEqual([
+        "UI work",
+        "accessibility",
+      ]);
+      expect(result["shuttle-backend"]?.config.triggers).toEqual([]);
+    });
+
+    it("copies category triggers without sharing the source array", () => {
+      const config = cfg(`
+        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+        category frontend {
+          description "Frontend implementation work"
+          triggers ["UI work", "styling"]
+        }
+      `);
+      const source = config.categories.frontend?.triggers;
+      expect(source).toEqual(["UI work", "styling"]);
+
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+      const generated = result.value["shuttle-frontend"]?.config.triggers;
+      expect(generated).toEqual(["UI work", "styling"]);
+      expect(generated).not.toBe(source);
+
+      source?.push("mutated");
+      expect(generated).toEqual(["UI work", "styling"]);
+    });
+
+    it("base absent and category absent leaves fast unset", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+        category frontend { description "Frontend implementation work" }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.fast).toBeUndefined();
+    });
+
+    it("base true and category absent inherits fast true", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] fast true }
+        category frontend { description "Frontend implementation work" }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.fast).toBe(true);
+    });
+
+    it("base absent and category true sets fast true", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+        category frontend { description "Frontend implementation work" fast true }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.fast).toBe(true);
+    });
+
+    it("base true and category true remains fast true", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] fast true }
+        category frontend { description "Frontend implementation work" fast true }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.fast).toBe(true);
+    });
+  });
+
+  describe("generated array isolation", () => {
+    it("mutating one generated shuttle models/skills/triggers does not mutate base, siblings, or category sources", () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Base."
+          models ["claude-sonnet-4-5", "gpt-4o"]
+          skills ["review", "summarize"]
+          review_models ["openai/gpt-5"]
+          triggers ["generic fallback"]
+          tool_policy { read allow write ask }
+          delegation { max_children 4 }
+          routing { delegation_exclude ["warp"] }
+        }
+        category frontend {
+          description "Frontend implementation work"
+          models ["gpt-5"]
+          triggers ["UI work", "styling"]
+        }
+        category backend {
+          description "Backend implementation work"
+        }
+      `);
+
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+
+      const frontend = result.value["shuttle-frontend"]?.config;
+      const backend = result.value["shuttle-backend"]?.config;
+      const base = config.agents.shuttle;
+      if (
+        frontend === undefined ||
+        backend === undefined ||
+        base === undefined
+      ) {
+        throw new Error("expected generated shuttles and base shuttle");
+      }
+
+      expect(frontend.models).toEqual(["gpt-5"]);
+      expect(backend.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(frontend.skills).toEqual(["review", "summarize"]);
+      expect(backend.skills).toEqual(["review", "summarize"]);
+      expect(frontend.triggers).toEqual(["UI work", "styling"]);
+      expect(backend.triggers).toEqual([]);
+
+      expect(frontend.models).not.toBe(config.categories.frontend?.models);
+      expect(backend.models).not.toBe(base.models);
+      expect(frontend.skills).not.toBe(base.skills);
+      expect(backend.skills).not.toBe(base.skills);
+      expect(frontend.skills).not.toBe(backend.skills);
+      expect(frontend.triggers).not.toBe(config.categories.frontend?.triggers);
+      expect(frontend.review_models).not.toBe(base.review_models);
+      expect(backend.review_models).not.toBe(base.review_models);
+      expect(frontend.tool_policy).not.toBe(base.tool_policy);
+      expect(backend.tool_policy).not.toBe(base.tool_policy);
+      expect(frontend.delegation).not.toBe(base.delegation);
+      expect(frontend.routing).not.toBe(base.routing);
+      expect(frontend.routing?.delegation_exclude).not.toBe(
+        base.routing?.delegation_exclude,
+      );
+
+      frontend.models?.push("mutated-frontend-model");
+      frontend.skills?.push("mutated-frontend-skill");
+      frontend.triggers?.push("mutated-frontend-trigger");
+      frontend.review_models?.push("mutated-frontend-review");
+      if (frontend.tool_policy !== undefined) {
+        frontend.tool_policy.write = "allow";
+      }
+      if (frontend.delegation !== undefined) {
+        frontend.delegation.max_children = 1;
+      }
+      frontend.routing?.delegation_exclude?.push("mutated-exclude");
+
+      expect(base.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(base.skills).toEqual(["review", "summarize"]);
+      expect(base.triggers).toEqual(["generic fallback"]);
+      expect(base.review_models).toEqual(["openai/gpt-5"]);
+      expect(base.tool_policy).toEqual({ read: "allow", write: "ask" });
+      expect(base.delegation).toEqual({ max_children: 4 });
+      expect(base.routing?.delegation_exclude).toEqual(["warp"]);
+
+      expect(backend.models).toEqual(["claude-sonnet-4-5", "gpt-4o"]);
+      expect(backend.skills).toEqual(["review", "summarize"]);
+      expect(backend.triggers).toEqual([]);
+      expect(backend.review_models).toEqual(["openai/gpt-5"]);
+      expect(backend.tool_policy).toEqual({ read: "allow", write: "ask" });
+      expect(backend.delegation).toEqual({ max_children: 4 });
+      expect(backend.routing?.delegation_exclude).toEqual(["warp"]);
+
+      expect(config.categories.frontend?.models).toEqual(["gpt-5"]);
+      expect(config.categories.frontend?.triggers).toEqual([
+        "UI work",
+        "styling",
+      ]);
+    });
+
+    it("mutating a sibling generated shuttle does not leak inherited models or skills", () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Base."
+          models ["claude-sonnet-4-5"]
+          skills ["review"]
+        }
+        category frontend { description "Frontend implementation work" }
+        category backend { description "Backend implementation work" }
+      `);
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+
+      const frontend = result.value["shuttle-frontend"]?.config;
+      const backend = result.value["shuttle-backend"]?.config;
+      if (frontend === undefined || backend === undefined) {
+        throw new Error("expected sibling generated shuttles");
+      }
+
+      backend.models?.push("mutated-backend-model");
+      backend.skills?.push("mutated-backend-skill");
+
+      expect(frontend.models).toEqual(["claude-sonnet-4-5"]);
+      expect(frontend.skills).toEqual(["review"]);
+      expect(config.agents.shuttle?.models).toEqual(["claude-sonnet-4-5"]);
+      expect(config.agents.shuttle?.skills).toEqual(["review"]);
     });
   });
 });

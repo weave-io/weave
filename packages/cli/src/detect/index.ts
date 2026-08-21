@@ -1,4 +1,4 @@
-import { okAsync, ResultAsync } from "neverthrow";
+import { okAsync, Result, ResultAsync } from "neverthrow";
 import {
   BunDetectionProbes,
   type DetectionProbes,
@@ -7,14 +7,16 @@ import {
 
 export type SupportedHarnessId = "opencode" | "claude-code" | "pi";
 
-export const HARNESS_IDS: SupportedHarnessId[] = [
+export const HARNESS_IDS: readonly SupportedHarnessId[] = [
   "opencode",
   "claude-code",
   "pi",
 ];
 
+const HARNESS_ID_SET = new Set<string>(HARNESS_IDS);
+
 export function isHarnessId(value: string): value is SupportedHarnessId {
-  return HARNESS_IDS.includes(value as SupportedHarnessId);
+  return HARNESS_ID_SET.has(value);
 }
 
 export type DetectedHarness = {
@@ -58,11 +60,19 @@ export function detectHarnesses(
   }).andThen((detected) => okAsync(detected));
 }
 
-function isDetectionError(cause: unknown): cause is DetectionError {
-  if (typeof cause !== "object" || cause === null) return false;
-  if (!("type" in cause)) return false;
-  const type = cause.type;
-  return type === "ProbeFailed" || type === "UnknownDetectionError";
+function isDetectionError<T>(cause: T): cause is T & DetectionError {
+  const candidate = new Object(cause);
+  if (cause === null || candidate !== cause) return false;
+  const descriptor = Result.fromThrowable(
+    () => Object.getOwnPropertyDescriptor(candidate, "type"),
+    () => void 0,
+  )();
+  if (descriptor.isErr() || descriptor.value === undefined) return false;
+  if (!("value" in descriptor.value)) return false;
+  return (
+    descriptor.value.value === "ProbeFailed" ||
+    descriptor.value.value === "UnknownDetectionError"
+  );
 }
 
 function probeFailed(

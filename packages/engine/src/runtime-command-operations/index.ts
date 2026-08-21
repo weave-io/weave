@@ -25,8 +25,8 @@
  * | Abort execution      | `abort-execution`     | Cancel or abort an active execution      |
  * | Advance step         | `advance-step`        | Advance or complete a blocked step       |
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  */
 
 export { abortExecution, advanceStep } from "./control.js";

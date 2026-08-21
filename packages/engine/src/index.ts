@@ -1,4 +1,27 @@
+export type {
+  ModelIntentEntry,
+  ModelIntentParseError,
+  ThinkingLevelDecl,
+} from "@weaveio/weave-core";
+export {
+  parseModelIntentEntry,
+  THINKING_LEVEL_VALUES,
+} from "@weaveio/weave-core";
 export type { HarnessAdapter } from "./adapter.js";
+export type {
+  AdapterCommandError,
+  AdapterCommandHandler,
+  AdapterCommandRegistry,
+  AdapterCommandRequest,
+  AdapterCommandResult,
+} from "./adapter-command.js";
+export {
+  AdapterCommandRequestSchema,
+  AdapterCommandResultSchema,
+  createAdapterCommandRegistry,
+  dispatchAdapterCommand,
+  parseAdapterCommandRequest,
+} from "./adapter-command.js";
 export type {
   AdapterCapabilityContract,
   AdapterHealthReport,
@@ -6,8 +29,12 @@ export type {
   CapabilityId,
   CapabilityProbeResult,
   CapabilityReadiness,
+  EffectiveCapabilityEntry,
+  EffectiveCapabilityEvaluation,
+  EffectiveProbeResolution,
   HumanReadinessRow,
   ProfileEvaluationResult,
+  ProviderFastActivationStatus,
   ReadinessOutcome,
   ReadinessVerdict,
   SafeAdapterInitInput,
@@ -22,9 +49,17 @@ export {
   CapabilityEntrySchema,
   CapabilityIdSchema,
   CapabilityReadinessSchema,
+  effectiveProviderFastReadiness,
   evaluateCoreReadinessProfile,
+  evaluateEffectiveCapabilities,
+  lowerReadinessByProbe,
   OPTIONAL_CAPABILITIES,
+  PROVIDER_FAST_ACTIVATION_ID,
+  PROVIDER_FAST_ACTIVATION_STATUSES,
+  ProviderFastActivationStatusSchema,
+  providerFastActivationState,
   REQUIRED_CAPABILITIES,
+  readinessForProviderFastStatus,
   toJson,
 } from "./capability-contract.js";
 export type {
@@ -35,14 +70,28 @@ export type {
   CategoryMetadata,
   ComposeError,
   DelegationTarget,
+  PromptFileReader,
+  PromptFileReadFailure,
   PromptTemplateReason,
   WorkflowStepComposedPrompt,
 } from "./compose.js";
 export {
   composeAgentDescriptor,
   composeWorkflowStepPrompt,
+  defaultPromptFileReader,
   detectAppendCollisions,
 } from "./compose.js";
+export type {
+  DelegationAuthorizationDecision,
+  DelegationAuthorizationError,
+  DelegationAuthorizationInput,
+  DelegationLimitsError,
+  EffectiveDelegationLimits,
+} from "./delegation-limits.js";
+export {
+  authorizeDelegation,
+  resolveEffectiveDelegationLimits,
+} from "./delegation-limits.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env, EnvValidationError } from "./env.js";
@@ -51,9 +100,6 @@ export type {
   ApproveArtifactInput,
   ApproveArtifactOutput,
   ApproveArtifactResult,
-  BeforeToolInput,
-  BeforeToolOutput,
-  BeforeToolResult,
   CompleteExecutionEffect,
   CompleteStepInput,
   CompleteStepOutput,
@@ -85,13 +131,19 @@ export type {
   ReconcileExecutionOutput,
   ReconcileExecutionResult,
   ReconciliationAuthorizationSource,
+  RegisteredBeforeToolInput,
+  RegisteredBeforeToolResult,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
+  ResumeRecoveryTakeover,
   SafeMetadata,
   StartExecutionInput,
   StartExecutionOutput,
   StartExecutionResult,
+  StaticToolPolicyPreviewInput,
+  StaticToolPolicyPreviewOutput,
+  StaticToolPolicyPreviewResult,
   StepCompletionSignal,
   WorkflowExecutionContext,
 } from "./execution-lifecycle.js";
@@ -110,6 +162,7 @@ export {
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
+  previewToolPolicy,
   RECONCILIATION_AUTHORIZATION_SOURCES,
   RECONCILIATION_REASONS,
   reconcileExecution,
@@ -137,8 +190,87 @@ export {
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
 export type {
+  PermissionCoverageContext,
+  PermissionCoverageDiagnosticsPolicy,
+  PermissionCoverageError,
+  PermissionCoverageIncompleteReason,
+  PermissionCoverageProof,
+} from "./permissions/coverage.js";
+export { verifyPermissionCoverage } from "./permissions/coverage.js";
+export {
+  PermissionRegistryBuilder,
+  PermissionRegistryGeneration,
+} from "./permissions/registry.js";
+export type { PermissionServiceActivationInput } from "./permissions/service.js";
+export {
+  createPermissionService,
+  PermissionService,
+} from "./permissions/service.js";
+export type { PermissionRegistryReplacement } from "./permissions/session.js";
+export { PermissionSession } from "./permissions/session.js";
+export type {
+  ApprovalResponse,
+  DeniedGrantablePermissionRequestView,
+  DeniedPermissionRequestView,
+  DeniedUnresolvedPermissionRequestView,
+  GrantablePermissionRequest,
+  GrantablePermissionRequestView,
+  GrantScope,
+  OpaqueId,
+  PendingPermissionDecision,
+  PendingPermissionEvaluation,
+  PendingPermissionReason,
+  PendingPermissionRequestView,
+  PendingPermissionSource,
+  PermissionApprovalChoice,
+  PermissionApprovalResponse,
+  PermissionAuditEvent,
+  PermissionCallInput,
+  PermissionCapability,
+  PermissionChallengeConsumeInput,
+  PermissionDecision,
+  PermissionDisplay,
+  PermissionError,
+  PermissionExecutionSnapshot,
+  PermissionGrantSummary,
+  PermissionOutcome,
+  PermissionPermitConsumeInput,
+  PermissionPolicy,
+  PermissionRegistration,
+  PermissionRegistrationContext,
+  PermissionRegistrationMetadata,
+  PermissionRegistryGenerationMetadata,
+  PermissionRegistryInventory,
+  PermissionRequest,
+  PermissionResolver,
+  PermissionTarget,
+  UnresolvedPermissionRequest,
+  UnresolvedPermissionRequestView,
+} from "./permissions/types.js";
+export type {
+  ActivePlanTask,
+  PlanActiveTaskError,
+} from "./plan-active-task.js";
+export { selectActivePlanTask } from "./plan-active-task.js";
+export type {
+  PlanFormat,
   PlanStateError,
   PlanStateProvider,
+  PlanTaskNode,
+  PlanTaskSnapshot,
+  PlanTaskState,
+  PlanTaskTransition,
+} from "./plan-state-provider.js";
+export {
+  applyAuthorizedPlanTransition,
+  authorizePlanCoordinator,
+  DEFAULT_PLAN_COORDINATOR,
+  derivePlanParentState,
+  findPlanLeaf,
+  isAllowedPlanLeafTransition,
+  isPlanSnapshotComplete,
+  PLAN_TASK_STATES,
+  validatePlanTransition,
 } from "./plan-state-provider.js";
 export type {
   CollatedReview,
@@ -170,20 +302,24 @@ export type {
   RuntimeStoreConflictError,
   RuntimeStoreError,
   RuntimeStoreInitializationError,
+  RuntimeStoreInvariantViolationError,
   RuntimeStoreJournalWriteError,
   RuntimeStoreMigrationVersionError,
   RuntimeStoreNotFoundError,
   RuntimeStoreQueryError,
+  RuntimeStoreRetentionError,
   RuntimeStoreSerializationError,
   RuntimeStoreValidationError,
 } from "./runtime/errors.js";
 export {
   conflictError,
   initializationError,
+  invariantViolationError,
   journalWriteError,
   migrationVersionError,
   notFoundError,
   queryError,
+  retentionError,
   serializationError,
   validationError,
 } from "./runtime/errors.js";
@@ -194,6 +330,24 @@ export {
 export type { WriteJournalEntryInput } from "./runtime/journal-writer.js";
 export { RuntimeJournalWriter } from "./runtime/journal-writer.js";
 export type {
+  FileIdentity,
+  RuntimeLogDirectoryHandle,
+  RuntimeLogFileHandle,
+  RuntimeLogFileSystem,
+  RuntimeLogSinkError,
+  RuntimeLogSinkOptions,
+} from "./runtime/log-sink.js";
+export {
+  asPinoDestination,
+  BunRuntimeLogFileSystem,
+  createRotatingRuntimeLogSink,
+  identitiesMatch,
+  MemoryRuntimeLogFileSystem,
+  RotatingRuntimeLogSink,
+  validateLogSettings,
+  wouldRotate,
+} from "./runtime/log-sink.js";
+export type {
   InMemoryRuntimeStoreFailureConfig,
   InMemoryRuntimeStoreOptions,
 } from "./runtime/memory-store.js";
@@ -201,6 +355,16 @@ export {
   createInMemoryRuntimeStore,
   InMemoryRuntimeStore,
 } from "./runtime/memory-store.js";
+export type {
+  RetentionRunResult,
+  RetentionScheduler,
+  RuntimeRetentionServiceOptions,
+} from "./runtime/retention.js";
+export {
+  DEFAULT_RETENTION_INTERVAL_MS,
+  DEFAULT_RETENTION_WRITE_THRESHOLD,
+  RuntimeRetentionService,
+} from "./runtime/retention.js";
 export {
   isDeniedKey,
   sanitizeJournalData,
@@ -218,6 +382,7 @@ export {
 } from "./runtime/sqlite/store.js";
 export type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -227,11 +392,25 @@ export type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
+} from "./runtime/store.js";
+export {
+  ADAPTER_PREFERENCE_KEY_MAX_CHARS,
+  ADAPTER_PREFERENCE_LIST_LIMIT,
+  ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS,
+  ADAPTER_PREFERENCE_VALUE_MAX_BYTES,
+  clampAdapterPreferenceListLimit,
+  validateAdapterPreferenceIdentity,
+  validateAdapterPreferenceKey,
+  validateAdapterPreferenceNamespace,
+  validateAdapterPreferenceValue,
 } from "./runtime/store.js";
 // Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
 // exported from ./runtime/types.js above.
 export type {
+  AdapterPreferenceRecord,
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactInputDecl,
@@ -250,11 +429,20 @@ export type {
   JsonPrimitive,
   JsonValue,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationInput,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
+  UsageTokenCounters,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -267,10 +455,22 @@ export {
   createOwnerId,
   createRuntimeJournalEntryId,
   createSessionSnapshotId,
+  createUsageObservationId,
   createWorkflowInstanceId,
   JOURNAL_SEVERITIES,
   WORKFLOW_INSTANCE_STATUSES,
 } from "./runtime/types.js";
+export type { NormalizedUsageObservation } from "./runtime/usage.js";
+export {
+  applyObservationToRollup,
+  denormalizeUsageObservation,
+  emptyUsageRollup,
+  normalizedUsageEqual,
+  normalizeUsageObservation,
+  reconcileUsageReplay,
+  TOKEN_FIELDS,
+  usageRollupKey,
+} from "./runtime/usage.js";
 export type {
   AbortExecutionInput,
   AbortExecutionResult,
@@ -323,6 +523,8 @@ export type {
   SkillResolutionConfigInput,
   SkillResolutionError,
   SkillResolutionInput,
+  SkillResolutionResult,
+  SkillResolutionWarning,
 } from "./skill-resolution.js";
 export {
   resolveSkillsForAgent,

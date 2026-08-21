@@ -18,6 +18,7 @@
     "@weaveio/weave-core",
     "@weaveio/weave-config",
     "@weaveio/weave-engine",
-    "@weaveio/weave-adapter-claude-code"
+    "@weaveio/weave-adapter-claude-code",
+    "@weaveio/weave-adapter-pi"
   ]
 }

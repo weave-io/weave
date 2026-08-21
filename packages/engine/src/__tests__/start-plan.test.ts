@@ -66,6 +66,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -82,6 +92,20 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Mock `PlanStateProvider` that always returns a `ProviderUnavailable` error.
  */
 class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,
@@ -104,6 +128,17 @@ class FailingPlanStateProvider implements PlanStateProvider {
  * (e.g. the name contains `/`, `..`, `\0`, or other unsafe characters).
  */
 class InvalidNamePlanStateProvider implements PlanStateProvider {
+  readSnapshot(planName: string) {
+    return errAsync({ type: "InvalidPlanName" as const, planName });
+  }
+
+  applyTransition(input: { planName: string }) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName: input.planName,
+    });
+  }
+
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "InvalidPlanName" as const,
@@ -152,7 +187,7 @@ const SIMPLE_WORKFLOWS: StartPlanInput["workflows"] = {
 
 const noopProjectEffect = (
   _effect: DispatchAgentEffect,
-): ResultAsync<void, WorkflowRunnerError> => okAsync(undefined);
+): ResultAsync<void, WorkflowRunnerError> => okAsync();
 
 // ---------------------------------------------------------------------------
 // Shared base input factory
@@ -561,9 +596,9 @@ describe("startPlan — successful execution", () => {
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
+      expect(result.value.workflowInstanceId).toBeDefined();
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
-      expect(typeof result.value.leaseId).toBe("string");
+      expect(result.value.leaseId).toBeDefined();
       expect(result.value.leaseId.length).toBeGreaterThan(0);
     }
   });

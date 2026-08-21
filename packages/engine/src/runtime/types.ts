@@ -11,7 +11,7 @@
  * These types are engine-owned and live in @weaveio/weave-engine, not @weaveio/weave-core.
  * No SQLite or Kysely types are referenced here — this file is pure domain.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 // ---------------------------------------------------------------------------
@@ -19,21 +19,37 @@
 // ---------------------------------------------------------------------------
 
 /**
- * A JSON primitive value: string, number, boolean, or null.
+ * A JSON primitive accepted by engine-owned persisted contracts.
+ *
+ * `undefined`, functions, symbols, bigint values, and non-finite numbers are
+ * deliberately excluded. Boundary parsers reject those values instead of
+ * relying on JSON.stringify's lossy coercions.
  */
 export type JsonPrimitive = string | number | boolean | null;
 
 /**
- * A JSON object with string keys and `JsonValue` values.
+ * A recursively valid JSON object owned by the Runtime Store boundary.
+ *
+ * This is a domain contract, not a type for unvalidated caller input. Runtime
+ * parsers must produce it from descriptor-safe snapshots before persistence.
  */
 export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
-/**
- * Any valid JSON value: primitive, object, or array.
- */
-export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+/** Any valid JSON value owned by an engine persistence contract. */
+export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
+
+/** Journal payload contract after descriptor-safe sanitization. */
+export type JournalData = JsonObject;
+
+/** Scalar values allowed in a SessionSnapshot metadata record. */
+export type SnapshotMetadataValue = string | number | boolean;
+
+/** Flat metadata contract for a persisted SessionSnapshot. */
+export interface SnapshotMetadata {
+  readonly [key: string]: SnapshotMetadataValue;
+}
 
 // ---------------------------------------------------------------------------
 // Branded ID types
@@ -72,6 +88,14 @@ export type RuntimeJournalEntryId = string & {
 };
 
 /**
+ * Branded string type for UsageObservation identifiers.
+ * Use `createUsageObservationId()` to create values.
+ */
+export type UsageObservationId = string & {
+  readonly __brand: "UsageObservationId";
+};
+
+/**
  * Branded string type for execution owner identifiers (Weave-generated).
  * Use `createOwnerId()` to create values.
  */
@@ -91,16 +115,22 @@ export type ArtifactId = string & { readonly __brand: "ArtifactId" };
 
 /** Cast a raw string to WorkflowInstanceId. */
 export function createWorkflowInstanceId(raw: string): WorkflowInstanceId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as WorkflowInstanceId;
 }
 
 /** Cast a raw string to ExecutionLeaseId. */
 export function createExecutionLeaseId(raw: string): ExecutionLeaseId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as ExecutionLeaseId;
 }
 
 /** Cast a raw string to SessionSnapshotId. */
 export function createSessionSnapshotId(raw: string): SessionSnapshotId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as SessionSnapshotId;
 }
 
@@ -108,16 +138,29 @@ export function createSessionSnapshotId(raw: string): SessionSnapshotId {
 export function createRuntimeJournalEntryId(
   raw: string,
 ): RuntimeJournalEntryId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as RuntimeJournalEntryId;
+}
+
+/** Cast a raw string to UsageObservationId. */
+export function createUsageObservationId(raw: string): UsageObservationId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
+  return raw as UsageObservationId;
 }
 
 /** Cast a raw string to OwnerId. */
 export function createOwnerId(raw: string): OwnerId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as OwnerId;
 }
 
 /** Cast a raw string to ArtifactId. */
 export function createArtifactId(raw: string): ArtifactId {
+  // SAFETY: this owner factory is the sole construction seam for the brand;
+  // callers receive the exact string they supplied without runtime rewriting.
   return raw as ArtifactId;
 }
 
@@ -325,6 +368,29 @@ export interface ArtifactRefInput {
  * - Credentials, tokens, cookies, authorization headers
  * - Private filesystem paths outside the project root
  */
+/**
+ * Who decided an artifact approval/rejection.
+ *
+ * - `user` — interactive operator approval (`/weave:artifact`), with provenance
+ * - `agent` — structured gate/reviewer agent with an explicit gate kind
+ *
+ * Replaces the bare `approverAgent` string so self-approval, gate authority,
+ * and user provenance are enforceable without harness-specific types.
+ *
+ * @see docs/adapters/pi.md
+ * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
+ */
+export type ArtifactApprovalActor =
+  | {
+      readonly kind: "user";
+      readonly provenance: Readonly<Record<string, string | number | boolean>>;
+    }
+  | {
+      readonly kind: "agent";
+      readonly agentName: string;
+      readonly gate: "review" | "security";
+    };
+
 export interface ArtifactRef {
   /**
    * Stable logical identity for this artifact across revisions.
@@ -355,6 +421,17 @@ export interface ArtifactRef {
    * an artifact it produced. When absent, self-approval checks are skipped.
    */
   readonly producerAgent?: string;
+  /**
+   * Actor that last decided approval for this revision.
+   * Set by `approveArtifact` together with `approvalDecidedAt`.
+   * Cleared when a new revision resets approval to `pending`.
+   */
+  readonly approvalActor?: ArtifactApprovalActor;
+  /**
+   * ISO-8601 timestamp of the last approval decision for this revision.
+   * Cleared when a new revision resets approval to `pending`.
+   */
+  readonly approvalDecidedAt?: string;
   /** Optional MIME type hint. */
   readonly mimeType?: string;
   /** Optional human-readable description. */
@@ -500,15 +577,22 @@ export interface ExecutionLease {
  * - PII-like harness-private fields
  * - User secrets or session-private state
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 export interface SessionSnapshot {
   /** Unique identifier for this snapshot. */
   readonly id: SessionSnapshotId;
   /** The WorkflowInstance this snapshot is associated with. */
   readonly workflowInstanceId: WorkflowInstanceId;
-  /** The ExecutionLease active when this snapshot was taken. */
-  readonly leaseId: ExecutionLeaseId;
+  /**
+   * The ExecutionLease active when this snapshot was taken.
+   *
+   * Undefined for historical snapshots whose lease has since been
+   * released: `ExecutionLeaseRepository.release()` severs this link
+   * (rather than deleting the snapshot) so the observation survives
+   * terminal workflow completion.
+   */
+  readonly leaseId?: ExecutionLeaseId;
   /** Harness adapter name (e.g. "opencode", "claude-code"). */
   readonly harnessName: string;
   /** Harness adapter version string, if available. */
@@ -527,7 +611,7 @@ export interface SessionSnapshot {
    * Structured, sanitized metadata about the session.
    * Must not contain raw prompts, completions, credentials, or tokens.
    */
-  readonly metadata: Record<string, string | number | boolean>;
+  readonly metadata: SnapshotMetadata;
 }
 
 // ---------------------------------------------------------------------------
@@ -623,4 +707,111 @@ export interface JournalQueryFilter {
   readonly before?: string;
   /** Maximum number of entries to return. */
   readonly limit?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Usage observations and rollups (Runtime Store contract retention/usage extension)
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional non-negative token counters on a usage observation.
+ * Missing counters stay absent — they are never coerced to zero.
+ */
+export interface UsageTokenCounters {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly totalTokens?: number;
+}
+
+/**
+ * One detailed usage observation for a settled assistant message.
+ *
+ * Identity is adapter-supplied and stable across retries. Same ID with the
+ * same normalized values is a no-op; same ID with different values is an
+ * invariant breach. Detail pruning never subtracts durable rollups.
+ */
+export interface UsageObservation extends UsageTokenCounters {
+  readonly id: UsageObservationId;
+  /** ISO 8601 timestamp. */
+  readonly timestamp: string;
+  readonly source: JournalEntrySource;
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly stepId?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  /** Optional non-negative finite cost. Absent when unknown. */
+  readonly cost?: number;
+}
+
+/**
+ * Input for recording a usage observation. Callers supply the stable ID.
+ */
+export type UsageObservationInput = UsageObservation;
+
+/**
+ * Durable aggregated usage rollup grouped by available dimensions.
+ * Each known numeric field is summed independently across observations that
+ * contributed that field. `observationCount` counts inserted observations only.
+ */
+export interface UsageRollup extends UsageTokenCounters {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly stepId?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  readonly source: JournalEntrySource;
+  readonly cost?: number;
+  readonly observationCount: number;
+}
+
+/** Result of recording a usage observation. */
+export type UsageObservationRecordResult =
+  | { readonly kind: "inserted"; readonly observation: UsageObservation }
+  | { readonly kind: "noop"; readonly observation: UsageObservation };
+
+/** Stats returned by age-then-count pruning operations. */
+export interface RetentionPruneStats {
+  readonly removedByAge: number;
+  readonly removedByCount: number;
+}
+
+/** Filter for listing usage observations. */
+export interface UsageObservationQueryFilter {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly sourceKind?: "engine" | "adapter";
+  readonly sourceName?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  readonly after?: string;
+  readonly before?: string;
+  readonly limit?: number;
+}
+
+/** Filter for listing usage rollups. */
+export interface UsageRollupQueryFilter {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly sourceKind?: "engine" | "adapter";
+  readonly sourceName?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Adapter preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * One harness-neutral adapter preference row.
+ *
+ * `valueJson` is an opaque valid JSON string. The engine stores and returns it
+ * without interpreting the payload. Preferences must never contain secrets.
+ */
+export interface AdapterPreferenceRecord {
+  readonly namespace: string;
+  readonly key: string;
+  /** Opaque valid JSON text. The engine does not interpret this value. */
+  readonly valueJson: string;
+  /** ISO 8601 timestamp of the last write. */
+  readonly updatedAt: string;
 }

@@ -88,8 +88,8 @@ jobs:
         name: Run the non-creating discovery phase
         env:
           PENDING_CHANGES_CHANGED: ${{ steps.pending.outputs.pending }}
-          SELF_RELEASE_MERGE: "${{ contains(github.event.head_commit.message, 'chore(release): version packages') }}"
-          CHANGESET_CLEANUP_MERGE: "${{ contains(github.event.head_commit.message, 'chore(release): remove consumed changesets') }}"
+          SELF_RELEASE_MERGE: ${{ contains(github.event.head_commit.message, 'chore(release): version packages') }}
+          CHANGESET_CLEANUP_MERGE: ${{ contains(github.event.head_commit.message, 'chore(release): remove consumed changesets') }}
         run: |
           set -euo pipefail
           # Task 9 discovery returns a neutral green no-op for absent marker +

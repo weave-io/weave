@@ -25,6 +25,7 @@
  */
 
 import { loadConfig } from "@weaveio/weave-config";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { composeAgentDescriptor } from "@weaveio/weave-engine";
 import { errAsync, ok, ResultAsync } from "neverthrow";
 import type {
@@ -161,7 +162,7 @@ function inferSourceDescriptors(
  */
 export interface ComposeSnapshotInput {
   /** Resolved Weave configuration. */
-  config: import("@weaveio/weave-core").WeaveConfig;
+  config: WeaveConfig;
   /** The agent name to compose a snapshot for. */
   agentName: string;
 }

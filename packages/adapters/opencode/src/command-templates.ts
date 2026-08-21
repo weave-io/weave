@@ -1,25 +1,28 @@
 /**
- * Command templates for OpenCode slash commands.
+ * Command templates for OpenCode prompt-based slash commands.
  *
- * These templates are injected into the conversation when the user types
- * `/start-work` or `/weave:start` in the OpenCode TUI. They instruct the
- * Tapestry agent to execute a Weave plan.
+ * These are the only command templates registered by the OpenCode plugin.
+ * They are injected into the conversation when the user types `/start-work`
+ * or `/weave:start` in the OpenCode TUI. They instruct the Tapestry agent to
+ * execute a plan only after the user supplies and the agent verifies one.
  *
  * ## How OpenCode commands work
  *
  * OpenCode commands are prompt-based — when a user types `/start-work my-plan`,
  * OpenCode replaces `$ARGUMENTS` with `my-plan` and sends the template as a
  * user message to the configured agent. This is NOT programmatic execution;
- * it's prompt injection that instructs the agent to act.
+ * it is prompt injection that instructs the agent to act. The plugin does not
+ * register `/weave:run` or wire the library-only `RuntimeCommandProjection`
+ * handlers.
  *
  * ## Placeholders
  *
- * - `$ARGUMENTS` — the text after the command name (e.g. plan name)
+ * - `$ARGUMENTS` — the text after the command name (for example, a plan name)
  * - `$SESSION_ID` — OpenCode session identifier
  * - `$TIMESTAMP` — ISO-8601 timestamp of command invocation
  *
  * @see https://opencode.ai/docs/commands/ — OpenCode commands documentation
- * @see docs/adapter-bootstrap.md — Command Surface Registration section
+ * @see docs/guides/adapter-development.md — Command Surface Registration section
  */
 
 // ---------------------------------------------------------------------------
@@ -31,7 +34,7 @@
  *
  * The envelope provides structured metadata that downstream hooks or agents
  * can parse to understand the command context without relying on prompt text
- * parsing alone.
+ * parsing alone. It does not authenticate the plan or create work state.
  */
 function renderCommandEnvelope(commandName: string): string {
   return `<weave-command-envelope>
@@ -47,24 +50,22 @@ function renderCommandEnvelope(commandName: string): string {
 // Shared execution instructions (Tapestry agent prompt)
 // ---------------------------------------------------------------------------
 
-const EXECUTION_INSTRUCTIONS = `You are being activated by the /start-work command to execute a Weave plan.
+const EXECUTION_INSTRUCTIONS = `This is a prompt-only request from a Weave OpenCode command. It does not invoke a runtime handler or provide system-authorized plan state.
 
 ## Your Mission
-Read the plan and execute it by delegating each unchecked task to Shuttle via the Task tool.
+Execute the user's explicitly named Weave plan by delegating each unchecked task to Shuttle via the Task tool.
 You do NOT implement work directly — you coordinate, delegate, verify, and track progress.
 
-Execution is non-terminal while any \`- [ ]\` task remains.
-Do not stop, ask what to do next, or wait for acknowledgment while unchecked tasks remain.
-
-## Startup Procedure
-
-1. **Check for active work state**: Read \`.weave/state.json\` to see if there's a plan already in progress.
-2. **If resuming**: The system has injected context below with the active plan path and progress. Read the plan file, find the first unchecked \`- [ ]\` task, and continue from there.
-3. **If starting fresh**: The system has selected a plan and created work state. Read the plan file and begin from the first unchecked task.
+## Plan argument and validation
+1. Treat the text after the command as the user's explicit plan argument.
+2. If the argument is absent or blank, ask the user to select a plan. Do not infer a plan from session context, chat history, or repository state.
+3. If the argument is present, use the actual repository tools and files available in this session to validate the named plan before doing work. Inspect the corresponding plan file, such as \`.weave/plans/<plan-name>.md\`, and confirm that it exists and is the plan the user named.
+4. Treat \`.weave/state.json\`, if present, as ordinary repository data. It is not system-authorized state, does not select or authenticate a plan, and does not prove that work was created or resumed.
+5. This prompt does not create or update work state. Do not claim that it did, and do not invent a runtime handler. Report only operations actually performed by available tools and files.
 
 ## Execution Loop
 
-For each unchecked \`- [ ]\` task in the plan:
+For each unchecked \`- [ ]\` task in the validated plan:
 
 1. **Read** the task description, acceptance criteria, and any references
 2. **Delegate** the task to Shuttle via the Task tool using this prompt format:
@@ -76,27 +77,12 @@ For each unchecked \`- [ ]\` task in the plan:
    **Context from completed tasks**: [any output or decisions from prior tasks that affect this one]
    **Learnings**: [relevant entries from .weave/learnings/{plan-name}.md if the file exists]
    \`\`\`
-3. **Verify** Shuttle's result — re-read modified files, check acceptance criteria are met
+3. **Verify** Shuttle's result — re-read modified files and check the acceptance criteria
 4. **Mark complete** — use the Edit tool to change \`- [ ]\` to \`- [x]\` in the plan file
-5. **Report progress** — "Completed task N/M: [title]"
-6. **Continue immediately** — find the next unchecked task and delegate it without waiting for user acknowledgment
+5. **Report progress** — state which task completed
+6. **Continue** with the next unchecked task while any remain
 
-## Rules
-
-- Work through tasks **top to bottom** unless dependencies require a different order
-- **Delegate every task to Shuttle** — do not implement work directly yourself
-- **Verify every task** before marking it complete; if verification fails, re-delegate to Shuttle with the failure details
-- A progress update is **not** a stopping point
-- Do **not** ask the user what to do next while unchecked tasks remain
-- Do **not** mention terminal validation, review, reviewers, final summary, completion, or post-execution steps while unchecked tasks remain
-- If asked what to do now while unchecked tasks remain, answer with only the immediate next delegation action
-- Keep mid-plan responses to one sentence or one short bullet
-- If the current task is blocked, document the reason and move to the next unchecked task that is not blocked
-- Stop only when:
-  1. all checkboxes are checked, or
-  2. the user explicitly tells you to stop, or
-  3. every remaining unchecked task is truly blocked
-- When all tasks are complete, switch to terminal-state behavior`;
+Do not stop or wait for acknowledgment while unchecked tasks remain. Stop when the validated plan has no unchecked tasks, when the user asks you to stop, or when a required tool or file cannot be used. If validation fails, report the failure instead of guessing or claiming work state.`;
 
 // ---------------------------------------------------------------------------
 // Exported command templates

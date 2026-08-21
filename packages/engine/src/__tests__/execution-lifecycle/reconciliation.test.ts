@@ -8,12 +8,14 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  createExecutionLeaseId,
   createInMemoryRuntimeStore,
+  createWorkflowInstanceId,
   reconcileExecution,
   startExecution,
   type WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
-import { cfg, MockPlanStateProvider } from "./fixtures.js";
+import { cfg } from "./fixtures.js";
 
 const WORKFLOW_WITH_HANDLER = cfg(`
 workflow reconcile-flow {
@@ -49,6 +51,11 @@ workflow reconcile-flow {
   }
 }
 `);
+
+const reconcileFlow = WORKFLOW_WITH_HANDLER.workflows["reconcile-flow"];
+if (reconcileFlow === undefined) {
+  throw new Error("reconcile-flow fixture is missing");
+}
 
 async function createRunningInstance(workflowName = "reconcile-flow") {
   const store = createInMemoryRuntimeStore();
@@ -146,7 +153,7 @@ describe("reconcileExecution — handler resolution", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "reconcile-flow": WORKFLOW_WITH_HANDLER.workflows["reconcile-flow"]!,
+        "reconcile-flow": reconcileFlow,
       },
     };
 
@@ -180,7 +187,7 @@ describe("reconcileExecution — handler resolution", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "reconcile-flow": WORKFLOW_WITH_HANDLER.workflows["reconcile-flow"]!,
+        "reconcile-flow": reconcileFlow,
       },
     };
 
@@ -213,7 +220,7 @@ describe("reconcileExecution — handler resolution", () => {
       goal: "test goal",
       slug: "test-goal",
       workflows: {
-        "reconcile-flow": WORKFLOW_WITH_HANDLER.workflows["reconcile-flow"]!,
+        "reconcile-flow": reconcileFlow,
       },
     };
 
@@ -241,12 +248,8 @@ describe("reconcileExecution — validation", () => {
     const store = createInMemoryRuntimeStore();
     const result = await reconcileExecution(
       {
-        workflowInstanceId: "" as ReturnType<
-          typeof import("@weaveio/weave-engine").createWorkflowInstanceId
-        >,
-        leaseId: "lease-001" as ReturnType<
-          typeof import("@weaveio/weave-engine").createExecutionLeaseId
-        >,
+        workflowInstanceId: createWorkflowInstanceId(""),
+        leaseId: createExecutionLeaseId("lease-001"),
         reason: "user-revision-request",
         authorizationSource: "user",
       },

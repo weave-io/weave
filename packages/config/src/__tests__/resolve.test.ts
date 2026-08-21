@@ -141,7 +141,7 @@ describe("resolvePromptPaths", () => {
   it("(k) category with prompt_append_file resolves to <rootDir>/prompts/<file>", () => {
     const config = cfg(`
       category frontend {
-        patterns ["src/**/*.tsx"]
+        description "Frontend implementation work"
         prompt_append_file "cat-extra.md"
       }
     `);
@@ -155,7 +155,7 @@ describe("resolvePromptPaths", () => {
   it("(l) category without prompt_append_file is left unchanged", () => {
     const config = cfg(`
       category backend {
-        patterns ["src/api/**"]
+        description "Backend implementation work"
         prompt_append "Focus on API contracts."
       }
     `);
@@ -170,11 +170,11 @@ describe("resolvePromptPaths", () => {
   it("(m) mixed categories: only category with prompt_append_file is resolved", () => {
     const config = cfg(`
       category frontend {
-        patterns ["src/**/*.tsx"]
+        description "Frontend implementation work"
         prompt_append_file "cat-extra.md"
       }
       category backend {
-        patterns ["src/api/**"]
+        description "Backend implementation work"
         prompt_append "Focus on API contracts."
       }
     `);
@@ -189,7 +189,7 @@ describe("resolvePromptPaths", () => {
   it("(n) immutability: original category prompt_append_file not mutated", () => {
     const config = cfg(`
       category frontend {
-        patterns ["src/**/*.tsx"]
+        description "Frontend implementation work"
         prompt_append_file "cat-extra.md"
       }
     `);

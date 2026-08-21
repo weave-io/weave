@@ -2,36 +2,36 @@
 
 ## Most Imported Files (change these carefully)
 
+- `packages/adapters/pi/src/types.ts` — imported by **57** files
+- `scripts/release/constants.ts` — imported by **54** files
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/cli/src/theme/colors.ts` — imported by **20** files
-- `packages/cli/src/io/terminal.ts` — imported by **18** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
-- `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `packages/engine/src/runtime/types.ts` — imported by **16** files
-- `packages/cli/src/args.ts` — imported by **14** files
-- `packages/engine/src/runtime/store.ts` — imported by **13** files
-- `packages/cli/src/fs/file-system.ts` — imported by **12** files
-- `packages/engine/src/logger.ts` — imported by **12** files
-- `packages/engine/src/compose.ts` — imported by **11** files
-- `packages/engine/src/runtime/errors.ts` — imported by **11** files
-- `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/cli/src/errors.ts` — imported by **10** files
-- `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
-- `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
+- `packages/adapters/pi/src/ui-paint.ts` — imported by **36** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **32** files
+- `scripts/release/model.ts` — imported by **31** files
+- `packages/engine/src/runtime/types.ts` — imported by **28** files
+- `scripts/release/package-policy.ts` — imported by **28** files
+- `scripts/release/errors.ts` — imported by **26** files
+- `packages/adapters/pi/src/native-session-fs.ts` — imported by **25** files
+- `packages/adapters/pi/src/child-timer.ts` — imported by **25** files
+- `packages/adapters/pi/src/errors.ts` — imported by **22** files
+- `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/adapters/pi/src/child-session-events.ts` — imported by **20** files
+- `packages/adapters/pi/src/rpc-child.ts` — imported by **20** files
+- `packages/cli/src/io/terminal.ts` — imported by **20** files
+- `scripts/release/filesystem.ts` — imported by **19** files
+- `scripts/release/npm-registry-client.ts` — imported by **19** files
+- `packages/adapters/pi/src/child-envelope.ts` — imported by **18** files
+- `packages/adapters/pi/src/__tests__/fakes/test-only-session-storage-authority.ts` — imported by **18** files
 
 ## Import Map (who imports what)
 
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-runtime.test.ts` +52 more
+- `scripts/release/constants.ts` ← `scripts/build-public-packages-pi.ts`, `scripts/release/__tests__/changed-adapters.test.ts`, `scripts/release/__tests__/changelog-format.test.ts`, `scripts/release/__tests__/changeset-cleanup.test.ts`, `scripts/release/__tests__/changeset-consumption.test.ts` +49 more
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
-- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
-- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
-- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
-- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
+- `packages/adapters/pi/src/ui-paint.ts` ← `packages/adapters/pi/src/__tests__/child-card-render.test.ts`, `packages/adapters/pi/src/__tests__/child-card-stream.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-internal-entry-suppression.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-layout.test.ts`, `packages/adapters/pi/src/__tests__/child-overlay-live-proof-regressions.test.ts` +31 more
+- `packages/adapters/pi/src/strict-json.ts` ← `packages/adapters/pi/src/__tests__/child-compaction-settlement.test.ts`, `packages/adapters/pi/src/__tests__/child-diagnostic-wire-budget.test.ts`, `packages/adapters/pi/src/__tests__/child-envelope.test.ts`, `packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts`, `packages/adapters/pi/src/__tests__/child-mode.test.ts` +27 more
+- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/__tests__/release-plan.test.ts` +26 more
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
+- `scripts/release/package-policy.ts` ← `scripts/release/__tests__/fixture-seam-isolation.test.ts`, `scripts/release/__tests__/packager.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/pi-adapter-fake-host-consumer.test.ts`, `scripts/release/__tests__/pi-adapter-packed.test.ts` +23 more
+- `scripts/release/errors.ts` ← `scripts/release/__tests__/bind-artifacts.test.ts`, `scripts/release/__tests__/changeset-cleanup.test.ts`, `scripts/release/__tests__/changeset-consumption.test.ts`, `scripts/release/__tests__/consumption-ledger.test.ts`, `scripts/release/__tests__/github-client.test.ts` +21 more
+- `packages/adapters/pi/src/native-session-fs.ts` ← `packages/adapters/pi/src/__tests__/adapter-cli-commands.test.ts`, `packages/adapters/pi/src/__tests__/adapter-cli-production-delete.test.ts`, `packages/adapters/pi/src/__tests__/child-historical-overlay-restart.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-bounded-reads.test.ts`, `packages/adapters/pi/src/__tests__/child-native-session-create.integration.test.ts` +20 more

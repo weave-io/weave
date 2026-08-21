@@ -286,7 +286,7 @@ function isDeclaredImpact(
 }
 
 function isPrivatePackageName(name: string): name is PrivatePackageName {
-  return PRIVATE_PACKAGE_NAMES.includes(name as PrivatePackageName);
+  return PRIVATE_PACKAGE_NAMES.some((candidate) => candidate === name);
 }
 
 /** The public packages a changeset releases, in catalog order. */

@@ -136,7 +136,7 @@ bun run docs:dev
 ```
 
 See [`packages/docs/README.md`](./packages/docs/README.md) for the public docs
-site and [`docs/documentation-policy.md`](./docs/documentation-policy.md)
+site and [`docs/contributing/documentation.md`](./docs/contributing/documentation.md)
 for documentation conventions.
 
 ## License

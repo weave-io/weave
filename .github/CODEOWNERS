@@ -17,7 +17,6 @@
 /packages/adapters/*/tsconfig.build.json @weave-io/release-maintainers
 /scripts/release/ @weave-io/release-maintainers
 /scripts/build-public-packages.ts @weave-io/release-maintainers
-/scripts/build-release-control.ts @weave-io/release-maintainers
 /packages/cli/ @weave-io/release-maintainers
 /packages/core/ @weave-io/release-maintainers
 /packages/config/ @weave-io/release-maintainers

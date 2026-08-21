@@ -1,6 +1,5 @@
 import type {
   AgentConfig,
-  DelegationTrigger,
   ToolPolicy,
   WeaveConfig,
   WorkflowConfig,
@@ -21,8 +20,8 @@ import {
   type AgentPromptTemplateContext,
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
-  type CategoryInput,
   type ReviewRoutingContext,
+  toRendererTemplateContext,
 } from "./template-context.js";
 import {
   type RendererError,
@@ -38,8 +37,17 @@ const log = logger.child({ module: "compose" });
 
 type AgentMode = NonNullable<AgentConfig["mode"]>;
 
-export interface CategoryMetadata extends CategoryInput {
-  patterns: string[];
+/**
+ * Category metadata attached to a generated category shuttle.
+ *
+ * `description` is required here — the DSL requires a non-blank description on
+ * every category block, so generated shuttles always carry routing text.
+ * Template contexts still use the looser `CategoryInput` for externally
+ * supplied descriptors.
+ */
+export interface CategoryMetadata {
+  name: string;
+  description: string;
   isCategory: true;
 }
 
@@ -52,6 +60,8 @@ export interface AgentDescriptor {
   models: string[];
   mode: AgentMode;
   temperature?: number;
+  /** Neutral provider-acceleration intent. Present only as `true`. */
+  fast?: true;
   effectiveToolPolicy: EffectiveToolPolicy;
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
@@ -60,14 +70,14 @@ export interface AgentDescriptor {
 
 export interface AgentDescriptorCategory {
   name: string;
-  description?: string;
-  patterns: string[];
+  description: string;
 }
 
 export interface DelegationTarget {
   name: string;
   description?: string;
-  triggers: DelegationTrigger[];
+  /** Bounded copy of the target's declared string triggers. */
+  triggers: string[];
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -78,9 +88,7 @@ export type PromptTemplateReason =
   | { kind: "UnsupportedTag"; tag: string; message: string }
   | { kind: "UnknownPath"; path: string; message: string }
   | { kind: "UnsafePath"; path: string; message: string }
-  | { kind: "FunctionValue"; path: string; message: string }
-  | { kind: "SectionMismatch"; message: string }
-  | { kind: "UnresolvedTag"; tag: string; message: string };
+  | { kind: "FunctionValue"; path: string; message: string };
 
 export type ComposeError =
   | {
@@ -113,9 +121,46 @@ export type ComposeError =
       message: string;
     };
 
+/** Failure returned by a {@link PromptFileReader}. */
+export interface PromptFileReadFailure {
+  /**
+   * Reader-supplied reason for the failure. It is copied verbatim into
+   * `PromptFileReadError.fileErrorMessage`, so the error shape is identical
+   * whether the bytes came from the default reader or an injected one.
+   */
+  message: string;
+}
+
+/**
+ * Injectable source for prompt file contents.
+ *
+ * Composition reads `prompt_file` and `prompt_append_file` through this seam so
+ * a caller that has already read (and, for example, hashed) those bytes can
+ * compose from the very same bytes instead of re-reading the path. The reader
+ * substitutes I/O only: it never decides which prompt source wins.
+ */
+export interface PromptFileReader {
+  /** Read the full text of `path`. */
+  read(path: string): ResultAsync<string, PromptFileReadFailure>;
+}
+
+/**
+ * Reader used when a caller supplies none.
+ *
+ * Preserves the historical behavior of composition: read the path with
+ * `Bun.file(path).text()` and report the thrown reason verbatim.
+ */
+export const defaultPromptFileReader: PromptFileReader = {
+  read: (path) =>
+    ResultAsync.fromPromise(Bun.file(path).text(), (cause) => ({
+      message: cause instanceof Error ? cause.message : String(cause),
+    })),
+};
+
 function loadPromptSource(
   agentName: string,
   agentConfig: AgentConfig,
+  reader: PromptFileReader,
 ): ResultAsync<string, ComposeError> {
   if (agentConfig.prompt !== undefined) return okAsync(agentConfig.prompt);
 
@@ -129,13 +174,62 @@ function loadPromptSource(
 
   const promptFilePath = agentConfig.prompt_file;
 
-  return ResultAsync.fromPromise(Bun.file(promptFilePath).text(), (cause) => ({
+  return reader.read(promptFilePath).mapErr((failure) => ({
     type: "PromptFileReadError" as const,
     agentName,
     promptFilePath,
     message: `Failed to read prompt file for agent "${agentName}": ${promptFilePath}`,
-    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
+    fileErrorMessage: failure.message,
   }));
+}
+
+function copyStringList(values: readonly string[] | undefined): string[] {
+  return values === undefined ? [] : [...values];
+}
+
+function buildComposedDescriptor(input: {
+  agentName: string;
+  agentConfig: AgentConfig;
+  category: CategoryMetadata | undefined;
+  composedPrompt: string;
+  effectiveToolPolicy: EffectiveToolPolicy;
+  delegationTargets: DelegationTarget[];
+}): AgentDescriptor {
+  const {
+    agentName,
+    agentConfig,
+    category,
+    composedPrompt,
+    effectiveToolPolicy,
+    delegationTargets,
+  } = input;
+
+  const descriptor: AgentDescriptor = {
+    name: agentName,
+    displayName: agentConfig.display_name,
+    description: agentConfig.description,
+    category:
+      category === undefined
+        ? undefined
+        : {
+            name: category.name,
+            description: category.description,
+          },
+    composedPrompt,
+    models: copyStringList(agentConfig.models),
+    mode: agentConfig.mode ?? "subagent",
+    temperature: agentConfig.temperature,
+    effectiveToolPolicy,
+    rawToolPolicy: agentConfig.tool_policy,
+    delegationTargets,
+    skills: copyStringList(agentConfig.skills),
+  };
+
+  if (agentConfig.fast === true) {
+    descriptor.fast = true;
+  }
+
+  return descriptor;
 }
 
 function shouldExcludeSharedShuttleTarget(
@@ -190,7 +284,7 @@ function buildDelegationTargets(
     targets.push({
       name: targetName,
       description: targetConfig.description,
-      triggers: targetConfig.triggers ?? [],
+      triggers: copyStringList(targetConfig.triggers),
       isCategory: categoryShuttleNames.has(targetName),
     });
   }
@@ -245,12 +339,10 @@ function mapRendererErrorToReason(
     };
   }
 
-  // UnresolvedTag
-  return {
-    kind: "UnresolvedTag",
-    tag: rendererError.tag,
-    message: rendererError.message,
-  };
+  // FunctionValue is the last RendererError variant. Exhaustiveness is enforced
+  // by the assignment below: if a new variant is added, `never` fails to compile.
+  const exhaustive: never = rendererError;
+  return exhaustive;
 }
 
 /**
@@ -287,36 +379,35 @@ function mapRendererError(
 function loadAppendSource(
   agentName: string,
   agentConfig: AgentConfig,
+  reader: PromptFileReader,
 ): ResultAsync<
   { content: string; fromFile: boolean } | undefined,
   ComposeError
 > {
-  return loadAppendSourceFromInput(agentName, {
-    prompt_append: agentConfig.prompt_append,
-    prompt_append_file: agentConfig.prompt_append_file,
-  });
+  return loadAppendSourceFromInput(
+    agentName,
+    {
+      prompt_append: agentConfig.prompt_append,
+      prompt_append_file: agentConfig.prompt_append_file,
+    },
+    reader,
+  );
 }
 
 /**
  * Render a template source string with the given context.
  * Returns Result<string, ComposeError>.
- *
- * AgentPromptTemplateContext is cast to TemplateContext because it satisfies
- * the structural requirements but lacks the index signature. The cast is safe
- * because all values in AgentPromptTemplateContext are TemplateContextValue-compatible.
  */
 function renderPromptTemplate(
   source: string,
-  context: AgentPromptTemplateContext,
+  context: TemplateContext,
   agentName: string,
   sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file",
   promptFilePath?: string,
 ): Result<string, ComposeError> {
-  const renderResult = renderTemplate(
-    source,
-    context as unknown as TemplateContext,
-    { allowedPaths: ALLOWED_TEMPLATE_PATHS },
-  );
+  const renderResult = renderTemplate(source, context, {
+    allowedPaths: ALLOWED_TEMPLATE_PATHS,
+  });
 
   if (renderResult.isErr()) {
     return err(
@@ -501,7 +592,9 @@ function findScalarCollision(
   // Collect all (index, value) pairs where the field is defined
   const defined: Array<{ index: number; value: string }> = [];
   for (let i = 0; i < configs.length; i++) {
-    const value = extract(configs[i] as WeaveConfig);
+    const config = configs[i];
+    if (config === undefined) continue;
+    const value = extract(config);
     if (value !== undefined) {
       defined.push({ index: i, value });
     }
@@ -511,11 +604,9 @@ function findScalarCollision(
   if (defined.length < 2) return undefined;
 
   // The winner is the last (highest-priority) entry; the loser is the one before it
-  const winner = defined[defined.length - 1] as {
-    index: number;
-    value: string;
-  };
-  const loser = defined[defined.length - 2] as { index: number; value: string };
+  const winner = defined.at(-1);
+  const loser = defined.at(-2);
+  if (winner === undefined || loser === undefined) return undefined;
 
   return {
     losingValue: loser.value,
@@ -548,6 +639,7 @@ interface AppendSourceInput {
 function loadAppendSourceFromInput(
   contextLabel: string,
   input: AppendSourceInput,
+  reader: PromptFileReader,
 ): ResultAsync<
   { content: string; fromFile: boolean } | undefined,
   ComposeError
@@ -557,24 +649,30 @@ function loadAppendSourceFromInput(
   }
 
   if (input.prompt_append_file === undefined) {
-    return okAsync(undefined);
+    return okAsync<
+      { content: string; fromFile: boolean } | undefined,
+      ComposeError
+    >(void 0);
   }
 
   const appendFilePath = input.prompt_append_file;
 
-  return ResultAsync.fromPromise(Bun.file(appendFilePath).text(), (cause) => ({
-    type: "PromptFileReadError" as const,
-    agentName: contextLabel,
-    promptFilePath: appendFilePath,
-    message: `Failed to read prompt_append_file for "${contextLabel}": ${appendFilePath}`,
-    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
-  })).map((content) => ({ content, fromFile: true }));
+  return reader
+    .read(appendFilePath)
+    .mapErr((failure) => ({
+      type: "PromptFileReadError" as const,
+      agentName: contextLabel,
+      promptFilePath: appendFilePath,
+      message: `Failed to read prompt_append_file for "${contextLabel}": ${appendFilePath}`,
+      fileErrorMessage: failure.message,
+    }))
+    .map((content) => ({ content, fromFile: true }));
 }
 
 /**
  * Compose the final prompt for a single workflow step.
  *
- * ## Precedence rules (Spec 22 Unit 4)
+ * ## Precedence rules (execution lifecycle contract)
  *
  * 1. **Step-local precedence**: when the step declares its own
  *    `prompt_append` / `prompt_append_file`, that append is used exclusively.
@@ -583,7 +681,7 @@ function loadAppendSourceFromInput(
  * 2. **Workflow-scope fallback**: when the step has no append of its own,
  *    the workflow-level `prompt_append` / `prompt_append_file` is applied.
  *
- * 3. **No append**: when neither scope has an append, the step prompt is
+ * 3. **No append**: when neither scope has an append, the step is
  *    returned as-is (after template rendering).
  *
  * 4. **Same-scope last-append-wins**: within a single scope, the config-merge
@@ -600,6 +698,8 @@ function loadAppendSourceFromInput(
  * @param step             - The validated workflow step config
  * @param workflow         - The validated workflow config (provides workflow-scope append)
  * @param templateContext  - Bounded template context for Mustache rendering
+ * @param promptFileReader - Optional prompt-source seam; defaults to reading the
+ *                           declared `prompt_append_file` path with Bun
  * @returns `ResultAsync<WorkflowStepComposedPrompt, ComposeError>`
  */
 export function composeWorkflowStepPrompt(
@@ -607,13 +707,16 @@ export function composeWorkflowStepPrompt(
   step: WorkflowStep,
   workflow: WorkflowConfig,
   templateContext: AgentPromptTemplateContext,
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<WorkflowStepComposedPrompt, ComposeError> {
   const contextLabel = `workflow-step:${stepName}`;
+  const reader = promptFileReader ?? defaultPromptFileReader;
+  const rendererContext = toRendererTemplateContext(templateContext);
 
   // Render the step's primary prompt as a template
   const renderedPrimaryResult = renderPromptTemplate(
     step.prompt,
-    templateContext,
+    rendererContext,
     contextLabel,
     "prompt",
   );
@@ -650,7 +753,11 @@ export function composeWorkflowStepPrompt(
     effectiveScope = "none";
   }
 
-  return loadAppendSourceFromInput(contextLabel, effectiveAppendInput).andThen(
+  return loadAppendSourceFromInput(
+    contextLabel,
+    effectiveAppendInput,
+    reader,
+  ).andThen(
     (appendSource): Result<WorkflowStepComposedPrompt, ComposeError> => {
       if (appendSource === undefined) {
         return ok({ composedPrompt: renderedPrimary, appendScope: "none" });
@@ -665,7 +772,7 @@ export function composeWorkflowStepPrompt(
 
       const renderedAppendResult = renderPromptTemplate(
         appendSource.content,
-        templateContext,
+        rendererContext,
         contextLabel,
         appendSourceKind,
         appendFilePath,
@@ -689,30 +796,30 @@ export function composeWorkflowStepPrompt(
  * Returns `undefined` when no matching groups exist.
  */
 export function buildReviewRoutingContext(
-  reviewVariants: MaterializedAgent[],
+  reviewVariants: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
   delegationTargetNames: string[],
 ): ReviewRoutingContext | undefined {
   const delegationSet = new Set(delegationTargetNames);
 
-  // Filter to review-variant agents only
-  const variants = reviewVariants.filter((a) => a.source === "review-variant");
-
-  // Group by sourceAgentName
   const groups = new Map<string, Array<{ name: string; model: string }>>();
-  for (const variant of variants) {
-    const sourceAgentName = variant.reviewMeta?.sourceAgentName;
-    if (sourceAgentName === undefined) continue;
-    if (!delegationSet.has(sourceAgentName)) continue;
+  for (const variant of reviewVariants) {
+    if (variant.source !== "review-variant") continue;
+    const reviewMeta = variant.reviewMeta;
+    if (reviewMeta === undefined) continue;
+    if (!delegationSet.has(reviewMeta.sourceAgentName)) continue;
 
-    const existing = groups.get(sourceAgentName);
+    const existing = groups.get(reviewMeta.sourceAgentName);
     const entry = {
       name: variant.agentName,
-      model: variant.reviewMeta?.reviewModel ?? "",
+      model: reviewMeta.reviewModel,
     };
     if (existing !== undefined) {
       existing.push(entry);
     } else {
-      groups.set(sourceAgentName, [entry]);
+      groups.set(reviewMeta.sourceAgentName, [entry]);
     }
   }
 
@@ -726,14 +833,27 @@ export function buildReviewRoutingContext(
   };
 }
 
+/**
+ * Compose one adapter-facing agent descriptor.
+ *
+ * `promptFileReader` is an optional trailing seam: when omitted, `prompt_file`
+ * and `prompt_append_file` are read with {@link defaultPromptFileReader}, which
+ * preserves the historical `Bun.file(path).text()` behavior. Existing positional
+ * callers are unaffected.
+ */
 export function composeAgentDescriptor(
   agentName: string,
   agentConfig: AgentConfig,
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
-  materializedReviewVariants?: MaterializedAgent[],
+  materializedReviewVariants?: Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >[],
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<AgentDescriptor, ComposeError> {
+  const reader = promptFileReader ?? defaultPromptFileReader;
   const delegationTargets = buildDelegationTargets(
     agentName,
     agentConfig,
@@ -772,23 +892,24 @@ export function composeAgentDescriptor(
   }
 
   const templateContext = contextResult.value;
+  const rendererContext = toRendererTemplateContext(templateContext);
   const promptFilePath = agentConfig.prompt_file;
   const primarySourceKind: "prompt" | "prompt_file" =
     agentConfig.prompt !== undefined ? "prompt" : "prompt_file";
 
-  return loadPromptSource(agentName, agentConfig)
+  return loadPromptSource(agentName, agentConfig, reader)
     .andThen(
       (promptSource): Result<string, ComposeError> =>
         renderPromptTemplate(
           promptSource,
-          templateContext,
+          rendererContext,
           agentName,
           primarySourceKind,
           promptFilePath,
         ),
     )
     .andThen((renderedPrimary) =>
-      loadAppendSource(agentName, agentConfig).andThen(
+      loadAppendSource(agentName, agentConfig, reader).andThen(
         (appendSource): Result<AgentDescriptor, ComposeError> => {
           const sections: string[] = [renderedPrimary];
 
@@ -802,7 +923,7 @@ export function composeAgentDescriptor(
 
             const renderedAppendResult = renderPromptTemplate(
               appendSource.content,
-              templateContext,
+              rendererContext,
               agentName,
               appendSourceKind,
               appendFilePath,
@@ -815,27 +936,16 @@ export function composeAgentDescriptor(
 
           const composedPrompt = sections.join("\n\n");
 
-          return ok({
-            name: agentName,
-            displayName: agentConfig.display_name,
-            description: agentConfig.description,
-            category:
-              category === undefined
-                ? undefined
-                : {
-                    name: category.name,
-                    description: category.description,
-                    patterns: [...(category.patterns ?? [])],
-                  },
-            composedPrompt,
-            models: agentConfig.models ?? [],
-            mode: agentConfig.mode ?? "subagent",
-            temperature: agentConfig.temperature,
-            effectiveToolPolicy,
-            rawToolPolicy: agentConfig.tool_policy,
-            delegationTargets,
-            skills: agentConfig.skills ?? [],
-          });
+          return ok(
+            buildComposedDescriptor({
+              agentName,
+              agentConfig,
+              category,
+              composedPrompt,
+              effectiveToolPolicy,
+              delegationTargets,
+            }),
+          );
         },
       ),
     );

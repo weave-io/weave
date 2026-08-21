@@ -37,7 +37,10 @@ import {
 // Re-exports for backward compatibility
 // ---------------------------------------------------------------------------
 
-export { convertLegacyJsonc } from "../migration/legacy-jsonc-converter.js";
+export {
+  convertLegacyJsonc,
+  convertLegacyValue,
+} from "../migration/legacy-jsonc-converter.js";
 export { writeMigratedDsl } from "../migration/migration-write.js";
 export type {
   ConversionResult,
@@ -144,7 +147,7 @@ async function createPlan(input: {
     ctx.flags.harness ||
     ctx.flags.allHarnesses
   ) {
-    scope = "local";
+    scope = "global";
   } else {
     if (!prompt.isInteractive()) {
       return {
@@ -409,7 +412,7 @@ function buildFlagPlan(
   harnesses: DetectedHarness[],
   resolvedScope?: InitScope,
 ): InitPlan {
-  const scope = resolvedScope ?? flags.scope ?? "local";
+  const scope = resolvedScope ?? flags.scope ?? "global";
   const selectedHarnesses = resolveSelectedHarnesses(flags, harnesses);
   return {
     scope,

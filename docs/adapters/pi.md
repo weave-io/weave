@@ -2,7 +2,7 @@
 
 `@weaveio/weave-adapter-pi` projects normalized Weave configuration and lifecycle decisions into an interactive Pi TUI session. It is a Pi extension, not a standalone print/JSON/RPC/SDK runtime. The adapter may start private authenticated RPC children for delegation and direct workflow steps.
 
-**Related:** [Adapter Boundary](../adapter-boundary.md) · [Capabilities](../adapter-readiness-status.md) · [Execution Lifecycle](../workflow-schema.md) · [Runtime Store](../system-architecture.md) · [Delegation](../product-vision.md)
+**Related:** [Adapter Boundary](../architecture/adapter-boundary.md) · [Capabilities](../reference/adapter-capabilities.md) · [Execution Lifecycle](../reference/execution-lifecycle.md) · [Runtime Store](../reference/runtime.md) · [Delegation](../reference/delegation.md)
 
 ---
 
@@ -80,7 +80,7 @@ During `session_start`, the adapter reads Pi's host-owned skill catalog from the
 - commits the selected primary agent atomically;
 - reports model or temperature degradation once per generation.
 
-If boot activation fails, the adapter remains unavailable and does not retry when a message arrives. The later `before_agent_start` event only appends the committed agent's delimited prompt block without replacing Pi or other-extension context. A native model change after boot governs the active period until an explicit agent switch applies new model intent.
+If boot activation fails, the adapter remains unavailable and does not retry when a message arrives. The later `before_agent_start` event only appends the committed agent's delimited prompt block without replacing Pi or other-extension context. A native model change after boot governs the active period until an explicit agent switch applies new model intent. Pi's optional [runtime model fallback](#runtime-model-fallback) can apply the next eligible model after Pi's own recovery has settled a low-level run; it never changes the ordered model intent owned by Weave.
 
 Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents, resolves the new primary against the currently published catalog, and switches atomically. It is also the one in-session point at which a deferred config change may be applied; see [Config refresh at delegation boundaries](#config-refresh-at-delegation-boundaries). The [Plan Rail](#plan-rail) above the editor shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown. When the host cannot mount a widget, the same name falls back to Pi's status line.
 
@@ -96,7 +96,7 @@ A descriptor's `fast true` reaches Pi as neutral intent, and the adapter carries
 | Public OpenAI API Fast/Priority, the `openai` provider | Unsupported |
 | Every other Pi provider | Unsupported |
 
-These are two different OpenAI contracts, and they share no fact, allowlist entry, request field, or response value. See the [provider acceleration contract](../model-resolution.md).
+These are two different OpenAI contracts, and they share no fact, allowlist entry, request field, or response value. See the [provider acceleration contract](../specs/fast-provider-acceleration-contract.md#openai-codex-subscription-fast-mode-chatgpt-backend).
 
 #### The hook seam stays unsupported
 
@@ -152,7 +152,7 @@ The `provider-fast-activation` capability declares the static readiness `degrade
 
 A mapped attempt journals its own sanitized snapshots, and the latest of them is also the state `/weave:status` reports. `requested` is recorded immediately, as soon as both controls land on the outgoing request, and the terminal snapshot is recorded later, when that same attempt's evidence resolves or the call ends below `applied`. A mapped snapshot therefore does not wait for the turn to settle. Intent that reached no mapped attempt is recorded instead when a turn settles (`agent_settled`). A bounded in-memory dedupe window collapses repeats of the same `(state, reason, evidenceOutcome)` triple to one durable journal record, so the transient `requested` state and its terminal outcome are each kept once, and the key is claimed before the write so two settled turns cannot persist it twice. A failed write releases the claim, so a later settled turn may record it again. The window is in-memory only: it is cleared on session start, after a successful primary switch, and on shutdown or a failed boot activation, so the new active intent owner records its own outcome. The latest mapped snapshot is dropped with it, because it describes one session's request. Durable journal events already written are never removed by that reset.
 
-This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. Raising Pi to `applied`, or mapping any further provider, requires the same proof this mapping already carries: the effective transport of one prepared request plus correlated response evidence for that same request, shown in a fresh real harness under [Adapter Readiness Status](../adapter-readiness-status.md). Unit confidence is not that proof. The Codex mapping also carries a [recheck obligation](../model-resolution.md): a failed recheck returns it to `unsupported`.
+This capability is optional. It warns, never enters health-only mode, and never blocks activation, prompts, models, tools, delegation, or bootstrap. Raising Pi to `applied`, or mapping any further provider, requires the same proof this mapping already carries: the effective transport of one prepared request plus correlated response evidence for that same request, shown in a fresh real harness under [Adapter Verification](../testing/adapter-verification.md). Unit confidence is not that proof. The Codex mapping also carries a [recheck obligation](../specs/fast-provider-acceleration-contract.md#recheck-obligation-for-this-transport): a failed recheck returns it to `unsupported`.
 
 ## Config refresh at delegation boundaries
 
@@ -171,7 +171,7 @@ The catalog is derived from four kinds of source:
 
 Every file source keeps its **own** SHA-256 over the raw bytes as read. A digest is never taken over a concatenation of several files, and DSL-level normalization happens after hashing, so detection is byte-level.
 
-Inline prompts are not separate sources. A single-line `prompt` and a triple-quoted multiline `prompt` are both content of the config file that declares them, so an inline prompt edit is detected through that file's digest; there is no separate manifest entry for inline prompt text. See [Prompt Composition — Change detection](../prompt-composition.md), and [DSL Reference — Multiline strings](../dsl-reference.md) for the multiline syntax itself.
+Inline prompts are not separate sources. A single-line `prompt` and a triple-quoted multiline `prompt` are both content of the config file that declares them, so an inline prompt edit is detected through that file's digest; there is no separate manifest entry for inline prompt text. See [Prompt Composition — Change detection](../reference/prompts.md#change-detection), and [DSL Reference — Multiline strings](../reference/dsl.md#multiline-strings) for the multiline syntax itself.
 
 The project root and the trust state are identity inputs, not sources. A change to either is a different source graph and is handled by session replacement, never by refresh.
 
@@ -451,7 +451,7 @@ Retries use persisted attempt metadata so they reuse the artifact revisions cons
 
 Delegation requires a persistent parent session. A parent started with `--no-session` has nowhere to record child references, so the adapter refuses to spawn a child and returns `PersistentParentSessionRequired`; the child surfaces stay mounted but read-only. This fails before any child work starts rather than falling back to an unrecorded child.
 
-A delegation call addresses a *thread*, not a single run. Omitting `action` starts a new thread from `agent` plus `task`. `action retry` reruns a failed or cancelled thread by opaque `thread` id, with optional extra `instruction`. `action continue` gives a completed thread more work from a new `task`. A thread that is already running refuses both with `ThreadAlreadyRunning`; other thread failures are `ThreadNotFound`, `ThreadAuthorityDenied`, `ThreadStale`, `ThreadIntegrityError`, `ThreadNotRetryable`, `ThreadNotResumable`, and `ThreadResumeUnavailable`. Each run increments a run number, and earlier runs freeze rather than being rewritten. See [Delegation](../product-vision.md).
+A delegation call addresses a *thread*, not a single run. Omitting `action` starts a new thread from `agent` plus `task`. `action retry` reruns a failed or cancelled thread by opaque `thread` id, with optional extra `instruction`. `action continue` gives a completed thread more work from a new `task`. A thread that is already running refuses both with `ThreadAlreadyRunning`; other thread failures are `ThreadNotFound`, `ThreadAuthorityDenied`, `ThreadStale`, `ThreadIntegrityError`, `ThreadNotRetryable`, `ThreadNotResumable`, and `ThreadResumeUnavailable`. Each run increments a run number, and earlier runs freeze rather than being rewritten. See [Delegation](../reference/delegation.md#thread-lifecycle).
 
 A run that settles with no terminal assistant response fails with `ChildResponseMissing` and one reason: `empty`, `whitespace-only`, `thinking-only`, `tool-only`, or `no-response`. This is a result failure, not a transport failure — the recorded session stays intact, capacity is released like any other settlement, the failure is retryable, and its recovery hint is to retry the thread.
 
@@ -484,7 +484,7 @@ Children are inspectable and cancellable through the TUI tree, not steerable. Pu
 
 `/weave:pi-config` chooses which Pi extensions a delegated child loads. It is TUI-only: outside TUI mode, or when the host offers no custom surface, it reports that instead of opening. It writes durable state, so health-only mode blocks it like every other mutating command, and it needs the generation's open Runtime Store. It writes no `.weave` config file and no Pi settings file.
 
-The default is **inherit-all**. No preference row exists, the spawn argv is byte-identical to a child spawned before this command existed, and the child inherits whatever the host would load. Saving an explicit selection stores an `explicit` record, and the child is then spawned with `--no-extensions` followed by one `-e <absolute path>` per resolved extension. Only absolute paths are emitted; `-e npm:<package>` never is, because Pi would install that package into a temporary directory for every child.
+The default is **inherit-all**. No preference row exists, the spawn argv is byte-identical to a child spawned before this command existed, and the child inherits whatever the host would load. If the parent itself was launched with `--no-extensions` (for example, a pinned preloader launch), Pi cannot inherit the parent's `-e` arguments, so Weave passes its already-recorded pinned entries explicitly; the child still verifies the complete pinned runtime graph before activation. Saving an explicit selection stores an `explicit` record, and the child is then spawned with `--no-extensions` followed by one `-e <absolute path>` per resolved extension. Only absolute paths are emitted; `-e npm:<package>` never is, because Pi would install that package into a temporary directory for every child.
 
 Weave is always first and is never persisted in the record. Its path is derived at spawn time, so a stale stored path can never disable or misdirect the adapter. When that path cannot be derived, the plan falls back to inherit-all rather than spawning a child without Weave. The overlay pins the Weave row as `Weave adapter — always enabled`, never renders it as toggleable, and a save payload that tries to add or remove it is rejected.
 
@@ -496,7 +496,7 @@ Unselecting a provider extension removes the models and credentials it supplies,
 
 Enumeration is best-effort and read-only. The inventory unions three evidence sources: the `sourceInfo` of commands and tools the host already loaded, configured packages with their installed path and `pi.extensions` manifest, and bounded scans of `<agent dir>/extensions` plus, only for a trusted project, `<cwd>/.pi/extensions`. Nothing is loaded, evaluated, installed, or resolved over the network. Two limits follow from that: an extension that registers no command and no tool and lives outside those two directories cannot be enumerated at all, and a configured package is represented by its installed directory rather than by each entry it declares. The inventory is capped at 200 entries, with bounded directory depth and page sizes, and reports truncation instead of silently shortening the list.
 
-The record is stored in the project Runtime Store as one [adapter preference](../system-architecture.md) row under namespace `adapter-pi`, key `child-extensions`. Choosing inherit-all removes the row rather than storing a record that says "default". `weave runtime preferences --namespace adapter-pi` lists it read-only.
+The record is stored in the project Runtime Store as one [adapter preference](../reference/runtime.md#adapter-preferences) row under namespace `adapter-pi`, key `child-extensions`. Choosing inherit-all removes the row rather than storing a record that says "default". `weave runtime preferences --namespace adapter-pi` lists it read-only.
 
 ### Native child sessions
 
@@ -520,19 +520,19 @@ A child whose parent session is gone becomes an orphan. Orphans stay readable an
 
 #### No migration from the JSONL store
 
-Earlier versions kept child history in an adapter-owned JSONL store under `child-history/<parent-session-id>/`. That store is removed, and there is no migration. Weave does not read, convert, quarantine, or delete existing JSONL history — the files are simply left in place and are no longer visible to Weave. Handle them outside Weave if you still want the data. See [runtime persistence ADR](../adr/0002-runtime-persistence-store.md).
+Earlier versions kept child history in an adapter-owned JSONL store under `child-history/<parent-session-id>/`. That store is removed, and there is no migration. Weave does not read, convert, quarantine, or delete existing JSONL history — the files are simply left in place and are no longer visible to Weave. Handle them outside Weave if you still want the data. See [ADR 0014](../adr/0014-pi-native-child-sessions.md).
 
 The removed settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, and `orphan_retention_days` went with the store. The `child_inspection` block is strict, so a config that still sets them fails validation.
 
 ### Private child inspection
 
-Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. It carries `recovery_enabled` (default `true`), `recovery_countdown_seconds` (default `10`, range `0`–`60`), and the optional `keys` overlay key map. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Pi adapter readiness contract](../adapter-readiness-status.md). Do not infer these settings from engine configuration.
+Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. It carries `recovery_enabled` (default `true`), `recovery_countdown_seconds` (default `10`, range `0`–`60`), and the optional `keys` overlay key map. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Spec 33 §§4–10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#4-parent-child-refs). Do not infer these settings from engine configuration.
 
-The inspector is adapter-owned. It reads sensitive raw prompts, responses, and session events from local-only native child sessions; it never places that content in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. Clearing removes local records; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
+The inspector is adapter-owned. It reads sensitive prompts, responses, and session events from local-only native child sessions; it never places that content in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. The one exception is a live raw-reasoning projection held in bounded process memory for the focused surface; it is not a native-session read, and Weave never copies host-persisted reasoning into its own state. Clearing removes local records; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
 
-Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [adapter boundary ADR](../adr/0003-opencode-adapter-materialization-shape.md) for the ownership decision and [adapter boundary](../adapter-boundary.md) for the limits.
+Inspector recovery is separate from runtime model fallback. It is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [ADR 0013](../adr/0013-pi-private-child-sessions.md) for the ownership decision and [Spec 33 §6](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#6-inline-weavedelegate-delegation-card) for the limits.
 
-The inspection view renders with Pi's own chat components, so a streamed child reads like a native Pi session: user and task blocks, markdown answer text, italic reasoning, and Pi's tool-execution blocks with real diffs and bash output. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. The adapter injects those components through a narrow port (`PiTranscriptComponentFactory`); the transcript reducer and its dependency-free fallback renderer stay pure, and the fallback text still renders when a component cannot be built. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
+The inspection view renders through a narrow port (`PiTranscriptComponentFactory`) and a dependency-free fallback renderer. Its live transcript shows generic Pi 0.84.2 thinking as exactly `↪ reasoning • <text>`, bounded sanitized correlated tool rows, and the incremental assistant reply; it does not use an italic or summary reasoning row. Tool calls render through Pi's builtin tool definitions, so a row reads `read <path>` rather than a bare tool name. One `toolCallId` updates one row from running to terminal state. Bookkeeping facts Pi never shows — usage, queue, status, retry, extension-UI requests, and unknown events — are suppressed instead of printed as event prose.
 
 The two-row session header names identity and parent context only; every number lives on the Status Matrix rail. Messages sit one blank row apart. Below the header the transcript scrolls: PageUp and PageDown move a page, Shift+Up and Shift+Down a line, Home jumps to the oldest output, and End follows the live tail again. If the newest page still fits the overlay but older history exists, PageUp and Home load that older page and leave live tail so the prepended rows become visible. The overlay matches these keys by identity, so legacy terminal frames, Kitty event-aware frames, and SS3 `ESC O H` / `ESC O F` all work, and it ignores Kitty release frames. While scrolled back, the view says how many newer lines wait below. Escape leaves the view without cancelling anything, and leaving returns the tree editor to the root so typing goes to the parent session again, not to the child.
 
@@ -554,14 +554,31 @@ The card is one frame: exactly one top edge, exactly one bottom edge, and no cor
 
 - **Status-first rail.** A ten-column left rail carries the upper-case state word behind a toned bar, then the child agent name, then elapsed. The drop order is mechanical: the state word and the child name survive every width, elapsed is the only droppable cell, and below the minimum body width identity folds and the rail disappears.
 - **Assignment.** The top body row is one imperative sentence in the parent's own words — no provenance prefix, acceptance clause, scope field, or routing rationale. When the parent recorded none, the row reads `no assignment recorded`.
-- **Native Line.** Beneath the assignment there is exactly one line: a semantic glyph plus the single most meaningful thing the child has produced. Whitespace-only and control-only fragments are skipped, and reasoning appears as a bounded summary only. The `✓` glyph belongs to the settlement-named output, so a collapsed row can never imply an answer the settlement has not published.
+- **Native Line.** Beneath the assignment there is exactly one live child-activity
+  line: `↪ reasoning • <text>`, sourced only from generic Pi 0.84.2
+  `thinking_start` / `thinking_delta` / `thinking_end` events. It uses one
+  process-memory buffer capped at 4 KiB UTF-8, one parent line capped at 240 code
+  points, terminal-control normalization only, and the 100 ms card coalescer.
+  Non-empty omitted text ends with `… [truncated]`; non-printable input uses
+  `[unprintable reasoning]`; the card never renders an empty reasoning row. The
+  `✓` glyph belongs to settlement framing, not live child activity.
 - **Balanced edge footer.** The bottom edge carries the run and the lifecycle phase plus elapsed, tokens, and cost on the left, and `Ctrl+O expand · Alt+I inspect child` on the right. It never prints the status word the rail already owns. The action side is measured first, so an affordance always outlives a number, telemetry never outlives `Ctrl+O`, and `Alt+I` is the last hint standing.
 
-`Ctrl+O` is Pi's own tool-expand action and `Alt+I` is the existing Weave picker action. The card registers **no** keybinding and prints both as hints only. The expand verb is `expand` while running, `details` once settled, and `collapse` while expanded. Expanded, the card adds one interior rule and a fixed-height child viewport: one status strip reading `LIVE · following bottom` while the child can still act and `AT BOTTOM · child settled` once it cannot, plus `↑ N rows above` when scrollback exists, over exactly nine literal bottom transcript rows. Nothing in the viewport is summarized, grouped, or relabelled.
+`Ctrl+O` is Pi's own tool-expand action and `Alt+I` is the existing Weave picker action. The card registers **no** keybinding and prints both as hints only. The expand verb is `expand` while running, `details` once settled, and `collapse` while expanded. Expanded, the card adds one interior rule and a fixed-height child viewport: one status strip reading `LIVE · following bottom` while the child can still act and `AT BOTTOM · child settled` once it cannot, plus `↑ N rows above` when scrollback exists, over exactly nine literal bottom card rows. The viewport contains only card-owned assignment, lifecycle, terminal framing, and the live reasoning projection; child assistant/tool activity and payload are never shown or relabelled there.
 
-Settlement is **native and authoritative**. The authoritative settlement rewrites the rail state word, the Native Line, and the footer verb, and adds no row, banner, border verdict, or action deck. A `message_end` never produces a completed card or a success glyph, so an ended-but-unsettled assistant message cannot claim completion. The card never offers retry, steer, resume, or cancel, in any state. A failed card prints the already-redacted reason and names recovery only where the failure class is documented as recoverable; a cancelled card names the initiator in safe terms, says the partial work was kept and that nothing was verified, and never claims success.
+Settlement is **native and authoritative**. The authoritative settlement
+rewrites the rail state word and footer verb, clears the transient reasoning
+line, and adds no assistant/tool row, banner, border verdict, or action deck.
+The settled tool API result remains authoritative, but the custom card does not
+render that output as activity. A `message_end` never produces a completed card
+or a success glyph, so an ended-but-unsettled assistant message cannot claim
+completion. The card never offers retry, steer, resume, or cancel, in any state.
+A failed card prints the already-redacted reason and names recovery only where
+the failure class is documented as recoverable; a cancelled card names the
+initiator in safe terms, says the partial work was kept and that nothing was
+verified, and never claims success.
 
-The card is fail-closed and bounded. The reducer keeps at most 64 runs per thread and 128 items per run, and older runs stay frozen exactly as they last rendered. Its persisted `details` payload is versioned, bounded, and strictly parsed, and a foreign, older, or oversized payload degrades to a bounded four-row card that says `delegation card unavailable`, prints the bounded reason, keeps the `Alt+I` hint, and claims no state, telemetry, or outcome. Re-rendering from persisted details after replay or restart reproduces the final live frame; a render failure never affects the child run. Every child-sourced string is sanitized before it becomes a segment, and box-drawing glyphs are reachable only through the frame primitive, so child text structurally cannot forge a frame. Tool activity is reported as the tool name plus its canonical state — `running`, `done`, or `failed` — derived from the event type. A tool result, partial result, or tool error payload is never read into the card, so no command output, file content, provider body, or exception text can reach the model-visible line or the persisted `details`; that payload stays in the child overlay and the child transcript, which the reader opens deliberately. The card exposes no filesystem path, native session id, or opaque thread id, and the model-visible `content[0].text` stays a bounded activity line with no card chrome. Nested delegation uses the same renderer; each run gets a new card, and a prior run's card is frozen and never rewritten.
+The card is fail-closed and bounded. The reducer keeps at most 64 runs per thread and 128 items per run, and older runs stay frozen exactly as they last rendered. Its persisted `details` payload is versioned, bounded, and strictly parsed, and a foreign, older, or oversized payload degrades to a bounded four-row card that says `delegation card unavailable`, prints the bounded reason, keeps the `Alt+I` hint, and claims no state, telemetry, or outcome. Re-rendering from persisted details after replay or restart reproduces the final frame without raw reasoning; a render failure never affects the child run. Every child-sourced string is sanitized before it becomes a segment, and box-drawing glyphs are reachable only through the frame primitive, so child text structurally cannot forge a frame. The live card's only child-activity row is the bounded raw-reasoning line. It hides assistant output, tool names and status, arguments, results, stdout, stderr, and inspector payload. Those values stay in the child inspector and authoritative settled tool API, not in the card. The TUI-only `toolCallId` / `invalidate()` seam reads the generation-scoped process-memory reasoning registry; `content[0].text` and persisted `details` remain content-free of reasoning, assistant activity, and tool payload. Nested delegation uses the same renderer; each run gets a new card, and a prior run's card is frozen and never rewritten.
 
 Every 64-run bound in the adapter — the card reducer, the overlay descriptor, and the parent child ref — is a bounded newest-last **window**, not a ceiling on how many times a thread may run. A ref carries the cumulative `totalRuns` alongside its window, so run 65 and run 1,001 append normally, the run ordinal keeps counting after a restart, and only the finite one-million ordinal ceiling can refuse an append.
 
@@ -573,11 +590,30 @@ The finalized surface is one high-contrast titled outer frame — ` WEAVE · CHI
 
 - **Session header, row 1.** An inverse ` CHILD ` badge, the child agent name, its model, its role, and its bounded task title, all left-aligned. The model sits immediately after the name and appears **exactly once**. The header grows to two rows before it drops the title.
 - **Session header, row 2.** `delegated by <PARENT>` followed by the plan › task › subtask breadcrumb, shedding subtask first, then plan.
-- **Transcript.** A Pi-native pane on the left: role gutters, understated read / edit / bash calls and results, reasoning as a bounded summary only, and plain streaming and final assistant responses. Raw chain-of-thought is never rendered. Raw reasoning — a `thinking_delta`, a legacy `delta.thinking`, a standalone `thinking` event, or a persisted `thinking` content block — prints a content-free `✻ reasoning` marker and nothing else, and its text is dropped before it reaches transcript state.
+- **Transcript.** A Pi-native pane on the left: role gutters, understated read /
+  edit / bash calls and results, the live reasoning row, and plain streaming and
+  final assistant responses. Generic `thinking_start`, `thinking_delta`, and
+  `thinking_end` text renders exactly as `↪ reasoning • <text>` through a
+  display-only projector. The row is at most three rows, uses one 4 KiB UTF-8
+  process-memory buffer and the 50 ms inspector coalescer, and applies terminal-
+  control normalization only. Non-empty omitted text ends with `… [truncated]`;
+  non-printable input uses `[unprintable reasoning]`; no blank row is rendered.
+  Retained generic-thinking events remain content-free.
 
-A carrier is judged by what it holds, not by what it calls itself. A frame whose `assistantMessageEvent.type` says `text_delta` or `answer` while it buries prose in a `thinking` or `reasoning` member, or in a nested `{ type: "thinking" }` content block, is a raw-reasoning carrier: beside an answer it is rejected outright and moves nothing, and on its own it yields the content-free marker. A reasoning key with no prose under it — for example the numeric `usage.reasoning` token count — declares nothing, and a hostile carrier (a throwing proxy, or one nested deeper or wider than the bounded scan reads) is rejected rather than published.
+A carrier is judged by what it holds, not by what it calls itself. A frame whose `assistantMessageEvent.type` says `text_delta` or `answer` while it buries prose in a `thinking` or `reasoning` member, or in a nested `{ type: "thinking" }` content block, is a raw-reasoning carrier: beside an answer it is rejected outright and moves nothing, and on its own it yields the bounded live update plus a content-free retained fact. A reasoning key with no prose under it — for example the numeric `usage.reasoning` token count — declares nothing, and a hostile carrier (a throwing proxy, or one nested deeper or wider than the bounded scan reads) is rejected rather than published.
 
-The **retention boundary** is the same for every path that keeps an event, and it asks one shared question before anything is kept. A frame the carrier classification **rejected** — mixed carriers, conflicting answers, or a payload the bounded descriptor-safe scan could not read — moves nothing and is retained nowhere: not in transcript history, not in an overlay entry or a replay step, not in a rebuild or a search, and not in the durable child-history port. Redaction blanks the prose fields a carrier *declared*, which cannot describe a frame nobody could classify, so a thought parked under an undeclared member such as `assistantMessageEvent.metadata` is refused outright rather than blanked. A frame the classification called **reasoning** is refused in the same spirit, one step short of dropping it: it states one fact a reader renders, so retention keeps a canonical event the adapter builds — `{ type: "message_update", assistantMessageEvent: { type: "thinking_delta" } }` — and nothing observed. Blanking declared fields kept the host's own object, and a reasoning frame may state prose in a member no field list names, so no nested member, string, block, `metadata` / `partial` / `usage` subobject, accessor, or unknown field of it survives anywhere. The canonical event classifies as reasoning again, so a rebuild is a fixed point and the reader still learns that the child reasoned. An ordinary answer and pure framing are retained unchanged. The inspection registry hands the transcript reducer and the history port the **same** parser-approved, retained event, and an event the parser refuses is retained nowhere either: history records that a checkpoint happened and carries no payload. Only an explicit host `reasoning_summary` event or `delta.reasoningSummary` field prints prose, under `✻ reasoning · SUMMARY`; no summary is ever derived by truncating or relabelling raw reasoning. The originating prompt comes first, then user messages, assistant text, reasoning summaries, tool calls and results, errors, retry dividers, and images.
+The **retention boundary** separates the live projector from every Weave-owned
+path that keeps an event. A rejected frame moves nothing and is retained
+nowhere. A generic thinking frame becomes one canonical content-free event for
+transcript history, overlay entries, replay steps, rebuilds, search,
+serialization, checkpoints, and the native-session read path used by Weave. The
+live projector receives the parser-approved `thinking_start` /
+`thinking_delta` / `thinking_end` text before retention and stores it only in
+the focused process-memory buffer. No nested member, string, block, accessor,
+or unknown field of the observed reasoning carrier survives durable state. The
+originating prompt comes first, then user messages, the live reasoning row, tool calls and results, the live assistant reply, errors,
+retry dividers, and images. There is no summary type, derived summary, `✻ reasoning` marker, or
+`reasoning · SUMMARY` mapping in this contract.
 - **Status Matrix rail.** An aligned key/value matrix on the right, grouped lifecycle · work · spend, with an inverse alert pair above the matrix when a tool fails. Below the width at which the rail and the transcript minimum both fit, it folds to its compact matrix form rather than disappearing.
 - **Prompt panel.** A primary-like bordered editor over one muted key row. A disabled key prints an explicit `✕` rather than only dim colour, so a settled child reads as unactionable on a monochrome terminal. The key row sheds ordinary notes, then the danger note, then whole chips in ladder order — `/ search`, then `Alt+Enter queue`, then `q cancel` — with `Enter` and `Esc` as the floor.
 
@@ -589,9 +625,75 @@ The rail is the sole telemetry surface for the focused child: provider, model, c
 
 Settlement adds no chrome at all. The authoritative final response, the safe failure line, the cancellation record, and the retry record are ordinary transcript events; the frame marker and the rail carry the state word. That word is the settlement authority's own verdict — `COMPLETED`, `FAILED`, or `CANCELLED` — carried on the descriptor from the child's terminal status for a live run and from the ref record's status for a historical one. It is never read from assistant text, from reported status prose, or from `message_end`. **Compatibility fallback:** history written before the descriptor carried an outcome proves only that the run ended, so it keeps the generic `SETTLED` word rather than claiming a verdict. There is no banner band, rail verdict section, transcript checkpoint block, or action deck. Failure text reaches the screen only through the sanitizer, which strips ANSI, removes stack frames, redacts credential-shaped tokens and long opaque IDs, and hides absolute paths.
 
-Historical pages adapt native session entries directly through the host's read API, with cursors in both directions, so the overlay never loads an entire large transcript. Live output flows through the same parser and card pipeline as the delegation card, so the two surfaces cannot disagree. The parser treats `type` as authoritative only when it is the event's own enumerable data property holding a bounded primitive string. An accessor, inherited value, non-enumerable field, or non-string never selects a known event kind or the Pi 0.84 `queue_update` normalizer. A terminal assistant `stopReason: "error"` also flows through one bounded sanitizer and renderer: safe 429, 5xx, connection, and timeout facts can appear, while unavailable or unsafe facts show `assistant error · details unavailable`. The card, the live and historical inspector, the fallback path, and the parent-facing summary use the same canonical line, and the rail states the classification rather than repeating that sentence. A later successful assistant terminal event clears a stale error; tool failure alone does not create one. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End scroll the transcript. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
+Historical pages adapt native session entries directly through the host's read API, with cursors in both directions, so the overlay never loads an entire large transcript. Historical reads never reconstruct raw reasoning; reopening starts with an empty live buffer. Live output flows through the same parser and card pipeline as the delegation card for assistant and tool facts, while the focused reasoning projector has its own generation, authenticated-child, focus, settlement, and 50 ms repaint gates. The parser treats `type` as authoritative only when it is the event's own enumerable data property holding a bounded primitive string. An accessor, inherited value, non-enumerable field, or non-string never selects a known event kind or the Pi 0.84.2 `queue_update` normalizer. A terminal assistant `stopReason: "error"` also flows through one bounded sanitizer and renderer: safe 429, 5xx, connection, and timeout facts can appear, while unavailable or unsafe facts show `assistant error · details unavailable`. The card, the live and historical inspector, the fallback path, and the parent-facing summary use the same canonical line, and the rail states the classification rather than repeating that sentence. A later successful assistant terminal event clears a stale error; tool failure alone does not create one. PageUp, PageDown, Shift+Up, Shift+Down, Home, and End scroll the transcript. Scroll keys are matched by key identity rather than by raw bytes, so legacy, Kitty event-aware, and SS3 encodings of the same key all scroll, and a Kitty release frame never repeats a page. Pi does not enable terminal mouse reporting (including SGR-1006 and modes 1002/1003), so mouse-wheel events cannot reach the component. Mouse-wheel scrolling remains unavailable until Pi exposes a mouse input surface.
 
 When the host does not provide the `child-overlay-lifecycle` surface, the overlay degrades to the existing custom-editor inspection path instead of disappearing. Delegation itself is unaffected: overlay gaps never trigger health-only mode.
+
+#### Child-streaming remediation contract
+
+The user-approved Pi `0.84.2` contract is a live raw-reasoning projection, not a
+summary lane. Generic `thinking_start`, `thinking_delta`, and `thinking_end`
+text is accepted only at the authenticated, parser-approved event boundary.
+The exact display format on both surfaces is `↪ reasoning • <text>`.
+
+The projector keeps at most one 4 KiB UTF-8 buffer per active surface in process
+memory. The parent card renders one line of at most 240 code points and
+coalesces repaints at 100 ms. The focused inspector renders at most three rows
+and coalesces repaints at 50 ms. Terminal-control normalization is the only
+reasoning-text filter. Non-empty omitted text ends with `… [truncated]`;
+non-printable input uses `[unprintable reasoning]`; a blank reasoning row is
+never emitted. The parent card shows this row as its only live child activity
+and hides assistant and tool activity. The focused inspector shows the row,
+bounded sanitized correlated tool arguments/results, and the live assistant
+reply. One tool call updates one row. The settled `weave_delegate` tool result
+still returns authoritative child output, but the custom card does not render
+that result as activity.
+
+Raw reasoning exists only in these bounded UI buffers. Weave never copies it to
+parent messages or model input, tool-result `content`, card `details`, Runtime
+Store records, checkpoints, transcript/replay/search state, logs, diagnostics,
+proof artifacts, reports, or files. The Pi host-managed native child session
+may persist it under Pi's rules; that host persistence is outside Weave's
+boundary. Weave releases each buffer at settlement, disposal, inspector close,
+focus change, generation replacement, component disposal, and session shutdown;
+a historical reopen starts empty.
+
+The identity gate runs independently before any live assertion. It matches the
+source-input digest, built output digests, path-free sidecar manifest, loaded
+artifact digest and load time, on-disk digest, and process start time. It
+reports only bounded identity facts and closed states: `current`,
+`stale-on-disk`, `manifest-mismatch`, or `unverifiable`. A build-A-loaded /
+build-B-on-disk process, corrupted manifest/output, missing identity fact, or
+stale parent fails the gate; modification time alone is not identity proof.
+`/reload` can adopt a new artifact, but final evidence still requires a fresh
+parent process.
+
+The Pi `0.84.2` fixture is produced through real Pi session/RPC/extension
+machinery at the public event boundary. It records event kinds, own enumerable
+field shapes, value kinds, ordering, lifecycle phases, tool correlation,
+bounded sanitized tool data, and incremental assistant ordering. Generic
+thinking text is omitted online before any fixture or manifest write; only
+content-free structure, saturated byte/line counts, and truncation state remain.
+The capture never writes a reasoning prefix, suffix, hash, encoding, exception,
+terminal capture, screenshot, or uncontrolled output. In-memory replay may
+inject a controlled string for UI assertions.
+
+Diagnostics are content-free bounded aggregates: closed stage/reason codes,
+saturated counts, and bounded first/last times. They contain no reasoning,
+assistant text, tool payload, paths, prompts, credentials, exception text, or
+content-derived digest. Red controls cover stale identity, corrupt capture or
+manifest, malformed and mixed carriers, stale generation/focus/correlation,
+bounds and truncation honesty, terminal controls, sink isolation, lifecycle
+release, missing assistant deltas, broken tool correlation, duplicate tool
+terminals, and parent-card leakage.
+
+The complete 2026-08-18 Herdr run is preserved as a post-build RED
+reproduction in [the remediation proof](../specs/33-spec-pi-adapter/33-proofs/33-child-streaming-remediation-proof.md).
+It observed the old empty reasoning marker, missing tool detail, duplicate tool
+rows, and a blank live assistant body. The product reversal explains only the
+empty reasoning marker. It does not explain missing tools or blank assistant
+text; those remain independent defects. No observed reasoning prose is retained
+in documentation or proof data.
 
 #### Overlay keys
 
@@ -653,12 +755,12 @@ Four earlier surfaces are gone. If you are upgrading, expect them to be absent r
 
 | Removed surface | Replacement |
 | --- | --- |
-| The three-line compact `weave_delegate` block, with its name/model/level line, activity line, and `run N · action` line. | One framed [delegation card](#delegation-card) per run, with a status-first rail, an assignment row, a Native Line, a balanced edge footer, and a nine-row expanded child viewport. |
+| The three-line compact `weave_delegate` block, with its name/model/level line, activity line, and `run N · action` line. | One framed [delegation card](#delegation-card) per run, with a status-first rail, an assignment row, the live `↪ reasoning • <text>` Native Line, a balanced edge footer, and a nine-row expanded card viewport with no child assistant/tool payload. |
 | The per-child `full` / `compact` overlay view mode and its in-overlay toggle. | Removed outright. The inspector has one view, and `Ctrl+O` is Pi's own tool-expand action for the card, which Weave never registers. |
 | The overlay header's telemetry row (status, model, reasoning level, turn and queue counts, token cost). | The Status Matrix rail, which is the only place child telemetry appears. The header carries identity and parent context only. |
 | The duplicate `weave-task` plan-task footer beside the plan widget. | The [Plan Rail](#plan-rail), the single owner of ambient parent context. |
 
-The `child_inspection.keys` map declares no view-toggle action, so a config that names one is a validation error. See the [Weave product vision](../product-vision.md) for why each surface was dropped.
+The `child_inspection.keys` map declares no view-toggle action, so a config that names one is a validation error. See the [Weave UI design record](../specs/33-spec-pi-adapter/33-weave-ui-design.md) for why each surface was dropped.
 
 #### Why an inspection opened in the fallback editor
 
@@ -703,29 +805,52 @@ Outside the TUI, the same adapter-owned data is reachable through `weave adapter
 
 Each check reports `pass`, `fail`, or `skip` with a bounded detail string. The report status is `ok` when no check fails, `degraded` when any check fails, and `unavailable` when every check is skipped or the report itself fails validation. Scans are bounded to 50 rows per page and details carry counters, never child text.
 
-For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt record is reported as a diagnostic code — `ChildSessionMissing`, `ChildSessionCorrupt`, `ChildSessionRootViolation`, `ChildSessionPermissionError`, `ChildTombstoneAppendFailed`, `ChildRefInvalid`, `ChildRefOriginMismatch`, `ChildCacheDegraded`, or `ChildCacheStale` — and it does not authorize a guessed resume. Step-by-step remedies are in [Pi adapter readiness status](../adapter-readiness-status.md); the complete command and key map is [CLI reference](../reference/cli.md#weave-adapter).
+For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt record is reported as a diagnostic code — `ChildSessionMissing`, `ChildSessionCorrupt`, `ChildSessionRootViolation`, `ChildSessionPermissionError`, `ChildTombstoneAppendFailed`, `ChildRefInvalid`, `ChildRefOriginMismatch`, `ChildCacheDegraded`, or `ChildCacheStale` — and it does not authorize a guessed resume. Step-by-step remedies are in [Pi child troubleshooting](../guides/pi-child-troubleshooting.md); the complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#15-commands-dispatch-boundary-and-cli).
 
 ### Settlement and output
 
 The [delegation card](#delegation-card) is the tool entry. Its rail names the
-child and its state, and its Native Line carries the child's latest meaningful
-output. The model and reasoning level come from the same resolution the child's
-bootstrap carries, so the card names what the child will actually run on before
-it exists.
+child and its state, and its Native Line is the live raw-reasoning projection
+only. It is cleared when the run settles; authoritative child output remains in
+the settled tool API result and is not rendered as card activity. The model and
+reasoning level come from the same resolution the child's bootstrap carries, so
+the card names what the child will actually run on before it exists.
 
-While a child runs, `weave_delegate` updates the card from Pi's streamed
-`message_update` events. Before answer text starts, the Native Line shows the
-content-free word `reasoning` so a reasoning child does not look frozen; it
-prints `summary · …` only when the host published an explicit
-`reasoning_summary`. Raw chain-of-thought never reaches the model-visible line
-or the persisted card rows. Once a `text_delta` arrives, answer text replaces
-the reasoning line and remains authoritative. Both previews are transient, capped at 4 KiB, and
-never persisted. The collapsed Native Line shows the latest whitespace-normalized
-240 code points; `Ctrl+O` expands the card to nine literal transcript rows. Spawn failures return the typed code plus the adapter-owned safe message,
-closed reason when available, retryability, and recovery hint; raw host errors
-and environment values never enter the result.
+While a child runs, `weave_delegate` observes Pi 0.84.2 generic
+`thinking_start` / `thinking_delta` / `thinking_end` events. The parent card's
+only live child-activity row is exactly `↪ reasoning • <text>`, from one
+TUI-only process-memory buffer capped at 4 KiB UTF-8. The collapsed line is one
+whitespace-normalized 240-code-point row; card repaints coalesce at 100 ms. The
+projector applies terminal-control normalization only. Non-empty omitted text
+ends with `… [truncated]`, non-printable input uses `[unprintable reasoning]`,
+and no empty reasoning row is shown. Assistant output, tool activity, command
+arguments/results, stdout/stderr, and inspector payload stay out of the card.
+They remain available to the focused inspector and the authoritative settled
+`weave_delegate` result as separately defined contracts. Raw reasoning never
+enters tool-result `content`, persisted `details`, parent messages, or parent
+model input. Spawn failures return the typed code plus the adapter-owned safe
+message, closed reason when available, retryability, and recovery hint; raw host
+errors and environment values never enter the result.
 
 Pi's `agent_settled` event has no payload. The adapter derives `failed` from the latest assistant `message_end.stopReason` when it is `error` or `aborted`; every other case, including no observed reason, settles as `completed`. Once cancellation is admitted, that child cannot report `completed`.
+
+#### Runtime model fallback
+
+Runtime model fallback is an optional Pi host feature. Pi first completes its own native retry, overflow-compaction, and queued-message recovery. Only then does Pi emit its payloadless `agent_settled` event. Weave cannot suppress that internal low-level settlement, so recovery uses an exact two-low-level-run compromise:
+
+1. Pi settles the first low-level run internally.
+2. Weave keeps its visible child, tool call, and session pending, then applies the next eligible model and starts a hidden public custom-message turn.
+3. The hidden turn runs in the same Pi process and native session. It is a new low-level run, not a continuation of the first one and not a replacement process or session.
+
+The recovery turn does not invoke or depend on `before_agent_start`. Weave dispatches it with `pi.sendMessage(..., { triggerTurn: true })`. The custom message has type `weave.model-fallback.recovery-marker`, fixed bounded content, and strict details `{ schemaVersion: 1, token: <RFC 4122 version-4 UUID> }`, with `display: false`. Only `message_start` for that exact marker and token proves dispatch. A missing proof fails closed after a bounded 15-second timeout; `sendMessage` completion is not proof.
+
+The public `context` handler repairs only the provider request. It removes the exact failed assistant and its immediately following marker after matching the retained bounded fingerprint. The failed assistant and marker remain in durable native Pi history. Weave sends no synthetic provider user message, and it keeps failed partial output separate from successful fallback output, so the two responses cannot be concatenated. Trusted context handlers registered after Weave receive the filtered list. This is trusted composition, not isolation from a malicious full-access extension that can inspect or rewrite the same session context.
+
+The coordinator freezes a distinct ordered candidate list, capped at 64 entries, and starts after the applied failed model without wrapping. A manual, unmatched, delayed, duplicate, or ambiguous `model_select` latches fallback off until explicit Weave agent activation. Ordinary turns do not clear that latch. Catalog misses and unavailable provider credentials skip only the current candidate. A context-overflow failure may advance only to a candidate with a strictly larger declared context window; other failure classes do not use that comparison. A model that Pi reports as applied is reported as the current model even when marker or context proof later fails. An applied-only switch therefore has no recovery event.
+
+A recovery-confirmed switch appends one read-only `weave.model-failover` event. Exhaustion and an applied-only switch append no Model Fallback event. The event and the delegation-card geometry are normative in the [Weave UI design record](../specs/33-spec-pi-adapter/33-weave-ui-design.md); this adapter note does not duplicate that geometry.
+
+The `runtime-model-fallback` host surface is optional. The implementation targets Pi `0.84.2`'s public surfaces, and Task 15 is the exact real-host proof target. Until Task 15 passes, Pi `0.84.2` is not a proven fallback host. The compatibility floor remains Pi `0.81.1`. Missing or unproven public surfaces keep health ready and use legacy visible and child settlement. They do not enter health-only mode and do not select the overlay fallback.
 
 A `failed` verdict is captured immediately but published on a bounded deferral, because a context-compaction extension can force a threshold compaction by aborting the run and then compacting from its own `agent_settled` handler. Pi awaits extension handlers sequentially, so the adapter returns from `agent_settled` at once instead of blocking that chain. Only the structural compaction lifecycle decides the outcome. `session_before_compact` or `session_compact` is recorded in either handler order: after the abort it moves the captured verdict to a ten-minute resume window, and before the abort it opens a five-second evidence window that sends the next captured verdict straight to that same resume window. The next `turn_start` discards the captured verdict only when compaction evidence was recorded for it; a turn that starts with no such evidence is an unrelated turn, so the captured verdict is published at once and the gate closes, and lifecycle evidence that arrives after that turn began can never adopt it. Error prose is never used to detect compaction.
 
@@ -747,15 +872,16 @@ alike. Producers project before signing and the schemas admit the projected
 value, because rejecting a body over its display text would discard the typed
 code that body carries.
 
-The private output capture carries its own provenance, because the four
-possible sources are not interchangeable. `transferred-candidate` and
-`inline-candidate` are the child's verified structured completion candidate,
-`transferred-output` is its complete free-text terminal output, and
-`observed-terminal` is only the last terminal assistant message the parent
-happened to observe. A direct workflow step persists a candidate source and
-nothing else: a capture whose provenance is observed prose, or one that
-disagrees with the settled candidate, fails closed instead of durably storing
-unrelated assistant text as the step's result.
+The private output capture has four distinct sources, because they are not
+interchangeable. `transferred-candidate` and `inline-candidate` are the child's
+verified structured completion candidate, `transferred-output` is its complete
+free-text terminal output, and `observed-terminal` is only the last terminal
+assistant message the parent happened to observe. A direct workflow step
+persists a candidate source and nothing else: a capture whose source is
+observed prose, or that disagrees with the settled candidate, fails closed
+instead of durably storing unrelated assistant text as the step's result. This
+settlement provenance is separate from the live raw-reasoning UI projection;
+there is no reasoning-summary gate.
 
 ### Durable results
 
@@ -831,9 +957,9 @@ Beyond the engine's closed capability IDs, the adapter declares the concrete Pi 
 - `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
 - `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
 - `rendering-fallback` — a gap uses Pi's default rendering.
-- `feature-only` — a gap leaves current behavior in place and never enters health-only mode or the overlay fallback. `post-recovery-model-switch` is the only such surface; the adapter probes `pi.features.agent_recovery_exhausted` as an own enumerable data property equal to `true` and reports that result on `/weave:health` as a `feature-unavailable` host-surface gap. It does not add an engine capability ID.
+- `feature-only` — a gap leaves current behavior in place and never enters health-only mode or the overlay fallback. `runtime-model-fallback` is the only such surface. The adapter probes the public registration and event surfaces for payloadless `agent_settled`, terminal `message_end`, replacement-returning `context`, `message_start`, `model_select`, callable `setModel`, fire-and-forget `sendMessage`, and callable idle and pending-message helpers. Surface presence does not prove lifecycle ordering. Missing or unproven surfaces report bounded evidence, keep health ready, and use legacy visible and child settlement. This surface does not add an engine capability ID.
 
-A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Readiness Status](../adapter-readiness-status.md).
+A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Capabilities](../reference/adapter-capabilities.md#adapter-owned-host-surface-probes).
 
 ### Host runtime resolution
 
@@ -847,7 +973,7 @@ Redirection is fail-open. An unproven host root, a mismatched host package, a mi
 
 Consumers that need a specific copy read that outcome as provenance: one specifier is `host` when it was redirected to the host file or already was it, and `unproven` with a bounded reason otherwise. The codex fast provider registration is the first such consumer and refuses to run on anything but `host`.
 
-Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Readiness Status](../adapter-readiness-status.md).
+Setting `WEAVE_PI_HOST_MODULE_PROOF=1` writes exactly one bounded JSON line to stderr with the host root, host version, and per-specifier resolutions. That line carries absolute paths, so it is strictly opt-in and no other surface prints them. `bun run verify:pi-host-singleton` reads it against a real Pi process; see [Adapter Verification](../testing/adapter-verification.md#prove-one-host-runtime-copy-pi).
 
 ## Health-only mode
 

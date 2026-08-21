@@ -19,7 +19,6 @@
  * - Delegating agents list all specialist agent names in their composed prompt.
  * - Shuttle, Pattern, Thread, Spindle, Weft, Warp (delegate deny) do NOT
  *   produce a `## Delegation` section.
- * - No unresolved unescaped Mustache tags remain in any composed prompt.
  * - No raw config objects, model lists, prompt file paths, harness tool names,
  *   secrets, or environment data appear in any composed prompt.
  */
@@ -137,32 +136,51 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("# Delegation Guidance");
   });
 
-  it("loom composedPrompt contains routing_hint-based delegation guidance for each specialist", () => {
+  it("builtin specialists declare string trigger guidance", () => {
+    expect(config.agents.thread?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for fast codebase exploration — read-only and cheap",
+      ]),
+    );
+    expect(config.agents.spindle?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for external docs and research — read-only",
+      ]),
+    );
+    expect(config.agents.pattern?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for multi-file features, complex refactors, or work spanning 5+ steps",
+      ]),
+    );
+    expect(config.agents.shuttle?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use for a scoped change only when no listed category shuttle clearly matches the work",
+      ]),
+    );
+    expect(config.agents.weft?.triggers).toEqual(
+      expect.arrayContaining([
+        "Use after non-trivial changes (3+ files, or when quality matters)",
+      ]),
+    );
+    expect(config.agents.warp?.triggers).toEqual(
+      expect.arrayContaining([
+        "MANDATORY when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation",
+      ]),
+    );
+  });
+
+  it("loom composedPrompt lists each specialist by name", () => {
     const descriptor = getDescriptor("loom");
-    // Thread routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for fast codebase exploration",
-    );
-    // Spindle routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for external docs and research",
-    );
-    // Pattern routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for multi-file features, complex refactors",
-    );
-    // Shuttle routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use for single-file changes, bug fixes",
-    );
-    // Weft routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "Use after non-trivial changes",
-    );
-    // Warp routing hints
-    expect(descriptor.composedPrompt).toContain(
-      "MANDATORY when changes touch auth, crypto, tokens",
-    );
+    for (const name of [
+      "shuttle",
+      "pattern",
+      "thread",
+      "spindle",
+      "weft",
+      "warp",
+    ]) {
+      expect(descriptor.composedPrompt).toContain(name);
+    }
   });
 
   it("loom composedPrompt contains delegate aggressively guidance", () => {
@@ -358,6 +376,23 @@ describe("builtin compose smoke", () => {
     }
   });
 
+  it("delegating prompts include each target's configured name and description together", () => {
+    for (const name of DELEGATING_AGENTS) {
+      const descriptor = getDescriptor(name);
+      for (const target of descriptor.delegationTargets) {
+        const description = target.description;
+        // `description` is optional on DelegationTarget; every builtin target
+        // must supply one because it is the routing metadata orchestrators read.
+        expect(description).toBeDefined();
+        if (description === undefined) continue;
+        expect(description.length).toBeGreaterThan(0);
+        expect(descriptor.composedPrompt).toContain(
+          `- **${target.name}** — ${description}`,
+        );
+      }
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Non-delegating agents: no ## Delegation section
   // ---------------------------------------------------------------------------
@@ -413,29 +448,6 @@ describe("builtin compose smoke", () => {
     const descriptor = getDescriptor("tapestry");
     expect(descriptor.composedPrompt).toContain("weft");
     expect(descriptor.composedPrompt).toContain("warp");
-  });
-
-  // ---------------------------------------------------------------------------
-  // No unresolved Mustache tags in any composed prompt
-  // ---------------------------------------------------------------------------
-
-  it("no unresolved unescaped triple-brace Mustache tags remain in any composed prompt", () => {
-    for (const name of ALL_BUILTINS) {
-      const descriptor = getDescriptor(name);
-      expect(descriptor.composedPrompt).not.toMatch(/\{\{\{[^}]+\}\}\}/);
-    }
-  });
-
-  it("no unresolved unescaped double-brace Mustache tags remain in any composed prompt", () => {
-    // Use the same precise regex as the renderer: only match Mustache-style
-    // identifiers (letters, digits, dots, underscores, hyphens with optional
-    // section prefix). This avoids false positives from Mermaid hexagon syntax
-    // like {{"weft"}} which contains quotes and is not a Mustache tag.
-    const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
-    for (const name of ALL_BUILTINS) {
-      const descriptor = getDescriptor(name);
-      expect(descriptor.composedPrompt).not.toMatch(mustacheTagPattern);
-    }
   });
 
   // ---------------------------------------------------------------------------

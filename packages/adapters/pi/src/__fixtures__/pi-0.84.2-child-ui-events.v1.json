@@ -1,0 +1,1424 @@
+{
+  "schemaVersion": 1,
+  "events": [
+    {
+      "ordinalId": 0,
+      "eventType": "agent_start",
+      "payload": {
+        "type": "agent_start"
+      }
+    },
+    {
+      "ordinalId": 1,
+      "eventType": "turn_start",
+      "payload": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "ordinalId": 2,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<prompt-omitted>"
+            }
+          ],
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 3,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "<prompt-omitted>"
+            }
+          ],
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 4,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-1",
+              "name": "read",
+              "arguments": {
+                "path": "weave-capture-sample.txt"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 5,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_start",
+          "contentIndex": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 6,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 7,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 8,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_start",
+          "contentIndex": 1
+        }
+      }
+    },
+    {
+      "ordinalId": 9,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_delta",
+          "contentIndex": 1,
+          "delta": "{\"path\":\"weave-capture-sample.txt\"}"
+        }
+      }
+    },
+    {
+      "ordinalId": 10,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_end",
+          "contentIndex": 1,
+          "toolCall": {
+            "type": "toolCall",
+            "id": "tool-call-1",
+            "name": "read",
+            "arguments": {
+              "path": "weave-capture-sample.txt"
+            }
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 11,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-1",
+              "name": "read",
+              "arguments": {
+                "path": "weave-capture-sample.txt"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 12,
+      "eventType": "tool_execution_start",
+      "payload": {
+        "type": "tool_execution_start",
+        "toolCallId": "tool-call-1",
+        "toolName": "read",
+        "args": {
+          "path": "weave-capture-sample.txt"
+        }
+      }
+    },
+    {
+      "ordinalId": 13,
+      "eventType": "tool_execution_end",
+      "payload": {
+        "type": "tool_execution_end",
+        "toolCallId": "tool-call-1",
+        "toolName": "read",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "weave capture deterministic workspace file\n"
+            }
+          ]
+        },
+        "isError": false
+      }
+    },
+    {
+      "ordinalId": 14,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "toolResult",
+          "toolCallId": "tool-call-1",
+          "toolName": "read",
+          "content": [
+            {
+              "type": "text",
+              "text": "weave capture deterministic workspace file\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 15,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "toolResult",
+          "toolCallId": "tool-call-1",
+          "toolName": "read",
+          "content": [
+            {
+              "type": "text",
+              "text": "weave capture deterministic workspace file\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 16,
+      "eventType": "turn_end",
+      "payload": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-1",
+              "name": "read",
+              "arguments": {
+                "path": "weave-capture-sample.txt"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        },
+        "toolResults": [
+          {
+            "role": "toolResult",
+            "toolCallId": "tool-call-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "weave capture deterministic workspace file\n"
+              }
+            ],
+            "isError": false,
+            "timestamp": 0
+          }
+        ]
+      }
+    },
+    {
+      "ordinalId": 17,
+      "eventType": "turn_start",
+      "payload": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "ordinalId": 18,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-2",
+              "name": "bash",
+              "arguments": {
+                "command": "echo weave-capture-ok"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 19,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_start",
+          "contentIndex": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 20,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 21,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 22,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_start",
+          "contentIndex": 1
+        }
+      }
+    },
+    {
+      "ordinalId": 23,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_delta",
+          "contentIndex": 1,
+          "delta": "{\"command\":\"echo weave-capture-ok\"}"
+        }
+      }
+    },
+    {
+      "ordinalId": 24,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "toolcall_end",
+          "contentIndex": 1,
+          "toolCall": {
+            "type": "toolCall",
+            "id": "tool-call-2",
+            "name": "bash",
+            "arguments": {
+              "command": "echo weave-capture-ok"
+            }
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 25,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-2",
+              "name": "bash",
+              "arguments": {
+                "command": "echo weave-capture-ok"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 26,
+      "eventType": "tool_execution_start",
+      "payload": {
+        "type": "tool_execution_start",
+        "toolCallId": "tool-call-2",
+        "toolName": "bash",
+        "args": {
+          "command": "echo weave-capture-ok"
+        }
+      }
+    },
+    {
+      "ordinalId": 27,
+      "eventType": "tool_execution_update",
+      "payload": {
+        "type": "tool_execution_update",
+        "toolCallId": "tool-call-2",
+        "toolName": "bash",
+        "args": {
+          "command": "echo weave-capture-ok"
+        },
+        "partialResult": {
+          "content": []
+        }
+      }
+    },
+    {
+      "ordinalId": 28,
+      "eventType": "tool_execution_update",
+      "payload": {
+        "type": "tool_execution_update",
+        "toolCallId": "tool-call-2",
+        "toolName": "bash",
+        "args": {
+          "command": "echo weave-capture-ok"
+        },
+        "partialResult": {
+          "content": [
+            {
+              "type": "text",
+              "text": "weave-capture-ok\n"
+            }
+          ],
+          "details": {}
+        }
+      }
+    },
+    {
+      "ordinalId": 29,
+      "eventType": "tool_execution_end",
+      "payload": {
+        "type": "tool_execution_end",
+        "toolCallId": "tool-call-2",
+        "toolName": "bash",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "weave-capture-ok\n"
+            }
+          ]
+        },
+        "isError": false
+      }
+    },
+    {
+      "ordinalId": 30,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "toolResult",
+          "toolCallId": "tool-call-2",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "weave-capture-ok\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 31,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "toolResult",
+          "toolCallId": "tool-call-2",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "weave-capture-ok\n"
+            }
+          ],
+          "isError": false,
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 32,
+      "eventType": "turn_end",
+      "payload": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "toolCall",
+              "id": "tool-call-2",
+              "name": "bash",
+              "arguments": {
+                "command": "echo weave-capture-ok"
+              }
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 0
+        },
+        "toolResults": [
+          {
+            "role": "toolResult",
+            "toolCallId": "tool-call-2",
+            "toolName": "bash",
+            "content": [
+              {
+                "type": "text",
+                "text": "weave-capture-ok\n"
+              }
+            ],
+            "isError": false,
+            "timestamp": 0
+          }
+        ]
+      }
+    },
+    {
+      "ordinalId": 33,
+      "eventType": "turn_start",
+      "payload": {
+        "type": "turn_start"
+      }
+    },
+    {
+      "ordinalId": 34,
+      "eventType": "message_start",
+      "payload": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "text",
+              "text": "Weave capture deterministic final answer."
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 35,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_start",
+          "contentIndex": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 36,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 37,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": {
+            "marker": "<reasoning-omitted>",
+            "byteLength": 1,
+            "lineCount": 1,
+            "truncated": false
+          }
+        }
+      }
+    },
+    {
+      "ordinalId": 38,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "text_start",
+          "contentIndex": 1
+        }
+      }
+    },
+    {
+      "ordinalId": 39,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "Weave capture "
+        }
+      }
+    },
+    {
+      "ordinalId": 40,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "deterministic final "
+        }
+      }
+    },
+    {
+      "ordinalId": 41,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 1,
+          "delta": "answer."
+        }
+      }
+    },
+    {
+      "ordinalId": 42,
+      "eventType": "message_update",
+      "payload": {
+        "type": "message_update",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "assistantMessageEvent": {
+          "type": "text_end",
+          "contentIndex": 1,
+          "content": "Weave capture deterministic final answer."
+        }
+      }
+    },
+    {
+      "ordinalId": 43,
+      "eventType": "message_end",
+      "payload": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "text",
+              "text": "Weave capture deterministic final answer."
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 0
+        }
+      }
+    },
+    {
+      "ordinalId": 44,
+      "eventType": "turn_end",
+      "payload": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": {
+                "marker": "<reasoning-omitted>",
+                "byteLength": 1,
+                "lineCount": 1,
+                "truncated": false
+              }
+            },
+            {
+              "type": "text",
+              "text": "Weave capture deterministic final answer."
+            }
+          ],
+          "api": "<provider-value-omitted>",
+          "provider": "<provider-value-omitted>",
+          "model": "<provider-value-omitted>",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 0
+        },
+        "toolResults": []
+      }
+    },
+    {
+      "ordinalId": 45,
+      "eventType": "agent_end",
+      "payload": {
+        "type": "agent_end",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<prompt-omitted>"
+              }
+            ],
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": {
+                  "marker": "<reasoning-omitted>",
+                  "byteLength": 1,
+                  "lineCount": 1,
+                  "truncated": false
+                }
+              },
+              {
+                "type": "toolCall",
+                "id": "tool-call-1",
+                "name": "read",
+                "arguments": {
+                  "path": "weave-capture-sample.txt"
+                }
+              }
+            ],
+            "api": "<provider-value-omitted>",
+            "provider": "<provider-value-omitted>",
+            "model": "<provider-value-omitted>",
+            "usage": {
+              "input": 1,
+              "output": 1,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 2,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 0
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "tool-call-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "weave capture deterministic workspace file\n"
+              }
+            ],
+            "isError": false,
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": {
+                  "marker": "<reasoning-omitted>",
+                  "byteLength": 1,
+                  "lineCount": 1,
+                  "truncated": false
+                }
+              },
+              {
+                "type": "toolCall",
+                "id": "tool-call-2",
+                "name": "bash",
+                "arguments": {
+                  "command": "echo weave-capture-ok"
+                }
+              }
+            ],
+            "api": "<provider-value-omitted>",
+            "provider": "<provider-value-omitted>",
+            "model": "<provider-value-omitted>",
+            "usage": {
+              "input": 1,
+              "output": 1,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 2,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 0
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "tool-call-2",
+            "toolName": "bash",
+            "content": [
+              {
+                "type": "text",
+                "text": "weave-capture-ok\n"
+              }
+            ],
+            "isError": false,
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": {
+                  "marker": "<reasoning-omitted>",
+                  "byteLength": 1,
+                  "lineCount": 1,
+                  "truncated": false
+                }
+              },
+              {
+                "type": "text",
+                "text": "Weave capture deterministic final answer."
+              }
+            ],
+            "api": "<provider-value-omitted>",
+            "provider": "<provider-value-omitted>",
+            "model": "<provider-value-omitted>",
+            "usage": {
+              "input": 1,
+              "output": 1,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 2,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 0
+          }
+        ],
+        "willRetry": false
+      }
+    },
+    {
+      "ordinalId": 46,
+      "eventType": "agent_settled",
+      "payload": {
+        "type": "agent_settled"
+      }
+    }
+  ]
+}

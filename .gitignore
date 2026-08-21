@@ -3,6 +3,10 @@ node_modules/
 ~/
 .bun/
 
+# Prototype-only dependency trees (the prototypes themselves are committed)
+prototypes/node_modules
+prototypes/pi-subagent-observability/
+
 .weave/
 
 # Build output

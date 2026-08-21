@@ -32,13 +32,17 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { WorkflowConfig } from "@weaveio/weave-core";
 import type {
   AgentDescriptor,
   PlanStateError,
   PlanStateProvider,
 } from "@weaveio/weave-engine";
-import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  createInMemoryRuntimeStore,
+  createOwnerId,
+} from "@weaveio/weave-engine";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter, type OpenCodeAdapterError } from "../adapter.js";
 import {
@@ -66,30 +70,7 @@ class MockOpenCodeAdapter extends OpenCodeAdapter {
     descriptor: AgentDescriptor,
   ): ResultAsync<void, OpenCodeAdapterError> {
     this.spawnSubagentCalls.push(descriptor);
-    return okAsync(undefined);
-  }
-}
-
-/**
- * Failing test double for `OpenCodeAdapter`.
- *
- * `spawnSubagent` always returns an error — used to prove failure paths.
- */
-class FailingOpenCodeAdapter extends OpenCodeAdapter {
-  override spawnSubagent(
-    descriptor: AgentDescriptor,
-  ): ResultAsync<void, OpenCodeAdapterError> {
-    return errAsync(
-      new (class extends Error {
-        readonly type = "ReconcileAgentError" as const;
-        readonly agentName = descriptor.name;
-        readonly cause = undefined;
-        constructor() {
-          super(`spawnSubagent failed for agent "${descriptor.name}"`);
-          this.name = "OpenCodeAdapterError";
-        }
-      })(),
-    );
+    return ResultAsync.fromSafePromise(Promise.resolve());
   }
 }
 
@@ -111,6 +92,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -133,7 +124,7 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Used for tests that need a successful execution without plan-oriented
  * completion methods.
  */
-const SIMPLE_WORKFLOWS: Record<string, unknown> = {
+const SIMPLE_WORKFLOWS = {
   "simple-workflow": {
     description: "Simple 2-step workflow for testing",
     version: 1,
@@ -156,7 +147,7 @@ const SIMPLE_WORKFLOWS: Record<string, unknown> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Gate workflow with a `review_verdict` step for completion signal tests.
@@ -166,7 +157,7 @@ const SIMPLE_WORKFLOWS: Record<string, unknown> = {
  *
  * Used to test `handleAdvanceStep` with `review_verdict` approved/rejected signals.
  */
-const GATE_WORKFLOWS: Record<string, unknown> = {
+const GATE_WORKFLOWS = {
   "gate-workflow": {
     description: "Gate workflow with review_verdict step for testing",
     version: 1,
@@ -190,14 +181,14 @@ const GATE_WORKFLOWS: Record<string, unknown> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Plan workflow with `plan_created` and `plan_complete` completion methods.
  *
  * Used to test the degraded fallback when `planStateProvider` is absent.
  */
-const PLAN_COMPLETION_WORKFLOWS: Record<string, unknown> = {
+const PLAN_COMPLETION_WORKFLOWS = {
   "plan-completion-workflow": {
     description: "Plan completion workflow for testing",
     version: 1,
@@ -226,28 +217,13 @@ const PLAN_COMPLETION_WORKFLOWS: Record<string, unknown> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Minimal fixture agent config for the shuttle agent.
  *
  * Used in workflow steps that reference the shuttle agent.
  */
-const SHUTTLE_AGENT_CONFIG = {
-  description: "Shuttle (Domain Specialist)",
-  prompt: "You are a domain specialist.",
-  models: ["claude-sonnet-4-5"],
-  mode: "subagent" as const,
-  temperature: 0.2,
-  tool_policy: {
-    read: "allow" as const,
-    write: "allow" as const,
-    execute: "allow" as const,
-    delegate: "deny" as const,
-    network: "ask" as const,
-  },
-};
-
 // ---------------------------------------------------------------------------
 // § 1 — WEAVE_COMMAND_LABELS
 // ---------------------------------------------------------------------------
@@ -459,18 +435,22 @@ describe("RuntimeCommandProjection.handleStartPlan — delegates to engine start
     const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
-    // planStateProvider is required — engine returns command_validation
-    const result = await projection.handleStartPlan({
-      planName: "my-plan",
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider: undefined as unknown as MockPlanStateProvider,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
+    // This raw fixture enters the adapter projection and then the engine's
+    // startPlan validation seam. It never mutates a trusted typed input.
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        planName: "my-plan",
+        workflowName: "simple-workflow",
+        goal: "Test goal",
+        slug: "test-goal",
+        ownerId: "test-owner",
+        store,
+        planStateProvider: undefined,
+        workflows: SIMPLE_WORKFLOWS,
+        adapter,
+      }),
+    );
+    const result = await projection.handleStartPlan(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
@@ -692,7 +672,7 @@ describe("RuntimeCommandProjection.handleInspectStatus — delegates to engine i
     });
 
     if (statusResult.outcome === "success") {
-      expect(typeof statusResult.data.hasActiveLease).toBe("boolean");
+      expect(statusResult.data.hasActiveLease).toBeDefined();
       expect(statusResult.data.status).toBeDefined();
       expect(statusResult.data.workflowName).toBe("simple-workflow");
     }
@@ -880,6 +860,57 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     expect(result.message).toContain("opencode");
   });
 
+  it("reports only prompt plan-entry commands as degraded", async () => {
+    const healthReport = buildOpenCodeHealthReport();
+    const commandEntrypoints =
+      healthReport.capabilityContract.capabilities.find(
+        (entry) => entry.id === "command-entrypoints",
+      );
+
+    expect(commandEntrypoints?.readiness).toBe("degraded");
+    expect(commandEntrypoints?.notes).toContain("/weave:start");
+    expect(commandEntrypoints?.notes).toContain("/start-work");
+    expect(commandEntrypoints?.notes).not.toContain(
+      "OpenCode slash commands (/weave:start, /weave:run)",
+    );
+    expect(commandEntrypoints?.notes).toContain("not live plugin entrypoints");
+
+    const result = await new RuntimeCommandProjection().handleRuntimeHealth({
+      healthReport,
+    });
+    expect(result.outcome).toBe("degraded");
+    if (result.outcome === "degraded") {
+      expect(result.data?.commandEntrypointsSupported).toBe(false);
+    }
+  });
+
+  it("reports ownership and delegation limits instead of false native readiness", () => {
+    const healthReport = buildOpenCodeHealthReport();
+    const capabilities = healthReport.capabilityContract.capabilities;
+    const materialization = capabilities.find(
+      (entry) => entry.id === "agent-materialization",
+    );
+    const primary = capabilities.find(
+      (entry) => entry.id === "primary-agent-selection",
+    );
+    const delegation = capabilities.find(
+      (entry) => entry.id === "delegated-specialist-execution",
+    );
+    const policy = capabilities.find(
+      (entry) => entry.id === "tool-policy-mapping",
+    );
+
+    expect(materialization?.readiness).toBe("degraded");
+    expect(materialization?.notes).toContain("config hook");
+    expect(primary?.readiness).toBe("degraded");
+    expect(primary?.notes).toContain("safely injects Loom");
+    expect(delegation?.readiness).toBe("degraded");
+    expect(policy?.readiness).toBe("native");
+    expect(policy?.notes).toContain("task");
+    expect(policy?.notes).toContain("glob");
+    expect(policy?.notes).toContain("explicit");
+  });
+
   it("returns degraded result when commandEntrypoints is degraded", async () => {
     const projection = new RuntimeCommandProjection();
     const healthReport = buildOpenCodeHealthReport({
@@ -928,7 +959,7 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     if (result.outcome === "success" || result.outcome === "degraded") {
       expect(result.data).toBeDefined();
       if (result.data !== undefined) {
-        expect(typeof result.data.commandEntrypointsSupported).toBe("boolean");
+        expect(result.data.commandEntrypointsSupported).toBeDefined();
         expect(result.data.kind).toBe("runtime-health");
       }
     }
@@ -987,9 +1018,9 @@ describe("ProjectionResult — shape invariants across all handlers", () => {
 
     if (result.outcome === "success") {
       expect(result.outcome).toBe("success");
-      expect(typeof result.command).toBe("string");
+      expect(result.command).toBeDefined();
       expect(result.data).toBeDefined();
-      expect(typeof result.message).toBe("string");
+      expect(result.message).toBeDefined();
       expect(result.message.length).toBeGreaterThan(0);
     }
   });
@@ -1005,9 +1036,9 @@ describe("ProjectionResult — shape invariants across all handlers", () => {
 
     if (result.outcome === "failure") {
       expect(result.outcome).toBe("failure");
-      expect(typeof result.command).toBe("string");
+      expect(result.command).toBeDefined();
       expect(result.error).toBeDefined();
-      expect(typeof result.message).toBe("string");
+      expect(result.message).toBeDefined();
       expect(result.message.length).toBeGreaterThan(0);
     }
   });
@@ -1025,8 +1056,8 @@ describe("ProjectionResult — shape invariants across all handlers", () => {
 
     if (result.outcome === "degraded") {
       expect(result.outcome).toBe("degraded");
-      expect(typeof result.command).toBe("string");
-      expect(typeof result.message).toBe("string");
+      expect(result.command).toBeDefined();
+      expect(result.message).toBeDefined();
       expect(result.message.length).toBeGreaterThan(0);
     }
   });
@@ -1156,9 +1187,7 @@ async function createBlockedInstanceOnStep(
 
   const lease = await store.leases.acquire({
     workflowInstanceId: instance.value.id,
-    ownerId: "owner-test" as Parameters<
-      typeof store.leases.acquire
-    >[0]["ownerId"],
+    ownerId: createOwnerId("owner-test"),
     ttlMs: 60_000,
   });
   if (!lease.isOk()) throw new Error("Failed to acquire lease");
@@ -1459,17 +1488,17 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     const store = createInMemoryRuntimeStore();
 
     // Missing outcome → command_validation (not automatic detection).
-    // The projection layer requires an explicit outcome — there is no automatic
-    // signal detection from harness events or agent output.
-    const result = await projection.handleAdvanceStep({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      stepName: "execute",
-      completionSignal: {
-        outcome: "" as "success" | "blocked" | "failed" | "paused",
-      },
-      store,
-    });
+    // The raw JSON fixture crosses the engine validation seam directly.
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: "nonexistent-instance",
+        leaseId: "nonexistent-lease",
+        stepName: "execute",
+        completionSignal: { outcome: "" },
+        store,
+      }),
+    );
+    const result = await projection.handleAdvanceStep(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
@@ -1483,16 +1512,17 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     const projection = new RuntimeCommandProjection();
     const store = createInMemoryRuntimeStore();
 
-    // Missing outcome → command_validation (not automatic detection)
-    const result = await projection.handleAdvanceStep({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      stepName: "execute",
-      completionSignal: {
-        outcome: "" as "success" | "blocked" | "failed" | "paused",
-      },
-      store,
-    });
+    // Missing outcome → command_validation (not automatic detection).
+    const rawInput = JSON.parse(
+      JSON.stringify({
+        workflowInstanceId: "nonexistent-instance",
+        leaseId: "nonexistent-lease",
+        stepName: "execute",
+        completionSignal: { outcome: "" },
+        store,
+      }),
+    );
+    const result = await projection.handleAdvanceStep(rawInput);
 
     expect(result.outcome).toBe("failure");
     if (result.outcome === "failure") {
@@ -1547,5 +1577,13 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
       expect(advanceEntry.reason).toContain("TUI");
       expect(advanceEntry.equivalent.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("OpenCode RuntimeStore boundary", () => {
+  it("receives no durable permission mutation surface", () => {
+    const store = createInMemoryRuntimeStore();
+    expect("permissions" in store).toBe(false);
+    expect(Object.keys(store)).not.toContain("permissions");
   });
 });

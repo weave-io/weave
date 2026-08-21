@@ -24,7 +24,7 @@ Rules:
 | Feature | Syntax |
 | --- | --- |
 | Comments | `# comment` |
-| Strings | Double-quoted strings, or triple-quoted multiline strings. |
+| Strings | Double-quoted strings, or triple-quoted `""" ... """` multiline strings. The repository's [Multiline strings](https://github.com/weaveio/weave/blob/main/docs/reference/dsl.md#multiline-strings) section is the normative contract: raw content with no escapes, closing at the first `"""`, minimum-count dedent, and normalized line endings. |
 | Arrays | JSON-style arrays such as `["a", "b"]`. |
 | Enums | Bare identifiers such as `allow`, `deny`, `primary`, `subagent`. |
 | Numbers | Bare numeric literals. |
@@ -57,22 +57,30 @@ Supported top-level forms include:
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. |
 | `temperature` | number | Optional generation preference. |
 | `skills` | string[] | Skill names resolved using adapter-provided context. |
-| `triggers` | object[] | Delegation metadata with `domain` and `trigger`. |
+| `triggers` | string[] | Ordered routing guidance strings shown to delegating agents. Each entry is a non-blank string. |
+| `fast` | literal `true` | Optional neutral provider-acceleration intent. Only `fast true` is valid; omit it to preserve provider defaults. |
 | `routing.delegation_exclude` | string[] | Exclude named targets from delegation guidance. |
 | `tool_policy` | block | Abstract capability permissions. |
+
+Structured trigger objects with `domain`, `trigger`, or `routing_hint` are invalid, and so are `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority`. Across config layers, trigger arrays union-merge: higher-priority entries come first, then lower-priority entries not already present by exact string equality. `fast` merges as a scalar, so a higher-priority layer can opt in but omission cannot cancel a lower-priority `fast true`.
 
 ## Category Fields
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `description` | string | Human-readable domain summary. |
-| `patterns` | string[] | Glob-like routing metadata. |
+| `description` | string | **Required.** Non-blank routing guidance shown for the generated category shuttle. |
+| `triggers` | string[] | Ordered routing guidance strings copied to the generated category shuttle. |
+| `fast` | literal `true` | Optional neutral provider-acceleration intent for the generated category shuttle. |
 | `models` | string[] | Category-specific model preference override. |
 | `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
 | `temperature` | number | Optional generation preference. |
 | `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
 
-Categories generate agents named `shuttle-{category}`.
+Categories generate agents named `shuttle-{category}`. The generated agent uses the category description in Loom and Tapestry delegation tables and does not inherit the base Shuttle's triggers; its description and its own merged trigger list provide category routing, while generic Shuttle triggers cover fallback work. A category `fast true` overrides the base Shuttle value; omitting `fast` inherits the base intent.
+
+Categories have no file-pattern field. Weave performs no deterministic file routing, and the removed `patterns` field has no replacement.
+
+These are breaking config requirements: every category block must add a non-blank `description`, delete `patterns`, and replace structured trigger objects with plain strings. Handwritten `.weave` files fail validation on the old forms. Legacy JSONC migration converts on a best-effort basis — it emits each trigger object's non-blank `routing_hint`, otherwise its `trigger`, drops patterns with a warning, skips categories without descriptions, and never infers `fast`.
 
 ## Tool Policy
 
@@ -113,6 +121,8 @@ Workflow step fields include `name`, `type`, `agent`, `prompt`, `completion`, `i
 
 ```weave
 workflow plan-and-implement {
+  version 1
+
   extension_points {
     before-plan
   }
@@ -149,6 +159,7 @@ disable skills ["tdd"]
 
 settings {
   log_level INFO
+  enforce_permissions true
   runtime {
     journal {
       strict false
@@ -156,6 +167,12 @@ settings {
   }
 }
 ```
+
+`enforce_permissions` defaults to enabled behavior. Set it to `false` to let supporting adapters preserve native or tool-owner permission behavior. The Pi adapter applies the setting to parent and authenticated child sessions.
+
+`settings.adapters.<harness>` contains adapter-owned JSON-like settings. Core validates the shared shape and limits, then preserves the block for the named adapter; it does not interpret harness-specific keys. Objects deep-merge, arrays union-merge, and scalars override across built-in, global, and project layers. See [Config Loading](../../configuration/) for merge behavior and the [Pi adapter reference](../adapters/pi/) for harness-facing behavior. The repository's [DSL reference](https://github.com/weaveio/weave/blob/main/docs/reference/dsl.md#settings-and-disables) is the canonical contract for shared limits.
+
+Pi's `child_inspection` settings, exact defaults, bounds, private storage, controls, quotas, and recovery limits are canonical in the repository's [amended Spec 33](https://github.com/weaveio/weave/blob/main/docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings). The [Pi adapter reference](../adapters/pi/) explains how the adapter exposes them without making history engine-owned.
 
 `continuation` and `analytics` are not current validated public schema blocks.
 
@@ -170,8 +187,7 @@ Do not use these as current public instructions:
 | `routes` | Unsupported in current public DSL. |
 | `continuation { ... }` | Not current validated public schema. |
 | `analytics { ... }` | Not current validated public schema. |
-| `weave build` | No current CLI command. |
 
-## Related Guides
+## Related pages
 
-Use [Configuration](../../configuration/) for authoring and validation workflow. Use [Agents and Categories](../../agents-and-categories/) and [Workflows](../../workflows/) for task-oriented examples.
+Use [Configuration](../../configuration/) for authoring and validation. Use [Agents and categories](../../agents-and-categories/) and [Workflows](../../workflows/) for examples.

@@ -9,8 +9,8 @@
  * inputs and return normalized results. They never scan harness directories,
  * query harness APIs, register concrete hooks, or mutate harness state.
  *
- * See: docs/specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md
- * See: docs/adapter-boundary.md
+ * See: docs/reference/adapter-capabilities.md
+ * See: docs/architecture/adapter-boundary.md
  */
 
 import { z } from "zod";
@@ -48,8 +48,8 @@ export const CapabilityReadinessSchema = z.enum([
 // ---------------------------------------------------------------------------
 
 /**
- * Stable identifiers for all 19 capabilities defined in the Core Readiness
- * Profile (12 required + 7 optional).
+ * Stable identifiers for all 21 capabilities defined in the Core Readiness
+ * Profile (12 required + 9 optional).
  *
  * Required capabilities (12):
  *   config-materialization, agent-materialization, primary-agent-selection,
@@ -57,12 +57,13 @@ export const CapabilityReadinessSchema = z.enum([
  *   workflow-persistence, workflow-step-dispatch, plan-file-compatibility,
  *   command-entrypoints, event-logging, token-usage-reporting
  *
- * Optional capabilities (7):
+ * Optional capabilities (9):
  *   idle-continuation, compaction-recovery, context-window-monitor,
  *   analytics-dashboard, eval-integration, static-artifact-generation,
- *   multiple-active-workflows
+ *   multiple-active-workflows, model-thinking-activation,
+ *   provider-fast-activation
  *
- * ## Execution-entry capability model (Spec 22 Unit 4)
+ * ## Execution-entry capability model (execution lifecycle contract)
  *
  * `command-entrypoints` is the **canonical execution-entry capability**. It
  * models how an adapter exposes the explicit user-authorized trigger that
@@ -84,7 +85,7 @@ export const CapabilityReadinessSchema = z.enum([
  * a substitute for `command-entrypoints` readiness when evaluating whether
  * the harness can initiate durable execution.
  *
- * See: docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md (Unit 4)
+ * See: docs/reference/execution-lifecycle.md
  * See: docs/adr/0004-workflow-first-execution-contract.md
  */
 export type CapabilityId =
@@ -108,7 +109,9 @@ export type CapabilityId =
   | "analytics-dashboard"
   | "eval-integration"
   | "static-artifact-generation"
-  | "multiple-active-workflows";
+  | "multiple-active-workflows"
+  | "model-thinking-activation"
+  | "provider-fast-activation";
 
 export const CapabilityIdSchema = z.enum([
   // Required
@@ -132,6 +135,38 @@ export const CapabilityIdSchema = z.enum([
   "eval-integration",
   "static-artifact-generation",
   "multiple-active-workflows",
+  "model-thinking-activation",
+  "provider-fast-activation",
+]);
+
+/** Optional capability for provider acceleration request and evidence. */
+export const PROVIDER_FAST_ACTIVATION_ID = "provider-fast-activation" as const;
+
+/**
+ * Bounded runtime states for `provider-fast-activation`.
+ *
+ * Absence of `fast true` emits no acceleration state at all. These values are
+ * sanitized `runtimeStatus` tokens, not a second readiness machine:
+ * `applied` may only accompany `native`, `requested`/`declared`/`not-confirmed`
+ * stay at or below `degraded`, and `unsupported` cannot be raised.
+ */
+export const PROVIDER_FAST_ACTIVATION_STATUSES = [
+  "declared",
+  "requested",
+  "applied",
+  "not-confirmed",
+  "unsupported",
+] as const;
+
+export type ProviderFastActivationStatus =
+  (typeof PROVIDER_FAST_ACTIVATION_STATUSES)[number];
+
+export const ProviderFastActivationStatusSchema = z.enum(
+  PROVIDER_FAST_ACTIVATION_STATUSES,
+);
+
+const OtherCapabilityIdSchema = CapabilityIdSchema.exclude([
+  PROVIDER_FAST_ACTIVATION_ID,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -163,6 +198,8 @@ export interface CapabilityEntry {
   /**
    * Current runtime status string, if the adapter can supply one.
    * Must be sanitized — no credentials, local paths, or secrets.
+   * For `provider-fast-activation`, a present value must be one of
+   * {@link ProviderFastActivationStatus}.
    */
   runtimeStatus?: string;
   /**
@@ -182,16 +219,31 @@ export interface CapabilityEntry {
   remediationHint?: string;
 }
 
-export const CapabilityEntrySchema = z.object({
-  id: CapabilityIdSchema,
+const CapabilityEntryFieldsSchema = z.object({
   description: z.string().min(1),
   readiness: CapabilityReadinessSchema,
   notes: z.string().optional(),
-  runtimeStatus: z.string().optional(),
   blockingImpact: z.string().optional(),
   supplier: z.string().optional(),
   remediationHint: z.string().optional(),
 });
+
+/**
+ * Exported capability entry. `provider-fast-activation` reuses the shared
+ * fields and accepts only {@link ProviderFastActivationStatus} when
+ * `runtimeStatus` is present. Other capabilities keep sanitized freeform
+ * status strings.
+ */
+export const CapabilityEntrySchema = z.discriminatedUnion("id", [
+  CapabilityEntryFieldsSchema.extend({
+    id: z.literal(PROVIDER_FAST_ACTIVATION_ID),
+    runtimeStatus: ProviderFastActivationStatusSchema.optional(),
+  }),
+  CapabilityEntryFieldsSchema.extend({
+    id: OtherCapabilityIdSchema,
+    runtimeStatus: z.string().optional(),
+  }),
+]);
 
 // ---------------------------------------------------------------------------
 // § 1.3 — Adapter Capability Contract
@@ -222,6 +274,10 @@ export const AdapterCapabilityContractSchema = z.object({
  * only when the adapter declares that the harness exposes usage data. When the
  * adapter explicitly marks it `unsupported` with a documented reason, the
  * evaluator downgrades it to a warning. See `evaluateCoreReadinessProfile`.
+ *
+ * Native session storage is not a separate required capability. A harness that
+ * addresses sessions by path proves containment inside its own adapter, and
+ * delegation readiness is reported through `delegated-specialist-execution`.
  */
 export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
   "config-materialization",
@@ -239,8 +295,14 @@ export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
 ] as const;
 
 /**
- * The 7 optional capability IDs for the Core Readiness Profile.
+ * The 9 optional capability IDs for the Core Readiness Profile.
  * Gaps in optional capabilities produce warnings, not failures.
+ *
+ * `provider-fast-activation` is the optional provider-acceleration capability.
+ * Static readiness is a truthful ceiling for whether the adapter can request
+ * acceleration. Runtime evidence may only lower that ceiling. A descriptor
+ * without `fast true` does not require this capability and emits no requested
+ * or applied state.
  */
 export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "idle-continuation",
@@ -250,13 +312,57 @@ export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "eval-integration",
   "static-artifact-generation",
   "multiple-active-workflows",
+  "model-thinking-activation",
+  "provider-fast-activation",
 ] as const;
 
-/** All 19 capability IDs in profile order (required then optional). */
+/** All 21 capability IDs in profile order (required then optional). */
 export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,
 ] as const;
+
+/**
+ * Map a bounded acceleration state onto the existing readiness vocabulary.
+ * This is a ceiling hint for that state, not a grant to raise a declaration.
+ */
+export function readinessForProviderFastStatus(
+  status: ProviderFastActivationStatus,
+): CapabilityReadiness {
+  if (status === "applied") return "native";
+  if (status === "unsupported") return "unsupported";
+  return "degraded";
+}
+
+/**
+ * Resolve the acceleration state for one descriptor.
+ *
+ * No `fast true` returns `undefined` and must not emit requested/applied.
+ * A declared descriptor with no attempt is `declared`.
+ */
+export function providerFastActivationState(input: {
+  readonly fast?: true;
+  readonly status?: ProviderFastActivationStatus;
+}): ProviderFastActivationStatus | undefined {
+  if (input.fast !== true) return undefined;
+  return input.status ?? "declared";
+}
+
+/**
+ * Combine a static ceiling with one bounded acceleration state.
+ * Evidence can lower readiness but never raise it.
+ */
+export function effectiveProviderFastReadiness(
+  declared: CapabilityReadiness,
+  status: ProviderFastActivationStatus | undefined,
+): CapabilityReadiness {
+  if (status === undefined) return declared;
+  if (status === "applied") return lowerReadinessByProbe(declared, "ok");
+  if (status === "unsupported") {
+    return lowerReadinessByProbe(declared, "unavailable");
+  }
+  return lowerReadinessByProbe(declared, "degraded");
+}
 
 // ---------------------------------------------------------------------------
 // § 2.1 — Readiness Verdict and Outcome
@@ -477,20 +583,206 @@ export interface AdapterHealthReport {
   harness: string;
   /** ISO 8601 timestamp when the report was built. */
   timestamp: string;
-  /** Static capability contract as declared by the adapter. */
+  /** Static capability contract as declared by the adapter (ceiling). */
   capabilityContract: AdapterCapabilityContract;
   /** Runtime probe results supplied by the adapter. */
   probeResults: CapabilityProbeResult[];
-  /** Core Readiness Profile evaluation result. */
+  /** Core Readiness Profile evaluation against probe-lowered effective readiness. */
   profileResult: ProfileEvaluationResult;
+  /** Exactly one effective entry per capability ID after probe lowering. */
+  effectiveCapabilities: EffectiveCapabilityEntry[];
+  /** True when required effective gaps force health-only mode. */
+  healthOnlyMode: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// § 3.1 — Probe-lowered effective readiness (adapter capability contract extension / Pi adapter contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * How a probe was resolved for one capability ID during a generation.
+ *
+ * - `ok` / `degraded` / `unavailable` — single valid adapter probe status
+ * - `missing` — no probe supplied for the ID
+ * - `failed` — probe payload was unusable
+ * - `duplicate` — more than one probe for the same ID
+ * - `contradictory` — multiple probes disagreed on status
+ */
+export type EffectiveProbeResolution =
+  | "ok"
+  | "degraded"
+  | "unavailable"
+  | "missing"
+  | "failed"
+  | "duplicate"
+  | "contradictory";
+
+interface ResolvedProbe {
+  resolution: EffectiveProbeResolution;
+  details?: string;
+}
+
+/**
+ * One capability after probe lowering. Static declaration fields are preserved;
+ * `effectiveReadiness` is the readiness used for profile evaluation.
+ */
+export interface EffectiveCapabilityEntry extends CapabilityEntry {
+  /** Unchanged adapter-declared readiness (ceiling). */
+  readonly declaredReadiness: CapabilityReadiness;
+  /** Readiness after applying the generation probe. */
+  readonly effectiveReadiness: CapabilityReadiness;
+  /** How the probe for this ID was resolved. */
+  readonly probeResolution: EffectiveProbeResolution;
+  /** Sanitized probe detail, if any. */
+  readonly probeDetails?: string;
+}
+
+/** Aggregate effective evaluation for one controller generation. */
+export interface EffectiveCapabilityEvaluation {
+  /** Static declarations preserved unchanged. */
+  readonly declarations: AdapterCapabilityContract;
+  /** Exactly one effective entry per known capability ID (21). */
+  readonly effectiveCapabilities: EffectiveCapabilityEntry[];
+  /** Profile evaluation against effective readiness. */
+  readonly profileResult: ProfileEvaluationResult;
+  /**
+   * True when any required effective capability is `degraded` or `unsupported`
+   * (health-only mode). Equivalent to `!profileResult.ready` for the core
+   * profile after probe lowering.
+   */
+  readonly healthOnlyMode: boolean;
+}
+
+/**
+ * Lower a declared readiness ceiling by one sanitized probe outcome.
+ * Probes never raise readiness.
+ */
+export function lowerReadinessByProbe(
+  declared: CapabilityReadiness,
+  resolution: EffectiveProbeResolution,
+): CapabilityReadiness {
+  if (resolution === "ok") return declared;
+  if (resolution === "degraded") {
+    if (declared === "unsupported") return "unsupported";
+    return "degraded";
+  }
+  // unavailable | missing | failed | duplicate | contradictory
+  return "unsupported";
+}
+
+function resolveProbeForId(
+  id: CapabilityId,
+  probes: readonly CapabilityProbeResult[],
+): ResolvedProbe {
+  const matches = probes.filter((probe) => probe.capabilityId === id);
+  if (matches.length === 0) return { resolution: "missing" };
+  if (matches.length > 1) {
+    const statuses = new Set(matches.map((probe) => probe.probeStatus));
+    if (statuses.size > 1) {
+      return {
+        resolution: "contradictory",
+        details: "multiple probes disagreed on status",
+      };
+    }
+    return {
+      resolution: "duplicate",
+      details: "multiple probes supplied for the same capability",
+    };
+  }
+
+  const probe = matches[0];
+  if (probe === undefined) return { resolution: "missing" };
+
+  if (
+    probe.probeStatus !== "ok" &&
+    probe.probeStatus !== "degraded" &&
+    probe.probeStatus !== "unavailable"
+  ) {
+    return { resolution: "failed", details: probe.details };
+  }
+
+  return { resolution: probe.probeStatus, details: probe.details };
+}
+
+/**
+ * Evaluate static declarations through exactly one probe per capability ID.
+ *
+ * Effective-readiness rules for the Pi adapter capability contract:
+ * - Static declaration is a ceiling
+ * - `ok` preserves declaration
+ * - `degraded` lowers to degraded (without raising unsupported)
+ * - `unavailable` / missing / failed / duplicate / contradictory → unsupported
+ * - Required effective degraded/unsupported → health-only mode
+ * - Optional gaps remain warnings
+ * - Static declarations are preserved on the result
+ *
+ * This function is pure and performs no harness I/O.
+ */
+export function evaluateEffectiveCapabilities(
+  contract: AdapterCapabilityContract,
+  probeResults: readonly CapabilityProbeResult[],
+): EffectiveCapabilityEvaluation {
+  const byId = new Map<CapabilityId, CapabilityEntry>(
+    contract.capabilities.map((entry) => [entry.id, entry]),
+  );
+
+  const effectiveCapabilities: EffectiveCapabilityEntry[] = [];
+
+  for (const id of ALL_CAPABILITY_IDS) {
+    const declaredEntry = byId.get(id);
+    const declaredReadiness: CapabilityReadiness =
+      declaredEntry?.readiness ?? "unsupported";
+    const resolved = resolveProbeForId(id, probeResults);
+    const effectiveReadiness = lowerReadinessByProbe(
+      declaredReadiness,
+      resolved.resolution,
+    );
+
+    const base: CapabilityEntry = declaredEntry ?? {
+      id,
+      description: id,
+      readiness: "unsupported",
+    };
+
+    const effectiveEntry: EffectiveCapabilityEntry = {
+      ...base,
+      // Profile evaluation consumes `readiness` as the effective level.
+      readiness: effectiveReadiness,
+      declaredReadiness,
+      effectiveReadiness,
+      probeResolution: resolved.resolution,
+    };
+    if (resolved.details !== undefined) {
+      effectiveCapabilities.push({
+        ...effectiveEntry,
+        probeDetails: resolved.details,
+        runtimeStatus: resolved.details,
+      });
+    } else {
+      effectiveCapabilities.push(effectiveEntry);
+    }
+  }
+
+  const effectiveContract: AdapterCapabilityContract = {
+    capabilities: effectiveCapabilities,
+  };
+  const profileResult = evaluateCoreReadinessProfile(effectiveContract);
+
+  return {
+    declarations: contract,
+    effectiveCapabilities,
+    profileResult,
+    healthOnlyMode: !profileResult.ready,
+  };
 }
 
 /**
  * Build an `AdapterHealthReport` from adapter-supplied inputs.
  *
- * This function is pure: it calls `evaluateCoreReadinessProfile` internally
- * and stamps the current timestamp. It does not perform harness I/O, scan
- * directories, register hooks, or mutate harness state.
+ * This function is pure: it applies probe-lowered effective readiness, then
+ * evaluates the Core Readiness Profile against effective levels while
+ * preserving static declarations on the report. It does not perform harness
+ * I/O, scan directories, register hooks, or mutate harness state.
  *
  * @param input - Read-only adapter-supplied declarations and probe results.
  * @returns A complete health report ready for CLI rendering or JSON output.
@@ -498,13 +790,18 @@ export interface AdapterHealthReport {
 export function buildAdapterHealthReport(
   input: SafeAdapterInitInput,
 ): AdapterHealthReport {
-  const profileResult = evaluateCoreReadinessProfile(input.capabilityContract);
+  const effective = evaluateEffectiveCapabilities(
+    input.capabilityContract,
+    input.probeResults,
+  );
   return {
     harness: input.harness,
     timestamp: new Date().toISOString(),
     capabilityContract: input.capabilityContract,
     probeResults: input.probeResults,
-    profileResult,
+    profileResult: effective.profileResult,
+    effectiveCapabilities: effective.effectiveCapabilities,
+    healthOnlyMode: effective.healthOnlyMode,
   };
 }
 

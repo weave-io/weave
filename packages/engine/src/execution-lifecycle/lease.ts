@@ -11,12 +11,15 @@
 import { err, ok, type Result } from "neverthrow";
 import type { RuntimeStoreConflictError } from "../runtime/errors.js";
 import {
+  createExecutionLeaseId,
+  type ExecutionLease,
+  type ExecutionLeaseId,
+} from "../runtime/types.js";
+import {
   lifecycleLeaseConflictError,
   lifecyclePersistenceError,
 } from "./errors.js";
 import type {
-  ExecutionLease,
-  ExecutionLeaseId,
   LifecycleError,
   LifecycleLeaseConflictError,
   LifecyclePersistenceError,
@@ -50,9 +53,10 @@ export function mapConflictToLeaseConflict(
   workflowInstanceId: WorkflowInstanceId,
   storeError: RuntimeStoreConflictError,
 ): LifecycleLeaseConflictError {
-  const conflictingLeaseId = storeError.conflictingId
-    ? (storeError.conflictingId as ExecutionLeaseId)
-    : ("unknown" as ExecutionLeaseId);
+  const conflictingLeaseId =
+    storeError.conflictingId === undefined
+      ? createExecutionLeaseId("unknown")
+      : createExecutionLeaseId(storeError.conflictingId);
   return lifecycleLeaseConflictError(
     workflowInstanceId,
     conflictingLeaseId,
@@ -80,7 +84,7 @@ export function validateActiveLease(
     return err(
       lifecycleLeaseConflictError(
         workflowInstanceId,
-        "none" as ExecutionLeaseId,
+        createExecutionLeaseId("none"),
         "No active lease for this workflow instance",
       ),
     );

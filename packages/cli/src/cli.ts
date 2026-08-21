@@ -119,6 +119,7 @@ export async function run(
             "",
             `  ${theme.cyan("weave runtime status")}              ${theme.dim("Show runtime store status")}`,
             `  ${theme.cyan("weave runtime journal")} ${theme.dim("[--limit <n>]")}  ${theme.dim("Show recent journal entries")}`,
+            `  ${theme.cyan("weave runtime preferences")} ${theme.dim("[--namespace <ns>] [--limit <n>]")}  ${theme.dim("Show stored adapter preferences")}`,
           ].join("\n"),
         );
         return ok(1);
@@ -128,6 +129,102 @@ export async function run(
         theme,
         subcommand,
         limit: flags.limit,
+        namespace: flags.namespace,
+      });
+    }
+
+    case "adapter": {
+      const { parseAdapterTarget, renderAdapterHelp, runAdapter } =
+        await import("./commands/adapter.js");
+      const { resolveProductionAdapterCliRegistry } = await import(
+        "@weaveio/weave-adapter-pi/cli"
+      );
+      if (rest.length === 0 || flags.help) {
+        terminal.stdout(renderAdapterHelp(theme));
+        return ok(rest.length === 0 ? 1 : 0);
+      }
+      const target = parseAdapterTarget(rest);
+      if (target.isErr()) {
+        terminal.stderr(formatCliError(target.error));
+        terminal.stderr(renderAdapterHelp(theme));
+        return ok(1);
+      }
+      let resolved = target.value;
+      if (
+        resolved.action === "children.show" &&
+        (flags.cursor !== undefined ||
+          flags.parentSession !== undefined ||
+          flags.content === true ||
+          flags.contentCursor !== undefined)
+      ) {
+        const next = { ...resolved };
+        if (flags.cursor !== undefined) {
+          next.cursor = flags.cursor;
+        }
+        if (flags.content === true) {
+          next.content = true;
+        }
+        if (flags.contentCursor !== undefined) {
+          next.contentCursor = flags.contentCursor;
+        }
+        if (flags.parentSession !== undefined) {
+          next.parentSessionId = flags.parentSession;
+        }
+        resolved = next;
+      }
+      if (
+        resolved.action === "children.result" &&
+        (flags.cursor !== undefined || flags.parentSession !== undefined)
+      ) {
+        const next = { ...resolved };
+        if (flags.cursor !== undefined) {
+          next.cursor = flags.cursor;
+        }
+        if (flags.parentSession !== undefined) {
+          next.parentSessionId = flags.parentSession;
+        }
+        resolved = next;
+      }
+      if (
+        resolved.action === "children.delete" &&
+        flags.parentSession !== undefined
+      ) {
+        resolved = {
+          ...resolved,
+          parentSessionId: flags.parentSession,
+        };
+      }
+      const workspaceKey = process.cwd();
+      // Delete is gated inside resolveProductionAdapterCliRegistry before
+      // createProductionPorts / any cache or ref open.
+      const productionRegistry = await resolveProductionAdapterCliRegistry({
+        action: resolved.action,
+        workspaceKey,
+        accessMode: "read",
+      });
+      if (productionRegistry.isErr()) {
+        const error = productionRegistry.error;
+        const message =
+          error.type === "RequiredCapabilityUnavailable"
+            ? `RequiredCapabilityUnavailable: ${error.capabilityId} (${error.reason})`
+            : `Pi adapter command ports unavailable: ${error.type} (${error.reason})`;
+        terminal.stderr(
+          formatCliError({
+            type: "InvalidArgs",
+            message,
+          }),
+        );
+        return ok(1);
+      }
+      return runAdapter({
+        terminal,
+        theme,
+        target: resolved,
+        json: flags.json,
+        yes: flags.yes,
+        diagnostic: flags.diagnostic === true,
+        workspaceKey,
+        registry: productionRegistry.value,
       });
     }
 
@@ -213,7 +310,7 @@ function renderMigrateHelp(
     "",
     `  ${theme.boldCyan("OPTIONS")}`,
     "",
-    `    ${theme.cyan("--scope")} global|local  ${theme.dim("Choose migration scope (default: local)")}`,
+    `    ${theme.cyan("--scope")} global|local  ${theme.dim("Choose migration scope (default: global)")}`,
     `    ${theme.cyan("--yes, -y")}            ${theme.dim("Non-interactive: skip confirmation prompt")}`,
     `    ${theme.cyan("--force")}              ${theme.dim("Overwrite destination even if it exists (backup created)")}`,
     "",

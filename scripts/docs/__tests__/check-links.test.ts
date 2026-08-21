@@ -1,5 +1,25 @@
 import { describe, expect, it } from "bun:test";
-import { checkLinks, loadDocuments } from "../check-links.js";
+import {
+  checkLinks,
+  DEFAULT_LINK_CHECK_LIMITS,
+  type LinkCheckBound,
+  type LinkCheckLimits,
+  loadDocuments,
+} from "../check-links.js";
+
+const BUDGET_CASES: readonly [
+  LinkCheckBound,
+  Partial<LinkCheckLimits>,
+  Record<string, string>,
+][] = [
+  ["documents", { documents: 1 }, { "a.md": "# A", "b.md": "# B" }],
+  [
+    "links",
+    { links: 1 },
+    { "a.md": "[x](a.md) [y](a.md) [z](a.md)", "b.md": "# B" },
+  ],
+  ["anchors", { anchors: 1 }, { "a.md": "# A\n\n## B\n\n### C" }],
+];
 
 describe("checkLinks", () => {
   it.each([
@@ -28,5 +48,19 @@ describe("checkLinks", () => {
 
   it("accepts the current documentation tree", async () => {
     expect(checkLinks(await loadDocuments()).isOk()).toBe(true);
+  });
+
+  it.each(
+    BUDGET_CASES,
+  )("reports an exhausted %s budget", (bound, overrides, documents) => {
+    const result = checkLinks(
+      { documents },
+      { ...DEFAULT_LINK_CHECK_LIMITS, ...overrides },
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.type).toBe("LinkBudgetExceeded");
+    if (result.error.type !== "LinkBudgetExceeded") return;
+    expect(result.error.bound).toBe(bound);
   });
 });

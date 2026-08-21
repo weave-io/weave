@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
-import { loadConfig } from "@weaveio/weave-config";
-import { formatError, parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import { type ConfigLoadError, loadConfig } from "@weaveio/weave-config";
+import {
+  formatError,
+  parseConfig,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
 import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
@@ -99,25 +103,36 @@ function resolveValidationTarget(
   return undefined;
 }
 
+export function mapConfigLoadErrors(
+  cwd: string,
+  errors: ConfigLoadError[],
+): ValidateError {
+  return {
+    type: "ParseFailure",
+    path: cwd,
+    errors: errors.flatMap((error) => {
+      if (error.type === "FileReadError")
+        return [`${error.path}: could not read config`];
+      if (error.type === "BuiltinParseError")
+        return error.errors.map((e) => `builtins:${formatError(e)}`);
+      if (error.type === "MergeError")
+        return error.errors.flatMap((e) => {
+          if (e.type === "WorkflowExtensionError")
+            return `merge:${e.type}:${e.error.type}`;
+          return e.errors.map(
+            (issue) => `merge:${e.type}:${issue.path}:${issue.message}`,
+          );
+        });
+      return error.errors.map((e) => `${error.path}:${formatError(e)}`);
+    }),
+  };
+}
+
 function validateEffective(
   fs: FileSystem,
 ): ResultAsync<ValidatedConfig, ValidateError> {
   return loadConfig(fs.cwd())
-    .mapErr(
-      (errors): ValidateError => ({
-        type: "ParseFailure",
-        path: fs.cwd(),
-        errors: errors.flatMap((error) => {
-          if (error.type === "FileReadError")
-            return [`${error.path}: could not read config`];
-          if (error.type === "BuiltinParseError")
-            return error.errors.map((e) => `builtins:${formatError(e)}`);
-          if (error.type === "MergeError")
-            return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
-          return error.errors.map((e) => `${error.path}:${formatError(e)}`);
-        }),
-      }),
-    )
+    .mapErr((errors) => mapConfigLoadErrors(fs.cwd(), errors))
     .map((config) => ({ path: fs.cwd(), config }));
 }
 

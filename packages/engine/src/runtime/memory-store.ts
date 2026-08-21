@@ -7,10 +7,11 @@
  * Designed for use in unit and integration tests. Supports configurable
  * failure injection to exercise error paths without a real SQLite database.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { InMemoryPermissionApprovalRepository } from "../permissions/repository.js";
 import {
   conflictError,
   notFoundError,
@@ -18,9 +19,11 @@ import {
   type RuntimeStoreError,
 } from "./errors.js";
 import { RuntimeJournalWriter } from "./journal-writer.js";
+import { registerPermissionApprovalRepository } from "./permission-repository.js";
 import { sanitizeSnapshotMetadata } from "./sanitizer.js";
 import type {
   AcquireLeaseInput,
+  AdapterPreferenceRepository,
   CreateWorkflowInstanceInput,
   ExecutionLeaseRepository,
   RecordSessionSnapshotInput,
@@ -30,9 +33,19 @@ import type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "./store.js";
+import {
+  clampAdapterPreferenceListLimit,
+  compareAdapterPreferenceRecords,
+  validateAdapterPreferenceIdentity,
+  validateAdapterPreferenceNamespace,
+  validateAdapterPreferenceValue,
+} from "./store.js";
 import type {
+  AdapterPreferenceRecord,
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -41,13 +54,19 @@ import type {
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
-  JsonObject,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -59,6 +78,15 @@ import {
   createSessionSnapshotId,
   createWorkflowInstanceId,
 } from "./types.js";
+import {
+  applyObservationToRollup,
+  denormalizeUsageObservation,
+  emptyUsageRollup,
+  type NormalizedUsageObservation,
+  normalizeUsageObservation,
+  reconcileUsageReplay,
+  usageRollupKey,
+} from "./usage.js";
 
 // ---------------------------------------------------------------------------
 // Failure injection configuration
@@ -91,6 +119,20 @@ export interface InMemoryRuntimeStoreFailureConfig {
   snapshotRecord?: RuntimeStoreError;
   /** Injected error for `RuntimeJournalRepository.append`. */
   journalAppend?: RuntimeStoreError;
+  /** Injected error for `RuntimeJournalRepository.prune`. */
+  journalPrune?: RuntimeStoreError;
+  /** Injected error for `UsageRepository.recordObservation`. */
+  usageRecord?: RuntimeStoreError;
+  /** Injected error for `UsageRepository.pruneDetails`. */
+  usagePrune?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.set`. */
+  preferenceSet?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.get`. */
+  preferenceGet?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.list` and `listAll`. */
+  preferenceList?: RuntimeStoreError;
+  /** Injected error for `AdapterPreferenceRepository.remove`. */
+  preferenceRemove?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.transaction`. */
   transaction?: RuntimeStoreError;
   /** Injected error for `RuntimeStore.close`. */
@@ -116,6 +158,23 @@ export interface InMemoryRuntimeStoreOptions {
    * Can be updated at runtime via `store.failureConfig`.
    */
   readonly failOn?: InMemoryRuntimeStoreFailureConfig;
+}
+
+type MutableWorkflowInstance = {
+  -readonly [K in keyof WorkflowInstance]: WorkflowInstance[K];
+};
+
+type MutableArtifactRef = {
+  -readonly [K in keyof ArtifactRef]: ArtifactRef[K];
+};
+
+type MutableSessionSnapshot = {
+  -readonly [K in keyof SessionSnapshot]: SessionSnapshot[K];
+};
+
+interface InMemoryUsageSnapshot {
+  readonly observations: Map<string, NormalizedUsageObservation>;
+  readonly rollups: Map<string, UsageRollup>;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +236,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const instance = this.store.get(id);
     if (!instance) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     return okAsync(instance);
   }
@@ -201,7 +260,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     const now = new Date().toISOString();
     const isTerminal =
@@ -209,30 +268,18 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       input.status === "failed" ||
       input.status === "cancelled";
 
-    let stepPatch: Partial<WorkflowInstance> = {};
-    if (input.currentStepName !== undefined) {
-      stepPatch =
-        input.currentStepName !== null
-          ? { currentStepName: input.currentStepName }
-          : { currentStepName: undefined };
-    }
-
-    let errorPatch: Partial<WorkflowInstance> = {};
-    if (input.errorMessage !== undefined) {
-      errorPatch =
-        input.errorMessage !== null
-          ? { errorMessage: input.errorMessage }
-          : { errorMessage: undefined };
-    }
-
-    const updated: WorkflowInstance = {
+    const updated: MutableWorkflowInstance = {
       ...existing,
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...stepPatch,
-      ...errorPatch,
-      ...(isTerminal && !existing.completedAt ? { completedAt: now } : {}),
       updatedAt: now,
     };
+    if (input.status !== undefined) updated.status = input.status;
+    if (input.currentStepName !== undefined) {
+      updated.currentStepName = input.currentStepName ?? undefined;
+    }
+    if (input.errorMessage !== undefined) {
+      updated.errorMessage = input.errorMessage ?? undefined;
+    }
+    if (isTerminal && !existing.completedAt) updated.completedAt = now;
     this.store.set(id, updated);
     return okAsync(updated);
   }
@@ -253,7 +300,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
 
     // Find existing artifact with same name to determine revision (last occurrence)
@@ -264,20 +311,18 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     // Reuse stable id across revisions; assign new id for first occurrence
     const artifactId = prior ? prior.id : createArtifactId(newId());
 
-    const ref: ArtifactRef = {
+    const ref: MutableArtifactRef = {
       id: artifactId,
       name: artifact.name,
       path: artifact.path,
       revision,
       // New revision always resets approvalState to pending, invalidating prior approval.
       approvalState: "pending",
-      ...(artifact.producerAgent
-        ? { producerAgent: artifact.producerAgent }
-        : {}),
-      ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      ...(artifact.description ? { description: artifact.description } : {}),
-      ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
     };
+    if (artifact.producerAgent) ref.producerAgent = artifact.producerAgent;
+    if (artifact.mimeType) ref.mimeType = artifact.mimeType;
+    if (artifact.description) ref.description = artifact.description;
+    if (artifact.integrity) ref.integrity = artifact.integrity;
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: [...existing.artifacts, ref],
@@ -294,7 +339,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
 
     // Compute attempt number: count prior attempts for this step + 1
@@ -323,13 +368,19 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: ArtifactApprovalActor;
+      readonly decidedAt: string;
+      readonly expectedRevision: number;
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     if (this.failures.workflowUpdateArtifactApproval) {
       return errAsync(this.failures.workflowUpdateArtifactApproval);
     }
     const existing = this.store.get(id);
     if (!existing) {
-      return errAsync(notFoundError("WorkflowInstance", id as string));
+      return errAsync(notFoundError("WorkflowInstance", id));
     }
     // Find the last index of the artifact with the given id
     let artifactIndex = -1;
@@ -340,11 +391,44 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       }
     }
     if (artifactIndex === -1) {
-      return errAsync(notFoundError("ArtifactRef", artifactId as string));
+      return errAsync(notFoundError("ArtifactRef", artifactId));
     }
-    const updatedArtifacts = existing.artifacts.map((a, i) =>
-      i === artifactIndex ? { ...a, approvalState } : a,
-    );
+    const currentArtifact = existing.artifacts[artifactIndex];
+    if (
+      approval !== undefined &&
+      currentArtifact.revision !== approval.expectedRevision
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactRevision",
+          `Artifact revision changed before approval commit`,
+          artifactId,
+        ),
+      );
+    }
+    if (
+      approval !== undefined &&
+      currentArtifact.integrity !== undefined &&
+      currentArtifact.integrity.digest !== approval.expectedDigest
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactDigest",
+          `Artifact digest changed before approval commit`,
+          artifactId,
+        ),
+      );
+    }
+    const updatedArtifacts = existing.artifacts.map((a, i) => {
+      if (i !== artifactIndex) return a;
+      if (approval === undefined) return { ...a, approvalState };
+      return {
+        ...a,
+        approvalState,
+        approvalActor: approval.actor,
+        approvalDecidedAt: approval.decidedAt,
+      };
+    });
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: updatedArtifacts,
@@ -376,10 +460,16 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
   private readonly store = new Map<string, ExecutionLease>();
   private failures: InMemoryRuntimeStoreFailureConfig;
   private readonly clock: () => Date;
+  private readonly onRelease?: (leaseId: ExecutionLeaseId) => void;
 
-  constructor(failures: InMemoryRuntimeStoreFailureConfig, clock: () => Date) {
+  constructor(
+    failures: InMemoryRuntimeStoreFailureConfig,
+    clock: () => Date,
+    onRelease?: (leaseId: ExecutionLeaseId) => void,
+  ) {
     this.failures = failures;
     this.clock = clock;
+    this.onRelease = onRelease;
   }
 
   /** Update the shared failure config reference. */
@@ -453,7 +543,7 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
   ): ResultAsync<ExecutionLease, RuntimeStoreError> {
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     return okAsync(lease);
   }
@@ -468,13 +558,13 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
     }
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     const now = this.clock();
     const nowIso = now.toISOString();
     if (lease.expiresAt <= nowIso) {
       return errAsync(
-        conflictError("ExecutionLease", "Lease has expired", id as string),
+        conflictError("ExecutionLease", "Lease has expired", id),
       );
     }
     if (lease.ownerId !== ownerId) {
@@ -482,7 +572,7 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
         conflictError(
           "ExecutionLease",
           "Lease is owned by a different owner",
-          id as string,
+          id,
         ),
       );
     }
@@ -504,19 +594,23 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
     }
     const lease = this.store.get(id);
     if (!lease) {
-      return errAsync(notFoundError("ExecutionLease", id as string));
+      return errAsync(notFoundError("ExecutionLease", id));
     }
     if (lease.ownerId !== ownerId) {
       return errAsync(
         conflictError(
           "ExecutionLease",
           "Lease is owned by a different owner",
-          id as string,
+          id,
         ),
       );
     }
     this.store.delete(id);
-    return okAsync(undefined);
+    // Parity with the SQLite store's ON DELETE SET NULL: sever historical
+    // SessionSnapshot references to the released lease instead of dropping
+    // the snapshot itself.
+    this.onRelease?.(id);
+    return okAsync(void 0);
   }
 
   /** Snapshot current store state for transaction staging. */
@@ -550,6 +644,20 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
     this.failures = failures;
   }
 
+  /**
+   * Sever every SessionSnapshot's reference to a released ExecutionLease.
+   *
+   * Mirrors the SQLite store's `ON DELETE SET NULL` foreign key action:
+   * the snapshot rows survive, only the `leaseId` link is cleared.
+   */
+  severLeaseReferences(leaseId: ExecutionLeaseId): void {
+    for (const [id, snapshot] of this.store) {
+      if (snapshot.leaseId !== leaseId) continue;
+      const { leaseId: _severed, ...rest } = snapshot;
+      this.store.set(id, rest);
+    }
+  }
+
   record(
     input: RecordSessionSnapshotInput,
   ): ResultAsync<SessionSnapshot, RuntimeStoreError> {
@@ -560,19 +668,19 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
     if (sanitizeResult.isErr()) {
       return errAsync(sanitizeResult.error);
     }
-    const snapshot: SessionSnapshot = {
+    const snapshot: MutableSessionSnapshot = {
       id: createSessionSnapshotId(newId()),
       workflowInstanceId: input.workflowInstanceId,
       leaseId: input.leaseId,
       harnessName: input.harnessName,
-      ...(input.harnessVersion ? { harnessVersion: input.harnessVersion } : {}),
       agentName: input.agentName,
-      ...(input.modelId ? { modelId: input.modelId } : {}),
-      ...(input.stepName ? { stepName: input.stepName } : {}),
       sessionStatus: input.sessionStatus,
       recordedAt: new Date().toISOString(),
       metadata: { ...sanitizeResult.value },
     };
+    if (input.harnessVersion) snapshot.harnessVersion = input.harnessVersion;
+    if (input.modelId) snapshot.modelId = input.modelId;
+    if (input.stepName) snapshot.stepName = input.stepName;
     this.store.set(snapshot.id, snapshot);
     return okAsync(snapshot);
   }
@@ -589,7 +697,7 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
   ): ResultAsync<SessionSnapshot, RuntimeStoreError> {
     const snap = this.store.get(id);
     if (!snap) {
-      return errAsync(notFoundError("SessionSnapshot", id as string));
+      return errAsync(notFoundError("SessionSnapshot", id));
     }
     return okAsync(snap);
   }
@@ -670,7 +778,7 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
   ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
     const entry = this.store.get(id);
     if (!entry) {
-      return errAsync(notFoundError("RuntimeJournalEntry", id as string));
+      return errAsync(notFoundError("RuntimeJournalEntry", id));
     }
     return okAsync(entry);
   }
@@ -715,6 +823,18 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
     return okAsync(entries);
   }
 
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    if (this.failures.journalPrune) {
+      return errAsync(this.failures.journalPrune);
+    }
+    return okAsync(
+      pruneByAgeThenCount(this.store, options, (entry) => entry.timestamp),
+    );
+  }
+
   /** Snapshot current store state for transaction staging. */
   snapshot(): Map<string, RuntimeJournalEntry> {
     return new Map(this.store);
@@ -730,18 +850,307 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
 }
 
 // ---------------------------------------------------------------------------
-// InMemoryRuntimeStore
+// InMemoryUsageRepository
 // ---------------------------------------------------------------------------
 
+class InMemoryUsageRepository implements UsageRepository {
+  private readonly observations = new Map<string, NormalizedUsageObservation>();
+  private readonly rollups = new Map<string, UsageRollup>();
+  private failures: InMemoryRuntimeStoreFailureConfig;
+
+  constructor(failures: InMemoryRuntimeStoreFailureConfig) {
+    this.failures = failures;
+  }
+
+  setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
+    this.failures = failures;
+  }
+
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError> {
+    if (this.failures.usageRecord) {
+      return errAsync(this.failures.usageRecord);
+    }
+
+    const normalizedResult = normalizeUsageObservation(observation);
+    if (normalizedResult.isErr()) return errAsync(normalizedResult.error);
+    const normalized = normalizedResult.value;
+
+    const existing = this.observations.get(normalized.id);
+    if (existing !== undefined) {
+      const replay = reconcileUsageReplay(existing, normalized);
+      if (replay.isErr()) return errAsync(replay.error);
+      return okAsync({
+        kind: "noop",
+        observation: denormalizeUsageObservation(existing),
+      });
+    }
+
+    this.observations.set(normalized.id, normalized);
+    const key = usageRollupKey(normalized);
+    const prior = this.rollups.get(key) ?? emptyUsageRollup(normalized);
+    this.rollups.set(key, applyObservationToRollup(prior, normalized));
+
+    return okAsync({
+      kind: "inserted",
+      observation: denormalizeUsageObservation(normalized),
+    });
+  }
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError> {
+    const found = this.observations.get(id);
+    if (found === undefined) return okAsync(null);
+    return okAsync(denormalizeUsageObservation(found));
+  }
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError> {
+    let entries = Array.from(this.observations.values()).sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp),
+    );
+    if (filter?.workflowInstanceId) {
+      entries = entries.filter(
+        (e) => e.workflowInstanceId === filter.workflowInstanceId,
+      );
+    }
+    if (filter?.sourceKind) {
+      entries = entries.filter((e) => e.sourceKind === filter.sourceKind);
+    }
+    if (filter?.sourceName) {
+      entries = entries.filter((e) => e.sourceName === filter.sourceName);
+    }
+    if (filter?.agentName) {
+      entries = entries.filter((e) => e.agentName === filter.agentName);
+    }
+    if (filter?.model) {
+      entries = entries.filter((e) => e.model === filter.model);
+    }
+    if (filter?.after) {
+      const after = filter.after;
+      entries = entries.filter((e) => e.timestamp > after);
+    }
+    if (filter?.before) {
+      const before = filter.before;
+      entries = entries.filter((e) => e.timestamp < before);
+    }
+    if (filter?.limit) {
+      entries = entries.slice(0, filter.limit);
+    }
+    return okAsync(entries.map(denormalizeUsageObservation));
+  }
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError> {
+    let entries = Array.from(this.rollups.values());
+    if (filter?.workflowInstanceId) {
+      entries = entries.filter(
+        (e) => e.workflowInstanceId === filter.workflowInstanceId,
+      );
+    }
+    if (filter?.sourceKind) {
+      entries = entries.filter((e) => e.source.kind === filter.sourceKind);
+    }
+    if (filter?.sourceName) {
+      entries = entries.filter((e) => e.source.name === filter.sourceName);
+    }
+    if (filter?.agentName) {
+      entries = entries.filter((e) => e.agentName === filter.agentName);
+    }
+    if (filter?.model) {
+      entries = entries.filter((e) => e.model === filter.model);
+    }
+    return okAsync(entries);
+  }
+
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    if (this.failures.usagePrune) {
+      return errAsync(this.failures.usagePrune);
+    }
+    // Detail pruning never touches rollups.
+    return okAsync(
+      pruneByAgeThenCount(
+        this.observations,
+        options,
+        (entry) => entry.timestamp,
+      ),
+    );
+  }
+
+  snapshot(): InMemoryUsageSnapshot {
+    return {
+      observations: new Map(this.observations),
+      rollups: new Map(this.rollups),
+    };
+  }
+
+  restore(snapshot: InMemoryUsageSnapshot): void {
+    this.observations.clear();
+    for (const [k, v] of snapshot.observations) {
+      this.observations.set(k, v);
+    }
+    this.rollups.clear();
+    for (const [k, v] of snapshot.rollups) {
+      this.rollups.set(k, v);
+    }
+  }
+}
+
 /**
- * In-memory implementation of `RuntimeStore`.
- *
- * Uses `Map<string, T>` collections for each entity type.
- * Transactions collect operations in a staging area and commit atomically
- * on success, or discard on failure.
- *
- * Supports configurable failure injection via `failureConfig`.
+ * Age-first then oldest-above-count pruning against a Map keyed by id.
  */
+function pruneByAgeThenCount<T>(
+  store: Map<string, T>,
+  options: { readonly olderThan?: string; readonly maxCount?: number },
+  timestampOf: (value: T) => string,
+): RetentionPruneStats {
+  let removedByAge = 0;
+  let removedByCount = 0;
+
+  if (options.olderThan !== undefined) {
+    const olderThan = options.olderThan;
+    for (const [id, value] of store) {
+      if (timestampOf(value) < olderThan) {
+        store.delete(id);
+        removedByAge += 1;
+      }
+    }
+  }
+
+  if (options.maxCount !== undefined && store.size > options.maxCount) {
+    const ordered = Array.from(store.entries()).sort((a, b) =>
+      timestampOf(a[1]).localeCompare(timestampOf(b[1])),
+    );
+    const overflow = store.size - options.maxCount;
+    for (let i = 0; i < overflow; i += 1) {
+      const entry = ordered[i];
+      if (entry === undefined) break;
+      store.delete(entry[0]);
+      removedByCount += 1;
+    }
+  }
+
+  return { removedByAge, removedByCount };
+}
+
+// ---------------------------------------------------------------------------
+// InMemoryAdapterPreferenceRepository
+// ---------------------------------------------------------------------------
+
+function preferenceMapKey(namespace: string, key: string): string {
+  return `${namespace}\0${key}`;
+}
+
+class InMemoryAdapterPreferenceRepository
+  implements AdapterPreferenceRepository
+{
+  private readonly store = new Map<string, AdapterPreferenceRecord>();
+  private failures: InMemoryRuntimeStoreFailureConfig;
+  private readonly clock: () => Date;
+
+  constructor(failures: InMemoryRuntimeStoreFailureConfig, clock: () => Date) {
+    this.failures = failures;
+    this.clock = clock;
+  }
+
+  setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
+    this.failures = failures;
+  }
+
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError> {
+    if (this.failures.preferenceGet) {
+      return errAsync(this.failures.preferenceGet);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    return okAsync(this.store.get(preferenceMapKey(namespace, key)) ?? null);
+  }
+
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError> {
+    if (this.failures.preferenceSet) {
+      return errAsync(this.failures.preferenceSet);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    const value = validateAdapterPreferenceValue(valueJson);
+    if (value.isErr()) return errAsync(value.error);
+    const record: AdapterPreferenceRecord = {
+      namespace,
+      key,
+      valueJson,
+      updatedAt: this.clock().toISOString(),
+    };
+    this.store.set(preferenceMapKey(namespace, key), record);
+    return okAsync(record);
+  }
+
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    if (this.failures.preferenceList) {
+      return errAsync(this.failures.preferenceList);
+    }
+    const validated = validateAdapterPreferenceNamespace(namespace);
+    if (validated.isErr()) return errAsync(validated.error);
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    const entries = Array.from(this.store.values())
+      .filter((entry) => entry.namespace === namespace)
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .slice(0, clamped);
+    return okAsync(entries);
+  }
+
+  listAll(
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError> {
+    if (this.failures.preferenceList) {
+      return errAsync(this.failures.preferenceList);
+    }
+    const clamped = clampAdapterPreferenceListLimit(limit);
+    // Code-unit ordering, matching SQLite's default BINARY collation.
+    const entries = Array.from(this.store.values())
+      .sort(compareAdapterPreferenceRecords)
+      .slice(0, clamped);
+    return okAsync(entries);
+  }
+
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError> {
+    if (this.failures.preferenceRemove) {
+      return errAsync(this.failures.preferenceRemove);
+    }
+    const identity = validateAdapterPreferenceIdentity(namespace, key);
+    if (identity.isErr()) return errAsync(identity.error);
+    this.store.delete(preferenceMapKey(namespace, key));
+    return okAsync(void 0);
+  }
+
+  snapshot(): Map<string, AdapterPreferenceRecord> {
+    return new Map(this.store);
+  }
+
+  restore(snapshot: Map<string, AdapterPreferenceRecord>): void {
+    this.store.clear();
+    for (const [k, v] of snapshot) {
+      this.store.set(k, v);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // InMemoryJournalWriterRepository
 // ---------------------------------------------------------------------------
@@ -775,7 +1184,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
         workflowInstanceId: entry.workflowInstanceId,
         stepId: entry.stepId,
         severity: entry.severity,
-        data: entry.data as JsonObject,
+        data: entry.data,
       })
       .andThen((result) => {
         if (result === undefined) {
@@ -786,7 +1195,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
             source: entry.source,
             eventType: entry.eventType,
             severity: entry.severity,
-            data: entry.data as JsonObject,
+            data: entry.data,
           };
           return okAsync(synthetic);
         }
@@ -811,6 +1220,13 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
     return this.inner.query(filter);
   }
+
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return this.inner.prune(options);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -822,6 +1238,9 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   readonly leases: InMemoryExecutionLeaseRepository;
   readonly snapshots: InMemorySessionSnapshotRepository;
   readonly journal: InMemoryRuntimeJournalRepository;
+  readonly usage: InMemoryUsageRepository;
+  readonly preferences: InMemoryAdapterPreferenceRepository;
+  #permissions: InMemoryPermissionApprovalRepository;
 
   private readonly clock: () => Date;
   private readonly strictJournal: boolean;
@@ -836,15 +1255,27 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   constructor(options: InMemoryRuntimeStoreOptions = {}) {
     this.clock = options.clock ?? (() => new Date());
     this.strictJournal = options.strictJournal ?? false;
-    this.failureConfig = { ...(options.failOn ?? {}) };
+    this.failureConfig = { ...options.failOn };
 
     this.instances = new InMemoryWorkflowInstanceRepository(this.failureConfig);
+    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.leases = new InMemoryExecutionLeaseRepository(
       this.failureConfig,
       this.clock,
+      (leaseId) => this.snapshots.severLeaseReferences(leaseId),
     );
-    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
+    this.usage = new InMemoryUsageRepository(this.failureConfig);
+    this.preferences = new InMemoryAdapterPreferenceRepository(
+      this.failureConfig,
+      this.clock,
+    );
+    // Construct after the injected Date clock is assigned so revoke/list/match
+    // timestamps share the store clock (parity with SqliteRuntimeStore).
+    this.#permissions = new InMemoryPermissionApprovalRepository({}, () =>
+      this.clock().getTime(),
+    );
+    registerPermissionApprovalRepository(this, this.#permissions);
   }
 
   /**
@@ -856,6 +1287,8 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     this.leases.setFailures(config);
     this.snapshots.setFailures(config);
     this.journal.setFailures(config);
+    this.usage.setFailures(config);
+    this.preferences.setFailures(config);
   }
 
   transaction<T>(
@@ -870,6 +1303,8 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     const leasesSnap = this.leases.snapshot();
     const snapshotsSnap = this.snapshots.snapshot();
     const journalSnap = this.journal.snapshot();
+    const usageSnap = this.usage.snapshot();
+    const preferencesSnap = this.preferences.snapshot();
 
     // Wrap the journal with a writer that enforces strict/best-effort semantics
     const journalForTx = new InMemoryJournalWriterRepository(
@@ -882,17 +1317,22 @@ export class InMemoryRuntimeStore implements RuntimeStore {
       leases: this.leases,
       snapshots: this.snapshots,
       journal: journalForTx,
+      usage: this.usage,
+      preferences: this.preferences,
     };
 
-    return ResultAsync.fromPromise(Promise.resolve(callback(tx)), (cause) =>
-      queryError("Transaction callback threw unexpectedly", cause),
-    ).andThen((result) => {
+    return ResultAsync.fromThrowable(
+      async () => callback(tx),
+      (cause) => queryError("Transaction callback threw unexpectedly", cause),
+    )().andThen((result) => {
       if (result.isErr()) {
         // Rollback: restore all snapshots
         this.instances.restore(instancesSnap);
         this.leases.restore(leasesSnap);
         this.snapshots.restore(snapshotsSnap);
         this.journal.restore(journalSnap);
+        this.usage.restore(usageSnap);
+        this.preferences.restore(preferencesSnap);
         return errAsync(result.error);
       }
       // Commit: changes are already applied in-place
@@ -904,7 +1344,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     if (this.failureConfig.close) {
       return errAsync(this.failureConfig.close);
     }
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 }
 

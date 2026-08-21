@@ -84,7 +84,7 @@ describe("ClaudeCodeAdapter", () => {
 
     const skills = await adapter.loadAvailableSkills();
     expect(skills.length).toBeGreaterThanOrEqual(1);
-    expect(skills[0]!.name).toBe("my-skill");
+    expect(skills[0]?.name).toBe("my-skill");
   });
 
   it("loadAvailableSkills returns empty on discovery failure", async () => {
@@ -129,7 +129,9 @@ describe("ClaudeCodeAdapter", () => {
       k.endsWith("plugin.json"),
     );
     expect(pluginJsonPath).toBeDefined();
-    const parsed = JSON.parse(written[pluginJsonPath!]!);
+    const pluginJson = pluginJsonPath ? written[pluginJsonPath] : undefined;
+    expect(pluginJson).toBeDefined();
+    const parsed = JSON.parse(pluginJson ?? "");
     expect(parsed).toMatchObject({ name: "weave", version: "1.0.0" });
   });
 
@@ -144,8 +146,37 @@ describe("ClaudeCodeAdapter", () => {
       (k) => k.includes("agents") && k.endsWith("loom.md"),
     );
     expect(agentPath).toBeDefined();
-    expect(written[agentPath!]).toContain("name: loom");
-    expect(written[agentPath!]).toContain("You are a test agent.");
+    const agent = agentPath ? written[agentPath] : undefined;
+    expect(agent).toBeDefined();
+    expect(agent).toContain("name: loom");
+    expect(agent).toContain("You are a test agent.");
+  });
+
+  it("materializes a fast-declaring agent with unchanged model and permission output", async () => {
+    const baselineFiles: Record<string, string> = {};
+    const baselineAdapter = makeAdapter(baselineFiles, []);
+    await baselineAdapter.spawnSubagent(makeDescriptor({ name: "shuttle" }));
+    await baselineAdapter.flush();
+
+    const fastFiles: Record<string, string> = {};
+    const fastAdapter = makeAdapter(fastFiles, []);
+    const spawnResult = await fastAdapter.spawnSubagent(
+      makeDescriptor({ name: "shuttle", fast: true }),
+    );
+    await fastAdapter.flush();
+
+    expect(spawnResult.isOk()).toBe(true);
+    expect(fastFiles).toEqual(baselineFiles);
+
+    const agentPath = Object.keys(fastFiles).find(
+      (k) => k.includes("agents") && k.endsWith("shuttle.md"),
+    );
+    expect(agentPath).toBeDefined();
+    const agent = agentPath ? (fastFiles[agentPath] ?? "") : "";
+    expect(agent).toContain("model: sonnet");
+    expect(agent).toContain("- Read");
+    expect(agent).not.toContain("- Task");
+    expect(agent).not.toContain("fast");
   });
 
   it("flush writes settings.json when loom agent is present", async () => {
@@ -158,8 +189,10 @@ describe("ClaudeCodeAdapter", () => {
     const settingsPath = Object.keys(written).find((k) =>
       k.endsWith("settings.json"),
     );
-    expect(settingsPath).toBeDefined();
-    const parsed = JSON.parse(written[settingsPath!]!);
+    const settings =
+      settingsPath === undefined ? undefined : written[settingsPath];
+    expect(settings).toBeDefined();
+    const parsed = JSON.parse(settings ?? "{}");
     expect(parsed).toMatchObject({ agent: "loom" });
   });
 
@@ -256,8 +289,8 @@ describe("ClaudeCodeAdapter", () => {
     const agentPath = Object.keys(written).find(
       (k) => k.includes("agents") && k.endsWith("test-agent.md"),
     );
-    expect(agentPath).toBeDefined();
-    const content = written[agentPath!]!;
+    const content = agentPath === undefined ? undefined : written[agentPath];
+    expect(content).toBeDefined();
     expect(content).toContain("- Read");
     expect(content).not.toContain("- Write");
     expect(content).not.toContain("- Bash");
@@ -311,13 +344,20 @@ describe("ClaudeCodeAdapter", () => {
     const startWorkPath = Object.keys(written).find(
       (k) => k.includes("commands") && k.endsWith("start-work.md"),
     );
+    const goalPath = Object.keys(written).find(
+      (k) => k.includes("commands") && k.endsWith("goal.md"),
+    );
 
     expect(startPath).toBeDefined();
     expect(startWorkPath).toBeDefined();
-    expect(written[startPath!]).toContain("context: fork");
-    expect(written[startPath!]).toContain("agent: weave:tapestry");
-    expect(written[startWorkPath!]).toContain("context: fork");
-    expect(written[startWorkPath!]).toContain("agent: weave:tapestry");
+    expect(goalPath).toBeUndefined();
+    const start = startPath === undefined ? undefined : written[startPath];
+    const startWork =
+      startWorkPath === undefined ? undefined : written[startWorkPath];
+    expect(start).toContain("context: fork");
+    expect(start).toContain("agent: weave:tapestry");
+    expect(startWork).toContain("context: fork");
+    expect(startWork).toContain("agent: weave:tapestry");
   });
 
   it("flush does NOT write command files when tapestry is absent", async () => {
@@ -343,7 +383,9 @@ describe("ClaudeCodeAdapter", () => {
       homeDir: "/home/user",
       exists: async () => true,
       readDir: async (path) => {
-        if (path.endsWith("commands")) return ["start.md", "start-work.md"];
+        if (path.endsWith("commands")) {
+          return ["start.md", "start-work.md", "goal.md"];
+        }
         return [];
       },
       readFile: async () => "",
@@ -359,10 +401,11 @@ describe("ClaudeCodeAdapter", () => {
     await adapter.spawnSubagent(makeDescriptor({ name: "shuttle" }));
     await adapter.flush();
 
-    // Both command files should be removed when tapestry is not present
-    expect(removed).toHaveLength(2);
+    // All command files should be removed when tapestry is not present
+    expect(removed).toHaveLength(3);
     expect(removed.some((p) => p.includes("start.md"))).toBe(true);
     expect(removed.some((p) => p.includes("start-work.md"))).toBe(true);
+    expect(removed.some((p) => p.includes("goal.md"))).toBe(true);
   });
 
   it("flush removes stale command files not in the current command set", async () => {
@@ -376,7 +419,7 @@ describe("ClaudeCodeAdapter", () => {
       exists: async () => true,
       readDir: async (path) => {
         if (path.endsWith("commands"))
-          return ["start.md", "start-work.md", "old-command.md"];
+          return ["start.md", "start-work.md", "goal.md", "other.md"];
         return [];
       },
       readFile: async () => "",
@@ -392,14 +435,15 @@ describe("ClaudeCodeAdapter", () => {
     await adapter.spawnSubagent(makeDescriptor({ name: "tapestry" }));
     await adapter.flush();
 
-    // old-command.md should be removed; start.md and start-work.md should be written
-    expect(removed).toHaveLength(1);
-    expect(removed[0]).toContain("old-command.md");
-    const startPath = Object.keys(written).find((k) => k.endsWith("start.md"));
-    const startWorkPath = Object.keys(written).find((k) =>
-      k.endsWith("start-work.md"),
-    );
-    expect(startPath).toBeDefined();
-    expect(startWorkPath).toBeDefined();
+    // other.md and the old goal.md are stale and removed by the generic stale
+    // sweep; the two supported commands are written.
+    expect(removed).toHaveLength(2);
+    expect(removed.some((path) => path.endsWith("other.md"))).toBe(true);
+    expect(removed.some((path) => path.endsWith("goal.md"))).toBe(true);
+    const commandWrites = Object.keys(written)
+      .filter((path) => path.includes("/commands/"))
+      .map((path) => path.split("/").at(-1))
+      .sort();
+    expect(commandWrites).toEqual(["start-work.md", "start.md"]);
   });
 });

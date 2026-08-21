@@ -2,10 +2,10 @@
  * Execution Lifecycle — authorization validation helpers.
  *
  * Validates execution and reconciliation authorization sources against the
- * engine's closed authorization contract (ADR 0004, Spec 22 Unit 3).
+ * engine's closed authorization contract (ADR 0004, execution lifecycle contract).
  *
  * @see docs/adr/0004-workflow-first-execution-contract.md
- * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type { ReconciliationReason } from "@weaveio/weave-core";
@@ -33,7 +33,9 @@ export function validateAuthorizationSource(
   source: ExecutionAuthorizationSource,
   operation: "startExecution" | "resumeExecution",
 ): Result<undefined, LifecyclePolicyDecisionError> {
-  if (source === AUTHORIZED_EXECUTION_SOURCE) return ok(undefined);
+  if (source === AUTHORIZED_EXECUTION_SOURCE) {
+    return ok<undefined, LifecyclePolicyDecisionError>(void 0);
+  }
   return err(
     lifecyclePolicyDecisionError(
       `${operation} requires explicit user authorization (source: "${source}" is not permitted). ` +
@@ -47,14 +49,12 @@ export function validateAuthorizationSource(
 /**
  * Map from reconciliation reason to its single authorized source.
  */
-const RECONCILIATION_AUTHORIZED_SOURCES: Readonly<
-  Record<ReconciliationReason, ReconciliationAuthorizationSource>
-> = {
+const RECONCILIATION_AUTHORIZED_SOURCES = {
   "execution-mismatch": "runtime",
   "user-revision-request": "user",
   "review-rejection": "review-gate",
   "security-rejection": "security-gate",
-};
+} satisfies Record<ReconciliationReason, ReconciliationAuthorizationSource>;
 
 /**
  * Validate that the reconciliation source is authorized for the given reason.
@@ -67,12 +67,14 @@ export function validateReconciliationSource(
   source: ReconciliationAuthorizationSource,
 ): Result<undefined, LifecyclePolicyDecisionError> {
   const authorized = RECONCILIATION_AUTHORIZED_SOURCES[reason];
-  if (source === authorized) return ok(undefined);
+  if (source === authorized) {
+    return ok<undefined, LifecyclePolicyDecisionError>(void 0);
+  }
   return err(
     lifecyclePolicyDecisionError(
       `Reconciliation reason "${reason}" requires source "${authorized}" but received "${source}". ` +
         `Only the authorized source may trigger this reconciliation reason. ` +
-        `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+        `See docs/reference/execution-lifecycle.md`,
       "reconciliationSource",
     ),
   );

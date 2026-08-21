@@ -417,16 +417,22 @@ function validateStableReleasePolicy(
     });
 
   const expectedDigest = releasePlanDigest(plan);
+  if (expectedDigest.isErr())
+    return err({
+      type: "InvalidReleasePlanMetadata",
+      reason: expectedDigest.error.type,
+      recovery: RELEASE_POLICY_RECOVERY_HINT,
+    });
   const suppliedDigest = readPlanDigest(input, planResult.value);
   if (suppliedDigest.isErr()) return err(suppliedDigest.error);
   if (
     suppliedDigest.value !== undefined &&
-    suppliedDigest.value !== expectedDigest
+    suppliedDigest.value !== expectedDigest.value
   )
     return err({
       type: "PlanDigestMismatch",
       expected: suppliedDigest.value,
-      actual: expectedDigest,
+      actual: expectedDigest.value,
       recovery: RELEASE_POLICY_RECOVERY_HINT,
     });
 

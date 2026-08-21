@@ -1,69 +1,95 @@
-# Weave Documentation
+# Weave Contributor Documentation
 
-This is the top-level entry point for Weave's documentation corpus. Start here to navigate guides, architecture decision records (ADRs), and formal specs.
+This directory is the current internal reference for contributors and coding agents. It contains architecture, implementation contracts, adapter internals, contributor guides, and decision records. It deliberately excludes plans, completed specs, task logs, and proof artifacts.
 
-The published docs site is built from the Astro + Starlight package at [`packages/docs/`](../packages/docs/README.md). That package is for **public documentation** and the marketing landing page. This `docs/` directory remains the **internal documentation corpus** for architecture, ADRs, specs, and implementation guidance.
+User-facing tutorials and product reference live in the [public docs package](../packages/docs/). See the [documentation policy](contributing/documentation.md) for the boundary.
 
----
+## Architecture
 
-## Conceptual Guides
-
-| Guide | What it covers |
+| Page | Purpose |
 | --- | --- |
-| [Product Vision](product-vision.md) | Harness-agnostic architecture, core mental model, boundary rules |
-| [Adapter Boundary](adapter-boundary.md) | Engine/adapter ownership matrix, correct data-flow examples, anti-patterns |
-| [Adapter Bootstrap Guide](adapter-bootstrap.md) | `loadConfig` → `materializeAgents` → adapter loop pattern |
-| [Config Loading](config-loading.md) | Three-layer merge, builtin agents, config discovery, prompt file resolution |
-| [Model Resolution](model-resolution.md) | Model intent, adapter responsibility, category shuttle model preferences |
-| [Prompt Composition](prompt-composition.md) | Mustache templates, delegation section, template context fields |
-| [Tool Policy Evaluation](tool-policy-evaluation.md) | Abstract capabilities, `EffectiveToolPolicy`, adapter mapping |
-| [Workflow Schema](workflow-schema.md) | Workflow fields, step types, completion methods, artifact passing |
-| [CLI](cli.md) | `weave validate`, `weave init`, `weave init migrate`, `weave eval run`, harness detection |
-| [DSL Reference](dsl-reference.md) | Canonical `.weave` DSL syntax reference (agents, categories, workflows, settings) |
-| [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
-| [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
-| [Claude Code Adapter Guide](adapters/claude-code.md) | Two-plugin model, installation, tool policy mapping, model aliases, edge cases |
-| [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
-| [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |
-| [Agent Evals](agent-evals.md) | Eval architecture, the shared eight-suite text-only registry surface, fixture layout, CLI usage, dry-run validation behavior, filter semantics, forbidden text-only assertion shapes, prompt snapshot coverage, registry-driven sync tests, recommended case-authoring pattern, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model, and the 2026-06-30 phase-1 fairness-gate plus phase-2 prompt-quality-gate decisions |
-| [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy, `schemaVersion` and freshness rules, website data flow, `/evals/` legacy coexistence |
-| [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
-| [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
-| [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
-| [Stable Release Trains](stable-release-trains.md) | Stable cut, CAS fix, immutable checkout, and expiry policy |
-| [Release Automation](release-automation.md) | Artifact identity, OIDC publishing, channels, and manual MFA `latest` promotion |
-| [Release Runbook](../RELEASING.md) | Operator procedure, recovery, external setup evidence, and release PR issue linkage |
+| [Product Vision](architecture/product-vision.md) | Harness-agnostic product model and design principles |
+| [System Overview](architecture/system-overview.md) | How configuration becomes harness behavior |
+| [Adapter Boundary](architecture/adapter-boundary.md) | Engine/adapter ownership and prohibited dependencies |
+| [Agent Surfaces](architecture/agent-surfaces.md) | Patterns for materializing agents in different harnesses |
 
----
+## Reference
 
-## Architecture Decision Records (ADRs)
-
-ADRs record decisions with meaningful trade-offs. They are durable — once accepted, they are not rewritten.
-
-| ADR | Decision |
+| Page | Contract |
 | --- | --- |
-| [ADR 0001 — Prompt Composition Templates](adr/0001-prompt-composition-templates.md) | Mustache as the prompt template engine |
-| [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) | SQLite-backed Runtime Store under `.weave/runtime/` |
-| [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) | OpenCode plugin materialization contract |
-| [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) | `startExecution` as the sole authorized execution entry point |
-| [ADR 0005 — Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
-| [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led, not workflow-driven. |
-| [ADR 0007 — Artifact-First OIDC Releases](adr/0007-artifact-first-oidc-releases.md) | Bundled public packs, OIDC channels, immutable release records, and no-unpublish policy |
+| [DSL](reference/dsl.md) | Internal canonical `.weave` syntax |
+| [Configuration](reference/configuration.md) | Discovery, layering, merge, trust, and prompt paths |
+| [Prompts](reference/prompts.md) | Template context, delegation rendering, and composition |
+| [Models](reference/models.md) | Model intent, resolution, thinking suffixes, and reviewers |
+| [Workflows](reference/workflows.md) | Workflow schema, extensions, steps, artifacts, and completion |
+| [Delegation](reference/delegation.md) | Portable child and concurrency budgets |
+| [Tool Policy](reference/tool-policy.md) | Abstract capability decisions and concrete mapping boundary |
+| [Permissions](reference/permissions.md) | Grants, challenges, permits, coverage, and authorization |
+| [Adapter Capabilities](reference/adapter-capabilities.md) | Static ceilings, runtime probes, health, and readiness |
+| [Execution Lifecycle](reference/execution-lifecycle.md) | Normalized operations, effects, completion, and recovery |
+| [Runtime Store](reference/runtime.md) | Durable state, leases, journal, privacy, and retention |
+| [CLI](reference/cli.md) | Internal command behavior, runtime commands, and adapter dispatch |
+| [Eval Reporting](reference/eval-reporting.md) | Sanitized bundles, indexes, raw artifacts, and publication |
 
----
+## Adapters
 
-## Formal Specs
+| Page | Harness |
+| --- | --- |
+| [OpenCode](adapters/opencode.md) | Runtime plugin, materialization, commands, and logging |
+| [Claude Code](adapters/claude-code.md) | File materialization and capability boundary |
+| [Pi](adapters/pi.md) | Extension lifecycle, private children, readiness, and recovery |
 
-Numbered specs define subsystem requirements with acceptance criteria. See [docs/specs/README.md](specs/README.md) for the full index.
+## Guides
 
----
+| Page | Task |
+| --- | --- |
+| [Develop an Adapter](guides/adapter-development.md) | Bootstrap, materialize, project commands, and lifecycle mapping |
+| [Author Agent Evals](guides/evals.md) | Add cases, run dry checks, and interpret results |
+| [Troubleshoot Pi Child Sessions](guides/pi-child-troubleshooting.md) | Read doctor checks, diagnostic codes, and child session commands |
+| [Verify an Adapter](testing/adapter-verification.md) | Prove a packaged adapter loads, becomes ready, and works in its real harness |
+| [Pi Config Hot-Reload Live Proof](testing/pi-adapter-config-hot-reload-live-proof.md) | Recorded real-harness evidence for the Pi delegation-boundary config refresh |
 
-## Artifact Policy
+## Contributing
 
-Proof artifacts, audit trails, and validation checklists are non-normative historical records. They live under [`docs/artifacts/`](artifacts/README.md) and are governed by the [Documentation Policy](documentation-policy.md).
+| Page | Conventions |
+| --- | --- |
+| [TypeScript](contributing/typescript.md) | Bun runtime, `neverthrow`, control flow, and logging |
+| [Testing](contributing/testing.md) | Schema coverage and boundary mocks |
+| [Builtin Prompts](contributing/builtin-prompts.md) | Portable prompt behavior and regression rules |
+| [Releases](contributing/releases.md) | Artifact identity, channels, publication, and trust boundaries |
+| [Documentation](contributing/documentation.md) | Audience split, page types, update rules, and pruning policy |
 
----
+## Specifications
 
-## Documentation Policy
+| Spec | Status |
+| --- | --- |
+| [33 — Pi private child sessions](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) | Active; amended for private child inspection |
+| [33 — Weave UI design record](specs/33-spec-pi-adapter/33-weave-ui-design.md) | Active; delegation card, child inspector, and Plan Rail |
 
-See [docs/documentation-policy.md](documentation-policy.md) for the classification of durable vs. non-normative artifacts and the rules for where each type belongs.
+## Architecture Decision Records
+
+ADRs preserve the reason for decisions. Current behavior belongs in the pages above.
+
+| ADR | Status | Decision |
+| --- | --- | --- |
+| [0001](adr/0001-prompt-composition-templates.md) | Accepted | Mustache prompt templates |
+| [0002](adr/0002-runtime-persistence-store.md) | Accepted | SQLite-backed Runtime Store |
+| [0003](adr/0003-opencode-adapter-materialization-shape.md) | Accepted | OpenCode materialization shape |
+| [0004](adr/0004-workflow-first-execution-contract.md) | Accepted | Explicit execution authorization boundary |
+| [0005](adr/0005-five-spec-remediation-decisions.md) | Deprecated | One-time remediation choices for a completed refactor |
+| [0006](adr/0006-end-to-end-orchestration-flow.md) | Accepted with superseded section | End-to-end orchestration flow |
+| [0007](adr/0007-artifact-first-oidc-releases.md) | Accepted | Artifact-first OIDC releases |
+| [0008](adr/0008-portable-delegation-budgets.md) | Accepted | Portable delegation budgets |
+| [0009](adr/0009-input-aware-tool-permission-authorization.md) | Accepted | Input-aware authorization |
+| [0010](adr/0010-plan-state-and-artifact-approval-authority.md) | Accepted | Plan and artifact approval authority |
+| [0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md) | Accepted | Effective readiness and observability |
+| [0013](adr/0013-pi-private-child-sessions.md) | Accepted | Private Pi child sessions are adapter-owned and outside Runtime Store |
+| [0014](adr/0014-pi-native-child-sessions.md) | Accepted | Pi children use native Pi sessions with no JSONL migration |
+
+## Validation
+
+```bash
+bun run docs:check-links
+```
+
+The documentation checker validates local links in both this corpus and the public docs package.

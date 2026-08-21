@@ -1,209 +1,66 @@
 ---
-title: Agents and Categories
-description: Define builtin overrides, custom agents, category shuttles, and delegation metadata.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+title: Agents and categories
+description: Declare named agents and domain categories in a Weave configuration.
 ---
 
-## Choose The Right Construct
+## Choose an agent or category
 
-Agents and categories solve different problems.
+Use an **agent** when you need a named role with its own prompt and model preferences. Use a **category** when you want routing metadata and a generated shuttle for a domain.
 
-| Need | Use |
-| --- | --- |
-| Change how a known role behaves | Override a builtin `agent` by name. |
-| Add a new named role | Create a custom `agent`. |
-| Route a domain of files to a specialist | Create a `category`; Weave generates `shuttle-{category}`. |
-| Hide noisy delegation targets | Add `routing { delegation_exclude [...] }` to the delegating agent. |
-
-Start with the smallest construct. If you only need a reviewer prompt, add one agent. If you need file-pattern-specific routing, add a category.
-
-## Agent Block Walkthrough
+## Define an agent
 
 ```weave
-agent security-reviewer {
-  description "Security-focused reviewer"
-  prompt_file "security-reviewer.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+agent reviewer {
+  description "Reviews changes for correctness"
+  prompt "Review the requested change and report concrete findings."
+  models ["claude-sonnet-4-5", "gpt-5"]
   mode subagent
-  temperature 0.1
-  skills ["code-review"]
-
-  triggers [
-    { domain "Security" trigger "Authentication, authorization, secrets, or data exposure changes" }
-    { domain "Architecture" trigger "Security-sensitive boundaries or trust model changes" }
-  ]
-
-  routing {
-    delegation_exclude ["spindle"]
-  }
-
-  tool_policy {
-    read allow
-    write deny
-    execute ask
-    network deny
-    delegate deny
-  }
 }
 ```
 
-Important fields:
+Supported fields include `description`, `prompt`, `prompt_file`, prompt appends, `models`, `mode`, `temperature`, `skills`, delegation `triggers`, `fast`, `routing.delegation_exclude`, and `tool_policy`. Use either `prompt` or `prompt_file` for the primary prompt.
 
-| Field | Meaning |
-| --- | --- |
-| `description` | Human-readable summary used in delegation guidance and listings. |
-| `prompt` / `prompt_file` | Primary instruction source. Exactly one is allowed. |
-| `models` | Ordered model preference list; concrete availability is adapter-owned. |
-| `mode` | `primary`, `subagent`, or `all`. This is an adapter-facing context hint. |
-| `temperature` | Optional generation preference. |
-| `skills` | Skill names to resolve against adapter-provided available skills. |
-| `triggers` | Delegation metadata used by router prompts. |
-| `routing.delegation_exclude` | Target names to omit from this agent's delegation guidance. |
-| `tool_policy` | Abstract capabilities mapped by adapters. |
+`triggers` is an ordered list of plain strings, such as `triggers ["Use for pull request review"]`. Structured trigger objects with `domain`, `trigger`, or `routing_hint` are invalid.
 
-## Builtin Overrides
+`fast true` is optional neutral intent asking an adapter to request provider acceleration. Only the literal `fast true` is valid; omit the field to preserve provider defaults. `fast false` and the aliases `service_class`, `speed`, `variant`, and `priority` are invalid. Each adapter decides whether the intent becomes a provider control: OpenCode and Claude Code send none, and Pi sends one only for its OpenAI Codex subscription mapping.
 
-Builtins are regular DSL definitions packaged with Weave. To customize a builtin, declare an agent with the same name in global or project config and specify only the fields you need to change.
-
-## Builtin Agent Configuration
-
-The builtin agents are not hard-coded in a separate format. They are declared in ordinary `.weave` DSL inside `packages/config/src/builtins.ts` as `BUILTIN_WEAVE_SOURCE`, then parsed through the same config pipeline as user-authored config.
-
-That means three things are true:
-
-1. Builtins use the same schema and syntax rules as your own config.
-2. Builtins are loaded before global and project config.
-3. Overriding a builtin is normal config merge behavior, not a special API.
-
-Current builtin agents shipped by Weave:
-
-| Agent | Purpose | Default mode |
-| --- | --- | --- |
-| `loom` | Main orchestrator | `primary` |
-| `tapestry` | Plan execution | `primary` |
-| `shuttle` | Domain specialist base agent | `subagent` |
-| `pattern` | Strategic planner | `subagent` |
-| `thread` | Codebase explorer | `subagent` |
-| `spindle` | External researcher | `subagent` |
-| `weft` | Reviewer | `subagent` |
-| `warp` | Security auditor | `subagent` |
-
-Builtin prompt content ships in Weave's bundled internal config layer, then gets resolved or inlined during config loading.
-
-If you want the exact current builtin DSL, inspect the source directly:
-
-```bash
-bun packages/cli/src/main.ts prompt list
-bun packages/cli/src/main.ts prompt inspect loom
-```
-
-And for the authoritative implementation:
-
-```text
-packages/config/src/builtins.ts
-packages/config/prompts/
-```
-
-```weave
-agent loom {
-  prompt_append "Before delegating, summarize the user-visible acceptance criteria."
-  models ["claude-sonnet-4-5"]
-}
-```
-
-Because objects deep-merge, the override does not need to copy the full builtin prompt or tool policy. Validate and inspect after overrides so you can see the final composed descriptor:
-
-```bash
-bun packages/cli/src/main.ts prompt inspect loom
-```
-
-## Custom Agents
-
-Create custom agents when the role is durable enough to reuse. Keep custom roles focused; one clear responsibility produces better delegation guidance than a generic catch-all role.
-
-```weave
-agent docs-editor {
-  description "Documentation editor"
-  prompt "Improve docs for accuracy, structure, and reader task flow."
-  mode subagent
-
-  tool_policy {
-    read allow
-    write allow
-    execute ask
-    network deny
-    delegate deny
-  }
-}
-```
-
-Verify it exists:
-
-```bash
-bun packages/cli/src/main.ts prompt list
-bun packages/cli/src/main.ts prompt inspect docs-editor
-```
-
-## Category Shuttles
-
-Categories route domain work by metadata and generate shuttle agents. A category named `frontend` generates `shuttle-frontend`.
+## Define a category
 
 ```weave
 category frontend {
-  description "Frontend UI, styling, accessibility, and responsive behavior"
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  description "UI and accessibility work"
+  triggers ["Use for UI, styling, and accessibility"]
   models ["claude-sonnet-4-5"]
-  temperature 0.2
-  prompt_append "Preserve accessibility and design-system consistency."
-
-  tool_policy {
-    read allow
-    write allow
-    execute ask
-    delegate deny
-  }
+  fast true
 }
 ```
 
-Categories inherit from the base `shuttle` agent and apply category-specific fields. Adapters decide how generated descriptors become concrete harness resources.
+A category produces an agent named `shuttle-frontend`. Its `description` is required and must contain non-blank routing guidance; Loom and Tapestry show it in their delegation tables. The category's prompt append, model preferences, and tool policy apply to that generated agent.
 
-## Collision And Naming Behavior
+Generated category shuttles do not inherit the base Shuttle's triggers. They route from their category description and their own trigger strings, while the generic Shuttle's triggers describe fallback work that no category claims. A category `fast true` overrides the base Shuttle value; omitting it inherits the base intent.
 
-Generated category agents use the stable name `shuttle-{category}`. Avoid creating a custom agent with the same generated name unless you intentionally want to override that descriptor. When in doubt, run:
+Categories have no file-pattern field. Weave does not perform deterministic file routing, and there is no replacement for the removed `patterns` field.
 
-```bash
-bun packages/cli/src/main.ts prompt list
-```
+## Migrate existing categories
 
-Then inspect the exact generated name.
+These are breaking config changes:
 
-## Delegation Metadata
+- Add a non-blank `description` to every existing `category` block before validation.
+- Delete every `patterns [...]` declaration. Strict parsing rejects it.
+- Replace each structured trigger object with one plain string.
 
-Triggers describe when another agent should be considered. They are not routing code; they are prompt metadata used to build delegation guidance.
+`weave init migrate` converts legacy JSONC on a best-effort basis: it takes each trigger object's non-blank `routing_hint`, otherwise its non-blank `trigger`, preserves source order, drops exact duplicates, and warns for every discarded field. It drops category patterns with a warning and no replacement metadata, skips legacy categories without descriptions, and never infers `fast`. Handwritten `.weave` files get no compatibility path: the old forms are hard validation errors.
 
-Use `routing.delegation_exclude` when a primary agent should not see a target even though that target exists in config:
+## Override a built-in
+
+Declare an agent with the built-in name to change its public configuration. Keep the override in the project scope when it should apply to one project.
 
 ```weave
 agent loom {
-  routing {
-    delegation_exclude ["warp", "spindle"]
-  }
+  prompt_append "Always state the next concrete action."
 }
 ```
 
-This filtering is engine-owned. Adapters receive descriptors after delegation targets have been resolved.
+Run `weave prompt list` to see available names and `weave prompt inspect loom` to inspect the rendered prompt from the current project root.
 
-## Troubleshooting
-
-| Problem | Check |
-| --- | --- |
-| A custom agent does not appear | Validate config and confirm the agent is not in `disable agents [...]`. |
-| A category shuttle has unexpected prompt text | Inspect `shuttle-{category}` and review the base `shuttle` plus category append. |
-| Delegation guidance is noisy | Add or refine `triggers`, or exclude targets with `routing.delegation_exclude`. |
-| Tool access is too broad | Tighten `tool_policy`; adapters map capabilities to concrete tools. |
-
-## Next Steps
-
-Read [Prompts, Models, and Policy](../prompts-models-policy/) for deeper prompt composition and policy rules. Use [DSL Reference](../reference/dsl/) for field-level syntax.
+See [the DSL reference](../reference/dsl/) for field types and [Configuration](../configuration/) for scope and merge rules.

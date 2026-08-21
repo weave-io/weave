@@ -23,7 +23,11 @@ import {
   type ValidatedChangeset,
 } from "../changeset-policy.js";
 import type { CommandResult } from "../command-runner.js";
-import { PUBLIC_PACKAGES, type PublicPackageName } from "../constants.js";
+import {
+  PUBLIC_PACKAGE_NAMES,
+  PUBLIC_PACKAGES,
+  type PublicPackageName,
+} from "../constants.js";
 import {
   type ConsumptionLedger,
   EMPTY_CONSUMPTION_LEDGER,
@@ -142,6 +146,17 @@ function controllerFor(
 }
 
 /** Parses a fixture through the real policy, so identities are real. */
+function smuggledChangeset(packageName: string): PublicImpactChangeset {
+  const changeset = changesetOf(".changeset/pi.md", PI_PATCH);
+  if (changeset.kind !== "public-impact")
+    throw new Error("fixture changeset is not public-impact");
+  Object.defineProperty(changeset, "releases", {
+    value: new Map([[packageName, "minor"]]),
+    enumerable: true,
+  });
+  return changeset;
+}
+
 function changesetOf(path: string, source: string): ValidatedChangeset {
   const result = new ChangesetPolicyValidator(
     new BunChangesetFileSystem(),
@@ -205,13 +220,11 @@ function catalogAt(
     Partial<Record<PublicPackageName, readonly string[]>>
   > = {},
 ): readonly ScratchPackageInput[] {
-  return (Object.keys(PUBLIC_PACKAGES) as PublicPackageName[]).map(
-    (packageName) => ({
-      packageName,
-      version,
-      dependencies: dependencies[packageName] ?? [],
-    }),
-  );
+  return PUBLIC_PACKAGE_NAMES.map((packageName) => ({
+    packageName,
+    version,
+    dependencies: dependencies[packageName] ?? [],
+  }));
 }
 
 function requestOf(
@@ -257,9 +270,10 @@ class ManifestWritingRunner implements ScratchCommandRunner {
   }
 
   private async write(cwd: string): Promise<CommandResult> {
-    for (const [packageName, version] of Object.entries(this.versions)) {
-      const directory =
-        PUBLIC_PACKAGES[packageName as PublicPackageName].directory;
+    for (const packageName of PUBLIC_PACKAGE_NAMES) {
+      const version = this.versions[packageName];
+      if (version === undefined) continue;
+      const directory = PUBLIC_PACKAGES[packageName].directory;
       await Bun.write(
         join(cwd, directory, "package.json"),
         `${JSON.stringify({ name: packageName, version }, null, 2)}\n`,
@@ -702,10 +716,7 @@ describe("computeStableVersions", () => {
 
   it("rejects a private bump target that never passed the policy", async () => {
     const runner = new UnusedRunner();
-    const smuggled = {
-      ...changesetOf(".changeset/pi.md", PI_PATCH),
-      releases: new Map([["@weaveio/weave-engine", "minor"]]),
-    } as unknown as PublicImpactChangeset;
+    const smuggled = smuggledChangeset("@weaveio/weave-engine");
 
     const error = await versionFailure(
       requestOf({ selected: [PI], consumedBySelection: [smuggled] }),
@@ -723,10 +734,7 @@ describe("computeStableVersions", () => {
 
   it("rejects an unknown bump target that never passed the policy", async () => {
     const runner = new UnusedRunner();
-    const smuggled = {
-      ...changesetOf(".changeset/pi.md", PI_PATCH),
-      releases: new Map([["@weaveio/weave-adapter-imaginary", "minor"]]),
-    } as unknown as PublicImpactChangeset;
+    const smuggled = smuggledChangeset("@weaveio/weave-adapter-imaginary");
 
     const error = await versionFailure(
       requestOf({ selected: [PI], consumedBySelection: [smuggled] }),

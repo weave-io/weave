@@ -20,6 +20,7 @@ export type Command =
   | "run"
   | "prompt"
   | "runtime"
+  | "adapter"
   | "eval"
   | "compose"
   | "unknown";
@@ -51,10 +52,12 @@ export interface ParsedArgs {
     project: boolean;
     /** --global flag for validate */
     global: boolean;
-    /** --limit <n> for runtime journal */
+    /** --limit <n> for runtime journal and runtime preferences */
     limit?: number;
-    /** runtime subcommand: status | journal */
-    runtimeSubcommand?: "status" | "journal";
+    /** --namespace <ns> for runtime preferences */
+    namespace?: string;
+    /** runtime subcommand: status | journal | preferences */
+    runtimeSubcommand?: "status" | "journal" | "preferences";
     /** prompt subcommand: inspect | list | self-modify */
     promptSubcommand?: "inspect" | "list" | "self-modify";
     /** agent name for `prompt inspect <agent>` */
@@ -86,6 +89,16 @@ export interface ParsedArgs {
     init?: boolean;
     /** --bootstrap-dir <path> for `weave compose --init` — overrides default output path */
     bootstrapDir?: string;
+    /** --diagnostic — include path-bearing diagnostic fields in adapter output */
+    diagnostic?: boolean;
+    /** --content — include bounded child entry content in adapter show output */
+    content?: boolean;
+    /** --content-cursor <token> for paging one large child entry */
+    contentCursor?: string;
+    /** --cursor <token> for adapter children show pagination */
+    cursor?: string;
+    /** --parent-session <id> for adapter children show/delete scope */
+    parentSession?: string;
   };
 }
 
@@ -172,6 +185,50 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--raw-artifacts") {
       flags.rawArtifacts = true;
+      continue;
+    }
+    if (arg === "--diagnostic") {
+      flags.diagnostic = true;
+      continue;
+    }
+    if (arg === "--content") {
+      flags.content = true;
+      continue;
+    }
+    if (arg === "--content-cursor") {
+      const value = args[++i];
+      if (!value || value.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--content-cursor",
+          message: "--content-cursor requires an opaque cursor token",
+        });
+      }
+      flags.contentCursor = value;
+      continue;
+    }
+    if (arg === "--cursor") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--cursor",
+          message: "--cursor requires an opaque cursor token",
+        });
+      }
+      flags.cursor = val;
+      continue;
+    }
+    if (arg === "--parent-session") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--parent-session",
+          message: "--parent-session requires a parent session id",
+        });
+      }
+      flags.parentSession = val;
       continue;
     }
     if (arg === "--adapter") {
@@ -307,6 +364,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       flags.limit = parsed;
       continue;
     }
+    if (arg === "--namespace") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--namespace",
+          message: "--namespace requires a preference namespace",
+        });
+      }
+      flags.namespace = val;
+      continue;
+    }
     if (arg === "--agent") {
       const val = args[++i];
       if (!val || val.startsWith("-")) {
@@ -368,6 +437,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         case "compose":
           command = "compose";
           break;
+        case "adapter":
+          command = "adapter";
+          break;
         default:
           command = "unknown";
           unknownCommand = arg;
@@ -384,9 +456,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       }
     }
 
-    // runtime subcommands: status, journal
+    // runtime subcommands: status, journal, preferences
     if (command === "runtime" && flags.runtimeSubcommand === undefined) {
-      if (arg === "status" || arg === "journal") {
+      if (arg === "status" || arg === "journal" || arg === "preferences") {
         flags.runtimeSubcommand = arg;
         continue;
       }

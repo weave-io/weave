@@ -84,7 +84,7 @@ export class MockAdapter implements HarnessAdapter {
 
   spawnSubagent(descriptor: AgentDescriptor): ResultAsync<void, never> {
     this.calls.push({ method: "spawnSubagent", descriptor });
-    return okAsync(undefined);
+    return okAsync();
   }
 
   /**

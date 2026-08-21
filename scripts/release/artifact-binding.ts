@@ -11,11 +11,11 @@ import type {
   GitHubClient,
   WorkflowRunMetadata,
 } from "./github-client.js";
+import { canonicalizeJson, type JsonValue, validateJsonValue } from "./json.js";
 import {
   type ArtifactBindingRecord,
   ArtifactBindingRecordSchema,
   type ArtifactManifest,
-  type StableTrainRecord,
 } from "./model.js";
 import {
   type ReleasePlan,
@@ -49,8 +49,12 @@ export interface BindingRecordInput {
   manifest: ArtifactManifest;
   manifestDigest: string;
   files: readonly { filename: string; sha256: string }[];
-  stableTrain?: StableTrainRecord;
 }
+
+type BindingCanonicalInput =
+  | JsonValue
+  | ArtifactBindingRecord
+  | Omit<ArtifactBindingRecord, "recordDigest">;
 
 export type BindingError =
   | { type: "InvalidBindingRecord"; issues: readonly string[] }
@@ -63,7 +67,8 @@ export type BindingError =
   | { type: "ArtifactExpired"; artifactId: number }
   | { type: "ArtifactDeleted"; artifactId: number }
   | { type: "ArtifactDigestMissing"; artifactId: number }
-  | { type: "GitHubLookupFailed"; operation: string; message: string };
+  | { type: "GitHubLookupFailed"; operation: string; message: string }
+  | { type: "CanonicalJsonFailed"; reason: string };
 
 export interface BindingVerificationContext {
   expectedWorkflowSha: string;
@@ -105,15 +110,17 @@ export interface PlanBoundArtifact {
  */
 export function bindArtifactsToPlan(input: {
   plan: ReleasePlan;
-  binding: unknown;
+  binding: JsonValue;
   artifacts: readonly UploadedArtifact[];
 }): Result<PlanBoundArtifact, PlanBindingError> {
   return validateUploadedArtifacts(input.artifacts).andThen(() =>
-    verifyReleasePlanBinding(input.plan, input.binding).map((binding) => ({
-      planDigest: releasePlanDigest(input.plan),
-      binding,
-      artifacts: input.artifacts,
-    })),
+    verifyReleasePlanBinding(input.plan, input.binding).andThen((binding) =>
+      releasePlanDigest(input.plan).map((planDigest) => ({
+        planDigest,
+        binding,
+        artifacts: input.artifacts,
+      })),
+    ),
   );
 }
 
@@ -161,7 +168,7 @@ function validateUploadedArtifacts(
 export function createBindingRecord(
   input: BindingRecordInput,
 ): Result<ArtifactBindingRecord, BindingError> {
-  const unsigned = {
+  const unsigned: Omit<ArtifactBindingRecord, "recordDigest"> = {
     schemaVersion: 1 as const,
     repositoryId: input.repositoryId,
     repository: "weave-io/weave" as const,
@@ -179,21 +186,20 @@ export function createBindingRecord(
     // used by the workflow path.
     originJobId: input.originJobId ?? 1,
     originJobName: input.originJobName ?? "build",
-    artifacts: input.artifacts,
+    artifacts: [...input.artifacts],
     packages: input.manifest.packages,
     versions: input.manifest.versions,
     releaseSubjectSha: input.manifest.releaseSubjectSha,
     manifestDigest: input.manifestDigest,
-    ...(input.stableTrain === undefined
-      ? {}
-      : { stableTrain: input.stableTrain }),
-    files: input.files,
+    files: [...input.files],
   };
-  const record = { ...unsigned, recordDigest: digest(canonicalJson(unsigned)) };
-  const parsed = ArtifactBindingRecordSchema.safeParse(record);
-  if (!parsed.success)
-    return err(invalid(parsed.error.issues.map((issue) => issue.message)));
-  return ok(parsed.data);
+  return canonicalJson(unsigned).andThen((canonical) => {
+    const record = { ...unsigned, recordDigest: digest(canonical) };
+    const parsed = ArtifactBindingRecordSchema.safeParse(record);
+    if (!parsed.success)
+      return err(invalid(parsed.error.issues.map((issue) => issue.message)));
+    return ok(parsed.data);
+  });
 }
 
 /**
@@ -201,15 +207,15 @@ export function createBindingRecord(
  * Artifact retrieval is exclusively by numeric server ID, never a display name.
  */
 export function verifyBindingRecord(
-  record: unknown,
+  record: ArtifactBindingInput,
   context: BindingVerificationContext,
   github: GitHubClient,
 ): ResultAsync<ArtifactBindingRecord, BindingError> {
   const parsed = ArtifactBindingRecordSchema.safeParse(record);
   if (!parsed.success)
     return errAsync(invalid(parsed.error.issues.map((issue) => issue.message)));
-  const digestMismatch = verifyRecordDigest(parsed.data);
-  if (digestMismatch !== undefined) return errAsync(digestMismatch);
+  const digestCheck = verifyRecordDigest(parsed.data);
+  if (digestCheck.isErr()) return errAsync(digestCheck.error);
   return github
     .getWorkflowRun(parsed.data.runId)
     .mapErr((error) => githubError(error))
@@ -223,7 +229,11 @@ function verifyRun(
   run: WorkflowRunMetadata,
   github: GitHubClient,
 ): ResultAsync<ArtifactBindingRecord, BindingError> {
-  const checks: readonly [string, unknown, unknown][] = [
+  const checks: readonly [
+    string,
+    BindingCanonicalInput,
+    BindingCanonicalInput,
+  ][] = [
     ["repositoryId", record.repositoryId, run.repositoryId],
     ["runId", record.runId, run.id],
     ["runAttempt", record.runAttempt, run.runAttempt],
@@ -246,11 +256,23 @@ function verifyRun(
       context.expectedManifest.releaseSubjectSha,
     ],
     ["manifestDigest", record.manifestDigest, context.expectedManifestDigest],
-    ["files", record.files, context.expectedFiles],
+    [
+      "files",
+      record.files.map(({ filename, sha256 }) => ({ filename, sha256 })),
+      context.expectedFiles.map(({ filename, sha256 }) => ({
+        filename,
+        sha256,
+      })),
+    ],
   ];
-  for (const [field, expected, actual] of checks)
-    if (canonicalJson(expected) !== canonicalJson(actual))
+  for (const [field, expected, actual] of checks) {
+    const expectedCanonical = canonicalJson(expected);
+    if (expectedCanonical.isErr()) return errAsync(expectedCanonical.error);
+    const actualCanonical = canonicalJson(actual);
+    if (actualCanonical.isErr()) return errAsync(actualCanonical.error);
+    if (expectedCanonical.value !== actualCanonical.value)
       return errAsync({ type: "BindingMismatch", field, expected, actual });
+  }
   // The run's conclusion is null while downstream jobs execute.  Bind to the
   // completed, named build job instead; this preserves live identity checks
   // without accepting a failed or substituted origin job.
@@ -353,40 +375,42 @@ function verifyArtifact(
         return errAsync(
           mismatch("downloadDigest", expected.uploadDigest, downloaded),
         );
-      return okAsync(undefined);
+      return okAsync();
     });
 }
 
 function verifyRecordDigest(
   record: ArtifactBindingRecord,
-): BindingError | undefined {
+): Result<void, BindingError> {
   const { recordDigest, ...unsigned } = record;
-  const expected = digest(canonicalJson(unsigned));
-  if (recordDigest === expected) return undefined;
-  return mismatch("recordDigest", expected, recordDigest);
+  return canonicalJson(unsigned)
+    .map((canonical) => digest(canonical))
+    .andThen((expected) =>
+      recordDigest === expected
+        ? ok()
+        : err(mismatch("recordDigest", expected, recordDigest)),
+    );
 }
 function digest(value: string | Uint8Array): string {
   return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
 }
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sort(value));
+function canonicalJson(
+  value: BindingCanonicalInput,
+): Result<string, BindingError> {
+  return validateJsonValue(value)
+    .andThen((bounded) => canonicalizeJson(bounded))
+    .mapErr((error) => ({
+      type: "CanonicalJsonFailed" as const,
+      reason: error.reason,
+    }));
 }
-function sort(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sort);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, sort((value as Record<string, unknown>)[key])]),
-  );
-}
-function mismatch(
-  field: string,
-  expected: unknown,
-  actual: unknown,
-): BindingError {
+function mismatch<T>(field: string, expected: T, actual: T): BindingError {
   return { type: "BindingMismatch", field, expected, actual };
 }
+type ArtifactBindingInput = Parameters<
+  typeof ArtifactBindingRecordSchema.safeParse
+>[0];
+
 function invalid(issues: readonly string[]): BindingError {
   return { type: "InvalidBindingRecord", issues };
 }

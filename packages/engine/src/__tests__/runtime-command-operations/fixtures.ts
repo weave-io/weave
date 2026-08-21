@@ -25,15 +25,18 @@
 
 import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type {
-  AdapterCapabilityContract,
-  CapabilityEntry,
-  SafeAdapterInitInput,
+import {
+  type AdapterCapabilityContract,
+  ALL_CAPABILITY_IDS,
+  type CapabilityEntry,
+  type CapabilityProbeResult,
+  type SafeAdapterInitInput,
 } from "../../capability-contract.js";
 import type { DispatchAgentEffect } from "../../execution-lifecycle.js";
 import type {
   PlanStateError,
   PlanStateProvider,
+  PlanTaskSnapshot,
 } from "../../plan-state-provider.js";
 import type { WorkflowRunnerError } from "../../runtime-command-operations/workflow-runner.js";
 
@@ -50,11 +53,43 @@ import type { WorkflowRunnerError } from "../../runtime-command-operations/workf
 export class MockPlanStateProvider implements PlanStateProvider {
   readonly planExistsCalls: string[] = [];
   readonly isPlanCompleteCalls: string[] = [];
+  readonly readSnapshotCalls: string[] = [];
 
   constructor(
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+
+  readSnapshot(
+    planName: string,
+  ): ResultAsync<PlanTaskSnapshot, PlanStateError> {
+    this.readSnapshotCalls.push(planName);
+    if (!this.planExistsResult) {
+      return errAsync({ type: "PlanMissing" as const, planName });
+    }
+    return okAsync({
+      planName,
+      contentRevision: "mock-rev-1",
+      format: "canonical",
+      parents: [
+        {
+          id: "1",
+          title: "task",
+          state: this.isPlanCompleteResult ? "completed" : "pending",
+          children: [],
+        },
+      ],
+      totalParentCount: 1,
+      complete: this.isPlanCompleteResult,
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -77,6 +112,20 @@ export class MockPlanStateProvider implements PlanStateProvider {
  * Used to test the error path when the provider cannot answer the query.
  */
 export class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,
@@ -103,6 +152,20 @@ export class FailingPlanStateProvider implements PlanStateProvider {
  * (e.g. the name contains `/`, `..`, `\0`, or other unsafe characters).
  */
 export class InvalidNamePlanStateProvider implements PlanStateProvider {
+  readSnapshot(planName: string) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName,
+    });
+  }
+
+  applyTransition(input: { planName: string }) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName: input.planName,
+    });
+  }
+
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "InvalidPlanName" as const,
@@ -140,7 +203,7 @@ export class MockEffectProjector {
     effect: DispatchAgentEffect,
   ): ResultAsync<void, WorkflowRunnerError> => {
     this.calls.push(effect);
-    return okAsync(undefined);
+    return okAsync();
   };
 }
 
@@ -172,7 +235,7 @@ export class MockSecondAdapter {
     effect: DispatchAgentEffect,
   ): ResultAsync<void, WorkflowRunnerError> => {
     this.projectedEffects.push(effect);
-    return okAsync(undefined);
+    return okAsync();
   };
 
   /**
@@ -183,7 +246,7 @@ export class MockSecondAdapter {
     return {
       harness: this.harness,
       capabilityContract: makeContractWithCommandEntrypoints("emulated"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     };
   }
 }
@@ -198,7 +261,7 @@ export class MockSecondAdapter {
  * Used for tests that need a successful `runWorkflowLifecycle` call without
  * plan-oriented completion methods.
  */
-export const SIMPLE_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const SIMPLE_WORKFLOWS = {
   "simple-execution": {
     description: "Simple execution workflow for testing",
     version: 1,
@@ -213,14 +276,14 @@ export const SIMPLE_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Multi-step workflow registry with two sequential `agent_signal` steps.
  *
  * Used for tests that need to verify multi-step execution and effect ordering.
  */
-export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const MULTI_STEP_WORKFLOWS = {
   "multi-step-execution": {
     description: "Multi-step execution workflow for testing",
     version: 1,
@@ -243,7 +306,7 @@ export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Gate workflow with a `review_verdict` step for completion signal tests.
@@ -253,7 +316,7 @@ export const MULTI_STEP_WORKFLOWS: Record<string, WorkflowConfig> = {
  *
  * Used to test `advanceStep` with `review_verdict` approved/rejected signals.
  */
-export const GATE_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const GATE_WORKFLOWS = {
   "gate-execution": {
     description: "Gate workflow with review_verdict step for testing",
     version: 1,
@@ -277,14 +340,14 @@ export const GATE_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 /**
  * Plan workflow with `plan_created` and `plan_complete` completion methods.
  *
  * Used to test the degraded fallback when `planStateProvider` is absent.
  */
-export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
+export const PLAN_COMPLETION_WORKFLOWS = {
   "plan-completion-execution": {
     description: "Plan completion workflow for testing",
     version: 1,
@@ -313,7 +376,7 @@ export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
       },
     ],
   },
-};
+} satisfies Record<string, WorkflowConfig>;
 
 // ---------------------------------------------------------------------------
 // § 7 — No-op projectEffect
@@ -326,11 +389,25 @@ export const PLAN_COMPLETION_WORKFLOWS: Record<string, WorkflowConfig> = {
  */
 export const noopProjectEffect = (
   _effect: DispatchAgentEffect,
-): ResultAsync<void, WorkflowRunnerError> => okAsync(undefined);
+): ResultAsync<void, WorkflowRunnerError> => okAsync();
 
 // ---------------------------------------------------------------------------
 // § 8 — Capability contract fixture helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Build an `ok` probe result for every one of the 20 capability IDs.
+ *
+ * `ok` probes never lower effective readiness below the static declaration
+ * (adapter capability and Pi adapter contracts), so fixtures using this helper preserve the exact
+ * pre-probe declared readiness for every capability.
+ */
+export function okProbesForAll(): CapabilityProbeResult[] {
+  return ALL_CAPABILITY_IDS.map((capabilityId) => ({
+    capabilityId,
+    probeStatus: "ok" as const,
+  }));
+}
 
 /**
  * Build a minimal `CapabilityEntry` for a given capability ID and readiness.

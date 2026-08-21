@@ -85,7 +85,12 @@ export function refinePromptExclusive(): [
 // Path safety
 // ---------------------------------------------------------------------------
 
-type HasPromptFile = Record<string, unknown>;
+type PromptFileField = "prompt_file" | "prompt_append_file";
+
+type HasPromptFile = {
+  prompt_file?: string;
+  prompt_append_file?: string;
+};
 
 /**
  * Returns a `[predicate, options]` tuple for use with Zod `.refine()`.
@@ -97,13 +102,12 @@ type HasPromptFile = Record<string, unknown>;
  * @param field - The field name to check (e.g. `"prompt_file"`, `"prompt_append_file"`).
  */
 export function refinePromptFileSafe(
-  field: string,
+  field: PromptFileField,
 ): [(data: HasPromptFile) => boolean, { message: string }] {
   return [
     (data) => {
       const value = data[field];
       if (value === undefined) return true;
-      if (typeof value !== "string") return true;
       if (posix.isAbsolute(value) || win32.isAbsolute(value)) return false;
       if (value.split(/[\\/]+/).some((segment) => segment === ".."))
         return false;

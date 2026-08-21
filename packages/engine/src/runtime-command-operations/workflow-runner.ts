@@ -24,8 +24,8 @@
  * - The engine never reads `.weave/plans/**`; plan state stays behind
  *   `PlanStateProvider` (not used here — plan validation is caller-owned).
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/start.ts — startExecution
  * @see packages/engine/src/execution-lifecycle/dispatch.ts — dispatchStep
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
@@ -39,13 +39,18 @@ import {
   dispatchStep,
   type LifecycleEffect,
   type LifecycleError,
+  type StepCompletionSignal,
   startExecution,
   type WorkflowExecutionContext,
 } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RuntimeStore } from "../runtime/store.js";
-import type { ExecutionLeaseId, WorkflowInstanceId } from "../runtime/types.js";
+import {
+  createWorkflowInstanceId,
+  type ExecutionLeaseId,
+  type WorkflowInstanceId,
+} from "../runtime/types.js";
 import type {
   CommandLifecycleError,
   CommandNotFoundError,
@@ -224,17 +229,17 @@ function completeAndAdvance(
     dispatchEffect?.runAgent.completionMethod === "review_verdict";
   const outcome = "success" as const;
   const approved = isReviewVerdict ? true : undefined;
+  const completionSignal: StepCompletionSignal =
+    approved === undefined
+      ? { outcome, method: completionMethod }
+      : { outcome, method: completionMethod, approved };
 
   return completeStep(
     {
       workflowInstanceId: state.workflowInstanceId,
       leaseId: state.leaseId,
       stepName,
-      completionSignal: {
-        outcome,
-        method: completionMethod,
-        ...(approved !== undefined ? { approved } : {}),
-      },
+      completionSignal,
       context: state.context,
       planStateProvider: state.planStateProvider,
     },
@@ -401,7 +406,7 @@ export function runWorkflowLifecycle(
   }
 
   const workflowInstanceId =
-    input.workflowInstanceId ?? (crypto.randomUUID() as WorkflowInstanceId);
+    input.workflowInstanceId ?? createWorkflowInstanceId(crypto.randomUUID());
 
   const context: WorkflowExecutionContext = {
     workflowName,
@@ -475,7 +480,7 @@ export function runWorkflowLifecycle(
           // Apply all dispatch effects sequentially, short-circuiting on error.
           const applyAll = dispatchAgentEffects.reduce(
             (chain, effect) => chain.andThen(() => projectEffect(effect)),
-            okAsync<void, WorkflowRunnerError>(undefined),
+            okAsync<undefined, WorkflowRunnerError>(),
           );
 
           // Pass the first dispatch-agent effect (if any) so the runner can

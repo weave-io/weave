@@ -18,6 +18,33 @@ export interface GeneratedCategoryShuttle {
   categoryMeta: CategoryMetadata;
 }
 
+function copyStringList(
+  values: readonly string[] | undefined,
+): string[] | undefined {
+  return values === undefined ? undefined : [...values];
+}
+
+function copyToolPolicy(
+  policy: AgentConfig["tool_policy"],
+): AgentConfig["tool_policy"] {
+  return policy === undefined ? undefined : { ...policy };
+}
+
+function copyDelegation(
+  delegation: AgentConfig["delegation"],
+): AgentConfig["delegation"] {
+  return delegation === undefined ? undefined : { ...delegation };
+}
+
+function copyRouting(routing: AgentConfig["routing"]): AgentConfig["routing"] {
+  if (routing === undefined) return undefined;
+  const copied = { ...routing };
+  if (routing.delegation_exclude !== undefined) {
+    copied.delegation_exclude = [...routing.delegation_exclude];
+  }
+  return copied;
+}
+
 /**
  * Generate category shuttle agent descriptors from the merged WeaveConfig.
  *
@@ -54,8 +81,22 @@ export function generateCategoryShuttles(
 
     if (config.disabled.agents.includes(shuttleName)) continue;
 
-    const overrides: Partial<AgentConfig> = {};
-    if (category.models !== undefined) overrides.models = category.models;
+    const overrides: Partial<AgentConfig> = {
+      // A category description describes the generated shuttle's domain, so it
+      // always replaces the base shuttle description everywhere the agent
+      // config is read (descriptors, delegation targets, prompts). The DSL
+      // requires a non-blank category description, so there is no fallback.
+      description: category.description,
+    };
+    // Always copy inherited and override arrays/objects. Spreading `base`
+    // would otherwise alias models, skills, review_models, tool_policy,
+    // delegation, and routing onto every generated sibling.
+    const models = copyStringList(category.models ?? base.models);
+    if (models !== undefined) overrides.models = models;
+    const skills = copyStringList(base.skills);
+    if (skills !== undefined) overrides.skills = skills;
+    const reviewModels = copyStringList(base.review_models);
+    if (reviewModels !== undefined) overrides.review_models = reviewModels;
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
     }
@@ -70,6 +111,19 @@ export function generateCategoryShuttles(
     }
     if (category.tool_policy !== undefined) {
       overrides.tool_policy = { ...base.tool_policy, ...category.tool_policy };
+    } else {
+      const toolPolicy = copyToolPolicy(base.tool_policy);
+      if (toolPolicy !== undefined) overrides.tool_policy = toolPolicy;
+    }
+    if (category.triggers !== undefined) {
+      overrides.triggers = [...category.triggers];
+    }
+    const delegation = copyDelegation(base.delegation);
+    if (delegation !== undefined) overrides.delegation = delegation;
+    const routing = copyRouting(base.routing);
+    if (routing !== undefined) overrides.routing = routing;
+    if (category.fast === true || base.fast === true) {
+      overrides.fast = true;
     }
 
     result[shuttleName] = {
@@ -77,12 +131,18 @@ export function generateCategoryShuttles(
         ...base,
         name: shuttleName,
         mode: "subagent",
+        // Category shuttles never inherit the generic Shuttle trigger list.
+        // They are routed by category description, policies, and any category
+        // string triggers. An explicit empty array records that omission at
+        // generation time so a later spread cannot silently reintroduce the
+        // base Shuttle fallback triggers. Config-layer array union-merge does
+        // not apply here — generation runs after `mergeConfigs`.
+        triggers: [],
         ...overrides,
       },
       categoryMeta: {
         name: categoryName,
         description: category.description,
-        patterns: [...(category.patterns ?? [])],
         isCategory: true,
       },
     };

@@ -25,7 +25,10 @@
  *     length, and structure assertions are made.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import {
   composeAgentSnapshots,
   composeSnapshot,
@@ -44,6 +47,16 @@ const PATTERN_PROMPT_SCOPE_CONTRACT =
 const PATTERN_PROMPT_ORDER_CONTRACT = "## Dependencies and Order";
 const PATTERN_PROMPT_ACCEPTANCE_CONTRACT =
   "Put acceptance criteria under each task's `**Acceptance**` field";
+const PATTERN_PROMPT_OUTLINE_CONTRACT =
+  "Every implementation task must include a concise numbered `**Implementation outline**`";
+const PATTERN_PROMPT_PITFALLS_CONTRACT =
+  "a `**Pitfalls / non-goals**` list covering edge cases, preserved behavior, or explicit non-goals";
+const PATTERN_PROMPT_FLAT_TASKS_CONTRACT =
+  "Keep executable tasks flat. Internal implementation steps and pitfalls must use plain numbered or list bullets, never nested `- [ ]` checklist items.";
+const PATTERN_PROMPT_SPLIT_CONTRACT =
+  "Split a task only when its parts have separate file ownership or can be independently verified";
+const PATTERN_PROMPT_ONE_TURN_CONTRACT =
+  "Keep each executable task small enough for one specialist turn.";
 const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
 const SHUTTLE_PROMPT_HONESTY_CONTRACT =
   "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
@@ -81,17 +94,19 @@ function makeInlineAgentConfig(prompt: string) {
  * Build a minimal WeaveConfig for testing with inline prompts.
  * This avoids filesystem reads while exercising the snapshot pipeline.
  */
-function makeMinimalConfig(
-  agents: Record<string, ReturnType<typeof makeInlineAgentConfig>>,
-): import("@weaveio/weave-core").WeaveConfig {
+function makeMinimalConfig(agents: WeaveConfig["agents"]): WeaveConfig {
   return {
-    agents: agents as import("@weaveio/weave-core").WeaveConfig["agents"],
+    agents,
     categories: {},
     workflows: {},
     disabled: { agents: [], hooks: [], skills: [] },
     settings: {
       log_level: "INFO" as const,
-      runtime: { journal: { strict: false } },
+      runtime: {
+        journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+        usage: { detail_retention_days: 30, max_observations: 100_000 },
+        log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+      },
     },
     extend_before_plan: { steps: [] },
   };
@@ -185,11 +200,11 @@ describe("composeSnapshot — snapshot structure", () => {
 
     const { snapshot } = result._unsafeUnwrap();
     expect(snapshot.agentName).toBe("tapestry");
-    expect(typeof snapshot.hash).toBe("string");
+    expect(snapshot.hash.length).toBe(64);
     expect(snapshot.hash).toHaveLength(64);
-    expect(typeof snapshot.byteLength).toBe("number");
+    expect(Number.isFinite(snapshot.byteLength)).toBe(true);
     expect(snapshot.byteLength).toBeGreaterThan(0);
-    expect(typeof snapshot.charLength).toBe("number");
+    expect(Number.isFinite(snapshot.charLength)).toBe(true);
     expect(snapshot.charLength).toBeGreaterThan(0);
     expect(Array.isArray(snapshot.sources)).toBe(true);
     expect(snapshot.sources.length).toBeGreaterThan(0);
@@ -224,7 +239,6 @@ describe("composeSnapshot — snapshot structure", () => {
 
     const { rawArtifact } = result._unsafeUnwrap();
     expect(rawArtifact.agentName).toBe("my-agent");
-    expect(typeof rawArtifact.composedPrompt).toBe("string");
     expect(rawArtifact.composedPrompt.length).toBeGreaterThan(0);
   });
 
@@ -311,11 +325,9 @@ describe("composeSnapshot — source descriptors", () => {
   });
 
   it("sources array has two entries for agent with primary and append", async () => {
-    const config = makeMinimalConfig(
-      {} as Record<string, ReturnType<typeof makeInlineAgentConfig>>,
-    );
+    const config = makeMinimalConfig({});
     // Build the config with an agent that has both prompt and prompt_append
-    const configWithAppend: import("@weaveio/weave-core").WeaveConfig = {
+    const configWithAppend: WeaveConfig = {
       ...config,
       agents: {
         "appended-agent": {
@@ -375,8 +387,8 @@ describe("composeSnapshot — error paths", () => {
     // Must not throw — result must be err
     expect(result.isErr()).toBe(true);
     const e = result._unsafeUnwrapErr();
-    expect(typeof e.type).toBe("string");
-    expect(typeof e.message).toBe("string");
+    expect(e.type.length).toBeGreaterThan(0);
+    expect(e.message.length).toBeGreaterThan(0);
   });
 });
 
@@ -385,6 +397,20 @@ describe("composeSnapshot — error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("composeAgentSnapshots — integration with builtin config", () => {
+  // `composeAgentSnapshots()` loads config from disk, and config discovery
+  // reads `$HOME/.weave` before the project scope. Point HOME at a directory
+  // that cannot exist so these tests compose builtin plus project config only,
+  // exactly as the isolation note above promises, whatever the developer's
+  // own global config happens to contain.
+  const originalHome = process.env.HOME;
+  beforeAll(() => {
+    process.env.HOME = join(tmpdir(), `weave-no-global-${crypto.randomUUID()}`);
+  });
+  afterAll(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
   it("default snapshot coverage stays aligned with the shared eval registry", () => {
     // DEFAULT_SNAPSHOT_AGENTS is the deduplicated set of short-agent filters.
     // EVAL_SHORT_AGENT_FILTERS may contain duplicates (e.g. 'tapestry' backing
@@ -499,6 +525,18 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(artifact?.composedPrompt).toContain(
       PATTERN_PROMPT_ACCEPTANCE_CONTRACT,
     );
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_OUTLINE_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_PITFALLS_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_FLAT_TASKS_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_SPLIT_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_ONE_TURN_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).not.toMatch(/\n {2,}- \[ \]/);
   });
 
   it("shuttle snapshot raw prompt preserves the delegated-task reporting contract", async () => {
@@ -633,7 +671,7 @@ describe("SHA-256 hash stability contract", () => {
     }
     // (If composition fails on empty prompt, that's fine — we just ensure
     // no exception is thrown and result is typed.)
-    expect(typeof result1.isOk()).toBe("boolean");
+    expect([true, false]).toContain(result1.isOk());
     // SHA-256 of the known constant, for documentation:
     expect(EMPTY_SHA256).toHaveLength(64);
   });

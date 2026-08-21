@@ -1,4 +1,11 @@
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import {
   ALL_DEPENDENCY_FIELDS,
   PRIVATE_PACKAGE_NAMES,
@@ -7,14 +14,29 @@ import {
   RUNTIME_DEPENDENCY_FIELDS,
 } from "./constants.js";
 import {
+  isJsonObject,
+  isJsonString,
+  type JsonObject,
+  type JsonValue,
+  parseJsonValue,
+} from "./json.js";
+import {
   isPublishablePackage,
   type PublishabilityError,
   resolvePublishablePackage,
 } from "./package-policy.js";
 
-type JsonObject = Record<string, unknown>;
+interface MutableJsonObject {
+  [key: string]: JsonValue;
+}
+
+interface DependencyMap {
+  [packageName: string]: string;
+}
+
 type DependencyField = (typeof ALL_DEPENDENCY_FIELDS)[number];
 type RuntimeDependencyField = (typeof RUNTIME_DEPENDENCY_FIELDS)[number];
+const isStringValue = isJsonString;
 
 export type PublicManifestError =
   | { type: "InvalidManifest"; path: string; message: string }
@@ -59,7 +81,7 @@ export class BunPublicManifestFileSystem implements PublicManifestFileSystem {
       type: "Filesystem" as const,
       path,
       operation: "write" as const,
-    })).map(() => undefined);
+    })).andThen(() => okAsync());
   }
 
   ensureDirectory(path: string): ResultAsync<void, PublicManifestError> {
@@ -71,7 +93,7 @@ export class BunPublicManifestFileSystem implements PublicManifestFileSystem {
         operation: "mkdir" as const,
       }),
     ).andThen((exitCode) => {
-      if (exitCode === 0) return okAsync(undefined);
+      if (exitCode === 0) return okAsync();
       return errAsync({
         type: "Filesystem" as const,
         path,
@@ -85,7 +107,7 @@ export interface StagedPublicManifest {
   packageName: PublicPackageName;
   directory: string;
   manifestPath: string;
-  manifest: JsonObject;
+  manifest: MutableJsonObject;
 }
 
 /**
@@ -96,9 +118,9 @@ export class PublicManifestBuilder {
   constructor(private readonly fileSystem: PublicManifestFileSystem) {}
 
   build(
-    source: unknown,
+    source: JsonValue,
     sourcePath: string,
-  ): Result<JsonObject, PublicManifestError> {
+  ): Result<MutableJsonObject, PublicManifestError> {
     if (!isJsonObject(source)) {
       return err({
         type: "InvalidManifest",
@@ -108,7 +130,7 @@ export class PublicManifestBuilder {
     }
 
     const packageName = source.name;
-    if (typeof packageName !== "string") {
+    if (!isStringValue(packageName)) {
       return err({
         type: "InvalidManifest",
         path: `${sourcePath}.name`,
@@ -159,21 +181,20 @@ export class PublicManifestBuilder {
     stagingDirectory: string,
     version?: string,
   ): ResultAsync<StagedPublicManifest, PublicManifestError> {
-    const parsed: Result<unknown, PublicManifestError> = Result.fromThrowable(
-      () => JSON.parse(contents) as unknown,
-      () => ({
-        type: "InvalidManifest" as const,
-        path: sourceManifestPath,
-        message: "Invalid JSON",
-      }),
-    )();
+    const parsed: Result<JsonValue, PublicManifestError> = parseJsonValue(
+      contents,
+    ).mapErr(() => ({
+      type: "InvalidManifest" as const,
+      path: sourceManifestPath,
+      message: "Invalid JSON",
+    }));
     if (parsed.isErr()) return errAsync(parsed.error);
 
     const manifest = this.build(parsed.value, sourceManifestPath);
     if (manifest.isErr()) return errAsync(manifest.error);
     if (version !== undefined) manifest.value.version = version;
     const packageName = manifest.value.name;
-    if (typeof packageName !== "string" || !isPublishablePackage(packageName)) {
+    if (!isStringValue(packageName) || !isPublishablePackage(packageName)) {
       return errAsync({
         type: "InvalidManifest",
         path: `${sourceManifestPath}.name`,
@@ -195,8 +216,8 @@ export class PublicManifestBuilder {
     );
   }
 
-  private copyPublicFields(source: JsonObject): JsonObject {
-    const staged: JsonObject = {};
+  private copyPublicFields(source: JsonObject): MutableJsonObject {
+    const staged: MutableJsonObject = {};
     for (const field of PUBLIC_MANIFEST_FIELDS) {
       const value = source[field];
       if (value !== undefined) staged[field] = value;
@@ -208,12 +229,11 @@ export class PublicManifestBuilder {
     source: JsonObject,
     sourcePath: string,
   ): Result<
-    Partial<Record<RuntimeDependencyField, Record<string, string>>>,
+    Partial<Record<RuntimeDependencyField, DependencyMap>>,
     PublicManifestError
   > {
-    const runtimeMaps: Partial<
-      Record<RuntimeDependencyField, Record<string, string>>
-    > = {};
+    const runtimeMaps: Partial<Record<RuntimeDependencyField, DependencyMap>> =
+      {};
     for (const field of ALL_DEPENDENCY_FIELDS) {
       const value = source[field];
       if (value === undefined) continue;
@@ -224,7 +244,7 @@ export class PublicManifestBuilder {
           message: "Expected dependency map",
         });
       }
-      const externalDependencies: Record<string, string> = {};
+      const externalDependencies: DependencyMap = {};
       for (const packageName of Object.keys(value)) {
         if (this.isForbiddenDependency(packageName)) {
           return err({
@@ -250,13 +270,9 @@ export class PublicManifestBuilder {
   }
 }
 
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isDependencyMap(value: unknown): value is Record<string, string> {
+function isDependencyMap(value: JsonValue): value is DependencyMap {
   if (!isJsonObject(value)) return false;
-  return Object.values(value).every((version) => typeof version === "string");
+  return Object.values(value).every(isStringValue);
 }
 
 function isRuntimeDependencyField(
@@ -266,14 +282,10 @@ function isRuntimeDependencyField(
 }
 
 function isKnownWorkspaceBuildDependency(packageName: string): boolean {
-  if (
-    PRIVATE_PACKAGE_NAMES.includes(
-      packageName as (typeof PRIVATE_PACKAGE_NAMES)[number],
-    )
-  ) {
+  if (PRIVATE_PACKAGE_NAMES.some((privateName) => privateName === packageName))
     return true;
-  }
-  // Bundled into the CLI build and stripped from its staged manifest.
+  // Bundled into `@weaveio/weave-cli` at build time (Claude compose + Pi adapter
+  // commands). Stripped from the published CLI manifest like private layers.
   return (
     packageName === "@weaveio/weave-adapter-claude-code" ||
     packageName === "@weaveio/weave-adapter-pi"

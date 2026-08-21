@@ -1,8 +1,43 @@
 import { describe, expect, it } from "bun:test";
+import type { AstNode, AstValue, Property } from "../ast.js";
 import { tokenize } from "../lexer.js";
 import { parse } from "../parser.js";
-import { validate } from "../validate.js";
+import { MAX_CONFIG_ARRAY_LENGTH } from "../schema-common.js";
+import type { SourcePos } from "../tokens.js";
+import {
+  MAX_VALIDATION_DIAGNOSTIC_SIZE,
+  MAX_VALIDATION_ISSUES,
+  MAX_VALIDATION_MESSAGE_LENGTH,
+  MAX_VALIDATION_PATH_LENGTH,
+  VALIDATION_DIAGNOSTICS_TRUNCATED,
+  validate,
+} from "../validate.js";
 
+type ValidateResult = ReturnType<typeof validate>;
+type DirectAstField =
+  | string
+  | boolean
+  | SourcePos
+  | DirectAstField[]
+  | DirectAstRecord;
+type DirectAstRecord = {
+  [key: string]: DirectAstField;
+};
+type HostilePropertyHost = {
+  key?: string;
+  value?: AstValue;
+  pos?: SourcePos;
+};
+type CyclicCategoryNode = {
+  type: "category";
+  name: string;
+  properties: Property[];
+  pos: SourcePos;
+  self?: CyclicCategoryNode;
+};
+type OwnedAgentFields = {
+  models: string[];
+};
 /** Helper: lex + parse + validate a source string */
 function validateSource(src: string) {
   const lexResult = tokenize(src);
@@ -13,6 +48,671 @@ function validateSource(src: string) {
     throw new Error(`Parse errors: ${JSON.stringify(parseResult.error)}`);
   return validate(parseResult.value);
 }
+
+function validateRuntimeInput(input: AstNode[]): ValidateResult {
+  return validate(input);
+}
+
+function expectValidationFailure(result: ValidateResult) {
+  expect(result.isErr()).toBe(true);
+  if (result.isOk()) {
+    throw new Error("Expected validation failure");
+  }
+  return result.error;
+}
+
+function expectValidationSuccess(result: ValidateResult) {
+  expect(result.isOk()).toBe(true);
+  if (result.isErr()) {
+    throw new Error(
+      `Expected validation success: ${JSON.stringify(result.error)}`,
+    );
+  }
+  return result.value;
+}
+
+function emptyDirectAstRecord(): DirectAstRecord {
+  return Object.setPrototypeOf({}, null);
+}
+
+describe("validate — bounded public schema arrays", () => {
+  const agentWithModels = (count: number): AstNode => {
+    const position = (): SourcePos => ({ line: 1, column: 1 });
+    const models: AstValue = {
+      kind: "array",
+      elements: Array.from(
+        { length: count },
+        (_, index): AstValue => ({
+          kind: "string",
+          value: `model-${index}`,
+          pos: position(),
+        }),
+      ),
+      pos: position(),
+    };
+    return {
+      type: "agent",
+      name: "helper",
+      properties: [{ key: "models", value: models, pos: position() }],
+      pos: position(),
+    };
+  };
+
+  it("accepts 512 model items at the validator boundary", () => {
+    const result = validateRuntimeInput([
+      agentWithModels(MAX_CONFIG_ARRAY_LENGTH),
+    ]);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.agents.helper?.models).toHaveLength(
+        MAX_CONFIG_ARRAY_LENGTH,
+      );
+    }
+  });
+
+  it("rejects 513 model items with bounded typed diagnostics", () => {
+    const result = validateRuntimeInput([
+      agentWithModels(MAX_CONFIG_ARRAY_LENGTH + 1),
+    ]);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(
+        result.error.every((error) => error.type === "ValidationError"),
+      ).toBe(true);
+      expect(result.error.some((error) => error.path.includes("models"))).toBe(
+        true,
+      );
+      expect(JSON.stringify(result.error).length).toBeLessThanOrEqual(
+        MAX_VALIDATION_DIAGNOSTIC_SIZE,
+      );
+    }
+  });
+});
+
+describe("validate — fail-closed AST structure", () => {
+  it.each([
+    [
+      "agent",
+      `agent helper { triggers [bareword] }`,
+      "agents.helper.triggers.0",
+    ],
+    [
+      "category",
+      `category helper { description "Helper" triggers [bareword] }`,
+      "categories.helper.triggers.0",
+    ],
+  ])("rejects bare identifiers in %s triggers", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: "trigger entries must be quoted strings",
+      }),
+    );
+  });
+
+  it.each([
+    ["agent", `agent helper { fast }`, "agents.helper.fast"],
+    [
+      "category",
+      `category helper { description "Helper" fast }`,
+      "categories.helper.fast",
+    ],
+  ])("rejects bare fast in %s declarations", (_kind, source, path) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path,
+        message: expect.stringContaining("fast true"),
+      }),
+    );
+  });
+
+  it("keeps intentionally supported bare extension-point flags", () => {
+    const result = validateSource(`workflow flow {
+      version 1
+      extension_points { before-plan }
+      step plan {
+        agent helper
+        role planning
+        type autonomous
+        prompt "Plan."
+        completion plan_created { plan_name "plan" }
+      }
+    }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().workflows.flow?.extension_points).toEqual({
+      before_plan: true,
+    });
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s fast and trigger properties", (kind) => {
+    const description = kind === "category" ? `description "Helper"` : "";
+    for (const duplicate of [
+      `fast true fast true`,
+      `triggers ["one"] triggers ["two"]`,
+    ]) {
+      const result = validateSource(
+        `${kind} helper { ${description} ${duplicate} }`,
+      );
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate property"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    "agent",
+    "category",
+  ])("rejects duplicate %s declarations", (kind) => {
+    const body = kind === "category" ? `description "Helper"` : `fast true`;
+    const result = validateSource(
+      `${kind} helper { ${body} } ${kind} helper { ${body} }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`duplicate ${kind} declaration`),
+      }),
+    );
+  });
+
+  it("rejects duplicate nested properties and workflow declarations", () => {
+    for (const source of [
+      `agent helper { tool_policy { read allow read deny } }`,
+      `workflow flow { version 1 } workflow flow { version 1 }`,
+      `workflow flow { version 1 step run { agent helper } step run { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("duplicate"),
+        }),
+      );
+    }
+  });
+
+  it.each([
+    [
+      "step display name",
+      `workflow flow { version 1 step run { name "Run" display_name "Overwrite" } }`,
+      "display_name",
+    ],
+    [
+      "completion method",
+      `workflow flow { version 1 step run { completion plan_created { method "overwrite" } } }`,
+      "method",
+    ],
+    [
+      "workflow steps",
+      `workflow flow { version 1 steps [] step run { agent helper } }`,
+      "steps",
+    ],
+  ])("rejects %s generated-destination collisions", (_case, source, destination) => {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining(`'${destination}'`),
+      }),
+    );
+  });
+
+  it("rejects direct workflow extends destination collisions", () => {
+    const position = () => ({ line: 1, column: 1 });
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          {
+            key: "extends",
+            value: {
+              kind: "string",
+              value: "generic",
+              pos: position(),
+            },
+            pos: position(),
+          },
+        ],
+        steps: [],
+        extends: "dedicated",
+        pos: position(),
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "workflows.pipeline.extends",
+        message: "property 'extends' collides with generated 'extends'",
+      }),
+    );
+  });
+
+  it("rejects direct step insertion destination collisions", () => {
+    const position = () => ({ line: 1, column: 1 });
+    const result = validate([
+      {
+        type: "workflow",
+        name: "pipeline",
+        properties: [
+          {
+            key: "version",
+            value: { kind: "number", value: 1, pos: position() },
+            pos: position(),
+          },
+        ],
+        steps: [
+          {
+            name: "implement",
+            properties: [
+              {
+                key: "insert_before",
+                value: {
+                  kind: "string",
+                  value: "generic-before",
+                  pos: position(),
+                },
+                pos: position(),
+              },
+              {
+                key: "insert_after",
+                value: {
+                  kind: "string",
+                  value: "generic-after",
+                  pos: position(),
+                },
+                pos: position(),
+              },
+            ],
+            insert_before: "dedicated-before",
+            insert_after: "dedicated-after",
+            pos: position(),
+          },
+        ],
+        pos: position(),
+      },
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_before",
+          message:
+            "property 'insert_before' collides with generated 'insert_before'",
+        }),
+        expect.objectContaining({
+          path: "workflows.pipeline.steps.implement.insert_after",
+          message:
+            "property 'insert_after' collides with generated 'insert_after'",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects unsafe direct AST graphs without executing getters", () => {
+    const pos = { line: 1, column: 1 };
+    let getterExecutions = 0;
+    const inheritedProperty: HostilePropertyHost = Object.create({
+      key: "description",
+    });
+    Object.defineProperty(inheritedProperty, "value", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return { kind: "string", value: "unsafe", pos };
+      },
+    });
+    Object.defineProperty(inheritedProperty, "pos", {
+      value: pos,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+
+    const symbolGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(symbolGraph[0], Symbol("unsafe"), {
+      value: true,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+
+    const readonlyGraph = [
+      { type: "category", name: "helper", properties: [], pos },
+    ];
+    Object.defineProperty(readonlyGraph[0], "name", {
+      value: "helper",
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    });
+
+    const cyclicNode: CyclicCategoryNode = {
+      type: "category",
+      name: "helper",
+      properties: [],
+      pos,
+    };
+    cyclicNode.self = cyclicNode;
+
+    const sparseGraph: never[] = [];
+    sparseGraph.length = 1;
+
+    class AstContainer extends Array<CyclicCategoryNode> {}
+    const unsafeGraphs = [
+      [
+        {
+          type: "category",
+          name: "helper",
+          properties: [inheritedProperty],
+          pos,
+        },
+      ],
+      Object.assign(
+        [
+          {
+            type: "category",
+            name: "helper",
+            properties: [],
+            pos,
+          },
+        ],
+        { extra: true },
+      ),
+      symbolGraph,
+      readonlyGraph,
+      [cyclicNode],
+      sparseGraph,
+      new AstContainer({
+        type: "category",
+        name: "helper",
+        properties: [],
+        pos,
+      }),
+    ];
+
+    for (const graph of unsafeGraphs) {
+      // SAFETY: hostile fixtures intentionally cross the typed public boundary.
+      const errors = expectValidationFailure(
+        validateRuntimeInput(graph as AstNode[]),
+      );
+      expect(errors).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          message: expect.stringContaining("own, enumerable, writable"),
+        }),
+      ]);
+    }
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("rejects callable direct AST nodes without executing getters", () => {
+    let getterExecutions = 0;
+    function callable(): void {}
+    Object.defineProperty(callable, "type", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterExecutions += 1;
+        return "category";
+      },
+    });
+
+    const callableGraph: AstNode[] = [];
+    Object.defineProperty(callableGraph, "0", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: callable,
+    });
+    callableGraph.length = 1;
+
+    const errors = expectValidationFailure(validateRuntimeInput(callableGraph));
+
+    expect(errors).toEqual([
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "",
+        message: expect.stringContaining("own, enumerable, writable"),
+      }),
+    ]);
+    expect(getterExecutions).toBe(0);
+  });
+
+  it("returns bounded errors for malformed safe direct AST shapes", () => {
+    const malformedGraphs = [null, {}, [null], [{ type: "category" }]];
+
+    for (const graph of malformedGraphs) {
+      // SAFETY: malformed fixtures intentionally cross the typed boundary.
+      const errors = expectValidationFailure(
+        validateRuntimeInput(graph as AstNode[]),
+      );
+      expect(errors).toEqual([
+        expect.objectContaining({
+          type: "ValidationError",
+          path: "",
+          message: expect.stringContaining("AST input"),
+        }),
+      ]);
+    }
+  });
+
+  it("accepts safe direct and null-prototype AST graphs", () => {
+    const position = () => ({ line: 1, column: 1 });
+    const directConfig = expectValidationSuccess(
+      validate([
+        {
+          type: "category",
+          name: "plain",
+          properties: [
+            {
+              key: "description",
+              value: {
+                kind: "string",
+                value: "Plain category",
+                pos: position(),
+              },
+              pos: position(),
+            },
+          ],
+          pos: position(),
+        },
+      ]),
+    );
+    expect(directConfig.categories.plain).toEqual({
+      description: "Plain category",
+    });
+
+    const stringValue = emptyDirectAstRecord();
+    stringValue.kind = "string";
+    stringValue.value = "Null category";
+    stringValue.pos = position();
+    const property = emptyDirectAstRecord();
+    property.key = "description";
+    property.value = stringValue;
+    property.pos = position();
+    const node = emptyDirectAstRecord();
+    node.type = "category";
+    node.name = "null-prototype";
+    node.properties = [property];
+    node.pos = position();
+
+    // SAFETY: the null-prototype fixture intentionally crosses the typed boundary.
+    const nullPrototypeConfig = expectValidationSuccess(
+      validateRuntimeInput([node] as AstNode[]),
+    );
+    expect(nullPrototypeConfig.categories["null-prototype"]).toEqual({
+      description: "Null category",
+    });
+  });
+
+  it("rejects dangerous declaration, property, nested block, and step names", () => {
+    for (const source of [
+      `agent __proto__ { fast true }`,
+      `category constructor { description "Helper" }`,
+      `agent helper { prototype true }`,
+      `agent helper { extension_points { __proto__ true } }`,
+      `workflow flow { step prototype { agent helper } }`,
+    ]) {
+      const result = validateSource(source);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("dangerous"),
+        }),
+      );
+    }
+  });
+
+  it("does not admit inherited fast, triggers, or description values", () => {
+    const inherited: OwnedAgentFields = Object.create({
+      fast: true,
+      triggers: ["inherited"],
+      description: "inherited",
+    });
+    inherited.models = ["model"];
+    const agentConfig = expectValidationSuccess(
+      validate([
+        {
+          type: "agent",
+          name: "helper",
+          properties: Object.entries(inherited).map(([key, value]) => ({
+            key,
+            value: {
+              kind: "array" as const,
+              elements: value.map((entry) => ({
+                kind: "string" as const,
+                value: entry,
+                pos: { line: 1, column: 1 },
+              })),
+              pos: { line: 1, column: 1 },
+            },
+            pos: { line: 1, column: 1 },
+          })),
+          pos: { line: 1, column: 1 },
+        },
+      ]),
+    );
+
+    expect(agentConfig.agents.helper).toEqual({ models: ["model"] });
+
+    const inheritedCategory: DirectAstRecord = Object.create({
+      description: "inherited",
+      fast: true,
+      triggers: ["inherited"],
+    });
+    const categoryErrors = expectValidationFailure(
+      validate([
+        {
+          type: "category",
+          name: "helper",
+          properties: Object.entries(inheritedCategory).map(([key, value]) => ({
+            key,
+            value: {
+              kind: "string" as const,
+              value: String(value),
+              pos: { line: 1, column: 1 },
+            },
+            pos: { line: 1, column: 1 },
+          })),
+          pos: { line: 1, column: 1 },
+        },
+      ]),
+    );
+    expect(categoryErrors).toContainEqual(
+      expect.objectContaining({ path: "categories.helper.description" }),
+    );
+  });
+
+  it("bounds issue count, path, message, and aggregate diagnostic size", () => {
+    const longKey = "x".repeat(MAX_VALIDATION_PATH_LENGTH * 4);
+    const unknowns = Array.from(
+      { length: MAX_VALIDATION_ISSUES * 4 },
+      (_, index) => `${longKey}${index} true`,
+    ).join("\n");
+    const result = validateSource(`agent helper { ${unknowns} }`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const aggregate = errors.reduce(
+      (size, error) => size + error.path.length + error.message.length,
+      0,
+    );
+
+    expect(errors.length).toBeLessThanOrEqual(MAX_VALIDATION_ISSUES);
+    expect(
+      Math.max(...errors.map((error) => error.path.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_PATH_LENGTH);
+    expect(
+      Math.max(...errors.map((error) => error.message.length)),
+    ).toBeLessThanOrEqual(MAX_VALIDATION_MESSAGE_LENGTH);
+    expect(aggregate).toBeLessThanOrEqual(MAX_VALIDATION_DIAGNOSTIC_SIZE);
+    expect(errors.at(-1)?.message).toBe(VALIDATION_DIAGNOSTICS_TRUNCATED);
+  });
+});
+
+describe("validate — model thinking suffix", () => {
+  it("preserves plain, suffixed, and escaped raw model entries", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#high", "weird\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.shuttle?.models).toEqual([
+      "plain-model",
+      "gpt-4o#high",
+      "weird\\#model",
+    ]);
+  });
+
+  it("preserves raw review and category model entries", () => {
+    const result = validateSource(`agent weft {
+  review_models ["plain-review", "review-model#low", "review\\#model"]
+}
+category backend {
+  description "Backend services and persistence"
+  models ["plain-category", "category-model#max", "category\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.weft?.review_models).toEqual([
+      "plain-review",
+      "review-model#low",
+      "review\\#model",
+    ]);
+    expect(config.categories.backend?.models).toEqual([
+      "plain-category",
+      "category-model#max",
+      "category\\#model",
+    ]);
+  });
+
+  it("rejects invalid suffixes with the field and entry index", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#hgih"]
+}`);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error[0]).toMatchObject({
+        path: "agents.shuttle.models.1",
+        message: expect.stringContaining("Allowed levels"),
+      });
+    }
+  });
+});
 
 describe("validate — valid agent", () => {
   it("valid agent with all fields", () => {
@@ -30,9 +730,8 @@ describe("validate — valid agent", () => {
     delegate allow
     network ask
   }
-  triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
-  ]
+  triggers ["Complex tasks"]
+  fast true
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
@@ -43,6 +742,8 @@ describe("validate — valid agent", () => {
     expect(config.agents.loom?.mode).toBe("primary");
     expect(config.agents.loom?.models).toEqual(["claude-sonnet-4-5"]);
     expect(config.agents.loom?.skills).toEqual(["tdd"]);
+    expect(config.agents.loom?.triggers).toEqual(["Complex tasks"]);
+    expect(config.agents.loom?.fast).toBe(true);
   });
 
   it("agent with prompt_file (safe path)", () => {
@@ -59,10 +760,11 @@ describe("validate — valid agent", () => {
 });
 
 describe("validate — valid category", () => {
-  it("category with patterns and tool_policy", () => {
+  it("category with fast, triggers, and tool_policy", () => {
     const src = `category backend {
   description "Backend APIs"
-  patterns ["src/api/**", "src/db/**"]
+  triggers ["API and database changes"]
+  fast true
   temperature 0.2
   tool_policy {
     read allow
@@ -74,11 +776,100 @@ describe("validate — valid category", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.categories.backend).toBeDefined();
-    expect(config.categories.backend?.patterns).toEqual([
-      "src/api/**",
-      "src/db/**",
+    expect(config.categories.backend?.triggers).toEqual([
+      "API and database changes",
     ]);
+    expect(config.categories.backend?.fast).toBe(true);
     expect(config.categories.backend?.temperature).toBe(0.2);
+  });
+});
+
+describe("validate — fast intent and string triggers", () => {
+  const scopes = [
+    ["agent", "agent helper {", "}", "agents.helper"],
+    [
+      "category",
+      'category helper {\n  description "Bounded work"',
+      "}",
+      "categories.helper",
+    ],
+  ] as const;
+
+  function expectBoundedDiagnostic(source: string, expectedPath: string): void {
+    const result = validateSource(source);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      const issue = result.error.find((error) => error.path === expectedPath);
+      expect(issue).toBeDefined();
+      expect(issue?.type).toBe("ValidationError");
+      expect(issue?.message.length).toBeLessThanOrEqual(256);
+    }
+  }
+
+  for (const [kind, open, close, path] of scopes) {
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = validateSource(`${open}\n${close}`);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        const entry =
+          kind === "agent"
+            ? result.value.agents.helper
+            : result.value.categories.helper;
+        expect(entry?.fast).toBeUndefined();
+        expect(entry?.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects fast false with a bounded diagnostic`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  fast false\n${close}`,
+        `${path}.fast`,
+      );
+    });
+
+    it(`${kind} rejects wrong scalar fast types`, () => {
+      for (const value of ['"true"', "1", '"fast"']) {
+        expectBoundedDiagnostic(
+          `${open}\n  fast ${value}\n${close}`,
+          `${path}.fast`,
+        );
+      }
+    });
+
+    it(`${kind} rejects empty and invalid triggers`, () => {
+      const cases = [
+        ["triggers []", `${path}.triggers`],
+        ['triggers [""]', `${path}.triggers.0`],
+        ['triggers ["   "]', `${path}.triggers.0`],
+        ["triggers [1]", `${path}.triggers.0`],
+      ] as const;
+      for (const [property, expectedPath] of cases) {
+        expectBoundedDiagnostic(
+          `${open}\n  ${property}\n${close}`,
+          expectedPath,
+        );
+      }
+    });
+
+    it(`${kind} rejects old structured trigger objects`, () => {
+      expectBoundedDiagnostic(
+        `${open}\n  triggers [{ domain "Orchestration" trigger "Plan work" }]\n${close}`,
+        `${path}.triggers.0`,
+      );
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of ["service_class", "speed", "variant", "priority"]) {
+        expectBoundedDiagnostic(`${open}\n  ${alias} true\n${close}`, path);
+      }
+    });
+  }
+
+  it("rejects removed category patterns with a bounded diagnostic", () => {
+    expectBoundedDiagnostic(
+      `category helper {\n  description "Bounded work"\n  patterns ["src/**"]\n}`,
+      "categories.helper",
+    );
   });
 });
 
@@ -148,15 +939,74 @@ describe("validate — schema constraint errors", () => {
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
   });
+});
 
-  it("empty patterns array on category → err", () => {
-    const src = `category empty {
-  patterns []
+describe("validate — category description is required and non-blank", () => {
+  it("category with a non-blank description → ok and preserved", () => {
+    const src = `category backend {
+  description "Backend services and persistence"
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.backend?.description).toBe(
+      "Backend services and persistence",
+    );
+  });
+
+  it("category with no description → err at categories.<name>.description", () => {
+    const src = `category backend {
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
-    expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue).toBeDefined();
+  });
+
+  it("category with an empty description → err with the non-empty message", () => {
+    const src = `category backend {
+  description ""
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("category with a whitespace-only description → err with the non-empty message", () => {
+    const src = `category backend {
+  description "   "
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const issue = errors.find(
+      (e) => e.path === "categories.backend.description",
+    );
+    expect(issue?.message).toBe(
+      "category description must be a non-empty string",
+    );
+  });
+
+  it("reports each undescribed category separately", () => {
+    const src = `category backend {
+}
+
+category frontend {
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const paths = result._unsafeUnwrapErr().map((e) => e.path);
+    expect(paths).toContain("categories.backend.description");
+    expect(paths).toContain("categories.frontend.description");
   });
 });
 
@@ -490,7 +1340,7 @@ describe("validate — prompt_append_file (agent)", () => {
 describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
-  patterns ["src/components/**"]
+  description "Frontend components"
   prompt_append_file "cat-extra.md"
 }`;
     const result = validateSource(src);
@@ -502,7 +1352,7 @@ describe("validate — prompt_append_file (category)", () => {
 
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
-  patterns ["src/components/**"]
+  description "Frontend components"
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"
 }`;
@@ -532,6 +1382,21 @@ describe("validate — settings block", () => {
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().settings.log_level).toBe("DEBUG");
+  });
+
+  it("settings { enforce_permissions false } disables permission enforcement", () => {
+    const result = validateSource(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.enforce_permissions).toBe(false);
+  });
+
+  it("rejects a non-boolean enforce_permissions value", () => {
+    const result = validateSource(`settings {
+  enforce_permissions off
+}`);
+    expect(result.isErr()).toBe(true);
   });
 
   it("settings block with all valid log levels", () => {
@@ -577,7 +1442,55 @@ describe("validate — settings block", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.enforce_permissions).toBeUndefined();
     expect(config.settings.runtime.journal.strict).toBe(false);
+    expect(config.settings.runtime.journal.retention_days).toBe(30);
+    expect(config.settings.runtime.journal.max_entries).toBe(10_000);
+    expect(config.settings.runtime.usage.detail_retention_days).toBe(30);
+    expect(config.settings.runtime.usage.max_observations).toBe(100_000);
+    expect(config.settings.runtime.log.max_segment_bytes).toBe(5_242_880);
+    expect(config.settings.runtime.log.max_segments).toBe(3);
+  });
+
+  it("settings runtime retention values are accepted", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict false
+      retention_days 14
+      max_entries 500
+    }
+    usage {
+      detail_retention_days 7
+      max_observations 1000
+    }
+    log {
+      max_segment_bytes 65536
+      max_segments 2
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const runtime = result._unsafeUnwrap().settings.runtime;
+    expect(runtime.journal.retention_days).toBe(14);
+    expect(runtime.journal.max_entries).toBe(500);
+    expect(runtime.usage.detail_retention_days).toBe(7);
+    expect(runtime.usage.max_observations).toBe(1000);
+    expect(runtime.log.max_segment_bytes).toBe(65_536);
+    expect(runtime.log.max_segments).toBe(2);
+  });
+
+  it("settings runtime retention out of range → err", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      retention_days 0
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
   });
 
   it("invalid log_level inside settings block → err", () => {
@@ -826,7 +1739,7 @@ extend before-plan ["requirements"]`;
 // ---------------------------------------------------------------------------
 
 describe("validate — before-plan non-reconciling in v1", () => {
-  // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+  // execution lifecycle contract: "before-plan steps do not participate in reconciliation
   // semantics" in v1. As of Task 4.1, `reconciliation_handlers` is a valid
   // schema field. The v1 non-reconciling constraint for before-plan steps is
   // enforced at the engine/runtime layer, not the schema/validate layer.
@@ -1029,7 +1942,7 @@ describe("validate — reconciliation_handlers on workflow steps", () => {
 });
 
 // ---------------------------------------------------------------------------
-// validate — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// validate — workflow-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("validate — workflow-level prompt_append and prompt_append_file", () => {
@@ -1154,7 +2067,7 @@ describe("validate — workflow-level prompt_append and prompt_append_file", () 
 });
 
 // ---------------------------------------------------------------------------
-// validate — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// validate — step-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("validate — step-level prompt_append and prompt_append_file", () => {
@@ -1393,5 +2306,169 @@ describe("validate — review_models field", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors.some((e) => e.path.includes("review_models"))).toBe(true);
+  });
+});
+
+describe("validate — delegation limits", () => {
+  it("normalizes approved project maxima and narrower agent overrides", () => {
+    const result = validateSource(`settings {
+  delegation {
+    max_children 256
+    max_concurrency 64
+    max_depth 32
+    max_processes 128
+  }
+}
+agent tapestry {
+  delegation {
+    max_children 64
+    max_concurrency 32
+  }
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation).toEqual({
+      max_children: 256,
+      max_concurrency: 64,
+      max_depth: 32,
+      max_processes: 128,
+    });
+    expect(config.agents.tapestry?.delegation).toEqual({
+      max_children: 64,
+      max_concurrency: 32,
+    });
+  });
+
+  it("accepts max_concurrency 64 for project and agent settings", () => {
+    const result = validateSource(`settings {
+  delegation { max_concurrency 64 }
+}
+agent tapestry {
+  delegation { max_concurrency 64 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(
+      64,
+    );
+    expect(
+      result._unsafeUnwrap().agents.tapestry?.delegation?.max_concurrency,
+    ).toBe(64);
+  });
+
+  it("rejects max_concurrency 65 with precise project and agent paths", () => {
+    const project = validateSource(
+      `settings { delegation { max_concurrency 65 } }`,
+    );
+    expect(project.isErr()).toBe(true);
+    expect(project._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({ path: "settings.delegation.max_concurrency" }),
+    );
+
+    const agent = validateSource(
+      `agent tapestry { delegation { max_concurrency 65 } }`,
+    );
+    expect(agent.isErr()).toBe(true);
+    expect(agent._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "agents.tapestry.delegation.max_concurrency",
+      }),
+    );
+  });
+
+  it("rejects project delegation values above each hard maximum", () => {
+    const cases = [
+      ["max_children", 257],
+      ["max_concurrency", 65],
+      ["max_depth", 33],
+      ["max_processes", 129],
+    ] as const;
+
+    for (const [field, value] of cases) {
+      const result = validateSource(
+        `settings { delegation { ${field} ${value} } }`,
+      );
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr()).toContainEqual(
+        expect.objectContaining({ path: `settings.delegation.${field}` }),
+      );
+    }
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = validateSource(`settings { delegation { max_children 2 } }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("rejects an agent child cap above the project cap with a precise path", () => {
+    const result = validateSource(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}
+agent tapestry {
+  delegation { max_children 4 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some(
+        (error) => error.path === "agents.tapestry.delegation.max_children",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unsupported agent delegation fields", () => {
+    const result = validateSource(`agent tapestry {
+  delegation { max_depth 2 }
+}`);
+    expect(result.isErr()).toBe(true);
+    expect(
+      result
+        ._unsafeUnwrapErr()
+        .some((error) => error.path.includes("delegation")),
+    ).toBe(true);
+  });
+
+  it("accepts all JSON-like opaque adapter values", () => {
+    const result = validateSource(
+      `settings { adapters { test { text "x" number 1.5 flag true empty null list [1, false] object { key "value" } } } }`,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
+      text: "x",
+      number: 1.5,
+      flag: true,
+      empty: null,
+      list: [1, false],
+      object: { key: "value" },
+    });
+  });
+
+  it("aggregates duplicate, non-JSON, and depth errors with adapter paths", () => {
+    const result = validateSource(
+      `settings { adapters { test { bad nope duplicate true duplicate false deep { a { b { c { d { e true } } } } } } } }`,
+    );
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    const paths = errors.map((error) => error.path);
+    expect(paths).toContain("settings.adapters.test.bad");
+    expect(paths).toContain("settings.adapters.test.duplicate");
+    expect(paths).toContain("settings.adapters.test.deep.a.b.c.d");
+    expect(errors.every((error) => error.message.length > 0)).toBe(true);
+  });
+
+  it("rejects an adapter block larger than 64 KiB of canonical JSON", () => {
+    const payload = "x".repeat(65 * 1024);
+    const result = validateSource(
+      `settings { adapters { test { payload "${payload}" } } }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "settings.adapters.test",
+        message: expect.stringContaining("64 KiB"),
+      }),
+    );
   });
 });

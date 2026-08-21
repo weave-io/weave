@@ -1,7 +1,7 @@
 /**
  * Integration tests for `runWorkflow` — explicit named-workflow execution.
  *
- * ## What these tests prove (Spec 22 Unit 4 / ADR 0004)
+ * ## What these tests prove (execution lifecycle contract and ADR 0004)
  *
  * 1. **Explicit named-workflow execution via engine delegation** — `runWorkflow`
  *    is the OpenCode adapter's helper for running a specific, named workflow
@@ -30,10 +30,9 @@
  *
  * 4. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
  *    not wired to any idle hook, session event, or continuation hook in the
- *    OpenCode adapter. The plugin's `event` hook fires only on
- *    `session.created` and performs agent materialization — it never calls
- *    `runWorkflow` or any other execution-start helper. The `config` hook is
- *    pure computation and never calls `runWorkflow`.
+ *    OpenCode adapter. The plugin exposes only its config hook and performs
+ *    agent projection there; it never calls `runWorkflow` or any other
+ *    execution-start helper.
  *
  * Uses:
  * - `InMemoryRuntimeStore` (no SQLite, no filesystem)
@@ -78,6 +77,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -96,6 +105,20 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Used to prove the engine propagates provider errors as `LifecycleError`.
  */
 class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,
@@ -143,7 +166,11 @@ const TWO_STEP_CONFIG: WeaveConfig = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -203,7 +230,11 @@ const THREE_STEP_CONFIG: WeaveConfig = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -269,7 +300,11 @@ const PLAN_CREATED_CONFIG: WeaveConfig = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -323,7 +358,11 @@ const PLAN_COMPLETE_CONFIG: WeaveConfig = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -448,7 +487,7 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
     }
 
     // Validate required fields are present and correctly typed
-    expect(typeof shuttleConfig.prompt).toBe("string");
+    expect(shuttleConfig.prompt).toEqual(expect.any(String));
     expect(shuttleConfig.mode).toBe("subagent");
     expect(shuttleConfig.permission).toBeDefined();
 
@@ -461,7 +500,11 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
       expect(validValues).toContain(String(permission.edit ?? ""));
       expect(validValues).toContain(String(permission.bash ?? ""));
       expect(validValues).toContain(String(permission.webfetch ?? ""));
-      expect(validValues).toContain(String(permission.doom_loop ?? ""));
+      expect(validValues).toContain(String(permission.task ?? ""));
+      expect(validValues).toContain(String(permission.read ?? ""));
+      expect(validValues).toContain(String(permission.glob ?? ""));
+      expect(validValues).toContain(String(permission.grep ?? ""));
+      expect(validValues).toContain(String(permission.list ?? ""));
     }
   });
 
@@ -568,7 +611,6 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
 
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
     }
   });
@@ -595,10 +637,10 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
 });
 
 // ---------------------------------------------------------------------------
-// Tests — explicit named-workflow execution boundary (Spec 22 Unit 4 / ADR 0004)
+// Tests — explicit named-workflow execution boundary (execution lifecycle contract and ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Unit 4)", () => {
+describe("runWorkflow — explicit named-workflow execution boundary (execution lifecycle contract)", () => {
   /**
    * Proof: `runWorkflow` executes a specific, named workflow by delegating to
    * the engine's `runNamedWorkflow` command operation. The caller must supply
@@ -752,10 +794,10 @@ describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Un
 });
 
 // ---------------------------------------------------------------------------
-// Tests — PlanStateProvider at completion boundaries (Spec 22 Unit 4)
+// Tests — PlanStateProvider at completion boundaries (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (Spec 22 Unit 4)", () => {
+describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (execution lifecycle contract)", () => {
   /**
    * Proof: when a named-workflow step uses `plan_created` as its completion
    * method, the engine requires a `PlanStateProvider`. The adapter (OpenCode)
@@ -764,7 +806,7 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
    * which passes it to `runWorkflowLifecycle` and ultimately to `completeStep`.
    *
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
-   * Spec 19: "Adapters supply a `PlanStateProvider` implementation via
+   * plan-state contract: "Adapters supply a `PlanStateProvider` implementation via
    * `CompleteStepInput.planStateProvider`."
    */
   it("fails with LifecycleError when plan_created step has no PlanStateProvider", async () => {

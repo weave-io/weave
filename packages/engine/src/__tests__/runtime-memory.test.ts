@@ -7,7 +7,7 @@
  *
  * All imports come from the public `@weaveio/weave-engine` barrel — no private paths.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";
@@ -200,7 +200,7 @@ describe("InMemoryRuntimeStore — WorkflowInstance CRUD", () => {
       await store.instances.list({ status: "running" })
     )._unsafeUnwrap();
     expect(running).toHaveLength(1);
-    expect(running[0].id as string).toBe(a.id as string);
+    expect(running[0].id).toBe(a.id);
   });
 
   it("addArtifact appends an artifact reference", async () => {
@@ -244,8 +244,8 @@ describe("InMemoryRuntimeStore — ExecutionLease", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("owner-001");
-    expect(lease.workflowInstanceId as string).toBe("wfi-001");
+    expect(String(lease.ownerId)).toBe("owner-001");
+    expect(String(lease.workflowInstanceId)).toBe("wfi-001");
     expect(lease.id).toBeDefined();
     expect(lease.acquiredAt).toBeDefined();
     expect(lease.expiresAt).toBeDefined();
@@ -294,7 +294,7 @@ describe("InMemoryRuntimeStore — ExecutionLease", () => {
     });
     expect(result.isOk()).toBe(true);
     const lease = result._unsafeUnwrap();
-    expect(lease.ownerId as string).toBe("new-owner");
+    expect(String(lease.ownerId)).toBe("new-owner");
   });
 
   it("findActive returns null when no lease exists", async () => {
@@ -746,6 +746,15 @@ describe("InMemoryRuntimeStore — transaction", () => {
     expect(result._unsafeUnwrapErr().type).toBe("query");
   });
 
+  it("maps a synchronous callback throw to a typed query error", async () => {
+    const store = makeStore();
+    const result = await store.transaction(() => {
+      throw new Error("callback failed");
+    });
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("query");
+  });
+
   it("transaction commits changes on success", async () => {
     const store = makeStore();
     const result = await store.transaction((tx) => {
@@ -793,7 +802,7 @@ describe("InMemoryRuntimeStore — transaction", () => {
     // The new instance should NOT be visible (rolled back)
     const all = (await store.instances.list())._unsafeUnwrap();
     expect(all).toHaveLength(1);
-    expect(all[0].id as string).toBe(existing.id as string);
+    expect(all[0].id).toBe(existing.id);
   });
 
   it("transaction rolls back lease changes on Err", async () => {
@@ -1025,7 +1034,7 @@ describe("InMemoryRuntimeStore — strictJournal wiring", () => {
               source: { kind: "engine", name: "runner" },
               eventType: "instance.created",
               severity: "info",
-              data: { instanceId: instance.id as string },
+              data: { instanceId: instance.id },
             })
             .map(() => instance);
         });
@@ -1069,7 +1078,7 @@ describe("InMemoryRuntimeStore — strictJournal wiring", () => {
             source: { kind: "engine", name: "runner" },
             eventType: "instance.created",
             severity: "info",
-            data: { instanceId: instance.id as string },
+            data: { instanceId: instance.id },
           });
         });
     });
@@ -1179,8 +1188,7 @@ describe("InMemoryRuntimeStore — artifact provenance: identity and revision", 
     expect(art.revision).toBe(1);
     expect(art.approvalState).toBe("pending");
     expect(art.id).toBeDefined();
-    expect(typeof art.id).toBe("string");
-    expect((art.id as string).length).toBeGreaterThan(0);
+    expect(art.id.length).toBeGreaterThan(0);
   });
 
   it("second addArtifact with same name increments revision and resets approvalState to 'pending'", async () => {
@@ -1245,7 +1253,7 @@ describe("InMemoryRuntimeStore — artifact provenance: identity and revision", 
     const idV2 = v2.artifacts[1].id;
 
     // Stable identity: same ArtifactId across revisions
-    expect(idV1 as string).toBe(idV2 as string);
+    expect(idV1).toBe(idV2);
   });
 
   it("different artifact names get different ArtifactIds", async () => {
@@ -1270,7 +1278,7 @@ describe("InMemoryRuntimeStore — artifact provenance: identity and revision", 
 
     const planId = withPlan.artifacts[0].id;
     const reportId = withReport.artifacts[1].id;
-    expect(planId as string).not.toBe(reportId as string);
+    expect(planId).not.toBe(reportId);
   });
 });
 
@@ -1325,11 +1333,77 @@ describe("InMemoryRuntimeStore — artifact provenance: approval lifecycle", () 
     expect(rejected.artifacts[0].approvalState).toBe("rejected");
   });
 
+  it("atomically rejects approval bound to a stale artifact revision", async () => {
+    const store = makeStore();
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const first = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v1.md",
+      })
+    )._unsafeUnwrap();
+    const latest = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const result = await store.instances.updateArtifactApproval(
+      created.id,
+      first.artifacts[0].id,
+      "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: new Date().toISOString(),
+        expectedRevision: 1,
+      },
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "conflict",
+      entity: "ArtifactRevision",
+    });
+    expect(latest.artifacts.at(-1)?.approvalState).toBe("pending");
+  });
+
+  it("atomically rejects approval bound to a mismatched artifact digest", async () => {
+    const store = makeStore();
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const withArtifact = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v1.md",
+        integrity: { algorithm: "sha256", digest: "a".repeat(64) },
+      })
+    )._unsafeUnwrap();
+
+    const result = await store.instances.updateArtifactApproval(
+      created.id,
+      withArtifact.artifacts[0].id,
+      "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: new Date().toISOString(),
+        expectedRevision: 1,
+        expectedDigest: "b".repeat(64),
+      },
+    );
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "conflict",
+      entity: "ArtifactDigest",
+    });
+  });
+
   it("updateArtifactApproval returns not_found for missing instance", async () => {
     const store = makeStore();
     const result = await store.instances.updateArtifactApproval(
       createWorkflowInstanceId("missing"),
-      "art-001" as ReturnType<typeof createArtifactId>,
+      createArtifactId("art-001"),
       "approved",
     );
     expect(result.isErr()).toBe(true);
@@ -1344,7 +1418,7 @@ describe("InMemoryRuntimeStore — artifact provenance: approval lifecycle", () 
 
     const result = await store.instances.updateArtifactApproval(
       created.id,
-      "nonexistent-art" as ReturnType<typeof createArtifactId>,
+      createArtifactId("nonexistent-art"),
       "approved",
     );
     expect(result.isErr()).toBe(true);
@@ -1509,9 +1583,7 @@ describe("InMemoryRuntimeStore — artifact provenance: recordStepAttempt", () =
     expect(attempt.attemptNumber).toBe(1);
     expect(attempt.dispatchedAt).toBeDefined();
     expect(attempt.consumedArtifacts).toHaveLength(1);
-    expect(attempt.consumedArtifacts[0].artifactId as string).toBe(
-      artifactId as string,
-    );
+    expect(attempt.consumedArtifacts[0].artifactId).toBe(artifactId);
     expect(attempt.consumedArtifacts[0].name).toBe("plan");
     expect(attempt.consumedArtifacts[0].revision).toBe(1);
   });
@@ -1583,9 +1655,9 @@ describe("InMemoryRuntimeStore — artifact provenance: recordStepAttempt", () =
     ]);
 
     const found = (await store.instances.getById(created.id))._unsafeUnwrap();
-    expect(
-      found.stepAttempts[0].consumedArtifacts[0].artifactId as string,
-    ).toBe(artifactId as string);
+    expect(found.stepAttempts[0].consumedArtifacts[0].artifactId).toBe(
+      artifactId,
+    );
     expect(found.stepAttempts[0].consumedArtifacts[0].revision).toBe(3);
   });
 });

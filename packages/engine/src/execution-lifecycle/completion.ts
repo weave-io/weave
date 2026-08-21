@@ -73,8 +73,12 @@ function validateCompletionMethod(
   signal: StepCompletionSignal,
   step: WorkflowStep,
 ): Result<undefined, LifecycleError> {
-  if (signal.method === undefined) return ok(undefined);
-  if (signal.method === step.completion.method) return ok(undefined);
+  if (signal.method === undefined) {
+    return ok<undefined, LifecycleError>(void 0);
+  }
+  if (signal.method === step.completion.method) {
+    return ok<undefined, LifecycleError>(void 0);
+  }
   return err(
     lifecycleValidationError(
       `Completion method mismatch: signal has "${signal.method}" but step "${step.name}" declares "${step.completion.method}"`,
@@ -103,9 +107,29 @@ function mapPlanStateError(
       "plan_name",
     );
   }
+  if (providerErr.type === "PlanMissing") {
+    return lifecycleValidationError(
+      `plan "${planName}" does not exist`,
+      "plan_name",
+    );
+  }
+  if (providerErr.type === "ProviderUnavailable") {
+    const causeMessage =
+      providerErr.cause instanceof Error
+        ? providerErr.cause.message
+        : providerErr.cause.message;
+    return lifecyclePersistenceError(
+      `PlanStateProvider unavailable for plan "${planName}"`,
+      { type: "query", message: causeMessage },
+    );
+  }
+  const detail =
+    "reason" in providerErr && providerErr.reason !== undefined
+      ? providerErr.reason
+      : providerErr.type;
   return lifecyclePersistenceError(
-    `PlanStateProvider unavailable for plan "${planName}"`,
-    { type: "query", message: String(providerErr.cause) },
+    `PlanStateProvider error for plan "${planName}": ${detail}`,
+    { type: "query", message: String(detail) },
   );
 }
 
@@ -123,10 +147,8 @@ function buildUpdateInput(
   if (outcome === "success") return { status: "running" };
   if (outcome === "blocked") return { status: "blocked" };
   if (outcome === "failed") {
-    return {
-      status: "failed",
-      ...(message !== undefined ? { errorMessage: message } : {}),
-    };
+    if (message === undefined) return { status: "failed" };
+    return { status: "failed", errorMessage: message };
   }
   return { status: "paused" };
 }
@@ -142,39 +164,60 @@ function buildUpdateInput(
  * - `"fail"`  — updates instance to `failed`, releases lease, emits `complete-execution`
  * - `"retry"` — re-dispatches the same gate step with a fresh correlation ID
  */
+interface GateRejectionResult {
+  readonly effects: readonly LifecycleEffect[];
+  /** EPHEMERAL — see `CompleteStepOutput.stepPromptText`. Never persisted or logged. */
+  readonly stepPromptText?: string;
+}
+
+function buildCompleteStepOutput(
+  result: GateRejectionResult,
+): CompleteStepOutput {
+  if (result.stepPromptText === undefined) {
+    return { effects: result.effects };
+  }
+  return { effects: result.effects, stepPromptText: result.stepPromptText };
+}
+
 function applyGateRejection(
   store: RuntimeStore,
   workflowInstanceId: WorkflowInstanceId,
   activeLease: ExecutionLease,
   step: WorkflowStep,
   message: string | undefined,
-): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+): ResultAsync<GateRejectionResult, LifecycleError> {
   const policy = step.on_reject ?? "pause";
 
   if (policy === "pause") {
     return store.instances
       .update(workflowInstanceId, { status: "paused" })
       .mapErr((storeError): LifecycleError => mapStoreError(storeError))
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "pause-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "pause-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   if (policy === "fail") {
     return store.instances
-      .update(workflowInstanceId, {
-        status: "failed",
-        ...(message !== undefined ? { errorMessage: message } : {}),
-      })
+      .update(
+        workflowInstanceId,
+        message === undefined
+          ? { status: "failed" }
+          : { status: "failed", errorMessage: message },
+      )
       .mapErr((storeError): LifecycleError => mapStoreError(storeError))
       .andThen(() =>
         store.leases
           .release(activeLease.id, activeLease.ownerId)
           .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "complete-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "complete-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   // policy === "retry" — re-dispatch the same gate step with a fresh correlation ID.
@@ -190,11 +233,13 @@ function applyGateRejection(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
       const runAgent = buildConfiguredRunAgentEffect(step, promptMetadata);
-      return okAsync([
-        { kind: "dispatch-agent" as const, runAgent },
-      ] as readonly LifecycleEffect[]);
+      return okAsync<GateRejectionResult, LifecycleError>({
+        effects: [{ kind: "dispatch-agent" as const, runAgent }],
+        stepPromptText,
+      });
     });
 }
 
@@ -217,7 +262,7 @@ function buildAutoAdvanceEffects(
   activeLease: ExecutionLease,
   workflowConfig: WorkflowConfig,
   completedStepName: string,
-): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+): ResultAsync<GateRejectionResult, LifecycleError> {
   const currentIndex = workflowConfig.steps.findIndex(
     (s) => s.name === completedStepName,
   );
@@ -233,9 +278,11 @@ function buildAutoAdvanceEffects(
           .release(activeLease.id, activeLease.ownerId)
           .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
-      .map((): readonly LifecycleEffect[] => [
-        { kind: "complete-execution", workflowInstanceId },
-      ]);
+      .map(
+        (): GateRejectionResult => ({
+          effects: [{ kind: "complete-execution", workflowInstanceId }],
+        }),
+      );
   }
 
   return store.instances
@@ -261,12 +308,14 @@ function buildAutoAdvanceEffects(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
 
       const runAgent = buildConfiguredRunAgentEffect(nextStep, promptMetadata);
-      return okAsync([
-        { kind: "dispatch-agent" as const, runAgent },
-      ] as readonly LifecycleEffect[]);
+      return okAsync<GateRejectionResult, LifecycleError>({
+        effects: [{ kind: "dispatch-agent" as const, runAgent }],
+        stepPromptText,
+      });
     });
 }
 
@@ -313,7 +362,7 @@ function runPlanCheck(
             ),
           );
         }
-        return okAsync(undefined);
+        return okAsync<undefined, LifecycleError>(void 0);
       });
   }
 
@@ -347,11 +396,11 @@ function runPlanCheck(
             ),
           );
         }
-        return okAsync(undefined);
+        return okAsync<undefined, LifecycleError>(void 0);
       });
   }
 
-  return okAsync(undefined);
+  return okAsync<undefined, LifecycleError>(void 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -430,7 +479,7 @@ export function completeStep(
             return errAsync(
               lifecycleNotFoundError(
                 "WorkflowInstance",
-                input.workflowInstanceId as string,
+                input.workflowInstanceId,
               ),
             );
           }
@@ -499,7 +548,10 @@ export function completeStep(
                   activeLease,
                   stepConfig,
                   message,
-                ).map((effects): CompleteStepOutput => ({ effects }));
+                ).map(
+                  (result): CompleteStepOutput =>
+                    buildCompleteStepOutput(result),
+                );
               }
             }
 
@@ -512,7 +564,7 @@ export function completeStep(
                 )
                 .andThen(() => {
                   if (!artifacts || artifacts.length === 0) {
-                    return okAsync(undefined);
+                    return okAsync();
                   }
                   return addArtifactsSequentially(
                     store,
@@ -557,7 +609,7 @@ export function completeStep(
                   artifacts,
                 );
                 if (outputCheck.isErr()) return errAsync(outputCheck.error);
-                return okAsync(undefined);
+                return okAsync();
               })
               .andThen(() =>
                 store.instances
@@ -568,7 +620,7 @@ export function completeStep(
               )
               .andThen(() => {
                 if (!artifacts || artifacts.length === 0) {
-                  return okAsync(undefined);
+                  return okAsync();
                 }
                 return addArtifactsSequentially(
                   store,
@@ -585,7 +637,9 @@ export function completeStep(
                   input.stepName,
                 ),
               )
-              .map((effects): CompleteStepOutput => ({ effects }));
+              .map(
+                (result): CompleteStepOutput => buildCompleteStepOutput(result),
+              );
           }
 
           // Legacy path (no context)
@@ -596,7 +650,7 @@ export function completeStep(
             .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .andThen(() => {
               if (!artifacts || artifacts.length === 0) {
-                return okAsync(undefined);
+                return okAsync();
               }
               return addArtifactsSequentially(
                 store,

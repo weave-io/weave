@@ -12,7 +12,7 @@ import {
   ClaudeCodeAdapter,
   getBootstrapDir,
 } from "@weaveio/weave-adapter-claude-code";
-import { loadConfig } from "@weaveio/weave-config";
+import { type ConfigLoadError, loadConfig } from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
@@ -24,6 +24,35 @@ import type { ThemeColors } from "../theme/colors.js";
 const log = logger.child({ module: "cli-compose" });
 
 const SUPPORTED_ADAPTERS = ["claude-code"] as const;
+
+export function mapConfigLoadErrors(
+  path: string,
+  errors: ConfigLoadError[],
+): CliError {
+  return {
+    type: "ParseFailure",
+    path,
+    errors: formatConfigErrors(errors),
+  };
+}
+
+function formatConfigErrors(errors: ConfigLoadError[]): string[] {
+  return errors.flatMap((error) => {
+    if (error.type === "FileReadError")
+      return [`${error.path}: could not read config`];
+    if (error.type === "BuiltinParseError")
+      return error.errors.map((e) => `builtins:${formatError(e)}`);
+    if (error.type === "MergeError")
+      return error.errors.flatMap((e) =>
+        e.type === "WorkflowExtensionError"
+          ? `merge:${e.type}:${e.error.type}`
+          : e.errors.map(
+              (issue) => `merge:${e.type}:${issue.path}:${issue.message}`,
+            ),
+      );
+    return error.errors.map((e) => `${error.path}:${formatError(e)}`);
+  });
+}
 type SupportedAdapter = (typeof SUPPORTED_ADAPTERS)[number];
 
 export interface ComposeContext {
@@ -33,7 +62,7 @@ export interface ComposeContext {
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
-  return (SUPPORTED_ADAPTERS as readonly string[]).includes(value);
+  return value === SUPPORTED_ADAPTERS[0];
 }
 
 /**
@@ -107,9 +136,7 @@ export async function runCompose(
     terminal.stderr(
       formatCliError({
         type: "InvalidArgs",
-        message:
-          "--adapter is required. Supported adapters: " +
-          SUPPORTED_ADAPTERS.join(", "),
+        message: `--adapter is required. Supported adapters: ${SUPPORTED_ADAPTERS.join(", ")}`,
       }),
     );
     return ok(1);
@@ -145,20 +172,8 @@ export async function runCompose(
   }
 
   // 1. Load config
-  const configResult = await loadConfig(projectRoot).mapErr(
-    (errors): CliError => ({
-      type: "ParseFailure",
-      path: projectRoot,
-      errors: errors.flatMap((error) => {
-        if (error.type === "FileReadError")
-          return [`${error.path}: could not read config`];
-        if (error.type === "BuiltinParseError")
-          return error.errors.map((e) => `builtins:${formatError(e)}`);
-        if (error.type === "MergeError")
-          return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
-        return error.errors.map((e) => `${error.path}:${formatError(e)}`);
-      }),
-    }),
+  const configResult = await loadConfig(projectRoot).mapErr((errors) =>
+    mapConfigLoadErrors(projectRoot, errors),
   );
 
   if (configResult.isErr()) {

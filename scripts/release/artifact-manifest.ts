@@ -13,6 +13,13 @@ import {
   validateReleasePlanArtifact,
 } from "./release-plan.js";
 
+type ArtifactManifestInput = Parameters<
+  typeof ArtifactManifestSchema.safeParse
+>[0];
+type ArtifactBindingInput = Parameters<
+  typeof ArtifactBindingRecordSchema.safeParse
+>[0];
+
 export type ArtifactManifestError = {
   type: "InvalidArtifactManifest";
   issues: readonly string[];
@@ -20,7 +27,7 @@ export type ArtifactManifestError = {
 
 /** Binds a validated payload shape to GitHub artifact identity and attestation. */
 export function validateArtifactManifest(
-  input: unknown,
+  input: ArtifactManifestInput,
 ): Result<ArtifactManifest, ArtifactManifestError> {
   const parsed = ArtifactManifestSchema.safeParse(input);
   if (!parsed.success)
@@ -33,7 +40,7 @@ export function validateArtifactManifest(
 
 /** Validates a server-bound, content-addressed manifest. */
 export function validateArtifactBindingRecord(
-  input: unknown,
+  input: ArtifactBindingInput,
 ): Result<ArtifactBindingRecord, ArtifactManifestError> {
   const parsed = ArtifactBindingRecordSchema.safeParse(input);
   if (!parsed.success)
@@ -61,8 +68,10 @@ export type PlanArtifactError =
  * well formed and self-consistent, never that the plan is authoritative. A
  * consumer must still recompute the plan before acting on it.
  */
+type PlanArtifactInput = Parameters<typeof validateReleasePlanArtifact>[0];
+
 export function validatePlanArtifact(
-  input: unknown,
+  input: PlanArtifactInput,
 ): Result<ReleasePlanArtifact, PlanArtifactError> {
   return validateReleasePlanArtifact(input);
 }

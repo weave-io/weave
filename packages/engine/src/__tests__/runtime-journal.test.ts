@@ -5,7 +5,7 @@
  * no raw content persistence, fingerprint stability within one store,
  * and fingerprint difference across salts.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";
@@ -21,6 +21,11 @@ import {
   type WriteJournalEntryInput,
 } from "../runtime/journal-writer.js";
 import {
+  MAX_SANITIZATION_ARRAY_LENGTH,
+  MAX_SANITIZATION_NODES,
+  MAX_SANITIZATION_PROPERTIES,
+  MAX_SANITIZATION_PROPERTIES_PER_OBJECT,
+  MAX_SANITIZATION_STRING_LENGTH,
   sanitizeJournalData,
   sanitizeSnapshotMetadata,
 } from "../runtime/sanitizer.js";
@@ -28,6 +33,7 @@ import type { RuntimeJournalRepository } from "../runtime/store.js";
 import type {
   JournalQueryFilter,
   JsonObject,
+  JsonValue,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
 } from "../runtime/types.js";
@@ -82,6 +88,16 @@ class StubJournalRepository implements RuntimeJournalRepository {
   injectFailure(): void {
     this.failNext = true;
   }
+
+  prune(_options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<
+    { removedByAge: number; removedByCount: number },
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +114,23 @@ function makeValidInput(
     data: { stepName: "implement" },
     ...overrides,
   };
+}
+
+interface CyclicJournalValue {
+  self?: CyclicJournalValue;
+}
+
+function makeInvalidDataInput(
+  data: null | readonly JsonValue[],
+): WriteJournalEntryInput {
+  const input = makeValidInput();
+  Object.defineProperty(input, "data", {
+    configurable: true,
+    enumerable: true,
+    value: data,
+    writable: true,
+  });
+  return input;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,15 +160,14 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
       makeValidInput({
+        // SAFETY: This hostile fixture bypasses the static union to exercise runtime validation.
         source: { kind: "unknown" as "engine", name: "runner" },
       }),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "source.kind",
-      );
+      expect(result.error.message).toContain("source.kind");
     }
     expect(repo.appended).toHaveLength(0);
   });
@@ -149,10 +181,37 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "source.name",
-      );
+      expect(result.error.message).toContain("source.name");
     }
+  });
+
+  it("rejects a boxed string spoof at the envelope boundary", async () => {
+    const repo = new StubJournalRepository();
+    const writer = new RuntimeJournalWriter(repo);
+    const input = makeValidInput();
+    const source = { ...input.source };
+    const spoofedName = {};
+    Object.defineProperty(spoofedName, Symbol.toStringTag, {
+      configurable: true,
+      enumerable: false,
+      value: "String",
+      writable: false,
+    });
+    Object.defineProperty(source, "name", {
+      configurable: true,
+      enumerable: true,
+      value: spoofedName,
+      writable: true,
+    });
+    Object.defineProperty(input, "source", {
+      configurable: true,
+      enumerable: true,
+      value: source,
+      writable: true,
+    });
+    const result = await writer.write(input);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.message).toContain("source.name");
   });
 
   it("rejects empty eventType", async () => {
@@ -162,9 +221,7 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "eventType",
-      );
+      expect(result.error.message).toContain("eventType");
     }
   });
 
@@ -172,14 +229,15 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
-      makeValidInput({ severity: "critical" as "error" }),
+      makeValidInput({
+        // SAFETY: This hostile fixture bypasses the static union to exercise runtime validation.
+        severity: "critical" as "error",
+      }),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "severity",
-      );
+      expect(result.error.message).toContain("severity");
     }
   });
 
@@ -197,7 +255,7 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
-      makeValidInput({ data: null as unknown as JsonObject }),
+      makeInvalidDataInput(null),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -209,7 +267,7 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
-      makeValidInput({ data: [] as unknown as JsonObject }),
+      makeInvalidDataInput([]),
     );
     expect(result.isErr()).toBe(true);
   });
@@ -258,7 +316,7 @@ describe("RuntimeJournalWriter — payload size limit", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain("64 KiB");
+      expect(result.error.message).toContain("64 KiB");
     }
     expect(repo.appended).toHaveLength(0);
   });
@@ -319,9 +377,7 @@ describe("RuntimeJournalWriter — sanitization", () => {
       expect(result.isErr()).toBe(true);
       if (result.isErr()) {
         expect(result.error.type).toBe("journal_write");
-        expect((result.error as { message: string }).message).toContain(
-          "denied field",
-        );
+        expect(result.error.message).toContain("denied field");
       }
       expect(repo.appended).toHaveLength(0);
     });
@@ -431,9 +487,9 @@ describe("RuntimeJournalWriter — no raw content persistence", () => {
     expect(result.isOk()).toBe(true);
     expect(repo.appended[0].data).toHaveProperty("promptFingerprint");
     // The stored value is a hex fingerprint, not the raw content
-    const stored = repo.appended[0].data.promptFingerprint as string;
-    expect(stored).not.toContain("helpful assistant");
-    expect(stored).toMatch(/^[0-9a-f]{64}$/); // SHA-256 hex = 64 chars
+    const stored = repo.appended[0].data.promptFingerprint;
+    if (fp.isOk()) expect(stored).toBe(fp.value);
+    expect(stored).not.toBe("You are a helpful assistant.");
   });
 });
 
@@ -519,6 +575,25 @@ describe("sanitizeJournalData", () => {
     expect(result.isOk()).toBe(true);
   });
 
+  it("accepts frozen JSON data descriptors", () => {
+    const frozen = Object.freeze({
+      stepName: "plan",
+      nested: Object.freeze({ duration: 100 }),
+      items: Object.freeze(["first", "second"]),
+    });
+
+    const result = sanitizeJournalData(frozen);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        stepName: "plan",
+        nested: { duration: 100 },
+        items: ["first", "second"],
+      });
+      expect(result.value).not.toBe(frozen);
+    }
+  });
+
   it("returns err for data with 'token' field", () => {
     const result = sanitizeJournalData({ token: "abc" });
     expect(result.isErr()).toBe(true);
@@ -566,9 +641,7 @@ describe("sanitizeJournalData", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "nesting depth",
-      );
+      expect(result.error.message).toContain("nesting depth");
     }
   });
 
@@ -581,6 +654,88 @@ describe("sanitizeJournalData", () => {
     }
     const result = sanitizeJournalData(wrapped);
     expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects aliases and cycles instead of retaining shared references", () => {
+    const child = { safe: "value" };
+    const aliased = sanitizeJournalData({ first: child, second: child });
+    expect(aliased.isErr()).toBe(true);
+
+    const cyclic: CyclicJournalValue = {};
+    cyclic.self = cyclic;
+    const cycleResult = sanitizeJournalData(cyclic);
+    expect(cycleResult.isErr()).toBe(true);
+  });
+
+  it("rejects accessors and proxy traps without invoking hostile code", () => {
+    const accessor = {};
+    Object.defineProperty(accessor, "safe", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        throw new Error("secret accessor");
+      },
+    });
+    expect(sanitizeJournalData(accessor).isErr()).toBe(true);
+
+    const proxy = new Proxy({ safe: "value" }, {
+      ownKeys: () => {
+        throw new Error("secret proxy trap");
+      },
+    });
+    expect(sanitizeJournalData(proxy).isErr()).toBe(true);
+  });
+
+  it("rejects sparse arrays and arrays beyond the array bound", () => {
+    const sparse: string[] = [];
+    sparse.length = 2;
+    sparse[1] = "value";
+    expect(sanitizeJournalData({ items: sparse }).isErr()).toBe(true);
+    const oversized = Array.from(
+      { length: MAX_SANITIZATION_ARRAY_LENGTH + 1 },
+      () => null,
+    );
+    expect(sanitizeJournalData({ items: oversized }).isErr()).toBe(true);
+  });
+
+  it("rejects node, property, per-object, and string bound violations", () => {
+    const branch = () =>
+      Array.from({ length: 512 }, () => ({ child: {} }));
+    const nodeHeavy = sanitizeJournalData({
+      left: branch(),
+      right: branch(),
+    });
+    expect(nodeHeavy.isErr()).toBe(true);
+
+    const perObject = Object.fromEntries(
+      Array.from(
+        { length: MAX_SANITIZATION_PROPERTIES_PER_OBJECT + 1 },
+        (_, index) => [`field${index}`, index],
+      ),
+    );
+    expect(sanitizeJournalData(perObject).isErr()).toBe(true);
+
+    const global = Object.fromEntries(
+      Array.from({ length: 9 }, (_, group) => [
+        `group${group}`,
+        Object.fromEntries(
+          Array.from({ length: 512 }, (_, index) => [
+            `field${index}`,
+            index,
+          ]),
+        ),
+      ]),
+    );
+    expect(sanitizeJournalData(global).isErr()).toBe(true);
+
+    const longString = sanitizeJournalData({
+      value: "x".repeat(MAX_SANITIZATION_STRING_LENGTH + 1),
+    });
+    expect(longString.isErr()).toBe(true);
+    expect(MAX_SANITIZATION_NODES).toBeGreaterThan(0);
+    expect(MAX_SANITIZATION_PROPERTIES).toBeGreaterThan(
+      MAX_SANITIZATION_PROPERTIES_PER_OBJECT,
+    );
   });
 });
 
@@ -609,35 +764,50 @@ describe("sanitizeSnapshotMetadata", () => {
   });
 
   it("rejects metadata exceeding depth limit (depth > 10)", () => {
-    // sanitizeSnapshotMetadata accepts Record<string, string|number|boolean>,
-    // but findDeniedKey operates on unknown — cast to exercise the depth path.
-    const deep: Record<string, unknown> = { safe: "value" };
-    let wrapped: Record<string, unknown> = deep;
+    const deep: JsonObject = { safe: "value" };
+    let wrapped: JsonObject = deep;
     for (let i = 0; i < 12; i++) {
       wrapped = { level: wrapped };
     }
-    const result = sanitizeSnapshotMetadata(
-      wrapped as Record<string, string | number | boolean>,
-    );
+    const result = sanitizeSnapshotMetadata(wrapped);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("journal_write");
-      expect((result.error as { message: string }).message).toContain(
-        "nesting depth",
+      expect(result.error.message).toContain("nesting depth");
+    }
+  });
+
+  it("rejects nested metadata even within the graph depth bound", () => {
+    const deep: JsonObject = { safe: "value" };
+    let wrapped: JsonObject = deep;
+    for (let i = 0; i < 9; i++) {
+      wrapped = { level: wrapped };
+    }
+    const result = sanitizeSnapshotMetadata(wrapped);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain(
+        "only string, number, or boolean",
       );
     }
   });
 
-  it("accepts metadata at exactly depth 10 (boundary — should pass)", () => {
-    const deep: Record<string, unknown> = { safe: "value" };
-    let wrapped: Record<string, unknown> = deep;
-    for (let i = 0; i < 9; i++) {
-      wrapped = { level: wrapped };
-    }
-    const result = sanitizeSnapshotMetadata(
-      wrapped as Record<string, string | number | boolean>,
-    );
+  it("does not pollute the output prototype for a __proto__ key", () => {
+    const hostile = {};
+    Object.defineProperty(hostile, "__proto__", {
+      configurable: true,
+      enumerable: true,
+      value: "safe",
+      writable: true,
+    });
+    const result = sanitizeSnapshotMetadata(hostile);
     expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(result.value, "__proto__"))
+        .toBe(true);
+      expect(result.value["__proto__"]).toBe("safe");
+    }
   });
 });
 

@@ -53,6 +53,18 @@ describe("reviewVariantName", () => {
     expect(reviewVariantName("weft", "my model@v1")).toBe("weft-my-model-v1");
   });
 
+  it("derives names from the base model when a thinking suffix is present", () => {
+    expect(reviewVariantName("weft", "openai/gpt-5#high")).toBe(
+      "weft-openai-gpt-5",
+    );
+  });
+
+  it("does not throw for a malformed suffix from a bypassed config", () => {
+    expect(reviewVariantName("weft", "openai/gpt-5#not-a-level")).toBe(
+      "weft-openai-gpt-5-not-a-level",
+    );
+  });
+
   it("preserves valid identifier characters (letters, digits, hyphens, underscores)", () => {
     expect(reviewVariantName("weft", "my_model-v1")).toBe("weft-my_model-v1");
   });
@@ -130,6 +142,24 @@ describe("generateReviewVariants — basic generation", () => {
       "anthropic/claude-opus-4",
     );
   });
+
+  it("defensively generates a variant for a malformed bypassed entry", () => {
+    const config = cfg(`
+      agent weft {
+        prompt "Reviewer"
+        models ["claude-sonnet-4-5"]
+        review_models ["openai/gpt-5"]
+      }
+    `);
+    const weft = config.agents.weft;
+    if (weft === undefined) throw new Error("Expected weft agent");
+    weft.review_models = ["openai/gpt-5#not-a-level"];
+
+    const variants = generateReviewVariants(config)._unsafeUnwrap();
+    expect(variants["weft-openai-gpt-5-not-a-level"].config.models).toEqual([
+      "openai/gpt-5#not-a-level",
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -157,6 +187,24 @@ describe("generateReviewVariants — variant config properties", () => {
 
   it("models contains only the single review model", () => {
     expect(variant().config.models).toEqual(["openai/gpt-5"]);
+  });
+
+  it("preserves the full raw review model entry in generated config", () => {
+    const config = cfg(`
+      agent weft {
+        prompt "You are a code reviewer."
+        models ["claude-sonnet-4-5"]
+        review_models ["openai/gpt-5#high"]
+      }
+    `);
+    const generated = generateReviewVariants(config)._unsafeUnwrap();
+
+    expect(generated["weft-openai-gpt-5"].config.models).toEqual([
+      "openai/gpt-5#high",
+    ]);
+    expect(generated["weft-openai-gpt-5"].reviewModel).toBe(
+      "openai/gpt-5#high",
+    );
   });
 
   it("tool_policy.read is allow", () => {
@@ -288,12 +336,9 @@ describe("generateReviewVariants — conflict detection", () => {
       }
     `);
     // Artificially inject a duplicate review model to simulate the collision.
-    const weft = config.agents["weft"];
+    const weft = config.agents.weft;
     if (weft) {
-      (weft as { review_models?: string[] }).review_models = [
-        "openai/gpt-5",
-        "openai/gpt-5",
-      ];
+      weft.review_models = ["openai/gpt-5", "openai/gpt-5"];
     }
     const result = generateReviewVariants(config);
     expect(result.isErr()).toBe(true);
@@ -301,6 +346,23 @@ describe("generateReviewVariants — conflict detection", () => {
     expect(error.type).toBe("ReviewVariantConflictError");
     expect(error.variantName).toBe("weft-openai-gpt-5");
     expect(error.message).toContain("weft-openai-gpt-5");
+  });
+
+  it("collides when the same base model has different thinking levels", () => {
+    const config = cfg(`
+      agent weft {
+        prompt "Reviewer"
+        models ["claude-sonnet-4-5"]
+        review_models ["openai/gpt-5#high", "openai/gpt-5#low"]
+      }
+    `);
+    const result = generateReviewVariants(config);
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ReviewVariantConflictError");
+    expect(error.variantName).toBe("weft-openai-gpt-5");
+    expect(error.reviewModel).toBe("openai/gpt-5#low");
   });
 
   it("conflict error message includes remediation guidance", () => {

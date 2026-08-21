@@ -5,6 +5,9 @@ import {
   type AgentDescriptor,
   type ComposeError,
   composeAgentDescriptor,
+  defaultPromptFileReader,
+  type PromptFileReader,
+  type PromptFileReadFailure,
 } from "./compose.js";
 import {
   type CategoryShuttleConflictError,
@@ -21,6 +24,14 @@ import {
 export interface MaterializationInput {
   /** Fully resolved and validated Weave configuration. */
   config: WeaveConfig;
+  /**
+   * Optional prompt-source seam for `prompt_file` and `prompt_append_file`.
+   *
+   * Omit it to keep the historical behavior of reading each declared path with
+   * Bun. Supply one to compose from bytes the caller already holds. Either way
+   * materialization consults the reader at most once per distinct path.
+   */
+  promptFileReader?: PromptFileReader;
 }
 
 /** A composed agent descriptor paired with its deterministic materialization key. */
@@ -80,6 +91,29 @@ export type MaterializationError =
       cause: ComposeError;
     };
 
+/**
+ * Wrap a reader so each distinct path is read at most once for the lifetime of
+ * the wrapper.
+ *
+ * The cached value is the reader's `ResultAsync` itself, so concurrent agents
+ * that declare the same prompt file share one in-flight read and observe the
+ * same content — or the same failure.
+ */
+function memoizeByPath(reader: PromptFileReader): PromptFileReader {
+  const reads = new Map<string, ResultAsync<string, PromptFileReadFailure>>();
+
+  return {
+    read(path) {
+      const cached = reads.get(path);
+      if (cached !== undefined) return cached;
+
+      const pending = reader.read(path);
+      reads.set(path, pending);
+      return pending;
+    },
+  };
+}
+
 function filterDisabled(
   entries: [string, AgentConfig][],
   disabled: readonly string[],
@@ -97,12 +131,19 @@ function filterDisabled(
  * Per-agent failures are accumulated into `plan.errors[]`. The ResultAsync
  * itself only rejects on a truly irrecoverable upstream failure — currently
  * none exist, so the returned promise always resolves to `ok`.
+ *
+ * Prompt files are read through `input.promptFileReader` when supplied and with
+ * Bun otherwise. Each distinct path is read at most once per call, so agents
+ * that share a prompt file compose from the same bytes.
  */
 export function materializeAgents(
   input: MaterializationInput,
 ): ResultAsync<MaterializationPlan, never> {
   const { config } = input;
   const disabled = config.disabled.agents;
+  const promptFileReader = memoizeByPath(
+    input.promptFileReader ?? defaultPromptFileReader,
+  );
 
   const generatedShuttlesResult = generateCategoryShuttles(config);
 
@@ -152,20 +193,16 @@ export function materializeAgents(
   ).map(([agentName, agentConfig]) => ({
     agentName,
     agentConfig,
-    entrySource: { source: "explicit" } as EntrySource,
+    entrySource: { source: "explicit" } satisfies EntrySource,
   }));
 
-  const generatedEntries = filterDisabled(
-    Object.entries(generatedShuttles).map(
-      ([agentName, generated]) =>
-        [agentName, generated.config] as [string, AgentConfig],
-    ),
-    disabled,
-  ).map(([agentName, agentConfig]) => ({
-    agentName,
-    agentConfig,
-    entrySource: { source: "category-shuttle" } as EntrySource,
-  }));
+  const generatedEntries = Object.entries(generatedShuttles)
+    .filter(([agentName]) => !disabled.includes(agentName))
+    .map(([agentName, generated]) => ({
+      agentName,
+      agentConfig: generated.config,
+      entrySource: { source: "category-shuttle" } satisfies EntrySource,
+    }));
 
   const reviewVariantEntries = Object.entries(generatedReviewVariants)
     .filter(([agentName]) => !disabled.includes(agentName))
@@ -176,7 +213,7 @@ export function materializeAgents(
         source: "review-variant",
         sourceAgentName: generated.sourceAgentName,
         reviewModel: generated.reviewModel,
-      } as EntrySource,
+      } satisfies EntrySource,
     }));
 
   const allTypedEntries = [
@@ -191,30 +228,20 @@ export function materializeAgents(
 
   const allAgents = Object.fromEntries(allEntries);
 
-  // Build lightweight MaterializedAgent-shaped objects for review variants so
-  // primary-mode agents can receive reviewRouting context during composition.
-  // These are pre-built before the main composition loop (review variants are
-  // generated before composition) so they are available for all primary agents.
-  const prebuiltReviewVariants: MaterializedAgent[] = reviewVariantEntries.map(
-    ({ agentName: rvName, agentConfig: _rvConfig, entrySource: rvSource }) => {
-      const rv = rvSource as {
-        source: "review-variant";
-        sourceAgentName: string;
-        reviewModel: string;
-      };
-      return {
-        agentName: rvName,
-        // descriptor is a placeholder — only agentName/source/reviewMeta are
-        // used by buildReviewRoutingContext; the real descriptor is composed later.
-        descriptor: null as unknown as import("./compose.js").AgentDescriptor,
-        source: "review-variant" as const,
-        reviewMeta: {
-          sourceAgentName: rv.sourceAgentName,
-          reviewModel: rv.reviewModel,
-        },
-      };
-    },
-  );
+  type ReviewRoutingInput = Pick<
+    MaterializedAgent,
+    "agentName" | "source" | "reviewMeta"
+  >;
+
+  const prebuiltReviewVariants: ReviewRoutingInput[] =
+    reviewVariantEntries.map(({ agentName, entrySource }) => ({
+      agentName,
+      source: "review-variant",
+      reviewMeta: {
+        sourceAgentName: entrySource.sourceAgentName,
+        reviewModel: entrySource.reviewModel,
+      },
+    }));
 
   const compositionPromises = allTypedEntries.map(
     ({ agentName, agentConfig, entrySource }) => {
@@ -227,6 +254,7 @@ export function materializeAgents(
         allAgents,
         category,
         isPrimary ? prebuiltReviewVariants : undefined,
+        promptFileReader,
       ).match<
         | {
             ok: true;

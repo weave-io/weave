@@ -8,9 +8,10 @@
  *
  * 1. Accept the harness-provided `SkillInfo[]` list (injected at construction
  *    time or supplied by the SDK at runtime).
- * 2. Validate declared skill names against that list.
- * 3. Surface missing declared skills as hard errors so the engine's
- *    `resolveSkillsForAgent()` can emit `MissingSkill` errors.
+ * 2. Validate declared skill names against that list when a caller needs a
+ *    strict diagnostic.
+ * 3. Pass the list to the engine, which emits non-fatal `MissingSkill`
+ *    warnings while preserving available skills.
  *
  * ## Adapter / Harness Boundary
  *
@@ -20,15 +21,11 @@
  * - **Adapter-owned**: receiving the harness-provided list, forwarding it to
  *   the engine, and validating declared skill names against it.
  * - **Engine-owned**: matching declared skill names against `SkillInfo.name`
- *   values and emitting `MissingSkill` errors for unresolved names.
+ *   values and emitting non-fatal `MissingSkill` warnings for unresolved names.
  *
- * ## Hard-error semantics
- *
- * Missing declared skills are hard errors (not silent skips). When an agent's
- * `skills [...]` declaration references a skill that is not in the
- * harness-provided list, `validateDeclaredSkills()` returns
- * `err(MissingSkillsError)` with the missing names. Callers must not suppress
- * those errors.
+ * `validateDeclaredSkills()` is a compatibility helper for callers that need
+ * a strict diagnostic. Adapter activation must convert its missing names into
+ * warnings and continue with available skills.
  *
  * Boundary rule: this module must not import from `@opencode-ai/sdk` directly.
  * All SDK type imports flow through `./sdk-types`.
@@ -105,5 +102,5 @@ export function validateDeclaredSkills(
   if (missing.length > 0) {
     return err({ type: "MissingSkillsError", missingSkills: missing });
   }
-  return ok(undefined);
+  return ok(void 0);
 }

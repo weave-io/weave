@@ -147,16 +147,16 @@ Classes: `prose`, `crumbs`, `meta`/`meta-row`, `lede`, numbered headings,
 `prevnext`, `feedback`, `toc`/`toc-label`/`toc-meta`.
 
 **Canonical article route (implemented):** `src/content/docs/docs/workflows.mdx`
-is the canonical port of `docs-article.html`. All other article routes
-(`getting-started`, `guides/*`, `reference/*`) reuse the same chrome. The
+is the canonical port of `docs-article.html`. All other live article routes
+under `src/content/docs/docs/` reuse the same chrome. The
 article-only chrome that lived in the prototype's *inline* `<style>`/`<script>`
 is factored into three shared docs components so every article shares one source:
 
 | Component | Role |
 | --------- | ---- |
-| `src/components/docs/ArticleChrome.astro` | Page-scoped `is:global` CSS: numbered `·NN` heading markers (CSS counter on `.prose h2`, so the marker never enters the TOC text), `.meta-row`, `.feedback` styling, and hiding Starlight's `.sl-anchor-link` icon. |
-| `src/components/docs/Feedback.astro` | The `.feedback` block + its toggle script (clicking `[data-fb]` adds `.done`). |
-| `src/components/docs/WorkflowGraph.astro` | The `.diagram` block + the compiled-graph SVG `<script>` (kept in an `.astro` component because MDX parses raw `<script>` bodies as JSX expressions). |
+| `src/components/docs/article-chrome.astro` | Page-scoped `is:global` CSS: numbered `·NN` heading markers (CSS counter on `.prose h2`, so the marker never enters the TOC text), `.meta-row`, `.feedback` styling, and hiding Starlight's `.sl-anchor-link` icon. |
+| `src/components/docs/feedback.astro` | The `.feedback` block + its toggle script (clicking `[data-fb]` adds `.done`). |
+| `src/components/docs/workflow-graph.astro` | The `.diagram` block + the compiled-graph SVG `<script>` (kept in an `.astro` component because MDX parses raw `<script>` bodies as JSX expressions). |
 
 Headings are authored as **markdown** (`##`/`###`) so Astro collects them into
 the right-hand TOC and the `docs.js` scrollspy/smooth-scroll resolve against the

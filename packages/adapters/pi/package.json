@@ -27,8 +27,8 @@
   },
   "scripts": {
     "build": "bun ../../../scripts/build-public-packages.ts",
-    "typecheck": "bun -e 'process.exit(0)'",
-    "test": "bun -e 'process.exit(0)'",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test src",
     "clean": "rm -rf dist"
   },
   "dependencies": {

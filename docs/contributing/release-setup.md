@@ -13,25 +13,10 @@ bun run release:doctor --pre-cutover
 The command prints grouped pass, warning, and failure checks. A failure
 includes the manual fix. An unknown or unreadable value fails closed.
 
-Before the first pre-cutover doctor run, prove the retained publisher with the
-explicit read-only operation from protected `main`:
-
-```sh
-gh workflow run publish.yml --repo weave-io/weave --ref main -f operation=preflight
-run_id="$(gh run list --repo weave-io/weave --workflow publish.yml --branch main --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq '.[] | select(.displayTitle == "legacy-publisher-preflight") | .databaseId' | head -n 1)"
-test -n "$run_id"
-gh run watch "$run_id" --repo weave-io/weave --exit-status
-gh run view "$run_id" --repo weave-io/weave --json databaseId,displayTitle,status,conclusion,event,headBranch,headSha,workflowName,workflowRef
-```
-
-Capture the final `gh run view` JSON with the doctor evidence. It must show
-`displayTitle` `legacy-publisher-preflight`, `conclusion` `success`, event
-`workflow_dispatch`, `headBranch` `main`, the protected-main `headSha`, and
-workflow ref `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
-The run summary must state publication enablement `true`, read-only `true`, and
-side effects `none`. Do not use a normal `workflow_dispatch` operation as a
-substitute. The preflight does not install dependencies, query npm, mint OIDC
-or App credentials, publish packages, or mutate refs.
+Before the cutover, the pre-cutover doctor requires a recent successful
+scheduled run of the old publisher on protected `main`. After the cutover,
+`--pre-cutover` is a rollback-verification mode: use it only after a Git revert
+restores the old workflow and its trust identity.
 
 ### Workflow-run identity contract
 
@@ -57,10 +42,8 @@ match `weave-io/weave/.github/workflows/publish.yml@refs/heads/main`.
 
 A scheduled success is accepted only with the exact workflow name, repository
 and head-repository identity, protected `main`, successful conclusion, valid
-ID and timestamps, and `event: schedule`. A dispatch is accepted only when
-those fields also identify `event: workflow_dispatch` and
-`display_title: legacy-publisher-preflight`. Missing or malformed identity
-fields fail closed.
+ID and timestamps, and `event: schedule`. Dispatch runs are not operational
+proof. Missing or malformed identity fields fail closed.
 
 ## Manual setup
 
@@ -75,8 +58,11 @@ Create these repository environments in **Settings → Environments**:
 - `prerelease` — protects `next` and nightly proof work.
 
 Configure the required reviewers and wait for GitHub to save the protection
-rules. The doctor checks that both environments exist and that their metadata
-is readable. The doctor does not check or print secret values.
+rules. The doctor checks that both environments exist, that their metadata is
+readable, and that GitHub reports a `required_reviewers` protection rule that
+names at least one reviewer. An environment that exists with no protection
+rules — GitHub returns an empty object or an empty rule list — gates nothing
+and fails the doctor. The doctor does not check or print secret values.
 
 ### Ruleset and required checks
 
@@ -123,8 +109,8 @@ at repository scope:
 
 - `release-app`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
 - `docs-audit-patch`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`
-- `release-refs`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` for retained
-  legacy `publish.yml`
+- `release-refs`: `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` for the
+  release-refs cleanup job
 - `release-ai`: `WEAVE_RELEASE_AI_API_KEY`
 
 The App ID and private key are protected credentials. Every App-authority job
@@ -176,7 +162,7 @@ accept a neighboring rung.
 
 | Order | Command | Required tuple | Typed result | Operational step |
 | --- | --- | --- | --- | --- |
-| 1 | `bun run release:doctor --pre-cutover` | stage `pre-cutover`; mode `disabled` or `dry-run`; old `publish.yml` scheduled and the new workflow scheduleless | `ReadyForCutover` | Task 32 preflight. CLI/OpenCode still trust old `publish.yml`; Claude/Pi remain unpublished. |
+| 1 | `bun run release:doctor --pre-cutover` | stage `pre-cutover`; mode `disabled` or `dry-run`; old `publish.yml` scheduled and the new workflow scheduleless | `ReadyForCutover` | Task 32 pre-cutover readiness. CLI/OpenCode still trust old `publish.yml`; Claude/Pi remain unpublished. |
 | 2 | `bun run release:doctor --cutover` | stage `frozen`; mode `disabled`; old workflow absent; new `release-publish.yml` has the `17 0 * * *` schedule; valid freeze record | `CutoverVerified` | Task 35 freeze and cutover. CLI/OpenCode trust switches during the freeze. |
 | 3 | `bun run release:doctor --post-bootstrap-frozen` | stage `frozen`; mode `disabled`; valid freeze record; all four packages trust the new workflow | `ReadyForActivation` | Task 38 post-bootstrap readiness. Claude/Pi trust is added by the approved bootstrap step. This is not final health. |
 | 4 | `bun run release:doctor --activation-ready` | stage `ready`; mode `disabled`; valid freeze and activation records; all four trust the new workflow | `ActivationReadyVerified` | Task 38 reviewed activation commit. Publication is still disabled. |
@@ -193,6 +179,73 @@ Do not set `RELEASE_ROLLOUT_MODE=enabled` while the stage is `pre-cutover` or
 `frozen`. Do not set it before the reviewed stage-to-`ready` commit. If the
 variable flip fails, leave the system at `ready` + `disabled` and rerun
 `--activation-ready`; no second code change is needed.
+
+## Cutover freeze, trust switch, and rollback
+
+The cutover is a freeze protocol, not a deployment. It removes the old
+publisher while the new pipeline stays disabled, so at no point are both
+systems publishable, and at no point is either system publishable without an
+explicit record.
+
+### Order
+
+1. **Prove quiescence.** Confirm there is no open release PR, no merged
+   release that has not reached a terminal state, and no in-flight run of the
+   old publisher. Record the evidence; it is an input to the freeze record.
+2. **Begin the freeze.** Confirm `RELEASE_ROLLOUT_MODE=disabled`, then commit
+   the rollout-stage declaration change to `frozen` with its freeze record
+   (the quiescence evidence link and timestamp).
+3. **Land the cutover change.** The same change deletes `publish.yml`, deletes
+   the retired publisher's planning, replay, promotion, and legacy ref
+   modules together with their tests, adds the `17 0 * * *` schedule to
+   `release-publish.yml` behind the still-disabled gate, updates the
+   entrypoint inventory, and rewrites the documentation that described the
+   removed system. The denylist-driven removal test in
+   [`scripts/release/__tests__/removed-paths.test.ts`](../../scripts/release/__tests__/removed-paths.test.ts)
+   enforces both halves: nothing denylisted survives, and every new-pipeline
+   entrypoint is positively retained.
+4. **Switch npm trust interactively.** An authorized maintainer, outside CI,
+   moves `@weaveio/weave-cli` and `@weaveio/weave-adapter-opencode`'s sole
+   trusted-publisher records from the old `publish.yml` identity to
+   `.github/workflows/release-publish.yml`: action `npm publish`, repository
+   `weave-io/weave`, no environment restriction. Record nonsecret evidence
+   only. Never switch a record before the freeze is active and quiescence is
+   proven.
+5. **Verify.** Run `bun run release:doctor --cutover` until it reports typed
+   `CutoverVerified`.
+
+Steps 1, 2, 4, and 5 are manual and external. Code cannot create or change an
+npm trusted-publisher record.
+
+### While frozen
+
+New normal publication stays disabled through the bootstrap and
+post-bootstrap verification. The only sanctioned publication inside the freeze
+is the manual, token-based bootstrap publish. A scheduled or dispatched event
+during the freeze exits in the route job before any attestation, proof, OIDC,
+or publish work.
+
+Nightly coverage pauses for exactly this window. It resumes when the two-phase
+activation enables publication: a reviewed stage-to-`ready` commit while the
+mode stays `disabled`, verified by `--activation-ready`, then the single
+`RELEASE_ROLLOUT_MODE=enabled` flip. That sequence is the only unfreeze.
+
+### Rollback
+
+On any failure the repository stays frozen. Do not unfreeze to recover.
+
+1. Use `git revert <cutover-commit>` to revert the cutover change. This
+   restores `publish.yml`, the retired modules, and the `pre-cutover` stage
+   declaration. Do not keep or recreate a dormant copy of the old runtime.
+2. Interactively restore the old npm trusted-publisher identity for
+   `@weaveio/weave-cli` and `@weaveio/weave-adapter-opencode` to
+   `.github/workflows/publish.yml`.
+3. Re-verify with `bun run release:doctor --pre-cutover` and expect
+   `ReadyForCutover`.
+
+Both the workflow code and the trust identity must be restored before the old
+system may resume. Restoring only one leaves the repository with neither
+system operational and no freeze record, which the rollout tuple rejects.
 
 ## Recovery checks
 
@@ -218,6 +271,56 @@ The doctor also reads Task 14's recomputed post-merge state and the
   or moves `latest`.
 - `CompleteWithIncident` is terminal and allows fix-forward preparation after
   the durable warning, refs, cleanup, and deprecation readback are authoritative.
+
+### Where post-merge authority comes from
+
+The doctor recomputes Task 14 state from immutable, source-bound observations.
+It never reads a pull-request comment, and it never treats a workflow artifact
+as authority.
+
+| Authority | Source |
+| --- | --- |
+| Package identity and version | `package.json` at the release merge commit |
+| Publication, bytes, deprecation | the npm registry version document and tarball |
+| Expected digest | npm's published provenance statement, accepted only when its in-toto subject is the served tarball and its build source commit is the released commit |
+| Tags and releases | Git tag refs and GitHub releases |
+| Changeset cleanup | the merged tree plus `main`'s tree, so a cleanup pull request merged *after* the release is observed |
+| Artifact cache and independent proof | Actions runs for `release-publish.yml` and `release-attest.yml` at the released commit |
+| Integrity-incident authorization | the protected `release-integrity-incident` check run on the released commit |
+| `CreationCleanupPending` | Weave's durable release-state database |
+
+When npm has published no provenance for a version, that is an observed
+`PendingRegistryVerification`. When npm has published provenance that does not
+describe the served bytes or names another commit, the doctor fails closed:
+only the protected incident-resolution operation records the attested digest of
+foreign bytes, and the doctor never invents one.
+
+### Durable release-state database
+
+`CreationCleanupPending` is operational state, so it is read from Weave's
+durable database rather than from a comment or an artifact. The doctor opens
+the database read-only and never creates, migrates, or writes it.
+
+- `WEAVE_RELEASE_STATE_DB` selects the database explicitly. A named database
+  that does not exist fails the doctor.
+- Without that variable the doctor reads
+  `$XDG_DATA_HOME/weave/release-state.sqlite`, defaulting to
+  `~/.local/share/weave/release-state.sqlite`. A missing default file is the
+  store's empty state.
+
+The record is bound to its generation and its pull request. A record that
+survives while a stable release pull request is associated with the live
+marker, or that names a pull request which is not an authoritative stable
+release PR, fails the doctor.
+
+### Outbound read boundaries
+
+Every outbound doctor read is bounded. HTTP reads have a wall-clock timeout and
+a byte bound counted while the body streams; `npm` subprocesses have a
+wall-clock timeout and stdout/stderr byte bounds counted while the streams
+drain. The GitHub credential is attached only after the API origin is proven to
+be `https://api.github.com`; a `GITHUB_API_URL` naming another host, scheme,
+port, userinfo, path, query, or fragment is refused rather than normalized.
 
 A green doctor report is evidence for the selected rung only. It is not a
 replacement for the reviewed freeze, activation commit, or protected GitHub

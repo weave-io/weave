@@ -70,6 +70,15 @@ function emptyLedger(): ConsumptionLedger {
   return { records: [], identities: new Map() };
 }
 
+function digestOf(plan: ReleasePlan): string {
+  return releasePlanDigest(plan).match(
+    (digest) => digest,
+    (error) => {
+      throw new Error(`invalid plan fixture: ${error.type}`);
+    },
+  );
+}
+
 function validRequest(
   overrides: Partial<ReleasePolicyCheckInput> = {},
 ): ReleasePolicyCheckInput {
@@ -89,7 +98,7 @@ function validRequest(
     ledger: emptyLedger(),
     currentMainSha: BASE_SHA,
     plan,
-    planDigest: releasePlanDigest(plan),
+    planDigest: digestOf(plan),
     docsAuditMetadata: {
       schemaVersion: 1,
       auditedSha: BASE_SHA,
@@ -272,7 +281,7 @@ describe("release-policy check", () => {
 
   it("parses explicit plan digests and docs-audit records", () => {
     const plan = validPlan();
-    const planDigest = releasePlanDigest(plan);
+    const planDigest = digestOf(plan);
     const digestBody = [
       `<!-- ${"weave-release-plan-digest"}:1`,
       JSON.stringify({ planDigest }),

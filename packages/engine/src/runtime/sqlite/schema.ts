@@ -80,8 +80,15 @@ export interface SessionSnapshotRow {
   readonly id: string;
   /** FK → workflow_instances.id. */
   readonly workflow_instance_id: string;
-  /** FK → execution_leases.id. */
-  readonly lease_id: string;
+  /**
+   * FK → execution_leases.id, nullable.
+   *
+   * `ON DELETE SET NULL` (schema v5+): releasing the referenced
+   * `ExecutionLease` severs this link but preserves the historical
+   * SessionSnapshot row. `NULL` means the originating lease has since
+   * been released; it does not mean the snapshot was recorded without one.
+   */
+  readonly lease_id: string | null;
   /** Harness adapter name. */
   readonly harness_name: string;
   /** Harness adapter version, or null. */
@@ -165,6 +172,89 @@ interface RuntimeMetadataRow {
   readonly value: string;
 }
 
+export interface PermissionGrantRow {
+  readonly grant_id: string;
+  readonly project_identity: string;
+  readonly agent_name: string;
+  readonly registration_owner: string;
+  readonly tool_identity: string;
+  readonly registration_revision: string;
+  readonly policy_fingerprint: string;
+  readonly request_schema_version: string;
+  readonly request_digest: string;
+  readonly display_summary: string;
+  readonly display_details: string | null;
+  readonly created_at: number;
+  readonly expires_at: number | null;
+  readonly revoked_at: number | null;
+  readonly state: string;
+}
+
+// ---------------------------------------------------------------------------
+// usage_observations / usage_rollups
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the `usage_observations` detail table.
+ * Optional counters are nullable; absent counters stay NULL (never zero-filled).
+ */
+export interface UsageObservationRow {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly source_kind: string;
+  readonly source_name: string;
+  readonly workflow_instance_id: string | null;
+  readonly step_id: string | null;
+  readonly agent_name: string | null;
+  readonly model: string | null;
+  readonly input_tokens: number | null;
+  readonly output_tokens: number | null;
+  readonly cache_read_tokens: number | null;
+  readonly cache_write_tokens: number | null;
+  readonly total_tokens: number | null;
+  readonly cost: number | null;
+  /** Canonical JSON for equality checks on replay. */
+  readonly normalized_json: string;
+}
+
+/**
+ * Row shape for the durable `usage_rollups` table.
+ * Rollups are never decremented when detail observations are pruned.
+ */
+export interface UsageRollupRow {
+  readonly rollup_key: string;
+  readonly source_kind: string;
+  readonly source_name: string;
+  readonly workflow_instance_id: string | null;
+  readonly step_id: string | null;
+  readonly agent_name: string | null;
+  readonly model: string | null;
+  readonly input_tokens: number | null;
+  readonly output_tokens: number | null;
+  readonly cache_read_tokens: number | null;
+  readonly cache_write_tokens: number | null;
+  readonly total_tokens: number | null;
+  readonly cost: number | null;
+  readonly observation_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// adapter_preferences
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the `adapter_preferences` table.
+ *
+ * `value_json` is an opaque valid JSON string. The engine does not interpret
+ * it. Preferences must never contain secrets.
+ */
+export interface AdapterPreferenceRow {
+  readonly namespace: string;
+  readonly key: string;
+  readonly value_json: string;
+  readonly updated_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // WeaveDatabase — Kysely schema type
 // ---------------------------------------------------------------------------
@@ -181,4 +271,8 @@ export interface WeaveDatabase {
   readonly runtime_journal_entries: RuntimeJournalEntryRow;
   readonly schema_migrations: SchemaMigrationRow;
   readonly runtime_metadata: RuntimeMetadataRow;
+  readonly permission_grants: PermissionGrantRow;
+  readonly usage_observations: UsageObservationRow;
+  readonly usage_rollups: UsageRollupRow;
+  readonly adapter_preferences: AdapterPreferenceRow;
 }

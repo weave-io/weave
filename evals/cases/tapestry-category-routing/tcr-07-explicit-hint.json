@@ -1,6 +1,6 @@
 {
   "id": "tcr-07-explicit-hint",
-  "description": "Route this task to the correct category shuttle using an explicit user hint. The user says: \"This is frontend work — I need to update the user profile widget.\" The file path provided is ambiguous: `src/4.Presentation/Shared/ProfileWidget.tsx`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. The file is in `src/4.Presentation/Shared/`, which does not match the pattern, but the user has explicitly stated this is frontend work. Which agent should handle this?",
+  "description": "Route this task to the correct category shuttle using an explicit user hint. The user says: \"This is frontend work — I need to update the user profile widget.\" The file path provided is ambiguous: `src/4.Presentation/Shared/ProfileWidget.tsx`. The active Weave config declares `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }`. The shared widget is not obviously DST client web UI code, but the user has explicitly stated this is frontend work. Which agent should handle this?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "allowed_models": [

@@ -14,6 +14,28 @@ import {
   resolveToolDecisions,
 } from "../tool-policy.js";
 
+function mappedDecisionAt(
+  results: readonly ToolDecision[],
+  index: number,
+): MappedToolDecision {
+  const decision = results[index];
+  if (decision === undefined || decision.kind !== "mapped") {
+    throw new Error(`expected mapped decision at index ${index}`);
+  }
+  return decision;
+}
+
+function unmappedDecisionAt(
+  results: readonly ToolDecision[],
+  index: number,
+): UnmappedToolDecision {
+  const decision = results[index];
+  if (decision === undefined || decision.kind !== "unmapped") {
+    throw new Error(`expected unmapped decision at index ${index}`);
+  }
+  return decision;
+}
+
 // ---------------------------------------------------------------------------
 // ABSTRACT_CAPABILITIES
 // ---------------------------------------------------------------------------
@@ -172,7 +194,7 @@ describe("evaluateEffectiveToolPolicy", () => {
   // -------------------------------------------------------------------------
 
   it("returns all-ask when policy is undefined", () => {
-    const result = evaluateEffectiveToolPolicy(undefined);
+    const result = evaluateEffectiveToolPolicy(void 0);
     expect(result).toEqual({
       read: "ask",
       write: "ask",
@@ -183,7 +205,7 @@ describe("evaluateEffectiveToolPolicy", () => {
   });
 
   it("returns a complete object (all five keys) when policy is undefined", () => {
-    const result = evaluateEffectiveToolPolicy(undefined);
+    const result = evaluateEffectiveToolPolicy(void 0);
     for (const cap of ABSTRACT_CAPABILITIES) {
       expect(result).toHaveProperty(cap);
     }
@@ -390,7 +412,7 @@ describe("evaluateEffectiveToolPolicy", () => {
 //
 // All fixtures use synthetic tool identifiers (synthetic.*) only.
 // No harness names (opencode, claude-code, pi, bash, etc.) appear here.
-// Aligned with Spec 07 `tool-policy-mapping` capability.
+// Aligned with adapter capability contract `tool-policy-mapping` capability.
 
 describe("resolveToolDecisions", () => {
   // Shared all-allow effective policy for basic classification tests
@@ -453,7 +475,7 @@ describe("resolveToolDecisions", () => {
       allAllowPolicy,
     );
     expect(results).toHaveLength(1);
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.toolId).toBe("synthetic.read-tool");
     expect(decision.capability).toBe("read");
@@ -469,7 +491,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allAllowPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.capability).toBe("write");
     expect(decision.permission).toBe("allow");
@@ -484,7 +506,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allAllowPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.capability).toBe("execute");
     expect(decision.permission).toBe("allow");
@@ -499,7 +521,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allAllowPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.capability).toBe("delegate");
     expect(decision.permission).toBe("allow");
@@ -514,7 +536,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allAllowPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.capability).toBe("network");
     expect(decision.permission).toBe("allow");
@@ -533,7 +555,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allDenyPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.capability).toBe("network");
     expect(decision.permission).toBe("deny");
@@ -548,7 +570,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       allDenyPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.permission).toBe("deny");
   });
@@ -573,7 +595,7 @@ describe("resolveToolDecisions", () => {
       classifications,
       askPolicy,
     );
-    const decision = results[0] as MappedToolDecision;
+    const decision = mappedDecisionAt(results, 0);
     expect(decision.kind).toBe("mapped");
     expect(decision.permission).toBe("ask");
   });
@@ -592,7 +614,7 @@ describe("resolveToolDecisions", () => {
       allAllowPolicy,
     );
     expect(results).toHaveLength(1);
-    const decision = results[0] as UnmappedToolDecision;
+    const decision = unmappedDecisionAt(results, 0);
     expect(decision.kind).toBe("unmapped");
     expect(decision.toolId).toBe("synthetic.unknown-tool");
   });
@@ -603,7 +625,7 @@ describe("resolveToolDecisions", () => {
       [],
       allAllowPolicy,
     );
-    const decision = results[0] as UnmappedToolDecision;
+    const decision = unmappedDecisionAt(results, 0);
     expect(decision.kind).toBe("unmapped");
     // Compile-time: UnmappedToolDecision has no `permission` field.
     // Runtime: the object must not have a permission property.
@@ -665,13 +687,13 @@ describe("resolveToolDecisions", () => {
 
     // All five classified tools are mapped with allow
     for (let i = 0; i < 5; i++) {
-      const d = results[i] as MappedToolDecision;
+      const d = mappedDecisionAt(results, i);
       expect(d.kind).toBe("mapped");
       expect(d.permission).toBe("allow");
     }
 
     // The unknown tool is unmapped
-    const unknown = results[5] as UnmappedToolDecision;
+    const unknown = unmappedDecisionAt(results, 5);
     expect(unknown.kind).toBe("unmapped");
     expect(unknown.toolId).toBe("synthetic.unknown-tool");
   });

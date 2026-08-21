@@ -16,6 +16,12 @@ export type { CliDeps } from "./cli.js";
 // CLI router
 // ---------------------------------------------------------------------------
 export { run } from "./cli.js";
+export type { AdapterCliTarget, AdapterCommandContext } from "./commands/adapter.js";
+export {
+  parseAdapterTarget,
+  renderAdapterHelp,
+  runAdapter,
+} from "./commands/adapter.js";
 
 // ---------------------------------------------------------------------------
 // Error types

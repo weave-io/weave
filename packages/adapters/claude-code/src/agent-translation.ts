@@ -3,24 +3,28 @@
  *
  * Translates a Weave `AgentDescriptor` into Claude Code's markdown agent
  * format with YAML frontmatter, suitable for writing to `.claude/agents/<name>.md`.
+ *
+ * Frontmatter carries only officially documented subagent fields. Claude Code
+ * documents no acceleration field for subagent files, so neutral `fast true`
+ * intent, delegation triggers, and category metadata are never encoded here.
  */
 
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 
-const MODEL_ALIAS_MAP: Record<string, string> = {
-  "claude-sonnet-4-5": "sonnet",
-  "claude-sonnet-4-20250514": "sonnet",
-  "claude-sonnet-4-5-20250514": "sonnet",
-  "claude-opus-4": "opus",
-  "claude-opus-4-20250918": "opus",
-  "claude-opus-4-5": "opus",
-  "claude-haiku-3-5": "haiku",
-  "claude-haiku-3-5-20241022": "haiku",
-};
+const MODEL_ALIAS_MAP = new Map<string, string>([
+  ["claude-sonnet-4-5", "sonnet"],
+  ["claude-sonnet-4-20250514", "sonnet"],
+  ["claude-sonnet-4-5-20250514", "sonnet"],
+  ["claude-opus-4", "opus"],
+  ["claude-opus-4-20250918", "opus"],
+  ["claude-opus-4-5", "opus"],
+  ["claude-haiku-3-5", "haiku"],
+  ["claude-haiku-3-5-20241022", "haiku"],
+]);
 
 function toClaudeCodeModel(model: string | undefined): string | undefined {
   if (!model) return undefined;
-  return MODEL_ALIAS_MAP[model] ?? model;
+  return MODEL_ALIAS_MAP.get(model) ?? model;
 }
 
 export interface AgentTranslationInput {
@@ -69,10 +73,14 @@ export function translateAgentToMarkdown(input: AgentTranslationInput): string {
   frontmatterLines.push(`name: ${descriptor.name}`);
 
   if (descriptor.description) {
-    frontmatterLines.push(`description: ${escapeYamlScalar(descriptor.description)}`);
+    frontmatterLines.push(
+      `description: ${escapeYamlScalar(descriptor.description)}`,
+    );
   }
 
-  frontmatterLines.push(`model: ${toClaudeCodeModel(resolvedModel) ?? resolvedModel}`);
+  frontmatterLines.push(
+    `model: ${toClaudeCodeModel(resolvedModel) ?? resolvedModel}`,
+  );
 
   if (allowedTools.length > 0) {
     frontmatterLines.push("tools:");

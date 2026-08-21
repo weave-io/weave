@@ -16,7 +16,6 @@ import {
   ArtifactBindingCliInputSchema,
 } from "./input-validation.js";
 import type { ArtifactManifest } from "./model.js";
-import { bindStableTrain } from "./stable-train.js";
 
 const log = logger.child({ module: "release-artifact-binding" });
 
@@ -92,24 +91,8 @@ export function bindArtifacts(
         .getWorkflowRun(input.runId)
         .mapErr(toGitHubError)
         .andThen((run) => {
-          const fields: readonly [string, unknown, unknown][] = [
-            ["repositoryId", input.repositoryId, run.repositoryId],
-            ["runId", input.runId, run.id],
-            ["runAttempt", input.runAttempt, run.runAttempt],
-            ["event", input.event, run.event],
-            ["workflowPath", input.workflowPath, run.workflowPath],
-            ["workflowSha", input.workflowSha, run.workflowSha],
-            ["headRef", input.headRef, run.headRef],
-            ["headSha", input.headSha, run.headSha],
-          ];
-          for (const [field, expected, actual] of fields)
-            if (expected !== actual)
-              return errAsync({
-                type: "BindingMismatch" as const,
-                field,
-                expected,
-                actual,
-              });
+          const identityMismatch = bindingIdentityMismatch(input, run);
+          if (identityMismatch !== null) return errAsync(identityMismatch);
           if (dependencies.github.listWorkflowRunJobs === undefined)
             return errAsync({
               type: "GitHubLookupFailed" as const,
@@ -138,7 +121,7 @@ export function bindArtifacts(
                     .getArtifact(input.control.serverArtifactId)
                     .mapErr(toGitHubError)
                     .andThen((control) => {
-                      const artifacts = [
+                      const artifactInputs = [
                         {
                           name: "release-payload",
                           expected: input.payload,
@@ -149,14 +132,21 @@ export function bindArtifacts(
                           expected: input.control,
                           actual: control,
                         },
-                      ];
-                      for (const artifact of artifacts) {
+                      ] as const;
+                      const verifiedArtifacts: {
+                        name: string;
+                        expected: typeof input.payload;
+                        actual: typeof payload;
+                        digest: string;
+                      }[] = [];
+                      for (const artifact of artifactInputs) {
                         if (artifact.actual.expired)
                           return errAsync({
                             type: "ArtifactExpired" as const,
                             artifactId: artifact.actual.id,
                           });
-                        if (artifact.actual.digest === undefined)
+                        const artifactDigest = artifact.actual.digest;
+                        if (artifactDigest === undefined)
                           return errAsync({
                             type: "ArtifactDigestMissing" as const,
                             artifactId: artifact.actual.id,
@@ -168,16 +158,17 @@ export function bindArtifacts(
                             expected: artifact.name,
                             actual: artifact.actual.name,
                           });
-                        if (
-                          artifact.actual.digest !==
-                          artifact.expected.uploadDigest
-                        )
+                        if (artifactDigest !== artifact.expected.uploadDigest)
                           return errAsync({
                             type: "BindingMismatch" as const,
                             field: "artifactDigest",
                             expected: artifact.expected.uploadDigest,
-                            actual: artifact.actual.digest,
+                            actual: artifactDigest,
                           });
+                        verifiedArtifacts.push({
+                          ...artifact,
+                          digest: artifactDigest,
+                        });
                       }
                       return dependencies.files
                         .readBytes(input.controlPath)
@@ -186,19 +177,6 @@ export function bindArtifacts(
                           path: input.controlPath,
                         }))
                         .andThen((controlBytes) => {
-                          const stableTrain =
-                            manifest.stableTrain === undefined
-                              ? undefined
-                              : bindStableTrain(
-                                  manifest.stableTrain as never,
-                                  digest(text),
-                                  artifacts.map(({ actual }) => actual.id),
-                                );
-                          if (stableTrain?.isErr())
-                            return errAsync({
-                              type: "InvalidManifest" as const,
-                              issues: [stableTrain.error.type],
-                            });
                           const record = createBindingRecord({
                             repositoryId: input.repositoryId,
                             workflowSha: input.workflowSha,
@@ -211,17 +189,16 @@ export function bindArtifacts(
                             originJobConclusion: "success",
                             originJobId: originBuildJob.id,
                             originJobName: "build",
-                            artifacts: artifacts.map(({ name, actual }) => ({
-                              name,
-                              serverArtifactId: actual.id,
-                              uploadDigest: actual.digest as string,
-                              sizeInBytes: actual.sizeInBytes,
-                            })),
+                            artifacts: verifiedArtifacts.map(
+                              ({ name, actual, digest }) => ({
+                                name,
+                                serverArtifactId: actual.id,
+                                uploadDigest: digest,
+                                sizeInBytes: actual.sizeInBytes,
+                              }),
+                            ),
                             manifest,
                             manifestDigest: digest(text),
-                            stableTrain: stableTrain?.isOk()
-                              ? stableTrain.value
-                              : undefined,
                             files: [
                               ...manifest.artifacts.map(
                                 ({ filename, sha256 }) => ({
@@ -253,12 +230,84 @@ export function bindArtifacts(
     });
 }
 
+function bindingIdentityMismatch(
+  input: ArtifactBindingCliInput,
+  run: {
+    repositoryId: number;
+    id: number;
+    runAttempt: number;
+    event: string;
+    workflowPath: string;
+    workflowSha: string;
+    headRef: string;
+    headSha: string;
+  },
+): BindingError | null {
+  if (input.repositoryId !== run.repositoryId)
+    return {
+      type: "BindingMismatch",
+      field: "repositoryId",
+      expected: input.repositoryId,
+      actual: run.repositoryId,
+    };
+  if (input.runId !== run.id)
+    return {
+      type: "BindingMismatch",
+      field: "runId",
+      expected: input.runId,
+      actual: run.id,
+    };
+  if (input.runAttempt !== run.runAttempt)
+    return {
+      type: "BindingMismatch",
+      field: "runAttempt",
+      expected: input.runAttempt,
+      actual: run.runAttempt,
+    };
+  if (input.event !== run.event)
+    return {
+      type: "BindingMismatch",
+      field: "event",
+      expected: input.event,
+      actual: run.event,
+    };
+  if (input.workflowPath !== run.workflowPath)
+    return {
+      type: "BindingMismatch",
+      field: "workflowPath",
+      expected: input.workflowPath,
+      actual: run.workflowPath,
+    };
+  if (input.workflowSha !== run.workflowSha)
+    return {
+      type: "BindingMismatch",
+      field: "workflowSha",
+      expected: input.workflowSha,
+      actual: run.workflowSha,
+    };
+  if (input.headRef !== run.headRef)
+    return {
+      type: "BindingMismatch",
+      field: "headRef",
+      expected: input.headRef,
+      actual: run.headRef,
+    };
+  if (input.headSha !== run.headSha)
+    return {
+      type: "BindingMismatch",
+      field: "headSha",
+      expected: input.headSha,
+      actual: run.headSha,
+    };
+  return null;
+}
+
 function parseManifest(
   text: string,
   path: string,
 ): ResultAsync<{ manifest: ArtifactManifest; text: string }, BindingCliError> {
   const json = Result.fromThrowable(
-    () => JSON.parse(text) as unknown,
+    () => JSON.parse(text),
     () => ({ type: "InvalidManifestJson" as const, path }),
   )();
   if (json.isErr()) return errAsync(json.error);

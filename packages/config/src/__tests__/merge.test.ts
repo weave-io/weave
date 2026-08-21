@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weaveio/weave-core";
+import type {
+  WeaveConfig,
+  WorkflowConfig,
+  WorkflowStep,
+} from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
 import { mergeConfigs, mergeConfigsResult, mergeWorkflow } from "../merge.js";
 
@@ -38,6 +42,20 @@ describe("mergeConfigs", () => {
     const c = cfg("settings { log_level WARN }");
     const merged = mergeConfigs(a, b, c);
     expect(merged.settings.log_level).toBe("WARN");
+  });
+
+  it("preserves a global permission opt-out when project scope omits it", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(false);
+  });
+
+  it("allows project scope to explicitly re-enable permission enforcement", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("settings { enforce_permissions true }");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(true);
   });
 
   // -------------------------------------------------------------------------
@@ -213,6 +231,64 @@ describe("mergeConfigs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests — multiline inline prompt scalars
+// ---------------------------------------------------------------------------
+
+describe("mergeConfigs — multiline inline prompts", () => {
+  it("lets project multiline values override global single-line values", () => {
+    const global = cfg(`agent helper {
+  prompt "Global prompt."
+  prompt_append "Global append."
+}`);
+    const project = cfg(`agent helper {
+  prompt """
+    Project prompt line one.
+      Project prompt line two.
+
+    Project prompt end.
+  """
+  prompt_append """
+    Project append line one.
+      Project append line two.
+  """
+}`);
+
+    const merged = mergeConfigs(global, project);
+
+    expect(merged.agents.helper?.prompt).toBe(
+      "Project prompt line one.\n  Project prompt line two.\n\nProject prompt end.",
+    );
+    expect(merged.agents.helper?.prompt_append).toBe(
+      "Project append line one.\n  Project append line two.",
+    );
+  });
+
+  it("lets project single-line values override global multiline values", () => {
+    const global = cfg(`agent helper {
+  prompt """
+    Global prompt line one.
+      Global prompt line two.
+
+    Global prompt end.
+  """
+  prompt_append """
+    Global append line one.
+      Global append line two.
+  """
+}`);
+    const project = cfg(`agent helper {
+  prompt "Project prompt."
+  prompt_append "Project append."
+}`);
+
+    const merged = mergeConfigs(global, project);
+
+    expect(merged.agents.helper?.prompt).toBe("Project prompt.");
+    expect(merged.agents.helper?.prompt_append).toBe("Project append.");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests — workflow backwards compat (no extends)
 // ---------------------------------------------------------------------------
 
@@ -303,8 +379,11 @@ describe("mergeWorkflow — step-aware merge", () => {
     if (result.isErr()) throw new Error(JSON.stringify(result.error));
     const workflows = result.value.workflows;
     const keys = Object.keys(workflows);
-    if (keys.length === 0) throw new Error("No workflow in source");
-    return { name: keys[0] as string, config: workflows[keys[0] as string]! };
+    const name = keys[0];
+    if (name === undefined) throw new Error("No workflow in source");
+    const config = workflows[name];
+    if (config === undefined) throw new Error("No workflow in source");
+    return { name, config };
   }
 
   it("insert_before: spec step inserted before plan in plan-and-execute", () => {
@@ -685,42 +764,44 @@ describe("mergeWorkflow — step-aware merge", () => {
     };
 
     // Merging workflow-a: override extends "workflow-b", which extends "workflow-a" → cycle
-    const result = mergeWorkflow(
+    const parsedCycle = mergeWorkflow(
       "workflow-a",
       workflowA.config,
       workflowA.config,
       workflowMap,
     );
+    expect(parsedCycle.isErr()).toBe(true);
+    if (parsedCycle.isErr()) {
+      expect(parsedCycle.error.type).toBe("ExtendsCycle");
+    }
 
-    // Self-reference is NOT a cycle (it uses base steps directly)
-    // So we need to test with a different extends target that loops
-    // Use a base that has no extends, and an override that extends a workflow
-    // that itself extends the current workflow
+    // Also cover explicitly constructed fixtures (base has no extends; override
+    // extends a workflow that itself extends the current workflow).
     const baseSteps = [
       {
         name: "fix",
         display_name: "Fix",
-        type: "autonomous" as const,
+        type: "autonomous",
         agent: "shuttle",
         prompt: "Fix it",
-        completion: { method: "agent_signal" as const },
+        completion: { method: "agent_signal" },
       },
-    ];
+    ] satisfies WorkflowStep[];
     const baseWfConfig = {
       version: 1,
       steps: baseSteps,
-    };
+    } satisfies WorkflowConfig;
     const overrideWfConfig = {
       version: 1,
       extends: "workflow-b",
       steps: [],
-    };
+    } satisfies WorkflowConfig;
     // workflow-b extends workflow-a (the current workflow) → cycle
     const wfBConfig = {
       version: 1,
       extends: "workflow-a",
       steps: [],
-    };
+    } satisfies WorkflowConfig;
 
     const cycleMap = {
       "workflow-a": baseWfConfig,
@@ -768,7 +849,35 @@ describe("mergeConfigsResult", () => {
     );
     const result = mergeConfigsResult(a);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().agents.loom).toBeDefined();
+    expect(result._unsafeUnwrap()).toEqual(a);
+  });
+
+  it("validates effective delegation limits for a single config", () => {
+    const parsed = parseConfig(`
+      settings { delegation { max_children 4 } }
+      agent loom { delegation { max_children 4 max_concurrency 4 } }
+    `);
+    if (parsed.isErr()) throw new Error(JSON.stringify(parsed.error));
+    const a: WeaveConfig = {
+      ...parsed.value,
+      settings: {
+        ...parsed.value.settings,
+        delegation: { max_children: 4, max_concurrency: 2 },
+      },
+    };
+    const result = mergeConfigsResult(a);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual([
+      {
+        type: "ConfigValidationError",
+        errors: [
+          {
+            path: "agents.loom.delegation.max_concurrency",
+            message: "agent max_concurrency may not exceed the project cap",
+          },
+        ],
+      },
+    ]);
   });
 
   it("insert_before via mergeConfigsResult: spec step before plan in plan-and-execute", () => {
@@ -845,9 +954,9 @@ describe("mergeConfigsResult", () => {
 
     const merged = result._unsafeUnwrap();
     const wf = merged.workflows["plan-and-execute"];
-    expect(wf).toBeDefined();
+    if (wf === undefined) throw new Error("expected plan-and-execute workflow");
 
-    const stepNames = wf!.steps.map((s) => s.name);
+    const stepNames = wf.steps.map((s) => s.name);
     const specIdx = stepNames.indexOf("spec");
     const planIdx = stepNames.indexOf("plan");
 
@@ -1433,7 +1542,7 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
   });
 
   it("(bp-10a) before-plan non-reconciling in v1: no reconciliation fields on steps after merge", () => {
-    // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+    // execution lifecycle contract: "before-plan steps do not participate in reconciliation
     // semantics" in v1. After merge, no step in the merged workflow has
     // reconciliation_handler or on_reconcile fields.
     const base = cfg(`
@@ -1540,5 +1649,320 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     // spec step inserted before plan
     const stepNames = wf?.steps.map((s) => s.name) ?? [];
     expect(stepNames.indexOf("spec")).toBe(stepNames.indexOf("plan") - 1);
+  });
+});
+
+describe("mergeConfigsResult — delegation limits", () => {
+  it("deep-merges only authored project delegation fields", () => {
+    const global = cfg(`settings {
+  delegation {
+    max_children 6
+    max_concurrency 3
+    max_depth 4
+    max_processes 12
+  }
+}`);
+    const project = cfg(`settings {
+  delegation { max_concurrency 2 }
+}`);
+
+    const result = mergeConfigsResult(global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 2,
+      max_depth: 4,
+      max_processes: 12,
+    });
+  });
+
+  it("preserves lower-layer delegation caps when an upper layer omits them", () => {
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(global, cfg(""));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_children).toBe(4);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(2);
+  });
+
+  it("deep-merges per-agent delegation overrides", () => {
+    const base = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const override = cfg(`agent loom {
+  delegation { max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation).toEqual({
+      max_children: 4,
+      max_concurrency: 2,
+    });
+  });
+
+  it("validates delegation caps after the full left-fold merge", () => {
+    const builtin = cfg(`agent loom {
+  delegation { max_children 5 }
+}`);
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 3 }
+}`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation?.max_children).toBe(
+      3,
+    );
+  });
+
+  it("preserves an omitted project concurrency limit when children are narrowed", () => {
+    const result = mergeConfigsResult(
+      emptyConfig,
+      cfg(`settings { delegation { max_children 2 } }`),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("allows a temporarily contradictory layer when the final layer repairs it", () => {
+    const builtin = cfg(
+      `settings { delegation { max_children 2 max_concurrency 2 } }`,
+    );
+    const global = cfg(`settings { delegation { max_concurrency 3 } }`);
+    const project = cfg(`settings { delegation { max_children 3 } }`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toMatchObject({
+      max_children: 3,
+      max_concurrency: 3,
+    });
+  });
+
+  it("fails when merged agent limits exceed a lower-layer project cap", () => {
+    const global = cfg(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const result = mergeConfigsResult(global, project);
+    expect(result.isErr()).toBe(true);
+    const validation = result
+      ._unsafeUnwrapErr()
+      .find((error) => error.type === "ConfigValidationError");
+    expect(validation?.type).toBe("ConfigValidationError");
+    if (validation?.type === "ConfigValidationError") {
+      expect(
+        validation.errors.some(
+          (error) => error.path === "agents.loom.delegation.max_children",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects an invalid source layer before a later override can hide it", () => {
+    const invalidSettings: WeaveConfig["settings"] = {
+      log_level: emptyConfig.settings.log_level,
+      runtime: emptyConfig.settings.runtime,
+      adapters: { generic: { payload: "x".repeat(65 * 1024) } },
+    };
+    if (emptyConfig.settings.delegation !== undefined) {
+      invalidSettings.delegation = emptyConfig.settings.delegation;
+    }
+    if (emptyConfig.settings.enforce_permissions !== undefined) {
+      invalidSettings.enforce_permissions =
+        emptyConfig.settings.enforce_permissions;
+    }
+    const invalid: WeaveConfig = {
+      agents: emptyConfig.agents,
+      categories: emptyConfig.categories,
+      disabled: emptyConfig.disabled,
+      settings: invalidSettings,
+      workflows: emptyConfig.workflows,
+      extend_before_plan: emptyConfig.extend_before_plan,
+    };
+    const valid = cfg(`settings { adapters { generic { payload "ok" } } }`);
+    const result = mergeConfigsResult(invalid, valid);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual({
+      type: "ConfigValidationError",
+      errors: [expect.objectContaining({ path: "settings.adapters.generic" })],
+    });
+  });
+
+  it("deep-merges three adapter layers and preserves null overrides", () => {
+    const builtin = cfg(
+      `settings { adapters { generic { object { base true } list [1, 2] value "base" } } }`,
+    );
+    const global = cfg(
+      `settings { adapters { generic { object { global true } list [2, 3] value null } } }`,
+    );
+    const project = cfg(
+      `settings { adapters { generic { object { project true } list [3, 4] } } }`,
+    );
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.generic).toEqual({
+      object: { base: true, global: true, project: true },
+      list: [3, 4, 2, 1],
+      value: null,
+    });
+  });
+});
+
+describe("mergeConfigs — fast intent and string triggers", () => {
+  it("preserves lower-layer agent fast true when a higher layer omits fast", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        fast true
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        temperature 0.4
+      }
+    `);
+    const merged = mergeConfigs(builtin, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+    expect(merged.agents.shuttle?.temperature).toBe(0.4);
+  });
+
+  it("lets a higher-layer agent fast true win over a lower-layer omission", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        fast true
+      }
+    `);
+    const merged = mergeConfigs(builtin, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+  });
+
+  it("preserves lower-layer category fast true when a higher layer omits fast", () => {
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        fast true
+      }
+    `);
+    const project = cfg(`
+      category backend {
+        description "Backend APIs"
+        temperature 0.3
+      }
+    `);
+    const merged = mergeConfigs(global, project);
+    expect(merged.categories.backend?.fast).toBe(true);
+    expect(merged.categories.backend?.temperature).toBe(0.3);
+  });
+
+  it("covers category and base shuttle inputs for later generated-agent fast inheritance", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        fast true
+      }
+      category backend {
+        description "Backend APIs"
+      }
+    `);
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        fast true
+      }
+    `);
+    const project = cfg(`
+      category frontend {
+        description "Frontend UI"
+      }
+    `);
+    const merged = mergeConfigs(builtin, global, project);
+    expect(merged.agents.shuttle?.fast).toBe(true);
+    expect(merged.categories.backend?.fast).toBe(true);
+    expect(merged.categories.frontend?.fast).toBeUndefined();
+  });
+
+  it("unions string triggers higher-priority-first and removes only exact duplicates", () => {
+    const builtin = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        triggers ["review code", "fix tests"]
+      }
+    `);
+    const global = cfg(`
+      agent shuttle {
+        triggers ["fix tests", "audit APIs"]
+      }
+    `);
+    const project = cfg(`
+      agent shuttle {
+        triggers ["ship patch", "review code"]
+      }
+    `);
+    const merged = mergeConfigs(builtin, global, project);
+    expect(merged.agents.shuttle?.triggers).toEqual([
+      "ship patch",
+      "review code",
+      "fix tests",
+      "audit APIs",
+    ]);
+  });
+
+  it("keeps case-sensitive trigger text and does not trim during merge", () => {
+    const base = cfg(`
+      agent shuttle {
+        prompt "Implement scoped changes"
+        models ["claude-sonnet-4-5"]
+        triggers ["Review code", "fix tests "]
+      }
+    `);
+    const override = cfg(`
+      agent shuttle {
+        triggers ["review code", "fix tests"]
+      }
+    `);
+    const merged = mergeConfigs(base, override);
+    expect(merged.agents.shuttle?.triggers).toEqual([
+      "review code",
+      "fix tests",
+      "Review code",
+      "fix tests ",
+    ]);
+  });
+
+  it("unions category triggers in the same higher-priority-first order", () => {
+    const global = cfg(`
+      category backend {
+        description "Backend APIs"
+        triggers ["Use for persistence", "Use for APIs"]
+      }
+    `);
+    const project = cfg(`
+      category backend {
+        description "Backend APIs"
+        triggers ["Use for APIs", "Use for migrations"]
+      }
+    `);
+    const merged = mergeConfigs(global, project);
+    expect(merged.categories.backend?.triggers).toEqual([
+      "Use for APIs",
+      "Use for migrations",
+      "Use for persistence",
+    ]);
   });
 });

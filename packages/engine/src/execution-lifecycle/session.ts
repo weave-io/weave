@@ -10,7 +10,10 @@
 
 import type { ResultAsync } from "neverthrow";
 import { errAsync } from "neverthrow";
-import type { RuntimeStore } from "../runtime/store.js";
+import type {
+  RecordSessionSnapshotInput,
+  RuntimeStore,
+} from "../runtime/store.js";
 import { lifecycleValidationError } from "./errors.js";
 import { mapStoreError } from "./lease.js";
 import { sanitizeMetadata } from "./metadata.js";
@@ -19,6 +22,10 @@ import type {
   ObserveSessionInput,
   ObserveSessionOutput,
 } from "./types.js";
+
+type MutableSnapshotInput = {
+  -readonly [Key in keyof RecordSessionSnapshotInput]: RecordSessionSnapshotInput[Key];
+};
 
 /**
  * Record a normalized session observation as a `SessionSnapshot` in the
@@ -73,17 +80,17 @@ export function observeSession(
     if (metaCheck.isErr()) return errAsync(metaCheck.error);
   }
 
-  const snapshotInput = {
+  const snapshotInput: MutableSnapshotInput = {
     workflowInstanceId: input.workflowInstanceId,
     leaseId: input.leaseId,
     harnessName: input.harnessName,
-    ...(input.harnessVersion ? { harnessVersion: input.harnessVersion } : {}),
     agentName: input.agentName,
-    ...(input.modelId ? { modelId: input.modelId } : {}),
-    ...(input.stepName ? { stepName: input.stepName } : {}),
     sessionStatus: input.sessionStatus,
     metadata: input.metadata ?? {},
   };
+  if (input.harnessVersion) snapshotInput.harnessVersion = input.harnessVersion;
+  if (input.modelId) snapshotInput.modelId = input.modelId;
+  if (input.stepName) snapshotInput.stepName = input.stepName;
 
   return store.snapshots
     .record(snapshotInput)

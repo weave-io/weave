@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-05-19  
-**Related**: [Prompt Composition Guide](../prompt-composition.md) · [Adapter Boundary](../adapter-boundary.md) · [Context Glossary](../../CONTEXT.md)
+**Related**: [Prompt Composition Guide](../reference/prompts.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Context Glossary](../../CONTEXT.md)
 
 ---
 
@@ -45,7 +45,7 @@ The Template Context first slice exposes:
 ### What changes
 
 - `prompt`, `prompt_file`, and `prompt_append` are now rendered as Mustache templates by the engine before adapters receive the composed prompt.
-- `ComposeError` gains a `PromptTemplateError` variant with typed nested reasons for malformed syntax, unsupported tags, unknown paths, unsafe paths, function values, section mismatch, and unresolved tags.
+- `ComposeError` gains a `PromptTemplateError` variant with typed nested reasons for malformed syntax, unsupported tags, unknown paths, unsafe paths, and function values. Validation inspects parsed source tokens; interpolated context values remain opaque and are not rescanned as template syntax.
 
 ### What is now possible
 

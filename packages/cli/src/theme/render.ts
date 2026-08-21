@@ -41,6 +41,7 @@ export class ThemeRenderer {
       `    ${theme.cyan("validate")}                    ${theme.dim("Validate .weave configuration files")}`,
       `    ${theme.cyan("runtime status")}              ${theme.dim("Show runtime store status")}`,
       `    ${theme.cyan("runtime journal")}             ${theme.dim("Show recent journal entries (--limit <n>)")}`,
+      `    ${theme.cyan("adapter pi …")}                 ${theme.dim("Bounded Pi children/doctor commands")}`,
       `    ${theme.cyan("eval run")}                    ${theme.dim("Run configured evals (--agent --model --case --dry-run)")}`,
       "",
       `  ${theme.boldCyan("OPTIONS")}`,
@@ -76,7 +77,7 @@ export class ThemeRenderer {
 
   private getVersion(): string {
     const version = this.versionSource.version;
-    if (typeof version === "string" && version.length > 0) return version;
+    if (version !== undefined && version.length > 0) return version;
     return "0.0.0";
   }
 

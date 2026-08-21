@@ -6,7 +6,11 @@
  * downstream packages.
  */
 
-export { getBuiltinConfig } from "./builtins.js";
+export {
+  BUILTIN_PROMPT_CONTENTS,
+  BUILTIN_WEAVE_SOURCE,
+  getBuiltinConfig,
+} from "./builtins.js";
 export type { DiscoveredConfig, FileReader } from "./discovery.js";
 export { discoverAndParse } from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";

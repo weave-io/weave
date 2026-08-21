@@ -11,63 +11,63 @@ describe("CLAUDE_CODE_TOOL_CLASSIFICATIONS", () => {
       (c) => c.toolId === "Read",
     );
     expect(entry).toBeDefined();
-    expect(entry!.capability).toBe("read");
+    expect(entry?.capability).toBe("read");
   });
 
   it("maps Write to write capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "Write",
     );
-    expect(entry!.capability).toBe("write");
+    expect(entry?.capability).toBe("write");
   });
 
   it("maps Edit to write capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "Edit",
     );
-    expect(entry!.capability).toBe("write");
+    expect(entry?.capability).toBe("write");
   });
 
   it("maps MultiEdit to write capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "MultiEdit",
     );
-    expect(entry!.capability).toBe("write");
+    expect(entry?.capability).toBe("write");
   });
 
   it("maps Bash to execute capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "Bash",
     );
-    expect(entry!.capability).toBe("execute");
+    expect(entry?.capability).toBe("execute");
   });
 
   it("maps Task to delegate capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "Task",
     );
-    expect(entry!.capability).toBe("delegate");
+    expect(entry?.capability).toBe("delegate");
   });
 
   it("maps Agent to delegate capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "Agent",
     );
-    expect(entry!.capability).toBe("delegate");
+    expect(entry?.capability).toBe("delegate");
   });
 
   it("maps WebFetch to network capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "WebFetch",
     );
-    expect(entry!.capability).toBe("network");
+    expect(entry?.capability).toBe("network");
   });
 
   it("maps WebSearch to network capability", () => {
     const entry = CLAUDE_CODE_TOOL_CLASSIFICATIONS.find(
       (c) => c.toolId === "WebSearch",
     );
-    expect(entry!.capability).toBe("network");
+    expect(entry?.capability).toBe("network");
   });
 
   it("covers all five abstract capabilities", () => {

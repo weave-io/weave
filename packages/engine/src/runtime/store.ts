@@ -8,12 +8,14 @@
  * - `find*()` — returns `ResultAsync<T | null, RuntimeStoreError>` (null if not found)
  * - `get*()` — returns `ResultAsync<T, RuntimeStoreError>` (errors with `not_found` if missing)
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
-import type { ResultAsync } from "neverthrow";
-import type { RuntimeStoreError } from "./errors.js";
+import { err, ok, Result, type ResultAsync } from "neverthrow";
+import { type RuntimeStoreError, validationError } from "./errors.js";
 import type {
+  AdapterPreferenceRecord,
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -22,11 +24,18 @@ import type {
   ExecutionLeaseId,
   JournalQueryFilter,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
-  StepAttemptRecord,
+  SnapshotMetadata,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -147,6 +156,14 @@ export interface WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: ArtifactApprovalActor;
+      readonly decidedAt: string;
+      /** Compare-and-swap binding for the exact reviewed revision. */
+      readonly expectedRevision: number;
+      /** Required when the stored revision carries integrity metadata. */
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
 
   /**
@@ -241,6 +258,11 @@ export interface ExecutionLeaseRepository {
    *
    * Fails with `not_found` if the lease does not exist.
    * Fails with `conflict` if the lease is owned by a different owner.
+   *
+   * Any `SessionSnapshot` that observed this lease is preserved: its
+   * `leaseId` link is severed (set to `undefined`/`NULL`), not deleted.
+   * Terminal workflow completion must be able to release the lease that
+   * drove it without losing that historical record.
    */
   release(
     id: ExecutionLeaseId,
@@ -257,6 +279,7 @@ export interface ExecutionLeaseRepository {
  */
 export interface RecordSessionSnapshotInput {
   readonly workflowInstanceId: WorkflowInstanceId;
+  /** The active ExecutionLease at record time. Always required to record. */
   readonly leaseId: ExecutionLeaseId;
   readonly harnessName: string;
   readonly harnessVersion?: string;
@@ -268,7 +291,7 @@ export interface RecordSessionSnapshotInput {
    * Sanitized metadata. Must not contain raw prompts, completions,
    * credentials, tokens, cookies, authorization headers, or PII.
    */
-  readonly metadata: Record<string, string | number | boolean>;
+  readonly metadata: SnapshotMetadata;
 }
 
 /**
@@ -357,6 +380,312 @@ export interface RuntimeJournalRepository {
   query(
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError>;
+
+  /**
+   * Prune journal entries by age first, then oldest above count.
+   *
+   * `olderThan` is an exclusive ISO 8601 upper bound for age deletion.
+   * `maxCount` retains the newest N entries after age pruning.
+   */
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// Usage repository
+// ---------------------------------------------------------------------------
+
+/**
+ * Repository for idempotent usage observations and durable rollups.
+ *
+ * Adapters submit normalized observations; they never write rollup tables
+ * directly. Insert + rollup update are atomic. Detail pruning never subtracts
+ * durable rollups.
+ */
+export interface UsageRepository {
+  /**
+   * Record one detailed observation and update durable rollups atomically.
+   *
+   * - Same ID + same normalized values → `{ kind: "noop" }`
+   * - Same ID + different values → `invariant_violation`
+   * - New ID → insert observation and add present fields to the matching rollup
+   */
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError>;
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError>;
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError>;
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError>;
+
+  /**
+   * Prune detailed observations by age first, then oldest above count.
+   * Never mutates durable rollups.
+   */
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// Adapter preference repository
+// ---------------------------------------------------------------------------
+
+/** Maximum namespace length in UTF-16 code units. */
+export const ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS = 64;
+
+/** Maximum key length in UTF-16 code units. */
+export const ADAPTER_PREFERENCE_KEY_MAX_CHARS = 128;
+
+/** Maximum serialized preference value size in bytes. */
+export const ADAPTER_PREFERENCE_VALUE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Default and maximum number of rows returned by `AdapterPreferenceRepository.list`
+ * and `AdapterPreferenceRepository.listAll`.
+ * Callers may pass a smaller limit. Larger or non-finite values are clamped
+ * to this bound.
+ */
+export const ADAPTER_PREFERENCE_LIST_LIMIT = 100;
+
+/**
+ * Order two preference records by `(namespace, key)` using UTF-16 code-unit
+ * comparison.
+ *
+ * This reproduces SQLite's default `BINARY` collation, so the in-memory store
+ * and the SQLite store return `listAll` rows in exactly the same order.
+ */
+export function compareAdapterPreferenceRecords(
+  left: AdapterPreferenceRecord,
+  right: AdapterPreferenceRecord,
+): number {
+  if (left.namespace !== right.namespace) {
+    return left.namespace < right.namespace ? -1 : 1;
+  }
+  if (left.key === right.key) return 0;
+  return left.key < right.key ? -1 : 1;
+}
+
+/**
+ * Clamp a `list` limit to `[0, ADAPTER_PREFERENCE_LIST_LIMIT]`.
+ * Missing or non-finite values become the documented default of 100.
+ */
+export function clampAdapterPreferenceListLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return ADAPTER_PREFERENCE_LIST_LIMIT;
+  }
+  return Math.max(
+    0,
+    Math.min(Math.floor(limit), ADAPTER_PREFERENCE_LIST_LIMIT),
+  );
+}
+
+function isStringValue<T>(value: T): value is T & string {
+  if (Object(value) === value) return false;
+  return Result.fromThrowable(
+    () => Object.prototype.toString.call(value),
+    () => "[object Other]",
+  )().match(
+    (tag) => tag === "[object String]",
+    () => false,
+  );
+}
+
+function hasControlOrNul(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function rejectControlChars(
+  value: string,
+  field: string,
+): Result<void, RuntimeStoreError> {
+  if (hasControlOrNul(value)) {
+    return err(
+      validationError(
+        `Adapter preference ${field} must not contain control characters or NUL`,
+        field,
+      ),
+    );
+  }
+  return ok(void 0);
+}
+
+/** Validate a preference namespace: non-empty, bounded, no control chars or NUL. */
+export function validateAdapterPreferenceNamespace(
+  namespace: string,
+): Result<void, RuntimeStoreError> {
+  if (!isStringValue(namespace)) {
+    return err(
+      validationError(
+        "Adapter preference namespace must be a string",
+        "namespace",
+      ),
+    );
+  }
+  if (namespace.length === 0) {
+    return err(
+      validationError(
+        "Adapter preference namespace must not be empty",
+        "namespace",
+      ),
+    );
+  }
+  if (namespace.length > ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS) {
+    return err(
+      validationError(
+        `Adapter preference namespace exceeds ${ADAPTER_PREFERENCE_NAMESPACE_MAX_CHARS} characters`,
+        "namespace",
+      ),
+    );
+  }
+  return rejectControlChars(namespace, "namespace");
+}
+
+/** Validate a preference key: non-empty, bounded, no control chars or NUL. */
+export function validateAdapterPreferenceKey(
+  key: string,
+): Result<void, RuntimeStoreError> {
+  if (!isStringValue(key)) {
+    return err(
+      validationError("Adapter preference key must be a string", "key"),
+    );
+  }
+  if (key.length === 0) {
+    return err(
+      validationError("Adapter preference key must not be empty", "key"),
+    );
+  }
+  if (key.length > ADAPTER_PREFERENCE_KEY_MAX_CHARS) {
+    return err(
+      validationError(
+        `Adapter preference key exceeds ${ADAPTER_PREFERENCE_KEY_MAX_CHARS} characters`,
+        "key",
+      ),
+    );
+  }
+  return rejectControlChars(key, "key");
+}
+
+/**
+ * Validate an opaque preference value.
+ *
+ * The engine checks that the string is valid JSON and within the 16 KiB
+ * bound. It does not interpret the payload. Preferences must never contain
+ * secrets.
+ */
+export function validateAdapterPreferenceValue(
+  valueJson: string,
+): Result<void, RuntimeStoreError> {
+  if (!isStringValue(valueJson)) {
+    return err(
+      validationError(
+        "Adapter preference value must be a JSON string",
+        "value",
+      ),
+    );
+  }
+  if (valueJson.includes("\0")) {
+    return err(
+      validationError("Adapter preference value must not contain NUL", "value"),
+    );
+  }
+  const bytes = new TextEncoder().encode(valueJson).byteLength;
+  if (bytes > ADAPTER_PREFERENCE_VALUE_MAX_BYTES) {
+    return err(
+      validationError(
+        `Adapter preference value exceeds the 16 KiB limit (${bytes} bytes)`,
+        "value",
+      ),
+    );
+  }
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(valueJson),
+    () =>
+      validationError("Adapter preference value must be valid JSON", "value"),
+  )();
+  if (parsed.isErr()) return err(parsed.error);
+  return ok(void 0);
+}
+
+/** Validate a preference namespace and key together. */
+export function validateAdapterPreferenceIdentity(
+  namespace: string,
+  key: string,
+): Result<void, RuntimeStoreError> {
+  return validateAdapterPreferenceNamespace(namespace).andThen(() =>
+    validateAdapterPreferenceKey(key),
+  );
+}
+
+/**
+ * Harness-neutral bounded key/value repository for adapter configuration.
+ *
+ * Values are opaque valid JSON strings. The engine does not interpret them
+ * and must never persist secrets here.
+ */
+export interface AdapterPreferenceRepository {
+  /**
+   * Read one preference. Returns `null` when the pair is absent.
+   */
+  get(
+    namespace: string,
+    key: string,
+  ): ResultAsync<AdapterPreferenceRecord | null, RuntimeStoreError>;
+
+  /**
+   * Insert or overwrite a preference. `updated_at` is set to the store clock.
+   */
+  set(
+    namespace: string,
+    key: string,
+    valueJson: string,
+  ): ResultAsync<AdapterPreferenceRecord, RuntimeStoreError>;
+
+  /**
+   * List preferences in one namespace, ordered by key.
+   *
+   * `limit` defaults to {@link ADAPTER_PREFERENCE_LIST_LIMIT} and is clamped
+   * to that maximum.
+   */
+  list(
+    namespace: string,
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError>;
+
+  /**
+   * List preferences across every namespace, ordered by namespace then key.
+   *
+   * Ordering uses UTF-16 code-unit comparison in every implementation, so the
+   * returned rows are byte-deterministic and identical across stores. `limit`
+   * defaults to {@link ADAPTER_PREFERENCE_LIST_LIMIT} and is clamped to that
+   * maximum, so the result is always bounded.
+   *
+   * This is the read-only enumeration a caller needs when it has no namespace
+   * to scope by; it does not replace {@link AdapterPreferenceRepository.list}.
+   */
+  listAll(
+    limit?: number,
+  ): ResultAsync<readonly AdapterPreferenceRecord[], RuntimeStoreError>;
+
+  /**
+   * Delete one preference. Missing pairs succeed.
+   */
+  remove(namespace: string, key: string): ResultAsync<void, RuntimeStoreError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +712,10 @@ export interface RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository within this transaction. */
   readonly journal: RuntimeJournalRepository;
+  /** Usage repository within this transaction. */
+  readonly usage: UsageRepository;
+  /** Adapter preference repository within this transaction. */
+  readonly preferences: AdapterPreferenceRepository;
 }
 
 /**
@@ -404,7 +737,7 @@ export type TransactionCallback<T> = (
  * Implementations include the default SQLite/Kysely store and the
  * in-memory test utility.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 export interface RuntimeStore {
   /** WorkflowInstance repository. */
@@ -415,7 +748,10 @@ export interface RuntimeStore {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository. */
   readonly journal: RuntimeJournalRepository;
-
+  /** Usage observation/rollup repository. */
+  readonly usage: UsageRepository;
+  /** Harness-neutral adapter preference repository. */
+  readonly preferences: AdapterPreferenceRepository;
   /**
    * Execute a unit-of-work transaction.
    *

@@ -130,8 +130,7 @@ jobs:
       # bounded data and are never imported as controller code.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: ${{ github.repository }}
-          ref: refs/heads/main
+          ref: main
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:

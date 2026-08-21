@@ -1,5 +1,3 @@
-/// <reference path="../../../../types/md.d.ts" />
-
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Mustache from "mustache";

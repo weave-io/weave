@@ -31,7 +31,7 @@
  * Boundary rule: this module calls the engine's `runNamedWorkflow` operation
  * and the adapter interface. It must not import directly from `@opencode-ai/sdk`.
  *
- * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/architecture/adapter-boundary.md — Execution Lifecycle Surface section
  * @see start-plan-execution.ts — the `/weave:start` ordinary-usage path
  * @see packages/engine/src/runtime-command-operations/run-named-workflow.ts
  */
@@ -156,9 +156,15 @@ function mapCommandError(error: CommandOperationError): RunWorkflowError {
   // command_validation (other fields), command_unsupported, command_degraded —
   // wrap as a LifecycleError with a policy_decision cause.
   let message = "Unknown command operation error";
-  if ("message" in error && typeof error.message === "string") {
+  if (
+    error.type === "command_validation" ||
+    error.type === "command_not_found"
+  ) {
     message = error.message;
-  } else if ("reason" in error && typeof error.reason === "string") {
+  } else if (
+    error.type === "command_unsupported" ||
+    error.type === "command_degraded"
+  ) {
     message = error.reason;
   }
 

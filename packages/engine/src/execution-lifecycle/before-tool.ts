@@ -1,89 +1,285 @@
 /**
- * Execution Lifecycle — beforeTool implementation.
+ * Execution Lifecycle — beforeTool compatibility and static policy preview.
  *
- * Pure policy evaluation for tool calls. Does NOT access the Runtime Store.
- * The adapter maps concrete harness tool names to abstract capabilities and
- * supplies the fully-resolved `effectiveToolPolicy`. The engine reads
- * `effectiveToolPolicy[toolCapability]` and returns the decision.
+ * `beforeTool` is the authoritative permission contract compatibility path. It accepts
+ * only a registered call snapshot and delegates directly to PermissionSession.
+ * The legacy one-capability evaluator lives in `previewToolPolicy`; its result
+ * is informational and cannot authorize execution or establish readiness.
  */
 
-import { errAsync, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result } from "neverthrow";
+import { z } from "zod";
+import {
+  authorizePermissionSessionCall,
+  validatePermissionSession,
+} from "../permissions/session.js";
+import {
+  createExecutionLeaseId,
+  createWorkflowInstanceId,
+} from "../runtime/types.js";
 import { ABSTRACT_CAPABILITIES } from "../tool-policy.js";
 import { lifecycleValidationError } from "./errors.js";
 import { sanitizeMetadata } from "./metadata.js";
 import type {
-  BeforeToolInput,
-  BeforeToolOutput,
-  BeforeToolResult,
-  LifecycleError,
+  LifecycleValidationError,
+  RegisteredBeforeToolInput,
+  RegisteredBeforeToolResult,
+  StaticToolPolicyPreviewInput,
+  StaticToolPolicyPreviewOutput,
+  StaticToolPolicyPreviewResult,
 } from "./types.js";
 
+const REGISTERED_INPUT_FIELDS = [
+  "workflowInstanceId",
+  "leaseId",
+  "agentName",
+  "toolName",
+  "permission",
+] as const;
+const PERMISSION_CONTEXT_FIELDS = [
+  "session",
+  "project",
+  "controllerSession",
+  "registryGeneration",
+  "call",
+  "approvalUiAvailable",
+] as const;
+
+type SnapshotFields = ReadonlyMap<string, PropertyDescriptor>;
+type BeforeToolRecord =
+  | RegisteredBeforeToolInput
+  | RegisteredBeforeToolInput["permission"];
+
+const primitiveStringSchema = z.string();
+
+const invalidPlainRecord = (
+  path: string,
+): ReturnType<typeof lifecycleValidationError> =>
+  lifecycleValidationError(`${path} must be a plain object`, path);
+
 /**
- * Evaluate the abstract tool policy for a tool call that is about to execute.
- *
- * This is a pure policy evaluation — it does NOT access the Runtime Store.
- * The adapter has already mapped the concrete harness tool name to an abstract
- * capability (`toolCapability`) and supplied the fully-resolved
- * `effectiveToolPolicy`. The engine reads `effectiveToolPolicy[toolCapability]`
- * and returns the corresponding `allow` / `deny` / `ask` decision.
- *
- * ## Adapter / Engine Boundary
- *
- * - **Adapters own** concrete tool-name mapping.
- * - **The engine owns** abstract policy decisions.
- * - `toolName` in `BeforeToolInput` is for audit/logging only.
- *
- * @param input - Tool call context from the adapter.
- * @returns `okAsync({ decision })` on success, or a typed `LifecycleError`.
+ * Snapshot a trusted-shaped record without invoking getters. All reflection is
+ * inside one neverthrow boundary so hostile proxies cannot escape as throws.
  */
-export function beforeTool(input: BeforeToolInput): BeforeToolResult {
-  if (!input.workflowInstanceId) {
+function snapshotPlainRecord(
+  input: BeforeToolRecord,
+  fields: readonly string[],
+  path: string,
+): Result<SnapshotFields, LifecycleValidationError> {
+  const reflected = Result.fromThrowable(
+    () => {
+      const prototype = Object.getPrototypeOf(input);
+      if (prototype !== Object.prototype && prototype !== null)
+        return err(invalidPlainRecord(path));
+
+      const allowed = new Set(fields);
+      const descriptors = new Map<string, PropertyDescriptor>();
+      const keys = Reflect.ownKeys(input);
+      if (keys.length !== fields.length)
+        return err(
+          lifecycleValidationError(
+            `${path} has unexpected or missing fields`,
+            path,
+          ),
+        );
+      for (const key of keys) {
+        const parsedKey = primitiveStringSchema.safeParse(key);
+        if (!parsedKey.success || !allowed.has(parsedKey.data))
+          return err(
+            lifecycleValidationError(
+              `${path} has unexpected or missing fields`,
+              path,
+            ),
+          );
+        const field = parsedKey.data;
+        const descriptor = Object.getOwnPropertyDescriptor(input, field);
+        if (
+          descriptor === undefined ||
+          descriptor.enumerable !== true ||
+          !("value" in descriptor)
+        )
+          return err(
+            lifecycleValidationError(
+              `${path}.${field} must be an own enumerable data property`,
+              `${path}.${field}`,
+            ),
+          );
+        descriptors.set(field, descriptor);
+      }
+      if (descriptors.size !== fields.length)
+        return err(
+          lifecycleValidationError(
+            `${path} has unexpected or missing fields`,
+            path,
+          ),
+        );
+      for (const field of fields)
+        if (!descriptors.has(field))
+          return err(
+            lifecycleValidationError(
+              `${path} has unexpected or missing fields`,
+              path,
+            ),
+          );
+      return ok(descriptors);
+    },
+    () => invalidPlainRecord(path),
+  )();
+  return reflected.andThen((result) => result);
+}
+
+function requiredText(
+  fields: SnapshotFields,
+  field: string,
+): Result<string, LifecycleValidationError> {
+  const parsed = primitiveStringSchema.safeParse(fields.get(field)?.value);
+  if (!parsed.success || parsed.data.length === 0)
+    return err(lifecycleValidationError(`${field} is required`, field));
+  return ok(parsed.data);
+}
+
+function requiredBoolean(
+  fields: SnapshotFields,
+  field: string,
+): Result<boolean, LifecycleValidationError> {
+  const value = fields.get(field)?.value;
+  if (value !== true && value !== false)
+    return err(lifecycleValidationError(`${field} must be boolean`, field));
+  return ok(value);
+}
+
+function captureRegisteredInput(
+  input: RegisteredBeforeToolInput,
+): Result<RegisteredBeforeToolInput, LifecycleValidationError> {
+  const topLevel = snapshotPlainRecord(input, REGISTERED_INPUT_FIELDS, "input");
+  if (topLevel.isErr()) return err(topLevel.error);
+
+  const workflowInstanceId = requiredText(topLevel.value, "workflowInstanceId");
+  if (workflowInstanceId.isErr()) return err(workflowInstanceId.error);
+  const leaseId = requiredText(topLevel.value, "leaseId");
+  if (leaseId.isErr()) return err(leaseId.error);
+  const agentName = requiredText(topLevel.value, "agentName");
+  if (agentName.isErr()) return err(agentName.error);
+  const toolName = requiredText(topLevel.value, "toolName");
+  if (toolName.isErr()) return err(toolName.error);
+
+  const permission = snapshotPlainRecord(
+    topLevel.value.get("permission")?.value,
+    PERMISSION_CONTEXT_FIELDS,
+    "permission",
+  );
+  if (permission.isErr()) return err(permission.error);
+  const project = requiredText(permission.value, "project");
+  if (project.isErr()) return err(project.error);
+  const controllerSession = requiredText(permission.value, "controllerSession");
+  if (controllerSession.isErr()) return err(controllerSession.error);
+  const registryGeneration = requiredText(
+    permission.value,
+    "registryGeneration",
+  );
+  if (registryGeneration.isErr()) return err(registryGeneration.error);
+  const approvalUiAvailable = requiredBoolean(
+    permission.value,
+    "approvalUiAvailable",
+  );
+  if (approvalUiAvailable.isErr()) return err(approvalUiAvailable.error);
+
+  const session = validatePermissionSession(
+    permission.value.get("session")?.value,
+  );
+  if (session.isErr())
+    return err(
+      lifecycleValidationError(
+        "permission.session must be a PermissionSession instance",
+        "permission.session",
+      ),
+    );
+
+  return ok({
+    workflowInstanceId: createWorkflowInstanceId(workflowInstanceId.value),
+    leaseId: createExecutionLeaseId(leaseId.value),
+    agentName: agentName.value,
+    toolName: toolName.value,
+    permission: {
+      session: session.value,
+      project: project.value,
+      controllerSession: controllerSession.value,
+      registryGeneration: registryGeneration.value,
+      call: permission.value.get("call")?.value,
+      approvalUiAvailable: approvalUiAvailable.value,
+    },
+  });
+}
+
+/**
+ * Evaluate static abstract policy intent for display, diagnostics, or adapter
+ * mapping. This helper never authorizes a call, issues a permit, or establishes
+ * adapter readiness.
+ */
+export function previewToolPolicy(
+  input: StaticToolPolicyPreviewInput,
+): StaticToolPolicyPreviewResult {
+  if (!input.workflowInstanceId)
     return errAsync(
       lifecycleValidationError(
         "workflowInstanceId is required",
         "workflowInstanceId",
       ),
     );
-  }
-  if (!input.leaseId) {
+  if (!input.leaseId)
     return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
-  }
-  if (!input.toolCapability) {
+  if (!input.toolCapability)
     return errAsync(
       lifecycleValidationError("toolCapability is required", "toolCapability"),
     );
-  }
-  if (!input.toolName) {
+  if (!input.toolName)
     return errAsync(
       lifecycleValidationError("toolName is required", "toolName"),
     );
-  }
-  if (!input.effectiveToolPolicy) {
+  if (!input.effectiveToolPolicy)
     return errAsync(
       lifecycleValidationError(
         "effectiveToolPolicy is required",
         "effectiveToolPolicy",
       ),
     );
-  }
-
-  if (
-    !(ABSTRACT_CAPABILITIES as readonly string[]).includes(input.toolCapability)
-  ) {
+  if (!ABSTRACT_CAPABILITIES.includes(input.toolCapability))
     return errAsync(
       lifecycleValidationError(
         `toolCapability '${input.toolCapability}' is not a recognized abstract capability`,
         "toolCapability",
       ),
     );
-  }
-
   if (input.metadata !== undefined && input.metadata !== null) {
     const metaCheck = sanitizeMetadata(input.metadata);
     if (metaCheck.isErr()) return errAsync(metaCheck.error);
   }
-
   const decision = input.effectiveToolPolicy[input.toolCapability];
+  return okAsync({ decision } satisfies StaticToolPolicyPreviewOutput);
+}
 
-  return okAsync({ decision });
+/**
+ * Authorize one intercepted registered call through the permission contract permission
+ * session. Legacy static-policy-shaped input is rejected by the exact-shape
+ * snapshot instead of being dispatched to a fallback evaluator.
+ *
+ * Authorization uses the module-private non-virtual
+ * {@link authorizePermissionSessionCall} entry so attacker-controlled own or
+ * prototype `authorizeCall` methods cannot redirect the decision.
+ */
+export function beforeTool(
+  input: RegisteredBeforeToolInput,
+): RegisteredBeforeToolResult {
+  const captured = captureRegisteredInput(input);
+  if (captured.isErr()) return errAsync(captured.error);
+  const permission = captured.value.permission;
+  return authorizePermissionSessionCall(permission.session, {
+    project: permission.project,
+    session: permission.controllerSession,
+    agentName: captured.value.agentName,
+    toolIdentity: captured.value.toolName,
+    registryGeneration: permission.registryGeneration,
+    call: permission.call,
+    approvalUiAvailable: permission.approvalUiAvailable,
+  });
 }

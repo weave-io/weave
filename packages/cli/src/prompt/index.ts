@@ -56,7 +56,47 @@ function cancelled(): PromptError {
 
 function ensureInteractive(isInteractive: boolean): Result<void, PromptError> {
   if (!isInteractive) return err(unavailable());
-  return ok(undefined);
+  return ok();
+}
+
+function parseSelectedOption<T extends string>(
+  answer: string,
+  options: PromptOption<T>[],
+): Result<T, PromptError> {
+  const selected = options.find((option) => option.value === answer);
+  if (selected === undefined) {
+    return err({
+      type: "PromptUnavailable",
+      message: "The prompt returned an option that was not offered.",
+    });
+  }
+  return ok(selected.value);
+}
+
+function parseSelectedOptions<T extends string>(
+  answers: string[],
+  options: PromptOption<T>[],
+): Result<T[], PromptError> {
+  const selected: T[] = [];
+  for (const answer of answers) {
+    const option = parseSelectedOption(answer, options);
+    if (option.isErr()) return err(option.error);
+    selected.push(option.value);
+  }
+  return ok(selected);
+}
+
+function firstOption<T extends string>(
+  options: PromptOption<T>[],
+): Result<T, PromptError> {
+  const first = options.at(0);
+  if (first === undefined) {
+    return err({
+      type: "PromptUnavailable",
+      message: "The prompt has no selectable options.",
+    });
+  }
+  return ok(first.value);
 }
 
 export class ClackPromptAdapter implements PromptAdapter {
@@ -84,7 +124,7 @@ export class ClackPromptAdapter implements PromptAdapter {
       initialValue: input.initialValue,
     });
     if (isCancel(answer)) return err(cancelled());
-    return ok(answer as T);
+    return parseSelectedOption(answer, input.options);
   }
 
   async multiselect<T extends string>(input: {
@@ -109,7 +149,7 @@ export class ClackPromptAdapter implements PromptAdapter {
       required: input.required ?? false,
     });
     if (isCancel(answer)) return err(cancelled());
-    return ok(answer as T[]);
+    return parseSelectedOptions(answer, input.options);
   }
 
   async text(input: {
@@ -175,8 +215,8 @@ export class StaticPromptAdapter implements PromptAdapter {
     if (!this.isInteractive()) return err(unavailable());
     if (this.answers.cancelNext) return err(cancelled());
     const next = this.answers.select?.shift() ?? input.initialValue;
-    if (next !== undefined) return ok(next as T);
-    return ok(input.options[0].value);
+    if (next !== undefined) return parseSelectedOption(next, input.options);
+    return firstOption(input.options);
   }
 
   async multiselect<T extends string>(input: {
@@ -188,7 +228,7 @@ export class StaticPromptAdapter implements PromptAdapter {
     if (!this.isInteractive()) return err(unavailable());
     if (this.answers.cancelNext) return err(cancelled());
     const next = this.answers.multiselect?.shift() ?? input.initialValues ?? [];
-    return ok(next as T[]);
+    return parseSelectedOptions(next, input.options);
   }
 
   async text(input: {

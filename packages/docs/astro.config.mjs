@@ -1,9 +1,12 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import weaveGrammar from './src/shiki/weave.tmLanguage.js';
+import { starlightSidebar } from './src/data/docs-navigation.ts';
 
 const site = process.env.SITE_URL ?? 'http://localhost:4321';
 const base = process.env.BASE_PATH ?? '/';
+const basePrefix = base === '/' ? '' : `/${base.replace(/^\/+|\/+$/g, '')}`;
+const withBase = (path) => `${basePrefix}${path}`;
 
 export default defineConfig({
   site,
@@ -23,6 +26,14 @@ export default defineConfig({
         weave: 'weave-config',
       },
     },
+  },
+  redirects: {
+    '/docs/getting-started': withBase('/docs/quickstart'),
+    '/docs/tutorials/quickstart': withBase('/docs/quickstart'),
+    '/docs/explanation/what-is-weave': withBase('/docs/concepts'),
+    '/docs/guides/installation': withBase('/docs/quickstart'),
+    '/docs/guides/configuration': withBase('/docs/configuration'),
+    '/docs/guides/core-concepts': withBase('/docs/concepts'),
   },
   integrations: [
     starlight({
@@ -71,29 +82,29 @@ export default defineConfig({
 
       // --- Component overrides (Starlight 0.40 keys) ------------------------
       components: {
-        Head: './src/components/starlight/Head.astro',
-        ThemeProvider: './src/components/starlight/ThemeProvider.astro',
-        PageFrame: './src/components/starlight/PageFrame.astro',
-        Header: './src/components/starlight/Header.astro',
-        Sidebar: './src/components/starlight/Sidebar.astro',
-        MobileMenuToggle: './src/components/starlight/MobileMenuToggle.astro',
-        TwoColumnContent: './src/components/starlight/TwoColumnContent.astro',
-        PageSidebar: './src/components/starlight/PageSidebar.astro',
-        TableOfContents: './src/components/starlight/TableOfContents.astro',
-        ContentPanel: './src/components/starlight/ContentPanel.astro',
+        Head: './src/components/starlight/head.astro',
+        ThemeProvider: './src/components/starlight/theme-provider.astro',
+        PageFrame: './src/components/starlight/page-frame.astro',
+        Header: './src/components/starlight/header.astro',
+        Sidebar: './src/components/starlight/sidebar.astro',
+        MobileMenuToggle: './src/components/starlight/mobile-menu-toggle.astro',
+        TwoColumnContent: './src/components/starlight/two-column-content.astro',
+        PageSidebar: './src/components/starlight/page-sidebar.astro',
+        TableOfContents: './src/components/starlight/table-of-contents.astro',
+        ContentPanel: './src/components/starlight/content-panel.astro',
         // Hero override — the docs index (`docs/index.mdx`) sets `hero`
         // frontmatter so Starlight's Page.astro suppresses the auto PageTitle
         // (`.prose h1#_top`) and renders this component instead. It emits the
         // prototype `.home-hero` block (docs-home.html) as the first child of
         // `.docs-main`. Inert on every route that does not set `hero`.
-        Hero: './src/components/docs/DocsHomeHero.astro',
-        PageTitle: './src/components/starlight/PageTitle.astro',
-        MarkdownContent: './src/components/starlight/MarkdownContent.astro',
-        Footer: './src/components/starlight/Footer.astro',
-        Search: './src/components/starlight/Search.astro',
-        ThemeSelect: './src/components/starlight/ThemeSelect.astro',
-        SocialIcons: './src/components/starlight/SocialIcons.astro',
-        LanguageSelect: './src/components/starlight/LanguageSelect.astro',
+        Hero: './src/components/docs/docs-home-hero.astro',
+        PageTitle: './src/components/starlight/page-title.astro',
+        MarkdownContent: './src/components/starlight/markdown-content.astro',
+        Footer: './src/components/starlight/footer.astro',
+        Search: './src/components/starlight/search.astro',
+        ThemeSelect: './src/components/starlight/theme-select.astro',
+        SocialIcons: './src/components/starlight/social-icons.astro',
+        LanguageSelect: './src/components/starlight/language-select.astro',
       },
 
       social: [
@@ -106,41 +117,13 @@ export default defineConfig({
       editLink: {
         baseUrl: 'https://github.com/weave-io/weave/edit/main/packages/docs/',
       },
-      // Public docs expose a compact guide-first structure. Legacy tutorial,
-      // how-to, explanation, and per-topic reference routes still exist as
-      // compatibility pages, but they are intentionally left out of navigation.
-      sidebar: [
-        {
-          label: 'Start',
-          items: [
-            'docs',
-            'docs/getting-started',
-            'docs/concepts',
-          ],
-        },
-        {
-          label: 'Guides',
-          items: [
-            'docs/configuration',
-            'docs/agents-and-categories',
-            'docs/prompts-models-policy',
-            'docs/workflows',
-            'docs/evals',
-            'docs/opencode',
-            'docs/runtime-operations',
-          ],
-        },
-        {
-          label: 'Reference',
-          items: [
-            'docs/reference/cli',
-            'docs/reference/dsl',
-            'docs/reference/adapters',
-            'docs/reference/packages',
-            'docs/reference/releases',
-          ],
-        },
-      ],
+      // Public docs expose a compact guide-first structure. The declarative
+      // contract in `src/data/docs-navigation.json` is the single authority for
+      // navigated routes, palette search entries, and compatibility routes.
+      // This config declares no routes of its own, so the release-time
+      // deterministic checker reads that data structurally instead of reading
+      // anything here.
+      sidebar: starlightSidebar,
     }),
   ],
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { FakeChatModel } from "@langchain/core/utils/testing";
 import { err, ok } from "neverthrow";
 import type { ParsedArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";
@@ -6,6 +7,7 @@ import { ThemeManager } from "../../theme/colors.js";
 import {
   buildLangChainScorer,
   type EvalContext,
+  type LangChainChatOpenAIFields,
   type LangChainOpenAIModule,
   readPublishMode,
   runEval,
@@ -41,14 +43,21 @@ function flags(
  * model/case allowlist validation. Bypasses real file-system reads.
  */
 const passThroughValidateFilters: EvalContext["validateFilters"] = async () =>
-  ok(undefined);
+  ok(void 0);
+
+interface EvalTestContext {
+  readonly terminal: BufferTerminal;
+  readonly ctx: EvalContext;
+}
+
+type TestEnvironment = Partial<Record<string, string>>;
 
 function context(
   flagOverrides: Partial<ParsedArgs["flags"]> = {},
-  envOverrides: Record<string, string | undefined> = {},
+  envOverrides: TestEnvironment = {},
   runner?: EvalContext["runner"],
   validateFilters: EvalContext["validateFilters"] = passThroughValidateFilters,
-): { terminal: BufferTerminal; ctx: EvalContext } {
+): EvalTestContext {
   const terminal = new BufferTerminal();
   const ctx: EvalContext = {
     terminal,
@@ -59,6 +68,19 @@ function context(
     validateFilters,
   };
   return { terminal, ctx };
+}
+
+function createCapturingLangChainModule(
+  captured: LangChainChatOpenAIFields[],
+): LangChainOpenAIModule {
+  class CapturingChatOpenAI extends FakeChatModel {
+    constructor(fields: LangChainChatOpenAIFields) {
+      super({});
+      captured.push(fields);
+    }
+  }
+
+  return { ChatOpenAI: CapturingChatOpenAI };
 }
 
 // ---------------------------------------------------------------------------
@@ -710,17 +732,8 @@ describe("runEval run — defaultValidateFilters real fixture integration", () =
  */
 describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)", () => {
   it("passes apiKey to ChatOpenAI constructor", async () => {
-    const capturedFields: Record<string, unknown>[] = [];
-
-    // Minimal BaseChatModel stub — only needs to satisfy the interface used
-    // by RealLangChainJudge (a BaseChatModel is passed through opaque).
-    // Use a plain function constructor (not a class) so we can capture fields
-    // without returning from a class constructor (Biome noConstructorReturn).
-    const fakeModule: LangChainOpenAIModule = {
-      ChatOpenAI: function FakeChatOpenAI(fields: Record<string, unknown>) {
-        capturedFields.push({ ...fields });
-      } as unknown as LangChainOpenAIModule["ChatOpenAI"],
-    };
+    const capturedFields: LangChainChatOpenAIFields[] = [];
+    const fakeModule = createCapturingLangChainModule(capturedFields);
 
     const evalEnv = {
       apiKey: "test-openrouter-api-key",
@@ -736,23 +749,18 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
 
     // Critical: `apiKey` must be present — this is the field the v1
     // BaseChatOpenAI constructor reads.
-    expect(fields.apiKey).toBe("test-openrouter-api-key");
+    expect(fields?.apiKey).toBe("test-openrouter-api-key");
 
     // Equally critical: `openAIApiKey` must NOT be the sole auth mechanism
     // (it is ignored by the runtime in @langchain/openai v1).
     // If `apiKey` is set, whether `openAIApiKey` happens to also be set
     // doesn't matter — but it should NOT be the only auth field.
-    expect(fields.apiKey).toBeDefined();
+    expect(fields?.apiKey).toBeDefined();
   });
 
   it("does NOT pass openAIApiKey as the sole auth field", async () => {
-    const capturedFields: Record<string, unknown>[] = [];
-
-    const fakeModule: LangChainOpenAIModule = {
-      ChatOpenAI: function FakeChatOpenAI(fields: Record<string, unknown>) {
-        capturedFields.push({ ...fields });
-      } as unknown as LangChainOpenAIModule["ChatOpenAI"],
-    };
+    const capturedFields: LangChainChatOpenAIFields[] = [];
+    const fakeModule = createCapturingLangChainModule(capturedFields);
 
     const evalEnv = {
       apiKey: "test-key-abc",
@@ -763,19 +771,14 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
 
     const fields = capturedFields[0];
     // `apiKey` is set — the v1 constructor will find it
-    expect(fields.apiKey).toBe("test-key-abc");
+    expect(fields?.apiKey).toBe("test-key-abc");
     // `openAIApiKey` is NOT the primary auth field — it is a dead alias in v1
-    expect(fields.openAIApiKey).toBeUndefined();
+    expect(fields).not.toHaveProperty("openAIApiKey");
   });
 
   it("passes baseURL inside configuration", async () => {
-    const capturedFields: Record<string, unknown>[] = [];
-
-    const fakeModule: LangChainOpenAIModule = {
-      ChatOpenAI: function FakeChatOpenAI(fields: Record<string, unknown>) {
-        capturedFields.push({ ...fields });
-      } as unknown as LangChainOpenAIModule["ChatOpenAI"],
-    };
+    const capturedFields: LangChainChatOpenAIFields[] = [];
+    const fakeModule = createCapturingLangChainModule(capturedFields);
 
     const evalEnv = {
       apiKey: "test-key",
@@ -785,9 +788,8 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
     await buildLangChainScorer(evalEnv, async () => fakeModule);
 
     const fields = capturedFields[0];
-    expect(fields.configuration).toBeDefined();
-    const config = fields.configuration as Record<string, unknown>;
-    expect(config.baseURL).toBe("https://openrouter.ai/api/v1");
+    expect(fields?.configuration).toBeDefined();
+    expect(fields?.configuration?.baseURL).toBe("https://openrouter.ai/api/v1");
   });
 
   it("returns err(EvalValidation) when the module loader throws module-not-found", async () => {

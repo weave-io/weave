@@ -43,11 +43,8 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "packages/adapters/claude-code/tsconfig.build.json",
   "scripts/release/constants.ts",
   "scripts/release/model.ts",
-  "scripts/release/stable-train.ts",
-  "scripts/release/release-orchestrator.ts",
   "scripts/release/packager.ts",
   "scripts/build-public-packages.ts",
-  "scripts/build-release-control.ts",
   "packages/cli/src/main.ts",
   "packages/core/src/index.ts",
   "packages/config/src/index.ts",
@@ -195,7 +192,7 @@ export function verifyCodeowners(
       }
     }
     if (errors.length > 0) return err(errors);
-    return ok(undefined);
+    return ok();
   });
 }
 

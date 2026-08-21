@@ -15,6 +15,7 @@ import type { SourcePos } from "./tokens.js";
 export type StringValue = { kind: "string"; value: string; pos: SourcePos };
 export type NumberValue = { kind: "number"; value: number; pos: SourcePos };
 export type BooleanValue = { kind: "boolean"; value: boolean; pos: SourcePos };
+export type NullValue = { kind: "null"; value: null; pos: SourcePos };
 export type IdentifierValue = {
   kind: "identifier";
   value: string;
@@ -35,6 +36,7 @@ export type AstValue =
   | StringValue
   | NumberValue
   | BooleanValue
+  | NullValue
   | IdentifierValue
   | ArrayValue
   | BlockValue;
@@ -47,6 +49,8 @@ export type Property = {
   key: string;
   value: AstValue;
   pos: SourcePos;
+  /** True only when the source omitted a value and used the bare-flag form. */
+  bare?: true;
 };
 
 // ---------------------------------------------------------------------------
@@ -84,6 +88,9 @@ export type AgentBlock = {
    * Notable nested blocks stored here as `BlockValue` properties:
    * - `tool_policy` — capability permission map
    * - `routing`     — per-agent routing knobs (e.g. `delegation_exclude`)
+   *
+   * Scalar `fast` and string-array `triggers` values remain generic properties;
+   * the validator enforces their exact config shapes.
    */
   properties: Property[];
   pos: SourcePos;
@@ -92,6 +99,10 @@ export type AgentBlock = {
 export type CategoryBlock = {
   type: "category";
   name: string;
+  /**
+   * Flat property bag. The validator accepts literal `fast true` and ordered
+   * string-array `triggers`, and rejects removed category `patterns`.
+   */
   properties: Property[];
   pos: SourcePos;
 };

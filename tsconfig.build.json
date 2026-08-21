@@ -18,8 +18,9 @@
     { "path": "./packages/engine/tsconfig.build.json" },
     { "path": "./packages/config/tsconfig.build.json" },
     { "path": "./packages/adapters/claude-code/tsconfig.build.json" },
-    { "path": "./packages/cli/tsconfig.build.json" },
-    { "path": "./packages/adapters/opencode/tsconfig.build.json" }
+    { "path": "./packages/adapters/pi/tsconfig.build.json" },
+    { "path": "./packages/adapters/opencode/tsconfig.build.json" },
+    { "path": "./packages/cli/tsconfig.build.json" }
   ],
   "files": []
 }

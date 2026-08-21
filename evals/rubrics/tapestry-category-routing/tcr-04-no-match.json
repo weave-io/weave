@@ -5,6 +5,6 @@
     "outcome_weight": 0.6,
     "per_expectation_weight": 0.4,
     "required": true,
-    "notes": "Fairness/alignment: `src/Infrastructure/Logging/Logger.cs` does not match the only declared category pattern `src/4.Presentation/DST.Client/**`. The model should fall back to the generic `shuttle` agent (or `loom` as acceptable alternate). Credit `loom` as an accepted alternate since no category shuttle is appropriate. Do not credit `shuttle-client-frontend` — routing an infra file to the client-frontend shuttle is a clear mismatch. The rationale should explain that no category pattern matched."
+    "notes": "Fairness/alignment: `src/Infrastructure/Logging/Logger.cs` is infrastructure logging work and does not belong to the only declared category domain, `client-frontend`. The model should fall back to the generic `shuttle` agent (or `loom` as acceptable alternate). Credit `loom` as an accepted alternate since no category shuttle is appropriate. Do not credit `shuttle-client-frontend` — routing an infra file to the client-frontend shuttle is a clear mismatch. The rationale should explain that no category domain matched."
   }
 }

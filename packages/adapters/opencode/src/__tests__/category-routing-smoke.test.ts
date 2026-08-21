@@ -22,7 +22,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
-import { translateAgent } from "../translate-agent.js";
+import { describeFastActivation, translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
 // Fixture: shuttle-client-frontend AgentDescriptor
@@ -53,7 +53,6 @@ const descriptor: AgentDescriptor = {
   category: {
     name: "client-frontend",
     description: "Client-facing UI, components, and styling",
-    patterns: ["src/client/**", "**/*.tsx", "**/*.css"],
   },
   composedPrompt: COMPOSED_PROMPT,
   models: ["claude-sonnet-4-5"],
@@ -166,12 +165,16 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       //   write:allow   → permission.edit = "allow"
       //   execute:allow → permission.bash = "allow"
       //   network:ask   → permission.webfetch = "ask"
-      //   delegate:deny → permission.doom_loop = "deny"
+      //   delegate:deny → permission.task = "deny"
       expect(config.permission).toBeDefined();
       expect(config.permission?.edit).toBe("allow");
       expect(config.permission?.bash).toBe("allow");
       expect(config.permission?.webfetch).toBe("ask");
-      expect(config.permission?.doom_loop).toBe("deny");
+      expect(config.permission?.read).toBe("allow");
+      expect(config.permission?.glob).toBe("allow");
+      expect(config.permission?.grep).toBe("allow");
+      expect(config.permission?.list).toBe("allow");
+      expect(config.permission?.task).toBe("deny");
     });
 
     it("full translated config shape is a non-null object with required fields", () => {
@@ -179,9 +182,8 @@ describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
-      expect(typeof config).toBe("object");
-      expect(config).not.toBeNull();
-      expect(typeof config.prompt).toBe("string");
+      expect(config).toBeDefined();
+      expect(config.prompt).toBeDefined();
       expect((config.prompt ?? "").length).toBeGreaterThan(0);
       expect(config.mode).toBeDefined();
       expect(config.permission).toBeDefined();
@@ -208,10 +210,55 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
 
   it("descriptor category metadata is correct", () => {
     expect(descriptor.category?.name).toBe("client-frontend");
-    expect(descriptor.category?.patterns).toContain("src/client/**");
+    expect(descriptor.category?.description).toBe(
+      "Client-facing UI, components, and styling",
+    );
+    expect("patterns" in (descriptor.category ?? {})).toBe(false);
   });
 
   it("translateAgent is importable and is a function", () => {
-    expect(typeof translateAgent).toBe("function");
+    expect(translateAgent).toBeInstanceOf(Function);
+  });
+
+  it("category descriptor keeps string triggers and no patterns", () => {
+    const withTriggers: AgentDescriptor = {
+      ...descriptor,
+      delegationTargets: [
+        {
+          name: "shuttle-client-frontend",
+          description: "Client-facing UI, components, and styling",
+          triggers: ["review the design system", "fix a component"],
+          isCategory: true,
+        },
+      ],
+    };
+
+    const target = withTriggers.delegationTargets[0];
+    expect(target?.triggers).toEqual([
+      "review the design system",
+      "fix a component",
+    ]);
+    expect("patterns" in (target ?? {})).toBe(false);
+
+    const result = translateAgent(withTriggers);
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("emits no acceleration state without fast intent", () => {
+    expect(describeFastActivation(descriptor)).toBeUndefined();
+  });
+
+  it("reports unsupported and translates unchanged with fast intent", () => {
+    const fastDescriptor: AgentDescriptor = { ...descriptor, fast: true };
+
+    expect(describeFastActivation(fastDescriptor)?.state).toBe("unsupported");
+
+    const plain = translateAgent(descriptor, "anthropic/claude-opus-5");
+    const fast = translateAgent(fastDescriptor, "anthropic/claude-opus-5");
+    expect(plain.isOk()).toBe(true);
+    expect(fast.isOk()).toBe(true);
+    if (plain.isOk() && fast.isOk()) {
+      expect(fast.value).toEqual(plain.value);
+    }
   });
 });

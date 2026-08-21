@@ -24,15 +24,14 @@
  * - Terminal-state executions return typed errors rather than silently
  *   succeeding or failing.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
- * @see docs/adapter-boundary.md
+ * @see docs/reference/cli.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/interrupts.ts — handleUserInterrupt
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
  * @see packages/engine/src/runtime-command-operations/types.ts
  */
 
-import type { WorkflowConfig } from "@weaveio/weave-core";
-import { errAsync } from "neverthrow";
+import { errAsync, type ResultAsync } from "neverthrow";
 import { completeStep, handleUserInterrupt } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
 import type {
@@ -50,12 +49,21 @@ const log = logger.child({ module: "control-operations" });
 // § 1 — Terminal status guard
 // ---------------------------------------------------------------------------
 
-/** Status values that indicate a workflow instance has reached a terminal state. */
-const TERMINAL_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-] as const);
+/** Return whether a workflow instance has reached a terminal state. */
+function isTerminalStatus(
+  status:
+    | "created"
+    | "running"
+    | "paused"
+    | "blocked"
+    | "completed"
+    | "failed"
+    | "cancelled",
+): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
 
 // ---------------------------------------------------------------------------
 // § 2 — abortExecution — command operation entry point
@@ -91,10 +99,7 @@ const TERMINAL_STATUSES = new Set([
  */
 export function abortExecution(
   input: AbortExecutionInput,
-): import("neverthrow").ResultAsync<
-  ExecutionAbortedData,
-  CommandOperationError
-> {
+): ResultAsync<ExecutionAbortedData, CommandOperationError> {
   const { workflowInstanceId, leaseId, signal, store } = input;
 
   if (!workflowInstanceId) {
@@ -148,16 +153,12 @@ export function abortExecution(
         return errAsync({
           type: "command_not_found",
           entity: "execution",
-          name: workflowInstanceId as string,
+          name: workflowInstanceId,
           message: `Workflow instance "${workflowInstanceId}" not found`,
         } satisfies CommandNotFoundError);
       }
 
-      if (
-        TERMINAL_STATUSES.has(
-          instance.status as "completed" | "failed" | "cancelled",
-        )
-      ) {
+      if (isTerminalStatus(instance.status)) {
         log.warn(
           { workflowInstanceId, status: instance.status },
           "abort-execution: instance is already in a terminal state",
@@ -165,7 +166,7 @@ export function abortExecution(
         return errAsync({
           type: "command_not_found",
           entity: "execution",
-          name: workflowInstanceId as string,
+          name: workflowInstanceId,
           message: `Workflow instance "${workflowInstanceId}" is already in terminal state "${instance.status}"`,
         } satisfies CommandNotFoundError);
       }
@@ -180,7 +181,7 @@ export function abortExecution(
             return {
               type: "command_not_found",
               entity: "execution",
-              name: workflowInstanceId as string,
+              name: workflowInstanceId,
               message: lifecycleError.message,
             } satisfies CommandNotFoundError;
           }
@@ -193,7 +194,7 @@ export function abortExecution(
             return {
               type: "command_not_found",
               entity: "lease",
-              name: leaseId as string,
+              name: leaseId,
               message: lifecycleError.message,
             } satisfies CommandNotFoundError;
           }
@@ -244,7 +245,7 @@ export function abortExecution(
  */
 export function advanceStep(
   input: AdvanceStepInput,
-): import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError> {
+): ResultAsync<StepAdvancedData, CommandOperationError> {
   const {
     workflowInstanceId,
     leaseId,
@@ -302,20 +303,15 @@ export function advanceStep(
   );
 
   // Build the completeStep context from the optional advance-step context.
-  // Cast workflows from the opaque `Record<string, unknown>` declared in
-  // AdvanceStepInput to the concrete `Record<string, WorkflowConfig>`
-  // required by completeStep. The lifecycle validates step existence before
-  // accessing any config fields, so an invalid entry produces a typed
-  // `not_found` error rather than a runtime crash.
   const completeStepContext =
-    context !== undefined
-      ? {
+    context === undefined
+      ? undefined
+      : {
           workflowName: context.workflowName,
           goal: context.goal,
           slug: context.slug,
-          workflows: context.workflows as Record<string, WorkflowConfig>,
-        }
-      : undefined;
+          workflows: context.workflows,
+        };
 
   return completeStep(
     {
@@ -337,7 +333,7 @@ export function advanceStep(
         return {
           type: "command_not_found",
           entity: "execution",
-          name: workflowInstanceId as string,
+          name: workflowInstanceId,
           message: lifecycleError.message,
         } satisfies CommandNotFoundError;
       }
@@ -350,7 +346,7 @@ export function advanceStep(
         return {
           type: "command_not_found",
           entity: "lease",
-          name: leaseId as string,
+          name: leaseId,
           message: lifecycleError.message,
         } satisfies CommandNotFoundError;
       }

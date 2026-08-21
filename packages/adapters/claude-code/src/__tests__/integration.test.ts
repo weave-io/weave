@@ -5,25 +5,76 @@
  * → verify output files. Uses injectable mock I/O — no real file system access.
  */
 
-import { describe, it, expect, beforeEach } from "bun:test";
-import { ClaudeCodeAdapter } from "../adapter.js";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
+import { ClaudeCodeAdapter } from "../adapter.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const OUT_DIR = "C:\\Users\\piete\\AppData\\Local\\Temp\\opencode\\weave-cc-integration";
+const OUT_DIR =
+  "C:\\Users\\piete\\AppData\\Local\\Temp\\opencode\\weave-cc-integration";
+
+interface ClaudeCodeFrontmatter {
+  name?: string;
+  description?: string;
+  model?: string;
+  tools?: string[];
+  fast?: string;
+  fastMode?: string;
+  triggers?: string[];
+  patterns?: string[];
+}
+
+type ClaudeCodeFrontmatterArrayKey = "tools" | "triggers" | "patterns";
+
+function frontmatterArrayKey(
+  key: string,
+): ClaudeCodeFrontmatterArrayKey | undefined {
+  switch (key) {
+    case "tools":
+    case "triggers":
+    case "patterns":
+      return key;
+    default:
+      return undefined;
+  }
+}
+
+function setFrontmatterScalar(
+  result: ClaudeCodeFrontmatter,
+  key: string,
+  value: string,
+) {
+  switch (key) {
+    case "name":
+      result.name = value;
+      break;
+    case "description":
+      result.description = value;
+      break;
+    case "model":
+      result.model = value;
+      break;
+    case "fast":
+      result.fast = value;
+      break;
+    case "fastMode":
+      result.fastMode = value;
+      break;
+  }
+}
 
 /** Parses YAML frontmatter from a markdown string (between the first two ---). */
-function parseFrontmatter(markdown: string): Record<string, unknown> {
+function parseFrontmatter(markdown: string): ClaudeCodeFrontmatter {
   const parts = markdown.split("---");
   // parts[0] is empty string before first ---, parts[1] is frontmatter body
   if (parts.length < 3) return {};
-  const body = parts[1]!;
-  const result: Record<string, unknown> = {};
-  let currentKey: string | null = null;
-  let currentArray: string[] | null = null;
+  const body = parts[1] ?? "";
+  const result: ClaudeCodeFrontmatter = {};
+  let currentArrayKey: ClaudeCodeFrontmatterArrayKey | undefined;
+  let currentArray: string[] | undefined;
 
   for (const raw of body.split("\n")) {
     const line = raw.trimEnd();
@@ -31,17 +82,17 @@ function parseFrontmatter(markdown: string): Record<string, unknown> {
 
     // Array item inside a list block
     if (line.startsWith("  - ")) {
-      if (currentArray !== null) {
+      if (currentArray !== undefined) {
         currentArray.push(line.slice(4).trim());
       }
       continue;
     }
 
     // If we were building an array, commit it before processing new key
-    if (currentArray !== null && currentKey !== null) {
-      result[currentKey] = currentArray;
-      currentArray = null;
-      currentKey = null;
+    if (currentArray !== undefined && currentArrayKey !== undefined) {
+      result[currentArrayKey] = currentArray;
+      currentArray = undefined;
+      currentArrayKey = undefined;
     }
 
     const colonIdx = line.indexOf(":");
@@ -52,16 +103,16 @@ function parseFrontmatter(markdown: string): Record<string, unknown> {
 
     if (value === "") {
       // Next lines are an array
-      currentKey = key;
-      currentArray = [];
+      currentArrayKey = frontmatterArrayKey(key);
+      currentArray = currentArrayKey === undefined ? undefined : [];
     } else {
-      result[key] = value;
+      setFrontmatterScalar(result, key, value);
     }
   }
 
   // Flush trailing array
-  if (currentArray !== null && currentKey !== null) {
-    result[currentKey] = currentArray;
+  if (currentArray !== undefined && currentArrayKey !== undefined) {
+    result[currentArrayKey] = currentArray;
   }
 
   return result;
@@ -183,9 +234,9 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(fm["name"]).toBe("loom");
-    expect(typeof fm["model"]).toBe("string");
-    expect((fm["model"] as string).length).toBeGreaterThan(0);
+    expect(fm.name).toBe("loom");
+    expect(fm.model).toBeDefined();
+    expect(fm.model?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("loom.md frontmatter includes Agent (delegate) in tools", () => {
@@ -194,10 +245,9 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    const tools = fm["tools"] as string[];
-    expect(Array.isArray(tools)).toBe(true);
+    expect(fm.tools).toBeDefined();
     // "Task" is the Claude Code tool that maps to delegate capability
-    expect(tools).toContain("Task");
+    expect(fm.tools ?? []).toContain("Task");
   });
 
   it("loom.md contains the composed prompt body", () => {
@@ -230,7 +280,7 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(fm["name"]).toBe("shuttle");
+    expect(fm.name).toBe("shuttle");
   });
 
   // -------------------------------------------------------------------------
@@ -243,8 +293,8 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
     );
     expect(key).toBeDefined();
     const fm = parseFrontmatter(written[key!]!);
-    expect(typeof fm["description"]).toBe("string");
-    expect((fm["description"] as string).toLowerCase()).toContain("core");
+    expect(fm.description).toBeDefined();
+    expect(fm.description?.toLowerCase() ?? "").toContain("core");
   });
 
   it("shuttle-core.md delegate denied — Task absent from tools", () => {
@@ -279,6 +329,82 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Optional capability gap: fast intent must not change or block materialization
+// ---------------------------------------------------------------------------
+
+describe("ClaudeCodeAdapter — unsupported provider acceleration", () => {
+  const fastLoom: AgentDescriptor = {
+    ...loomDescriptor,
+    fast: true,
+    delegationTargets: [
+      {
+        name: "shuttle-backend",
+        description: "Backend APIs",
+        triggers: ["ship patch", "review code"],
+        isCategory: true,
+      },
+    ],
+  };
+
+  it("still materializes every artifact when fast intent is declared", async () => {
+    const written: Record<string, string> = {};
+    const adapter = makeAdapter(written);
+
+    await adapter.init();
+    const spawnResult = await adapter.spawnSubagent(fastLoom);
+    const flushResult = await adapter.flush();
+
+    expect(spawnResult.isOk()).toBe(true);
+    expect(flushResult.isOk()).toBe(true);
+
+    const pluginKey = Object.keys(written).find((k) =>
+      k.endsWith("plugin.json"),
+    );
+    const settingsKey = Object.keys(written).find((k) =>
+      k.endsWith("settings.json"),
+    );
+    const agentKey = Object.keys(written).find(
+      (k) => k.includes("agents") && k.endsWith("loom.md"),
+    );
+    expect(pluginKey).toBeDefined();
+    expect(settingsKey).toBeDefined();
+    expect(agentKey).toBeDefined();
+
+    const fm = parseFrontmatter(written[agentKey!]!);
+    expect(fm.name).toBe("loom");
+    expect(fm.model).toBeDefined();
+    expect(fm.fast).toBeUndefined();
+    expect(fm.fastMode).toBeUndefined();
+    expect(fm.triggers).toBeUndefined();
+    expect(fm.patterns).toBeUndefined();
+  });
+
+  it("writes byte-identical output with and without fast intent", async () => {
+    const { fast: _declaredFast, ...noIntentLoom } = fastLoom;
+
+    const baseline: Record<string, string> = {};
+    const baselineAdapter = makeAdapter(baseline);
+    await baselineAdapter.init();
+    await baselineAdapter.spawnSubagent(noIntentLoom);
+    await baselineAdapter.flush();
+
+    const withFast: Record<string, string> = {};
+    const fastAdapter = makeAdapter(withFast);
+    await fastAdapter.init();
+    await fastAdapter.spawnSubagent(fastLoom);
+    await fastAdapter.flush();
+
+    expect(withFast).toEqual(baseline);
+    for (const content of Object.values(withFast)) {
+      expect(content).not.toContain("fastMode");
+      expect(content).not.toContain("service_tier");
+      expect(content).not.toContain("anthropic-beta");
+      expect(content).not.toContain("ship patch");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Negative case: no loom agent → settings.json must NOT be written
 // ---------------------------------------------------------------------------
 
@@ -292,7 +418,9 @@ describe("ClaudeCodeAdapter — negative case (no loom agent)", () => {
     await adapter.spawnSubagent(shuttleCoreDescriptor);
     await adapter.flush();
 
-    const settingsKey = Object.keys(written).find((k) => k.endsWith("settings.json"));
+    const settingsKey = Object.keys(written).find((k) =>
+      k.endsWith("settings.json"),
+    );
     expect(settingsKey).toBeUndefined();
   });
 
@@ -304,7 +432,9 @@ describe("ClaudeCodeAdapter — negative case (no loom agent)", () => {
     await adapter.spawnSubagent(shuttleDescriptor);
     await adapter.flush();
 
-    const pluginKey = Object.keys(written).find((k) => k.endsWith("plugin.json"));
+    const pluginKey = Object.keys(written).find((k) =>
+      k.endsWith("plugin.json"),
+    );
     expect(pluginKey).toBeDefined();
 
     const agentFiles = Object.keys(written).filter(

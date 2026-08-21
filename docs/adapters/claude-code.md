@@ -44,7 +44,7 @@ Claude Code has a native fast mode through `/fast`, Option/Alt+O, and the Agent 
 
 A descriptor's `fast true` therefore changes no generated file. The adapter encodes no frontmatter field, environment value, prompt instruction, or provider control, and generated agent or command markdown must not claim that acceleration was requested or applied. `provider-fast-activation` declares `unsupported` with runtime status `unsupported` and the bounded reason `harness-seam-unavailable`.
 
-This is an optional-capability gap. Agent and command materialization continues unchanged. Raising Claude Code above `unsupported` requires a runtime Agent SDK integration with per-attempt response proof, or a new official materialization field with equivalent proof, verified in a real harness under [Adapter Readiness Status](../adapter-readiness-status.md).
+This is an optional-capability gap. Agent and command materialization continues unchanged. Raising Claude Code above `unsupported` requires a runtime Agent SDK integration with per-attempt response proof, or a new official materialization field with equivalent proof, verified in a real harness under [Adapter Verification](../testing/adapter-verification.md).
 
 ## Consequences
 
@@ -57,4 +57,4 @@ This is an optional-capability gap. Agent and command materialization continues 
   unpublished.
 
 See [the practical Claude guide](claude-code.md),
-[Adapter Boundary](../adapter-boundary.md), and [Release Automation](../contributing/releases.md).
+[Adapter Boundary](../architecture/adapter-boundary.md), and [Release Automation](../contributing/releases.md).

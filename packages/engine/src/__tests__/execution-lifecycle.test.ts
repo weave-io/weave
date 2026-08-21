@@ -8,9 +8,9 @@
  * - Public import paths compile (imports from @weaveio/weave-engine)
  * - SafeMetadata structural constraint
  * - Error factory helpers produce correct discriminants
- * - ExecutionOperationKind discriminated union (Spec 22 Unit 1)
+ * - ExecutionOperationKind discriminated union (execution lifecycle contract)
  * - ExecutionAuthorizationSource — explicit authorization enforcement (Task 1.3)
- * - inspectExecution read-only behavior (Spec 22 Unit 1)
+ * - inspectExecution read-only behavior (execution lifecycle contract)
  * - observeSession boundary: cannot create instances or leases (ADR 0004)
  * - Agent-, hook-, and event-initiated self-start paths are rejected (ADR 0004)
  */
@@ -18,13 +18,10 @@
 import { describe, expect, it } from "bun:test";
 import type { RunAgentEffect } from "@weaveio/weave-engine";
 import {
+  ARTIFACT_INPUT_ROLES,
   type ArtifactInputDecl,
   type ArtifactInputRole,
   type ArtifactInputSummary,
-  ARTIFACT_INPUT_ROLES,
-  type BeforeToolInput,
-  type BeforeToolOutput,
-  beforeTool,
   type CompleteStepInput,
   type CompleteStepOutput,
   completeStep,
@@ -61,19 +58,22 @@ import {
   type PlanStateError,
   type PlanStateProvider,
   type PromptMetadata,
+  previewToolPolicy,
   queryError,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
   type ReconcileExecutionInput,
   type ReconcileExecutionOutput,
   type ReconciliationAuthorizationSource,
-  reconcileExecution,
-  RECONCILIATION_AUTHORIZATION_SOURCES,
-  RECONCILIATION_REASONS,
   type ResumeExecutionInput,
   type ResumeExecutionOutput,
+  reconcileExecution,
   resumeExecution,
   type SafeMetadata,
   type StartExecutionInput,
   type StartExecutionOutput,
+  type StaticToolPolicyPreviewInput,
+  type StaticToolPolicyPreviewOutput,
   type StepCompletionSignal,
   sanitizeMetadata,
   startExecution,
@@ -82,6 +82,15 @@ import {
   type WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
+
+function isSafeMetadataValue(value: SafeMetadata[string]): boolean {
+  return (
+    value === true ||
+    value === false ||
+    String(value) === value ||
+    Number.isFinite(value)
+  );
+}
 
 // ---------------------------------------------------------------------------
 // MockPlanStateProvider
@@ -102,6 +111,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly existsError?: PlanStateError,
     private readonly completeError?: PlanStateError,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string) {
     if (this.existsError) return errAsync(this.existsError);
@@ -153,8 +172,7 @@ describe("SafeMetadata", () => {
       bool: true,
     };
     for (const val of Object.values(meta)) {
-      const t = typeof val;
-      expect(["string", "number", "boolean"]).toContain(t);
+      expect(isSafeMetadataValue(val)).toBe(true);
     }
   });
 });
@@ -602,10 +620,10 @@ describe("CompleteStepInput / CompleteStepOutput", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BeforeTool input/output shapes
+// Static tool-policy preview input/output shapes
 // ---------------------------------------------------------------------------
 
-describe("BeforeToolInput / BeforeToolOutput", () => {
+describe("StaticToolPolicyPreviewInput / StaticToolPolicyPreviewOutput", () => {
   const allAllowPolicy = evaluateEffectiveToolPolicy({
     read: "allow",
     write: "allow",
@@ -615,7 +633,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
   });
 
   it("accepts all abstract capability categories", () => {
-    const capabilities: BeforeToolInput["toolCapability"][] = [
+    const capabilities: StaticToolPolicyPreviewInput["toolCapability"][] = [
       "read",
       "write",
       "execute",
@@ -623,7 +641,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
       "network",
     ];
     for (const toolCapability of capabilities) {
-      const input: BeforeToolInput = {
+      const input: StaticToolPolicyPreviewInput = {
         workflowInstanceId: wfId,
         leaseId,
         agentName: "shuttle",
@@ -635,8 +653,8 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     }
   });
 
-  it("accepts BeforeToolInput with optional metadata", () => {
-    const input: BeforeToolInput = {
+  it("accepts StaticToolPolicyPreviewInput with optional metadata", () => {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: wfId,
       leaseId,
       agentName: "loom",
@@ -648,13 +666,13 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     expect(input.metadata?.filePath).toBe("src/index.ts");
   });
 
-  it("BeforeToolOutput decision: 'allow'", () => {
-    const output: BeforeToolOutput = { decision: "allow" };
+  it("StaticToolPolicyPreviewOutput decision: 'allow'", () => {
+    const output: StaticToolPolicyPreviewOutput = { decision: "allow" };
     expect(output.decision).toBe("allow");
   });
 
-  it("BeforeToolOutput decision: 'deny' with reason", () => {
-    const output: BeforeToolOutput = {
+  it("StaticToolPolicyPreviewOutput decision: 'deny' with reason", () => {
+    const output: StaticToolPolicyPreviewOutput = {
       decision: "deny",
       reason: "Network access is denied by policy",
     };
@@ -662,8 +680,8 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     expect(output.reason).toBe("Network access is denied by policy");
   });
 
-  it("BeforeToolOutput decision: 'ask'", () => {
-    const output: BeforeToolOutput = { decision: "ask" };
+  it("StaticToolPolicyPreviewOutput decision: 'ask'", () => {
+    const output: StaticToolPolicyPreviewOutput = { decision: "ask" };
     expect(output.decision).toBe("ask");
   });
 });
@@ -676,17 +694,17 @@ describe("public import paths", () => {
   it("lifecycle error factories are importable from @weaveio/weave-engine", () => {
     // These are already imported at the top of this file from @weaveio/weave-engine.
     // If the imports compile and resolve, this test passes.
-    expect(typeof lifecycleValidationError).toBe("function");
-    expect(typeof lifecycleNotFoundError).toBe("function");
-    expect(typeof lifecycleLeaseConflictError).toBe("function");
-    expect(typeof lifecyclePersistenceError).toBe("function");
-    expect(typeof lifecyclePolicyDecisionError).toBe("function");
+    expect(lifecycleValidationError).toBeDefined();
+    expect(lifecycleNotFoundError).toBeDefined();
+    expect(lifecycleLeaseConflictError).toBeDefined();
+    expect(lifecyclePersistenceError).toBeDefined();
+    expect(lifecyclePolicyDecisionError).toBeDefined();
   });
 
   it("ID factory helpers are importable from @weaveio/weave-engine", () => {
-    expect(typeof createWorkflowInstanceId).toBe("function");
-    expect(typeof createExecutionLeaseId).toBe("function");
-    expect(typeof createSessionSnapshotId).toBe("function");
+    expect(createWorkflowInstanceId).toBeDefined();
+    expect(createExecutionLeaseId).toBeDefined();
+    expect(createSessionSnapshotId).toBeDefined();
   });
 });
 
@@ -713,7 +731,7 @@ describe("observeSession (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { snapshotId } = result.value;
-    expect(typeof snapshotId).toBe("string");
+    expect(snapshotId).toBeDefined();
     expect(snapshotId.length).toBeGreaterThan(0);
 
     // Verify the snapshot was persisted
@@ -744,10 +762,7 @@ describe("observeSession (Runtime Store)", () => {
         sessionStatus: "active",
         // TypeScript allows this because SafeMetadata is Record<string, string|number|boolean>
         // but the runtime sanitizer rejects it
-        metadata: { password: "hunter2" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { password: "hunter2" },
       },
       store,
     );
@@ -767,10 +782,7 @@ describe("observeSession (Runtime Store)", () => {
         harnessName: "claude-code",
         agentName: "shuttle",
         sessionStatus: "idle",
-        metadata: { token: "secret-token-value" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { token: "secret-token-value" },
       },
       store,
     );
@@ -784,7 +796,7 @@ describe("observeSession (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await observeSession(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         harnessName: "opencode",
         agentName: "loom",
@@ -806,7 +818,7 @@ describe("observeSession (Runtime Store)", () => {
     const result = await observeSession(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
@@ -920,7 +932,7 @@ describe("startExecution (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { leaseId: acquiredLeaseId, effects } = result.value;
-    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId).toBeDefined();
     expect(acquiredLeaseId.length).toBeGreaterThan(0);
     expect(effects).toHaveLength(0);
 
@@ -1013,7 +1025,7 @@ describe("startExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await startExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         ownerId: "session-abc",
       },
       store,
@@ -1150,7 +1162,7 @@ describe("resumeExecution (Runtime Store)", () => {
     if (!result.isOk()) return;
 
     const { leaseId: newLeaseId, effects } = result.value;
-    expect(typeof newLeaseId).toBe("string");
+    expect(newLeaseId).toBeDefined();
     expect(newLeaseId.length).toBeGreaterThan(0);
     expect(effects).toHaveLength(0);
 
@@ -1181,7 +1193,7 @@ describe("resumeExecution (Runtime Store)", () => {
     // Acquire an initial lease (will expire in 1 hour from clockTime)
     const firstLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "session-first-owner" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("session-first-owner"),
       ttlMs: 1, // 1ms TTL — expires almost immediately
     });
     expect(firstLeaseResult.isOk()).toBe(true);
@@ -1223,7 +1235,7 @@ describe("resumeExecution (Runtime Store)", () => {
     // Acquire an active lease by another owner
     const firstLeaseResult = await store.leases.acquire({
       workflowInstanceId: instanceId,
-      ownerId: "session-foreign-owner" as ReturnType<typeof createOwnerId>,
+      ownerId: createOwnerId("session-foreign-owner"),
       ttlMs: 3_600_000, // 1 hour — unexpired
     });
     expect(firstLeaseResult.isOk()).toBe(true);
@@ -1273,7 +1285,7 @@ describe("resumeExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await resumeExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         ownerId: "session-resume",
       },
       store,
@@ -1442,7 +1454,7 @@ describe("handleUserInterrupt (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await handleUserInterrupt(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         signal: "pause",
       },
@@ -1462,7 +1474,7 @@ describe("handleUserInterrupt (Runtime Store)", () => {
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
         signal: "cancel",
       },
       store,
@@ -1712,7 +1724,7 @@ describe("dispatchStep (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await dispatchStep(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
       },
       store,
@@ -1731,7 +1743,7 @@ describe("dispatchStep (Runtime Store)", () => {
     const result = await dispatchStep(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
       },
       store,
     );
@@ -1988,7 +2000,7 @@ describe("completeStep (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await completeStep(
       {
-        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         stepName: "plan",
         completionSignal: { outcome: "success" },
@@ -2009,7 +2021,7 @@ describe("completeStep (Runtime Store)", () => {
     const result = await completeStep(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        leaseId: createExecutionLeaseId(""),
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -2092,14 +2104,14 @@ describe("completeStep (Runtime Store)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — policy evaluation
+// previewToolPolicy — policy evaluation
 // ---------------------------------------------------------------------------
 
-describe("beforeTool", () => {
-  // Helper: build a minimal valid BeforeToolInput
+describe("previewToolPolicy", () => {
+  // Helper: build a minimal valid StaticToolPolicyPreviewInput
   function makeInput(
-    overrides: Partial<BeforeToolInput> = {},
-  ): BeforeToolInput {
+    overrides: Partial<StaticToolPolicyPreviewInput> = {},
+  ): StaticToolPolicyPreviewInput {
     return {
       workflowInstanceId: wfId,
       leaseId,
@@ -2118,7 +2130,7 @@ describe("beforeTool", () => {
   }
 
   it("allow decision: effectiveToolPolicy.read = 'allow', toolCapability = 'read'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         effectiveToolPolicy: evaluateEffectiveToolPolicy({ read: "allow" }),
@@ -2131,7 +2143,7 @@ describe("beforeTool", () => {
   });
 
   it("deny decision: effectiveToolPolicy.write = 'deny', toolCapability = 'write'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "write",
         toolName: "write_file",
@@ -2145,7 +2157,7 @@ describe("beforeTool", () => {
   });
 
   it("ask decision: effectiveToolPolicy.network = 'ask', toolCapability = 'network'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "network",
         toolName: "fetch_url",
@@ -2159,7 +2171,7 @@ describe("beforeTool", () => {
   });
 
   it("allow decision for execute capability", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "execute",
         toolName: "run_command",
@@ -2173,7 +2185,7 @@ describe("beforeTool", () => {
   });
 
   it("deny decision for delegate capability", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "delegate",
         toolName: "spawn_subagent",
@@ -2187,11 +2199,9 @@ describe("beforeTool", () => {
   });
 
   it("unknown capability: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
-      makeInput({
-        toolCapability: "unknown" as BeforeToolInput["toolCapability"],
-      }),
-    );
+    const input = makeInput();
+    Object.defineProperty(input, "toolCapability", { value: "unknown" });
+    const result = await previewToolPolicy(input);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2204,11 +2214,8 @@ describe("beforeTool", () => {
   it("missing toolCapability: returns LifecycleValidationError", async () => {
     const input = makeInput();
     // Simulate missing toolCapability at runtime
-    const inputWithoutCapability = {
-      ...input,
-      toolCapability: "" as BeforeToolInput["toolCapability"],
-    };
-    const result = await beforeTool(inputWithoutCapability);
+    Object.defineProperty(input, "toolCapability", { value: "" });
+    const result = await previewToolPolicy(input);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2219,9 +2226,9 @@ describe("beforeTool", () => {
   });
 
   it("missing workflowInstanceId: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
       }),
     );
 
@@ -2234,9 +2241,9 @@ describe("beforeTool", () => {
   });
 
   it("missing leaseId: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
       }),
     );
 
@@ -2249,11 +2256,11 @@ describe("beforeTool", () => {
   });
 
   it("output contains only decision and optional reason — no raw tool payload fields", () => {
-    // TypeScript structural test: BeforeToolOutput must only have decision and reason.
+    // TypeScript structural test: StaticToolPolicyPreviewOutput must only have decision and reason.
     // This verifies the type does not accidentally include credential or payload fields.
-    const output: BeforeToolOutput = { decision: "allow" };
+    const output: StaticToolPolicyPreviewOutput = { decision: "allow" };
 
-    // These fields must NOT exist on BeforeToolOutput (compile-time + runtime check)
+    // These fields must NOT exist on StaticToolPolicyPreviewOutput (compile-time + runtime check)
     expect("token" in output).toBe(false);
     expect("apiKey" in output).toBe(false);
     expect("password" in output).toBe(false);
@@ -2270,11 +2277,11 @@ describe("beforeTool", () => {
     }
   });
 
-  it("BeforeToolInput does not accept credential fields (structural security test)", () => {
-    // Verify that a valid BeforeToolInput object has no credential-named fields.
+  it("StaticToolPolicyPreviewInput does not accept credential fields (structural security test)", () => {
+    // Verify that a valid StaticToolPolicyPreviewInput object has no credential-named fields.
     // This is a runtime structural check — TypeScript prevents adding extra fields,
     // but we also verify at runtime that no credential keys leak into the input.
-    const input: BeforeToolInput = makeInput();
+    const input: StaticToolPolicyPreviewInput = makeInput();
 
     expect("token" in input).toBe(false);
     expect("apiKey" in input).toBe(false);
@@ -2290,14 +2297,14 @@ describe("beforeTool", () => {
     // must produce the same decision — proving toolName is audit-only.
     const policy = evaluateEffectiveToolPolicy({ read: "allow" });
 
-    const result1 = await beforeTool(
+    const result1 = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         toolName: "read_file",
         effectiveToolPolicy: policy,
       }),
     );
-    const result2 = await beforeTool(
+    const result2 = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         toolName: "some_other_harness_read_tool",
@@ -2489,7 +2496,7 @@ describe("observeSession: metadata sanitization", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { token: "secret-token" } as SafeMetadata,
+        metadata: { token: "secret-token" },
       },
       store,
     );
@@ -2512,7 +2519,7 @@ describe("observeSession: metadata sanitization", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { jwt: "eyJhbGciOiJIUzI1NiJ9" } as SafeMetadata,
+        metadata: { jwt: "eyJhbGciOiJIUzI1NiJ9" },
       },
       store,
     );
@@ -2524,13 +2531,13 @@ describe("observeSession: metadata sanitization", () => {
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — metadata sanitization integration
+// previewToolPolicy — metadata sanitization integration
 // ---------------------------------------------------------------------------
 
-describe("beforeTool: metadata sanitization", () => {
-  function makeBeforeToolInput(
-    overrides: Partial<BeforeToolInput> = {},
-  ): BeforeToolInput {
+describe("previewToolPolicy: metadata sanitization", () => {
+  function makeStaticToolPolicyPreviewInput(
+    overrides: Partial<StaticToolPolicyPreviewInput> = {},
+  ): StaticToolPolicyPreviewInput {
     return {
       workflowInstanceId: wfId,
       leaseId,
@@ -2548,10 +2555,10 @@ describe("beforeTool: metadata sanitization", () => {
     };
   }
 
-  it("beforeTool: returns validation error when metadata contains password key", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
-        metadata: { password: "hunter2" } as SafeMetadata,
+  it("previewToolPolicy: returns validation error when metadata contains password key", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
+        metadata: { password: "hunter2" },
       }),
     );
 
@@ -2564,10 +2571,10 @@ describe("beforeTool: metadata sanitization", () => {
     }
   });
 
-  it("beforeTool: returns validation error when metadata contains apiToken key", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
-        metadata: { apiToken: "sk-abc" } as SafeMetadata,
+  it("previewToolPolicy: returns validation error when metadata contains apiToken key", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
+        metadata: { apiToken: "sk-abc" },
       }),
     );
 
@@ -2576,9 +2583,9 @@ describe("beforeTool: metadata sanitization", () => {
     expect(result.error.type).toBe("validation");
   });
 
-  it("beforeTool: proceeds normally with safe metadata", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
+  it("previewToolPolicy: proceeds normally with safe metadata", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
         metadata: { filePath: "src/index.ts", attempt: 1 },
       }),
     );
@@ -2893,7 +2900,7 @@ describe("startExecution: WorkflowExecutionContext", () => {
     if (!result.isOk()) return;
 
     const { leaseId: acquiredLeaseId } = result.value;
-    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId).toBeDefined();
     expect(acquiredLeaseId.length).toBeGreaterThan(0);
 
     // Verify the lease is active and bound to the correct instance
@@ -3356,7 +3363,8 @@ describe("dispatchStep: configured workflow step resolution", () => {
       // (the rendered prompt "Create a plan for Add dark mode support (slug: add-dark-mode-support)"
       //  is non-empty)
       expect(effects[0].runAgent.promptMetadata).toBeDefined();
-      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      const pm = effects[0].runAgent.promptMetadata;
+      if (pm === undefined) return;
       expect(pm.byteLength).toBeGreaterThan(0);
     }
   });
@@ -3397,7 +3405,8 @@ describe("dispatchStep: configured workflow step resolution", () => {
       // The rendered prompt "Implement the plan at .weave/plans/add-dark-mode.md"
       // is non-empty — promptMetadata.byteLength reflects this
       expect(effects[0].runAgent.promptMetadata).toBeDefined();
-      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      const pm = effects[0].runAgent.promptMetadata;
+      if (pm === undefined) return;
       expect(pm.byteLength).toBeGreaterThan(0);
     }
   });
@@ -3567,7 +3576,7 @@ describe("dispatchStep: configured workflow step resolution", () => {
     const { effects } = result.value;
     if (effects[0]?.kind === "dispatch-agent") {
       const { correlationId } = effects[0].runAgent;
-      expect(typeof correlationId).toBe("string");
+      expect(correlationId).toBeDefined();
       // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(correlationId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -4901,7 +4910,7 @@ describe("completeStep: completion method validation and gate logic", () => {
       expect(effects[0].runAgent.stepType).toBe("gate");
       expect(effects[0].runAgent.completionMethod).toBe("review_verdict");
       // Fresh correlation ID
-      expect(typeof effects[0].runAgent.correlationId).toBe("string");
+      expect(effects[0].runAgent.correlationId).toBeDefined();
       expect(effects[0].runAgent.correlationId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
@@ -6166,10 +6175,10 @@ describe("completeStep: blocking issue fixes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1: ExecutionOperationKind — explicit operations are first-class
+// execution lifecycle contract: ExecutionOperationKind — explicit operations are first-class
 // ---------------------------------------------------------------------------
 
-describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
+describe("ExecutionOperationKind (execution lifecycle contract)", () => {
   it("EXECUTION_OPERATION_KINDS contains all 5 explicit operation kinds", () => {
     expect(EXECUTION_OPERATION_KINDS).toHaveLength(5);
     expect(EXECUTION_OPERATION_KINDS).toContain("start");
@@ -6201,17 +6210,17 @@ describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
     expect(EXECUTION_OPERATION_KINDS).not.toContain("observeSession");
   });
 
-  it("beforeTool is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
-    expect(EXECUTION_OPERATION_KINDS).not.toContain("beforeTool");
+  it("previewToolPolicy is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("previewToolPolicy");
     expect(EXECUTION_OPERATION_KINDS).not.toContain("tool");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1: inspectExecution — read-only, no side effects
+// execution lifecycle contract: inspectExecution — read-only, no side effects
 // ---------------------------------------------------------------------------
 
-describe("inspectExecution (Spec 22 Unit 1)", () => {
+describe("inspectExecution (execution lifecycle contract)", () => {
   it("InspectExecutionInput / InspectExecutionOutput type shapes are correct", () => {
     const input: InspectExecutionInput = {
       workflowInstanceId: wfId,
@@ -6229,6 +6238,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
       createdAt: "2026-06-02T00:00:00.000Z",
       updatedAt: "2026-06-02T00:01:00.000Z",
       artifacts: [],
+      stepAttempts: [],
       hasActiveLease: true,
     };
     expect(output.status).toBe("running");
@@ -6256,7 +6266,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
   it("returns validation error for missing workflowInstanceId", async () => {
     const store = createInMemoryRuntimeStore();
     const result = await inspectExecution(
-      { workflowInstanceId: "" as typeof wfId },
+      { workflowInstanceId: createWorkflowInstanceId("") },
       store,
     );
 
@@ -6445,7 +6455,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
     const result = await inspectExecution(
       {
         workflowInstanceId: instanceId,
-        metadata: { token: "secret" } as Record<string, string>,
+        metadata: { token: "secret" },
       },
       store,
     );
@@ -6457,7 +6467,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1 / ADR 0004: observeSession boundary invariants
+// Execution lifecycle contract and ADR 0004: observeSession boundary invariants
 // ---------------------------------------------------------------------------
 
 describe("observeSession boundary invariants (ADR 0004)", () => {
@@ -6710,7 +6720,7 @@ describe("startExecution: explicit authorization enforcement (ADR 0004)", () => 
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(typeof result.value.leaseId).toBe("string");
+    expect(result.value.leaseId).toBeDefined();
   });
 
   it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
@@ -6894,7 +6904,7 @@ describe("resumeExecution: explicit authorization enforcement (ADR 0004)", () =>
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(typeof result.value.leaseId).toBe("string");
+    expect(result.value.leaseId).toBeDefined();
   });
 
   it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
@@ -7128,7 +7138,7 @@ describe("observeSession: side-effect-free boundary (ADR 0004)", () => {
 
 // ---------------------------------------------------------------------------
 // Task 1.4: No implicit execution — ordinary conversation, idle, and session
-// observation paths (ADR 0004 / Spec 22 Unit 1)
+// observation paths (ADR 0004 / execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)", () => {
@@ -7329,13 +7339,13 @@ describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — side-effect-free boundary (Task 1.3 / ADR 0004)
+// previewToolPolicy — side-effect-free boundary (Task 1.3 / ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
-  it("beforeTool does not accept authorizationSource — it is not an execution operation", () => {
-    // BeforeToolInput must NOT have an authorizationSource field.
-    const input: BeforeToolInput = {
+describe("previewToolPolicy: side-effect-free boundary (ADR 0004)", () => {
+  it("previewToolPolicy does not accept authorizationSource — it is not an execution operation", () => {
+    // StaticToolPolicyPreviewInput must NOT have an authorizationSource field.
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-boundary-001"),
       leaseId: createExecutionLeaseId("lease-bt-001"),
       agentName: "shuttle",
@@ -7347,10 +7357,10 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
     expect("authorizationSource" in input).toBe(false);
   });
 
-  it("beforeTool does not create WorkflowInstances or acquire leases", async () => {
-    // beforeTool is a pure policy evaluation — it must not touch the store.
+  it("previewToolPolicy does not create WorkflowInstances or acquire leases", async () => {
+    // previewToolPolicy is a pure policy evaluation — it must not touch the store.
     // We verify this by calling it without a store and confirming it succeeds.
-    const input: BeforeToolInput = {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-no-store-001"),
       leaseId: createExecutionLeaseId("lease-bt-no-store-001"),
       agentName: "shuttle",
@@ -7359,17 +7369,17 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
       effectiveToolPolicy: evaluateEffectiveToolPolicy({ write: "allow" }),
     };
 
-    // beforeTool takes no store argument — it is a pure policy evaluation
-    const result = await beforeTool(input);
+    // previewToolPolicy takes no store argument — it is a pure policy evaluation
+    const result = await previewToolPolicy(input);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
     expect(result.value.decision).toBe("allow");
   });
 
-  it("beforeTool called repeatedly does not accumulate state", async () => {
-    // Calling beforeTool multiple times must produce the same result each time.
+  it("previewToolPolicy called repeatedly does not accumulate state", async () => {
+    // Calling previewToolPolicy multiple times must produce the same result each time.
     const policy = evaluateEffectiveToolPolicy({ execute: "ask" });
-    const input: BeforeToolInput = {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-idempotent-001"),
       leaseId: createExecutionLeaseId("lease-bt-idempotent-001"),
       agentName: "shuttle",
@@ -7379,9 +7389,9 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
     };
 
     const results = await Promise.all([
-      beforeTool(input),
-      beforeTool(input),
-      beforeTool(input),
+      previewToolPolicy(input),
+      previewToolPolicy(input),
+      previewToolPolicy(input),
     ]);
 
     for (const result of results) {
@@ -7558,6 +7568,15 @@ describe("ArtifactInputRole — type and constant surface", () => {
 // ---------------------------------------------------------------------------
 
 describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", () => {
+  type BaseWorkflowConfig = WorkflowExecutionContext["workflows"][string];
+  type RoleAwareWorkflowConfig = Omit<BaseWorkflowConfig, "steps"> & {
+    readonly steps: Array<
+      Omit<BaseWorkflowConfig["steps"][number], "inputs"> & {
+        readonly inputs?: ArtifactInputDecl[];
+      }
+    >;
+  };
+
   /**
    * Workflow fixture with mixed normative and informational inputs.
    *
@@ -7571,7 +7590,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
    * "plan" step:
    *   - no inputs (produces plan_path)
    */
-  const mixedInputWorkflows: WorkflowExecutionContext["workflows"] = {
+  const mixedInputWorkflows = {
     "mixed-inputs": {
       version: 1,
       steps: [
@@ -7599,7 +7618,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "context_doc",
               description: "Optional context document",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
         {
@@ -7614,7 +7633,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "build_report",
               description: "Build report (advisory)",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
@@ -7633,7 +7652,7 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "required_spec",
               description: "Required specification",
               role: "normative",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
@@ -7652,12 +7671,12 @@ describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", 
               name: "prior_analysis",
               description: "Prior analysis (advisory)",
               role: "informational",
-            } as ArtifactInputDecl,
+            },
           ],
         },
       ],
     },
-  };
+  } satisfies Record<string, RoleAwareWorkflowConfig>;
 
   /**
    * Helper: start an execution with workflow context.
@@ -8375,10 +8394,7 @@ describe("reconcileExecution (Runtime Store)", () => {
    * - implement: has reconciliation_handlers for user-revision-request
    * - security-review: no handlers (gate step)
    */
-  const reconcileWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const reconcileWorkflows = {
     "reconcile-workflow": {
       name: "reconcile-workflow",
       description: "Test workflow for reconciliation",
@@ -8420,7 +8436,7 @@ describe("reconcileExecution (Runtime Store)", () => {
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const reconcileContext: WorkflowExecutionContext = {
     workflowName: "reconcile-workflow",
@@ -8459,7 +8475,7 @@ describe("reconcileExecution (Runtime Store)", () => {
     const store = createInMemoryRuntimeStore();
     const result = await reconcileExecution(
       {
-        workflowInstanceId: "" as typeof wfId,
+        workflowInstanceId: createWorkflowInstanceId(""),
         leaseId,
         reason: "user-revision-request",
         authorizationSource: "user",
@@ -8479,7 +8495,7 @@ describe("reconcileExecution (Runtime Store)", () => {
     const result = await reconcileExecution(
       {
         workflowInstanceId: wfId,
-        leaseId: "" as typeof leaseId,
+        leaseId: createExecutionLeaseId(""),
         reason: "user-revision-request",
         authorizationSource: "user",
       },
@@ -8495,15 +8511,14 @@ describe("reconcileExecution (Runtime Store)", () => {
 
   it("returns validation error for missing reason", async () => {
     const store = createInMemoryRuntimeStore();
-    const result = await reconcileExecution(
-      {
-        workflowInstanceId: wfId,
-        leaseId,
-        reason: "" as "user-revision-request",
-        authorizationSource: "user",
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "user-revision-request" as const,
+      authorizationSource: "user" as const,
+    };
+    Object.defineProperty(input, "reason", { value: "" });
+    const result = await reconcileExecution(input, store);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -8514,15 +8529,14 @@ describe("reconcileExecution (Runtime Store)", () => {
 
   it("returns validation error for missing authorizationSource", async () => {
     const store = createInMemoryRuntimeStore();
-    const result = await reconcileExecution(
-      {
-        workflowInstanceId: wfId,
-        leaseId,
-        reason: "user-revision-request",
-        authorizationSource: "" as ReconciliationAuthorizationSource,
-      },
-      store,
-    );
+    const input = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "user-revision-request" as const,
+      authorizationSource: "user" as const,
+    };
+    Object.defineProperty(input, "authorizationSource", { value: "" });
+    const result = await reconcileExecution(input, store);
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -9024,10 +9038,7 @@ describe("reconcileExecution (Runtime Store)", () => {
         leaseId,
         reason: "user-revision-request",
         authorizationSource: "user",
-        metadata: { token: "secret" } as Record<
-          string,
-          string | number | boolean
-        >,
+        metadata: { token: "secret" },
       },
       store,
     );
@@ -9038,10 +9049,10 @@ describe("reconcileExecution (Runtime Store)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — gate re-run behavior (Spec 22 Unit 3)
+// reconcileExecution — gate re-run behavior (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — gate re-run (execution lifecycle contract)", () => {
   /**
    * Workflow for gate re-run tests.
    *
@@ -9051,10 +9062,7 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
    * - review-gate: gate step (no handlers)
    * - security-gate: gate step (no handlers)
    */
-  const gateReRunWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const gateReRunWorkflows = {
     "gate-rerun-workflow": {
       name: "gate-rerun-workflow",
       description: "Test workflow for gate re-run tests",
@@ -9107,7 +9115,7 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const gateReRunContext: WorkflowExecutionContext = {
     workflowName: "gate-rerun-workflow",
@@ -9260,10 +9268,7 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
 
   it("review-rejection fail-closed: gateReRunStepName is still set even when no handler found", async () => {
     // Workflow with no handlers for review-rejection
-    const noHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noHandlerWorkflows = {
       "no-handler-workflow": {
         name: "no-handler-workflow",
         description: "Workflow with no review-rejection handlers",
@@ -9289,7 +9294,7 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noHandlerContext: WorkflowExecutionContext = {
       workflowName: "no-handler-workflow",
@@ -9371,10 +9376,10 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — before-plan exclusion (Spec 22 Unit 3)
+// reconcileExecution — before-plan exclusion (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — before-plan exclusion (execution lifecycle contract)", () => {
   /**
    * Workflow with before-plan extension point.
    *
@@ -9388,10 +9393,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
    * guarantee by simulating a step that has handlers but is in the before-plan
    * position (e.g. after config merge or composition bypasses schema validation).
    */
-  const beforePlanWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const beforePlanWorkflows = {
     "before-plan-workflow": {
       name: "before-plan-workflow",
       description: "Workflow with before-plan extension point",
@@ -9441,7 +9443,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const beforePlanContext: WorkflowExecutionContext = {
     workflowName: "before-plan-workflow",
@@ -9507,10 +9509,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
   it("before-plan step is skipped: routes to planning step when implement has no handler", async () => {
     // Workflow where only spec-review (before-plan) and plan have handlers,
     // but implement does not. The engine must skip spec-review and route to plan.
-    const noImplementHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noImplementHandlerWorkflows = {
       "no-implement-handler-workflow": {
         name: "no-implement-handler-workflow",
         description: "Workflow where implement has no handler",
@@ -9558,7 +9557,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noImplementHandlerContext: WorkflowExecutionContext = {
       workflowName: "no-implement-handler-workflow",
@@ -9607,10 +9606,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
   it("before-plan exclusion: fails closed when only before-plan steps have handlers", async () => {
     // Workflow where only the before-plan step has a handler — no valid handler
     // exists after exclusion, so the engine must fail closed.
-    const onlyBeforePlanHandlerWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const onlyBeforePlanHandlerWorkflows = {
       "only-before-plan-handler-workflow": {
         name: "only-before-plan-handler-workflow",
         description: "Workflow where only before-plan step has handler",
@@ -9649,7 +9645,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const onlyBeforePlanContext: WorkflowExecutionContext = {
       workflowName: "only-before-plan-handler-workflow",
@@ -9697,10 +9693,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
 
   it("workflow without extension_points.before_plan: no steps are excluded", async () => {
     // Workflow without before-plan extension point — all steps are eligible
-    const noExtensionWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const noExtensionWorkflows = {
       "no-extension-workflow": {
         name: "no-extension-workflow",
         description: "Workflow without before-plan extension",
@@ -9727,7 +9720,7 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const noExtensionContext: WorkflowExecutionContext = {
       workflowName: "no-extension-workflow",
@@ -9775,10 +9768,10 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
+// reconcileExecution — immutable completed plan tasks (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — immutable completed plan tasks (execution lifecycle contract)", () => {
   /**
    * Workflow for immutable plan tests.
    *
@@ -9790,10 +9783,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
    * plan has reconciliation_handlers for user-revision-request.
    * implement has reconciliation_handlers for user-revision-request.
    */
-  const immutablePlanWorkflows: Record<
-    string,
-    WorkflowExecutionContext["workflows"][string]
-  > = {
+  const immutablePlanWorkflows = {
     "immutable-plan-workflow": {
       name: "immutable-plan-workflow",
       description: "Test workflow for immutable plan tests",
@@ -9831,7 +9821,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
         },
       ],
     },
-  };
+  } satisfies WorkflowExecutionContext["workflows"];
 
   const immutablePlanContext: WorkflowExecutionContext = {
     workflowName: "immutable-plan-workflow",
@@ -10052,10 +10042,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
 
   it("rejects reconciliation when plan_created step's plan is complete", async () => {
     // Workflow with plan_created completion method
-    const planCreatedWorkflows: Record<
-      string,
-      WorkflowExecutionContext["workflows"][string]
-    > = {
+    const planCreatedWorkflows = {
       "plan-created-workflow": {
         name: "plan-created-workflow",
         description: "Workflow with plan_created completion",
@@ -10083,7 +10070,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
           },
         ],
       },
-    };
+    } satisfies WorkflowExecutionContext["workflows"];
 
     const planCreatedContext: WorkflowExecutionContext = {
       workflowName: "plan-created-workflow",
@@ -10247,7 +10234,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — runtime-contract.test.ts coverage (Spec 22 Unit 3)
+// reconcileExecution — runtime-contract.test.ts coverage (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("reconcileExecution — closed reason set enforcement", () => {
@@ -10276,7 +10263,7 @@ describe("reconcileExecution — closed reason set enforcement", () => {
       "review-gate",
       "security-gate",
     ];
-    const authorizedMap: Record<string, string> = {
+    const authorizedMap = {
       "execution-mismatch": "runtime",
       "user-revision-request": "user",
       "review-rejection": "review-gate",
@@ -10287,10 +10274,7 @@ describe("reconcileExecution — closed reason set enforcement", () => {
       const authorized = authorizedMap[reason];
       for (const source of allSources) {
         if (source === authorized) continue;
-        const result = validateReconciliationSource(
-          reason,
-          source as ReconciliationAuthorizationSource,
-        );
+        const result = validateReconciliationSource(reason, source);
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
           expect(result.error.type).toBe("policy_decision");

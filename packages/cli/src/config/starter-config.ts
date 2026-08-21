@@ -24,8 +24,8 @@ agent loom {
   }
 
   triggers [
-    { domain "Planning" trigger "Break complex work into safe steps" }
-    { domain "Review" trigger "Coordinate specialist review" }
+    "Break complex work into safe steps"
+    "Coordinate specialist review"
   ]
 
   skills ["code-review"]
@@ -50,7 +50,7 @@ agent shuttle {
 category backend {
   description "Backend APIs, services, persistence, and data integrity"
   models ["claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
+  triggers ["Use for API contracts, services, and persistence"]
   prompt_append "Prioritize API contracts, migrations, and backwards compatibility."
   temperature 0.2
 }
@@ -58,7 +58,7 @@ category backend {
 category frontend {
   description "Frontend UI, styling, accessibility, and user interaction"
   models ["gpt-4o"]
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  triggers ["Use for UI, styling, and accessibility"]
   prompt_append "Preserve accessibility and responsive behavior."
   temperature 0.2
 }

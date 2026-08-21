@@ -62,7 +62,7 @@ class IsolatedConsumer {
         type: "Filesystem" as const,
         path: destination,
         operation: "write" as const,
-      })).map(() => undefined),
+      })).andThen(() => okAsync()),
     );
   }
 
@@ -109,7 +109,7 @@ class IsolatedConsumer {
   }
 
   cleanup(): ResultAsync<void, ConsumerTestError> {
-    return this.run(["rm", "-rf", this.directory]).map(() => undefined);
+    return this.run(["rm", "-rf", this.directory]).andThen(() => okAsync());
   }
 }
 

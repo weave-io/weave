@@ -35,6 +35,7 @@ import {
   RELEASE_PR_LABEL,
   type RegenerationBuilder,
   type RegenerationDraft,
+  type ReleasePrEnvelope,
   type ReleasePrError,
   type ReleasePrOwnership,
   type ReleasePrPorts,
@@ -55,17 +56,21 @@ function hex(seed: string): string {
   return new Bun.CryptoHasher("sha256").update(seed).digest("hex");
 }
 
+/** The evidence every prepared release in these tests cites. */
+const EVIDENCE: ChangelogEvidence = { pullRequests: [412] };
+const EVIDENCE_DIGEST = evidenceDigest(EVIDENCE);
+
 /** Builds a valid envelope whose rendered form is exactly `bytes` long. */
 function envelopeSized(bytes: number) {
   const digest = `sha256:${hex("pad")}`;
   const records: { key: string; digest: string }[] = [{ key: "x", digest }];
-  const build = () => ({
-    schemaVersion: 1 as const,
+  const build = (): ReleasePrEnvelope => ({
+    schemaVersion: RELEASE_PR_ENVELOPE_SCHEMA_VERSION,
     ref: RELEASE_PR_MARKER_REF,
     ownerGeneration: hex("owner"),
     plannedBaseSha: sha("base"),
     baseSha: sha("base"),
-    regeneratedFrom: [] as string[],
+    regeneratedFrom: [],
     entryProse: records.map((record) => ({ ...record })),
     evidenceDigest: EVIDENCE_DIGEST,
   });
@@ -120,10 +125,6 @@ function identity(id: string, seed = id): ChangesetIdentity {
   return { id, sourceDigest: hex(seed) };
 }
 
-/** The evidence every prepared release in these tests cites. */
-const EVIDENCE: ChangelogEvidence = { pullRequests: [412] };
-const EVIDENCE_DIGEST = evidenceDigest(EVIDENCE);
-
 function entry(
   prose: string,
   sources: readonly ChangesetIdentity[],
@@ -159,6 +160,20 @@ interface FakeFaults {
   team: number;
   readMain: number;
 }
+
+type NumericFaultKey =
+  | "createCommit"
+  | "readRef"
+  | "updateRef"
+  | "deleteRef"
+  | "listPulls"
+  | "readCommitMessage"
+  | "compareCommits"
+  | "updatePullRequest"
+  | "addLabels"
+  | "completion"
+  | "team"
+  | "readMain";
 
 interface FakeHooks {
   beforeCreateRef?: () => void;
@@ -240,7 +255,7 @@ class FakeGitHub {
     this.refs.set(ref, value);
     this.createdRefs.push({ ref, sha: value });
     this.log.push(`createRef ${ref}=${value}`);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   updateRefWithLease(
@@ -260,7 +275,7 @@ class FakeGitHub {
       });
     this.refs.set(ref, value);
     this.log.push(`updateRef ${ref}=${value}`);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   deleteRefWithLease(
@@ -278,7 +293,7 @@ class FakeGitHub {
       });
     this.refs.delete(ref);
     this.log.push(`deleteRef ${ref}`);
-    return okAsync(undefined);
+    return okAsync(void 0);
   }
 
   createCommitOnBase(input: {
@@ -478,10 +493,10 @@ class FakeGitHub {
     return okAsync(this.members.has(input.login));
   }
 
-  private consume(key: keyof FakeFaults): boolean {
+  private consume(key: NumericFaultKey): boolean {
     const remaining = this.faults[key];
-    if (typeof remaining !== "number" || remaining <= 0) return false;
-    (this.faults[key] as number) = remaining - 1;
+    if (remaining <= 0) return false;
+    this.faults[key] = remaining - 1;
     return true;
   }
 }
@@ -1894,17 +1909,17 @@ describe("transactional creation faults", () => {
   const cases: FaultCase[] = [
     {
       name: "plan rebinding",
-      apply: () => undefined,
+      apply: () => void 0,
       preparer: failingPreparer("plan-rebinding"),
     },
     {
       name: "docs gate",
-      apply: () => undefined,
+      apply: () => void 0,
       preparer: failingPreparer("docs-gate"),
     },
     {
       name: "changelog AI",
-      apply: () => undefined,
+      apply: () => void 0,
       preparer: failingPreparer("changelog-ai"),
     },
     {

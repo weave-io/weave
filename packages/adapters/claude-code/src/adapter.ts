@@ -24,7 +24,10 @@ import {
   CC_START_WORK_COMMAND,
   CC_WEAVE_START_COMMAND,
 } from "./command-templates.js";
-import { buildClaudeCodeModelInput } from "./model-resolution.js";
+import {
+  buildClaudeCodeModelInput,
+  describeClaudeCodeFastActivation,
+} from "./model-resolution.js";
 import { discoverClaudeCodeSkills } from "./skill-discovery.js";
 import {
   CLAUDE_CODE_TOOL_IDS,
@@ -134,7 +137,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const markdown = this.translateDescriptor(descriptor);
       this.pendingAgents.push({ name: descriptor.name, markdown });
       log.info({ agent: descriptor.name }, "Queued agent for flush");
-      return okAsync(undefined);
+      return okAsync();
     } catch (e) {
       return errAsync(e instanceof Error ? e : new Error(String(e)));
     }
@@ -162,6 +165,23 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   // ---------------------------------------------------------------------------
 
   private translateDescriptor(descriptor: AgentDescriptor): string {
+    // Provider acceleration is an unsupported invocation control here, exactly
+    // like thinking levels: report the bounded gap and continue materializing.
+    const fastDiagnostic = describeClaudeCodeFastActivation(descriptor);
+    if (fastDiagnostic) {
+      log.warn(
+        {
+          agent: descriptor.name,
+          capability: fastDiagnostic.capabilityId,
+          state: fastDiagnostic.state,
+          evidenceKind: fastDiagnostic.evidenceKind,
+          evidenceOutcome: fastDiagnostic.evidenceOutcome,
+          reason: fastDiagnostic.reason,
+        },
+        "Provider acceleration intent is unsupported by Claude Code static materialization",
+      );
+    }
+
     const modelInput = buildClaudeCodeModelInput(descriptor);
     const modelResult = resolveAdapterModelIntent(modelInput);
     const resolvedModel = modelResult.model;
@@ -207,9 +227,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const pendingNames = new Set(
         this.pendingAgents.map((a) => `${a.name}.md`),
       );
-      const existing = await this.readDir(agentsDir).catch(
-        () => [] as string[],
-      );
+      const existing = await this.readDir(agentsDir).catch(() => []);
       for (const file of existing) {
         if (file.endsWith(".md") && !pendingNames.has(file)) {
           await this.removeFile(join(agentsDir, file));
@@ -248,11 +266,11 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         await this.mkdir(commandsDir);
       } else {
         // Clean up any .md files not in the current command set so stale
-        // commands don't remain after tapestry is removed.
+        // commands don't remain after tapestry is removed. Command files Weave
+        // no longer generates (such as the old `goal.md`) are removed by this
+        // same stale sweep.
         const commandNames = new Set(["start.md", "start-work.md"]);
-        const existing = await this.readDir(commandsDir).catch(
-          () => [] as string[],
-        );
+        const existing = await this.readDir(commandsDir).catch(() => []);
         for (const file of existing) {
           if (file.endsWith(".md") && !commandNames.has(file)) {
             await this.removeFile(join(commandsDir, file));
@@ -277,9 +295,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       const commandsDir = join(this.outDir, "commands");
       const commandsDirExists = await this.exists(commandsDir);
       if (commandsDirExists) {
-        const existing = await this.readDir(commandsDir).catch(
-          () => [] as string[],
-        );
+        const existing = await this.readDir(commandsDir).catch(() => []);
         for (const file of existing) {
           if (file.endsWith(".md")) {
             await this.removeFile(join(commandsDir, file));

@@ -31,6 +31,14 @@ export const RELEASE_ATTEST_WORKFLOW_PATH =
   ".github/workflows/release-attest.yml" as const;
 
 /**
+ * The single nightly cron. Task 35's cutover moved it off the removed
+ * publish.yml onto the trusted publish workflow, where it stays inert until
+ * Task 38's two-phase activation. It is the only schedule that workflow may
+ * declare.
+ */
+export const CUTOVER_NIGHTLY_CRON = "17 0 * * *" as const;
+
+/**
  * The only release branch. Its atomic creation is the exclusivity lock for the
  * single open stable release PR, and it dies with that PR.
  */
@@ -101,6 +109,14 @@ export const PUBLIC_PACKAGES = {
 
 export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 
+/** The publishable catalog in its canonical declaration order. */
+export const PUBLIC_PACKAGE_NAMES = [
+  "@weaveio/weave-cli",
+  "@weaveio/weave-adapter-opencode",
+  "@weaveio/weave-adapter-claude-code",
+  "@weaveio/weave-adapter-pi",
+] as const satisfies readonly PublicPackageName[];
+
 /** Third-party packages that are intentionally resolved by a packed artifact. */
 export const PUBLIC_RUNTIME_EXTERNALS = [
   "@clack/prompts",
@@ -132,6 +148,8 @@ export interface PublicPackageBuild {
   entries: readonly PublicBuildEntry[];
   declarations: readonly PublicDeclarationBuild[];
   bootstrap?: readonly string[];
+  /** Extra package-relative files copied into the packed artifact as-is. */
+  extraFiles?: readonly string[];
   runtimeExternals?: readonly string[];
 }
 
@@ -223,9 +241,12 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/host-module-loader.js",
       },
       {
+        source: "packages/adapters/pi/src/extension-build-identity.ts",
+        output: "packages/adapters/pi/dist/extension-build-identity.js",
+      },
+      {
         source: "packages/adapters/pi/src/extension.ts",
         output: "packages/adapters/pi/dist/extension.js",
-        transpileOnly: true,
       },
       {
         source: "packages/adapters/pi/src/extension-impl.ts",
@@ -250,6 +271,7 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/pi/dist/extension-impl.d.ts",
       },
     ],
+    extraFiles: ["dist/extension-build-identity.json"],
   },
 } as const satisfies Record<PublicPackageName, PublicPackageBuild>;
 
@@ -297,65 +319,20 @@ export const PACKAGE_ARCHIVE_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Deprecated stable-train constants.
+// Retired-publisher identity.
 //
-// These exist only so the not-yet-removed stable-train and metadata-replay
-// modules keep compiling. They are deleted with their consumers in a single
-// commit. No new code may read them.
+// The old publication workflow was removed at the Task 35 cutover. The
+// rollback and pre-cutover doctor mode name this path only when Git revert
+// restores the old publisher. Nothing here grants publication authority, and
+// no new code may treat it as a route.
 // ---------------------------------------------------------------------------
 
-/** @deprecated Old publish workflow. Use the per-workflow paths above. */
+/** Retired publish workflow, named only by rollback and pre-cutover checks. */
 export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
 
-/** Stable workflow-run identity for the read-only pre-cutover proof. */
-export const LEGACY_PREFLIGHT_RUN_NAME = "legacy-publisher-preflight" as const;
-
-/** @deprecated Stable-train operation names. The new pipeline routes by channel. */
-export const RELEASE_OPERATIONS = [
-  "nightly",
-  "stable-cut",
-  "stable-fix",
-  "stable-publish",
-  "stable-finalize",
-  "metadata-replay",
-] as const;
-
-/** @deprecated Stable-train record schema version. */
-export const TRAIN_SCHEMA_VERSION = 1 as const;
-
-/** @deprecated Stable-train record lifetime. */
-export const TRAIN_VALIDITY_DAYS = 7 as const;
-
-/** @deprecated Stable-train lifecycle states. */
-export const STABLE_TRAIN_STATES = [
-  "prepared",
-  "built",
-  "bound",
-  "published-next",
-  "awaiting-promotion",
-  "promoted",
-  "release-draft",
-  "finalized",
-  "metadata-pending",
-  "blocked",
-  "expired",
-  "abandoned",
-  "partial",
-] as const;
-
-/** @deprecated Stable-train lifecycle transitions. */
-export const STABLE_TRAIN_TRANSITIONS = {
-  prepared: ["built", "blocked", "abandoned", "expired"],
-  built: ["bound", "blocked", "abandoned", "expired"],
-  bound: ["published-next", "blocked", "abandoned", "expired"],
-  "published-next": ["awaiting-promotion", "partial", "blocked", "expired"],
-  "awaiting-promotion": ["promoted", "partial", "blocked", "expired"],
-  promoted: ["release-draft", "finalized", "metadata-pending", "blocked"],
-  "release-draft": ["finalized", "metadata-pending", "blocked", "abandoned"],
-  finalized: ["metadata-pending"],
-  "metadata-pending": ["finalized", "blocked"],
-  blocked: ["abandoned", "expired"],
-  expired: ["abandoned"],
-  abandoned: [],
-  partial: ["blocked", "abandoned"],
-} as const;
+/**
+ * Binding-record operation vocabulary retained by the adapted artifact
+ * identity checks. The new pipeline routes by channel; only the two channel
+ * operations that the retained binding checks still validate survive.
+ */
+export const RELEASE_OPERATIONS = ["nightly", "stable-publish"] as const;

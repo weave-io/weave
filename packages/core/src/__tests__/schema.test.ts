@@ -1,9 +1,28 @@
 import { describe, expect, it } from "bun:test";
-import { ToolPermissionSchema, ToolPolicySchema } from "@weaveio/weave-core";
+import {
+  type AgentConfig,
+  type CategoryConfig,
+  copySafeGraph,
+  DEFAULT_DELEGATION_LIMITS,
+  MAX_DELEGATION_LIMITS,
+  type ModelIntentEntry,
+  type ModelIntentParseError,
+  parseModelIntentEntry,
+  type SafeGraphCopyBudget,
+  THINKING_LEVEL_VALUES,
+  type ThinkingLevelDecl,
+  ThinkingLevelSchema,
+  type ToolPermission,
+  ToolPermissionSchema,
+  type ToolPolicy,
+  ToolPolicySchema,
+} from "@weaveio/weave-core";
 import {
   AgentConfigSchema,
+  AgentDelegationConfigSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
+  DelegationSettingsSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,
   LogLevelSchema,
@@ -21,11 +40,28 @@ import {
   WorkflowStepTypeSchema,
 } from "../schema.js";
 
+function omittedZodInput(): undefined {
+  return;
+}
+
 // ---------------------------------------------------------------------------
 // @weaveio/weave-core barrel — public API assertions
 // ---------------------------------------------------------------------------
 
 describe("@weaveio/weave-core barrel exports", () => {
+  it("exports SafeGraphCopyBudget through the public type surface", () => {
+    const budget: SafeGraphCopyBudget = {
+      maxDepth: 4,
+      maxNodes: 32,
+      maxProperties: 32,
+      maxPropertiesPerObject: 8,
+      maxArrayLength: 8,
+      maxStringLength: 1024,
+    };
+    const copied = copySafeGraph({ value: true }, budget);
+    expect(copied.isOk()).toBe(true);
+  });
+
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();
     expect(ToolPermissionSchema.safeParse("allow").success).toBe(true);
@@ -52,7 +88,7 @@ describe("@weaveio/weave-core barrel exports", () => {
     const r = ToolPolicySchema.safeParse({ read: "allow" });
     expect(r.success).toBe(true);
     if (r.success) {
-      const policy: import("@weaveio/weave-core").ToolPolicy = r.data;
+      const policy: ToolPolicy = r.data;
       expect(policy.read).toBe("allow");
     }
   });
@@ -62,8 +98,37 @@ describe("@weaveio/weave-core barrel exports", () => {
     const parsed = ToolPermissionSchema.safeParse("allow");
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
+      const perm: ToolPermission = parsed.data;
       expect(perm).toBe("allow");
+    }
+  });
+
+  it("exports model thinking schemas, values, parser, and types from one barrel", () => {
+    expect(ThinkingLevelSchema.safeParse("high").success).toBe(true);
+    expect(THINKING_LEVEL_VALUES).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+
+    const parsed = parseModelIntentEntry("provider/model#high");
+    expect(parsed.isOk()).toBe(true);
+    if (parsed.isOk()) {
+      const entry: ModelIntentEntry = parsed.value;
+      const level: ThinkingLevelDecl = entry.thinkingLevel ?? "off";
+      expect(entry.baseModel).toBe("provider/model");
+      expect(level).toBe("high");
+    }
+
+    const invalid = parseModelIntentEntry("provider/model#unknown");
+    expect(invalid.isErr()).toBe(true);
+    if (invalid.isErr()) {
+      const parseError: ModelIntentParseError = invalid.error;
+      expect(parseError.type).toBe("InvalidThinkingLevelSuffix");
     }
   });
 });
@@ -485,7 +550,7 @@ describe("WorkflowConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WorkflowConfigSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
+  // WorkflowConfigSchema — prompt_append and prompt_append_file (execution lifecycle contract)
   // -------------------------------------------------------------------------
 
   it("accepts workflow with prompt_append (workflow-scope append)", () => {
@@ -581,7 +646,7 @@ describe("WorkflowConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WorkflowStepSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
+// WorkflowStepSchema — prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("WorkflowStepSchema — prompt_append and prompt_append_file", () => {
@@ -710,11 +775,101 @@ describe("RuntimeSettingsSchema", () => {
   });
 
   it("defaults entire runtime settings when undefined", () => {
-    const r = RuntimeSettingsSchema.safeParse(undefined);
+    const r = RuntimeSettingsSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.journal.strict).toBe(false);
+      expect(r.data.journal.retention_days).toBe(30);
+      expect(r.data.journal.max_entries).toBe(10_000);
+      expect(r.data.usage.detail_retention_days).toBe(30);
+      expect(r.data.usage.max_observations).toBe(100_000);
+      expect(r.data.log.max_segment_bytes).toBe(5_242_880);
+      expect(r.data.log.max_segments).toBe(3);
     }
+  });
+
+  it("accepts full retention settings at defaults", () => {
+    const r = RuntimeSettingsSchema.safeParse({
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts boundary values for all retention fields", () => {
+    const r = RuntimeSettingsSchema.safeParse({
+      journal: { retention_days: 1, max_entries: 1 },
+      usage: { detail_retention_days: 3650, max_observations: 10_000_000 },
+      log: { max_segment_bytes: 65_536, max_segments: 100 },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.journal.retention_days).toBe(1);
+      expect(r.data.journal.max_entries).toBe(1);
+      expect(r.data.usage.detail_retention_days).toBe(3650);
+      expect(r.data.usage.max_observations).toBe(10_000_000);
+      expect(r.data.log.max_segment_bytes).toBe(65_536);
+      expect(r.data.log.max_segments).toBe(100);
+    }
+  });
+
+  it("rejects zero and out-of-range retention values", () => {
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { retention_days: 0 } })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { retention_days: 3651 } })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { max_entries: 0 } }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        journal: { max_entries: 10_000_001 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        usage: { detail_retention_days: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        usage: { max_observations: 10_000_001 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 65_535 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 1_073_741_825 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ log: { max_segments: 0 } }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ log: { max_segments: 101 } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects non-integer retention values", () => {
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        journal: { retention_days: 1.5 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 65_536.5 },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -739,11 +894,27 @@ describe("SettingsConfigSchema", () => {
     }
   });
 
-  it("defaults log_level to INFO when omitted", () => {
+  it("accepts an explicit permission-enforcement toggle", () => {
+    const r = SettingsConfigSchema.safeParse({ enforce_permissions: false });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.enforce_permissions).toBe(false);
+    }
+  });
+
+  it("rejects a non-boolean permission-enforcement toggle", () => {
+    const r = SettingsConfigSchema.safeParse({
+      enforce_permissions: "false",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("preserves an omitted permission toggle for layered merge", () => {
     const r = SettingsConfigSchema.safeParse({});
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
+      expect(r.data.enforce_permissions).toBeUndefined();
     }
   });
 
@@ -777,10 +948,11 @@ describe("SettingsConfigSchema", () => {
   });
 
   it("defaults entire settings when undefined", () => {
-    const r = SettingsConfigSchema.safeParse(undefined);
+    const r = SettingsConfigSchema.safeParse(omittedZodInput());
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
+      expect(r.data.enforce_permissions).toBeUndefined();
       expect(r.data.runtime.journal.strict).toBe(false);
     }
   });
@@ -887,12 +1059,182 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CategoryConfigSchema — description (required, non-blank)
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema and CategoryConfigSchema — fast intent and triggers", () => {
+  const schemas = [
+    ["agent", AgentConfigSchema, {}],
+    ["category", CategoryConfigSchema, { description: "Bounded work" }],
+  ] as const;
+
+  for (const [kind, schema, base] of schemas) {
+    it(`${kind} accepts literal fast true and ordered non-blank triggers`, () => {
+      const result = schema.safeParse({
+        ...base,
+        fast: true,
+        triggers: ["First trigger", "Second trigger"],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBe(true);
+        expect(result.data.triggers).toEqual([
+          "First trigger",
+          "Second trigger",
+        ]);
+      }
+    });
+
+    it(`${kind} preserves omission of fast and triggers`, () => {
+      const result = schema.safeParse(base);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.fast).toBeUndefined();
+        expect(result.data.triggers).toBeUndefined();
+      }
+    });
+
+    it(`${kind} rejects false and wrong scalar fast values`, () => {
+      for (const fast of [false, "true", 1, null]) {
+        expect(schema.safeParse({ ...base, fast }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects empty, blank, non-string, and structured triggers`, () => {
+      for (const triggers of [
+        [],
+        [""],
+        ["   "],
+        [42],
+        [{ domain: "Orchestration", trigger: "Plan work" }],
+      ]) {
+        expect(schema.safeParse({ ...base, triggers }).success).toBe(false);
+      }
+    });
+
+    it(`${kind} rejects provider acceleration aliases`, () => {
+      for (const alias of [
+        "service_class",
+        "speed",
+        "variant",
+        "priority",
+      ] as const) {
+        expect(schema.safeParse({ ...base, [alias]: true }).success).toBe(
+          false,
+        );
+      }
+    });
+  }
+
+  it("exports public agent and category types with the new shapes", () => {
+    const agent: AgentConfig = {
+      fast: true,
+      triggers: ["Plan work"],
+    };
+    const category: CategoryConfig = {
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    };
+    expect(agent).toEqual({ fast: true, triggers: ["Plan work"] });
+    expect(category).toEqual({
+      description: "Bounded work",
+      fast: true,
+      triggers: ["Small changes"],
+    });
+  });
+
+  it("rejects removed category patterns", () => {
+    const result = CategoryConfigSchema.safeParse({
+      description: "Backend work",
+      patterns: ["src/**"],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("CategoryConfigSchema — description", () => {
+  it("accepts a category with a non-blank description", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Frontend components and styling",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.description).toBe("Frontend components and styling");
+    }
+  });
+
+  it("preserves surrounding whitespace verbatim when content is present", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "  Backend services  ",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.description).toBe("  Backend services  ");
+  });
+
+  it("rejects a category with no description at all", () => {
+    const r = CategoryConfigSchema.safeParse({});
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue).toBeDefined();
+      expect(issue?.code).toBe("invalid_type");
+    }
+  });
+
+  it("rejects an empty-string description with the non-empty message", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.message).toBe(
+        "category description must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects a whitespace-only description with the non-empty message", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "   \t\n  ",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.message).toBe(
+        "category description must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects a non-string description", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: 42,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues.find(
+        (i) => i.path.join(".") === "description",
+      );
+      expect(issue?.code).toBe("invalid_type");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CategoryConfigSchema — prompt_append_file
 // ---------------------------------------------------------------------------
 
 describe("CategoryConfigSchema — prompt_append_file", () => {
   const baseCategory = {
-    patterns: ["src/**/*.ts"],
+    description: "TypeScript source edits",
   };
 
   it("accepts prompt_append_file with a valid relative path", () => {
@@ -1181,7 +1523,15 @@ describe("WorkflowConfigSchema — extension_points", () => {
   it("rejects workflow with two planning steps (DuplicatePlanningStep)", () => {
     const r = WorkflowConfigSchema.safeParse({
       version: 1,
-      steps: [planningStep, { ...planningStep, name: "plan2" }, regularStep],
+      steps: [
+        planningStep,
+        {
+          ...planningStep,
+          name: "plan2",
+          completion: { ...planningStep.completion },
+        },
+        regularStep,
+      ],
     });
     expect(r.success).toBe(false);
     if (!r.success) {
@@ -1508,10 +1858,10 @@ describe("WorkflowStepSchema — reconciliation_handlers", () => {
 // ---------------------------------------------------------------------------
 
 describe("WorkflowStepSchema — v1 before-plan non-reconciling contract", () => {
-  // Spec 22 Unit 2 states: "before-plan steps do not participate in
-  // reconciliation semantics" in v1.
+  // The execution lifecycle contract states: "before-plan steps do not
+  // participate in reconciliation semantics" in v1.
   //
-  // As of Task 4.1, `reconciliation_handlers` IS a valid schema field on
+  // `reconciliation_handlers` is a valid schema field on
   // WorkflowStepSchema. The v1 non-reconciling constraint for before-plan
   // steps is enforced at the engine/runtime layer (not the schema layer),
   // because the schema cannot know which steps will end up in the before-plan
@@ -1656,5 +2006,294 @@ describe("AgentConfigSchema — review_models field", () => {
       review_models: "claude-opus-4-5",
     });
     expect(r.success).toBe(false);
+  });
+});
+
+describe("delegation limit schemas", () => {
+  it("uses the approved defaults", () => {
+    expect(DEFAULT_DELEGATION_LIMITS).toEqual({
+      max_children: 32,
+      max_concurrency: 8,
+      max_depth: 8,
+      max_processes: 32,
+    });
+  });
+
+  it("accepts portable project and agent delegation limits", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({
+        max_children: 256,
+        max_concurrency: 64,
+        max_depth: 32,
+        max_processes: 128,
+      }).success,
+    ).toBe(true);
+    expect(
+      AgentDelegationConfigSchema.safeParse({
+        max_children: 64,
+        max_concurrency: 32,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts max_concurrency 64 and rejects 65", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 64 }).success,
+    ).toBe(true);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
+    ).toBe(false);
+    expect(
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 64 } })
+        .success,
+    ).toBe(true);
+    expect(
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 65 } })
+        .success,
+    ).toBe(false);
+  });
+
+  it("accepts each hard maximum and rejects values above it", () => {
+    expect(
+      DelegationSettingsSchema.safeParse(MAX_DELEGATION_LIMITS).success,
+    ).toBe(true);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_children: 257 }).success,
+    ).toBe(false);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 65 }).success,
+    ).toBe(false);
+    expect(DelegationSettingsSchema.safeParse({ max_depth: 33 }).success).toBe(
+      false,
+    );
+    expect(
+      DelegationSettingsSchema.safeParse({ max_processes: 129 }).success,
+    ).toBe(false);
+    expect(
+      AgentDelegationConfigSchema.safeParse({ max_children: 257 }).success,
+    ).toBe(false);
+    expect(
+      AgentDelegationConfigSchema.safeParse({ max_concurrency: 65 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects non-positive and fractional limits", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({ max_children: 0 }).success,
+    ).toBe(false);
+    expect(DelegationSettingsSchema.safeParse({ max_depth: 1.5 }).success).toBe(
+      false,
+    );
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: { delegation: { max_children: 2 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.delegation).toEqual({ max_children: 2 });
+    }
+  });
+
+  it("rejects max_concurrency above max_children at the precise path", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 2, max_concurrency: 3 },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0]?.path.join(".")).toBe(
+        "settings.delegation.max_concurrency",
+      );
+    }
+  });
+
+  it("reports one local agent concurrency issue without a duplicate project issue", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: { delegation: { max_children: 4, max_concurrency: 2 } },
+      agents: { loom: { delegation: { max_children: 1, max_concurrency: 3 } } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0]).toMatchObject({
+        path: ["agents", "loom", "delegation", "max_concurrency"],
+        message: "max_concurrency must be less than or equal to max_children",
+      });
+    }
+  });
+
+  it("reports the project child cap alongside one local concurrency issue", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 2, max_concurrency: 2 },
+      },
+      agents: {
+        loom: {
+          delegation: { max_children: 3, max_concurrency: 4 },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(2);
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["agents", "loom", "delegation", "max_children"],
+            message: "agent max_children may not exceed the project cap",
+          }),
+          expect.objectContaining({
+            path: ["agents", "loom", "delegation", "max_concurrency"],
+            message:
+              "max_concurrency must be less than or equal to max_children",
+          }),
+        ]),
+      );
+      expect(
+        result.error.issues.filter(
+          (issue) =>
+            issue.path.join(".") === "agents.loom.delegation.max_concurrency",
+        ),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("rejects agent overrides that exceed project caps", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 4, max_concurrency: 2 },
+      },
+      agents: {
+        loom: {
+          delegation: { max_children: 5, max_concurrency: 3 },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((issue) => issue.path.join("."));
+      expect(paths).toContain("agents.loom.delegation.max_children");
+      expect(paths).toContain("agents.loom.delegation.max_concurrency");
+    }
+  });
+
+  it("rejects project-only fields in an agent override", () => {
+    const result = AgentDelegationConfigSchema.safeParse({ max_depth: 2 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("opaque adapter settings", () => {
+  it("validates JSON values and bounds", () => {
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { value: null, list: [true, 1] } },
+      }).success,
+    ).toBe(true);
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { a: { b: { c: { d: { e: true } } } } } },
+      }).success,
+    ).toBe(false);
+    expect(
+      SettingsConfigSchema.safeParse({
+        adapters: { test: { value: Number.POSITIVE_INFINITY } },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("model thinking suffix validation", () => {
+  it("accepts plain, suffixed, and escaped agent model entries", () => {
+    const result = AgentConfigSchema.safeParse({
+      models: ["plain-model", "gpt-4o#high", "weird\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.models).toEqual([
+        "plain-model",
+        "gpt-4o#high",
+        "weird\\#model",
+      ]);
+    }
+  });
+
+  it("accepts plain, suffixed, and escaped review_models entries", () => {
+    const result = AgentConfigSchema.safeParse({
+      review_models: ["plain-review", "review-model#low", "review\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.review_models).toEqual([
+        "plain-review",
+        "review-model#low",
+        "review\\#model",
+      ]);
+    }
+  });
+
+  it("accepts plain, suffixed, and escaped category model entries", () => {
+    const result = CategoryConfigSchema.safeParse({
+      description: "Source tree work",
+      models: ["plain-category", "category-model#max", "category\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.models).toEqual([
+        "plain-category",
+        "category-model#max",
+        "category\\#model",
+      ]);
+    }
+  });
+
+  it("rejects an invalid agent model suffix with a readable indexed error", () => {
+    const result = AgentConfigSchema.safeParse({
+      models: ["plain-model", "gpt-4o#hgih"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
+  });
+
+  it("rejects an invalid review_models suffix with a readable indexed error", () => {
+    const result = AgentConfigSchema.safeParse({
+      review_models: ["plain-review", "review-model#bad"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["review_models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
+  });
+
+  it("rejects an invalid category model suffix with a readable indexed error", () => {
+    const result = CategoryConfigSchema.safeParse({
+      description: "Source tree work",
+      models: ["plain-category", "category-model#bad"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
   });
 });

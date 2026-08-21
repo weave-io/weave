@@ -1,6 +1,6 @@
 {
   "id": "tcr-08-misleading-prose",
-  "description": "Route this task correctly despite misleading prose. The user says: \"Fix the backend API validation for the settings endpoint.\" However, the files being changed are `src/4.Presentation/DST.Client/Components/SettingsForm.tsx` and `src/4.Presentation/DST.Client/Utils/validation.ts`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. Both files are clearly inside the client-frontend category. Should the model trust the prose or the file paths when routing?",
+  "description": "Route this task correctly despite misleading prose. The user says: \"Fix the backend API validation for the settings endpoint.\" However, the files being changed are `src/4.Presentation/DST.Client/Components/SettingsForm.tsx` and `src/4.Presentation/DST.Client/Utils/validation.ts`. The active Weave config declares `category client-frontend { description \"DST client web UI: React components, pages, and hooks\" triggers [\"Use for DST client web UI work\"] }`. Both files are clearly DST client web UI code. Should the model trust the prose or the file evidence when routing?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "allowed_models": [
@@ -20,5 +20,5 @@
       "agent_name": "shuttle-client-frontend"
     }
   ],
-  "tags": ["routing", "category-routing", "misleading-prose", "path-wins"]
+  "tags": ["routing", "category-routing", "misleading-prose", "file-evidence-wins"]
 }

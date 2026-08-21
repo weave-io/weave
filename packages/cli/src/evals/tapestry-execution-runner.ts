@@ -78,17 +78,16 @@ import type { ModelClient } from "./openrouter-client.js";
 import type {
   CaseResult,
   CaseResultSummary,
-  DimensionScore,
   EvalCase,
   EvalRubric,
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
   RunnerError,
   RunnerResult,
-  ScoringDimension,
   TranscriptMessage,
 } from "./types.js";
 
@@ -216,7 +215,7 @@ export function extractDelegationChain(content: string): string[] {
 
   // Validate all members are known agents
   for (const member of chain) {
-    if (!agentSet.has(member as (typeof DELEGATION_BASE_AGENT_NAMES)[number])) {
+    if (!agentSet.has(member)) {
       return [];
     }
   }
@@ -476,15 +475,12 @@ function buildErrorResult(
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -529,15 +525,12 @@ function buildErrorResult(
 function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
   const scoredAt = new Date().toISOString();
 
-  const dimensionScores: Record<
-    ScoringDimension,
-    { score: number; applicable: boolean }
-  > = {
+  const dimensionScores = {
     routingCorrectness: { score: 0, applicable: false },
     delegationCorrectness: { score: 0, applicable: false },
     executionCompleteness: { score: 0, applicable: false },
     rationaleQuality: { score: 0, applicable: false },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
@@ -814,12 +807,11 @@ export class TapestryExecutionRunner {
             err<RunnerResult, RunnerError>({
               type: "NoCasesFound",
               suite: TAPESTRY_EXECUTION_SUITE,
-              message:
-                `No cases found in suite "${TAPESTRY_EXECUTION_SUITE}"` +
-                (request.caseFilter !== undefined
+              message: `No cases found in suite "${TAPESTRY_EXECUTION_SUITE}"${
+                request.caseFilter !== undefined
                   ? ` matching case filter "${request.caseFilter}"`
-                  : "") +
-                ".",
+                  : ""
+              }.`,
             }),
           ),
         );
@@ -913,10 +905,10 @@ export class TapestryExecutionRunner {
             systemPrompt,
           ).map((result) => [...results, result]),
         ),
-      ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
+      ResultAsync.fromSafePromise(Promise.resolve<CaseResult[]>([])),
     );
 
-    return executeAll as ResultAsync<CaseResult[], never>;
+    return executeAll;
   }
 
   /**
@@ -1003,18 +995,10 @@ export class TapestryExecutionRunner {
           return { summary, rawArtifact };
         },
         (error) => {
-          const errorType =
-            "type" in error
-              ? String((error as { type: string }).type)
-              : "UnknownError";
+          const errorType = error.type;
           const dimension =
-            "dimension" in error
-              ? String((error as { dimension: string }).dimension)
-              : undefined;
-          const rawMessage =
-            "message" in error
-              ? String((error as { message: string }).message)
-              : undefined;
+            error.type === "ScorerAdapterError" ? error.dimension : undefined;
+          const rawMessage = error.message;
           return buildErrorResult(
             evalCase,
             modelId,
@@ -1078,7 +1062,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
     getPrompt: (agentName: string) => {
       const importPromise = ResultAsync.fromPromise(
         import("./prompt-snapshots.js"),
-        (cause): import("./types.js").ProvenanceError => ({
+        (cause): ProvenanceError => ({
           type: "PromptCompositionError",
           agentName,
           message: `Dynamic import of prompt-snapshots failed: ${String(cause)}`,
@@ -1087,7 +1071,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
 
       return importPromise.andThen(({ composeAgentSnapshots }) =>
         composeAgentSnapshots({ agentNames: [agentName], rawArtifacts: true })
-          .mapErr((provErr): import("./types.js").ProvenanceError => provErr)
+          .mapErr((provErr): ProvenanceError => provErr)
           .andThen((snapshotResult) => {
             const raw = snapshotResult.rawArtifacts.find(
               (a) => a.agentName === agentName,
@@ -1099,12 +1083,9 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
             }
             // Composition succeeded but raw artifact not found — hard fail.
             // No fallback to hardcoded prompts; caller must handle the error.
-            return new ResultAsync<
-              string,
-              import("./types.js").ProvenanceError
-            >(
+            return new ResultAsync<string, ProvenanceError>(
               Promise.resolve(
-                err<string, import("./types.js").ProvenanceError>({
+                err<string, ProvenanceError>({
                   type: "PromptCompositionError",
                   agentName,
                   message: `No raw artifact found for agent "${agentName}" after composition.`,
@@ -1127,7 +1108,7 @@ function makeDefaultTapestryPromptProvider(): PromptProvider {
  */
 function buildDimensionScoreSummary(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Record<ScoringDimension, { score: number; applicable: boolean }> {
+) {
   return {
     routingCorrectness: {
       score: dimensions.routingCorrectness.score,
@@ -1145,23 +1126,37 @@ function buildDimensionScoreSummary(
       score: dimensions.rationaleQuality.score,
       applicable: dimensions.rationaleQuality.applicable,
     },
-  };
+  } satisfies CaseResultSummary["dimensionScores"];
 }
+
+type DimensionRationales = {
+  routingCorrectness?: string;
+  delegationCorrectness?: string;
+  executionCompleteness?: string;
+  rationaleQuality?: string;
+};
 
 /**
  * Build dimension rationale mapping for local-only raw artifact storage.
  */
 function buildDimensionRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
-): Partial<Record<ScoringDimension, string>> {
-  const rationales: Partial<Record<ScoringDimension, string>> = {};
+): DimensionRationales {
+  const rationales: DimensionRationales = {};
 
-  for (const [dim, score] of Object.entries(dimensions) as Array<
-    [ScoringDimension, DimensionScore]
-  >) {
-    if (score.applicable) {
-      rationales[dim] = score.rationale;
-    }
+  if (dimensions.routingCorrectness.applicable) {
+    rationales.routingCorrectness = dimensions.routingCorrectness.rationale;
+  }
+  if (dimensions.delegationCorrectness.applicable) {
+    rationales.delegationCorrectness =
+      dimensions.delegationCorrectness.rationale;
+  }
+  if (dimensions.executionCompleteness.applicable) {
+    rationales.executionCompleteness =
+      dimensions.executionCompleteness.rationale;
+  }
+  if (dimensions.rationaleQuality.applicable) {
+    rationales.rationaleQuality = dimensions.rationaleQuality.rationale;
   }
 
   return rationales;

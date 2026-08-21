@@ -58,9 +58,9 @@
 import { describe, expect, it } from "bun:test";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { buildAdapterHealthReport } from "../capability-contract.js";
-import type { OwnerId } from "../runtime/types.js";
 import {
   createExecutionLeaseId,
+  createOwnerId,
   createWorkflowInstanceId,
 } from "../runtime/types.js";
 import {
@@ -90,9 +90,68 @@ import {
   makeCapabilityEntry,
   makeContractWithCommandEntrypoints,
   noopProjectEffect,
+  okProbesForAll,
   PLAN_COMPLETION_WORKFLOWS,
   SIMPLE_WORKFLOWS,
 } from "./runtime-command-operations/fixtures.js";
+
+function startPlanInputWithoutProvider(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): StartPlanInput {
+  const input: StartPlanInput = {
+    planName: "my-plan",
+    workflowName: "simple-execution",
+    goal: "Test goal",
+    slug: "my-plan",
+    ownerId: "owner-test",
+    store,
+    workflows: SIMPLE_WORKFLOWS,
+    planStateProvider: new MockPlanStateProvider(true, true),
+  };
+  Object.defineProperty(input, "planStateProvider", { value: undefined });
+  return input;
+}
+
+function abortInputWithMissingSignal(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AbortExecutionInput {
+  const input: AbortExecutionInput = {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    signal: "cancel",
+    store,
+  };
+  Object.defineProperty(input, "signal", { value: "" });
+  return input;
+}
+
+function advanceStepInputWithMissingSignal(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AdvanceStepInput {
+  const input: AdvanceStepInput = {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    stepName: "execute",
+    completionSignal: { outcome: "success" },
+    store,
+  };
+  Object.defineProperty(input, "completionSignal", { value: null });
+  return input;
+}
+
+function advanceStepInputWithInvalidOutcome(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+): AdvanceStepInput {
+  const completionSignal = { outcome: "success" as const };
+  Object.defineProperty(completionSignal, "outcome", { value: "" });
+  return {
+    workflowInstanceId: createWorkflowInstanceId("some-instance"),
+    leaseId: createExecutionLeaseId("some-lease"),
+    stepName: "execute",
+    completionSignal,
+    store,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // § 1 — start-plan
@@ -122,9 +181,9 @@ describe("start-plan — success", () => {
       expect(result.value.workflowName).toBe("simple-execution");
       expect(result.value.goal).toBe("Implement the feature");
       expect(result.value.slug).toBe("my-plan");
-      expect(typeof result.value.workflowInstanceId).toBe("string");
+      expect(result.value.workflowInstanceId).toBeDefined();
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
-      expect(typeof result.value.leaseId).toBe("string");
+      expect(result.value.leaseId).toBeDefined();
       expect(result.value.leaseId.length).toBeGreaterThan(0);
       expect(Array.isArray(result.value.effects)).toBe(true);
     }
@@ -207,16 +266,7 @@ describe("start-plan — degraded/unsupported (missing planStateProvider)", () =
   it("returns command_validation when planStateProvider is undefined", async () => {
     const store = createInMemoryRuntimeStore();
 
-    const input: StartPlanInput = {
-      planName: "my-plan",
-      workflowName: "simple-execution",
-      goal: "Test goal",
-      slug: "my-plan",
-      ownerId: "owner-test",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      planStateProvider: undefined as unknown as MockPlanStateProvider,
-    };
+    const input = startPlanInputWithoutProvider(store);
 
     const result = await startPlan(input, noopProjectEffect);
 
@@ -232,19 +282,7 @@ describe("start-plan — degraded/unsupported (missing planStateProvider)", () =
   it("leaves the store empty when planStateProvider is absent", async () => {
     const store = createInMemoryRuntimeStore();
 
-    await startPlan(
-      {
-        planName: "my-plan",
-        workflowName: "simple-execution",
-        goal: "Test goal",
-        slug: "my-plan",
-        ownerId: "owner-test",
-        store,
-        workflows: SIMPLE_WORKFLOWS,
-        planStateProvider: undefined as unknown as MockPlanStateProvider,
-      },
-      noopProjectEffect,
-    );
+    await startPlan(startPlanInputWithoutProvider(store), noopProjectEffect);
 
     const instances = await store.instances.list();
     expect(instances.isOk()).toBe(true);
@@ -568,9 +606,9 @@ describe("run-named-workflow — success", () => {
       expect(result.value.workflowName).toBe("simple-execution");
       expect(result.value.goal).toBe("Run the workflow");
       expect(result.value.slug).toBe("run-the-workflow");
-      expect(typeof result.value.workflowInstanceId).toBe("string");
+      expect(result.value.workflowInstanceId).toBeDefined();
       expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
-      expect(typeof result.value.leaseId).toBe("string");
+      expect(result.value.leaseId).toBeDefined();
       expect(result.value.leaseId.length).toBeGreaterThan(0);
       expect(Array.isArray(result.value.effects)).toBe(true);
     }
@@ -829,8 +867,8 @@ describe("inspect-status — success", () => {
       expect(result.value.workflowName).toBe("simple-execution");
       expect(result.value.goal).toBe("Test goal");
       expect(result.value.slug).toBe("test-slug");
-      expect(typeof result.value.createdAt).toBe("string");
-      expect(typeof result.value.updatedAt).toBe("string");
+      expect(result.value.createdAt).toBeDefined();
+      expect(result.value.updatedAt).toBeDefined();
       expect(result.value.raw).toBeDefined();
     }
   });
@@ -884,7 +922,7 @@ describe("inspect-status — validation", () => {
   it("returns command_validation when workflowInstanceId is empty", async () => {
     const store = createInMemoryRuntimeStore();
     const input: InspectStatusInput = {
-      workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+      workflowInstanceId: createWorkflowInstanceId(""),
       store,
     };
 
@@ -939,7 +977,7 @@ async function createRunningInstance(
 
   const lease = await store.leases.acquire({
     workflowInstanceId: instance.value.id,
-    ownerId: "owner-test" as OwnerId,
+    ownerId: createOwnerId("owner-test"),
     ttlMs: 60_000,
   });
   if (!lease.isOk()) throw new Error("Failed to acquire lease");
@@ -1066,7 +1104,7 @@ describe("abort-execution — validation", () => {
   it("returns command_validation when workflowInstanceId is empty", async () => {
     const store = createInMemoryRuntimeStore();
     const input: AbortExecutionInput = {
-      workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId: createExecutionLeaseId("some-lease"),
       signal: "cancel",
       store,
@@ -1087,7 +1125,7 @@ describe("abort-execution — validation", () => {
     const store = createInMemoryRuntimeStore();
     const input: AbortExecutionInput = {
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+      leaseId: createExecutionLeaseId(""),
       signal: "cancel",
       store,
     };
@@ -1105,12 +1143,7 @@ describe("abort-execution — validation", () => {
 
   it("returns command_validation when signal is missing", async () => {
     const store = createInMemoryRuntimeStore();
-    const input = {
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      signal: "" as "cancel" | "pause",
-      store,
-    };
+    const input = abortInputWithMissingSignal(store);
 
     const result = await abortExecution(input);
 
@@ -1147,7 +1180,7 @@ async function createBlockedInstance(
 
   const lease = await store.leases.acquire({
     workflowInstanceId: instance.value.id,
-    ownerId: "owner-test" as OwnerId,
+    ownerId: createOwnerId("owner-test"),
     ttlMs: 60_000,
   });
   if (!lease.isOk()) throw new Error("Failed to acquire lease");
@@ -1250,7 +1283,7 @@ describe("advance-step — validation", () => {
     const store = createInMemoryRuntimeStore();
 
     const result = await advanceStep({
-      workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+      workflowInstanceId: createWorkflowInstanceId(""),
       leaseId: createExecutionLeaseId("some-lease"),
       stepName: "execute",
       completionSignal: { outcome: "success" },
@@ -1271,7 +1304,7 @@ describe("advance-step — validation", () => {
 
     const result = await advanceStep({
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+      leaseId: createExecutionLeaseId(""),
       stepName: "execute",
       completionSignal: { outcome: "success" },
       store,
@@ -1309,13 +1342,7 @@ describe("advance-step — validation", () => {
   it("returns command_validation when completionSignal is missing", async () => {
     const store = createInMemoryRuntimeStore();
 
-    const result = await advanceStep({
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: null as unknown as AdvanceStepInput["completionSignal"],
-      store,
-    });
+    const result = await advanceStep(advanceStepInputWithMissingSignal(store));
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -1329,15 +1356,7 @@ describe("advance-step — validation", () => {
   it("returns command_validation when completionSignal.outcome is missing", async () => {
     const store = createInMemoryRuntimeStore();
 
-    const result = await advanceStep({
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: {
-        outcome: "" as "success" | "blocked" | "failed" | "paused",
-      },
-      store,
-    });
+    const result = await advanceStep(advanceStepInputWithInvalidOutcome(store));
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -1358,7 +1377,7 @@ describe("runtime-health — pure operation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1388,7 +1407,7 @@ describe("runtime-health — pure operation", () => {
           makeCapabilityEntry("token-usage-reporting", "degraded"),
         ],
       },
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1405,7 +1424,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1420,7 +1439,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("emulated"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1435,7 +1454,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("degraded"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1450,7 +1469,7 @@ describe("runtime-health — commandEntrypointsSupported derivation", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("unsupported"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1467,7 +1486,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({
@@ -1487,7 +1506,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({
@@ -1507,7 +1526,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("degraded"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1526,7 +1545,7 @@ describe("runtime-health — degraded/unsupported operation lists", () => {
     const healthReport = buildAdapterHealthReport({
       harness: "test-harness",
       capabilityContract: makeContractWithCommandEntrypoints("native"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     });
 
     const result = await runtimeHealth({ healthReport });
@@ -1917,9 +1936,7 @@ describe("command operation authorization boundary — no secret-bearing metadat
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "explicit-owner-id" as Parameters<
-        typeof store.leases.acquire
-      >[0]["ownerId"],
+      ownerId: createOwnerId("explicit-owner-id"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -1958,9 +1975,7 @@ describe("command operation authorization boundary — no secret-bearing metadat
 
     const lease = await store.leases.acquire({
       workflowInstanceId: instance.value.id,
-      ownerId: "explicit-owner-id" as Parameters<
-        typeof store.leases.acquire
-      >[0]["ownerId"],
+      ownerId: createOwnerId("explicit-owner-id"),
       ttlMs: 60_000,
     });
     expect(lease.isOk()).toBe(true);
@@ -2046,7 +2061,7 @@ describe("command operation authorization boundary — ambiguous targets are rej
   it("abort-execution rejects empty leaseId — no implicit authorization", async () => {
     const result = await abortExecution({
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ReturnType<typeof createExecutionLeaseId>, // empty — ambiguous
+      leaseId: createExecutionLeaseId(""), // empty — ambiguous
       signal: "cancel",
       store: createInMemoryRuntimeStore(),
     });
@@ -2062,7 +2077,7 @@ describe("command operation authorization boundary — ambiguous targets are rej
 
   it("abort-execution rejects empty workflowInstanceId — no implicit target", async () => {
     const result = await abortExecution({
-      workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>, // empty — ambiguous
+      workflowInstanceId: createWorkflowInstanceId(""), // empty — ambiguous
       leaseId: createExecutionLeaseId("some-lease"),
       signal: "cancel",
       store: createInMemoryRuntimeStore(),
@@ -2080,7 +2095,7 @@ describe("command operation authorization boundary — ambiguous targets are rej
   it("advance-step rejects empty leaseId — no implicit authorization", async () => {
     const result = await advanceStep({
       workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: "" as ReturnType<typeof createExecutionLeaseId>, // empty — ambiguous
+      leaseId: createExecutionLeaseId(""), // empty — ambiguous
       stepName: "execute",
       completionSignal: { outcome: "success" },
       store: createInMemoryRuntimeStore(),
@@ -2097,7 +2112,7 @@ describe("command operation authorization boundary — ambiguous targets are rej
 
   it("advance-step rejects empty workflowInstanceId — no implicit target", async () => {
     const result = await advanceStep({
-      workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>, // empty — ambiguous
+      workflowInstanceId: createWorkflowInstanceId(""), // empty — ambiguous
       leaseId: createExecutionLeaseId("some-lease"),
       stepName: "execute",
       completionSignal: { outcome: "success" },
@@ -2178,7 +2193,7 @@ async function createBlockedInstanceOnStep(
 
   const lease = await store.leases.acquire({
     workflowInstanceId: instance.value.id,
-    ownerId: "owner-test" as OwnerId,
+    ownerId: createOwnerId("owner-test"),
     ttlMs: 60_000,
   });
   if (!lease.isOk()) throw new Error("Failed to acquire lease");
@@ -2500,13 +2515,7 @@ describe("advance-step — unsupported automatic signal detection (degraded path
     const store = createInMemoryRuntimeStore();
 
     // Missing completionSignal → command_validation (not automatic detection)
-    const result = await advanceStep({
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: null as unknown as AdvanceStepInput["completionSignal"],
-      store,
-    });
+    const result = await advanceStep(advanceStepInputWithMissingSignal(store));
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -2522,15 +2531,7 @@ describe("advance-step — unsupported automatic signal detection (degraded path
     const store = createInMemoryRuntimeStore();
 
     // Missing outcome → command_validation (not automatic detection)
-    const result = await advanceStep({
-      workflowInstanceId: createWorkflowInstanceId("some-instance"),
-      leaseId: createExecutionLeaseId("some-lease"),
-      stepName: "execute",
-      completionSignal: {
-        outcome: "" as "success" | "blocked" | "failed" | "paused",
-      },
-      store,
-    });
+    const result = await advanceStep(advanceStepInputWithInvalidOutcome(store));
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {

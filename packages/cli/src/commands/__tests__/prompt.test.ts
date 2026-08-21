@@ -5,10 +5,19 @@ import { errAsync, okAsync } from "neverthrow";
 import type { ParsedArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { ThemeManager } from "../../theme/colors.js";
-import { runPrompt } from "../prompt.js";
+import { type PromptContext, runPrompt } from "../prompt.js";
 
 const themeManager = new ThemeManager({ isTty: () => false });
 const theme = themeManager.getTheme(false);
+
+interface PromptAgentListJson {
+  readonly agents: readonly { readonly name: string }[];
+}
+
+interface PromptInspectJson {
+  readonly composedPrompt: string;
+  readonly name: string;
+}
 
 const testConfig: WeaveConfig = {
   agents: {
@@ -23,13 +32,19 @@ const testConfig: WeaveConfig = {
     backend: {
       description: "Backend category",
       models: ["test-model"],
-      patterns: ["src/api/**"],
       temperature: 0.2,
     },
   },
   workflows: {},
   disabled: { agents: [], hooks: [], skills: [] },
-  settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+  settings: {
+    log_level: "INFO",
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
+  },
   extend_before_plan: { steps: [] },
 };
 
@@ -58,17 +73,17 @@ function context(
   cwd?: string,
 ) {
   const terminal = new BufferTerminal();
-  return {
+  const ctx: PromptContext = {
     terminal,
-    ctx: {
-      terminal,
-      theme,
-      flags: flags(overrides),
-      rest,
-      configLoader,
-      ...(cwd !== undefined ? { cwd } : {}),
-    },
+    theme,
+    flags: flags(overrides),
+    rest,
+    configLoader,
   };
+  if (cwd !== undefined) {
+    ctx.cwd = cwd;
+  }
+  return { terminal, ctx };
 }
 
 describe("prompt command", () => {
@@ -104,9 +119,7 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(0);
-    const parsed = JSON.parse(terminal.out.join("\n")) as {
-      agents: Array<{ name: string }>;
-    };
+    const parsed: PromptAgentListJson = JSON.parse(terminal.out.join("\n"));
     expect(Array.isArray(parsed.agents)).toBe(true);
     expect(parsed.agents.map((agent) => agent.name)).toContain("test-agent");
   });
@@ -133,10 +146,7 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(0);
-    const parsed = JSON.parse(terminal.out.join("\n")) as {
-      composedPrompt: string;
-      name: string;
-    };
+    const parsed: PromptInspectJson = JSON.parse(terminal.out.join("\n"));
     expect(parsed.name).toBe("test-agent");
     expect(parsed.composedPrompt).toBe("You are test-agent.");
   });
@@ -197,7 +207,14 @@ describe("prompt command", () => {
       categories: {},
       workflows: {},
       disabled: { agents: [], hooks: [], skills: [] },
-      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      settings: {
+        log_level: "INFO",
+        runtime: {
+          journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+          usage: { detail_retention_days: 30, max_observations: 100_000 },
+          log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+        },
+      },
       extend_before_plan: { steps: [] },
     };
 
@@ -223,9 +240,7 @@ describe("prompt command", () => {
       const result = await runPrompt(ctx);
 
       expect(result._unsafeUnwrap()).toBe(0);
-      const parsed = JSON.parse(terminal.out.join("\n")) as {
-        agents: Array<{ name: string }>;
-      };
+      const parsed: PromptAgentListJson = JSON.parse(terminal.out.join("\n"));
       const names = parsed.agents.map((a) => a.name);
       expect(names).toContain("weft-openai-gpt-5");
       expect(names).toContain("weft-anthropic-claude-4");
@@ -287,7 +302,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -323,7 +342,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -391,7 +414,14 @@ describe("prompt command", () => {
       categories: {},
       workflows: {},
       disabled: { agents: [], hooks: [], skills: [] },
-      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      settings: {
+        log_level: "INFO",
+        runtime: {
+          journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+          usage: { detail_retention_days: 30, max_observations: 100_000 },
+          log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+        },
+      },
       extend_before_plan: { steps: [] },
     };
 
@@ -445,7 +475,11 @@ describe("prompt command", () => {
         disabled: { agents: [], hooks: [], skills: [] },
         settings: {
           log_level: "INFO",
-          runtime: { journal: { strict: false } },
+          runtime: {
+            journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+            usage: { detail_retention_days: 30, max_observations: 100_000 },
+            log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+          },
         },
         extend_before_plan: { steps: [] },
       };
@@ -533,7 +567,8 @@ describe("prompt command", () => {
   describe("self-modify subcommand", () => {
     it("Should_succeed_without_calling_configLoader", async () => {
       // configLoader always fails — self-modify must not call it
-      const failingLoader = () => errAsync([] as ConfigLoadError[]);
+      const failingLoader: NonNullable<PromptContext["configLoader"]> = () =>
+        errAsync<WeaveConfig, ConfigLoadError[]>([]);
       const { terminal, ctx } = context(
         { promptSubcommand: "self-modify" },
         failingLoader,
@@ -578,9 +613,29 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
+    });
+
+    it("Should_describe_current_delegation_template_fields", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("delegation.targets");
+      expect(output).toContain("{{name}}");
+      expect(output).toContain("{{description}}");
+      expect(output).toContain("{{#triggers}}");
+      expect(output).toContain("{{.}}");
+      expect(output).not.toContain("{{domains}}");
+      expect(output).toContain("sole detailed\nself-modification contract");
+      expect(output).not.toContain("delegation.section");
+      expect(output).not.toContain("delegation.mermaid");
+      expect(output).not.toContain("fallback suppression");
+      expect(output).not.toContain("Mermaid");
     });
 
     it("Should_use_explicit_global_scope_when_scope_flag_is_global", async () => {
@@ -634,9 +689,9 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
     });
 
     it("Should_use_injected_cwd_for_local_scope_paths", async () => {

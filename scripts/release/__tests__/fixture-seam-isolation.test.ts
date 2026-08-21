@@ -17,7 +17,6 @@ import {
   discoverProductionRoots,
   inventoriedPaths,
   isTestOnlyRoot,
-  LOCAL_REGISTRY_FIXTURE_DIR,
   MODULE_GRAPH_WALK_BOUND,
   PRODUCTION_ENTRYPOINTS,
   PRODUCTION_ROOT_CLASSES,
@@ -26,7 +25,6 @@ import {
   rootsFromBuildEntries,
   rootsFromPackageManifest,
   rootsFromWorkflowText,
-  SEAM_LEAK_FIXTURE_DIR,
   scriptCommandPaths,
 } from "../entrypoint-inventory.js";
 import { publishablePackageNames } from "../package-policy.js";
@@ -37,6 +35,9 @@ const SEAM =
   "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts";
 const INTEGRATION =
   "scripts/release/__tests__/incident-recovery.integration.test.ts";
+const LOCAL_REGISTRY_FIXTURE_DIR =
+  "scripts/release/__tests__/fixtures/local-registry";
+const SEAM_LEAK_FIXTURE_DIR = "scripts/release/__tests__/fixtures/seam-leaks";
 
 const IMPORT_SPEC =
   /(?:import|export)\s+(?:type\s+)?(?:[^'"\n]+from\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)|require\(\s*["']([^"']+)["']\s*\)/g;
@@ -323,14 +324,7 @@ function moduleGraphReachesSeam(
     ).andThen((present) => {
       if (!present || !/\.(ts|js|mjs|cjs)$/.test(current)) return walk();
       return readText(current).andThen((text) => {
-        // Guard constants in the reachability checker name the test-only seam
-        // but do not import or execute it. Other roots may carry the path in a
-        // manifest, workflow, or dynamic/spawn fixture and must be rejected.
-        if (
-          mentionsSeam(text) &&
-          !current.endsWith("/scripts/release/publish-reachability.ts") &&
-          !current.endsWith("/scripts/release/entrypoint-inventory.ts")
-        )
+        if (!isFixturePolicyScanner(root, current) && mentionsSeam(text))
           return okAsyncResult(SEAM);
         for (const spec of importSpecs(text))
           pending.push(...resolveImportCandidates(current, spec));
@@ -343,6 +337,10 @@ function moduleGraphReachesSeam(
   };
 
   return walk();
+}
+
+function isFixturePolicyScanner(root: string, current: string): boolean {
+  return current === resolve(root, "scripts/release/publish-reachability.ts");
 }
 
 function reachesFixture(

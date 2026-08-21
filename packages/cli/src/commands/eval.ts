@@ -17,6 +17,7 @@
  *     This is the live production path.
  */
 
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
@@ -274,7 +275,7 @@ async function defaultValidateFilters(
     }
   }
 
-  return ok(undefined);
+  return ok(void 0);
 }
 
 async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
@@ -514,24 +515,30 @@ async function buildLiveRunner(
  * `langchainModuleLoader` without importing the full `@langchain/openai`
  * package. The real dynamic import resolves to (a superset of) this shape.
  */
+export interface LangChainOpenAIConfiguration {
+  readonly baseURL?: string;
+}
+
+export interface LangChainChatOpenAIFields {
+  readonly model?: string;
+  /** @deprecated alias — use `apiKey` in @langchain/openai v1 */
+  readonly modelName?: string;
+  readonly temperature?: number;
+  /**
+   * API key passed directly to the underlying OpenAI client.
+   *
+   * In `@langchain/openai` v1, `BaseChatOpenAI` constructor reads
+   * `fields.apiKey` (NOT `fields.openAIApiKey`). Passing
+   * `openAIApiKey` is silently ignored by the runtime even though
+   * the TypeScript alias still exists on `OpenAIBaseInput`. Always
+   * use `apiKey` when targeting OpenRouter or any non-standard endpoint.
+   */
+  readonly apiKey?: string;
+  readonly configuration?: LangChainOpenAIConfiguration;
+}
+
 export interface LangChainOpenAIModule {
-  ChatOpenAI: new (fields: {
-    model?: string;
-    /** @deprecated alias — use `apiKey` in @langchain/openai v1 */
-    modelName?: string;
-    temperature?: number;
-    /**
-     * API key passed directly to the underlying OpenAI client.
-     *
-     * In `@langchain/openai` v1, `BaseChatOpenAI` constructor reads
-     * `fields.apiKey` (NOT `fields.openAIApiKey`). Passing
-     * `openAIApiKey` is silently ignored by the runtime even though
-     * the TypeScript alias still exists on `OpenAIBaseInput`. Always
-     * use `apiKey` when targeting OpenRouter or any non-standard endpoint.
-     */
-    apiKey?: string;
-    configuration?: { baseURL?: string; [key: string]: unknown };
-  }) => import("@langchain/core/language_models/chat_models").BaseChatModel;
+  ChatOpenAI: new (fields: LangChainChatOpenAIFields) => BaseChatModel;
 }
 
 /**
@@ -574,9 +581,7 @@ export async function buildLangChainScorer(
   evalEnv: { apiKey: string; baseUrl: string },
   langchainModuleLoader?: () => Promise<LangChainOpenAIModule>,
 ): Promise<Result<LangChainAgentEvalsScorer, CliError>> {
-  const loader =
-    langchainModuleLoader ??
-    (() => import("@langchain/openai") as Promise<LangChainOpenAIModule>);
+  const loader = langchainModuleLoader ?? (() => import("@langchain/openai"));
 
   return ResultAsync.fromPromise(
     (async () => {

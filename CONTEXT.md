@@ -180,13 +180,13 @@ _Avoid_: Display name, UI label, rendered agent title
 An adapter-visible harness agent whose configuration lifecycle is owned by Weave rather than authored manually in the harness.
 _Avoid_: Any same-named agent, UI alias, unmanaged agent
 
-**Canonical Documentation Set**:
-The repo-root `docs/` corpus that defines current authoritative Weave behavior and guidance.
-_Avoid_: Public docs site, marketing docs, package docs mirror
+**Internal Documentation Set**:
+The repo-root `docs/` corpus for current contributor architecture, implementation contracts, adapter internals, and decisions.
+_Avoid_: Public user guide, completed plan archive, numbered spec set
 
 **Public Documentation Package**:
-The `packages/docs/` site that publishes public-facing Weave documentation derived from the canonical docs.
-_Avoid_: Source of truth, internal spec set, canonical architecture docs
+The `packages/docs/` site that owns tutorials, user how-to guides, product explanation, and public reference.
+_Avoid_: Internal architecture set, mirror of repo-root docs, generated copy
 
 ## Relationships
 
@@ -236,8 +236,6 @@ _Avoid_: Source of truth, internal spec set, canonical architecture docs
 - A **SessionSnapshot** may describe harness session context for a **WorkflowInstance** without storing raw harness-private state.
 - **Plan Markdown** remains the source for task-list progress in plan-compatible workflows during dogfooding.
 - A **WorkflowInstance** may reference **Plan Markdown** as an artifact.
-- An **Execution Contract** defines execution semantics independently of the harness-specific command, skill, hook, or script mechanism that delivers them.
-- A **Canonical Execution Command** is one possible adapter-visible projection of the **Execution Contract** and should be evaluated through adapter capability/readiness policy rather than assumed to exist in every harness.
 - **Artifact Approval State** attaches to an **Artifact Identity** and a specific **Artifact Revision** rather than to a file path alone.
 - An **Artifact Revision** may carry **Artifact Integrity Metadata** without storing raw artifact contents in the Runtime Store.
 - **Artifact Integrity Metadata** lives inside `ArtifactRef` in the Runtime Store; it is engine-owned and never stored in adapter-owned storage or harness session state.
@@ -254,22 +252,23 @@ _Avoid_: Source of truth, internal spec set, canonical architecture docs
 - Delegation data inside a **Composed Prompt** is computed from agent `triggers`; a **Prompt Template** may decide where and how that delegation guidance is rendered.
 - A **Delegation Diagram** starts as a current-agent star: the current agent points to each eligible delegation target.
 - A **Weave-managed Agent** is reconciled by its **Canonical Agent Name**, while display-oriented fields may change without changing identity.
-- The **Canonical Documentation Set** is authoritative when Weave behavior and the **Public Documentation Package** disagree.
-- The **Public Documentation Package** should mirror the **Canonical Documentation Set** without replacing it.
+- The **Internal Documentation Set** owns contributor architecture and implementation contracts.
+- The **Public Documentation Package** owns user-facing behavior and guidance.
+- A disagreement about shared behavior is a documentation defect; reconcile both surfaces with the implemented contract and current decision record.
 
 ## Prompt Composition Templates
 
 Prompt composition templates are a first-class engine feature. Every agent `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered with a bounded **Template Context** before adapters receive the final **Composed Prompt**. The Template Context exposes agent identity, effective tool policy, and generated delegation data — including `delegation.section` (a Mermaid diagram plus compact bullets) and `delegation.mermaid` (the diagram alone). Prompt authors use `{{{delegation.section}}}` to control where delegation guidance appears; prompts that omit any `delegation.*` reference receive the fallback delegation section automatically. Static prompts without Mustache tags are unaffected.
 
-See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/adr/0001-prompt-composition-templates.md) for the full specification and rationale.
+See [Prompt Composition](docs/reference/prompts.md) and [ADR 0001](docs/adr/0001-prompt-composition-templates.md) for the current contract and rationale.
 
-## Workflow-First Execution Contract
+## Explicit Execution Authorization
 
 The **Execution Contract** is engine-owned and harness-agnostic. `startExecution` is the sole authorized entry point for durable execution — ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Adapters expose the contract through harness-appropriate delivery mechanisms (commands, skills, hooks, scripts, or UI) and call `startExecution` only after an explicit user-authorized trigger.
 
 This replaces the legacy `/start-work` → Tapestry flow, which was OpenCode-specific and could silently resume execution on `session.idle` events. The new model requires an explicit user-authorized transition at the execution boundary.
 
-See [ADR 0004 — Workflow-First Execution Contract](docs/adr/0004-workflow-first-execution-contract.md) and [Spec 22 — Workflow-First Execution](docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) for the full rationale and ownership matrix.
+See [ADR 0004 — Workflow-First Execution Contract](docs/adr/0004-workflow-first-execution-contract.md) for the decision history and [Execution Lifecycle](docs/reference/execution-lifecycle.md) for the current contract.
 
 ## Example dialogue
 
@@ -285,4 +284,4 @@ See [ADR 0004 — Workflow-First Execution Contract](docs/adr/0004-workflow-firs
 - "event log" can imply event sourcing; resolved: use **Runtime Journal** for observational runtime history that is not the source of truth.
 - "session runtime snapshot" can imply raw harness state capture; resolved: use **SessionSnapshot** for normalized Weave-visible observations only.
 - "agent name" can mean either a stable identifier or a UI-facing label; resolved: use **Canonical Agent Name** for identity and treat display text as presentation only.
-- "docs" can mean either the canonical repo docs or the public site; resolved: use **Canonical Documentation Set** for repo-root `docs/` and **Public Documentation Package** for `packages/docs/`.
+- "docs" can mean either contributor docs or the public site; resolved: use **Internal Documentation Set** for repo-root `docs/` and **Public Documentation Package** for `packages/docs/`.

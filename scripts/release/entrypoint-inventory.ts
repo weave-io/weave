@@ -15,9 +15,10 @@
  * registers every stable publish and independent-attestation workflow root;
  * Task 26 adds the guarded `next` prerelease controller; Task 27 adds the
  * guarded manual `nightly` controller; Task 28 adds the CI policy controller;
- * Task 30 adds the immutable-main docs-audit workflow controllers; Task 32
- * adds the dependency-free retained-publisher preflight root. Later tasks add,
- * rename, or remove entries in the same change.
+ * Task 30 adds the immutable-main docs-audit workflow controllers; Task 35
+ * removes every legacy executable entry deleted at cutover and positively
+ * retains every new-pipeline entry. Later tasks add, rename, or remove
+ * entries in the same change.
  * Test-only roots are never inventoried as production.
  */
 
@@ -93,12 +94,6 @@ export const PRODUCTION_ENTRYPOINTS = [
     role: "legacy",
     rationale:
       "Task 22 CI API compatibility controller. It runs API Extractor and the checked-in surface-map gate; it performs no publication mutation.",
-  },
-  {
-    path: "scripts/release/legacy-preflight.ts",
-    role: "legacy",
-    rationale:
-      "Task 32 dependency-free read-only pre-cutover publisher preflight. It runs before dependency installation, proves protected-main enablement, and performs no publication mutation.",
   },
   {
     path: "scripts/release/release-policy-check.ts",
@@ -222,40 +217,18 @@ export const PRODUCTION_ENTRYPOINTS = [
 ] as const satisfies readonly ProductionEntrypoint[];
 
 /**
- * Old-system executables still reachable from production scripts or
- * `publish.yml`. They are classified so they cannot be mistaken for an
- * unknown new-pipeline root. Task 35 removes them at cutover.
+ * Retained non-publishing executables that production scripts still reach.
+ * They are classified so they cannot be mistaken for an unknown new-pipeline
+ * root. Task 35 deleted every entry whose file, script, or workflow the
+ * cutover removed; what remains supports the new pipeline or a retained
+ * non-publishing release helper.
  */
 export const LEGACY_ENTRYPOINTS = [
-  // Task 32 removes this dependency-free root with the retained publisher at cutover.
-  "scripts/release/legacy-preflight.ts",
   "scripts/release/changeset-policy.ts",
-  "scripts/release/clean-room.ts",
-  "scripts/release/dry-run-nightly.ts",
-  "scripts/release/dry-run-stable.ts",
   "scripts/release/packager.ts",
-  "scripts/release/nightly-plan.ts",
   "scripts/release/write-artifact-manifest.ts",
   "scripts/release/bind-artifacts.ts",
-  "scripts/release/stable-plan-main.ts",
-  "scripts/release/metadata-replay-main.ts",
-  "scripts/release/stable-finalize.ts",
-  "scripts/release/release-refs-main.ts",
-  "scripts/release/control-main.ts",
-  "scripts/release/generate-acceptance-manifest.ts",
 ] as const;
-
-export const TEST_ONLY_ROOT_MARKERS = [
-  "scripts/release/__tests__/incident-recovery.integration.test.ts",
-  "scripts/release/__tests__/fixture-seam-isolation.test.ts",
-  "scripts/release/__tests__/fixtures/local-registry/deprecation-seam.ts",
-] as const;
-
-export const LOCAL_REGISTRY_FIXTURE_DIR =
-  "scripts/release/__tests__/fixtures/local-registry" as const;
-
-export const SEAM_LEAK_FIXTURE_DIR =
-  "scripts/release/__tests__/fixtures/seam-leaks" as const;
 
 export type EntrypointInventoryError =
   | {
@@ -320,19 +293,11 @@ export function registeredProductionPaths(
 export function isTestOnlyRoot(path: string): boolean {
   const normalized = posixPath(path);
   if (
-    TEST_ONLY_ROOT_MARKERS.some(
-      (marker) => normalized === marker || normalized.endsWith(`/${marker}`),
-    )
-  )
-    return true;
-  if (
     normalized.includes("/__tests__/") ||
     normalized.includes("/__fixtures__/")
   )
     return true;
   if (/\.(test|spec)\.ts$/.test(normalized)) return true;
-  if (normalized.includes("/fixtures/local-registry/")) return true;
-  if (normalized.includes("/fixtures/seam-leaks/")) return true;
   return false;
 }
 

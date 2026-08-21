@@ -51,6 +51,7 @@
 
 import { join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import type { CliError } from "../errors.js";
 import {
   ArtifactBundleWriter,
@@ -278,6 +279,8 @@ export interface RepeatabilityModelDriftSummary {
     max: number | null;
   };
   runs: Array<{
+    suite: string;
+    modelId: string;
     runId: string;
     passedCases: number;
     totalCases: number;
@@ -304,6 +307,9 @@ export interface RepeatabilityCaseModelDriftSummary {
     max: number;
   };
   runs: Array<{
+    suite: string;
+    caseId: string;
+    modelId: string;
     runId: string;
     passed: boolean;
     required: boolean;
@@ -328,6 +334,137 @@ export interface RepeatabilityDiagnosticsArtifact {
 }
 
 const REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION = 1 as const;
+
+const RepeatabilityDiagnosticsArtifactSchema = z
+  .object({
+    schemaVersion: z.literal(REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION),
+    generatedAt: z.string(),
+    comparisonKey: z
+      .object({
+        agentFilter: z.string().nullable(),
+        modelFilter: z.string().nullable(),
+        caseFilter: z.string().nullable(),
+        suites: z.array(z.string()),
+      })
+      .strict(),
+    currentRun: z
+      .object({
+        runId: z.string(),
+        repoSha: z.string(),
+        startedAt: z.string(),
+        bundleDir: z.string(),
+        suites: z.array(
+          z
+            .object({
+              suite: z.string(),
+              totalCases: z.number(),
+              passedCases: z.number(),
+              failedCases: z.number(),
+              suiteGreen: z.boolean(),
+              models: z.array(
+                z
+                  .object({
+                    modelId: z.string(),
+                    totalCases: z.number(),
+                    passedCases: z.number(),
+                    failedCases: z.number(),
+                    passRate: z.number().nullable(),
+                    cases: z.array(
+                      z
+                        .object({
+                          caseId: z.string(),
+                          passed: z.boolean(),
+                          required: z.boolean(),
+                          weightedTotal: z.number(),
+                          dryRun: z.boolean(),
+                        })
+                        .strict(),
+                    ),
+                  })
+                  .strict(),
+              ),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    comparableRunIds: z.array(z.string()),
+    comparableRunCount: z.number(),
+    driftSummary: z
+      .object({
+        models: z.array(
+          z
+            .object({
+              suite: z.string(),
+              modelId: z.string(),
+              comparableRunCount: z.number(),
+              classification: z.enum(["single-run", "consistent", "drifted"]),
+              passRateRange: z
+                .object({
+                  min: z.number().nullable(),
+                  max: z.number().nullable(),
+                })
+                .strict(),
+              runs: z.array(
+                z
+                  .object({
+                    suite: z.string(),
+                    modelId: z.string(),
+                    runId: z.string(),
+                    passedCases: z.number(),
+                    totalCases: z.number(),
+                    failedCases: z.number(),
+                    passRate: z.number().nullable(),
+                  })
+                  .strict(),
+              ),
+            })
+            .strict(),
+        ),
+        caseModels: z.array(
+          z
+            .object({
+              suite: z.string(),
+              caseId: z.string(),
+              modelId: z.string(),
+              comparableRunCount: z.number(),
+              classification: z.enum([
+                "single-run",
+                "consistent-pass",
+                "consistent-fail",
+                "mixed",
+              ]),
+              weightedTotalRange: z
+                .object({ min: z.number(), max: z.number() })
+                .strict(),
+              runs: z.array(
+                z
+                  .object({
+                    suite: z.string(),
+                    caseId: z.string(),
+                    modelId: z.string(),
+                    runId: z.string(),
+                    passed: z.boolean(),
+                    required: z.boolean(),
+                    weightedTotal: z.number(),
+                  })
+                  .strict(),
+              ),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  })
+  .strict();
+
+function parseRepeatabilityDiagnosticsArtifact(
+  parsedJson: z.input<typeof RepeatabilityDiagnosticsArtifactSchema>,
+): RepeatabilityDiagnosticsArtifact | null {
+  const parsed = RepeatabilityDiagnosticsArtifactSchema.safeParse(parsedJson);
+  if (!parsed.success) return null;
+  return parsed.data;
+}
 
 /**
  * Compact summary reference returned to callers after writing the local
@@ -625,6 +762,11 @@ export interface EvalOrchestratorOptions {
    */
   publisher?: ResultsRepoPublisher;
   /**
+   * Optional remote sequence reader paired with an injected publisher.
+   * The production GitHub publisher supplies this reader automatically.
+   */
+  remoteSequenceReader?: RemoteSequenceReader;
+  /**
    * Environment variable map for env reads and token lookup.
    * Defaults to `Bun.env`. Inject in tests.
    */
@@ -701,6 +843,7 @@ export class EvalOrchestrator {
   private readonly bundleRoot: string;
   private readonly publishMode: BundleWriteMode;
   private readonly publisher: ResultsRepoPublisher | undefined;
+  private readonly remoteSequenceReader: RemoteSequenceReader | undefined;
   private readonly env: Record<string, string | undefined>;
   private readonly evalsRoot: string | undefined;
   private readonly assembledAt: string | undefined;
@@ -715,6 +858,7 @@ export class EvalOrchestrator {
     this.bundleRoot = options.bundleRoot ?? join(process.cwd(), "eval-bundles");
     this.publishMode = options.publishMode ?? "local";
     this.publisher = options.publisher;
+    this.remoteSequenceReader = options.remoteSequenceReader;
     this.env = options.env ?? Bun.env;
     this.evalsRoot = options.evalsRoot;
     this.assembledAt = options.assembledAt;
@@ -799,8 +943,8 @@ export class EvalOrchestrator {
             const rawArtifactResults = request.rawArtifacts
               ? this.writeRawArtifacts(runnerResults, writeResult.bundleDir)
               : Promise.resolve({
-                  written: [] as string[],
-                  errors: [] as string[],
+                  written: [],
+                  errors: [],
                 });
 
             return ResultAsync.fromSafePromise(rawArtifactResults).andThen(
@@ -1037,7 +1181,7 @@ export class EvalOrchestrator {
       return this.runTapestryCategoryRoutingSuite(request, modelFilter);
     }
 
-    return ResultAsync.fromSafePromise(Promise.resolve(undefined)).andThen(() =>
+    return ResultAsync.fromSafePromise(Promise.resolve(null)).andThen(() =>
       err({
         type: "UnknownEvalSuite",
         suite: suiteId,
@@ -1260,7 +1404,7 @@ export class EvalOrchestrator {
         Promise.resolve({
           bundleDir: this.bundleRoot,
           runId: null,
-          filesWritten: [] as string[],
+          filesWritten: [],
         }),
       );
     }
@@ -1276,34 +1420,29 @@ export class EvalOrchestrator {
     //
     // When `publishMode === "local"` (the default), publisher is undefined —
     // `ArtifactBundleWriter.writeBundle()` skips external publication.
-    const resolvePublisher = async (): Promise<
-      ResultsRepoPublisher | undefined
-    > => {
-      if (this.publishMode !== "publish") return undefined;
-      if (this.publisher !== undefined) return this.publisher;
+    const resolvePublisher = async (): Promise<{
+      publisher: ResultsRepoPublisher | undefined;
+      remoteSequenceReader: RemoteSequenceReader | undefined;
+    }> => {
+      if (this.publishMode !== "publish") {
+        return { publisher: undefined, remoteSequenceReader: undefined };
+      }
+      if (this.publisher !== undefined) {
+        return {
+          publisher: this.publisher,
+          remoteSequenceReader: this.remoteSequenceReader,
+        };
+      }
       // Lazy import to avoid loading the GitHub publisher module in local mode
       const { GitHubContentsPublisher } = await import(
         "./github-contents-publisher.js"
       );
-      return new GitHubContentsPublisher();
-    };
-
-    const isRemoteSequenceReader = (
-      value: ResultsRepoPublisher | undefined,
-    ): value is ResultsRepoPublisher & RemoteSequenceReader => {
-      return (
-        value !== undefined &&
-        "readRemoteRunIds" in value &&
-        typeof value.readRemoteRunIds === "function"
-      );
+      const publisher = new GitHubContentsPublisher();
+      return { publisher, remoteSequenceReader: publisher };
     };
 
     return ResultAsync.fromSafePromise(resolvePublisher()).andThen(
-      (publisher) => {
-        const remoteSequenceReader = isRemoteSequenceReader(publisher)
-          ? publisher
-          : undefined;
-
+      ({ publisher, remoteSequenceReader }) => {
         return writer
           .writeBundle({
             runnerResults,
@@ -1558,16 +1697,10 @@ export class EvalOrchestrator {
         filePath,
         message: this.formatRepeatabilityDiagnosticsCause(cause),
       }),
-    )().map((parsed) => {
-      if (!this.isCompatibleRepeatabilityArtifact(parsed)) {
-        return null;
-      }
-
-      return parsed;
-    });
+    )().map((parsedJson) => parseRepeatabilityDiagnosticsArtifact(parsedJson));
   }
 
-  private writeRepeatabilityDiagnosticsArtifact(
+  protected writeRepeatabilityDiagnosticsArtifact(
     filePath: string,
     artifact: RepeatabilityDiagnosticsArtifact,
   ): ResultAsync<void, RepeatabilityDiagnosticsError> {
@@ -1578,41 +1711,7 @@ export class EvalOrchestrator {
         filePath,
         message: this.formatRepeatabilityDiagnosticsCause(cause),
       }),
-    )().map(() => undefined);
-  }
-
-  private isCompatibleRepeatabilityArtifact(
-    value: unknown,
-  ): value is RepeatabilityDiagnosticsArtifact {
-    if (typeof value !== "object" || value === null) {
-      return false;
-    }
-
-    const candidate = value as {
-      schemaVersion?: unknown;
-      comparisonKey?: unknown;
-      currentRun?: unknown;
-    };
-
-    if (candidate.schemaVersion !== REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION) {
-      return false;
-    }
-
-    if (
-      typeof candidate.comparisonKey !== "object" ||
-      candidate.comparisonKey === null
-    ) {
-      return false;
-    }
-
-    if (
-      typeof candidate.currentRun !== "object" ||
-      candidate.currentRun === null
-    ) {
-      return false;
-    }
-
-    return true;
+    )().andThen(() => ResultAsync.fromSafePromise(Promise.resolve()));
   }
 
   private buildRepeatabilityComparisonKey(
@@ -1649,7 +1748,7 @@ export class EvalOrchestrator {
     return true;
   }
 
-  private buildRepeatabilityRunSnapshot(
+  protected buildRepeatabilityRunSnapshot(
     metadata: EvalRunMetadata,
     runnerResults: RunnerResult[],
     bundleDir: string,
@@ -2086,15 +2185,9 @@ export class EvalOrchestrator {
   }
 
   private formatRepeatabilityDiagnosticsCause(cause: unknown): string {
-    if (cause instanceof Error) {
-      return cause.message;
-    }
-
-    if (typeof cause === "string") {
-      return cause;
-    }
-
-    return "Unknown repeatability diagnostics failure.";
+    return cause instanceof Error
+      ? cause.message
+      : "Unknown repeatability diagnostics failure.";
   }
 }
 

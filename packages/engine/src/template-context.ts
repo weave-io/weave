@@ -16,11 +16,11 @@
  * Only `AgentPromptTemplateContext` and `TemplateContextError` are exported.
  */
 
-import type { DelegationTrigger } from "@weaveio/weave-core";
 import { ok, type Result } from "neverthrow";
 
 import type { DelegationTarget } from "./compose.js";
 import { logger } from "./logger.js";
+import type { TemplateContext } from "./template-renderer.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 
 const log = logger.child({ module: "template-context" });
@@ -73,11 +73,7 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   // Delegation target fields (accessed inside {{#delegation.targets}} sections)
   "delegation.targets.name",
   "delegation.targets.description",
-  "delegation.targets.domains",
   "delegation.targets.triggers",
-  "delegation.targets.triggers.domain",
-  "delegation.targets.triggers.trigger",
-  "delegation.targets.triggers.routing_hint",
   "delegation.targets.isCategory",
 
   // Fields accessible inside {{#delegation.targets}}{{#isCategory}} sections
@@ -131,10 +127,8 @@ export interface ToolPolicyContextEntry {
 export interface DelegationTargetContextEntry {
   name: string;
   description?: string;
-  /** Deduplicated domain strings across all triggers for this target. */
-  domains: string[];
-  /** Full trigger details including optional routing hints. */
-  triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
+  /** Ordered copy of the target's declared string triggers. */
+  triggers: string[];
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -182,6 +176,72 @@ export interface AgentPromptTemplateContext {
   reviewRouting?: ReviewRoutingContext;
 }
 
+/**
+ * Project the bounded engine context into the renderer's recursive context
+ * shape. This is the single owner of the engine-to-renderer boundary.
+ */
+export function toRendererTemplateContext(
+  context: AgentPromptTemplateContext,
+): TemplateContext {
+  const agent: TemplateContext = {
+    name: context.agent.name,
+    mode: context.agent.mode,
+    skills: [...context.agent.skills],
+    isCategory: context.agent.isCategory,
+  };
+  if (context.agent.description !== undefined) {
+    agent.description = context.agent.description;
+  }
+
+  const delegationTargets = context.delegation.targets.map((target) => {
+    const result: TemplateContext = {
+      name: target.name,
+      triggers: [...target.triggers],
+      isCategory: target.isCategory,
+    };
+    if (target.description !== undefined) {
+      result.description = target.description;
+    }
+    return result;
+  });
+
+  const rendererContext: TemplateContext = {
+    agent,
+    toolPolicy: {
+      effective: {
+        read: context.toolPolicy.effective.read,
+        write: context.toolPolicy.effective.write,
+        execute: context.toolPolicy.effective.execute,
+        delegate: context.toolPolicy.effective.delegate,
+        network: context.toolPolicy.effective.network,
+      },
+    },
+    delegation: { targets: delegationTargets },
+  };
+
+  if (context.category !== undefined) {
+    const category: TemplateContext = { name: context.category.name };
+    if (context.category.description !== undefined) {
+      category.description = context.category.description;
+    }
+    rendererContext.category = category;
+  }
+
+  if (context.reviewRouting !== undefined) {
+    rendererContext.reviewRouting = {
+      groups: context.reviewRouting.groups.map((group) => ({
+        sourceAgent: group.sourceAgent,
+        variants: group.variants.map((variant) => ({
+          name: variant.name,
+          model: variant.model,
+        })),
+      })),
+    };
+  }
+
+  return rendererContext;
+}
+
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -206,7 +266,6 @@ export type TemplateContextError = {
 export interface CategoryInput {
   name: string;
   description?: string;
-  patterns?: string[];
 }
 
 /** Inputs for building an `AgentPromptTemplateContext`. */
@@ -230,41 +289,15 @@ export interface TemplateContextInput {
 /**
  * Project a `DelegationTarget` into a `DelegationTargetContextEntry`.
  *
- * Deduplicates domain strings across all triggers for the target.
- * Preserves trigger order for deterministic output.
+ * Copies declared trigger strings in source order. Does not invent domains,
+ * structured trigger objects, or provider-specific fields.
  */
 function projectDelegationTarget(
   target: DelegationTarget,
 ): DelegationTargetContextEntry {
-  const seenDomains = new Set<string>();
-  const domains: string[] = [];
-
-  for (const trigger of target.triggers) {
-    if (!seenDomains.has(trigger.domain)) {
-      seenDomains.add(trigger.domain);
-      domains.push(trigger.domain);
-    }
-  }
-
-  const triggers: Array<{
-    domain: string;
-    trigger: string;
-    routing_hint?: string;
-  }> = target.triggers.map((t: DelegationTrigger) => {
-    const entry: { domain: string; trigger: string; routing_hint?: string } = {
-      domain: t.domain,
-      trigger: t.trigger,
-    };
-    if (t.routing_hint !== undefined) {
-      entry.routing_hint = t.routing_hint;
-    }
-    return entry;
-  });
-
   const entry: DelegationTargetContextEntry = {
     name: target.name,
-    domains,
-    triggers,
+    triggers: [...target.triggers],
     isCategory: target.isCategory,
   };
 

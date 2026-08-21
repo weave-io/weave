@@ -16,7 +16,7 @@
  *
  * - `$ARGUMENTS` - the text after the command name (e.g. plan name)
  *
- * @see docs/adapter-bootstrap.md - Command Surface Registration section
+ * @see docs/guides/adapter-development.md - Command Surface Registration section
  */
 
 // ---------------------------------------------------------------------------

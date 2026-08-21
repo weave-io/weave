@@ -1323,6 +1323,62 @@ describe("TapestryCategoryRoutingRunner — scorer integration", () => {
     expect(errorSummary?.dimension).toBe("delegationCorrectness");
   });
 
+  it("normalizes every non-adapter scorer failure to a secret-safe adapter error", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.enqueueError({
+      type: "RubricNotFound",
+      caseId: evalCase.id,
+      message: "Bearer sk-or-secret-value must not escape",
+    });
+
+    const result = await makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    ).run({ rawArtifacts: true });
+
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const errorSummary = caseResult?.rawArtifact?.errorSummary;
+    expect(errorSummary?.errorType).toBe("ScorerAdapterError");
+    expect(errorSummary?.classification).toBe("scoring-adapter-failure");
+    expect(errorSummary?.dimension).toBe("routingCorrectness");
+    expect(errorSummary?.localDiagnostic).toContain("[REDACTED]");
+    expect(errorSummary?.localDiagnostic).not.toContain("secret-value");
+  });
+
+  it("keeps non-scorer model failures on their own typed error boundary", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+    const modelClient = new StubModelClient();
+    modelClient.enqueueError({
+      type: "NetworkError",
+      message: "network failure with Bearer sk-or-secret-value",
+    });
+
+    const result = await makeRunner(
+      {
+        modelClient,
+        scorer: new StubAgentEvalsScorer(),
+        tapestrySystemPrompt: "You are Tapestry.",
+      },
+      [evalCase],
+      [rubric],
+    ).run({ rawArtifacts: true });
+
+    const errorSummary =
+      result._unsafeUnwrap().caseResults[0]?.rawArtifact?.errorSummary;
+    expect(errorSummary?.errorType).toBe("NetworkError");
+    expect(errorSummary?.classification).toBe("model-network-failure");
+    expect(errorSummary?.localDiagnostic).not.toContain("secret-value");
+  });
+
   it("qualitative gate enforced for required case with transcript_expectations when scorer present", async () => {
     // Case with transcript_expectations — should require qualitative avg >= 0.7
     const evalCase = makeCategoryRoutingCase({

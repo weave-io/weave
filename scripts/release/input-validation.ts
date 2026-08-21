@@ -136,9 +136,16 @@ export type InputValidationError = {
   issues: readonly z.core.$ZodIssue[];
 };
 
+type ReleaseInvocationInput = Parameters<
+  typeof ReleaseInvocationSchema.safeParse
+>[0];
+type ReleaseControlEnvironmentInput = Parameters<
+  typeof ReleaseControlEnvironmentSchema.safeParse
+>[0];
+
 /** The workflow boundary: callers must validate before interpolation or side effects. */
 export function validateReleaseInvocation(
-  input: unknown,
+  input: ReleaseInvocationInput,
 ): Result<ReleaseInvocation, InputValidationError> {
   const parsed = ReleaseInvocationSchema.safeParse(input);
   if (!parsed.success)
@@ -150,7 +157,7 @@ export function validateReleaseInvocation(
 }
 
 export function validateReleaseControlEnvironment(
-  input: unknown,
+  input: ReleaseControlEnvironmentInput,
 ): Result<ReleaseControlEnvironment, InputValidationError> {
   const parsed = ReleaseControlEnvironmentSchema.safeParse(input);
   if (!parsed.success)

@@ -205,7 +205,7 @@ export function writeManifest(
 ): ResultAsync<void, ProvenanceError> {
   const json = JSON.stringify(manifest, null, 2);
   return ResultAsync.fromPromise(
-    Bun.write(outputPath, json).then(() => undefined),
+    Bun.write(outputPath, json).then(() => {}),
     (cause): ProvenanceError => ({
       type: "ManifestWriteError",
       path: outputPath,

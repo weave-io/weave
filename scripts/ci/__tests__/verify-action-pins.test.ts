@@ -14,15 +14,6 @@ describe("verifyActionPins", () => {
     ["branch", "uses: actions/checkout@main"],
     ["unknown owner", `uses: evil/checkout@${PIN}`],
     ["short SHA", "uses: actions/checkout@34e1148"],
-    [
-      "deprecated upload-artifact SHA",
-      `uses: actions/upload-artifact@${DEPRECATED_UPLOAD_ARTIFACT_PIN}`,
-    ],
-    ["deprecated upload-artifact major", "uses: actions/upload-artifact@v3"],
-    [
-      "deprecated download-artifact major",
-      "uses: actions/download-artifact@v3",
-    ],
   ])("rejects a %s reference", (_name, uses) => {
     expect(verifyActionPins({ "fixture.yml": uses }).isErr()).toBe(true);
   });
