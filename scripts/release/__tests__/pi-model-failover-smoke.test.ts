@@ -34,6 +34,7 @@ import {
   fixtureRoleHash,
   MAX_REPORT_BYTES,
   MAX_REPORT_STRING_LENGTH,
+  MAX_REPORT_TIMESTAMP_MS,
   type NativeSessionObservation,
   PARENT_TASK,
   PROVIDER_FAILURE_MARKER,
@@ -243,9 +244,12 @@ function lifecycle(
   return {
     ...merged,
     contextRepairCount,
+    // The public fallback phases have a bounded order:
+    // tool start ≤ first settlement ≤ model select ≤ marker start ≤
+    // context repair ≤ final settlement ≤ tool end.
     contextRepairTimesMs:
       overrides.contextRepairTimesMs ??
-      Array.from({ length: contextRepairCount }, (_, index) => 1_100 + index),
+      Array.from({ length: contextRepairCount }, (_, index) => 1_400 + index),
     modelSelectTimesMs:
       overrides.modelSelectTimesMs ??
       Array.from(
@@ -254,14 +258,13 @@ function lifecycle(
       ),
     settlementTimesMs:
       overrides.settlementTimesMs ??
-      Array.from(
-        { length: merged.settlementCount },
-        (_, index) => 1_300 + index,
+      Array.from({ length: merged.settlementCount }, (_, index) =>
+        index === 0 ? 1_100 : 1_500 + index - 1,
       ),
     markerMessageStartCount: markerCount,
     markerMessageStartTimesMs:
       overrides.markerMessageStartTimesMs ??
-      Array.from({ length: markerCount }, (_, index) => 1_400 + index),
+      Array.from({ length: markerCount }, (_, index) => 1_300 + index),
     recoveryMarkerCount: markerCount,
   };
 }
@@ -671,12 +674,12 @@ function successfulFallbackInput() {
     parentToolCallIdHash: "1".repeat(64),
     parentToolEndCallIdHash: "1".repeat(64),
     parentToolStartedAtMs: 1_000,
-    parentToolEndedAtMs: 1_500,
-    parentToolPendingMs: 500,
+    parentToolEndedAtMs: 1_600,
+    parentToolPendingMs: 600,
     parentToolStartCount: 1,
     parentToolEndCount: 1,
     parentToolStartTimesMs: [1_000],
-    parentToolEndTimesMs: [1_500],
+    parentToolEndTimesMs: [1_600],
   };
   return {
     observation: {
@@ -711,7 +714,10 @@ function rebuildFallbackInput(
       ...observationOverrides,
       captures: [child, parent],
       providerCaptures: [providerCapture(child), providerCapture(parent)],
-      nativeSessions: [nativeObservation(child), nativeObservation(parent)],
+      nativeSessions: observationOverrides.nativeSessions ?? [
+        nativeObservation(child),
+        nativeObservation(parent),
+      ],
       controls: observationOverrides.controls ?? [
         controlCapture(child),
         controlCapture(parent),
@@ -2097,15 +2103,15 @@ describe("Pi model-fallback release smoke", () => {
     const cases = [
       {
         name: "parent settles before marker admission",
-        parentToolEndedAtMs: 1_399,
-        parentToolPendingMs: 399,
-        parentToolEndTimesMs: [1_399],
+        parentToolEndedAtMs: 1_299,
+        parentToolPendingMs: 299,
+        parentToolEndTimesMs: [1_299],
       },
       {
         name: "parent starts after context repair",
-        parentToolStartedAtMs: 1_101,
-        parentToolPendingMs: 399,
-        parentToolStartTimesMs: [1_101],
+        parentToolStartedAtMs: 1_401,
+        parentToolPendingMs: 199,
+        parentToolStartTimesMs: [1_401],
       },
     ] as const;
     for (const candidate of cases) {
@@ -2118,6 +2124,251 @@ describe("Pi model-fallback release smoke", () => {
       if (result.isErr())
         expect(result.error.type, name).toBe("ProviderContextViolation");
     }
+  });
+
+  it("enforces the complete bounded fallback phase order", () => {
+    const input = successfulFallbackInput();
+    const cases: readonly {
+      readonly name: string;
+      readonly child?: Partial<FixtureSnapshot["lifecycle"]>;
+      readonly parent?: Partial<FixtureSnapshot>;
+    }[] = [
+      {
+        name: "parent tool start after first low-level settlement",
+        parent: {
+          parentToolStartedAtMs: 1_101,
+          parentToolPendingMs: 499,
+          parentToolStartTimesMs: [1_101],
+        },
+      },
+      {
+        name: "first low-level settlement after model selection",
+        child: { settlementTimesMs: [1_201, 1_500] },
+      },
+      {
+        name: "model selection after marker start",
+        child: { modelSelectTimesMs: [1_301] },
+      },
+      {
+        name: "marker start after context repair",
+        child: { markerMessageStartTimesMs: [1_401] },
+      },
+      {
+        name: "context repair after final child settlement",
+        child: { contextRepairTimesMs: [1_501] },
+      },
+      {
+        name: "final child settlement after parent tool end",
+        child: { settlementTimesMs: [1_100, 1_601] },
+      },
+    ];
+    for (const candidate of cases) {
+      const child = {
+        ...input.child,
+        lifecycle: {
+          ...input.child.lifecycle,
+          ...(candidate.child ?? {}),
+        },
+      };
+      const parent = { ...input.parent, ...(candidate.parent ?? {}) };
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, child, parent),
+      );
+      expect(result.isErr(), candidate.name).toBe(true);
+    }
+  });
+
+  it("fails closed for missing and duplicate fallback phase evidence", () => {
+    const input = successfulFallbackInput();
+    const cases: readonly {
+      readonly name: string;
+      readonly child: Partial<FixtureSnapshot["lifecycle"]>;
+    }[] = [
+      {
+        name: "missing first low-level settlement",
+        child: { settlementCount: 1, settlementTimesMs: [1_100] },
+      },
+      {
+        name: "duplicate final child settlement",
+        child: {
+          settlementCount: 3,
+          settlementTimesMs: [1_100, 1_500, 1_501],
+        },
+      },
+    ];
+    for (const candidate of cases) {
+      const child = {
+        ...input.child,
+        lifecycle: { ...input.child.lifecycle, ...candidate.child },
+      };
+      const result = validateFallbackFacts(
+        rebuildFallbackInput(input, child, input.parent),
+      );
+      expect(result.isErr(), candidate.name).toBe(true);
+    }
+  });
+
+  it("allows equal millisecond phase boundaries but rejects a zero-width tool", () => {
+    const input = successfulFallbackInput();
+    // The parent and child observers run in separate processes. Equal
+    // millisecond timestamps at the interval boundaries carry no finer order.
+    const equalChild = {
+      ...input.child,
+      lifecycle: lifecycle({
+        ...input.child.lifecycle,
+        contextRepairTimesMs: [1_100],
+        modelSelectTimesMs: [1_100],
+        markerMessageStartTimesMs: [1_100],
+        settlementTimesMs: [1_100, 1_100],
+      }),
+    };
+    const equalParent = {
+      ...input.parent,
+      parentToolStartedAtMs: 1_100,
+      parentToolEndedAtMs: 1_200,
+      parentToolPendingMs: 100,
+      parentToolStartTimesMs: [1_100],
+      parentToolEndTimesMs: [1_200],
+    };
+    const equal = validateFallbackFacts(
+      rebuildFallbackInput(input, equalChild, equalParent),
+    );
+    expect(equal.isOk()).toBe(true);
+
+    const zeroWidthChild = {
+      ...equalChild,
+      lifecycle: lifecycle({
+        ...equalChild.lifecycle,
+        settlementTimesMs: [1_100, 1_100],
+      }),
+    };
+    const zeroWidthParent = {
+      ...equalParent,
+      parentToolEndedAtMs: 1_100,
+      parentToolPendingMs: 0,
+      parentToolEndTimesMs: [1_100],
+    };
+    const zeroWidth = validateFallbackFacts(
+      rebuildFallbackInput(input, zeroWidthChild, zeroWidthParent),
+    );
+    expect(zeroWidth.isErr()).toBe(true);
+  });
+
+  it("rejects ambiguous and mixed identities for the fallback timeline", () => {
+    const input = successfulFallbackInput();
+    const ambiguousChild = {
+      ...input.child,
+      lifecycle: {
+        ...input.child.lifecycle,
+        appliedIdentity: undefined,
+      },
+    };
+    const ambiguous = validateFallbackFacts(
+      rebuildFallbackInput(input, ambiguousChild, input.parent),
+    );
+    expect(ambiguous.isErr()).toBe(true);
+
+    const childIdHash = input.child.childIdHash;
+    if (childIdHash === undefined)
+      throw new Error("test setup: child identity is missing");
+    const mixedParent = {
+      ...input.parent,
+      parentToolCallIdHash: childIdHash,
+      parentToolEndCallIdHash: childIdHash,
+    };
+    const mixed = validateFallbackFacts(
+      rebuildFallbackInput(input, input.child, mixedParent),
+    );
+    expect(mixed.isErr()).toBe(true);
+
+    const childNative = input.observation.nativeSessions.find(
+      (session) => session.role === "child",
+    );
+    const parentNative = input.observation.nativeSessions.find(
+      (session) => session.role === "parent",
+    );
+    if (childNative === undefined || parentNative === undefined)
+      throw new Error("test setup: native identity observations are missing");
+    const nativeMismatch = validateFallbackFacts(
+      rebuildFallbackInput(input, input.child, input.parent, {
+        nativeSessions: [
+          {
+            ...childNative,
+            appliedIdentity: { provider: "smoke", id: "third" },
+          },
+          parentNative,
+        ],
+      }),
+    );
+    expect(nativeMismatch.isErr()).toBe(true);
+    if (nativeMismatch.isErr())
+      expect(nativeMismatch.error.type).toBe("CaptureMalformed");
+  });
+
+  it("rejects hostile timeline values and native sequence indexes without throwing", () => {
+    const input = successfulFallbackInput();
+    const hostileTimestamps: readonly unknown[] = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+      MAX_REPORT_TIMESTAMP_MS + 1,
+      "1_200",
+    ];
+    for (const timestamp of hostileTimestamps) {
+      const child = {
+        ...input.child,
+        lifecycle: {
+          ...input.child.lifecycle,
+          contextRepairTimesMs: [timestamp as number],
+        },
+      };
+      const candidate = rebuildFallbackInput(input, child, input.parent);
+      expect(() => validateFallbackFacts(candidate)).not.toThrow();
+      expect(validateFallbackFacts(candidate).isErr(), String(timestamp)).toBe(
+        true,
+      );
+    }
+
+    const history = input.child.history;
+    if (history === undefined)
+      throw new Error("test setup: history is missing");
+    const hostileIndexes: readonly number[] = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -1,
+      1.5,
+      257,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+    for (const entryIndex of hostileIndexes) {
+      const child = {
+        ...input.child,
+        history: {
+          ...history,
+          descriptors: history.descriptors.map((descriptor, index) =>
+            index === 0 ? { ...descriptor, entryIndex } : descriptor,
+          ),
+        },
+      };
+      const candidate = rebuildFallbackInput(input, child, input.parent);
+      expect(() => validateFallbackFacts(candidate)).not.toThrow();
+      expect(
+        validateFallbackFacts(candidate).isErr(),
+        `entry index ${String(entryIndex)}`,
+      ).toBe(true);
+    }
+
+    const malformedPending = rebuildFallbackInput(input, input.child, {
+      ...input.parent,
+      parentToolPendingMs: 99,
+    });
+    expect(() => validateFallbackFacts(malformedPending)).not.toThrow();
+    expect(validateFallbackFacts(malformedPending).isErr()).toBe(true);
   });
 
   it("fails closed for missing, reordered, duplicate, and wrong real context descriptors", () => {

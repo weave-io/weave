@@ -28,6 +28,7 @@ import {
   MAX_COMMAND_TIMEOUT_MS,
   MAX_CONTEXT_DESCRIPTOR_COUNT,
   MAX_HISTORY_DESCRIPTOR_COUNT,
+  MAX_REPORT_TIMESTAMP_MS,
   NATIVE_RECOVERY_MARKER_TYPE,
   PARENT_TASK,
   PROVIDER_FAILURE_MARKER,
@@ -42,9 +43,11 @@ import { normalizedTuiOutput } from "./health-observation.js";
 import {
   sameContextDescriptor,
   sameIdentity,
+  sameNumberArray,
 } from "./observation-comparison.js";
 import { validateObservedSources } from "./observation-validation.js";
 import {
+  boundedTimestamp,
   descriptorFactsFromDescriptors,
   HISTORY_DESCRIPTOR_KEYS,
   hasOnlyKeys,
@@ -452,36 +455,167 @@ function validateExactDurableHistory(
   return ok(undefined);
 }
 
+function isBoundedFallbackTimestamp(value: unknown): value is number {
+  return boundedTimestamp(value) && value <= MAX_REPORT_TIMESTAMP_MS;
+}
+
+/**
+ * Validate the fallback's cross-process timeline from role-bound control
+ * captures. `validateObservedSources` binds these captures to the snapshots
+ * and native identities before this check runs; this function must not infer
+ * a phase from an unbound child or parent record.
+ *
+ * Equal phase timestamps are valid because the observer records only
+ * millisecond timestamps and no cross-event sequence. The parent tool still
+ * requires a positive interval, so its start and end may not be equal.
+ */
 function validateParentToolPendingAcrossChildTimeline(
   child: FixtureSnapshot,
   parent: FixtureSnapshot,
+  observation: ScenarioObservation,
 ): Result<void, SmokeFailure> {
-  const startedAt = parent.parentToolStartedAtMs;
-  const endedAt = parent.parentToolEndedAtMs;
-  const childTimeline = [
-    ...child.lifecycle.contextRepairTimesMs,
-    ...child.lifecycle.modelSelectTimesMs,
-    ...child.lifecycle.markerMessageStartTimesMs,
-    ...child.lifecycle.settlementTimesMs,
+  const childControl = observation.controls.find(
+    (capture) => capture.role === "child",
+  );
+  const parentControl = observation.controls.find(
+    (capture) => capture.role === "parent",
+  );
+  const childNative = observation.nativeSessions.find(
+    (session) => session.role === "child",
+  );
+  const childIdentity = childControl?.lifecycle.appliedIdentity;
+  if (
+    childControl === undefined ||
+    parentControl === undefined ||
+    childNative === undefined ||
+    childIdentity === undefined ||
+    childNative.appliedIdentity === undefined ||
+    !sameIdentity(childIdentity, childNative.appliedIdentity) ||
+    child.role !== "child" ||
+    parent.role !== "parent" ||
+    parentControl.parentToolCallIdHash === undefined ||
+    parentControl.parentToolEndCallIdHash !==
+      parentControl.parentToolCallIdHash ||
+    parentControl.parentToolCallIdHash === child.childIdHash ||
+    parentControl.parentToolCallIdHash === child.threadIdHash
+  ) {
+    return err(
+      failure(
+        "ProviderContextViolation",
+        "fallback timeline identities are missing or mixed",
+      ),
+    );
+  }
+
+  const childLifecycle = childControl.lifecycle;
+  const childTimelineArrays = [
+    childLifecycle.contextRepairTimesMs,
+    childLifecycle.modelSelectTimesMs,
+    childLifecycle.markerMessageStartTimesMs,
+    childLifecycle.settlementTimesMs,
   ];
   if (
-    startedAt === undefined ||
-    endedAt === undefined ||
-    !Number.isFinite(startedAt) ||
-    !Number.isFinite(endedAt) ||
+    childTimelineArrays.some((timestamps) => !Array.isArray(timestamps)) ||
+    !Array.isArray(parentControl.parentToolStartTimesMs) ||
+    !Array.isArray(parentControl.parentToolEndTimesMs) ||
+    childLifecycle.contextRepairCount !== 1 ||
+    childLifecycle.modelSelectCount !== 1 ||
+    childLifecycle.markerMessageStartCount !== 1 ||
+    childLifecycle.recoveryMarkerCount !== 1 ||
+    !childLifecycle.recoveryMarkerObserved ||
+    childLifecycle.settlementCount !== 2 ||
+    childLifecycle.contextRepairTimesMs.length !== 1 ||
+    childLifecycle.modelSelectTimesMs.length !== 1 ||
+    childLifecycle.markerMessageStartTimesMs.length !== 1 ||
+    childLifecycle.settlementTimesMs.length !== 2 ||
+    parentControl.parentToolStartCount !== 1 ||
+    parentControl.parentToolEndCount !== 1 ||
+    parentControl.parentToolStartTimesMs.length !== 1 ||
+    parentControl.parentToolEndTimesMs.length !== 1
+  ) {
+    return err(
+      failure(
+        "ProviderContextViolation",
+        "fallback phase timeline is missing or duplicated",
+      ),
+    );
+  }
+
+  const startedAt = parentControl.parentToolStartedAtMs;
+  const endedAt = parentControl.parentToolEndedAtMs;
+  const firstSettlement = childLifecycle.settlementTimesMs[0];
+  const modelSelection = childLifecycle.modelSelectTimesMs[0];
+  const markerStart = childLifecycle.markerMessageStartTimesMs[0];
+  const contextRepair = childLifecycle.contextRepairTimesMs[0];
+  const finalSettlement = childLifecycle.settlementTimesMs[1];
+  const parentToolStart = parentControl.parentToolStartTimesMs[0];
+  const parentToolEnd = parentControl.parentToolEndTimesMs[0];
+  const pendingMs = parentControl.parentToolPendingMs;
+  if (
+    !isBoundedFallbackTimestamp(startedAt) ||
+    !isBoundedFallbackTimestamp(endedAt) ||
+    !isBoundedFallbackTimestamp(firstSettlement) ||
+    !isBoundedFallbackTimestamp(modelSelection) ||
+    !isBoundedFallbackTimestamp(markerStart) ||
+    !isBoundedFallbackTimestamp(contextRepair) ||
+    !isBoundedFallbackTimestamp(finalSettlement) ||
+    !isBoundedFallbackTimestamp(parentToolStart) ||
+    !isBoundedFallbackTimestamp(parentToolEnd) ||
+    !isBoundedFallbackTimestamp(pendingMs)
+  ) {
+    return err(
+      failure(
+        "ProviderContextViolation",
+        "parent tool pending interval or fallback timeline is malformed",
+      ),
+    );
+  }
+  if (
     startedAt >= endedAt ||
-    childTimeline.length === 0 ||
-    childTimeline.some(
-      (timestamp) =>
-        !Number.isFinite(timestamp) ||
-        timestamp < startedAt ||
-        timestamp > endedAt,
+    parentToolStart !== startedAt ||
+    parentToolEnd !== endedAt ||
+    pendingMs !== endedAt - startedAt ||
+    pendingMs > MAX_COMMAND_TIMEOUT_MS ||
+    parentControl.parentToolStartedAtMs !== parent.parentToolStartedAtMs ||
+    parentControl.parentToolEndedAtMs !== parent.parentToolEndedAtMs ||
+    parentControl.parentToolPendingMs !== parent.parentToolPendingMs ||
+    !sameNumberArray(
+      childLifecycle.contextRepairTimesMs,
+      child.lifecycle.contextRepairTimesMs,
+    ) ||
+    !sameNumberArray(
+      childLifecycle.modelSelectTimesMs,
+      child.lifecycle.modelSelectTimesMs,
+    ) ||
+    !sameNumberArray(
+      childLifecycle.markerMessageStartTimesMs,
+      child.lifecycle.markerMessageStartTimesMs,
+    ) ||
+    !sameNumberArray(
+      childLifecycle.settlementTimesMs,
+      child.lifecycle.settlementTimesMs,
     )
   ) {
     return err(
       failure(
         "ProviderContextViolation",
-        "parent tool pending interval does not enclose the child fallback timeline",
+        "parent tool pending interval or fallback timeline is malformed",
+      ),
+    );
+  }
+
+  if (
+    startedAt > firstSettlement ||
+    firstSettlement > modelSelection ||
+    modelSelection > markerStart ||
+    markerStart > contextRepair ||
+    contextRepair > finalSettlement ||
+    finalSettlement > endedAt
+  ) {
+    return err(
+      failure(
+        "ProviderContextViolation",
+        "fallback lifecycle phases are out of order or outside the parent tool interval",
       ),
     );
   }
@@ -701,6 +835,7 @@ export function validateFallbackFacts(input: {
   const pendingTimeline = validateParentToolPendingAcrossChildTimeline(
     child,
     parent,
+    observation,
   );
   if (pendingTimeline.isErr()) return err(pendingTimeline.error);
   const identity = child.lifecycle.appliedIdentity;
