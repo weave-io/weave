@@ -87,6 +87,7 @@ class FakeOutputPort {
     readonly settle: (result: Result<void, PiChildOutputError>) => void;
     readonly bytes: Uint8Array;
     cancelled: boolean;
+    committed: boolean;
   }> = [];
   failWritesRemaining = 0;
   deferWritesRemaining = 0;
@@ -137,7 +138,7 @@ class FakeOutputPort {
       };
       this.nextError = undefined;
       this.failWritesRemaining = Math.max(0, this.failWritesRemaining - 1);
-      return { committed: false, result: errAsync(error), cancel: () => {} };
+      return { result: errAsync(error), cancel: () => "cancelled" };
     }
     const firstLine = new TextDecoder().decode(bytes).split("\n")[0];
     const kind =
@@ -160,18 +161,24 @@ class FakeOutputPort {
         readonly settle: (result: Result<void, PiChildOutputError>) => void;
         readonly bytes: Uint8Array;
         cancelled: boolean;
+        committed: boolean;
       } = {
         settle: (result) => {
           if (settled) return;
           settled = true;
-          if (!entry.cancelled && result.isOk()) this.record(bytes);
+          if (!entry.cancelled && result.isOk()) {
+            entry.committed = true;
+            this.record(bytes);
+          }
           settle(result);
         },
         bytes,
         cancelled: false,
+        committed: false,
       };
-      const cancel = (): void => {
-        if (settled) return;
+      const cancel = (): "cancelled" | "committed" => {
+        if (entry.committed) return "committed";
+        if (settled) return "cancelled";
         entry.cancelled = true;
         settled = true;
         settle(
@@ -180,12 +187,13 @@ class FakeOutputPort {
             reason: "output-write-cancelled",
           }),
         );
+        return "cancelled";
       };
       this.deferredWrites.push(entry);
-      return { committed: false, result: new ResultAsync(pending), cancel };
+      return { result: new ResultAsync(pending), cancel };
     }
     this.record(bytes);
-    return { committed: true, result: okAsync(undefined), cancel: () => {} };
+    return { result: okAsync(undefined), cancel: () => "committed" };
   }
 }
 

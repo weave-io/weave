@@ -180,6 +180,7 @@ import type {
 } from "./child-recovery.js";
 import { PiChildRecoveryCoordinator } from "./child-recovery.js";
 import {
+  type PiChildOutputCancellation,
   type PiChildOutputError,
   type PiChildOutputPort,
   type PiChildOutputWrite,
@@ -1043,6 +1044,7 @@ class StdoutChildOutputPort implements PiChildOutputPort {
   writeLine(bytes: Uint8Array): PiChildOutputWrite {
     let resolveResult!: (result: Result<void, PiChildOutputError>) => void;
     let settled = false;
+    let ownership: "pending" | PiChildOutputCancellation = "pending";
     const settle = (result: Result<void, PiChildOutputError>): void => {
       if (settled) return;
       settled = true;
@@ -1053,11 +1055,33 @@ class StdoutChildOutputPort implements PiChildOutputPort {
         resolveResult = resolve;
       }),
     );
+    const cancel = (): PiChildOutputCancellation => {
+      if (ownership === "committed") {
+        settle(
+          err({
+            type: "ChildOutputWriteCancelled",
+            reason: "output-write-cancelled",
+          }),
+        );
+        return "committed";
+      }
+      if (ownership === "cancelled") return "cancelled";
+      ownership = "cancelled";
+      settle(
+        err({
+          type: "ChildOutputWriteCancelled",
+          reason: "output-write-cancelled",
+        }),
+      );
+      return "cancelled";
+    };
 
     // `writer.write` is the authenticated stream's commit point. If it
     // throws, no bytes were handed to stdout and the sequence reservation can
     // be safely retried. Once it returns, cancellation only ends the pending
-    // flush; it cannot retract bytes already committed to the stream.
+    // flush; it cannot retract bytes already committed to the stream. The
+    // ownership assignment is synchronous with this call, so `cancel()` is
+    // the only race-safe way for a caller to inspect it.
     const written = Result.fromThrowable(
       () => this.writer.write(bytes),
       (): PiChildOutputError => ({
@@ -1066,19 +1090,11 @@ class StdoutChildOutputPort implements PiChildOutputPort {
       }),
     )();
     if (written.isErr()) {
+      ownership = "cancelled";
       settle(err(written.error));
-      return {
-        committed: false,
-        result,
-        cancel: () =>
-          settle(
-            err({
-              type: "ChildOutputWriteCancelled",
-              reason: "output-write-cancelled",
-            }),
-          ),
-      };
+      return { result, cancel };
     }
+    ownership = "committed";
 
     const flushed = ResultAsync.fromThrowable(
       async () => {
@@ -1094,17 +1110,7 @@ class StdoutChildOutputPort implements PiChildOutputPort {
       () => settle(ok(undefined)),
       (failure) => settle(err(failure)),
     );
-    return {
-      committed: true,
-      result,
-      cancel: () =>
-        settle(
-          err({
-            type: "ChildOutputWriteCancelled",
-            reason: "output-write-cancelled",
-          }),
-        ),
-    };
+    return { result, cancel };
   }
 }
 

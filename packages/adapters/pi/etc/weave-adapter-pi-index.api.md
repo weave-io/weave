@@ -3115,6 +3115,9 @@ export interface PiChildMetadataSource {
 }
 
 // @public (undocumented)
+export type PiChildOutputCancellation = "cancelled" | "committed";
+
+// @public (undocumented)
 export type PiChildOutputError = {
     readonly type: "ChildOutputWriteFailed";
     readonly reason: string;
@@ -3130,8 +3133,7 @@ export interface PiChildOutputPort {
 
 // @public (undocumented)
 export interface PiChildOutputWrite {
-    readonly cancel: () => void;
-    readonly committed: boolean;
+    readonly cancel: () => PiChildOutputCancellation;
     readonly result: ResultAsync<void, PiChildOutputError>;
 }
 

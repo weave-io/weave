@@ -97,22 +97,27 @@ const MODEL_TRANSITION_REPORT_TIMEOUT_REASON =
 const MODEL_TRANSITION_REPORT_CANCEL_REASON =
   "model-transition-report-cancelled";
 
+export type PiChildOutputCancellation = "cancelled" | "committed";
+
 export interface PiChildOutputWrite {
-  /** True once the bytes have been committed to the output stream. */
-  readonly committed: boolean;
   /** Settles when the output operation completes or is cancelled. */
   readonly result: ResultAsync<void, PiChildOutputError>;
-  /** Cancels completion and prevents any not-yet-committed append. */
-  readonly cancel: () => void;
+  /**
+   * Atomically cancels an uncommitted write, or reports that its bytes already
+   * own the stream. The operation is idempotent: repeated calls return the
+   * same ownership state. An uncommitted cancellation must prevent any later
+   * host callback from appending the bytes.
+   */
+  readonly cancel: () => PiChildOutputCancellation;
 }
 
 export interface PiChildOutputPort {
   /**
    * Starts one already-LF-terminated line directly on this process's own
-   * stdout. Implementations must commit synchronously when `committed` is
-   * true and make `cancel()` idempotent. A cancelled, uncommitted operation
-   * must never append its bytes, including when its host callback resolves
-   * later.
+   * stdout. Implementations must make `cancel()` the single ownership check;
+   * callers must not snapshot a separate committed flag. A cancelled,
+   * uncommitted operation must never append its bytes, including when its
+   * host callback resolves later.
    */
   writeLine(bytes: Uint8Array): PiChildOutputWrite;
 }
@@ -193,7 +198,7 @@ export class PiChildRuntime {
   private lastModelTransition: PiModelTransitionBody | undefined;
   /** Serializes allocation, signing, and output before a sequence is committed. */
   private outgoingSendTail: Promise<void> = Promise.resolve();
-  /** Invalidates queued/in-flight sends when a generation-owned delivery is cancelled. */
+  /** Invalidates queued/in-flight sends when this runtime is disposed. */
   private outgoingSendEpoch = 0;
   /** The one model-transition delivery that may hold the send lane. */
   private activeModelTransition: ActiveModelTransition | undefined;
@@ -674,45 +679,70 @@ export class PiChildRuntime {
     const epoch = this.outgoingSendEpoch;
     let completed = false;
     let cancelled = false;
+    let laneAcquired = false;
+    let laneReleased = false;
     let timer: TimerHandle | undefined;
     let releaseLane!: () => void;
     let releaseSequence: (() => void) | undefined;
     let outputWrite: PiChildOutputWrite | undefined;
-    let outputCommitted = false;
-    let lane: Promise<void> | undefined;
+    let outputCancellation: PiChildOutputCancellation | undefined;
     const laneDone = new Promise<void>((resolve) => {
       releaseLane = resolve;
     });
 
-    const finish = (value: Result<void, PiChildRuntimeError>): void => {
-      if (completed) return;
-      completed = true;
-      timer?.cancel();
-      if (this.activeModelTransition?.cancel === cancel) {
-        this.activeModelTransition = undefined;
-      }
-      // Release the logical lane before resolving the caller. A terminal
-      // caller waiting on this result must see a completed transition lane.
+    const releaseLogicalLane = (): void => {
+      if (laneReleased) return;
+      laneReleased = true;
       releaseLane();
-      resolveResult(value);
+    };
+
+    const cancelOutputWrite = (): PiChildOutputCancellation | undefined => {
+      if (outputWrite === undefined) return undefined;
+      if (outputCancellation === undefined) {
+        outputCancellation = outputWrite.cancel();
+      }
+      return outputCancellation;
+    };
+
+    const releaseUncommittedSequence = (): void => {
+      const ownership = cancelOutputWrite();
+      // No output write means that signing or allocation has not reached the
+      // transport boundary. Once a write exists, only its atomic cancellation
+      // result can authorize sequence reuse.
+      if (ownership === undefined || ownership === "cancelled") {
+        releaseSequence?.();
+      }
+    };
+
+    const finish = (value: Result<void, PiChildRuntimeError>): void => {
+      if (!completed) {
+        completed = true;
+        timer?.cancel();
+        if (this.activeModelTransition?.cancel === cancel) {
+          this.activeModelTransition = undefined;
+        }
+        // A transition queued behind an unrelated write may finish its own
+        // result early, but its lane stays held until that prior operation
+        // reaches its own authority and this callback acquires the turn.
+        if (laneAcquired) releaseLogicalLane();
+        resolveResult(value);
+        return;
+      }
+      // Cancellation while queued completes the caller before the prior
+      // operation. When that prior operation eventually settles, this lane
+      // callback still has to release the queue in order.
+      if (laneAcquired) releaseLogicalLane();
     };
 
     const cancel = (reason: string): void => {
       if (completed) return;
       cancelled = true;
-      this.outgoingSendEpoch += 1;
+      // This transition owns no authority over an unrelated operation already
+      // in the lane. In particular, do not advance the shared epoch or detach
+      // outgoingSendTail here. The prior operation must settle through its own
+      // existing authority before the terminal can write.
       this.modelTransitionReportInFlight = false;
-      outputWrite?.cancel();
-      // A sequence is reusable only when the output port proves that the
-      // submitted write was never committed. A committed write owns its
-      // sequence forever, even when its flush promise settles late.
-      if (!outputCommitted) releaseSequence?.();
-      // The old lane may still be waiting for an output promise. Detach it
-      // only while it is still the current owner; a newer generation-owned
-      // send must never be overwritten by an old timeout callback.
-      if (lane !== undefined && this.outgoingSendTail === lane) {
-        this.outgoingSendTail = Promise.resolve();
-      }
+      releaseUncommittedSequence();
       finish(
         err({
           type: "EnvelopeSignFailed",
@@ -722,9 +752,32 @@ export class PiChildRuntime {
     };
 
     this.activeModelTransition = { result, cancel };
-    lane = prior.then(
+    const lane = prior.then(
       () => {
+        laneAcquired = true;
         if (cancelled || this.outgoingSendEpoch !== epoch) {
+          finish(
+            err({
+              type: "EnvelopeSignFailed",
+              reason: MODEL_TRANSITION_REPORT_CANCEL_REASON,
+            }),
+          );
+          return laneDone;
+        }
+
+        // The deadline belongs to the transition's output operation, not to
+        // time spent waiting behind a prior control write. A prior write that
+        // hangs keeps this queue blocked under its own authority; this timer
+        // never bypasses it or grants settlement authority.
+        timer = this.timerPort.schedule(
+          () => cancel(MODEL_TRANSITION_REPORT_TIMEOUT_REASON),
+          MODEL_TRANSITION_REPORT_TIMEOUT_MS,
+        );
+        // A synchronous fake timer can expire before schedule() returns. The
+        // cancellation above still owns this lane, so clean up the handle and
+        // do not start a send after the timeout has already won.
+        if (completed || cancelled || this.outgoingSendEpoch !== epoch) {
+          timer.cancel();
           finish(
             err({
               type: "EnvelopeSignFailed",
@@ -748,15 +801,15 @@ export class PiChildRuntime {
               },
               onWriteStarted: (write) => {
                 outputWrite = write;
-                outputCommitted = write.committed;
                 if (cancelled || this.outgoingSendEpoch !== epoch) {
-                  write.cancel();
-                  if (!outputCommitted) releaseSequence?.();
+                  const ownership = cancelOutputWrite();
+                  if (ownership === "cancelled") releaseSequence?.();
                 }
               },
             },
           );
         } catch (error: unknown) {
+          releaseUncommittedSequence();
           finish(
             err({
               type: "EnvelopeSignFailed",
@@ -768,8 +821,8 @@ export class PiChildRuntime {
         }
 
         // `sendControlNow` is a ResultAsync, so this handler observes both
-        // success and failure even if the lane has already detached. The
-        // timeout/cancel latch below makes late completion side-effect free.
+        // success and failure even if cancellation already released the lane.
+        // The completion latch makes late results side-effect free.
         void sent.match(
           () => {
             if (cancelled || this.outgoingSendEpoch !== epoch) {
@@ -788,6 +841,7 @@ export class PiChildRuntime {
         return laneDone;
       },
       (error: unknown) => {
+        laneAcquired = true;
         finish(
           err({
             type: "EnvelopeSignFailed",
@@ -799,13 +853,6 @@ export class PiChildRuntime {
       },
     );
     this.outgoingSendTail = lane;
-    timer = this.timerPort.schedule(
-      () => cancel(MODEL_TRANSITION_REPORT_TIMEOUT_REASON),
-      MODEL_TRANSITION_REPORT_TIMEOUT_MS,
-    );
-    // A synchronous fake timer can expire before schedule() returns. Cancel
-    // the returned handle as soon as it exists so no timer remains live.
-    if (completed) timer.cancel();
     return result;
   }
 
@@ -1136,7 +1183,7 @@ export class PiChildRuntime {
         reason: "control-send-cancelled",
       });
     }
-    let outputCommitted = false;
+    let outputWrite: PiChildOutputWrite | undefined;
     return signEnvelope(
       {
         childId: this.childId,
@@ -1177,7 +1224,7 @@ export class PiChildRuntime {
         )();
         if (writeResult.isErr()) return errAsync(writeResult.error);
         const write = writeResult.value;
-        outputCommitted = write.committed;
+        outputWrite = write;
         const startedResult = Result.fromThrowable(
           () => options.onWriteStarted?.(write),
           () => ({
@@ -1186,6 +1233,9 @@ export class PiChildRuntime {
           }),
         )();
         if (startedResult.isErr()) {
+          // The cancellation is atomic at the output boundary. The shared
+          // failure path below observes the same ownership result and can
+          // release the sequence only when no bytes were committed.
           write.cancel();
           return errAsync(startedResult.error);
         }
@@ -1206,7 +1256,10 @@ export class PiChildRuntime {
           );
       })
       .orElse((failure) => {
-        if (!outputCommitted) releaseSequence();
+        const ownership = outputWrite?.cancel();
+        if (outputWrite === undefined || ownership === "cancelled") {
+          releaseSequence();
+        }
         return errAsync(failure);
       });
   }

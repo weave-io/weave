@@ -97,6 +97,7 @@ class FakeClock implements TimerPort {
 
 type DeferredWrite = {
   readonly envelope: Record<string, unknown>;
+  readonly commit: () => void;
   readonly settle: (result: Result<void, PiChildOutputError>) => void;
 };
 
@@ -106,8 +107,19 @@ class DeferredOutputPort implements PiChildOutputPort {
   writeAttempts = 0;
   cancelCalls = 0;
   lateCallbacks = 0;
+  private deferredControlWrites = 0;
 
   constructor(readonly commitModelTransitions = false) {}
+
+  deferNextControlWrite(): void {
+    this.deferredControlWrites += 1;
+  }
+
+  commitNext(): void {
+    const deferred = this.deferred[0];
+    if (deferred === undefined) throw new Error("no deferred write pending");
+    deferred.commit();
+  }
 
   writeLine(bytes: Uint8Array): PiChildOutputWrite {
     this.writeAttempts += 1;
@@ -115,21 +127,45 @@ class DeferredOutputPort implements PiChildOutputPort {
       string,
       unknown
     >;
-    if (envelope.kind !== "model-transition") {
+    const shouldDefer =
+      envelope.kind === "model-transition" || this.deferredControlWrites > 0;
+    if (!shouldDefer) {
       this.lines.push(envelope);
-      return { committed: true, result: okAsync(undefined), cancel: () => {} };
+      return { result: okAsync(undefined), cancel: () => "committed" };
     }
+    if (envelope.kind !== "model-transition") this.deferredControlWrites -= 1;
 
     let settled = false;
-    let cancelled = false;
+    let ownership: "pending" | "cancelled" | "committed" = "pending";
+    let cancellationObserved = false;
     let settle!: (result: Result<void, PiChildOutputError>) => void;
     const pending = new Promise<Result<void, PiChildOutputError>>((resolve) => {
       settle = resolve;
     });
-    const cancel = (): void => {
-      this.cancelCalls += 1;
-      if (settled) return;
-      cancelled = true;
+    const commit = (): void => {
+      if (ownership !== "pending") return;
+      ownership = "committed";
+      this.lines.push(envelope);
+    };
+    const cancel = (): "cancelled" | "committed" => {
+      if (!cancellationObserved) {
+        cancellationObserved = true;
+        this.cancelCalls += 1;
+      }
+      if (ownership === "committed") {
+        if (!settled) {
+          settled = true;
+          settle(
+            err({
+              type: "ChildOutputWriteCancelled",
+              reason: "output-write-cancelled",
+            }),
+          );
+        }
+        return "committed";
+      }
+      if (ownership === "cancelled") return "cancelled";
+      ownership = "cancelled";
       settled = true;
       settle(
         err({
@@ -137,27 +173,24 @@ class DeferredOutputPort implements PiChildOutputPort {
           reason: "output-write-cancelled",
         }),
       );
+      return "cancelled";
     };
     this.deferred.push({
       envelope,
+      commit,
       settle: (result) => {
         if (settled) {
           this.lateCallbacks += 1;
           return;
         }
         settled = true;
-        if (!cancelled && result.isOk() && !this.commitModelTransitions) {
-          this.lines.push(envelope);
-        }
+        if (result.isOk()) commit();
+        else if (ownership === "pending") ownership = "cancelled";
         settle(result);
       },
     });
-    if (this.commitModelTransitions) this.lines.push(envelope);
-    return {
-      committed: this.commitModelTransitions,
-      result: new ResultAsync(pending),
-      cancel,
-    };
+    if (this.commitModelTransitions) commit();
+    return { result: new ResultAsync(pending), cancel };
   }
 
   settleNext(outcome: "resolve" | "reject"): void {
@@ -406,6 +439,91 @@ describe("PiChildRuntime model-transition transport lane", () => {
     expect(output.lateCallbacks).toBe(1);
     expect(clock.pending()).toHaveLength(0);
     await verifyLines(output.lines, secretBytes, "gen-committed");
+  });
+
+  it("keeps an immediately committed write's sequence at the timeout boundary without flushed reactions", async () => {
+    const output = new DeferredOutputPort();
+    const { runtime, clock, secretBytes } = await buildRuntime(
+      "gen-atomic-boundary",
+      output,
+      new FakeClock(),
+    );
+    const transition = runtime.reportModelTransition(appliedTransition());
+    await waitForDeferred(output);
+    const terminal = runtime.reportSettled("failed", { reason: "boundary" });
+
+    // Commit the bytes synchronously, then fire the deadline before any
+    // promise reaction from the output operation is allowed to run. The
+    // cancellation result, not a stale snapshot, owns the sequence decision.
+    output.commitNext();
+    clock.advanceBy(5_000);
+    await flushMicrotasks();
+
+    expect((await transition).isErr()).toBe(true);
+    expect((await terminal).isOk()).toBe(true);
+    expect(output.lines.map((line) => `${line.kind}:${line.sequence}`)).toEqual(
+      ["handshake:1", "model-transition:2", "settled:3"],
+    );
+    expect(output.cancelCalls).toBe(1);
+    expect(clock.pending()).toHaveLength(0);
+
+    const streamBeforeLateCallback = structuredClone(output.lines);
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    expect(output.lines).toEqual(streamBeforeLateCallback);
+    expect(output.lateCallbacks).toBe(1);
+    await verifyLines(output.lines, secretBytes, "gen-atomic-boundary");
+  });
+
+  it("waits for a deferred prior control write before arming or bypassing the transition lane", async () => {
+    const output = new DeferredOutputPort();
+    const { runtime, clock, secretBytes } = await buildRuntime(
+      "gen-prior-lane",
+      output,
+      new FakeClock(),
+    );
+    output.deferNextControlWrite();
+    const prior = runtime.reportBootstrapAck({});
+    await waitForDeferred(output);
+
+    const transition = runtime.reportModelTransition(appliedTransition());
+    await flushMicrotasks();
+    expect(clock.pending()).toHaveLength(0);
+    expect(output.deferred).toHaveLength(1);
+
+    const terminal = runtime.reportSettled("completed", {});
+    clock.advanceBy(5_000);
+    await flushMicrotasks();
+    // The transition has no deadline while it is queued. Terminal output also
+    // remains behind the prior operation; a transition timeout never grants
+    // authority to bypass that unrelated write.
+    expect(output.lines.map((line) => line.kind)).toEqual(["handshake"]);
+    expect(clock.pending()).toHaveLength(0);
+
+    output.settleNext("resolve");
+    await waitForDeferred(output);
+    await flushMicrotasks();
+    expect((await prior).isOk()).toBe(true);
+    expect(output.lines.map((line) => line.kind)).toEqual([
+      "handshake",
+      "bootstrap-ack",
+    ]);
+    expect(output.deferred).toHaveLength(1);
+    expect(clock.pending()).toHaveLength(1);
+
+    output.settleNext("resolve");
+    await flushMicrotasks();
+    expect((await transition).isOk()).toBe(true);
+    expect((await terminal).isOk()).toBe(true);
+    expect(output.lines.map((line) => `${line.kind}:${line.sequence}`)).toEqual(
+      ["handshake:1", "bootstrap-ack:2", "model-transition:3", "settled:4"],
+    );
+    expect(output.deferred).toHaveLength(0);
+    expect(clock.pending()).toHaveLength(0);
+    const streamAfterTerminal = structuredClone(output.lines);
+    await flushMicrotasks();
+    expect(output.lines).toEqual(streamAfterTerminal);
+    await verifyLines(output.lines, secretBytes, "gen-prior-lane");
   });
 
   it("wins the timeout boundary with a normal transition completion", async () => {

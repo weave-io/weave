@@ -531,6 +531,7 @@ export {
   type PiChildAccessOperation,
   type PiChildAccessState,
   type PiChildBootstrapHandlers,
+  type PiChildOutputCancellation,
   type PiChildOutputError,
   type PiChildOutputPort,
   type PiChildOutputWrite,

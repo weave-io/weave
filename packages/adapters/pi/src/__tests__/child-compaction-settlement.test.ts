@@ -84,7 +84,7 @@ class FakeOutputPort {
         this.lines.push(JSON.parse(line) as Record<string, unknown>);
       }
     }
-    return { committed: true, result: okAsync(undefined), cancel: () => {} };
+    return { result: okAsync(undefined), cancel: () => "committed" };
   }
 }
 
