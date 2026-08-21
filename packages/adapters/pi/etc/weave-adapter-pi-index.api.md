@@ -1362,7 +1362,7 @@ export function emit(row: Row, width: number, paint: Paint): string;
 // @public (undocumented)
 export const EMPTY_INSPECTOR_VIEW_STATE: PiInspectorViewState;
 
-// @public
+// @public (undocumented)
 export const EMPTY_PI_DISPATCH_SNAPSHOT: PiDispatchSnapshot;
 
 // @public (undocumented)
@@ -1480,6 +1480,9 @@ export type HostCompatibilityMatrixError = {
 } | {
     type: "SurfaceDrift";
     reason: string;
+} | {
+    type: "Malformed";
+    field: string;
 };
 
 // @public (undocumented)
@@ -1650,7 +1653,7 @@ export function isOwnSourceInfo(sourceInfo: PiSourceInfo): boolean;
 export function isPiChildOverlayActionId(value: string): value is PiChildOverlayActionId;
 
 // @public
-export function isPiSessionManagerStatic(value: unknown): value is PiSessionManagerStatic;
+export function isPiSessionManagerStatic<TCandidate>(value: TCandidate): value is TCandidate & PiSessionManagerStatic;
 
 // @public
 export function isProvenDurableChildTitle(stored: PiStoredChildTitle): boolean;
@@ -1664,8 +1667,10 @@ export function isRuntimeModelFallbackEnabled(report: PiHostSurfaceReport): bool
 // @public
 export function isSupportedHostVersion(version: string): boolean;
 
+// Warning: (ae-forgotten-export) The symbol "PiChildTitleProvenanceCandidate" needs to be exported by the entry point index.d.ts
+//
 // @public
-export function isTrustedChildTitleProvenance(value: unknown): value is PiChildTitleProvenance;
+export function isTrustedChildTitleProvenance(value: PiChildTitleProvenanceCandidate): value is PiChildTitleProvenance;
 
 // @public
 export function joinColumns(columns: ReadonlyArray<{
@@ -1883,8 +1888,10 @@ export type Paint = Readonly<Record<Ink, (text: string) => string>>;
 // @public
 export function paintTone(paint: Paint, tone: Tone, text: string): string;
 
+// Warning: (ae-forgotten-export) The symbol "PiChildMetadataRecordCandidate" needs to be exported by the entry point index.d.ts
+//
 // @public
-export function parseChildMetadataRecord(value: unknown): Result<PiChildMetadataRecord, PiChildMetadataCacheError>;
+export function parseChildMetadataRecord(value: PiJsonValue | PiChildMetadataRecordCandidate): Result<PiChildMetadataRecord, PiChildMetadataCacheError>;
 
 // @public
 export function parseChildOverlayKeyOverrides(raw: unknown, actions?: readonly PiChildOverlayActionDefinition[]): Result<ReadonlyMap<PiChildOverlayActionId, readonly PiChildOverlayKey[]>, PiChildOverlayKeyError>;
@@ -1892,10 +1899,10 @@ export function parseChildOverlayKeyOverrides(raw: unknown, actions?: readonly P
 // Warning: (ae-forgotten-export) The symbol "PiChildRefEnvelope" needs to be exported by the entry point index.d.ts
 //
 // @public
-export function parseChildRefEnvelope(value: unknown): Result<PiChildRefEnvelope, PiChildRefError>;
+export function parseChildRefEnvelope<T>(value: T): Result<PiChildRefEnvelope, PiChildRefError>;
 
 // @public
-export function parseChildRefRecord(value: unknown): Result<PiChildRefRecord, PiChildRefError>;
+export function parseChildRefRecord<T>(value: T): Result<PiChildRefRecord, PiChildRefError>;
 
 // @public
 export function parseDelegationCardDetails(details: unknown): Result<PiDelegationCardDetails, PiDelegationCardDetailsError>;
@@ -1907,7 +1914,7 @@ export function parseNpmSourceName(source: string): string | undefined;
 export function parsePiChildInspectionSettings(value: unknown): Result<PiChildInspectionSettings, readonly PiChildInspectionSettingsIssue[]>;
 
 // @public (undocumented)
-export function parsePiChildSessionCheckpoint(value: unknown): Result<PiChildSessionCheckpoint, PiChildCheckpointError>;
+export function parsePiChildSessionCheckpoint<T>(value: T): Result<PiChildSessionCheckpoint, PiChildCheckpointError>;
 
 // @public
 export const parsePiChildSessionEvent: (value: unknown) => z.ZodSafeParseResult<{
@@ -3073,12 +3080,16 @@ export type PiChildMetadataCacheRootViolation = "empty-home" | "relative-home" |
 
 // @public
 export interface PiChildMetadataDatabase {
+    // Warning: (ae-forgotten-export) The symbol "PiChildMetadataDbRow" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    all(sql: string, params?: readonly unknown[]): readonly unknown[];
+    all(sql: string, params?: readonly PiChildMetadataSqlValue[]): readonly PiChildMetadataDbRow[];
     // (undocumented)
     close(): void;
+    // Warning: (ae-forgotten-export) The symbol "PiChildMetadataSqlValue" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    run(sql: string, params?: readonly unknown[]): void;
+    run(sql: string, params?: readonly PiChildMetadataSqlValue[]): void;
 }
 
 // @public
@@ -3731,7 +3742,7 @@ export const PiChildProviderErrorSchema: z.ZodObject<{
 // @public
 export interface PiChildRefAppendPort {
     // (undocumented)
-    appendEntry(customType: string, data: unknown): void;
+    appendEntry(customType: string, data: PiChildRefEnvelope): void;
 }
 
 // Warning: (ae-forgotten-export) The symbol "PiChildRefEntryKindSchema" needs to be exported by the entry point index.d.ts
@@ -4085,7 +4096,7 @@ export type PiChildSessionCheckpoint = z.infer<typeof PiChildSessionCheckpointSc
 export type PiChildSessionCheckpointEntry = z.infer<typeof CheckpointEntrySchema>;
 
 // @public (undocumented)
-export const PiChildSessionCheckpointSchema: z.ZodObject<{
+export const PiChildSessionCheckpointSchema: z.ZodPreprocess<z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
     activeLeaf: z.ZodOptional<z.ZodString>;
     checkpointCursor: z.ZodNumber;
@@ -4097,7 +4108,7 @@ export const PiChildSessionCheckpointSchema: z.ZodObject<{
         cursor: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strict>>;
     updatedAt: z.ZodNumber;
-}, z.core.$strict>;
+}, z.core.$strict>>;
 
 // @public (undocumented)
 export type PiChildSessionEvent = z.infer<typeof PiChildSessionEventSchema>;
@@ -4278,7 +4289,7 @@ export interface PiChildSpawnInput {
 // @public (undocumented)
 export type PiChildStatus = "queued" | "spawning" | "handshaking" | "bootstrapping" | "running" | "cancelling" | "completed" | "cancelled" | "failed";
 
-// @public
+// @public (undocumented)
 export type PiChildTitleProvenance = (typeof PI_CHILD_TITLE_PROVENANCE_VALUES)[number];
 
 // @public
@@ -6077,7 +6088,7 @@ export type PiNativeSessionGrantRefusal =
 
 // @public
 export interface PiNativeSessionHandle {
-    appendCustomEntry?(customType: string, data?: unknown): string;
+    appendCustomEntry?<TData>(customType: string, data?: TData): string;
     // (undocumented)
     getEntries(): readonly unknown[];
     // (undocumented)
@@ -6955,7 +6966,7 @@ export interface PiSessionHeader {
 // @public
 export interface PiSessionManagerInstance {
     // (undocumented)
-    appendCustomEntry(customType: string, data?: unknown): string;
+    appendCustomEntry<TData>(customType: string, data?: TData): string;
     // (undocumented)
     getEntries(): readonly unknown[];
     // (undocumented)
@@ -7656,7 +7667,7 @@ export function projectPiProviderEvent(event: unknown): Result<PiProviderEventPr
 
 // Warning: (ae-forgotten-export) The symbol "PiNativeSessionRootInput" needs to be exported by the entry point index.d.ts
 //
-// @public
+// @public (undocumented)
 export function provePiChildSessionRoot(input: PiNativeSessionRootInput & {
     readonly fs: PiNativeSessionFsPort;
     readonly root?: string;
@@ -7911,6 +7922,10 @@ export type StrictJsonParseError = {
 } | {
     readonly type: "TrailingContent";
     readonly position: number;
+} | {
+    readonly type: "LimitExceeded";
+    readonly position: number;
+    readonly limit: "bytes" | "depth" | "nodes" | "properties" | "string";
 };
 
 // @public (undocumented)
@@ -7985,7 +8000,7 @@ export const UNKNOWN_PARENT_SESSION: PiParentSessionState;
 export function validateHostCompatibilityMatrix(matrix: PiHostCompatibilityMatrix): Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>;
 
 // @public
-export function validatePiNativeSessionHeader(candidate: unknown): Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>;
+export function validatePiNativeSessionHeader<TCandidate>(candidate: TCandidate): Result<PiValidatedSessionHeader, PiNativeSessionHeaderViolation>;
 
 // @public
 export function validateRepeatedSettlements(options: PiRepeatedSettlementValidationOptions): ResultAsync<PiRepeatedSettlementValidationReport, PiRepeatedSettlementValidationError>;
@@ -8054,7 +8069,7 @@ export function wrapPlain(text: string, width: number, maxLines: number): string
 // dist-types/child-inspection-editor.d.ts:16:5 - (ae-forgotten-export) The symbol "PiChildInspectorKey" needs to be exported by the entry point index.d.ts
 // dist-types/child-native-session-contracts.d.ts:109:5 - (ae-forgotten-export) The symbol "PiNativeSessionStorageUnavailableReason" needs to be exported by the entry point index.d.ts
 // dist-types/child-overlay-keys.d.ts:60:5 - (ae-forgotten-export) The symbol "SlotIndex" needs to be exported by the entry point index.d.ts
-// dist-types/model-resolution.d.ts:125:5 - (ae-forgotten-export) The symbol "ThinkingLevelDecl" needs to be exported by the entry point index.d.ts
+// dist-types/model-resolution.d.ts:143:5 - (ae-forgotten-export) The symbol "ThinkingLevelDecl" needs to be exported by the entry point index.d.ts
 // dist-types/plan-render.d.ts:106:5 - (ae-forgotten-export) The symbol "PlanTaskSnapshot" needs to be exported by the entry point index.d.ts
 // dist-types/plan-render.d.ts:107:5 - (ae-forgotten-export) The symbol "ActivePlanTask" needs to be exported by the entry point index.d.ts
 

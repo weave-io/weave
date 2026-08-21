@@ -4,9 +4,9 @@
 
 ```ts
 
-import { Agent } from '@opencode-ai/sdk';
-import { AgentConfig } from '@opencode-ai/sdk';
-import { OpencodeClient } from '@opencode-ai/sdk';
+import type { AgentConfig as AgentConfig_2 } from '@opencode-ai/sdk/v2';
+import type { PermissionActionConfig } from '@opencode-ai/sdk/v2';
+import type { PermissionRuleConfig } from '@opencode-ai/sdk/v2';
 import { Plugin as Plugin_2 } from '@opencode-ai/plugin';
 import { PluginInput } from '@opencode-ai/plugin';
 import { PluginModule } from '@opencode-ai/plugin';
@@ -49,9 +49,6 @@ export function buildOpenCodeHealthReport(overrides?: {
 //
 // @public
 export function buildSkillInfoList(names: string[]): SkillInfo[];
-
-// @public
-export function classifyExistingAgent(agentName: string, existingAgents: Agent[]): ReconcileDecision;
 
 // Warning: (ae-forgotten-export) The symbol "InMemoryRuntimeStoreOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "InMemoryRuntimeStore" needs to be exported by the entry point index.d.ts
@@ -111,7 +108,8 @@ export class OpenCodeAdapter implements HarnessAdapter {
     planStateProvider: PlanStateProvider | undefined;
     // Warning: (ae-forgotten-export) The symbol "AgentDescriptor" needs to be exported by the entry point index.d.ts
     spawnSubagent(descriptor: AgentDescriptor): ResultAsync<void, OpenCodeAdapterError>;
-    readonly translatedAgents: Map<string, AgentConfig>;
+    // Warning: (ae-forgotten-export) The symbol "OpenCodeAgentConfig" needs to be exported by the entry point index.d.ts
+    readonly translatedAgents: Map<string, OpenCodeAgentConfig>;
 }
 
 // @public (undocumented)
@@ -135,33 +133,8 @@ export class OpenCodeAdapterError extends Error {
 // @public
 export interface OpenCodeAdapterOptions {
     readonly availableSkills?: SkillInfo[];
-    readonly client?: OpenCodeClientFacade;
     readonly modelContext?: OpenCodeModelContext;
     readonly projectRoot?: string;
-}
-
-// @public
-export type OpenCodeClientError = {
-    type: "ListAgentsError";
-    message: string;
-    cause?: unknown;
-} | {
-    type: "CreateAgentError";
-    agentName: string;
-    message: string;
-    cause?: unknown;
-} | {
-    type: "UpdateAgentError";
-    agentName: string;
-    message: string;
-    cause?: unknown;
-};
-
-// @public
-export interface OpenCodeClientFacade {
-    createAgent(name: string, config: AgentConfig): ResultAsync<void, OpenCodeClientError>;
-    listAgents(): ResultAsync<Agent[], OpenCodeClientError>;
-    updateAgent(name: string, config: AgentConfig): ResultAsync<void, OpenCodeClientError>;
 }
 
 // @public (undocumented)
@@ -227,33 +200,6 @@ export interface ProjectionSuccess<T> {
 }
 
 // @public
-export function reconcileAgent(agentName: string, config: AgentConfig, client: OpenCodeClientFacade): ResultAsync<void, ReconcileAgentError>;
-
-// @public
-export type ReconcileAgentError = {
-    type: "ListAgentsError";
-    message: string;
-    cause?: unknown;
-} | {
-    type: "CreateAgentError";
-    agentName: string;
-    message: string;
-    cause?: unknown;
-} | {
-    type: "UpdateAgentError";
-    agentName: string;
-    message: string;
-    cause?: unknown;
-} | {
-    type: "CollisionError";
-    agentName: string;
-    message: string;
-};
-
-// @public
-export type ReconcileDecision = "create" | "update" | "collision";
-
-// @public
 export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<OpenCodeModelResolution, ModelResolutionError>;
 
 // @public
@@ -317,7 +263,8 @@ export interface RunWorkflowProjectionInput {
     readonly slug: string;
     readonly store: RuntimeStore;
     readonly workflowName: string;
-    readonly workflows: Record<string, unknown>;
+    // Warning: (ae-forgotten-export) The symbol "RunNamedWorkflowInput" needs to be exported by the entry point index.d.ts
+    readonly workflows: RunNamedWorkflowInput["workflows"];
 }
 
 // @public
@@ -327,17 +274,6 @@ export interface RunWorkflowResult {
     readonly status: "completed" | "paused";
     readonly stepsDispatched: number;
     readonly workflowInstanceId: string;
-}
-
-// @public
-export class SdkOpenCodeClient implements OpenCodeClientFacade {
-    constructor(client: OpencodeClient);
-    // (undocumented)
-    createAgent(name: string, config: AgentConfig): ResultAsync<void, OpenCodeClientError>;
-    // (undocumented)
-    listAgents(): ResultAsync<Agent[], OpenCodeClientError>;
-    // (undocumented)
-    updateAgent(name: string, config: AgentConfig): ResultAsync<void, OpenCodeClientError>;
 }
 
 // @public
@@ -385,11 +321,9 @@ export interface StartPlanProjectionInput {
     readonly slug: string;
     readonly store: RuntimeStore;
     readonly workflowName: string;
-    readonly workflows: Record<string, unknown>;
+    // Warning: (ae-forgotten-export) The symbol "StartPlanInput" needs to be exported by the entry point index.d.ts
+    readonly workflows: StartPlanInput["workflows"];
 }
-
-// @public
-export function tagWithOwnership(config: AgentConfig): AgentConfig;
 
 // Warning: (ae-forgotten-export) The symbol "MissingSkillsError" needs to be exported by the entry point index.d.ts
 //
@@ -407,9 +341,6 @@ export const WEAVE_COMMAND_LABELS: {
 };
 
 // @public
-export const WEAVE_OWNERSHIP_TAG = "[weave-managed]";
-
-// @public
 export const WEAVE_START_COMMAND: "/weave:start";
 
 // @public
@@ -425,7 +356,6 @@ export default WeavePlugin;
 
 // @public
 export interface WeavePluginOptions {
-    readonly clientFacade?: OpenCodeClientFacade;
     // Warning: (ae-forgotten-export) The symbol "FileReader_2" needs to be exported by the entry point index.d.ts
     readonly fileReader?: FileReader_2;
 }
