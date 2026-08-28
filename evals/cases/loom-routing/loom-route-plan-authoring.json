@@ -1,0 +1,21 @@
+{
+  "id": "loom-route-plan-authoring",
+  "description": "Create an implementation plan for refactoring project settings persistence, including scope, affected files, order, and acceptance criteria.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "pattern", "shuttle", "thread", "weft", "warp"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "pattern",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    { "check": "agent_mentioned", "agent_name": "pattern" }
+  ],
+  "tags": ["routing", "plan-authoring", "pattern"]
+}

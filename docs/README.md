@@ -16,6 +16,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Config Loading](config-loading.md) | Three-layer merge, builtin agents, config discovery, prompt file resolution |
 | [Model Resolution](model-resolution.md) | Model intent, adapter responsibility, category shuttle model preferences |
 | [Prompt Composition](prompt-composition.md) | Mustache templates, delegation section, template context fields |
+| [Builtin Prompt Guidelines](builtin-prompt-guidelines.md) | Provider-portable builtin prompt contract, ownership, autonomy, verification, and regression rules |
 | [Tool Policy Evaluation](tool-policy-evaluation.md) | Abstract capabilities, `EffectiveToolPolicy`, adapter mapping |
 | [Workflow Schema](workflow-schema.md) | Workflow fields, step types, completion methods, artifact passing |
 | [CLI](cli.md) | `weave validate`, `weave init`, `weave init migrate`, `weave eval run`, harness detection |

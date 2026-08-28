@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-security-audit",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Score the observable primary route to Warp for a security audit. Do not require security-tool telemetry, exact headings, or a particular review format."
+  }
+}

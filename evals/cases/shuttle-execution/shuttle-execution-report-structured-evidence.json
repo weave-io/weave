@@ -1,6 +1,6 @@
 {
   "id": "shuttle-execution-report-structured-evidence",
-  "description": "Shuttle should reflect delegated task intake, acknowledge the listed files, confirm acceptance coverage, and report concrete commands/tests as textual completion evidence without claiming real tool telemetry.",
+  "description": "Report completion of a bounded documentation task with the affected file scope, acceptance evidence, checks and results, and honest limits from assistant text only.",
   "suite": "shuttle-execution",
   "allowed_agents": ["shuttle"],
   "allowed_models": [
@@ -10,35 +10,17 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "Emit Shuttle-style evidence reporting that mirrors the delegated task contract from assistant text only.",
+    "description": "Provide bounded file awareness, acceptance evidence, check results, and an honest no-telemetry boundary.",
     "required_artifacts": [
-      "shuttle_task_intake_structured",
-      "shuttle_files_acknowledged",
-      "shuttle_acceptance_confirmed",
-      "shuttle_evidence_reported"
+      "shuttle_file_scope_bounded",
+      "shuttle_acceptance_evidence",
+      "shuttle_checks_reported",
+      "shuttle_honest_assumptions"
     ]
   },
   "accepted_alternates": [],
   "transcript_expectations": [
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "Files changed"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "Commands run"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "ALL acceptance criteria are met"
-    },
-    {
-      "check": "agent_mentioned",
-      "agent_name": "shuttle"
-    }
+    { "check": "agent_mentioned", "agent_name": "shuttle" }
   ],
-  "tags": ["execution", "delegated-task", "evidence"]
+  "tags": ["execution", "bounded-evidence", "honesty"]
 }

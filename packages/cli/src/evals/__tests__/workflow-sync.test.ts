@@ -50,6 +50,13 @@ const REPO_ROOT = resolve(import.meta.dir, "../../../../..");
 const WORKFLOW_PATH = resolve(REPO_ROOT, ".github/workflows/agent-evals.yml");
 const EVALS_DIR = EVALS_ROOT;
 
+const REQUIRED_LOOM_ROUTE_CASES = {
+  "loom-route-backend-api": "shuttle",
+  "loom-route-plan-authoring": "pattern",
+  "loom-route-codebase-exploration": "thread",
+  "loom-route-security-audit": "warp",
+} as const;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -239,6 +246,41 @@ describe("workflow-sync — agent-evals.yml ALLOWED_AGENTS matches known eval ag
     const allowedAgents = extractWorkflowAllowedAgents(workflowText);
 
     expect(allowedAgents.sort()).toEqual([...EVAL_AGENT_FILTERS].sort());
+  });
+
+  it("keeps the required Loom routes covered across both provider families", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const allowedCases = new Set(extractWorkflowAllowedCases(workflowText));
+    const casePaths = discoverCaseFilePaths();
+    const fixtures = await Promise.all(
+      casePaths.map((path) => loadCaseFile(path)),
+    );
+
+    for (const [caseId, targetAgent] of Object.entries(
+      REQUIRED_LOOM_ROUTE_CASES,
+    )) {
+      expect(allowedCases.has(caseId)).toBe(true);
+      const fixture = fixtures.find(
+        (result) => result.isOk() && result.value.id === caseId,
+      );
+      expect(fixture?.isOk()).toBe(true);
+      if (fixture === undefined || fixture.isErr()) continue;
+      expect(fixture.value.suite).toBe("loom-routing");
+      expect(fixture.value.expected_outcome).toMatchObject({
+        kind: "agent_routing",
+        target_agent: targetAgent,
+      });
+      expect(
+        fixture.value.allowed_models.some((model: string) =>
+          model.startsWith("anthropic/"),
+        ),
+      ).toBe(true);
+      expect(
+        fixture.value.allowed_models.some((model: string) =>
+          model.startsWith("openai/"),
+        ),
+      ).toBe(true);
+    }
   });
 
   it("workflow ALLOWED_CASES covers every suite present in the shared registry", async () => {

@@ -2,9 +2,9 @@
   "case_id": "shuttle-execution-report-tests-and-assumptions",
   "suite": "shuttle-execution",
   "scoring": {
-    "outcome_weight": 0.7,
-    "per_expectation_weight": 0.3,
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Score only assistant-visible final evidence reporting. Do not require real file mutation, tool traces, or hidden harness telemetry."
+    "notes": "Require observable file scope, acceptance evidence, checks with results, and honest assumptions. Accept prose or alternate headings; reject absent signals or claims of unavailable file/tool/shell telemetry."
   }
 }

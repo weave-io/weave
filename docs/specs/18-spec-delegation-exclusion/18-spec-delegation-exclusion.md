@@ -266,7 +266,7 @@ agent shuttle {
 
 ### Prompt Template Output
 
-Because `loom` excludes `warp`, the `{{{delegation.section}}}` rendered into Loom's prompt will contain only `tapestry` and `shuttle` in its Mermaid diagram and bullet list. Tapestry's rendered prompt will include `shuttle` and `warp`.
+Because `loom` excludes `warp`, iterating over `{{#delegation.targets}}` in Loom's prompt will expose only `tapestry` and `shuttle`. Tapestry's rendered prompt will expose `shuttle` and `warp`.
 
 ## Validation Behaviour
 
@@ -282,7 +282,7 @@ Because `loom` excludes `warp`, the `{{{delegation.section}}}` rendered into Loo
 
 ## Interaction with Prompt Templates
 
-The `{{{delegation.section}}}` template placeholder and the `{{#delegation.targets}}` iteration context both reflect the **post-exclusion** delegation target list. Adapters and prompt templates always receive the filtered list; they do not need to re-apply exclusion logic.
+The `{{#delegation.targets}}` iteration context reflects the **post-exclusion** delegation target list. Adapters and prompt templates always receive the filtered list; they do not need to re-apply exclusion logic.
 
 See [`docs/prompt-composition.md`](../../prompt-composition.md) for the full template context specification.
 

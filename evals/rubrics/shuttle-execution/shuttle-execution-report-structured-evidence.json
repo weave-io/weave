@@ -2,9 +2,9 @@
   "case_id": "shuttle-execution-report-structured-evidence",
   "suite": "shuttle-execution",
   "scoring": {
-    "outcome_weight": 0.7,
-    "per_expectation_weight": 0.3,
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Score only delegated-task structure that is visible in assistant text: bounded task intake, file awareness, acceptance confirmation, and evidence reporting."
+    "notes": "Score only text-visible bounded file scope, acceptance evidence, command/check results, and honest limits. Do not require Task-intake restatement, exact headings, real file mutation, or hidden tool telemetry."
   }
 }

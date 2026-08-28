@@ -33,24 +33,52 @@ import {
 } from "../prompt-snapshots.js";
 import { EVAL_SHORT_AGENT_FILTERS } from "../types.js";
 
-const WEFT_PROMPT_APPROVAL_CONTRACT =
-  "The first line must start with exactly one verdict tag: `[APPROVE]` or `[REJECT]`.";
-const WEFT_PROMPT_REVIEWED_FILES_CONTRACT =
-  "The second line must be `Reviewed files:` with backticked file paths.";
-const WEFT_PROMPT_BLOCKER_CONTRACT =
-  "Every `BLOCKER:` line must cite a specific file path";
-const PATTERN_PROMPT_SCOPE_CONTRACT =
-  "An explicit `## Scope` section that says what is in scope, what is out of scope, and any important constraints.";
-const PATTERN_PROMPT_ORDER_CONTRACT = "## Dependencies and Order";
-const PATTERN_PROMPT_ACCEPTANCE_CONTRACT =
-  "Put acceptance criteria under each task's `**Acceptance**` field";
-const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
-const SHUTTLE_PROMPT_HONESTY_CONTRACT =
-  "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
-const SPINDLE_PROMPT_FACTS_CONTRACT =
-  "A `Source facts` section containing only claims grounded in cited sources.";
-const SPINDLE_PROMPT_HONESTY_CONTRACT =
-  "If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed.";
+const WEFT_PROMPT_VERDICT_RE =
+  /\b(?:one|single)\b[\s\S]{0,40}\bverdict\b[\s\S]{0,120}\[APPROVE\][\s\S]{0,120}\[REJECT\]/i;
+const WEFT_PROMPT_REVIEWED_FILES_RE =
+  /\breviewed files\b\s*:[\s\S]{0,120}`[^`]+`/i;
+const WEFT_PROMPT_BLOCKER_RE =
+  /\bBLOCKER:[\s\S]{0,240}\b(?:path|file)\b[\s\S]{0,240}\b(?:fix|add|update|remove|guard|validate|handle|action)\b/i;
+const PATTERN_PROMPT_SCOPE_RE =
+  /## Scope\b[\s\S]*in scope[\s\S]*out of scope[\s\S]*constraints/i;
+const PATTERN_PROMPT_ORDER_RE = /## Dependencies and Order\b/i;
+const PATTERN_PROMPT_ACCEPTANCE_RE = /each task[\s\S]*\*\*Acceptance\*\*/i;
+const SHUTTLE_PROMPT_BOUNDED_EVIDENCE_RE =
+  /bounded[\s\S]*(?:evidence|observable)[\s\S]*(?:changed files|checks|commands)/i;
+const SHUTTLE_PROMPT_HONESTY_RE =
+  /(?:only|what is) observed[\s\S]*(?:claim|proof|telemetry)|do not claim[\s\S]*(?:proof|telemetry|runtime events)/i;
+const SPINDLE_PROMPT_FACTS_RE =
+  /^#{2,6}\s+(?:Source facts|Facts from sources|Verified facts)\s*$[\s\S]{0,500}\b(?:grounded|cited|citation|supported)\b/im;
+const SPINDLE_PROMPT_SOURCES_RE =
+  /^#{2,6}\s+(?:Sources|Citations)\s*$[\s\S]{0,500}\b(?:cited source|URL|page|heading|section|location)\b/im;
+const SPINDLE_PROMPT_HONESTY_RE =
+  /\b(?:retrieval|browsing|network)\b[\s\S]{0,180}\b(?:unavailable|occurred|runtime|access)\b/i;
+
+const COMPOSED_LIMITS: Record<string, { bytes: number; words: number }> = {
+  loom: { bytes: 4_500, words: 650 },
+  tapestry: { bytes: 4_000, words: 600 },
+  pattern: { bytes: 2_800, words: 420 },
+  shuttle: { bytes: 1_900, words: 280 },
+  thread: { bytes: 1_200, words: 180 },
+  spindle: { bytes: 1_600, words: 230 },
+  weft: { bytes: 2_300, words: 350 },
+  warp: { bytes: 3_000, words: 450 },
+};
+const AGGREGATE_LIMITS = { bytes: 23_200, words: 3_400 };
+
+function promptWordCount(prompt: string): number {
+  return prompt.trim() === "" ? 0 : prompt.trim().split(/\s+/u).length;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt budget helpers
+// ---------------------------------------------------------------------------
+
+describe("promptWordCount", () => {
+  it("counts words separated by spaces, tabs, and newlines", () => {
+    expect(promptWordCount("one two\tthree\nfour")).toBe(4);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -420,6 +448,36 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     }
   });
 
+  it("enforces per-agent and aggregate portable composed-prompt budgets", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: Object.keys(COMPOSED_LIMITS),
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+    const { snapshots, rawArtifacts } = result._unsafeUnwrap();
+    const artifactsByAgent = new Map(
+      rawArtifacts.map((artifact) => [
+        artifact.agentName,
+        artifact.composedPrompt,
+      ]),
+    );
+    let aggregateBytes = 0;
+    let aggregateWords = 0;
+    for (const snapshot of snapshots) {
+      const prompt = artifactsByAgent.get(snapshot.agentName);
+      expect(prompt).toBeDefined();
+      const limits = COMPOSED_LIMITS[snapshot.agentName];
+      expect(limits).toBeDefined();
+      if (prompt === undefined || limits === undefined) continue;
+      expect(snapshot.byteLength).toBeLessThanOrEqual(limits.bytes);
+      expect(promptWordCount(prompt)).toBeLessThanOrEqual(limits.words);
+      aggregateBytes += snapshot.byteLength;
+      aggregateWords += promptWordCount(prompt);
+    }
+    expect(aggregateBytes).toBeLessThanOrEqual(AGGREGATE_LIMITS.bytes);
+    expect(aggregateWords).toBeLessThanOrEqual(AGGREGATE_LIMITS.words);
+  });
+
   it("loom and tapestry snapshots have different hashes", async () => {
     const result = await composeAgentSnapshots();
     expect(result.isOk()).toBe(true);
@@ -478,11 +536,9 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
 
     const artifact = result._unsafeUnwrap().rawArtifacts[0];
     expect(artifact?.agentName).toBe("weft");
-    expect(artifact?.composedPrompt).toContain(WEFT_PROMPT_APPROVAL_CONTRACT);
-    expect(artifact?.composedPrompt).toContain(
-      WEFT_PROMPT_REVIEWED_FILES_CONTRACT,
-    );
-    expect(artifact?.composedPrompt).toContain(WEFT_PROMPT_BLOCKER_CONTRACT);
+    expect(artifact?.composedPrompt).toMatch(WEFT_PROMPT_VERDICT_RE);
+    expect(artifact?.composedPrompt).toMatch(WEFT_PROMPT_REVIEWED_FILES_RE);
+    expect(artifact?.composedPrompt).toMatch(WEFT_PROMPT_BLOCKER_RE);
   });
 
   it("pattern snapshot raw prompt preserves the planning-structure contract", async () => {
@@ -494,10 +550,12 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
 
     const artifact = result._unsafeUnwrap().rawArtifacts[0];
     expect(artifact?.agentName).toBe("pattern");
-    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_SCOPE_CONTRACT);
-    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_ORDER_CONTRACT);
-    expect(artifact?.composedPrompt).toContain(
-      PATTERN_PROMPT_ACCEPTANCE_CONTRACT,
+    const prompt = artifact?.composedPrompt ?? "";
+    expect(prompt).toMatch(PATTERN_PROMPT_SCOPE_RE);
+    expect(prompt).toMatch(PATTERN_PROMPT_ORDER_RE);
+    expect(prompt).toMatch(PATTERN_PROMPT_ACCEPTANCE_RE);
+    expect(prompt.indexOf("## Scope")).toBeLessThan(
+      prompt.indexOf("## Dependencies and Order"),
     );
   });
 
@@ -510,10 +568,10 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
 
     const artifact = result._unsafeUnwrap().rawArtifacts[0];
     expect(artifact?.agentName).toBe("shuttle");
-    expect(artifact?.composedPrompt).toContain(
-      SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT,
+    expect(artifact?.composedPrompt).toMatch(
+      SHUTTLE_PROMPT_BOUNDED_EVIDENCE_RE,
     );
-    expect(artifact?.composedPrompt).toContain(SHUTTLE_PROMPT_HONESTY_CONTRACT);
+    expect(artifact?.composedPrompt).toMatch(SHUTTLE_PROMPT_HONESTY_RE);
   });
 
   it("spindle snapshot raw prompt preserves the cited-facts and honesty contract", async () => {
@@ -525,8 +583,9 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
 
     const artifact = result._unsafeUnwrap().rawArtifacts[0];
     expect(artifact?.agentName).toBe("spindle");
-    expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_FACTS_CONTRACT);
-    expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_HONESTY_CONTRACT);
+    expect(artifact?.composedPrompt).toMatch(SPINDLE_PROMPT_FACTS_RE);
+    expect(artifact?.composedPrompt).toMatch(SPINDLE_PROMPT_SOURCES_RE);
+    expect(artifact?.composedPrompt).toMatch(SPINDLE_PROMPT_HONESTY_RE);
   });
 
   it("running twice produces identical hashes (deterministic)", async () => {

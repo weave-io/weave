@@ -333,7 +333,7 @@ workflow tapestry-execution {
   step execute {
     name "Execute the existing plan"
     type autonomous
-    agent shuttle
+    agent tapestry
     prompt "Execute the existing plan named {{instance.slug}} for: {{instance.goal}}"
     completion plan_complete {
       plan_name "{{instance.slug}}"

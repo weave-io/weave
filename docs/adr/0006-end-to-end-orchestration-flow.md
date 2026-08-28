@@ -82,7 +82,7 @@ See [Workflow Schema — before-plan Extension Surface](../workflow-schema.md#be
 
 Pattern is the `planning` agent. It reads the goal (and any before-plan artifacts) and writes a structured plan file to `.weave/plans/<slug>.md`. The planning step uses `completion plan_created { plan_name "{{instance.slug}}" }` — the engine verifies the plan file exists before advancing.
 
-The planning step carries `role planning` in the DSL. At most one step per workflow may carry this role.
+The planning step carries `role planning` in the DSL. At most one step per workflow may carry this role. Pattern must save the canonical artifact and report its exact `.weave/plans/<slug>.md` path before finishing; progress-only prose is not a valid planning handoff. Loom allows at most one Pattern delegation per user request and reports an invalid completed handoff instead of silently issuing another one.
 
 #### 4. User-authorized execution trigger
 
@@ -101,7 +101,9 @@ The adapter calls `startExecution(input, store)`. The engine creates a `Workflow
 
 #### 5. Tapestry: plan execution
 
-Tapestry is the `implement` step agent in the builtin `plan-and-execute` workflow. It reads the plan file and executes each task, typically by delegating bounded coding tasks to Shuttle workers.
+Tapestry is the `implement` step agent in the builtin `plan-and-execute` workflow and the `execute` step agent in `tapestry-execution`. It reads the plan file and executes each task, typically by delegating bounded coding tasks to Shuttle workers. `tapestry-execution` must dispatch Tapestry rather than Shuttle: Tapestry owns coordinator settlement and the `plan_complete` signal, while the workflow retains ownership of its later Weft and Warp gates.
+
+After each child settles, Tapestry verifies the evidence against the task criteria. When they pass, Tapestry marks the task complete in the canonical plan, re-reads plan state, and continues. A child claim or checkbox is not sufficient, and progress is not a completion point.
 
 Tapestry's role is now defined by the `.weave` DSL — it is a named agent with declared capabilities, not a special hook-registered entity. The engine dispatches Tapestry through the same `RunAgentEffect` mechanism used for any other step agent.
 

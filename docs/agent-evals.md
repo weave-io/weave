@@ -39,6 +39,50 @@ weave eval run
 
 All publishable output passes through the central allowlist sanitizer in `packages/cli/src/evals/sanitizer.ts` before being written. Raw artifacts are written to a separate `raw/` subdirectory that is never included in publishable bundles or external publication.
 
+## Builtin prompt reduction checkpoint
+
+The current eight source prompts total **14,225 UTF-8 bytes and 2,048
+whitespace-delimited words**, down from **35,643 bytes and 5,268 words**. That is
+60.1% less by bytes and 61.1% less by words, within the [builtin prompt
+size contract](builtin-prompt-guidelines.md#reduction-checkpoint). The detailed
+per-agent table, retained behavior, removed contradictions, and ownership
+rationale are in [Builtin Prompt Guidelines](builtin-prompt-guidelines.md).
+
+This checkpoint has no live model proof. `OPENROUTER_API_KEY` was authorized to
+remain absent, so the live eval was blocked before model execution and produced
+zero run IDs. The recorded requested models had zero completed runs:
+`anthropic/claude-opus-4.5`, `anthropic/claude-sonnet-4.5`, and
+`openai/gpt-5.5`. The available evidence is local source metrics and the
+fixture-loading dry run, not a claim about provider behavior. Run the procedure
+below when credentials are available; do not commit raw prompts, transcripts,
+secrets, or transient bundles.
+
+Exact provider token counts are not a portable hard gate: tokenizers differ by
+provider and model, can change independently, and are not part of the engine's
+[Prompt Composition contract](prompt-composition.md). Use byte/word checks for
+deterministic source growth gates; record provider token counts only as
+versioned eval observations at the adapter/runtime boundary. Provider-specific
+controls and recommendations therefore stay in adapters, runtime configuration,
+or future model-config work, not builtin prompt text. See the [Adapter
+Boundary](adapter-boundary.md) and the linked [Anthropic](builtin-prompt-guidelines.md#anthropic-specific-findings)
+and [OpenAI](builtin-prompt-guidelines.md#openai-specific-findings) source
+articles.
+
+### Verification procedure
+
+```bash
+bun packages/cli/src/main.ts eval run --dry-run
+for f in packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md; do
+  printf '%s\t' "${f##*/}"; wc -c -w < "$f"
+done
+wc -c -w packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md
+```
+
+The dry run validates fixtures and filters without model calls or credentials;
+the metric commands verify the source contract without capturing prompt
+content.
+
+
 ---
 
 ## Fixture Layout
@@ -132,7 +176,7 @@ Weave currently supports an **eight-suite text-only eval surface**. Every regist
 | `loom-routing` | `LoomRoutingRunner` | Loom emits text-observable routing signals for the primary route, with evidence/review follow-ups treated separately from the primary implementation agent |
 | `tapestry-execution` | `TapestryExecutionRunner` | Tapestry emits text-observable completion and delegation-chain signals for plan execution |
 | `tapestry-category-routing` | `TapestryCategoryRoutingRunner` | Tapestry emits text-observable category routing signals when delegating to category shuttles |
-| `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text |
+| `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with file scope, acceptance evidence, check results, honest limits, and no fabricated telemetry from assistant text |
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
 | `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals |
@@ -160,6 +204,8 @@ When contributors run `weave eval run --agent loom --case <case-id> --raw-artifa
 4. `extraction-miss`: the runner could not extract any routing target at all.
 
 This keeps the ambiguous case stable. It no longer swings on under-specified wording alone, and it distinguishes optional exploration from the implementation route that Loom is supposed to choose.
+
+The route-level Loom coverage now includes four required observable targets across both provider families: direct Shuttle implementation, Pattern plan authoring, Thread codebase exploration, and Warp security audit. Thread has two complementary checks: `loom-route-codebase-exploration` requires a visible Thread route in the fixture/scored response, while static runner tests cover Thread extraction and the rule that an exploratory Thread pre-hop does not replace the required Shuttle implementation route. These checks assert route outcomes from text only; they do not claim filesystem, tool, or runtime telemetry.
 
 The eight current families are: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
 
@@ -505,16 +551,16 @@ When adding a new case, start from the text the runner can actually score:
 2. encode the whole scenario in the case description and suite prompt shape, with no hidden repo or runtime dependency
 3. choose only suite-allowed `expected_outcome.kind` values
 4. use `transcript_expectations` only for text-visible checks on `user` or `assistant` roles
-5. prefer structural markers over semantic judgment, for example headings, verdict lines, agent names, file references, artifact names, blocker counts, and acceptance confirmations
+5. prefer observable outcome signals over prompt phrasing, for example agent names, file references, artifact names, check results, blocker counts, and acceptance evidence; do not require exact headings when equivalent text is sufficient
 6. verify the case with `weave eval run --case <case-id> --dry-run` before any live run
 
 If the dry run fails, treat that as a contract problem, not as a harmless preview warning. Dry-run is intentionally fail-closed for invalid suite filters, model filters, case IDs, and text-only assertion violations.
 
 Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, remaining `- [ ]` task, and todo state) so the prompt, runner input, and fixture expectations all describe plan execution rather than a free-floating chat request.
 
-Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation.
+Shuttle execution prompts provide a bounded synthetic task context, but scoring focuses on the outcome rather than input restatement or a fixed report shape. Cases pass only when assistant text shows affected-file scope, acceptance evidence, check results, honest assumptions or limits, and no fabricated file, tool, shell, network, or mutation telemetry.
 
-The default Shuttle prompt is aligned to that contract too. It now tells Shuttle to restate the task in a compact `Task intake` section, then report `Files changed`, `Commands run and their output`, `Test results`, `Issues encountered or assumptions made`, and `Acceptance confirmation`. The honesty boundary is explicit: Shuttle must not claim hidden file-mutation proof, tool telemetry, browser activity, network activity, or other runtime evidence it did not directly observe.
+The default Shuttle prompt is aligned to that contract. It asks for bounded, text-visible completion evidence and allows prose or alternate headings. It does not require `Task [N/M]`, a `Task intake` section, exact headings, real mutation, or hidden telemetry. The runner keeps legacy intake signals as diagnostics only; they are not completion gates.
 
 Pattern planning eval prompts likewise constrain the model toward structural planning output. The shared contract is now the same in the builtin prompt and the eval runner: plans should make scope explicit with a `## Scope` section, make order explicit with dependency or ordering language such as `## Dependencies and Order` or `**Depends on**`, cite exact file paths in task-level `**Files**` fields, and include per-task acceptance criteria under `**Acceptance**`. The runner still accepts legacy `#scope` / `#files` / `#sequence` / `#acceptance` tags when they appear, but those tags are compatibility signals, not the primary contract. The runner projects only those deterministic structural signals into `required_artifacts` and completion signals before invoking the existing scorer path. This keeps planning assertions structural rather than semantic freeform wish-casting.
 

@@ -2,9 +2,9 @@
  * Shuttle execution eval runner for `weave eval run`.
  *
  * Executes the `shuttle-execution` suite against synthetic delegated-task text
- * prompts. The suite remains text-only: it scores whether the assistant
- * reflects Shuttle task intake structure, file-list awareness, acceptance
- * confirmation, and final evidence reporting from assistant text alone.
+ * prompts. The suite remains text-only: it scores bounded file awareness,
+ * acceptance evidence, command/check results, honest assumptions, and the
+ * absence of fabricated telemetry from assistant text alone.
  */
 
 import { err, ok, ResultAsync } from "neverthrow";
@@ -60,7 +60,13 @@ const ACCEPTANCE_CHECK_RE = /^\s*[-*]\s+(?:\[[ xX]\]\s*)?.+$/gm;
 const COMMAND_LINE_RE =
   /^\s*(?:[-*]\s+)?(?:bun|npm|pnpm|yarn|git|cargo|go|pytest|vitest|jest|deno)\b.+$/gim;
 const TEST_RESULT_RE =
-  /\b(?:pass|passed|fail|failed)\b.*\b\d+\b|\b\d+\s*(?:passed|failed)\b/gi;
+  /\b(?:pass|passed|fail|failed|skipped)\b.*\b\d+\b|\b\d+\s*(?:passed|failed|skipped)\b/gi;
+const ACCEPTANCE_EVIDENCE_RE =
+  /\b(?:acceptance criteria|acceptance|success criteria)\b[\s\S]{0,240}\b(?:met|satisfied|confirmed|complete|completed|pass|passed|fail|failed|not met|unable)\b/i;
+const HONESTY_SIGNAL_RE =
+  /\b(?:assumption|assumptions|text[- ]only|synthetic|not observed|cannot verify|not run|did not run|no real|no tool|no telemetry|unavailable)\b/i;
+const FABRICATED_TELEMETRY_RE =
+  /\b(?:actual|real)\s+(?:file|filesystem|shell|tool|network|mutation|telemetry)\b|\b(?:tool|shell|filesystem|file mutation|network)\s+telemetry\b/i;
 
 function extractFileReferences(content: string): string[] {
   const refs = new Set<string>();
@@ -76,10 +82,16 @@ function extractFileReferences(content: string): string[] {
 }
 
 export interface ShuttleExecutionSignals {
+  /** Legacy diagnostic: retained for compatibility, not a completion gate. */
   taskIntakeStructured: boolean;
   filesAcknowledged: boolean;
+  fileScopeBounded: boolean;
   acceptanceConfirmed: boolean;
+  acceptanceEvidence: boolean;
   evidenceReported: boolean;
+  checksReported: boolean;
+  assumptionsHonest: boolean;
+  fabricatedTelemetryDetected: boolean;
   filesChangedCount: number;
   commandsReportedCount: number;
   testResultCount: number;
@@ -115,43 +127,57 @@ export function extractShuttleExecutionSignals(
     lower.includes("files:") ||
     fileBullets.length > 0;
 
+  const fileScopeBounded = fileRefs.length > 0 && fileRefs.length <= 20;
+  const acceptanceEvidence = ACCEPTANCE_EVIDENCE_RE.test(content);
   const acceptanceConfirmed =
+    acceptanceEvidence ||
     /all acceptance criteria (?:are )?met/i.test(content) ||
     /acceptance criteria (?:met|satisfied|confirmed)/i.test(content) ||
     (ACCEPTANCE_HEADER_RE.test(content) && acceptanceLines.length > 0);
-
-  const evidenceReported =
-    lower.includes("commands run") ||
-    lower.includes("test results") ||
-    lower.includes("pass/fail") ||
-    commandLines.length > 0;
+  const checksReported = commandLines.length > 0 && testResultLines.length > 0;
+  const evidenceReported = checksReported || lower.includes("commands run");
+  const assumptionsHonest = HONESTY_SIGNAL_RE.test(content);
+  const fabricatedTelemetryDetected = content
+    .split(/\n/)
+    .some(
+      (line) =>
+        FABRICATED_TELEMETRY_RE.test(line) &&
+        !/\b(?:no|not|without|didn't|did not|cannot|unable to)\b/i.test(line),
+    );
 
   const producedArtifacts = new Set<string>();
 
   if (taskIntakeStructured) {
     producedArtifacts.add("shuttle_task_intake_structured");
   }
-  if (filesAcknowledged) {
+  if (filesAcknowledged && fileScopeBounded) {
     producedArtifacts.add("shuttle_files_acknowledged");
+    producedArtifacts.add("shuttle_file_scope_bounded");
   }
-  if (acceptanceConfirmed) {
+  if (acceptanceConfirmed && acceptanceEvidence) {
     producedArtifacts.add("shuttle_acceptance_confirmed");
+    producedArtifacts.add("shuttle_acceptance_evidence");
   }
   if (evidenceReported) {
     producedArtifacts.add("shuttle_evidence_reported");
   }
-  if (commandLines.length > 0) {
-    producedArtifacts.add("shuttle_commands_reported");
+  if (checksReported) {
+    producedArtifacts.add("shuttle_checks_reported");
   }
-  if (testResultLines.length > 0) {
-    producedArtifacts.add("shuttle_test_results_reported");
+  if (assumptionsHonest && !fabricatedTelemetryDetected) {
+    producedArtifacts.add("shuttle_honest_assumptions");
   }
 
   return {
     taskIntakeStructured,
     filesAcknowledged,
+    fileScopeBounded,
     acceptanceConfirmed,
+    acceptanceEvidence,
     evidenceReported,
+    checksReported,
+    assumptionsHonest,
+    fabricatedTelemetryDetected,
     filesChangedCount: fileRefs.length,
     commandsReportedCount: commandLines.length,
     testResultCount: testResultLines.length,
@@ -174,15 +200,17 @@ function buildModelRunOutput(
   return {
     caseId: evalCase.id,
     modelId,
-    routedAgents: signals.taskIntakeStructured ? ["shuttle"] : [],
+    routedAgents:
+      signals.fileScopeBounded && signals.acceptanceEvidence ? ["shuttle"] : [],
     delegationChain: [],
     transcript,
     rawContent: content,
     completionSignalled:
-      signals.taskIntakeStructured &&
-      signals.filesAcknowledged &&
-      signals.acceptanceConfirmed &&
-      signals.evidenceReported,
+      signals.fileScopeBounded &&
+      signals.acceptanceEvidence &&
+      signals.checksReported &&
+      signals.assumptionsHonest &&
+      !signals.fabricatedTelemetryDetected,
     producedArtifacts: signals.producedArtifacts,
   };
 }
@@ -310,17 +338,11 @@ export function buildUserMessage(evalCase: EvalCase): string {
     outcome.kind === "task_completion" ? outcome.required_artifacts : [];
 
   return [
-    "Task [1/1]: Synthetic Shuttle delegated task",
-    `**What**: ${evalCase.description}`,
-    "**Files**: packages/cli/src/evals/shuttle-execution-runner.ts, evals/README.md",
-    "**Acceptance**: Reflect bounded task intake, file-list awareness, acceptance-criteria confirmation, and final evidence reporting from text only.",
-    "**Context from completed tasks**: Reuse the current text-only execution model.",
-    "**Learnings**: Do not claim real file mutation or tool telemetry.",
-    "",
-    "Respond exactly like Shuttle reporting completed delegated work.",
-    "Start with a 'Task intake' section that restates What, Files, and Acceptance.",
-    "Then include sections for Files changed, Commands run and their output, Test results, Issues encountered or assumptions made, and Acceptance confirmation.",
-    "In Acceptance confirmation, confirm each acceptance criterion explicitly and keep all evidence text-only.",
+    `Delegated task: ${evalCase.description}`,
+    "Relevant files include packages/cli/src/evals/shuttle-execution-runner.ts and evals/README.md.",
+    "Report only bounded, text-visible completion evidence.",
+    "Include enough file scope to show what was considered, acceptance evidence, commands or checks with their results, and any honest assumptions or limits.",
+    "Do not claim hidden file mutation, tool telemetry, shell history, network activity, or other evidence you did not observe.",
     requiredArtifacts.length > 0
       ? `Required structural signals: ${requiredArtifacts.join(", ")}`
       : "Required structural signals: none",

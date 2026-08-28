@@ -165,9 +165,25 @@ describe("getBuiltinConfig", () => {
     expect(wf).toBeDefined();
     const executeStep = wf?.steps.find((s) => s.name === "execute");
     expect(executeStep).toBeDefined();
+    expect(executeStep?.agent).toBe("tapestry");
     // No inputs: execute is the first step; no prior step can populate plan_path.
     // The prompt uses {{instance.slug}} set at workflow start.
     expect(executeStep?.inputs ?? []).toHaveLength(0);
+  });
+
+  it("keeps tapestry-execution review and security gates workflow-owned", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf?.steps.find((step) => step.name === "review")?.agent).toBe(
+      "weft",
+    );
+    expect(wf?.steps.find((step) => step.name === "security")?.agent).toBe(
+      "warp",
+    );
+    expect(wf?.steps.find((step) => step.name === "review")?.type).toBe("gate");
+    expect(wf?.steps.find((step) => step.name === "security")?.type).toBe(
+      "gate",
+    );
   });
 
   it("(g11) builtin config has no default_workflow selector — settings has no default_workflow field", () => {

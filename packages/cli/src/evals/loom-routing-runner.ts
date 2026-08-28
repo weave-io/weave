@@ -60,7 +60,7 @@
  * The composed Loom prompt is injected as the `system` message. The case
  * description becomes the `user` message. The model response is parsed for
  * agent routing signals using heuristic text patterns (e.g. lines containing
- * `→ <agent>`, `delegate to <agent>`, or `route to <agent>`).
+ * `→ <agent>`, `delegate to <agent>`, `route to <agent>`, or `go to <agent>`).
  */
 
 import { err, ok, ResultAsync } from "neverthrow";
@@ -368,6 +368,7 @@ function makePrimarySubstrings(agent: string): string[] {
     `routing to ${agent}`,
     `assign to ${agent}`,
     `send to ${agent}`,
+    `go to ${agent}`,
   ];
 }
 
@@ -482,6 +483,7 @@ function isOnlySecondaryRole(lower: string, agent: string): boolean {
  *   - `routing to <agent>`
  *   - `assign to <agent>`
  *   - `send to <agent>`
+ *   - `go to <agent>`
  *   - `"<agent>"` or `<agent> agent`
  *
  * ## Reviewer-agent suppression
@@ -520,6 +522,7 @@ export function extractRoutedAgents(content: string): string[] {
       `routing to ${agent}`,
       `assign to ${agent}`,
       `send to ${agent}`,
+      `go to ${agent}`,
       `${agent} agent`,
       `"${agent}"`,
       `\`${agent}\``,

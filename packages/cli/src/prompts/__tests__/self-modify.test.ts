@@ -117,6 +117,22 @@ describe("renderSelfModifyPrompt — packages/docs mirror note", () => {
   });
 });
 
+describe("renderSelfModifyPrompt — current prompt composition guidance", () => {
+  it("uses current delegation target iteration fields", () => {
+    const out = renderSelfModifyPrompt(localCtx());
+
+    expect(out).toContain("{{#delegation.targets}}");
+    expect(out).toContain("{{name}}");
+    expect(out).toContain("{{description}}");
+    expect(out).toContain("{{domains}}");
+    expect(out).toContain("{{#triggers}}");
+    expect(out).not.toContain("delegation.section");
+    expect(out).not.toContain("delegation.mermaid");
+    expect(out).not.toContain("fallback suppression");
+    expect(out).not.toContain("Mermaid");
+  });
+});
+
 describe("renderSelfModifyPrompt — target-aware rules", () => {
   it("global output mentions all-projects scope", () => {
     const out = renderSelfModifyPrompt(globalCtx());
