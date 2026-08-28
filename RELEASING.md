@@ -30,7 +30,7 @@ Weave uses a **tag-trigger model**: push a tag, and the workflow publishes to np
 
    **Important**: The tag commit must exactly equal the current `origin/main` commit. The workflow will validate this and fail if they differ.
 
-The workflow (`.github/workflows/publish-tag.yml`) will detect the tag, build the package, and publish it to npm.
+The workflow (`.github/workflows/publish-tag.yml`) will detect the tag, build the package, publish it to npm, and create a GitHub Release with auto-generated release notes.
 
 ## Tag naming convention
 
