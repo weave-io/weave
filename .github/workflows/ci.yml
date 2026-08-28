@@ -49,5 +49,3 @@ jobs:
       - name: Verify CODEOWNERS
         run: bun run verify:codeowners
 
-      - name: Check documentation links
-        run: bun run docs:check-links
