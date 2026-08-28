@@ -116,7 +116,7 @@ jobs:
       - name: Build
         run: bun run build
 
-      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
