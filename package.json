@@ -13,7 +13,6 @@
   ],
   "scripts": {
     "changeset": "changeset",
-    "changeset:check": "bun scripts/release/changeset-policy.ts",
     "docs:dev": "bun run --filter '@weaveio/weave-docs' dev",
     "docs:build": "bun run --filter '@weaveio/weave-docs' build",
     "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",
@@ -27,19 +26,10 @@
     "verify:codeowners": "bun scripts/ci/verify-codeowners.ts",
     "validate:declarations": "bun scripts/validate-api-extractor-configs.ts",
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
-    "version": "changeset version",
-    "release:dry": "bun run build && bun run release:control:build",
-    "release:control:build": "bun scripts/build-release-control.ts",
-    "release:control:clean-room": "bun scripts/release/clean-room.ts",
-    "release:dry:nightly": "bun scripts/release/dry-run-nightly.ts",
-    "release:dry:stable": "bun scripts/release/dry-run-stable.ts",
-    "release:doctor": "bun scripts/release/doctor.ts",
-    "release:validate": "bun run build && bun scripts/release/packager.ts",
     "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
-    "@changesets/cli": "^2.31.0",
     "@microsoft/api-extractor": "^7.55.1",
     "bun-types": "latest",
     "husky": "^9.1.7",

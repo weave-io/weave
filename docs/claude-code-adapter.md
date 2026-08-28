@@ -38,5 +38,4 @@ bundled and are never consumer npm dependencies.
   `preview` is retired; install `latest`, `next` only for train verification,
   or `nightly` as appropriate. Published versions are never unpublished.
 
-See [the practical Claude guide](adapters/claude-code.md),
-[Adapter Boundary](adapter-boundary.md), and [Release Automation](release-automation.md).
+See [the practical Claude guide](adapters/claude-code.md) and [Adapter Boundary](adapter-boundary.md).

@@ -56,5 +56,4 @@ This is an optional-capability gap. Agent and command materialization continues 
   `nightly` when you need those release channels. Published versions are never
   unpublished.
 
-See [the practical Claude guide](claude-code.md),
-[Adapter Boundary](../adapter-boundary.md), and [Release Automation](../contributing/releases.md).
+See [the practical Claude guide](claude-code.md) and [Adapter Boundary](../adapter-boundary.md).

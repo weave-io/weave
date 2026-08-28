@@ -28,7 +28,7 @@ export function verifyActionPins(
   const errors: ActionPinError[] = [];
   for (const [file, source] of Object.entries(files)) {
     let scannedActions = 0;
-    for (const line of source.split("\n")) {
+    for (const line of source.split(/\r?\n/)) {
       const value = actionValue(line);
       if (value === undefined) continue;
       scannedActions += 1;

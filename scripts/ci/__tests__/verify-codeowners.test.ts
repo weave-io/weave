@@ -26,9 +26,8 @@ const protectedRules = `
 /packages/*/tsconfig.build.json ${OWNER}
 /packages/adapters/*/api-extractor*.json ${OWNER}
 /packages/adapters/*/tsconfig.build.json ${OWNER}
-/scripts/release/ ${OWNER}
+/scripts/constants.ts ${OWNER}
 /scripts/build-public-packages.ts ${OWNER}
-/scripts/build-release-control.ts ${OWNER}
 /packages/cli/ ${OWNER}
 /packages/adapters/opencode/ ${OWNER}
 /packages/adapters/claude-code/ ${OWNER}

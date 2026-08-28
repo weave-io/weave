@@ -1,5 +1,7 @@
 # ADR 0007 — Artifact-First OIDC Releases
 
+> **Status**: Superseded by the simplified release system documented in [`RELEASING.md`](../../RELEASING.md). The old multi-workflow pipeline described here has been replaced by a single `.github/workflows/publish-tag.yml` workflow that publishes on Git tag push.
+
 ## Context
 
 Public packages must be published without long-lived npm automation credentials while preserving a verifiable link from protected release control to registry tarballs and GitHub releases.
@@ -12,7 +14,7 @@ We release only the CLI, OpenCode adapter, and nightly standalone Claude Code ad
 
 ## Consequences
 
-- Operators follow [RELEASING.md](../../RELEASING.md) and [Release Automation](../release-automation.md), including recovery and protected-main evidence.
+- Operators follow [RELEASING.md](../../RELEASING.md).
 - Consumers install supported public packages only and verify immutable version/checksum records rather than trusting tags alone.
 - `preview` is retired; historical preview versions remain published but are not recommended.
 - Release PRs link their related issue so the immutable release record has review context.

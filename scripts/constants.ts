@@ -10,26 +10,6 @@ export type ReleaseChannel = (typeof RELEASE_CHANNELS)[number];
 /** Immutable GitHub identity for every release-control invocation. */
 export const RELEASE_REPOSITORY = "weave-io/weave" as const;
 
-/** Creates the single stable release PR; never regenerates one. */
-export const RELEASE_STABLE_PREPARE_WORKFLOW_PATH =
-  ".github/workflows/release-stable-prepare.yml" as const;
-/** Regenerates the open stable release PR when `main` advances; never creates. */
-export const RELEASE_STABLE_REGENERATE_WORKFLOW_PATH =
-  ".github/workflows/release-stable-regenerate.yml" as const;
-/**
- * The one workflow identity npm trusted publishing points at. Every `npm
- * publish` for every channel runs here, because npm permits exactly one
- * trusted-publisher configuration per package.
- */
-export const RELEASE_PUBLISH_WORKFLOW_PATH =
-  ".github/workflows/release-publish.yml" as const;
-/**
- * Independent, non-reusable artifact attestation. Deliberately absent from
- * every npm trust record so its OIDC identity can never publish.
- */
-export const RELEASE_ATTEST_WORKFLOW_PATH =
-  ".github/workflows/release-attest.yml" as const;
-
 /**
  * The only release branch. Its atomic creation is the exclusivity lock for the
  * single open stable release PR, and it dies with that PR.
@@ -73,9 +53,12 @@ export const PRIVATE_WORKSPACE_NAMES = [
 export type PrivateWorkspaceName = (typeof PRIVATE_WORKSPACE_NAMES)[number];
 
 /**
- * The canonical release catalog: exactly four public packages, each releasing
- * on every channel. Adding a fifth package is a deliberate catalog change, not
+ * The canonical release catalog: exactly three public packages, each releasing
+ * on every channel. Adding a fourth package is a deliberate catalog change, not
  * a configuration detail.
+ *
+ * Note: @weaveio/weave-adapter-pi is developed and released separately from a
+ * private repository. It is not part of this public release catalog.
  */
 export const PUBLIC_PACKAGES = {
   "@weaveio/weave-cli": {
@@ -90,16 +73,19 @@ export const PUBLIC_PACKAGES = {
     directory: "packages/adapters/claude-code",
     channels: RELEASE_CHANNELS,
   },
-  "@weaveio/weave-adapter-pi": {
-    directory: "packages/adapters/pi",
-    channels: RELEASE_CHANNELS,
-  },
 } as const satisfies Record<
   string,
   { directory: string; channels: readonly ReleaseChannel[] }
 >;
 
 export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
+
+/** The publishable catalog in its canonical declaration order. */
+export const PUBLIC_PACKAGE_NAMES = [
+  "@weaveio/weave-cli",
+  "@weaveio/weave-adapter-opencode",
+  "@weaveio/weave-adapter-claude-code",
+] as const satisfies readonly PublicPackageName[];
 
 /** Third-party packages that are intentionally resolved by a packed artifact. */
 export const PUBLIC_RUNTIME_EXTERNALS = [
@@ -132,6 +118,8 @@ export interface PublicPackageBuild {
   entries: readonly PublicBuildEntry[];
   declarations: readonly PublicDeclarationBuild[];
   bootstrap?: readonly string[];
+  /** Extra package-relative files copied into the packed artifact as-is. */
+  extraFiles?: readonly string[];
   runtimeExternals?: readonly string[];
 }
 
@@ -207,50 +195,6 @@ export const PUBLIC_PACKAGE_BUILDS = {
       "skills/compose/SKILL.md",
     ],
   },
-  "@weaveio/weave-adapter-pi": {
-    runtimeExternals: ["kysely", "pino"],
-    entries: [
-      {
-        source: "packages/adapters/pi/src/index.ts",
-        output: "packages/adapters/pi/dist/index.js",
-      },
-      {
-        source: "packages/adapters/pi/src/cli.ts",
-        output: "packages/adapters/pi/dist/cli.js",
-      },
-      {
-        source: "packages/adapters/pi/src/host-module-loader.ts",
-        output: "packages/adapters/pi/dist/host-module-loader.js",
-      },
-      {
-        source: "packages/adapters/pi/src/extension.ts",
-        output: "packages/adapters/pi/dist/extension.js",
-        transpileOnly: true,
-      },
-      {
-        source: "packages/adapters/pi/src/extension-impl.ts",
-        output: "packages/adapters/pi/dist/extension-impl.js",
-      },
-    ],
-    declarations: [
-      {
-        config: "packages/adapters/pi/api-extractor.index.json",
-        output: "packages/adapters/pi/dist/index.d.ts",
-      },
-      {
-        config: "packages/adapters/pi/api-extractor.cli.json",
-        output: "packages/adapters/pi/dist/cli.d.ts",
-      },
-      {
-        config: "packages/adapters/pi/api-extractor.extension.json",
-        output: "packages/adapters/pi/dist/extension.d.ts",
-      },
-      {
-        config: "packages/adapters/pi/api-extractor.extension-impl.json",
-        output: "packages/adapters/pi/dist/extension-impl.d.ts",
-      },
-    ],
-  },
 } as const satisfies Record<PublicPackageName, PublicPackageBuild>;
 
 /** Fields that may cross from a source workspace manifest into an npm artifact. */
@@ -294,68 +238,4 @@ export const PACKAGE_ARCHIVE_LIMITS = {
   entries: 128,
   compressionRatio: 100,
   manifestBytes: 64 * 1024,
-} as const;
-
-// ---------------------------------------------------------------------------
-// Deprecated stable-train constants.
-//
-// These exist only so the not-yet-removed stable-train and metadata-replay
-// modules keep compiling. They are deleted with their consumers in a single
-// commit. No new code may read them.
-// ---------------------------------------------------------------------------
-
-/** @deprecated Old publish workflow. Use the per-workflow paths above. */
-export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
-
-/** Stable workflow-run identity for the read-only pre-cutover proof. */
-export const LEGACY_PREFLIGHT_RUN_NAME = "legacy-publisher-preflight" as const;
-
-/** @deprecated Stable-train operation names. The new pipeline routes by channel. */
-export const RELEASE_OPERATIONS = [
-  "nightly",
-  "stable-cut",
-  "stable-fix",
-  "stable-publish",
-  "stable-finalize",
-  "metadata-replay",
-] as const;
-
-/** @deprecated Stable-train record schema version. */
-export const TRAIN_SCHEMA_VERSION = 1 as const;
-
-/** @deprecated Stable-train record lifetime. */
-export const TRAIN_VALIDITY_DAYS = 7 as const;
-
-/** @deprecated Stable-train lifecycle states. */
-export const STABLE_TRAIN_STATES = [
-  "prepared",
-  "built",
-  "bound",
-  "published-next",
-  "awaiting-promotion",
-  "promoted",
-  "release-draft",
-  "finalized",
-  "metadata-pending",
-  "blocked",
-  "expired",
-  "abandoned",
-  "partial",
-] as const;
-
-/** @deprecated Stable-train lifecycle transitions. */
-export const STABLE_TRAIN_TRANSITIONS = {
-  prepared: ["built", "blocked", "abandoned", "expired"],
-  built: ["bound", "blocked", "abandoned", "expired"],
-  bound: ["published-next", "blocked", "abandoned", "expired"],
-  "published-next": ["awaiting-promotion", "partial", "blocked", "expired"],
-  "awaiting-promotion": ["promoted", "partial", "blocked", "expired"],
-  promoted: ["release-draft", "finalized", "metadata-pending", "blocked"],
-  "release-draft": ["finalized", "metadata-pending", "blocked", "abandoned"],
-  finalized: ["metadata-pending"],
-  "metadata-pending": ["finalized", "blocked"],
-  blocked: ["abandoned", "expired"],
-  expired: ["abandoned"],
-  abandoned: [],
-  partial: ["blocked", "abandoned"],
 } as const;

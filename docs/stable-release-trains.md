@@ -1,5 +1,7 @@
 # Stable release trains
 
+> **Status**: This document describes the old multi-workflow release system. The current release system is documented in [`RELEASING.md`](../RELEASING.md) and uses a single `.github/workflows/publish-tag.yml` workflow triggered by Git tags.
+
 Stable cuts begin at the green protected `main` SHA, using the GitHub server time as `cutAt`. A train expires **at** `cutAt + 7 days`; the boundary is exclusive. Its content-addressed record holds the release ref, deterministic versions, exact consumed stable Changeset paths and preimage digests, plus content-addressed metadata writes for later replay.
 
 Only stable-partition Changesets are consumed. Claude-only and post-cut files are recorded as preserved paths and are never included in the worktree plan. Stable package output is restricted to CLI and OpenCode.

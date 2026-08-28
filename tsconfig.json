@@ -17,8 +17,12 @@
       "@weaveio/weave-core/*": ["./packages/core/src/*"],
       "@weaveio/weave-engine": ["./packages/engine/src/index.ts"],
       "@weaveio/weave-engine/*": ["./packages/engine/src/*"],
-      "@weaveio/weave-adapter-opencode": ["./packages/adapters/opencode/src/index.ts"],
-      "@weaveio/weave-adapter-claude-code": ["./packages/adapters/claude-code/src/index.ts"],
+      "@weaveio/weave-adapter-opencode": [
+        "./packages/adapters/opencode/src/index.ts"
+      ],
+      "@weaveio/weave-adapter-claude-code": [
+        "./packages/adapters/claude-code/src/index.ts"
+      ],
       "@weaveio/weave-adapter-pi": ["./packages/adapters/pi/src/index.ts"],
       "@weaveio/weave-config": ["./packages/config/src/index.ts"],
       "@weaveio/weave-config/*": ["./packages/config/src/*"],
@@ -32,9 +36,5 @@
     "packages/adapters/*/src/**/*",
     "scripts/**/*"
   ],
-  "exclude": [
-    "node_modules",
-    "**/dist/**",
-    "scripts/release/__fixtures__/consumer/**"
-  ]
+  "exclude": ["node_modules", "**/dist/**"]
 }
