@@ -147,7 +147,8 @@ export async function loadDocuments(root = "."): Promise<DocumentStore> {
   ];
   for (const pattern of patterns) {
     for await (const path of new Bun.Glob(pattern).scan({ cwd: root })) {
-      documents[path] = await Bun.file(resolve(root, path)).text();
+      const normalizedPath = path.replaceAll("\\", "/");
+      documents[normalizedPath] = await Bun.file(resolve(root, path)).text();
     }
   }
   return { documents };

@@ -11,7 +11,7 @@ import {
   type PublicDeclarationBuild,
   type PublicPackageBuild,
   type PublicPackageName,
-} from "./release/constants.js";
+} from "./constants.js";
 
 export type PublicPackageBuildError =
   | {
@@ -115,11 +115,23 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
   }
 
   ensureDirectory(path: string): ResultAsync<void, PublicPackageBuildError> {
-    return this.run(["mkdir", "-p", path], path, "mkdir");
+    return ResultAsync.fromPromise(
+      (async () => {
+        const fs = await import("node:fs/promises");
+        await fs.mkdir(path, { recursive: true });
+      })(),
+      () => ({
+        type: "Filesystem" as const,
+        path,
+        operation: "mkdir" as const,
+      }),
+    );
   }
 
   makeExecutable(path: string): ResultAsync<void, PublicPackageBuildError> {
-    return this.run(["chmod", "755", path], path, "chmod");
+    // On Windows, executability is determined by file extension, not permissions
+    // Bun will handle execution of .js files with the shebang
+    return okAsync(undefined);
   }
 
   listDeclarationFiles(
@@ -162,21 +174,6 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     })).map(() => undefined);
   }
 
-  private run(
-    command: string[],
-    path: string,
-    operation: "mkdir" | "chmod",
-  ): ResultAsync<void, PublicPackageBuildError> {
-    return ResultAsync.fromPromise(Bun.spawn(command).exited, () => ({
-      type: "Filesystem" as const,
-      path,
-      operation,
-    })).andThen((exitCode) => {
-      if (exitCode === 0) return okAsync(undefined);
-      return errAsync({ type: "Filesystem" as const, path, operation });
-    });
-  }
-
   private async scanDeclarationFiles(directory: string): Promise<string[]> {
     const files: string[] = [];
     for await (const path of new Bun.Glob("**/*.d.ts").scan({
@@ -206,30 +203,9 @@ export class PublicPackageBuilder {
     for (const packageName of Object.keys(
       PUBLIC_PACKAGE_BUILDS,
     ) as PublicPackageName[]) {
-      result = result.andThen(() => this.buildIfSourceIsAvailable(packageName));
+      result = result.andThen(() => this.build(packageName));
     }
     return result;
-  }
-
-  private buildIfSourceIsAvailable(
-    packageName: PublicPackageName,
-  ): ResultAsync<void, PublicPackageBuildError> {
-    if (packageName !== "@weaveio/weave-adapter-pi")
-      return this.build(packageName);
-    const source = PUBLIC_PACKAGE_BUILDS[packageName].entries[0]?.source;
-    if (source === undefined) return this.build(packageName);
-    return ResultAsync.fromPromise(Bun.file(source).exists(), () => ({
-      type: "Filesystem" as const,
-      path: source,
-      operation: "list" as const,
-    })).andThen((available) => {
-      if (available) return this.build(packageName);
-      logger.info(
-        { packageName, source },
-        "skipping unavailable adapter source in release-only integration",
-      );
-      return okAsync(undefined);
-    });
   }
 
   build(
@@ -281,7 +257,8 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
     declarations: readonly PublicDeclarationBuild[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
+    let result = this.fileSystem.ensureDirectory(directory);
     for (const declaration of declarations) {
       result = result
         .andThen(() =>
@@ -345,12 +322,15 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
     declarations: readonly PublicDeclarationBuild[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    const expected = new Set(declarations.map(({ output }) => output));
+    const expected = new Set(
+      declarations.map(({ output }) => output.replaceAll("\\", "/")),
+    );
     const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
     return this.fileSystem.listDeclarationFiles(directory).andThen((files) => {
       let result = okAsync<void, PublicPackageBuildError>(undefined);
       for (const file of files) {
-        if (expected.has(file)) continue;
+        const normalizedFile = file.replaceAll("\\", "/");
+        if (expected.has(normalizedFile)) continue;
         result = result.andThen(() => this.fileSystem.removeFile(file));
       }
       return result;
@@ -510,11 +490,12 @@ export class PublicPackageBuilder {
       Promise.all([
         process.value.exited,
         new Response(process.value.stderr).text(),
+        new Response(process.value.stdout).text(),
       ]),
       () => error,
-    ).andThen(([exitCode, diagnostics]) => {
+    ).andThen(([exitCode, diagnostics, stdout]) => {
       if (exitCode === 0) return okAsync(undefined);
-      return errAsync({ ...error, diagnostics });
+      return errAsync({ ...error, diagnostics: diagnostics || stdout });
     });
   }
 
