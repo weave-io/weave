@@ -47,6 +47,7 @@ export type TranslateAgentError = {
  *   `undefined` the model field is omitted and OpenCode uses its own default)
  * - `temperature` → `temperature` (passed through when defined)
  * - `description` → `description` (passed through when defined)
+ * - `variant` → `variant` (passed through when defined)
  * - `mode` → `mode`
  * - `effectiveToolPolicy` → `permission` + optional `tools` patch via
  *   `mapToolPolicy`
@@ -84,6 +85,11 @@ export function translateAgent(
   // description: pass through when declared
   if (descriptor.description !== undefined) {
     config.description = descriptor.description;
+  }
+
+  // variant: pass through when declared
+  if (descriptor.variant !== undefined) {
+    config.variant = descriptor.variant;
   }
 
   // tools: merge read-class tool overrides when the read capability is denied

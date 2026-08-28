@@ -59,6 +59,9 @@ export function generateCategoryShuttles(
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
     }
+    if (category.variant !== undefined) {
+      overrides.variant = category.variant;
+    }
     if (category.prompt_append !== undefined) {
       const existing = base.prompt_append;
       overrides.prompt_append = existing

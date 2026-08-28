@@ -1620,3 +1620,39 @@ describe("parseConfig — review_models field", () => {
     ).toBe(true);
   });
 });
+
+describe("parseConfig — variant field", () => {
+  it("agent with variant 'high' parses end-to-end", () => {
+    const src = `agent loom {
+  prompt "You are loom."
+  models ["claude-sonnet-4-5"]
+  variant "high"
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.loom?.variant).toBe("high");
+  });
+
+  it("agent without variant has undefined variant", () => {
+    const src = `agent shuttle {
+  prompt "You are shuttle."
+  models ["claude-sonnet-4-5"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.shuttle?.variant).toBeUndefined();
+  });
+
+  it("category with variant parses end-to-end", () => {
+    const src = `category backend {
+  description "Backend APIs"
+  patterns ["src/api/**"]
+  variant "low"
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.backend?.variant).toBe("low");
+  });
+});

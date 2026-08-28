@@ -52,6 +52,7 @@ export interface AgentDescriptor {
   models: string[];
   mode: AgentMode;
   temperature?: number;
+  variant?: string;
   effectiveToolPolicy: EffectiveToolPolicy;
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
@@ -831,6 +832,7 @@ export function composeAgentDescriptor(
             models: agentConfig.models ?? [],
             mode: agentConfig.mode ?? "subagent",
             temperature: agentConfig.temperature,
+            variant: agentConfig.variant,
             effectiveToolPolicy,
             rawToolPolicy: agentConfig.tool_policy,
             delegationTargets,

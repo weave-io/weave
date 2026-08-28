@@ -14,7 +14,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
 import { translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +121,24 @@ describe("translateAgent — basic translation", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       expect(result.value.description).toBeUndefined();
+    }
+  });
+
+  it("passes through variant when defined", () => {
+    const descriptor = makeDescriptor({ variant: "high" });
+    const result = translateAgent(descriptor);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.variant).toBe("high");
+    }
+  });
+
+  it("omits variant when undefined", () => {
+    const descriptor = makeDescriptor({ variant: undefined });
+    const result = translateAgent(descriptor);
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.variant).toBeUndefined();
     }
   });
 });

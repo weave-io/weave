@@ -1658,3 +1658,117 @@ describe("AgentConfigSchema — review_models field", () => {
     expect(r.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentConfigSchema — variant field
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema — variant", () => {
+  it("accepts agent with variant as a valid string", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      variant: "specialized-v2",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBe("specialized-v2");
+    }
+  });
+
+  it("accepts agent without variant (optional)", () => {
+    const r = AgentConfigSchema.safeParse({ prompt: "You are an agent." });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBeUndefined();
+    }
+  });
+
+  it("accepts variant as empty string (valid string; runtime semantics are harness-owned)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      variant: "",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBe("");
+    }
+  });
+
+  it("rejects variant as non-string (number)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      variant: 42,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("variant"))).toBe(true);
+    }
+  });
+
+  it("rejects variant as non-string (boolean)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      variant: true,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("variant"))).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CategoryConfigSchema — variant field
+// ---------------------------------------------------------------------------
+
+describe("CategoryConfigSchema — variant", () => {
+  it("accepts category with variant as a valid string", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Backend category",
+      patterns: ["src/api/**"],
+      variant: "backend-v3",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBe("backend-v3");
+    }
+  });
+
+  it("accepts category without variant (optional)", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Backend category",
+      patterns: ["src/api/**"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBeUndefined();
+    }
+  });
+
+  it("accepts variant as empty string (valid string; runtime semantics are harness-owned)", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Backend category",
+      patterns: ["src/api/**"],
+      variant: "",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.variant).toBe("");
+    }
+  });
+
+  it("rejects variant as non-string (array)", () => {
+    const r = CategoryConfigSchema.safeParse({
+      description: "Backend category",
+      patterns: ["src/api/**"],
+      variant: ["v1", "v2"],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("variant"))).toBe(true);
+    }
+  });
+});

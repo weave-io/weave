@@ -1395,3 +1395,37 @@ describe("validate — review_models field", () => {
     expect(errors.some((e) => e.path.includes("review_models"))).toBe(true);
   });
 });
+
+describe("validate — variant field", () => {
+  it("agent with variant 'high' round-trips correctly", () => {
+    const src = `agent myagent {
+  prompt "You are myagent."
+  variant "high"
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.myagent?.variant).toBe("high");
+  });
+
+  it("agent without variant has undefined variant", () => {
+    const src = `agent shuttle {
+  prompt "You are shuttle."
+  models ["claude-sonnet-4-5"]
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.shuttle?.variant).toBeUndefined();
+  });
+
+  it("category with variant 'low' round-trips correctly", () => {
+    const src = `category mycat {
+  patterns ["src/**"]
+  variant "low"
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.mycat?.variant).toBe("low");
+  });
+});

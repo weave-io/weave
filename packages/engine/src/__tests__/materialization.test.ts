@@ -771,4 +771,79 @@ describe("materializeAgents", () => {
       );
     });
   });
+
+  describe("variant propagation", () => {
+    it("materialized agent includes variant when config declares it", async () => {
+      const plan = await materializeConfig(`
+        agent loom {
+          prompt "Loom"
+          models ["model-loom"]
+          variant "experimental-v2"
+        }
+      `);
+
+      expect(plan.agents[0]?.descriptor.variant).toBe("experimental-v2");
+    });
+
+    it("category shuttle inherits variant from base shuttle", async () => {
+      const plan = await materializeConfig(`
+        agent shuttle {
+          prompt "Base shuttle"
+          models ["model-shuttle"]
+          mode all
+          variant "shuttle-v1"
+        }
+        category frontend { patterns ["src/**/*.tsx"] }
+      `);
+
+      const frontend = plan.agents.find(
+        (a) => a.agentName === "shuttle-frontend",
+      );
+      expect(frontend?.descriptor.variant).toBe("shuttle-v1");
+    });
+
+    it("category shuttle overrides variant when category declares it", async () => {
+      const plan = await materializeConfig(`
+        agent shuttle {
+          prompt "Base shuttle"
+          models ["model-shuttle"]
+          mode all
+          variant "shuttle-v1"
+        }
+        category frontend {
+          patterns ["src/**/*.tsx"]
+          variant "frontend-v2"
+        }
+      `);
+
+      const frontend = plan.agents.find(
+        (a) => a.agentName === "shuttle-frontend",
+      );
+      expect(frontend?.descriptor.variant).toBe("frontend-v2");
+    });
+
+    it("review variant inherits variant from source agent", async () => {
+      const plan = await materializeConfig(`
+        agent weft {
+          prompt "Weft"
+          models ["model-weft"]
+          review_models ["openai/gpt-5"]
+          variant "weft-experimental"
+        }
+      `);
+
+      const variant = plan.agents.find(
+        (a) => a.agentName === "weft-openai-gpt-5",
+      );
+      expect(variant?.descriptor.variant).toBe("weft-experimental");
+    });
+
+    it("variant is undefined when not declared", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] }
+      `);
+
+      expect(plan.agents[0]?.descriptor.variant).toBeUndefined();
+    });
+  });
 });

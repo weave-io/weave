@@ -1008,6 +1008,43 @@ describe("composeAgentDescriptor", () => {
     });
   });
 
+  describe("variant passthrough", () => {
+    it("Variant_string_is_passed_through_unchanged", async () => {
+      const config = cfg(`
+        agent loom {
+          prompt "Base prompt."
+          variant "experimental-v2"
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.variant).toBe("experimental-v2");
+    });
+
+    it("Missing_variant_is_undefined", async () => {
+      const config = cfg(`
+        agent loom {
+          prompt "Base prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.variant).toBeUndefined();
+    });
+  });
+
   describe("stable non-category descriptor contract", () => {
     it("Custom_agent_descriptor_exposes_only_normalized_adapter_fields", async () => {
       const config = cfg(`

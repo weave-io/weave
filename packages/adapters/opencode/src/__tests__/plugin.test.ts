@@ -404,6 +404,83 @@ describe("WeavePlugin — config hook", () => {
     // Weave agent must also be present
     expect(cfg.agent?.["preserve-test-agent"]).toBeDefined();
   });
+
+  it("config hook passes through variant when defined in agent config", async () => {
+    const agentName = "variant-test-agent";
+    const root = join(
+      tmpdir(),
+      `weave-variant-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      [
+        `agent ${agentName} {`,
+        `  prompt "You are a test agent with variant."`,
+        `  models ["claude-sonnet-4-5"]`,
+        `  mode subagent`,
+        `  variant "high"`,
+        `}`,
+        "",
+      ].join("\n"),
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config?.(cfg as never);
+
+    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    expect(injected).toBeDefined();
+    expect(injected.variant).toBe("high");
+  });
+
+  it("config hook omits variant when not defined in agent config", async () => {
+    const agentName = "no-variant-agent";
+    const root = join(
+      tmpdir(),
+      `weave-no-variant-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      [
+        `agent ${agentName} {`,
+        `  prompt "You are a test agent without variant."`,
+        `  models ["claude-sonnet-4-5"]`,
+        `  mode subagent`,
+        `}`,
+        "",
+      ].join("\n"),
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config?.(cfg as never);
+
+    const injected = cfg.agent?.[agentName] as Record<string, unknown>;
+    expect(injected).toBeDefined();
+    expect(injected.variant).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

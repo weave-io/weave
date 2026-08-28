@@ -287,6 +287,37 @@ describe("generateCategoryShuttles", () => {
 
       expect(result["shuttle-frontend"]?.config.temperature).toBe(0.2);
     });
+
+    it("(h) category variant overrides base shuttle variant", () => {
+      const result = shuttles(`
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          variant "base-variant"
+        }
+        category frontend {
+          patterns ["src/components/**"]
+          variant "frontend-variant"
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.variant).toBe(
+        "frontend-variant",
+      );
+    });
+
+    it("(i) category shuttle inherits base shuttle variant when category has none", () => {
+      const result = shuttles(`
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          variant "base-variant"
+        }
+        category frontend { patterns ["src/components/**"] }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.variant).toBe("base-variant");
+    });
   });
 
   describe("disabling", () => {

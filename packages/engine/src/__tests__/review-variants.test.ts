@@ -186,6 +186,26 @@ describe("generateReviewVariants — variant config properties", () => {
   it("inherits prompt from source agent", () => {
     expect(variant().config.prompt).toBe("You are a code reviewer.");
   });
+
+  it("inherits variant from source agent", () => {
+    const source = cfg(`
+      agent weft {
+        prompt "You are a code reviewer."
+        models ["claude-sonnet-4-5"]
+        mode primary
+        review_models ["openai/gpt-5"]
+        variant "experimental"
+      }
+    `);
+
+    const v =
+      generateReviewVariants(source)._unsafeUnwrap()["weft-openai-gpt-5"];
+    expect(v.config.variant).toBe("experimental");
+  });
+
+  it("variant is undefined when source agent has no variant", () => {
+    expect(variant().config.variant).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

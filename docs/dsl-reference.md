@@ -66,6 +66,7 @@ agent loom {
   models ["claude-sonnet-4-5", "gpt-4o"]
   mode primary
   temperature 0.1
+  variant "preview"
 
   tool_policy {
     read allow
@@ -104,6 +105,7 @@ agent my-helper {
 | `models` | string[] | Ordered model preference list. Adapters translate to concrete harness model fields. |
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
+| `variant` | string | Free-form string for model variant selection (e.g. `"preview"`, `"latest"`). Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
@@ -199,6 +201,7 @@ category frontend {
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
 | `prompt_append_file` | string | File path appended to the base shuttle prompt |
 | `temperature` | number | Temperature hint for this category's shuttle agent |
+| `variant` | string | Free-form string for model variant selection. Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Tool policy overrides for this category's shuttle agent |
 
 Generated shuttle agent names follow the pattern `shuttle-{category-name}` (e.g. `shuttle-backend`, `shuttle-frontend`). Adapters decide how those descriptors are materialised in a concrete harness.
