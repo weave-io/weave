@@ -562,7 +562,7 @@ describe("composeAgentDescriptor", () => {
       );
     });
 
-    it("Mode_all_agent_with_non_shuttle_prefix_excludes_category_shuttles_from_delegation_targets", async () => {
+    it("Mode_all_agent_with_non_shuttle_prefix_does_not_exclude_category_shuttles_from_delegation_targets", async () => {
       const config = cfg(`
         agent loom-shuttle {
           prompt "Loom-shuttle prompt."
@@ -589,12 +589,13 @@ describe("composeAgentDescriptor", () => {
         config.agents,
       );
 
+      // loom-shuttle is not named "shuttle", so it should see category shuttles
       expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
-        ["helper"],
+        ["shuttle-frontend", "shuttle-backend", "helper"],
       );
     });
 
-    it("Agent_named_shuttle_with_mode_primary_does_not_exclude_category_shuttles", async () => {
+    it("Agent_named_shuttle_with_mode_primary_excludes_category_shuttles", async () => {
       const config = cfg(`
         agent shuttle {
           prompt "Shuttle prompt."
@@ -621,11 +622,9 @@ describe("composeAgentDescriptor", () => {
         config.agents,
       );
 
-      // mode primary targets are excluded from delegation, so shuttle-frontend and shuttle-backend
-      // are included (they have no mode set, defaulting to subagent), but shuttle itself is excluded
-      // (same agent). The key assertion: category shuttles are NOT excluded because source mode is primary.
+      // Agent named "shuttle" excludes category shuttles regardless of mode
       expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
-        ["shuttle-frontend", "shuttle-backend", "helper"],
+        ["helper"],
       );
     });
   });
