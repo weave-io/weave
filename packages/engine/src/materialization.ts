@@ -227,6 +227,7 @@ export function materializeAgents(
         allAgents,
         category,
         isPrimary ? prebuiltReviewVariants : undefined,
+        generatedShuttles,
       ).match<
         | {
             ok: true;

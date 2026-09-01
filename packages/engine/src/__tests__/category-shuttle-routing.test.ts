@@ -57,6 +57,8 @@ async function descriptor(
     config,
     allAgents,
     categoryMeta,
+    undefined,
+    shuttleMap.value,
   );
 
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
@@ -774,5 +776,149 @@ describe("category shuttle delegation targets in composed descriptor", () => {
 
     // The routing table enrichment has been removed; the heading must not appear.
     expect(desc.composedPrompt).not.toContain("## Category Routing Table");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Category shuttle exclusion logic — name-based identification
+// ---------------------------------------------------------------------------
+
+describe("category shuttle exclusion logic — name-based identification", () => {
+  it("(a) base shuttle named 'shuttle' excludes category shuttles from its delegation targets", async () => {
+    const desc = await descriptor(
+      "shuttle",
+      `
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          mode subagent
+          tool_policy { delegate allow }
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/frontend/**"]
+        }
+        category backend {
+          description "Backend API"
+          patterns ["src/backend/**"]
+        }
+      `,
+    );
+
+    // Base shuttle should not delegate to category shuttles
+    const targetNames = desc.delegationTargets.map((t) => t.name);
+    expect(targetNames).not.toContain("shuttle-frontend");
+    expect(targetNames).not.toContain("shuttle-backend");
+  });
+
+  it("(b) base shuttle with mode 'all' still excludes category shuttles", async () => {
+    const desc = await descriptor(
+      "shuttle",
+      `
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          mode all
+          tool_policy { delegate allow }
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/frontend/**"]
+        }
+      `,
+    );
+
+    // Base shuttle should exclude category shuttles regardless of mode
+    const targetNames = desc.delegationTargets.map((t) => t.name);
+    expect(targetNames).not.toContain("shuttle-frontend");
+  });
+
+  it("(c) unrelated all-mode delegator retains category shuttle targets", async () => {
+    const desc = await descriptor(
+      "orchestrator",
+      `
+        agent orchestrator {
+          prompt "I am an orchestrator."
+          models ["claude-sonnet-4-5"]
+          mode all
+          tool_policy { delegate allow }
+        }
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          mode subagent
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/frontend/**"]
+        }
+        category backend {
+          description "Backend API"
+          patterns ["src/backend/**"]
+        }
+      `,
+    );
+
+    // Unrelated all-mode agent should see category shuttles
+    const targetNames = desc.delegationTargets.map((t) => t.name);
+    expect(targetNames).toContain("shuttle-frontend");
+    expect(targetNames).toContain("shuttle-backend");
+  });
+
+  it("(d) category shuttle excludes base shuttle and sibling category shuttles", async () => {
+    const desc = await descriptor(
+      "shuttle-frontend",
+      `
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          mode subagent
+          tool_policy { delegate allow }
+        }
+        agent weft {
+          prompt "Reviewer."
+          models ["claude-sonnet-4-5"]
+          mode subagent
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/frontend/**"]
+        }
+        category backend {
+          description "Backend API"
+          patterns ["src/backend/**"]
+        }
+      `,
+    );
+
+    // Category shuttle should not delegate to base shuttle or other category shuttles
+    // but should still see non-shuttle subagents like weft
+    const targetNames = desc.delegationTargets.map((t) => t.name);
+    expect(targetNames).toContain("weft");
+    expect(targetNames).not.toContain("shuttle");
+    expect(targetNames).not.toContain("shuttle-frontend");
+    expect(targetNames).not.toContain("shuttle-backend");
+  });
+
+  it("(e) base shuttle with mode 'primary' still excludes category shuttles", async () => {
+    const desc = await descriptor(
+      "shuttle",
+      `
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          mode primary
+          tool_policy { delegate allow }
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/frontend/**"]
+        }
+      `,
+    );
+
+    // Base shuttle should exclude category shuttles regardless of mode
+    const targetNames = desc.delegationTargets.map((t) => t.name);
+    expect(targetNames).not.toContain("shuttle-frontend");
   });
 });

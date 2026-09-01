@@ -141,15 +141,16 @@ function loadPromptSource(
 
 function shouldExcludeSharedShuttleTarget(
   agentName: string,
-  agentConfig: AgentConfig,
   targetName: string,
 ): boolean {
-  if (!targetName.startsWith("shuttle-")) return false;
-  // Category shuttle: any agent whose name starts with "shuttle-"
-  if (agentName.startsWith("shuttle-")) return true;
-  // Root shuttle equivalent: mode === "all" and no "shuttle-" prefix (generalist root)
-  if (agentConfig.mode === "all" && !agentName.startsWith("shuttle-"))
-    return true;
+  // Category shuttle agent: exclude base shuttle and all sibling category shuttles
+  if (agentName.startsWith("shuttle-")) {
+    return targetName === "shuttle" || targetName.startsWith("shuttle-");
+  }
+  // Base shuttle agent: exclude all category shuttles
+  if (agentName === "shuttle") {
+    return targetName.startsWith("shuttle-");
+  }
   return false;
 }
 
@@ -158,6 +159,7 @@ function buildDelegationTargets(
   agentConfig: AgentConfig,
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
+  categoryShuttleMap: Record<string, { categoryMeta: CategoryMetadata }>,
 ): DelegationTarget[] {
   if (agentConfig.tool_policy?.delegate !== "allow") return [];
 
@@ -184,13 +186,16 @@ function buildDelegationTargets(
     if (targetName === agentName) continue;
     if (config.disabled.agents.includes(targetName)) continue;
     if (targetConfig.mode === "primary") continue;
-    if (shouldExcludeSharedShuttleTarget(agentName, agentConfig, targetName))
-      continue;
+    if (shouldExcludeSharedShuttleTarget(agentName, targetName)) continue;
     if (delegationExclude.includes(targetName)) continue;
+
+    // For category shuttles, prefer the category description over the agent config description
+    const categoryMeta = categoryShuttleMap[targetName]?.categoryMeta;
+    const description = categoryMeta?.description ?? targetConfig.description;
 
     targets.push({
       name: targetName,
-      description: targetConfig.description,
+      description,
       triggers: targetConfig.triggers ?? [],
       isCategory: categoryShuttleNames.has(targetName),
     });
@@ -734,12 +739,14 @@ export function composeAgentDescriptor(
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
   materializedReviewVariants?: MaterializedAgent[],
+  categoryShuttleMap?: Record<string, { categoryMeta: CategoryMetadata }>,
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const delegationTargets = buildDelegationTargets(
     agentName,
     agentConfig,
     config,
     allAgents,
+    categoryShuttleMap ?? {},
   );
 
   const delegationTargetNames = delegationTargets.map((t) => t.name);
