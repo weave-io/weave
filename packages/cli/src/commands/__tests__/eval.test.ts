@@ -499,7 +499,7 @@ describe("runEval run — unknown model fails closed before dry-run", () => {
           type: "EvalValidation" as const,
           message:
             `--model "${unknownModel}" is not in the model matrix allowlist. ` +
-            `Allowed model IDs: anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, openai/gpt-5.5`,
+            `Allowed model IDs: anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, openai/gpt-5.5, anthropic/claude-opus-5, openai/gpt-5.6-sol`,
         }),
     );
     await runEval(ctx);

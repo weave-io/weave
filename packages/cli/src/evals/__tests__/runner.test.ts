@@ -472,7 +472,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       const summary = result.value;
-      // With 3 default models × registry suite count, expect one failure per
+      // With 5 default models × registry suite count, expect one failure per
       // model × suite combination when fixtures are missing.
       // (NoCasesFound or PromptProviderFailed for each model × suite pair)
       const failureTypes = summary.partialFailures.map((f) => f.type);
@@ -482,7 +482,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
   });
 
   it("fan-out across all default models: partialFailures count reflects model × suite combinations", async () => {
-    // With 3 default models and the current registry suite count, we get one
+    // With 5 default models and the current registry suite count, we get one
     // partial failure per model × suite combination (NoCasesFound here).
     // This verifies that the orchestrator fans out across the full default matrix,
     // not just the first model.
@@ -490,9 +490,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // At least 3 partial failures (one per model for at least one suite);
-      // the real count is 6 but we allow flexibility for how runners fail
-      expect(result.value.partialFailures.length).toBeGreaterThanOrEqual(3);
+      // At least 5 partial failures (one per model for at least one suite);
+      // the real count is higher but we allow flexibility for how runners fail
+      expect(result.value.partialFailures.length).toBeGreaterThanOrEqual(5);
     }
   });
 
@@ -516,9 +516,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "loom" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // Loom suite only, 3 default models → at most 3 partial failures
+      // Loom suite only, 5 default models → at most 5 partial failures
       // (one NoCasesFound per model, other suites are skipped)
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
     }
   });
 
@@ -528,8 +528,8 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // Tapestry suites only (tapestry-execution + tapestry-category-routing),
-      // 3 default models → at most 6 partial failures
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(6);
+      // 5 default models → at most 10 partial failures
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(10);
     }
   });
 
@@ -538,7 +538,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
     }
   });
 
@@ -547,7 +547,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
     }
   });
 
@@ -556,7 +556,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "weft" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
     }
   });
 
@@ -565,7 +565,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "warp" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
     }
   });
 });
@@ -983,17 +983,17 @@ describe("EvalOrchestrator — prompt provider", () => {
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — multi-model fan-out", () => {
-  it("no model filter: all default models are attempted (default matrix has 3 models)", async () => {
+  it("no model filter: all default models are attempted (default matrix has 5 models)", async () => {
     // With no --model filter, the orchestrator should run suites for ALL models
     // in the default matrix. With fake evalsRoot (no fixtures), each combination
-    // produces a NoCasesFound partial failure. With 3 default models × 8 suites,
-    // we expect exactly 24 partial failures.
+    // produces a NoCasesFound partial failure. With 5 default models × 8 suites,
+    // we expect exactly 40 partial failures.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 8 suites = 24 partial failures (NoCasesFound for each)
-      expect(result.value.partialFailures.length).toBe(24);
+      // 5 models × 8 suites = 40 partial failures (NoCasesFound for each)
+      expect(result.value.partialFailures.length).toBe(40);
     }
   });
 
@@ -1010,62 +1010,62 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     }
   });
 
-  it("agent filter 'loom' + no model filter: 3 partial failures (one per default model)", async () => {
-    // Only loom suite runs, for each of the 3 default models.
+  it("agent filter 'loom' + no model filter: 5 partial failures (one per default model)", async () => {
+    // Only loom suite runs, for each of the 5 default models.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "loom" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 1 suite = 3 partial failures
-      expect(result.value.partialFailures.length).toBe(3);
+      // 5 models × 1 suite = 5 partial failures
+      expect(result.value.partialFailures.length).toBe(5);
     }
   });
 
-  it("agent filter 'tapestry' + no model filter: 3 partial failures (one per default model)", async () => {
+  it("agent filter 'tapestry' + no model filter: 10 partial failures (one per default model per suite)", async () => {
     // Tapestry backs two suites (tapestry-execution and tapestry-category-routing);
-    // with 3 default models → 6 partial failures (2 suites × 3 models).
+    // with 5 default models → 10 partial failures (2 suites × 5 models).
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "tapestry" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 2 tapestry suites = 6 partial failures
-      expect(result.value.partialFailures.length).toBe(6);
+      // 5 models × 2 tapestry suites = 10 partial failures
+      expect(result.value.partialFailures.length).toBe(10);
     }
   });
 
-  it("agent filter 'shuttle' + no model filter: 3 partial failures (one per default model)", async () => {
+  it("agent filter 'shuttle' + no model filter: 5 partial failures (one per default model)", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(3);
+      expect(result.value.partialFailures.length).toBe(5);
     }
   });
 
-  it("agent filter 'spindle' + no model filter: 3 partial failures (one per default model)", async () => {
+  it("agent filter 'spindle' + no model filter: 5 partial failures (one per default model)", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(3);
+      expect(result.value.partialFailures.length).toBe(5);
     }
   });
 
-  it("agent filter 'weft' + no model filter: 3 partial failures (one per default model)", async () => {
+  it("agent filter 'weft' + no model filter: 5 partial failures (one per default model)", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "weft" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(3);
+      expect(result.value.partialFailures.length).toBe(5);
     }
   });
 
-  it("agent filter 'warp' + no model filter: 3 partial failures (one per default model)", async () => {
+  it("agent filter 'warp' + no model filter: 5 partial failures (one per default model)", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "warp" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(3);
+      expect(result.value.partialFailures.length).toBe(5);
     }
   });
 

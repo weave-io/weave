@@ -17,7 +17,7 @@ on:
         description: |
           Optional model ID filter. Leave blank to run the full default model matrix.
           Allowed values: anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5,
-          openai/gpt-5.5
+          openai/gpt-5.5, anthropic/claude-opus-5, openai/gpt-5.6-sol
         required: false
         default: ""
         type: string
@@ -123,7 +123,7 @@ jobs:
           ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution tapestry-category-routing shuttle-execution spindle-tools pattern-planning weft-review warp-security"
 
           # Model allowlist: exact model IDs from evals/model-matrix.json.
-          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5"
+          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5 anthropic/claude-opus-5 openai/gpt-5.6-sol"
 
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI

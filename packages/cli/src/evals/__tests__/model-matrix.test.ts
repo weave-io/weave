@@ -74,7 +74,7 @@ describe("loadModelMatrix — real fixture", () => {
     expect(defaultModels.length).toBeGreaterThanOrEqual(MIN_DEFAULT_MODELS);
   });
 
-  it("returns exactly the canonical default three-model matrix (anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, openai/gpt-5.5)", async () => {
+  it("returns exactly the canonical default five-model matrix", async () => {
     const result = await loadModelMatrix();
     const matrix = result._unsafeUnwrap();
     const defaultIds = matrix.models
@@ -83,21 +83,25 @@ describe("loadModelMatrix — real fixture", () => {
       .sort();
     expect(defaultIds).toEqual([
       "anthropic/claude-opus-4.5",
+      "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-4.5",
       "openai/gpt-5.5",
+      "openai/gpt-5.6-sol",
     ]);
   });
 
-  it("resolveDefaultModels returns the three canonical defaults", async () => {
+  it("resolveDefaultModels returns all canonical defaults", async () => {
     const result = await loadModelMatrix();
     const matrix = result._unsafeUnwrap();
     const defaults = resolveDefaultModels(matrix);
-    expect(defaults).toHaveLength(MIN_DEFAULT_MODELS);
+    expect(defaults.length).toBeGreaterThanOrEqual(MIN_DEFAULT_MODELS);
     const ids = defaults.map((m) => m.id).sort();
     expect(ids).toEqual([
       "anthropic/claude-opus-4.5",
+      "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-4.5",
       "openai/gpt-5.5",
+      "openai/gpt-5.6-sol",
     ]);
   });
 
