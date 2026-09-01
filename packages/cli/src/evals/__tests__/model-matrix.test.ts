@@ -74,7 +74,7 @@ describe("loadModelMatrix — real fixture", () => {
     expect(defaultModels.length).toBeGreaterThanOrEqual(MIN_DEFAULT_MODELS);
   });
 
-  it("returns exactly the canonical default five-model matrix", async () => {
+  it("returns exactly the canonical default seven-model matrix", async () => {
     const result = await loadModelMatrix();
     const matrix = result._unsafeUnwrap();
     const defaultIds = matrix.models
@@ -85,8 +85,10 @@ describe("loadModelMatrix — real fixture", () => {
       "anthropic/claude-opus-4.5",
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-4.5",
+      "deepseek/deepseek-v4-flash-0731",
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
+      "qwen/qwen3.8-max",
     ]);
   });
 
@@ -100,8 +102,10 @@ describe("loadModelMatrix — real fixture", () => {
       "anthropic/claude-opus-4.5",
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-4.5",
+      "deepseek/deepseek-v4-flash-0731",
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
+      "qwen/qwen3.8-max",
     ]);
   });
 

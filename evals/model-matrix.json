@@ -35,6 +35,20 @@
       "provider": "openai",
       "default": true,
       "tags": ["high-quality", "reasoning"]
+    },
+    {
+      "id": "qwen/qwen3.8-max",
+      "display_name": "Qwen3.8 Max",
+      "provider": "qwen",
+      "default": true,
+      "tags": ["high-quality"]
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "display_name": "DeepSeek V4 Flash",
+      "provider": "deepseek",
+      "default": true,
+      "tags": ["fast", "cheap"]
     }
   ]
 }

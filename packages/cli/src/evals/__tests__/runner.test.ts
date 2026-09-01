@@ -48,6 +48,7 @@ import { dirname, join, resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
+import { loadModelMatrix, resolveDefaultModels } from "../model-matrix.js";
 import { StubModelClient } from "../openrouter-client.js";
 import type { GitShaProvider } from "../provenance.js";
 import { StubResultsRepoPublisher } from "../results-repo.js";
@@ -80,6 +81,12 @@ const TEMP_DIR = tmpdir();
 const FAKE_EVALS_ROOT = join(TEMP_DIR, "fake-evals-runner-test");
 const FAKE_BUNDLE_ROOT = join(TEMP_DIR, "fake-bundles-runner-test");
 const FAKE_GIT_SHA = "abc1234def5678901234567890123456789012ab";
+
+// Derived from the canonical matrix rather than hardcoded, so adding a model to
+// evals/model-matrix.json does not require editing every fan-out assertion here.
+const DEFAULT_MODEL_COUNT = resolveDefaultModels(
+  (await loadModelMatrix())._unsafeUnwrap(),
+).length;
 const FAKE_API_KEY = "test-api-key-not-real";
 const FIXED_TIMESTAMP = "2026-06-10T00:00:00.000Z";
 
@@ -492,7 +499,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     if (result.isOk()) {
       // At least 5 partial failures (one per model for at least one suite);
       // the real count is higher but we allow flexibility for how runners fail
-      expect(result.value.partialFailures.length).toBeGreaterThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeGreaterThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 
@@ -518,7 +527,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     if (result.isOk()) {
       // Loom suite only, 5 default models → at most 5 partial failures
       // (one NoCasesFound per model, other suites are skipped)
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 
@@ -529,7 +540,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     if (result.isOk()) {
       // Tapestry suites only (tapestry-execution + tapestry-category-routing),
       // 5 default models → at most 10 partial failures
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(10);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT * 2,
+      );
     }
   });
 
@@ -538,7 +551,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 
@@ -547,7 +562,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 
@@ -556,7 +573,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "weft" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 
@@ -565,7 +584,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "warp" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(5);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        DEFAULT_MODEL_COUNT,
+      );
     }
   });
 });
@@ -983,17 +1004,18 @@ describe("EvalOrchestrator — prompt provider", () => {
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — multi-model fan-out", () => {
-  it("no model filter: all default models are attempted (default matrix has 5 models)", async () => {
+  it("no model filter: all default models are attempted (full default matrix)", async () => {
     // With no --model filter, the orchestrator should run suites for ALL models
     // in the default matrix. With fake evalsRoot (no fixtures), each combination
-    // produces a NoCasesFound partial failure. With 5 default models × 8 suites,
-    // we expect exactly 40 partial failures.
+    // produces a NoCasesFound partial failure, so we expect exactly
+    // (default models × registry suites) partial failures.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 5 models × 8 suites = 40 partial failures (NoCasesFound for each)
-      expect(result.value.partialFailures.length).toBe(40);
+      expect(result.value.partialFailures.length).toBe(
+        DEFAULT_MODEL_COUNT * EVAL_SUITE_REGISTRY.length,
+      );
     }
   });
 
@@ -1017,7 +1039,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // 5 models × 1 suite = 5 partial failures
-      expect(result.value.partialFailures.length).toBe(5);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT);
     }
   });
 
@@ -1029,7 +1051,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // 5 models × 2 tapestry suites = 10 partial failures
-      expect(result.value.partialFailures.length).toBe(10);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT * 2);
     }
   });
 
@@ -1038,7 +1060,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(5);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT);
     }
   });
 
@@ -1047,7 +1069,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(5);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT);
     }
   });
 
@@ -1056,7 +1078,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "weft" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(5);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT);
     }
   });
 
@@ -1065,7 +1087,7 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "warp" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.partialFailures.length).toBe(5);
+      expect(result.value.partialFailures.length).toBe(DEFAULT_MODEL_COUNT);
     }
   });
 
