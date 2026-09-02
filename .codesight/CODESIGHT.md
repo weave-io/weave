@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 134 lib files | 10 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~12.100 tokens. Without it, AI exploration would cost ~46.800 tokens. **Saves ~34.700 tokens per conversation.**
-> **Last scanned:** 2026-09-01 19:29 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 136 lib files | 10 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~12.500 tokens. Without it, AI exploration would cost ~47.300 tokens. **Saves ~34.900 tokens per conversation.**
+> **Last scanned:** 2026-09-02 12:05 — re-run after significant changes
 
 ---
 
@@ -182,6 +182,14 @@
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
   - _...10 more_
+- `packages\cli\src\evals\loom-delegation-matrix.ts`
+  - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
+  - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
+  - function runLoomDelegationMatrixPreflight: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>
+  - interface ResolveLoomDelegationTargetsOptions
+  - interface LoomDelegationMatrixCoverageIssue
+  - interface RunLoomDelegationMatrixPreflightOptions
+  - _...8 more_
 - `packages\cli\src\evals\loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
@@ -306,7 +314,7 @@
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
   - function scoreDelegationCorrectness: (content, analysis) => DimensionScore
   - function scoreExecutionCompleteness: (content, analysis) => DimensionScore
-  - _...10 more_
+  - _...11 more_
 - `packages\cli\src\evals\tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -625,6 +633,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts\evals\verify-agent-eval-run.ts`
+  - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
+  - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
+  - function parseCliPackageVersion: (sourceText) => Result<string, VerifyEvalRunError>
+  - function parseLockedDependencyVersions: (sourceText) => Result<Record<string, string>, VerifyEvalRunError>
+  - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
+  - class DefaultArtifactReader
+  - _...25 more_
 - `scripts\validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<
@@ -673,11 +689,11 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages\cli\src\evals\types.ts` — imported by **39** files
+- `packages\cli\src\evals\types.ts` — imported by **42** files
 - `packages\cli\src\theme\colors.ts` — imported by **20** files
 - `packages\cli\src\io\terminal.ts` — imported by **18** files
 - `packages\cli\src\evals\openrouter-client.ts` — imported by **18** files
-- `packages\cli\src\evals\report-schema.ts` — imported by **17** files
+- `packages\cli\src\evals\report-schema.ts` — imported by **18** files
 - `packages\engine\src\runtime\types.ts` — imported by **16** files
 - `packages\cli\src\args.ts` — imported by **14** files
 - `packages\engine\src\runtime\store.ts` — imported by **13** files
@@ -696,11 +712,11 @@
 
 ## Import Map (who imports what)
 
-- `packages\cli\src\evals\types.ts` ← `packages\cli\src\evals\github-contents-publisher.ts`, `packages\cli\src\evals\input-validation.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts` +34 more
+- `packages\cli\src\evals\types.ts` ← `packages\cli\src\evals\github-contents-publisher.ts`, `packages\cli\src\evals\input-validation.ts`, `packages\cli\src\evals\loom-delegation-matrix.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts` +37 more
 - `packages\cli\src\theme\colors.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +15 more
 - `packages\cli\src\io\terminal.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +13 more
 - `packages\cli\src\evals\openrouter-client.ts` ← `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\pattern-planning-runner.ts`, `packages\cli\src\evals\runner.ts`, `packages\cli\src\evals\shuttle-execution-runner.ts`, `packages\cli\src\evals\spindle-tools-runner.ts` +13 more
-- `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +12 more
+- `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +13 more
 - `packages\engine\src\runtime\types.ts` ← `packages\engine\src\execution-lifecycle\resume.ts`, `packages\engine\src\execution-lifecycle\start.ts`, `packages\engine\src\execution-lifecycle\types.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sanitizer.ts` +11 more
 - `packages\cli\src\args.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +9 more
 - `packages\engine\src\runtime\store.ts` ← `packages\engine\src\execution-lifecycle\artifacts.ts`, `packages\engine\src\execution-lifecycle\dispatch.ts`, `packages\engine\src\execution-lifecycle\inspection.ts`, `packages\engine\src\execution-lifecycle\interrupts.ts`, `packages\engine\src\execution-lifecycle\reconciliation.ts` +8 more
@@ -712,7 +728,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 119 test files found
+> 121 test files found
 
 ---
 

@@ -183,10 +183,21 @@ const SECONDARY_ROLE_INDICATORS = [
 ];
 
 /**
- * Phrases that mark `thread` as exploratory evidence-gathering rather than the
- * primary implementation route.
+ * Agents that can act as an exploratory/evidence-gathering pre-hop before a
+ * primary implementation route (`thread` for internal code investigation,
+ * `spindle` for external research). When one of these agents appears in a
+ * line carrying an exploratory-pre-hop indicator AND a later primary route is
+ * also present, the agent is demoted to `exploratoryAgents` rather than
+ * scored as the primary route. When no later primary route exists, the
+ * agent remains the primary route (see the fallback in `analyzeLoomRouting`).
  */
-const EXPLORATORY_THREAD_INDICATORS = [
+const PREHOP_AGENT_NAMES = new Set(["thread", "spindle"]);
+
+/**
+ * Phrases that mark a pre-hop agent (`thread`/`spindle`) as exploratory
+ * evidence-gathering rather than the primary implementation route.
+ */
+const EXPLORATORY_PREHOP_INDICATORS = [
   "explore",
   "exploring",
   "investigate",
@@ -200,6 +211,24 @@ const EXPLORATORY_THREAD_INDICATORS = [
   "audit",
   "discover",
   "triage",
+  "locate",
+];
+
+/**
+ * Phrases that mark an agent mention as a rejected/negated alternative —
+ * explicitly considered and ruled out in favor of a different route, rather
+ * than being the chosen route.
+ *
+ * These are deliberately narrow, unambiguous phrases layered on top of the
+ * `isNegatedMentionLine` regex checks below.
+ */
+const REJECTED_ALTERNATIVE_INDICATORS = [
+  "not warranted",
+  "not necessary",
+  "unnecessary",
+  "is not needed",
+  "not needed here",
+  "will eventually implement",
 ];
 
 /**
@@ -221,8 +250,8 @@ function collectAgentLines(lower: string, agent: string): string[] {
   return lower.split(/\n/).filter((line) => line.includes(agent));
 }
 
-function isExploratoryThreadAgent(lower: string, agent: string): boolean {
-  if (agent !== "thread") {
+function isExploratoryPrehopAgent(lower: string, agent: string): boolean {
+  if (!PREHOP_AGENT_NAMES.has(agent)) {
     return false;
   }
 
@@ -232,8 +261,49 @@ function isExploratoryThreadAgent(lower: string, agent: string): boolean {
   }
 
   return lines.some((line) =>
-    EXPLORATORY_THREAD_INDICATORS.some((indicator) => line.includes(indicator)),
+    EXPLORATORY_PREHOP_INDICATORS.some((indicator) => line.includes(indicator)),
   );
+}
+
+/**
+ * Determine whether an agent is mentioned only as a rejected/negated
+ * alternative — explicitly considered and ruled out in text, rather than
+ * being chosen as the route. Used for LOCAL-ONLY diagnostics; does not
+ * affect scoring directly (rejected agents are already excluded from
+ * `extractedAgents` by `isNegatedMentionLine`/`REJECTED_ALTERNATIVE_INDICATORS`
+ * checks inside `extractRoutedAgents`).
+ */
+function isRejectedAlternativeAgent(lower: string, agent: string): boolean {
+  const lines = collectAgentLines(lower, agent);
+  if (lines.length === 0) {
+    return false;
+  }
+
+  return lines.some(
+    (line) =>
+      isNegatedMentionLine(line, agent) ||
+      REJECTED_ALTERNATIVE_INDICATORS.some((indicator) =>
+        line.includes(indicator),
+      ),
+  );
+}
+
+/**
+ * Determine whether a reviewer/auditor agent (`weft`/`warp`) is mentioned
+ * only in a downstream review/security-audit role for LOCAL-ONLY diagnostics.
+ * Mirrors the scoring-affecting check in `isOnlySecondaryRole` but is exposed
+ * independently so diagnostics can report downstream mentions even when the
+ * agent never appears in `extractedAgents`.
+ */
+function isDownstreamReviewAgent(lower: string, agent: string): boolean {
+  if (!REVIEWER_AGENT_NAMES.has(agent)) {
+    return false;
+  }
+  const lines = collectAgentLines(lower, agent);
+  if (lines.length === 0) {
+    return false;
+  }
+  return isOnlySecondaryRole(lower, agent);
 }
 
 export interface LoomRoutingAnalysis {
@@ -241,18 +311,44 @@ export interface LoomRoutingAnalysis {
   canonicalRoutedAgents: string[];
   primaryRoutedAgents: string[];
   exploratoryAgents: string[];
+  /**
+   * Agents mentioned only as a rejected/negated alternative — considered and
+   * ruled out in favor of a different route. LOCAL-ONLY diagnostic; never
+   * affects scoring directly (rejection already excludes the agent from
+   * `extractedAgents`).
+   */
+  rejectedAgents: string[];
+  /**
+   * Reviewer/auditor agents (`weft`/`warp`) mentioned only as a downstream
+   * follow-up review or security-audit step, not as the primary route.
+   * LOCAL-ONLY diagnostic; never affects scoring directly.
+   */
+  downstreamAgents: string[];
+  /**
+   * Candidate agent names present in the raw text without any
+   * routing-relevant phrase — a non-routing mention. LOCAL-ONLY diagnostic;
+   * never affects scoring.
+   */
+  mentionOnlyAgents: string[];
 }
 
 /**
  * Analyze Loom routing text into raw extracted agents, canonical routed agents,
  * and the primary implementation route used for scoring.
+ *
+ * In addition to the scoring-relevant fields (`primaryRoutedAgents`,
+ * `exploratoryAgents`), this also derives LOCAL-ONLY diagnostic buckets that
+ * classify every candidate agent occurrence into one of: affirmative primary
+ * route, exploratory pre-hop, downstream reviewer/security step,
+ * rejected/negated alternative, or non-routing mention. These diagnostic
+ * buckets never influence scoring — only `primaryRoutedAgents` is scored.
  */
 export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
   const lower = content.toLowerCase();
   const extractedAgents = extractRoutedAgents(content);
   const exploratoryAgents = uniqueInOrder(
     extractedAgents
-      .filter((agent) => isExploratoryThreadAgent(lower, agent))
+      .filter((agent) => isExploratoryPrehopAgent(lower, agent))
       .map((agent) => canonicalizeRoutingAgent(agent)),
   );
 
@@ -262,8 +358,44 @@ export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
 
   const primaryRoutedAgents = uniqueInOrder(
     extractedAgents
-      .filter((agent) => !isExploratoryThreadAgent(lower, agent))
+      .filter((agent) => !isExploratoryPrehopAgent(lower, agent))
       .map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  // LOCAL-ONLY diagnostics: scan the full candidate set (not just
+  // extractedAgents) so rejected/downstream mentions are visible even when
+  // extraction already excluded them from scoring.
+  const candidates = collectRoutingAgentCandidates(content);
+  const extractedSet = new Set(extractedAgents);
+
+  const rejectedAgents = uniqueInOrder(
+    candidates
+      .filter((agent) => isRejectedAlternativeAgent(lower, agent))
+      .map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  const downstreamAgents = uniqueInOrder(
+    candidates
+      .filter((agent) => isDownstreamReviewAgent(lower, agent))
+      .map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  const rejectedOrDownstreamSet = new Set([
+    ...rejectedAgents,
+    ...downstreamAgents,
+  ]);
+
+  const mentionOnlyAgents = uniqueInOrder(
+    candidates
+      .filter(
+        (agent) =>
+          lower.includes(agent) &&
+          !extractedSet.has(agent) &&
+          !isRejectedAlternativeAgent(lower, agent) &&
+          !isDownstreamReviewAgent(lower, agent),
+      )
+      .map((agent) => canonicalizeRoutingAgent(agent))
+      .filter((agent) => !rejectedOrDownstreamSet.has(agent)),
   );
 
   if (primaryRoutedAgents.length > 0) {
@@ -272,6 +404,9 @@ export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
       canonicalRoutedAgents,
       primaryRoutedAgents,
       exploratoryAgents,
+      rejectedAgents,
+      downstreamAgents,
+      mentionOnlyAgents,
     };
   }
 
@@ -280,6 +415,9 @@ export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
     canonicalRoutedAgents,
     primaryRoutedAgents: canonicalRoutedAgents,
     exploratoryAgents,
+    rejectedAgents,
+    downstreamAgents,
+    mentionOnlyAgents,
   };
 }
 
@@ -313,6 +451,9 @@ export function buildRoutingRunnerDiagnostics(
       canonicalRoutedAgents: analysis.canonicalRoutedAgents,
       primaryRoutedAgents: analysis.primaryRoutedAgents,
       exploratoryAgents: analysis.exploratoryAgents,
+      rejectedAgents: analysis.rejectedAgents,
+      downstreamAgents: analysis.downstreamAgents,
+      mentionOnlyAgents: analysis.mentionOnlyAgents,
       expectedTarget: canonicalizeRoutingAgent(
         evalCase.expected_outcome.target_agent,
       ),
@@ -339,6 +480,7 @@ function classifyRoutingDiagnostics(
   if (
     analysis.exploratoryAgents.length > 0 &&
     observedPrimaryTarget !== undefined &&
+    !analysis.exploratoryAgents.includes(observedPrimaryTarget) &&
     acceptedTargets.includes(observedPrimaryTarget)
   ) {
     return "acceptable-but-nonprimary-exploratory-route";
@@ -382,10 +524,13 @@ function isNegatedMentionLine(line: string, agent: string): boolean {
       "i",
     ),
     new RegExp(
-      `\\b${agentPattern}\\b[^\\n]{0,32}\\b(?:no|not needed|not required|unnecessary)\\b`,
+      `\\b${agentPattern}\\b[^\\n]{0,32}\\b(?:no|not needed|not required|not warranted|unnecessary)\\b`,
       "i",
     ),
     new RegExp(`\\bwithout\\s+${agentPattern}\\b`, "i"),
+    new RegExp(`\\bnot\\b[^\\n]{0,60}\\bvia\\s+${agentPattern}\\b`, "i"),
+    new RegExp(`\\brather than\\s+${agentPattern}\\b`, "i"),
+    new RegExp(`\\binstead of\\s+${agentPattern}\\b`, "i"),
   ];
   return negatedPatterns.some((pattern) => pattern.test(plainLine));
 }

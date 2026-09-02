@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-spindle-boundary-internal-exploration",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `spindle` delegation-matrix target. The primary route MUST be `thread` — this task is about understanding the existing codebase's own auth module, not external research. A rejected mention of `spindle` (explicitly stating external research is not what's needed) is acceptable context, but `spindle` must NOT be scored as the primary route. Do not require real delegation telemetry."
+  }
+}

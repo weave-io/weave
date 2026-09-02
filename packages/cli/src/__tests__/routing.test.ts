@@ -228,6 +228,11 @@ describe("CLI routing — eval", () => {
     const { terminal, result } = cli(["eval", "run", "--dry-run"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
+    // The default `EvalOrchestrator` runs the real Loom delegation-matrix
+    // coverage preflight against the real project config and real
+    // `evals/cases/loom-routing/*.json` fixtures. Task 6 populated every
+    // composed delegation target with `target:`/`polarity:` tagged cases,
+    // so the preflight now passes and dry-run exits 0.
     expect(r._unsafeUnwrap()).toBe(0);
     const out = terminal.out.join("\n");
     expect(out).toContain("dry run");
@@ -267,6 +272,11 @@ describe("CLI routing — eval", () => {
     ]);
     const r = await result;
     expect(r.isOk()).toBe(true);
+    // `--agent loom` still targets the real `loom-routing` suite. Task 6
+    // populated every composed delegation target with `target:`/`polarity:`
+    // tagged cases, so the real coverage preflight now passes and dry-run
+    // exits 0. The dry-run summary is still printed, which is what this
+    // test verifies.
     expect(r._unsafeUnwrap()).toBe(0);
     expect(terminal.out.join("\n")).toContain("loom");
   });

@@ -45,6 +45,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
@@ -186,6 +187,24 @@ function makeRequest(overrides: Partial<EvalRunRequest> = {}): EvalRunRequest {
   };
 }
 
+/**
+ * A trivially-passing `loomDelegationMatrixPreflight` stub for tests that
+ * exercise unrelated `EvalOrchestrator` concerns. Resolves to an empty
+ * composed-target set (vacuously satisfies coverage) without any real
+ * config loading, composition, or fixture file I/O.
+ *
+ * The dedicated "Loom delegation-matrix preflight" describe block below
+ * overrides this per-test to prove the real fail-closed and pass-through
+ * behaviors, and to prove the real production default (this stub NOT
+ * injected) fails closed against the repo's current untagged fixtures.
+ */
+function passingLoomDelegationMatrixPreflightStub(): ResultAsync<
+  DelegationTarget[],
+  never
+> {
+  return ResultAsync.fromSafePromise(Promise.resolve([]));
+}
+
 function makeOptions(
   overrides: Partial<EvalOrchestratorOptions> = {},
 ): EvalOrchestratorOptions {
@@ -199,6 +218,18 @@ function makeOptions(
     evalsRoot: FAKE_EVALS_ROOT,
     assembledAt: FIXED_TIMESTAMP,
     env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    // Loom delegation-matrix coverage preflight is ON by default in
+    // production (see `EvalOrchestrator` constructor). Unit tests in this
+    // file exercise unrelated concerns against `FAKE_EVALS_ROOT`, which does
+    // not carry `target:`/`polarity:` case tags (those live in the repo's
+    // real `evals/cases/loom-routing` fixtures, populated by Task 6). A
+    // passing stub keeps this suite's fixture roots intentionally
+    // controllable rather than depending on the real repo fixtures; the
+    // dedicated "Loom delegation-matrix preflight" describe block below
+    // overrides this to prove both the pass-through and fail-closed paths,
+    // and proves the real production default now passes against the
+    // repo's tagged fixtures.
+    loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
     ...overrides,
   };
 }
@@ -1000,6 +1031,127 @@ describe("EvalOrchestrator — prompt provider", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Loom delegation-matrix coverage preflight (Task 5)
+// ---------------------------------------------------------------------------
+
+describe("EvalOrchestrator — Loom delegation-matrix preflight", () => {
+  it("uses the real production preflight by default and passes against the repo's tagged loom-routing fixtures", async () => {
+    // No loomDelegationMatrixPreflight override — exercises the real default
+    // wired in the `EvalOrchestrator` constructor: it loads the real project
+    // config (via `loadConfig()`), composes the real `loom` agent, and
+    // validates the real `evals/cases/loom-routing/*.json` fixtures under
+    // `REAL_EVALS_ROOT`. Task 6 populated every composed delegation target
+    // with `target:`/`polarity:` tagged cases, so the coverage preflight now
+    // passes — proving the production default actually runs and lets the
+    // suite proceed to the model when coverage is satisfied.
+    const modelClient = new StubModelClient();
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer: new StubAgentEvalsScorer(),
+      promptProvider: new MockPromptProvider(),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot: FAKE_BUNDLE_ROOT,
+      evalsRoot: REAL_EVALS_ROOT,
+      assembledAt: FIXED_TIMESTAMP,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+      // Intentionally NOT overriding loomDelegationMatrixPreflight.
+    });
+
+    const result = await orchestrator.run(
+      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(
+      result.value.partialFailures.filter((f) => f.type === "FixtureLoadError")
+        .length,
+    ).toBe(0);
+    expect(modelClient.calls.length).toBeGreaterThan(0);
+  });
+
+  it("blocks the loom suite before any model call when the preflight fails", async () => {
+    const modelClient = new StubModelClient();
+    const preflightCalls: Array<string | undefined> = [];
+
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({
+        modelClient,
+        loomDelegationMatrixPreflight: (evalsRoot) => {
+          preflightCalls.push(evalsRoot);
+          return new ResultAsync(
+            Promise.resolve(
+              err({
+                type: "CoverageFailed" as const,
+                message:
+                  "stub: composed target 'shuttle-frontend' has no positive case",
+                issues: [
+                  {
+                    type: "MissingPositiveCase" as const,
+                    target: "shuttle-frontend",
+                    message: "stub coverage gap",
+                  },
+                ],
+              }),
+            ),
+          );
+        },
+      }),
+    );
+
+    const result = await orchestrator.run(
+      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Preflight was invoked with the configured evalsRoot before the suite ran.
+    expect(preflightCalls).toEqual([FAKE_EVALS_ROOT]);
+
+    // The loom suite surfaces as a partial failure — a FixtureLoadError —
+    // rather than executing and calling the model.
+    expect(result.value.partialFailures.length).toBeGreaterThan(0);
+    expect(
+      result.value.partialFailures.every((f) => f.type === "FixtureLoadError"),
+    ).toBe(true);
+    expect(modelClient.calls.length).toBe(0);
+  });
+
+  it("allows the loom suite to proceed when the preflight succeeds", async () => {
+    let preflightCalled = false;
+    const stubTargets: DelegationTarget[] = [
+      { name: "shuttle", triggers: [], isCategory: false },
+    ];
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({
+        loomDelegationMatrixPreflight: () => {
+          preflightCalled = true;
+          return ResultAsync.fromSafePromise(Promise.resolve(stubTargets));
+        },
+      }),
+    );
+
+    const result = await orchestrator.run(
+      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(preflightCalled).toBe(true);
+    // With FAKE_EVALS_ROOT (no fixtures), the suite still surfaces
+    // NoCasesFound after the preflight passes — proving the preflight ran
+    // and did not itself block the suite.
+    if (result.isOk()) {
+      expect(
+        result.value.partialFailures.some((f) => f.type === "NoCasesFound"),
+      ).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Multi-model fan-out (no model filter → default matrix)
 // ---------------------------------------------------------------------------
 
@@ -1309,6 +1461,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       publishMode: "publish",
       publisher,
       assembledAt: FIXED_TIMESTAMP,
@@ -1375,6 +1528,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       publishMode: "publish",
       publisher,
       assembledAt: FIXED_TIMESTAMP,
@@ -1437,6 +1591,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       publishMode: "publish",
       publisher,
       assembledAt: FIXED_TIMESTAMP,
@@ -1509,6 +1664,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       env: { OPENROUTER_API_KEY: FAKE_API_KEY },
       // Note: no assembledAt override — uses real current timestamp for bundle dir name
     });
@@ -1598,6 +1754,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
         gitShaProvider: makeGitShaProvider(),
         bundleRoot,
         evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
         env: { OPENROUTER_API_KEY: FAKE_API_KEY },
       });
     }
@@ -1681,6 +1838,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
         gitShaProvider: makeGitShaProvider(sharedSha),
         bundleRoot,
         evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
         assembledAt,
         env: { OPENROUTER_API_KEY: FAKE_API_KEY },
       });
@@ -1751,6 +1909,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
         gitShaProvider: makeGitShaProvider(),
         bundleRoot,
         evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
         env: { OPENROUTER_API_KEY: FAKE_API_KEY },
       });
     }
@@ -1868,6 +2027,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       env: { OPENROUTER_API_KEY: FAKE_API_KEY },
     });
 
@@ -2034,6 +2194,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
         gitShaProvider: makeGitShaProvider(),
         bundleRoot,
         evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
         env: { OPENROUTER_API_KEY: FAKE_API_KEY },
       });
     }
@@ -2117,6 +2278,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       env: { OPENROUTER_API_KEY: FAKE_API_KEY },
     });
 
@@ -2235,6 +2397,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       assembledAt: FIXED_TIMESTAMP,
       env: { OPENROUTER_API_KEY: FAKE_API_KEY },
     });
@@ -2292,6 +2455,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       assembledAt: FIXED_TIMESTAMP,
       env: { OPENROUTER_API_KEY: FAKE_API_KEY },
     });
@@ -2346,6 +2510,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
       gitShaProvider: makeGitShaProvider(),
       bundleRoot,
       evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
       publishMode: "publish",
       publisher,
       assembledAt: FIXED_TIMESTAMP,

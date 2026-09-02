@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-shuttle-implement-utility",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Positive case for the `shuttle` delegation-matrix target. The primary route MUST be `shuttle` for this small, bounded, single-file implementation task. Treat category shuttles (e.g. `shuttle-frontend`) as equivalent to `shuttle`. No plan, review, or audit is warranted for a change this small, so mentions of `pattern`, `weft`, or `warp` should not appear as the primary route. Do not require real delegation telemetry."
+  }
+}

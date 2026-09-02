@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-warp-security-audit-auth-flow",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Positive case for the `warp` delegation-matrix target. The primary route MUST be `warp` — this is a direct security-audit request with no new implementation work requested. Do not require real delegation telemetry."
+  }
+}

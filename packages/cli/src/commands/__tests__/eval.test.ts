@@ -221,6 +221,12 @@ describe("runEval run — dry-run", () => {
       },
     );
     const result = await runEval(ctx);
+    // The default `EvalOrchestrator` runs the real Loom delegation-matrix
+    // coverage preflight against the real project config and the real
+    // `evals/cases/loom-routing/*.json` fixtures. Task 6 populated every
+    // composed delegation target with `target:`/`polarity:` tagged cases,
+    // so the preflight now passes and dry-run exits 0. This test only
+    // cares about the no-filter message.
     expect(result._unsafeUnwrap()).toBe(0);
     const out = terminal.out.join("\n");
     expect(out).toContain("No filters");
@@ -254,6 +260,12 @@ describe("runEval run — dry-run", () => {
 
     const result = await runEval(ctx);
 
+    // This exercises the real production `EvalOrchestrator` (no injected
+    // runner) targeting the `loom` agent and a real `loom-routing` fixture.
+    // The default Loom delegation-matrix coverage preflight now runs against
+    // the real project config and real fixtures. Task 6 populated every
+    // composed delegation target with `target:`/`polarity:` tagged cases,
+    // so the preflight passes and dry-run exits 0.
     expect(result._unsafeUnwrap()).toBe(0);
     expect(terminal.out.join("\n")).toContain("dry run");
     expect(terminal.err.join("")).toBe("");
@@ -664,6 +676,12 @@ describe("runEval run — defaultValidateFilters real fixture integration", () =
       // No validateFilters injection — real validation
     };
     const result = await runEval(ctx);
+    // This test targets filter validation only. With no injected runner the
+    // real production `EvalOrchestrator` also runs the real Loom
+    // delegation-matrix coverage preflight against real `loom-routing`
+    // fixtures. Task 6 populated every composed delegation target with
+    // `target:`/`polarity:` tagged cases, so the preflight now passes and
+    // dry-run exits 0.
     expect(result._unsafeUnwrap()).toBe(0);
     expect(terminal.out.join("\n")).toContain("dry run");
     expect(terminal.err.join("")).toBe("");
@@ -685,6 +703,12 @@ describe("runEval run — defaultValidateFilters real fixture integration", () =
       // No validateFilters injection — real validation
     };
     const result = await runEval(ctx);
+    // This exercises the real production `EvalOrchestrator` (no injected
+    // runner) targeting the `loom` agent and a real `loom-routing` fixture.
+    // The default Loom delegation-matrix coverage preflight now runs against
+    // the real project config and real fixtures. Task 6 populated every
+    // composed delegation target with `target:`/`polarity:` tagged cases,
+    // so the preflight passes and dry-run exits 0.
     expect(result._unsafeUnwrap()).toBe(0);
     expect(terminal.out.join("\n")).toContain("dry run");
     expect(terminal.err.join("")).toBe("");

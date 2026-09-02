@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: all three files are within `src/4.Presentation/DST.Client/**`. The presence of multiple files in the same category pattern should not dilute routing confidence — score `shuttle-client-frontend` as exact-category-match (1.0). The rationale should note that all three paths match the pattern. Penalise generic `shuttle` routing when a clear category match exists."
+    "notes": "Required case. Pass gate: routingCorrectness >= 0.95 (deterministic) AND, because transcript_expectations is non-empty and a scorer is present, average qualitative score (delegationCorrectness + executionCompleteness + rationaleQuality) / 3 >= 0.7. Fairness/alignment: all three files are within `src/4.Presentation/DST.Client/**`. The presence of multiple files in the same category pattern should not dilute routing confidence — score `shuttle-client-frontend` as exact-category-match (1.0). The rationale should note that all three paths match the pattern. Penalise generic `shuttle` routing when a clear category match exists."
   }
 }

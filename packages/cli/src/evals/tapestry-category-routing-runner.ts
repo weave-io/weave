@@ -171,6 +171,25 @@ const ROUTING_PREFIXES = [
 ];
 
 /**
+ * Broader routing-phrase detector, applied in addition to `ROUTING_PREFIXES`.
+ *
+ * `ROUTING_PREFIXES` only matches an exact substring, so natural variations
+ * that insert a word between the verb and "to" (e.g. "Route it to",
+ * "Route the task to") were previously missed, as was fallback phrasing that
+ * never uses a routing verb at all (e.g. "falls back to the default agent").
+ * Both patterns were observed in real, unambiguous eval transcripts
+ * (`tcr-04-no-match`, `tcr-10-disabled-category`) where the model clearly
+ * named the correct target agent but the line was not recognized as a
+ * routing line, producing a false `extraction-miss`.
+ *
+ * This regex accepts a small (<=20 char) gap between a routing verb and
+ * "to", and separately recognizes "fall(s) back to" as a routing signal on
+ * its own. Exported for unit testing.
+ */
+const ROUTING_VERB_NEAR_TO_RE =
+  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)\b.{0,20}?\bto\b|\bfalls?\s+back\b.{0,20}?\bto\b/i;
+
+/**
  * Phrase patterns that indicate an agent is mentioned in a secondary or
  * follow-up context rather than as the primary routing target.
  */
@@ -257,7 +276,10 @@ function isSecondaryLine(line: string): boolean {
 
 function isRoutingLine(line: string): boolean {
   const lower = line.toLowerCase();
-  return ROUTING_PREFIXES.some((prefix) => lower.includes(prefix));
+  if (ROUTING_PREFIXES.some((prefix) => lower.includes(prefix))) {
+    return true;
+  }
+  return ROUTING_VERB_NEAR_TO_RE.test(line);
 }
 
 /**
@@ -773,6 +795,22 @@ function buildCategoryModelRunOutput(
 // Error classification
 // ---------------------------------------------------------------------------
 
+/**
+ * Bounded, local-only record of an injected scorer failure that was
+ * recovered (not propagated) so the deterministic routing result survives.
+ *
+ * Never placed in `CaseResultSummary` (the publishable boundary) — only used
+ * to construct the `RawErrorSummary` attached to `RawCaseResultArtifact` when
+ * `rawArtifacts` mode is enabled. `rawMessage` is redacted via
+ * `redactSecrets()` and bounded before it is ever written anywhere.
+ */
+interface ScorerDegradation {
+  errorType: string;
+  classification: string;
+  dimension?: string;
+  rawMessage?: string;
+}
+
 function classifyErrorType(errorType: string): string {
   switch (errorType) {
     case "NetworkError":
@@ -973,6 +1011,67 @@ function buildCategoryScoreRecord(
     passed,
     required: rubric.scoring.required,
     scoredAt,
+  };
+}
+
+/**
+ * Build a `NormalizedScoreRecord` for a case whose injected scorer failed.
+ *
+ * Preserves the locally computed, deterministic `routingCorrectness` dimension
+ * unconditionally — a scorer/judge failure is a judge-availability problem, not
+ * a routing-correctness problem, and must never mask or discard a correct (or
+ * incorrect) deterministic routing decision.
+ *
+ * The three qualitative dimensions (`delegationCorrectness`,
+ * `executionCompleteness`, `rationaleQuality`) are marked `applicable: false`
+ * with a fixed, safe rationale string — never the raw scorer error message.
+ * `applicable: false` also means these dimensions are excluded from
+ * `buildPublicExplanation()`'s dimension list, so the failure never leaks into
+ * the public explanation.
+ *
+ * Pass gate degrades to the same deterministic-only gate used on the no-scorer
+ * (heuristic) path: required cases pass when `routingCorrectness >= 0.95`;
+ * optional cases pass when `weightedTotal >= 0.5`. The qualitative
+ * (`transcript_expectations` + scorer-present) gate is intentionally NOT
+ * applied here — it cannot be evaluated without a working scorer, and judge
+ * unavailability must not turn a correct deterministic route into a failure.
+ *
+ * Exported for unit testing.
+ */
+export function buildScorerUnavailableScoreRecord(
+  evalCase: EvalCase,
+  modelId: string,
+  rubric: EvalRubric,
+  routingCorrectness: DimensionScore,
+): NormalizedScoreRecord {
+  const unavailable: DimensionScore = {
+    score: 0,
+    rationale:
+      "Qualitative scoring unavailable: the injected scorer failed for this case.",
+    applicable: false,
+  };
+
+  const weightedTotal =
+    routingCorrectness.score * rubric.scoring.outcome_weight;
+
+  const passed = rubric.scoring.required
+    ? routingCorrectness.score >= 0.95
+    : weightedTotal >= 0.5;
+
+  return {
+    caseId: evalCase.id,
+    modelId,
+    suite: evalCase.suite,
+    dimensions: {
+      routingCorrectness,
+      delegationCorrectness: unavailable,
+      executionCompleteness: unavailable,
+      rationaleQuality: unavailable,
+    },
+    weightedTotal,
+    passed,
+    required: rubric.scoring.required,
+    scoredAt: new Date().toISOString(),
   };
 }
 
@@ -1471,6 +1570,7 @@ export class TapestryCategoryRoutingRunner {
               runOutput: ModelRunOutput;
               scoreRecord: NormalizedScoreRecord;
               composedPrompt: string;
+              scorerDegradation: ScorerDegradation | undefined;
             },
             { type: string; message: string }
           >(
@@ -1493,25 +1593,18 @@ export class TapestryCategoryRoutingRunner {
 
         // When a scorer is injected, call it for qualitative dimensions and
         // merge with the locally computed deterministic routing score.
+        //
+        // A scorer failure is recovered here (via `.orElse`), NOT propagated
+        // to the outer `.match()` error branch. The deterministic
+        // `routingCorrectness` was already computed above and is preserved
+        // unconditionally: judge/scorer unavailability is a distinct failure
+        // mode from a wrong deterministic route, and must never zero out or
+        // discard a correct (or incorrect) routing decision. See
+        // `buildScorerUnavailableScoreRecord()`.
         if (this.scorer !== undefined) {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
             .score(runOutput, evalCase, rubrics)
-            .mapErr(
-              (
-                scoringError,
-              ): { type: string; message: string; dimension?: string } => ({
-                type: "ScorerAdapterError",
-                message:
-                  "message" in scoringError
-                    ? String(scoringError.message)
-                    : "Scorer returned an error.",
-                dimension:
-                  "dimension" in scoringError
-                    ? String((scoringError as { dimension: string }).dimension)
-                    : undefined,
-              }),
-            )
             .map((scorerRecord) => ({
               runOutput,
               scoreRecord: mergeWithScorerDimensions(
@@ -1522,7 +1615,43 @@ export class TapestryCategoryRoutingRunner {
                 scorerRecord,
               ),
               composedPrompt: systemPrompt,
-            }));
+              scorerDegradation: undefined as ScorerDegradation | undefined,
+            }))
+            .orElse((scoringError) => {
+              const errorType =
+                "type" in scoringError
+                  ? String(scoringError.type)
+                  : "ScorerAdapterError";
+              const dimension =
+                "dimension" in scoringError
+                  ? String((scoringError as { dimension: string }).dimension)
+                  : undefined;
+              const rawMessage =
+                "message" in scoringError
+                  ? String(scoringError.message)
+                  : undefined;
+
+              const scorerDegradation: ScorerDegradation = {
+                errorType,
+                classification: classifyErrorType(errorType),
+                dimension,
+                rawMessage,
+              };
+
+              return ResultAsync.fromSafePromise(
+                Promise.resolve({
+                  runOutput,
+                  scoreRecord: buildScorerUnavailableScoreRecord(
+                    evalCase,
+                    modelId,
+                    rubric,
+                    routingCorrectness,
+                  ),
+                  composedPrompt: systemPrompt,
+                  scorerDegradation,
+                }),
+              );
+            });
         }
 
         // No scorer: use local heuristic scoring for all dimensions.
@@ -1539,11 +1668,12 @@ export class TapestryCategoryRoutingRunner {
             runOutput,
             scoreRecord,
             composedPrompt: systemPrompt,
+            scorerDegradation: undefined as ScorerDegradation | undefined,
           }),
         );
       })
       .match<CaseResult>(
-        ({ runOutput, scoreRecord, composedPrompt }) => {
+        ({ runOutput, scoreRecord, composedPrompt, scorerDegradation }) => {
           const dimensionScores = buildDimensionScoreSummary(
             scoreRecord.dimensions,
           );
@@ -1567,6 +1697,21 @@ export class TapestryCategoryRoutingRunner {
             publicExplanation,
           };
 
+          // A scorer degradation never appears in `summary` (the publishable
+          // boundary) — only as a bounded, redacted `errorSummary` in the
+          // local-only raw artifact, exactly like other typed error paths.
+          const errorSummary: RawErrorSummary | undefined = scorerDegradation
+            ? {
+                errorType: scorerDegradation.errorType,
+                classification: scorerDegradation.classification,
+                dimension: scorerDegradation.dimension,
+                localDiagnostic:
+                  rawArtifacts && scorerDegradation.rawMessage !== undefined
+                    ? redactSecrets(scorerDegradation.rawMessage)
+                    : undefined,
+              }
+            : undefined;
+
           const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
             ? {
                 caseId: evalCase.id,
@@ -1577,6 +1722,7 @@ export class TapestryCategoryRoutingRunner {
                 dimensionRationales: buildDimensionRationales(
                   scoreRecord.dimensions,
                 ),
+                errorSummary,
               }
             : undefined;
 

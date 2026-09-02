@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-warp-boundary-downstream-audit",
+  "description": "Choose the primary route for this text-only task: implement a new file-upload endpoint that accepts profile pictures. Note that once implemented, warp will conduct a security audit of the endpoint before it ships.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "shuttle", "warp"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["target:warp", "polarity:boundary"]
+}

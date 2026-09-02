@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-spindle-boundary-internal-exploration",
+  "description": "Choose the primary route for this text-only task: understand how our own existing authentication module currently validates sessions before deciding on any changes. This requires exploring our own codebase, not external research via spindle.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "thread", "spindle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "thread",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "thread"
+    }
+  ],
+  "tags": ["target:spindle", "polarity:boundary"]
+}

@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-pattern-boundary-small-fix",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `pattern` delegation-matrix target. The primary route MUST be `shuttle` — this is a small, single-file bug fix that does not warrant a strategic plan. A rejected mention of `pattern` (explicitly stating a full plan is not needed) is acceptable context, but `pattern` must NOT be scored as the primary route. Do not require real delegation telemetry."
+  }
+}

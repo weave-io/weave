@@ -28,6 +28,8 @@ import { describe, expect, it } from "bun:test";
 import { err, ResultAsync } from "neverthrow";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
+import { assembleSuiteSummary } from "../report-bundle.js";
+import { EXPLANATION_MAX_CHARS } from "../report-schema.js";
 import {
   analyzeCategoryRouting,
   detectGenericShuttleFallback,
@@ -41,6 +43,7 @@ import {
   type TapestryCategoryRoutingRunnerOptions,
 } from "../tapestry-category-routing-runner.js";
 import type {
+  BundleScoreFile,
   EvalCase,
   EvalRubric,
   NormalizedScoreRecord,
@@ -271,6 +274,38 @@ describe("detectGenericShuttleFallback", () => {
       detectGenericShuttleFallback("route to shuttle as a follow-up"),
     ).toBe(false);
   });
+
+  // Regression: real tcr-04/tcr-10 raw transcripts used natural-language
+  // routing phrasings that inserted a word between the verb and "to"
+  // ("Route it to `shuttle`", "Route the task to `shuttle`") or used
+  // fallback phrasing with no routing verb at all ("falls back to the
+  // default agent"). The narrow `ROUTING_PREFIXES` substring list produced
+  // a false `extraction-miss` for every one of these clear, correct answers.
+  it("detects 'route it to shuttle' (verb + inserted word + to)", () => {
+    expect(detectGenericShuttleFallback("Route it to `shuttle`.")).toBe(true);
+  });
+
+  it("detects 'route the task to shuttle' (verb + longer insertion + to)", () => {
+    expect(
+      detectGenericShuttleFallback("Route the task to **`shuttle`**."),
+    ).toBe(true);
+  });
+
+  it("detects 'falls back to the default agent: shuttle' (no routing verb)", () => {
+    expect(
+      detectGenericShuttleFallback(
+        "So routing falls back to the default agent: `shuttle`.",
+      ),
+    ).toBe(true);
+  });
+
+  it("detects 'fall back to the default domain specialist: shuttle' (no routing verb)", () => {
+    expect(
+      detectGenericShuttleFallback(
+        "so fall back to the default domain specialist: `shuttle`.",
+      ),
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -379,6 +414,35 @@ describe("analyzeCategoryRouting", () => {
     );
     expect(analysis.classification).toBe("wrong-category");
     expect(analysis.primaryCategoryTarget).toBe("shuttle-backend");
+  });
+
+  // Regression: sanitized reproductions of real tcr-04/tcr-10 raw-artifact
+  // phrasing patterns (see docs/artifacts/ for the redacted diagnosis).
+  // These previously classified as "extraction-miss" (false negative)
+  // despite the model giving an unambiguous, correct "shuttle" answer.
+  it("classifies 'falls back to the default agent: shuttle' as generic-shuttle-fallback, not extraction-miss", () => {
+    const content = "So routing falls back to the default agent: `shuttle`.";
+    const analysis = analyzeCategoryRouting(content, "shuttle", []);
+    expect(analysis.classification).toBe("generic-shuttle-fallback");
+  });
+
+  it("classifies 'Route the task to shuttle' as generic-shuttle-fallback, not extraction-miss", () => {
+    const content = "Route the task to **`shuttle`**.";
+    const analysis = analyzeCategoryRouting(content, "shuttle", []);
+    expect(analysis.classification).toBe("generic-shuttle-fallback");
+  });
+
+  it("classifies 'Route it to shuttle' as generic-shuttle-fallback, not extraction-miss", () => {
+    const content = "Route it to `shuttle`.";
+    const analysis = analyzeCategoryRouting(content, "shuttle", []);
+    expect(analysis.classification).toBe("generic-shuttle-fallback");
+  });
+
+  it("classifies 'fall back to the default domain specialist: shuttle' as generic-shuttle-fallback, not extraction-miss", () => {
+    const content =
+      "`shuttle` - the category agent shuttle-client-frontend is disabled, so fall back to the default domain specialist.";
+    const analysis = analyzeCategoryRouting(content, "shuttle", []);
+    expect(analysis.classification).toBe("generic-shuttle-fallback");
   });
 });
 
@@ -1233,7 +1297,7 @@ describe("TapestryCategoryRoutingRunner — scorer integration", () => {
     expect(summary?.passed).toBe(false);
   });
 
-  it("scorer failure yields a typed ScorerAdapterError zero-score result without throwing; suite continues", async () => {
+  it("scorer failure preserves locally computed routingCorrectness; deterministic gate alone decides pass/fail; suite continues without throwing", async () => {
     const evalCase = makeCategoryRoutingCase();
     const rubric = makeEvalRubric();
 
@@ -1269,15 +1333,65 @@ describe("TapestryCategoryRoutingRunner — scorer integration", () => {
     // Suite completes — one case result emitted
     expect(result.caseResults).toHaveLength(1);
     const summary = result.caseResults[0]?.summary;
-    // Scorer error → zero-score, not passed
-    expect(summary?.passed).toBe(false);
-    expect(summary?.weightedTotal).toBe(0);
-    // All dimension scores are 0 and not applicable (error path)
-    expect(summary?.dimensionScores.routingCorrectness.score).toBe(0);
-    expect(summary?.dimensionScores.delegationCorrectness.score).toBe(0);
+    // Deterministic routing was correct (exact category match) and the case
+    // has no transcript_expectations, so the deterministic-only gate passes
+    // even though the scorer failed — judge unavailability must not mask a
+    // correct deterministic route.
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+    expect(summary?.dimensionScores.routingCorrectness.applicable).toBe(true);
+    expect(summary?.passed).toBe(true);
+    // Qualitative dimensions are marked not-applicable — scoring truly
+    // unavailable, not silently defaulted to a passing/failing score.
+    expect(summary?.dimensionScores.delegationCorrectness.applicable).toBe(
+      false,
+    );
+    expect(summary?.dimensionScores.executionCompleteness.applicable).toBe(
+      false,
+    );
+    expect(summary?.dimensionScores.rationaleQuality.applicable).toBe(false);
+    // Public explanation must still be generated (non-empty) even though the
+    // scorer failed.
+    expect(summary?.publicExplanation?.text.length).toBeGreaterThan(0);
 
     // rawArtifact errorSummary must contain ScorerAdapterError classification
     // (requires rawArtifacts: true)
+  });
+
+  it("scorer failure on a WRONG deterministic route still fails — judge unavailability never turns a wrong route into a pass", async () => {
+    const evalCase = makeCategoryRoutingCase(); // expected: shuttle-client-frontend
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    // Model routes to the WRONG category.
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-backend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.enqueueError({
+      type: "ScorerAdapterError",
+      caseId: evalCase.id,
+      dimension: "delegationCorrectness",
+      message: "LangChain judge timed out",
+    });
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected runner error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(0.0);
+    expect(summary?.passed).toBe(false);
   });
 
   it("scorer error raw artifact contains ScorerAdapterError and preserves dimension", async () => {
@@ -1476,4 +1590,148 @@ describe("TapestryCategoryRoutingRunner — scorer integration", () => {
     // Heuristic path: only routing gate, no qualitative threshold
     expect(summary?.passed).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Production-shaped E2E: real tcr-04/tcr-10 fixtures, injected scorer failure,
+// bundle assembly, non-empty public explanation.
+// ---------------------------------------------------------------------------
+
+describe("TapestryCategoryRoutingRunner — tcr-04/tcr-10 real fixtures with scorer failure (production-shaped E2E)", () => {
+  // No `caseLoader`/`rubricLoader` override: this exercises the production
+  // `TapestryCategoryRoutingRunner` reading the real fixture/rubric files
+  // from `evals/cases/tapestry-category-routing/` and
+  // `evals/rubrics/tapestry-category-routing/` on disk via `case-loader.ts`.
+  const productionCases: Array<{ caseId: string; modelContent: string }> = [
+    {
+      caseId: "tcr-04-no-match",
+      modelContent:
+        "→ shuttle. No declared category pattern matches src/Infrastructure/Logging/Logger.cs, " +
+        "so this falls back to the generic shuttle agent.",
+    },
+    {
+      caseId: "tcr-10-disabled-category",
+      modelContent:
+        "→ shuttle. The matching category shuttle-client-frontend is disabled, " +
+        "so this falls back to the generic shuttle agent.",
+    },
+  ];
+
+  for (const { caseId, modelContent } of productionCases) {
+    it(`loads the real "${caseId}" fixture/rubric from disk, preserves deterministic routing correctness through an injected scorer failure, and produces a non-empty publicExplanation`, async () => {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        model: "anthropic/claude-sonnet-4.5",
+        content: modelContent,
+      });
+
+      // Scorer fails for every case — simulates a live judge failure
+      // (e.g. missing OPENROUTER_API_KEY) without a network dependency.
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultError({
+        type: "ScorerAdapterError",
+        caseId,
+        dimension: "rationaleQuality",
+        message:
+          "judge unavailable: OPENROUTER_API_KEY is required to run evals but was not set.",
+      });
+
+      const runner = new TapestryCategoryRoutingRunner({
+        modelClient,
+        scorer,
+        tapestrySystemPrompt: "You are Tapestry.",
+      });
+
+      const result = await runner.run({
+        caseFilter: caseId,
+        rawArtifacts: true,
+      });
+
+      expect(result.isOk()).toBe(true);
+      const runnerResult = result._unsafeUnwrap();
+      expect(runnerResult.caseResults).toHaveLength(1);
+
+      const caseResult = runnerResult.caseResults[0];
+      const summary = caseResult?.summary;
+
+      // Deterministic gate: both tcr-04 and tcr-10 expect target_agent "shuttle",
+      // so a correct generic-shuttle fallback scores 1.0, not the 0.4 partial
+      // credit reserved for genuinely wrong fallbacks.
+      expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+      expect(summary?.dimensionScores.routingCorrectness.applicable).toBe(true);
+      // Judge/scorer unavailability must not mask the correct deterministic
+      // route: the case passes on the deterministic gate alone.
+      expect(summary?.passed).toBe(true);
+      expect(summary?.required).toBe(true);
+
+      // Qualitative dimensions are explicitly not-applicable (unavailable),
+      // never silently defaulted to a passing or failing score.
+      expect(summary?.dimensionScores.delegationCorrectness.applicable).toBe(
+        false,
+      );
+      expect(summary?.dimensionScores.executionCompleteness.applicable).toBe(
+        false,
+      );
+      expect(summary?.dimensionScores.rationaleQuality.applicable).toBe(false);
+
+      // Reports are not blank: a bounded, non-empty public explanation is
+      // always produced, even on scorer failure.
+      expect(summary?.publicExplanation).toBeDefined();
+      expect(summary?.publicExplanation?.text.length).toBeGreaterThan(0);
+      expect(summary?.publicExplanation?.text.length).toBeLessThanOrEqual(
+        EXPLANATION_MAX_CHARS,
+      );
+
+      // The raw (local-only) artifact records the scorer failure as a typed,
+      // classified error. `classification` is the safe, allowlisted label —
+      // never raw scorer message text.
+      const errorSummary = caseResult?.rawArtifact?.errorSummary;
+      expect(errorSummary?.errorType).toBe("ScorerAdapterError");
+      expect(errorSummary?.classification).toBe("scoring-adapter-failure");
+
+      // Bundle assembly: the same summary flows into the publishable
+      // suite-summary boundary with its publicExplanation intact.
+      const scoreFile: BundleScoreFile = {
+        suite: TAPESTRY_CATEGORY_ROUTING_SUITE,
+        assembledAt: new Date().toISOString(),
+        gitSha: "unknown",
+        dryRun: false,
+        results: [
+          {
+            caseId: summary!.caseId,
+            modelId: summary!.modelId,
+            passed: summary!.passed,
+            required: summary!.required,
+            weightedTotal: summary!.weightedTotal,
+            dimensionScores: summary!.dimensionScores,
+            scoredAt: summary!.scoredAt,
+            dryRun: summary!.dryRun,
+            publicExplanation: summary!.publicExplanation,
+          },
+        ],
+        totals: {
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suiteGreen: true,
+        },
+      };
+
+      const suiteSummaryResult = assembleSuiteSummary(
+        scoreFile,
+        "unknown",
+        new Date().toISOString(),
+      );
+      expect(suiteSummaryResult.isOk()).toBe(true);
+      const suiteSummary = suiteSummaryResult._unsafeUnwrap();
+      expect(suiteSummary.cases).toHaveLength(1);
+      expect(suiteSummary.cases[0]?.passed).toBe(true);
+      // publicExplanation survives BoundedExplanationSchema validation and
+      // is present (non-blank) in the assembled public bundle entry.
+      expect(suiteSummary.cases[0]?.explanation).toBeDefined();
+      expect(suiteSummary.cases[0]?.explanation?.text.length).toBeGreaterThan(
+        0,
+      );
+    });
+  }
 });

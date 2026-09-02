@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-shuttle-implement-utility",
+  "description": "Choose the primary implementation route for this text-only task: add a debounce utility function to the shared frontend utils module and wire it into the search input handler.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "shuttle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["target:shuttle", "polarity:positive"]
+}

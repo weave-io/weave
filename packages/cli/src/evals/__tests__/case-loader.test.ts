@@ -35,7 +35,8 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "../case-loader.js";
-import type { EvalCase } from "../types.js";
+import { loadModelMatrix } from "../model-matrix.js";
+import type { EvalCase, EvalRubric } from "../types.js";
 import { EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -1036,5 +1037,148 @@ describe("phase 1B fairness fixtures stay aligned with text-only runner contract
     expect(warpApprove.value.scoring.notes).toContain("assistant-text");
     expect(weftReject.value.scoring.notes).toContain("assistant text");
     expect(weftApprove.value.scoring.notes).toContain("Fairness/alignment");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tapestry-category-routing fixture alignment
+// ---------------------------------------------------------------------------
+
+describe("tapestry-category-routing fixtures stay aligned with extraction/scorer contracts", () => {
+  const TCR_SUITE = "tapestry-category-routing";
+
+  async function loadTcrFixtures(): Promise<{
+    cases: EvalCase[];
+    rubrics: EvalRubric[];
+  }> {
+    const casesResult = await loadSuiteCases(TCR_SUITE, EVALS_ROOT);
+    const rubricsResult = await loadSuiteRubrics(TCR_SUITE, EVALS_ROOT);
+    expect(casesResult.isOk()).toBe(true);
+    expect(rubricsResult.isOk()).toBe(true);
+    if (casesResult.isErr() || rubricsResult.isErr()) {
+      throw new Error("failed to load tapestry-category-routing fixtures");
+    }
+    return { cases: casesResult.value, rubrics: rubricsResult.value };
+  }
+
+  it("has exactly ten cases, each with exactly one same-ID rubric", async () => {
+    const { cases, rubrics } = await loadTcrFixtures();
+
+    expect(cases).toHaveLength(10);
+    expect(rubrics).toHaveLength(10);
+
+    const caseIds = cases.map((c) => c.id).sort();
+    const rubricIds = rubrics.map((r) => r.case_id).sort();
+    expect(rubricIds).toEqual(caseIds);
+
+    // No duplicate rubric IDs (one-to-one, not many-to-one)
+    expect(new Set(rubricIds).size).toBe(rubricIds.length);
+  });
+
+  it("every allowed_models entry exists in evals/model-matrix.json", async () => {
+    const { cases } = await loadTcrFixtures();
+    const matrixResult = await loadModelMatrix();
+    expect(matrixResult.isOk()).toBe(true);
+    if (matrixResult.isErr()) return;
+
+    const knownModelIds = new Set(matrixResult.value.models.map((m) => m.id));
+    for (const evalCase of cases) {
+      for (const modelId of evalCase.allowed_models) {
+        expect(knownModelIds.has(modelId)).toBe(true);
+      }
+    }
+  });
+
+  it("every expected target_agent and accepted_alternate is listed in allowed_agents", async () => {
+    const { cases } = await loadTcrFixtures();
+    for (const evalCase of cases) {
+      if (evalCase.expected_outcome.kind !== "agent_routing") continue;
+      const target = evalCase.expected_outcome.target_agent;
+      expect(evalCase.allowed_agents).toContain(target);
+      for (const alt of evalCase.accepted_alternates) {
+        expect(evalCase.allowed_agents).toContain(alt);
+      }
+    }
+  });
+
+  it("every rubric documents an executable pass gate (deterministic routing threshold or optional weighted-total gate)", async () => {
+    const { rubrics } = await loadTcrFixtures();
+    for (const rubric of rubrics) {
+      const notes = rubric.scoring.notes ?? "";
+      expect(notes.length).toBeGreaterThan(0);
+      if (rubric.scoring.required) {
+        expect(notes).toContain("routingCorrectness >= 0.95");
+      } else {
+        expect(notes).toContain("weighted total >= 0.5");
+      }
+    }
+  });
+
+  it("tcr-04 (no-match) and tcr-10 (disabled-category) require an affirmative primary generic `shuttle` route, and never grant loom full deterministic credit", async () => {
+    const { cases, rubrics } = await loadTcrFixtures();
+
+    for (const caseId of ["tcr-04-no-match", "tcr-10-disabled-category"]) {
+      const evalCase = cases.find((c) => c.id === caseId);
+      const rubric = rubrics.find((r) => r.case_id === caseId);
+      expect(evalCase).toBeDefined();
+      expect(rubric).toBeDefined();
+      if (evalCase === undefined || rubric === undefined) continue;
+
+      // Expected outcome affirmatively targets generic `shuttle`.
+      expect(evalCase.expected_outcome.kind).toBe("agent_routing");
+      if (evalCase.expected_outcome.kind === "agent_routing") {
+        expect(evalCase.expected_outcome.target_agent).toBe("shuttle");
+      }
+
+      // `loom` must not be listed as an accepted_alternate: the runner's
+      // deterministic extraction (`analyzeCategoryRouting`) only recognizes
+      // `shuttle` / `shuttle-{category}` tokens, so a `loom`-only mention is
+      // an `extraction-miss` (score 0.0), never partial/accepted-alternate
+      // credit. Documenting `loom` as an accepted alternate here would be
+      // misleading relative to actual runner behavior.
+      expect(evalCase.accepted_alternates).not.toContain("loom");
+
+      // transcript_expectations must require an affirmative `shuttle` mention.
+      const mentionsShuttle = evalCase.transcript_expectations.some(
+        (exp) =>
+          exp.check === "agent_mentioned" && exp.agent_name === "shuttle",
+      );
+      expect(mentionsShuttle).toBe(true);
+
+      // Rubric prose must not claim loom receives accepted-alternate credit.
+      expect(rubric.scoring.notes ?? "").not.toMatch(
+        /loom.{0,40}(accepted-alternate|0\.8)/i,
+      );
+    }
+  });
+
+  it("tcr-05 (cross-category, optional) documents that loom is qualitative-only and not a deterministic accepted alternate", async () => {
+    const { cases, rubrics } = await loadTcrFixtures();
+    const evalCase = cases.find((c) => c.id === "tcr-05-cross-category");
+    const rubric = rubrics.find((r) => r.case_id === "tcr-05-cross-category");
+    expect(evalCase).toBeDefined();
+    expect(rubric).toBeDefined();
+    if (evalCase === undefined || rubric === undefined) return;
+
+    expect(evalCase.accepted_alternates).not.toContain("loom");
+    expect(evalCase.allowed_agents).toContain("loom");
+    expect(rubric.scoring.notes ?? "").not.toMatch(
+      /all accepted alternates.*loom.*score equally/i,
+    );
+  });
+
+  it("transcript_expectations never conflict with the expected_outcome target (agent_mentioned always references the expected or an accepted target)", async () => {
+    const { cases } = await loadTcrFixtures();
+    for (const evalCase of cases) {
+      if (evalCase.expected_outcome.kind !== "agent_routing") continue;
+      const validTargets = new Set([
+        evalCase.expected_outcome.target_agent,
+        ...evalCase.accepted_alternates,
+      ]);
+      for (const exp of evalCase.transcript_expectations) {
+        if (exp.check !== "agent_mentioned") continue;
+        expect(validTargets.has(exp.agent_name)).toBe(true);
+      }
+    }
   });
 });

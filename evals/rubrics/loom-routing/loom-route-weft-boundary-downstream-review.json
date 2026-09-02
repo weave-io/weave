@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-weft-boundary-downstream-review",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `weft` delegation-matrix target. The primary route MUST still be `shuttle` — this is a bounded implementation task. A follow-up narration that `weft` will review the change afterward is acceptable downstream context, but `weft` must NOT be scored as the primary route. Do not require a real `weft` delegation call or tool-call evidence; the follow-up review mention is text-only narration."
+  }
+}

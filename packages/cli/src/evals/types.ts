@@ -1137,6 +1137,23 @@ export interface RawCaseResultArtifact {
       primaryRoutedAgents: string[];
       /** Exploratory or evidence-gathering agents kept out of the primary route. */
       exploratoryAgents: string[];
+      /**
+       * Agents mentioned only as a rejected/negated alternative — considered
+       * and ruled out in favor of a different route. LOCAL-ONLY diagnostic.
+       */
+      rejectedAgents: string[];
+      /**
+       * Reviewer/auditor agents (`weft`/`warp`) mentioned only as a
+       * downstream follow-up review or security-audit step. LOCAL-ONLY
+       * diagnostic.
+       */
+      downstreamAgents: string[];
+      /**
+       * Candidate agent names present in the raw text without any
+       * routing-relevant phrase — a non-routing mention. LOCAL-ONLY
+       * diagnostic.
+       */
+      mentionOnlyAgents: string[];
       /** Expected routing target from the fixture. */
       expectedTarget: string;
       /** Accepted routing targets after canonicalization. */

@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-weft-review-checkout-pr",
+  "description": "Choose the primary route for this text-only task: review the open pull request that adds the new checkout API for code quality, style, and maintainability issues. No new implementation work is requested — only a review.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "weft"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "weft",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "weft"
+    }
+  ],
+  "tags": ["target:weft", "polarity:positive"]
+}

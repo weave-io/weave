@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-thread-explore-auth-flow",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Positive case for the `thread` delegation-matrix target. The primary route MUST be `thread` — this is a pure codebase-exploration/research request with explicitly no code changes requested. Do not require real delegation telemetry."
+  }
+}

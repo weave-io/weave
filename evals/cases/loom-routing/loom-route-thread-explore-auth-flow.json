@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-thread-explore-auth-flow",
+  "description": "Choose the primary route for this text-only task: explore the existing codebase to find every place where authentication tokens are validated and summarize the call paths, without making any code changes.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "thread"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "thread",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "thread"
+    }
+  ],
+  "tags": ["target:thread", "polarity:positive"]
+}

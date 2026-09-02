@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-thread-boundary-prehop-then-implement",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `thread` delegation-matrix target. The primary route MUST be `shuttle` — this task explicitly asks for a bug fix (a code change), so `thread` locating the handler first is acceptable pre-hop evidence-gathering context, but `thread` must NOT be scored as the primary route. Do not require a real `thread` tool call or delegation telemetry."
+  }
+}

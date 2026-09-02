@@ -17,7 +17,7 @@
     "target_agent": "shuttle",
     "via": []
   },
-  "accepted_alternates": ["loom"],
+  "accepted_alternates": [],
   "transcript_expectations": [
     {
       "check": "agent_mentioned",

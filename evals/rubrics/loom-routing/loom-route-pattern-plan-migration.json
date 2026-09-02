@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-pattern-plan-migration",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Positive case for the `pattern` delegation-matrix target. The primary route MUST be `pattern` — this task requires a strategic, multi-week, multi-phase plan before any implementation work is appropriate. Do not require real delegation telemetry."
+  }
+}

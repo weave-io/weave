@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-shuttle-boundary-plan-first",
+  "description": "Choose the primary route for this text-only task: draft a comprehensive multi-week implementation plan for migrating the monolith service to a set of microservices, covering phased rollout, data-migration risk, and team assignments. Note that shuttle will eventually implement individual phases once the plan is approved.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "pattern", "shuttle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "pattern",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "pattern"
+    }
+  ],
+  "tags": ["target:shuttle", "polarity:boundary"]
+}

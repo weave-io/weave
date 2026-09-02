@@ -50,6 +50,7 @@
  */
 
 import { join } from "node:path";
+import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { CliError } from "../errors.js";
 import {
@@ -65,6 +66,8 @@ import {
 } from "./env.js";
 import type { EvalRunRequest } from "./input-validation.js";
 import type { AgentEvalsScorer } from "./langchain-agent-evals.js";
+import type { LoomDelegationMatrixPreflightError } from "./loom-delegation-matrix.js";
+import { runLoomDelegationMatrixPreflight } from "./loom-delegation-matrix.js";
 import {
   LOOM_ROUTING_SUITE,
   LoomRoutingRunner,
@@ -641,6 +644,32 @@ export interface EvalOrchestratorOptions {
    * Inject in tests for deterministic output.
    */
   assembledAt?: string;
+  /**
+   * Optional Loom delegation-matrix coverage preflight override.
+   *
+   * By default (when omitted), the orchestrator calls the real
+   * `runLoomDelegationMatrixPreflight()` from `loom-delegation-matrix.ts`
+   * before constructing the `LoomRoutingRunner` for the `loom-routing` suite
+   * — before any model call is made. It resolves the current, fully
+   * composed Loom delegation target set (via `composeAgentDescriptor()`,
+   * never a hardcoded agent list) and validates that the loaded
+   * `loom-routing` case fixtures cover every composed target with both a
+   * positive and a boundary/negative case, and that no case still targets a
+   * removed/renamed agent.
+   *
+   * A rejection here is surfaced as a `RunnerError` (`FixtureLoadError`)
+   * accumulated in `partialFailures` for the `loom-routing` suite — the
+   * suite is not executed and no model call is made for it. This is the
+   * default, always-on production behavior.
+   *
+   * Tests inject a stub here to avoid real config loading, composition, or
+   * fixture file I/O, and to keep unrelated eval fixture roots (which may
+   * not yet carry `target:`/`polarity:` tags) intentionally controllable
+   * rather than failing by default.
+   */
+  loomDelegationMatrixPreflight?: (
+    evalsRoot: string | undefined,
+  ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +733,9 @@ export class EvalOrchestrator {
   private readonly env: Record<string, string | undefined>;
   private readonly evalsRoot: string | undefined;
   private readonly assembledAt: string | undefined;
+  private readonly loomDelegationMatrixPreflight: (
+    evalsRoot: string | undefined,
+  ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
 
   constructor(options: EvalOrchestratorOptions) {
     this.modelClient = options.modelClient;
@@ -718,6 +750,9 @@ export class EvalOrchestrator {
     this.env = options.env ?? Bun.env;
     this.evalsRoot = options.evalsRoot;
     this.assembledAt = options.assembledAt;
+    this.loomDelegationMatrixPreflight =
+      options.loomDelegationMatrixPreflight ??
+      ((evalsRoot) => runLoomDelegationMatrixPreflight({ evalsRoot }));
   }
 
   /**
@@ -1054,19 +1089,48 @@ export class EvalOrchestrator {
     request: EvalRunRequest,
     modelFilter: string | undefined,
   ): ResultAsync<RunnerResult, RunnerError> {
-    const runner = new LoomRoutingRunner({
-      modelClient: this.modelClient,
-      scorer: this.scorer,
-      promptProvider: this.promptProvider,
-      evalsRoot: this.evalsRoot,
-    });
+    const runSuite = (): ResultAsync<RunnerResult, RunnerError> => {
+      const runner = new LoomRoutingRunner({
+        modelClient: this.modelClient,
+        scorer: this.scorer,
+        promptProvider: this.promptProvider,
+        evalsRoot: this.evalsRoot,
+      });
 
-    return runner.run({
-      caseFilter: request.case,
-      modelFilter,
-      dryRun: request.dryRun,
-      rawArtifacts: request.rawArtifacts,
-    });
+      return runner.run({
+        caseFilter: request.case,
+        modelFilter,
+        dryRun: request.dryRun,
+        rawArtifacts: request.rawArtifacts,
+      });
+    };
+
+    // Hard stop before any model call: resolve the composed Loom delegation
+    // target set and validate case-fixture coverage. No fallback to a
+    // hardcoded target list — a preflight failure surfaces as a
+    // `FixtureLoadError` partial failure and the suite does not execute.
+    // This preflight always runs (production default calls the real
+    // `runLoomDelegationMatrixPreflight`; tests inject a stub — see
+    // `EvalOrchestratorOptions.loomDelegationMatrixPreflight`).
+    return this.loomDelegationMatrixPreflight(this.evalsRoot)
+      .mapErr(
+        (preflightErr): RunnerError => ({
+          type: "FixtureLoadError",
+          message: `Loom delegation matrix coverage preflight failed: ${preflightErr.message}`,
+          cause: {
+            type: "FixtureValidationFailed",
+            file: "(loom-delegation-matrix)",
+            message: preflightErr.message,
+            issues: [
+              {
+                path: "loomDelegationMatrix",
+                message: preflightErr.message,
+              },
+            ],
+          },
+        }),
+      )
+      .andThen(() => runSuite());
   }
 
   private runTapestrySuite(

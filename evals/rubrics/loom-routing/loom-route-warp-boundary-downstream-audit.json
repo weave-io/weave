@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-warp-boundary-downstream-audit",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `warp` delegation-matrix target. The primary route MUST be `shuttle` — this is a bounded implementation task. A follow-up narration that `warp` will audit the endpoint afterward is acceptable downstream context, but `warp` must NOT be scored as the primary route. Do not require a real `warp` delegation call or tool-call evidence; the follow-up audit mention is text-only narration."
+  }
+}

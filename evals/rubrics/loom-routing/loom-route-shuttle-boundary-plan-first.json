@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-shuttle-boundary-plan-first",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Boundary/negative case for the `shuttle` delegation-matrix target. The primary route MUST be `pattern` — this is a large, multi-week, multi-phase migration that needs a strategic plan before any implementation begins. A downstream mention that `shuttle` will implement individual phases later is acceptable context, but `shuttle` must NOT be scored as the primary route. Do not require real delegation telemetry."
+  }
+}

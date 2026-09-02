@@ -1,0 +1,28 @@
+{
+  "id": "loom-route-weft-boundary-downstream-review",
+  "description": "Choose the primary implementation route for this text-only task: implement a new checkout API endpoint that calculates order totals including tax. Note that after implementation, the change will need a follow-up code review from weft.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "shuttle", "weft"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle",
+    "via": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["target:weft", "polarity:boundary"]
+}

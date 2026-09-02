@@ -2780,3 +2780,232 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
     expect(modelClient.calls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// analyzeLoomRouting — generalized occurrence classification matrix
+//
+// Covers: affirmative primary route, exploratory pre-hop, downstream
+// reviewer/security step, rejected/negated alternative, and non-routing
+// mention — for all composed target shapes described in the task.
+// ---------------------------------------------------------------------------
+
+describe("analyzeLoomRouting — occurrence classification matrix", () => {
+  it("thread -> shuttle: exploratory pre-hop retained in diagnostics, shuttle scored", () => {
+    const result = analyzeLoomRouting(
+      "1. [Sequential] thread: Locate the logout handler code\n" +
+        "2. [Sequential] shuttle: Implement the fix so cookies are cleared on logout",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+    expect(result.exploratoryAgents).toEqual(["thread"]);
+  });
+
+  it("spindle -> pattern: exploratory research pre-hop retained, pattern scored", () => {
+    const result = analyzeLoomRouting(
+      "1. [Sequential] spindle: Research current microservice migration patterns\n" +
+        "2. [Sequential] pattern: Draft the phased migration plan",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["pattern"]);
+    expect(result.exploratoryAgents).toEqual(["spindle"]);
+  });
+
+  it("spindle rejected in favor of thread for internal-only investigation", () => {
+    const result = analyzeLoomRouting(
+      "Delegate to thread to explore our own authentication module. " +
+        "This is internal codebase investigation, not external research via spindle.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["thread"]);
+    expect(result.rejectedAgents).toContain("spindle");
+    expect(result.extractedAgents).not.toContain("spindle");
+  });
+
+  it("pattern rejected for a small bounded fix; shuttle scored", () => {
+    const content =
+      "Route to shuttle directly to fix the pagination off-by-one bug. " +
+      "A full strategic plan from pattern is not warranted here.";
+    const result = analyzeLoomRouting(content);
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+    expect(result.rejectedAgents).toContain("pattern");
+  });
+
+  it("weft downstream review step retained in diagnostics, shuttle scored", () => {
+    const content =
+      "Route to shuttle to implement the new checkout API endpoint. " +
+      "Note that after implementation, the change will need a follow-up code review from weft.";
+    const result = analyzeLoomRouting(content);
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+    expect(result.downstreamAgents).toContain("weft");
+    expect(result.extractedAgents).not.toContain("weft");
+  });
+
+  it("warp downstream security-audit step retained in diagnostics, shuttle scored", () => {
+    const content =
+      "Route to shuttle to implement the file-upload endpoint. " +
+      "Once implemented, warp will conduct a security audit of the endpoint before it ships.";
+    const result = analyzeLoomRouting(content);
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+    expect(result.downstreamAgents).toContain("warp");
+    expect(result.extractedAgents).not.toContain("warp");
+  });
+
+  it("shuttle future-implementation mention does not count as the primary route", () => {
+    const content =
+      "Route to pattern to draft the multi-week migration plan. " +
+      "Note that shuttle will eventually implement individual phases once the plan is approved.";
+    const result = analyzeLoomRouting(content);
+    expect(result.primaryRoutedAgents).toEqual(["pattern"]);
+    expect(result.extractedAgents).not.toContain("shuttle");
+  });
+
+  it("direct 'route to weft for review' remains a valid positive primary route", () => {
+    const result = analyzeLoomRouting(
+      "route to weft for review of these changes.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["weft"]);
+  });
+
+  it("direct 'route to warp for a security audit' remains a valid positive primary route", () => {
+    const result = analyzeLoomRouting(
+      "route to warp for a security audit of the authentication flow.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["warp"]);
+  });
+
+  it("direct 'route to thread to inspect' remains a valid positive primary route", () => {
+    const result = analyzeLoomRouting(
+      "route to thread to inspect the existing logout handler code paths.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["thread"]);
+  });
+
+  it("direct 'route to spindle to research' remains a valid positive primary route", () => {
+    const result = analyzeLoomRouting(
+      "route to spindle to research the OAuth2 PKCE flow best practices.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["spindle"]);
+  });
+
+  it("a plain non-routing mention of an agent name is not scored as primary", () => {
+    const result = analyzeLoomRouting(
+      "Route to shuttle to implement the fix. Loom is the orchestrator that made this call.",
+    );
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+    expect(result.extractedAgents).not.toContain("loom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LoomRoutingRunner — boundary matrix fixture integration
+//
+// Loads and executes every one of the 12 real Task 6 matrix fixture/rubric
+// pairs (evals/cases/loom-routing/*.json + evals/rubrics/loom-routing/*.json
+// on disk, via the production fixture loader) end-to-end through the real
+// `LoomRoutingRunner`, with a stubbed model response mapped per case ID and a
+// stubbed scorer. Verifies the observed primary target matches each fixture's
+// actual `expected_outcome.target_agent`.
+// ---------------------------------------------------------------------------
+
+describe("LoomRoutingRunner — boundary matrix fixtures (real fixtures on disk)", () => {
+  // Case ID -> stubbed model response content mapping. Each entry mirrors the
+  // narrative in the corresponding real fixture description
+  // (evals/cases/loom-routing/<caseId>.json) so the extraction/classification
+  // logic under test exercises the same shape the fixture is designed to probe.
+  const modelContentByCaseId: Record<string, string> = {
+    "loom-route-shuttle-boundary-plan-first":
+      "Route to pattern to draft the multi-week microservice migration plan. " +
+      "Note that shuttle will eventually implement individual phases once the plan is approved.",
+    "loom-route-pattern-boundary-small-fix":
+      "Route to shuttle directly to fix the pagination off-by-one bug. " +
+      "A full strategic plan from pattern is not warranted here.",
+    "loom-route-thread-boundary-prehop-then-implement":
+      "1. [Sequential] thread: Locate the logout handler code\n" +
+      "2. [Sequential] shuttle: Fix the bug where session cookies are not cleared",
+    "loom-route-spindle-boundary-internal-exploration":
+      "Delegate to thread to explore our own authentication module and how it validates sessions. " +
+      "This is internal codebase investigation, not external research via spindle.",
+    "loom-route-weft-boundary-downstream-review":
+      "Route to shuttle to implement the new checkout API endpoint. " +
+      "Note that after implementation, the change will need a follow-up code review from weft.",
+    "loom-route-warp-boundary-downstream-audit":
+      "Route to shuttle to implement the file-upload endpoint. " +
+      "Once implemented, warp will conduct a security audit of the endpoint before it ships.",
+    "loom-route-weft-review-checkout-pr":
+      "route to weft for review of the open checkout PR.",
+    "loom-route-warp-security-audit-auth-flow":
+      "route to warp for a security audit of the authentication flow.",
+    "loom-route-thread-explore-auth-flow":
+      "route to thread to inspect the authentication token validation call paths.",
+    "loom-route-spindle-research-oauth-pkce":
+      "route to spindle to research the OAuth2 PKCE flow best practices.",
+    "loom-route-shuttle-implement-utility":
+      "route to shuttle to add the debounce utility function and wire it into the search input handler.",
+    "loom-route-pattern-plan-migration":
+      "route to pattern to draft the comprehensive multi-week microservice migration plan.",
+  };
+
+  // Expected primary target per case, taken directly from each real fixture's
+  // `expected_outcome.target_agent` (evals/cases/loom-routing/<caseId>.json).
+  const expectedTargetByCaseId: Record<string, string> = {
+    "loom-route-shuttle-boundary-plan-first": "pattern",
+    "loom-route-pattern-boundary-small-fix": "shuttle",
+    "loom-route-thread-boundary-prehop-then-implement": "shuttle",
+    "loom-route-spindle-boundary-internal-exploration": "thread",
+    "loom-route-weft-boundary-downstream-review": "shuttle",
+    "loom-route-warp-boundary-downstream-audit": "shuttle",
+    "loom-route-weft-review-checkout-pr": "weft",
+    "loom-route-warp-security-audit-auth-flow": "warp",
+    "loom-route-thread-explore-auth-flow": "thread",
+    "loom-route-spindle-research-oauth-pkce": "spindle",
+    "loom-route-shuttle-implement-utility": "shuttle",
+    "loom-route-pattern-plan-migration": "pattern",
+  };
+
+  const caseIds = Object.keys(modelContentByCaseId);
+
+  it("covers all 12 Task 6 matrix fixture IDs", () => {
+    expect(caseIds).toHaveLength(12);
+    expect(Object.keys(expectedTargetByCaseId)).toHaveLength(12);
+  });
+
+  for (const caseId of caseIds) {
+    it(`loads the real fixture/rubric and resolves the expected primary target for "${caseId}"`, async () => {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        model: "anthropic/claude-sonnet-4.5",
+        content: modelContentByCaseId[caseId] ?? "",
+      });
+
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(makeNormalizedScoreRecord());
+
+      // No `evalsRoot` override and no in-memory fixture subclass: this uses
+      // the production `LoomRoutingRunner` with the default `EVALS_ROOT`,
+      // reading the real fixture/rubric files from disk via `case-loader.ts`.
+      const runner = new LoomRoutingRunner({
+        modelClient,
+        scorer,
+        loomSystemPrompt: "Test",
+      });
+
+      const result = await runner.run({
+        caseFilter: caseId,
+        rawArtifacts: true,
+      });
+
+      expect(result.isOk()).toBe(true);
+      const runnerResult = result._unsafeUnwrap();
+      expect(runnerResult.caseResults).toHaveLength(1);
+
+      const caseResult = runnerResult.caseResults[0];
+      const signals =
+        caseResult?.rawArtifact?.runnerDiagnostics?.routingSignals;
+      const expectedTarget = expectedTargetByCaseId[caseId];
+
+      expect(signals?.expectedTarget).toBe(expectedTarget);
+      expect(signals?.observedPrimaryTarget).toBe(expectedTarget);
+      expect([
+        "matched-primary-target",
+        "acceptable-but-nonprimary-exploratory-route",
+      ]).toContain(signals?.classification ?? "");
+    });
+  }
+});

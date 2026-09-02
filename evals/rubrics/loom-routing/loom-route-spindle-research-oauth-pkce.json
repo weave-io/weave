@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-spindle-research-oauth-pkce",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Positive case for the `spindle` delegation-matrix target. The primary route MUST be `spindle` — this is a pure external-research request (current external best practices, library/package options) with no repository code changes requested. Do not require real delegation telemetry."
+  }
+}

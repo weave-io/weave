@@ -142,6 +142,88 @@ All suites share the same case schema, rubric schema, and model matrix. The shar
 
 The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools, inspect side effects, or capture real tool-call telemetry. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require unobservable runtime behavior. Reserve those checks for a future harness-backed trajectory runner.
 
+### Loom delegation matrix: composition-derived, not hardcoded
+
+The set of agents Loom is allowed to route to is never a hand-maintained list in eval code. `packages/cli/src/evals/loom-delegation-matrix.ts` resolves it by loading the merged Weave config and composing the `loom` agent through the engine's public `composeAgentDescriptor()` API, then reading `descriptor.delegationTargets` straight off the result. This is the same eligibility source the real harness uses at runtime, so a config change that adds, removes, or renames a delegation target is picked up automatically, no eval code edit required.
+
+`validateLoomDelegationMatrixCoverage()` turns that resolved target list into a fail-closed preflight: every currently composed target must have at least one `loom-routing` case tagged `target:<agentName>` + `polarity:positive` (proves the target IS the right route for some task) and at least one tagged `polarity:boundary` (proves an adjacent/ambiguous task should NOT route there). A case still tagged for a target that composition no longer produces is also reported as an error, so a removed agent cannot silently keep looking "covered." Run the preflight locally with:
+
+```bash
+bun test packages/cli/src/evals/__tests__/loom-delegation-matrix.test.ts
+```
+
+This is the composition-derived proof the acceptance criteria refers to: eligibility comes from `composeAgentDescriptor()`, not from a string literal in a test file, and the fixture set is checked against that resolved list rather than against a fixed expectation.
+
+**Text-only proof, explicitly bounded.** All of the above is a *routing-signal* proof, not a runtime-trajectory proof. The scorer reads assistant text and extracts a routing target; it never inspects which tool the harness actually invoked or whether a delegated subagent process really started. When you see "Loom routes correctly" in an eval report, read it as "Loom's text output named the composition-derived correct agent," not as "the harness delegated end to end." That distinction matters when someone asks why a green `loom-routing` suite doesn't also prove Tapestry's fan-out worked (see Deferred Scope below).
+
+### Scoring semantics
+
+Every case produces a `NormalizedScoreRecord` (`packages/cli/src/evals/types.ts`) with four dimensions, each scored `0`-`1`: `routingCorrectness`, `delegationCorrectness`, `executionCompleteness`, `rationaleQuality`. A dimension that doesn't apply to a case's `expected_outcome.kind` is marked `applicable: false` and scored `1.0` so it never drags down cases it wasn't meant to grade. The rubric's `outcome_weight` (for whichever of routing/delegation/execution is the primary dimension) and `per_expectation_weight` (for `rationaleQuality` and any transcript expectations) combine into `weightedTotal`. A case is `passed` when `weightedTotal` clears the pass threshold and, if the rubric marks it `required`, only `required` cases count toward a suite's green/red gate. Non-required cases can fail without turning a suite red; they still show up in per-case history.
+
+### Provenance verification
+
+Every published run bundle includes `provenance-manifest.json`, an internal (never-published-standalone) artifact that records a prompt hash per agent so a reader can confirm which prompt composition actually produced a given run's results. To verify provenance locally:
+
+```bash
+# Dry run first: confirms fixture/model/case wiring without a live call
+bun packages/cli/src/main.ts eval run --dry-run
+
+# Then a real run, inspect the manifest fields (never the raw prompt text)
+bun packages/cli/src/main.ts eval run --agent loom --case loom-route-backend-api
+```
+
+Provenance manifests are internal artifacts — they carry hashes and metadata, not raw prompt content — so they are safe to inspect locally but are never among the allowlisted published files (see [CI Artifact Model](#ci-artifact-model)).
+
+### Smoke commands
+
+Use a narrow, single-model smoke run to sanity-check a suite before committing to a full multi-model pass:
+
+```bash
+# One suite, one model, print the plan without calling the model
+bun packages/cli/src/main.ts eval run --agent loom-routing --model anthropic/claude-sonnet-4.5 --dry-run
+
+# Same filter, live call
+bun packages/cli/src/main.ts eval run --agent loom-routing --model anthropic/claude-sonnet-4.5
+
+# Cross-suite smoke on one shared model (all suites, one model)
+bun packages/cli/src/main.ts eval run --model anthropic/claude-sonnet-4.5
+```
+
+### CI dispatch
+
+The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_dispatch`, no push/PR/schedule triggers). Dispatch it from the Actions tab (or `gh workflow run agent-evals.yml -f agent=loom-routing -f model=anthropic/claude-sonnet-4.5 -f case=""`) with any combination of the three optional inputs:
+
+- `agent` — a suite ID or short agent alias from the shared registry (blank runs all suites).
+- `model` — an exact model ID from `evals/model-matrix.json` (blank runs the full default matrix).
+- `case` — an exact case ID from `evals/cases/**` (blank runs every case).
+
+Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_CASES`) before the eval job ever spends OpenRouter quota or touches secrets. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
+
+### Remote checks
+
+Published results live in `weave-io/weave-agent-evals`, not in this repository. To check the current state of a suite without running anything locally:
+
+```bash
+# Latest published run summary
+gh api repos/weave-io/weave-agent-evals/contents/indexes/v1/latest.json --jq '.content' | base64 -d
+
+# Per-suite pass-rate history
+gh api repos/weave-io/weave-agent-evals/contents/indexes/v1/suite-history-tapestry-category-routing.json --jq '.content' | base64 -d
+
+# Full commit history of published bundles (paginated)
+gh api --paginate repos/weave-io/weave-agent-evals/commits
+```
+
+`dashboard-manifest.json`, `suite-history-<suite>.json`, and `scenario-history-<suite>.json` are mutable indexes rolled forward on every publish — they show the latest run only. To see historical runs you must walk the commit history, as `docs/artifacts/tapestry-category-routing-rerun-diagnosis.md` does.
+
+### Deferred scope
+
+The following are explicitly **out of scope** for the current text-only eval surface, not silently missing:
+
+- **Tapestry fan-out.** `tapestry-category-routing` proves Tapestry's text output names the composition-derived correct category shuttle. It does not prove the harness actually fanned work out to multiple category shuttles concurrently, or that fan-out results were merged correctly. That is runtime/trajectory behavior, not text-observable from a single chat completion.
+- **Runtime tool-call telemetry.** No current runner inspects which tools a harness actually invoked, only what the assistant said it would do or did. This is a known, permanent boundary of the text-only architecture (see the note at the top of this section), not a bug to fix inside the current runner set.
+- **Other sub-80 suites.** As of the most recently published run inspected (`0eea530-2026-09-01-001`, see `docs/artifacts/tapestry-category-routing-rerun-diagnosis.md`), `tapestry-category-routing` scored 0% in every one of its four published runs since introduction (2026-07-14). The diagnosis traced this to every case falling through the runner's error path (`buildErrorResult`, which never sets `publicExplanation`), most plausibly because a live judge failure on the `rationaleQuality` dimension was discarding the whole case result, deterministic routing score included. `tapestry-category-routing-runner.ts` now recovers from that failure mode: when the injected scorer's `.score()` call fails, the deterministic `routingCorrectness` computed from the model's own text is preserved unconditionally (see the `scorerDegradation`/`buildScorerUnavailableScoreRecord()` path), a `publicExplanation` is still built from that preserved score, and only the failed `rationaleQuality` dimension is marked unavailable — judge unavailability no longer zeroes out a correct or incorrect routing decision. What remains **pending**, because no session so far has had `OPENROUTER_API_KEY` available for a credentialed rerun, is confirmation that a fresh published run actually reflects this recovery path end to end (published pass rate, presence of `publicExplanation` on every case, and the specific error type that was previously hitting the old `buildErrorResult` path). Do not report the historical 0% runs as retroactively fixed; report the scorer-degradation recovery as implemented and awaiting a credentialed rerun to confirm the live effect. Any other suite discovered to be persistently below an 80% pass rate should get the same treatment: documented as deferred with its own evidence trail, not silently patched over in a prompt-only fix.
+
 ### 2026-07-01 Loom routing stabilization, primary vs exploratory route rules
 
 The Loom suite now makes the routing contract more explicit so regressions are explainable without prompt rewrites.

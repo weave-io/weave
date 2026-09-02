@@ -171,6 +171,14 @@
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
   - _...10 more_
+- `packages\cli\src\evals\loom-delegation-matrix.ts`
+  - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
+  - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
+  - function runLoomDelegationMatrixPreflight: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>
+  - interface ResolveLoomDelegationTargetsOptions
+  - interface LoomDelegationMatrixCoverageIssue
+  - interface RunLoomDelegationMatrixPreflightOptions
+  - _...8 more_
 - `packages\cli\src\evals\loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
@@ -295,7 +303,7 @@
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
   - function scoreDelegationCorrectness: (content, analysis) => DimensionScore
   - function scoreExecutionCompleteness: (content, analysis) => DimensionScore
-  - _...10 more_
+  - _...11 more_
 - `packages\cli\src\evals\tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -614,6 +622,14 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts\evals\verify-agent-eval-run.ts`
+  - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
+  - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
+  - function parseCliPackageVersion: (sourceText) => Result<string, VerifyEvalRunError>
+  - function parseLockedDependencyVersions: (sourceText) => Result<Record<string, string>, VerifyEvalRunError>
+  - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
+  - class DefaultArtifactReader
+  - _...25 more_
 - `scripts\validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<

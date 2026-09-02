@@ -42,7 +42,8 @@
       "package.json",
       "tsconfig.json",
       "!packages/**/dist",
-      "!packages/**/dist-types"
+      "!packages/**/dist-types",
+      "!packages/**/.astro"
     ]
   },
   "overrides": [

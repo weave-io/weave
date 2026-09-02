@@ -36,6 +36,7 @@ import {
   ArtifactBundleWriter,
   EVAL_RESULTS_REPO_TOKEN_ENV_VAR,
 } from "../artifact-bundle.js";
+import { loadSuiteCases } from "../case-loader.js";
 import {
   DASHBOARD_MANIFEST_FILE,
   DashboardIndexWriter,
@@ -43,14 +44,18 @@ import {
   LATEST_SNAPSHOT_FILE,
   LATEST_SNAPSHOT_SCHEMA_VERSION,
   MODEL_COMPARISON_FILE_PREFIX,
+  SCENARIO_HISTORY_FILE_PREFIX,
   SUITE_HISTORY_FILE_PREFIX,
   validateDashboardManifestCompatibility,
   validateLatestSnapshotCompatibility,
   validatePublicReportBundleCompatibility,
+  validateScenarioHistoryCompatibility,
   validateSuiteHistoryCompatibility,
 } from "../dashboard-indexes.js";
+import { LOOM_ROUTING_SUITE } from "../loom-routing-runner.js";
 import { DASHBOARD_MANIFEST_SCHEMA_VERSION } from "../report-schema.js";
 import { assertJsonPublishSafe } from "../sanitizer.js";
+import { TAPESTRY_CATEGORY_ROUTING_SUITE } from "../tapestry-category-routing-runner.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -85,6 +90,7 @@ const UPDATED_AT_SECOND_BUILD = "2026-06-11T13:00:00.000Z";
 const KNOWN_SUITES = [
   "loom-routing",
   "tapestry-execution",
+  "tapestry-category-routing",
   "shuttle-execution",
   "spindle-tools",
   "pattern-planning",
@@ -130,6 +136,16 @@ function makeCaseResultSummary(
     dimensionScores: makeDimensionScores(),
     scoredAt,
     dryRun: false,
+    // Every fixture case gets a bounded, allowlisted-source explanation so
+    // the pipeline's explanation-derivation and scenario-history
+    // "description" fields have real, non-empty input to work with — not
+    // relying on generic pipeline defaults to happen to produce text.
+    publicExplanation: {
+      text: passed
+        ? `Case ${caseId} passed for ${modelId} in suite ${suite}.`
+        : `Case ${caseId} failed for ${modelId} in suite ${suite}.`,
+      source: "score_bucket_label",
+    },
   };
 }
 
@@ -164,42 +180,93 @@ function makeRunnerResult(
 }
 
 /**
+ * Loom-routing case IDs — loaded directly from the real fixture set under
+ * `evals/cases/loom-routing/` via `loadSuiteCases()`, the same loader the
+ * production runner uses. This is deliberately NOT a hand-maintained list:
+ * if a case is added, renamed, or removed from the real fixture set, this
+ * test picks it up automatically instead of silently testing a stale subset.
+ */
+const loomRoutingCasesResult = await loadSuiteCases(LOOM_ROUTING_SUITE);
+if (loomRoutingCasesResult.isErr()) {
+  throw new Error(
+    `Failed to load loom-routing cases for e2e fixture: ${loomRoutingCasesResult.error.message}`,
+  );
+}
+const LOOM_ROUTING_CASE_IDS = loomRoutingCasesResult.value.map((c) => c.id);
+
+/**
+ * Tapestry-category-routing (TCR) case IDs — loaded directly from the real
+ * fixture set under `evals/cases/tapestry-category-routing/` via
+ * `loadSuiteCases()`, for the same reason as `LOOM_ROUTING_CASE_IDS` above.
+ */
+const tcrCasesResult = await loadSuiteCases(TAPESTRY_CATEGORY_ROUTING_SUITE);
+if (tcrCasesResult.isErr()) {
+  throw new Error(
+    `Failed to load tapestry-category-routing cases for e2e fixture: ${tcrCasesResult.error.message}`,
+  );
+}
+const TCR_CASE_IDS = tcrCasesResult.value.map((c) => c.id);
+
+// Sanity guard: fail loudly (not silently pass with zero cases) if either
+// suite's real fixture directory is empty or unreadable.
+if (LOOM_ROUTING_CASE_IDS.length === 0) {
+  throw new Error(
+    "loom-routing fixture set is empty — e2e fixture flow requires at least one real case",
+  );
+}
+if (TCR_CASE_IDS.length === 0) {
+  throw new Error(
+    "tapestry-category-routing fixture set is empty — e2e fixture flow requires at least one real case",
+  );
+}
+
+/**
  * Build runner results for a two-suite, two-model evaluation run.
- * loom-routing: claude passes, gpt passes
+ * loom-routing: claude passes, gpt passes (enlarged to the full delegation
+ * matrix case set — one positive + one boundary case per composed target).
+ * tapestry-category-routing: claude passes, gpt passes (all ten TCR cases).
  * tapestry-execution: claude passes, gpt fails
  */
 function makeRun1Results(): RunnerResult[] {
   return [
-    makeRunnerResult("loom-routing", [
-      makeCaseResult(
-        "route-to-shuttle",
-        "anthropic/claude-sonnet-4.5",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN1,
-      ),
-      makeCaseResult(
-        "route-to-warp",
-        "anthropic/claude-sonnet-4.5",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN1,
-      ),
-      makeCaseResult(
-        "route-to-shuttle",
-        "openai/gpt-4o",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN1,
-      ),
-      makeCaseResult(
-        "route-to-warp",
-        "openai/gpt-4o",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN1,
-      ),
-    ]),
+    makeRunnerResult(
+      "loom-routing",
+      LOOM_ROUTING_CASE_IDS.flatMap((caseId) => [
+        makeCaseResult(
+          caseId,
+          "anthropic/claude-sonnet-4.5",
+          "loom-routing",
+          true,
+          ASSEMBLED_AT_RUN1,
+        ),
+        makeCaseResult(
+          caseId,
+          "openai/gpt-4o",
+          "loom-routing",
+          true,
+          ASSEMBLED_AT_RUN1,
+        ),
+      ]),
+    ),
+    makeRunnerResult(
+      "tapestry-category-routing",
+      TCR_CASE_IDS.flatMap((caseId) => [
+        makeCaseResult(
+          caseId,
+          "anthropic/claude-sonnet-4.5",
+          "tapestry-category-routing",
+          true,
+          ASSEMBLED_AT_RUN1,
+        ),
+        makeCaseResult(
+          caseId,
+          "openai/gpt-4o",
+          "tapestry-category-routing",
+          true,
+          ASSEMBLED_AT_RUN1,
+        ),
+      ]),
+    ),
     makeRunnerResult("tapestry-execution", [
       makeCaseResult(
         "exec-backend",
@@ -304,36 +371,44 @@ function makeRun1Results(): RunnerResult[] {
  */
 function makeRun2Results(): RunnerResult[] {
   return [
-    makeRunnerResult("loom-routing", [
-      makeCaseResult(
-        "route-to-shuttle",
-        "anthropic/claude-sonnet-4.5",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN2,
-      ),
-      makeCaseResult(
-        "route-to-warp",
-        "anthropic/claude-sonnet-4.5",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN2,
-      ),
-      makeCaseResult(
-        "route-to-shuttle",
-        "openai/gpt-4o",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN2,
-      ),
-      makeCaseResult(
-        "route-to-warp",
-        "openai/gpt-4o",
-        "loom-routing",
-        true,
-        ASSEMBLED_AT_RUN2,
-      ),
-    ]),
+    makeRunnerResult(
+      "loom-routing",
+      LOOM_ROUTING_CASE_IDS.flatMap((caseId) => [
+        makeCaseResult(
+          caseId,
+          "anthropic/claude-sonnet-4.5",
+          "loom-routing",
+          true,
+          ASSEMBLED_AT_RUN2,
+        ),
+        makeCaseResult(
+          caseId,
+          "openai/gpt-4o",
+          "loom-routing",
+          true,
+          ASSEMBLED_AT_RUN2,
+        ),
+      ]),
+    ),
+    makeRunnerResult(
+      "tapestry-category-routing",
+      TCR_CASE_IDS.flatMap((caseId) => [
+        makeCaseResult(
+          caseId,
+          "anthropic/claude-sonnet-4.5",
+          "tapestry-category-routing",
+          true,
+          ASSEMBLED_AT_RUN2,
+        ),
+        makeCaseResult(
+          caseId,
+          "openai/gpt-4o",
+          "tapestry-category-routing",
+          true,
+          ASSEMBLED_AT_RUN2,
+        ),
+      ]),
+    ),
     makeRunnerResult("tapestry-execution", [
       makeCaseResult(
         "exec-backend",
@@ -624,6 +699,13 @@ describe("E2E fixture flow: publish two runs → rebuild indexes → validate we
       filesWritten1.some(
         (f) =>
           f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
+          f.includes("tapestry-category-routing"),
+      ),
+    ).toBe(true);
+    expect(
+      filesWritten1.some(
+        (f) =>
+          f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
           f.includes("shuttle-execution"),
       ),
     ).toBe(true);
@@ -750,6 +832,104 @@ describe("E2E fixture flow: publish two runs → rebuild indexes → validate we
       run2.runId,
     );
     expect(run2BundleCompat.isOk()).toBe(true);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STEP 4a: Focused-suite explanations — every loom-routing and
+    //          tapestry-category-routing case row in the immutable
+    //          public-report.json must carry a bounded, non-empty
+    //          explanation. This is a per-suite assertion, not a reliance on
+    //          generic pipeline behavior: a regression that silently drops
+    //          explanations for one suite (as documented in
+    //          docs/artifacts/tapestry-category-routing-rerun-diagnosis.md)
+    //          must fail this test.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const FOCUSED_SUITES = ["loom-routing", "tapestry-category-routing"];
+
+    for (const parsedReport of [parsed1, parsed2]) {
+      for (const suiteName of FOCUSED_SUITES) {
+        const suiteSummary = parsedReport.suiteSummaries.find(
+          (s: { suite: string }) => s.suite === suiteName,
+        );
+        expect(suiteSummary).toBeDefined();
+        if (suiteSummary === undefined) continue;
+        expect(suiteSummary.cases.length).toBeGreaterThan(0);
+        for (const caseEntry of suiteSummary.cases as Array<{
+          caseId: string;
+          explanation?: { text: string; source: string };
+        }>) {
+          expect(caseEntry.explanation).toBeDefined();
+          expect(typeof caseEntry.explanation?.text).toBe("string");
+          expect(caseEntry.explanation?.text.length).toBeGreaterThan(0);
+          expect(caseEntry.explanation?.text.length).toBeLessThanOrEqual(300);
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STEP 4b: Scenario history for both focused suites — descriptions must
+    //          be derived from the (non-empty) explanations asserted above,
+    //          and both suites must have one scenario entry per real case ID.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    for (const suiteName of FOCUSED_SUITES) {
+      const scenarioPath = join(
+        bundleRoot,
+        `${SCENARIO_HISTORY_FILE_PREFIX}${suiteName}.json`,
+      );
+      const scenarioRaw = await Bun.file(scenarioPath).json();
+      const scenarioCompat = validateScenarioHistoryCompatibility(
+        scenarioRaw,
+        suiteName,
+      );
+      expect(scenarioCompat.isOk()).toBe(true);
+      const scenarioIndex = scenarioCompat._unsafeUnwrap();
+
+      expect(scenarioIndex.suite).toBe(suiteName);
+      const expectedCaseIds =
+        suiteName === "loom-routing" ? LOOM_ROUTING_CASE_IDS : TCR_CASE_IDS;
+      expect(scenarioIndex.scenarios.length).toBe(expectedCaseIds.length);
+
+      for (const scenario of scenarioIndex.scenarios) {
+        expect(expectedCaseIds).toContain(scenario.caseId);
+        // Description must be present and derived from a real explanation
+        // (non-empty, bounded) — not silently omitted for this suite.
+        expect(scenario.description).toBeDefined();
+        expect(scenario.description?.length).toBeGreaterThan(0);
+        expect(scenario.lastRuns.length).toBeGreaterThan(0);
+        for (const run of scenario.lastRuns) {
+          expect(isSafeId(run.runId)).toBe(true);
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STEP 4c: Model comparison completeness for both focused suites — every
+    //          model that ran cases in a focused suite must have a complete,
+    //          non-null perSuitePassRate entry for that suite.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    for (const run of [run1, run2]) {
+      const compPath = join(
+        bundleRoot,
+        `${MODEL_COMPARISON_FILE_PREFIX}${run.runId}.json`,
+      );
+      const compRaw = await Bun.file(compPath).json();
+      expect(Array.isArray(compRaw.models)).toBe(true);
+      expect(compRaw.models.length).toBeGreaterThan(0);
+
+      for (const suiteName of FOCUSED_SUITES) {
+        for (const model of compRaw.models as Array<{
+          modelId: string;
+          perSuitePassRates: Record<string, number | null>;
+        }>) {
+          expect(Object.hasOwn(model.perSuitePassRates, suiteName)).toBe(true);
+          expect(model.perSuitePassRates[suiteName]).not.toBeNull();
+          expect(model.perSuitePassRates[suiteName]).toBeGreaterThanOrEqual(0);
+          expect(model.perSuitePassRates[suiteName]).toBeLessThanOrEqual(1);
+        }
+      }
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 5: Simulate website ENDPOINT fetches from the generated manifest

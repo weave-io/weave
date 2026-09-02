@@ -14,17 +14,20 @@ This surface is intentionally narrow today. It is for **text-only prompt evals**
 
 ## Supported Suite Families
 
-The current public surface supports seven suite families:
+The current public surface supports eight suite families:
 
 - `loom-routing`
 - `tapestry-execution`
+- `tapestry-category-routing`
 - `shuttle-execution`
 - `spindle-tools`
 - `pattern-planning`
 - `weft-review`
 - `warp-security`
 
-These are the canonical suite IDs used by filters, fixtures, and reports. The `--agent` flag also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`.
+These are the canonical suite IDs used by filters, fixtures, and reports. The `--agent` flag also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. `tapestry` matches both `tapestry-execution` and `tapestry-category-routing`.
+
+Loom's eligible delegation targets are not a hardcoded list in the eval fixtures. They are derived by composing the `loom` agent through the engine's `composeAgentDescriptor()` API and reading its resolved `delegationTargets`, so a config change that adds or removes a target is reflected automatically. See `docs/agent-evals.md` for the composition-derived coverage preflight.
 
 ## Text-only Boundary
 
@@ -37,6 +40,14 @@ What they do **not** do:
 - inspect filesystem mutations, shell history, browser events, or network traces
 
 Runtime-backed trajectory evals are an explicit non-goal of the current public eval contract.
+
+## Deferred Scope
+
+Some behavior is deliberately out of reach for a text-only eval surface, not silently missing:
+
+- **Tapestry fan-out** (concurrently delegating to multiple category shuttles) is not exercised end to end; `tapestry-category-routing` only proves the text names the correct single category shuttle.
+- **Runtime tool-call telemetry** is never inspected, only what assistant text claims.
+- Any suite that stays below an 80% pass rate across published runs should be treated as deferred and diagnosed with evidence, not silently patched. See `docs/agent-evals.md` for the current status of suites in that state.
 
 ## Basic Usage
 

@@ -17,7 +17,7 @@
     "target_agent": "shuttle",
     "via": []
   },
-  "accepted_alternates": ["shuttle-client-frontend", "shuttle-backend-api", "loom"],
+  "accepted_alternates": ["shuttle-client-frontend", "shuttle-backend-api"],
   "transcript_expectations": [
     {
       "check": "agent_mentioned",

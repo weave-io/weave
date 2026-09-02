@@ -391,6 +391,25 @@ describe("builtin compose smoke", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Loom delegation-matrix eligibility source (Task 5) — proves the eval-owned
+  // resolver derives the same target set as this direct composition, without
+  // this test (or the resolver) hardcoding the current agent name list.
+  // ---------------------------------------------------------------------------
+
+  it("Loom's composed delegationTargets exactly match its DELEGATING/NON_DELEGATING split (no hardcoded name list required)", () => {
+    const loomDescriptor = getDescriptor("loom");
+    const loomTargetNames = loomDescriptor.delegationTargets
+      .map((t) => t.name)
+      .sort();
+
+    // Derived at test-run time from the loaded config (see beforeAll above),
+    // not from a literal agent-name array — matches the resolver's contract.
+    const expectedTargetNames = [...NON_DELEGATING_AGENTS].sort();
+
+    expect(loomTargetNames).toEqual(expectedTargetNames);
+  });
+
+  // ---------------------------------------------------------------------------
   // Workflow-sequence Mermaid diagrams
   // ---------------------------------------------------------------------------
 
