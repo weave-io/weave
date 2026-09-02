@@ -182,11 +182,11 @@
 - `packages\cli\src\evals\loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
+  - function findAffirmativeRoutedAgent: (content, candidates) => string | undefined
+  - function findLoneOpeningLineAgent: (content, candidates) => string | undefined
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
-  - class LoomRoutingRunner
-  - interface LoomRoutingAnalysis
-  - _...3 more_
+  - _...5 more_
 - `packages\cli\src\evals\model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
@@ -297,13 +297,13 @@
   - interface SpindleToolsRunnerOptions
   - _...2 more_
 - `packages\cli\src\evals\tapestry-category-routing-runner.ts`
+  - function findAffirmativeRouteTarget: (content) => string | undefined
+  - function findLoneOpeningLineTarget: (content) => string | undefined
   - function extractCategoryShuttles: (content) => string[]
   - function detectGenericShuttleFallback: (content) => boolean
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
-  - function scoreDelegationCorrectness: (content, analysis) => DimensionScore
-  - function scoreExecutionCompleteness: (content, analysis) => DimensionScore
-  - _...11 more_
+  - _...13 more_
 - `packages\cli\src\evals\tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean

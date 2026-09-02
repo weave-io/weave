@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 136 lib files | 10 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~12.500 tokens. Without it, AI exploration would cost ~47.300 tokens. **Saves ~34.900 tokens per conversation.**
-> **Last scanned:** 2026-09-02 12:05 — re-run after significant changes
+> **Token savings:** this file is ~12.500 tokens. Without it, AI exploration would cost ~47.300 tokens. **Saves ~34.800 tokens per conversation.**
+> **Last scanned:** 2026-09-02 18:46 — re-run after significant changes
 
 ---
 
@@ -193,11 +193,11 @@
 - `packages\cli\src\evals\loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
+  - function findAffirmativeRoutedAgent: (content, candidates) => string | undefined
+  - function findLoneOpeningLineAgent: (content, candidates) => string | undefined
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
-  - class LoomRoutingRunner
-  - interface LoomRoutingAnalysis
-  - _...3 more_
+  - _...5 more_
 - `packages\cli\src\evals\model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
@@ -308,13 +308,13 @@
   - interface SpindleToolsRunnerOptions
   - _...2 more_
 - `packages\cli\src\evals\tapestry-category-routing-runner.ts`
+  - function findAffirmativeRouteTarget: (content) => string | undefined
+  - function findLoneOpeningLineTarget: (content) => string | undefined
   - function extractCategoryShuttles: (content) => string[]
   - function detectGenericShuttleFallback: (content) => boolean
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
-  - function scoreDelegationCorrectness: (content, analysis) => DimensionScore
-  - function scoreExecutionCompleteness: (content, analysis) => DimensionScore
-  - _...11 more_
+  - _...13 more_
 - `packages\cli\src\evals\tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean

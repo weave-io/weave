@@ -18,6 +18,7 @@ src/**/*.d.ts.map
 .env
 .env.local
 .env.*.local
+.openrouter.key
 
 # Logs
 *.log
