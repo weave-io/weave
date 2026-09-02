@@ -282,6 +282,296 @@ function isRoutingLine(line: string): boolean {
   return ROUTING_VERB_NEAR_TO_RE.test(line);
 }
 
+// ---------------------------------------------------------------------------
+// Affirmative primary-route detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Real model output frequently uses an "explain then decide" order: a
+ * considered-but-rejected target (e.g. a disabled category shuttle) is named
+ * first in the reasoning, while the actual decision is stated later via an
+ * explicit affirmative-route utterance (e.g. `**Route to: `shuttle`**`).
+ *
+ * The plain position-based extraction in `extractCategoryShuttles()` picks
+ * the FIRST mentioned shuttle name, which is wrong for this "explain then
+ * decide" ordering — it scores the rejected alternative instead of the
+ * asserted route. These patterns detect an explicit affirmative-route
+ * utterance regardless of its position in the text, so it can override
+ * position-based extraction.
+ *
+ * Four forms are recognized:
+ *   - verb + "to": "route to X", "routing to X", "delegate to X",
+ *     "assign to X", "send to X", "route the task to X" (small word gap
+ *     allowed between the verb and "to").
+ *   - label form: "Route: X", "Primary route: X".
+ *   - arrow form: "→ X".
+ *   - labelled-answer form: "Answer: X", "Decision: X", "Result: X",
+ *     "Conclusion: X", "Final: X", "Final answer: X", "Verdict: X",
+ *     "Chosen: X", "Choice: X", "Recommendation: X", "Recommended: X",
+ *     "Selected: X", "Selection: X" (case-insensitive).
+ *
+ * Markdown emphasis (`**bold**`, `` `code` ``) around the verb or the target
+ * name is stripped before matching so `**Route to: `shuttle`**` is
+ * recognized the same as plain `Route to: shuttle`.
+ */
+const AFFIRMATIVE_VERB_TO_RE =
+  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+const AFFIRMATIVE_LABEL_RE =
+  /\b(?:primary\s+route|route)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+// Labelled-answer forms: "Answer: X", "Decision: X", "Final answer: X", etc.
+// (see module docs above the pattern list for the full recognized lead-word
+// set). Markdown emphasis around the label or target is stripped by
+// `stripMarkdownEmphasis()` before matching, so `**Answer: `shuttle`**` and
+// `**Answer:** shuttle` are both recognized the same as plain `Answer:
+// shuttle`. "final answer" is listed before "final" so the longer lead
+// phrase wins the alternation.
+const AFFIRMATIVE_LABELLED_ANSWER_RE =
+  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+
+// "Fallback verb" forms: "Fall back to X", "Falls back to X", "Falling back
+// to X", "Fallback to X", "Fallback: X", "Fall back: X", "Default fallback:
+// X", "Default fallback to X", "Default: X", "Default to X". Case-insensitive
+// via the `i` flag; markdown emphasis is stripped before matching, same as
+// the other affirmative patterns. See task 9b-follow-up-4 (deepseek run on
+// tcr-10: "**Fall back to `shuttle`.**").
+const AFFIRMATIVE_FALLBACK_VERB_RE =
+  /\b(?:fall(?:s)?\s*back|falling\s+back|fallback|default(?:\s+fallback)?)(?:\s+to|\s*:)?\s+(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+// "Use X" / "Use the X agent" forms. Scoped to start-of-sentence/clause
+// (start of string, or immediately after ". " or a newline) so the common
+// word "use" does not spuriously match mid-sentence prose. The target must
+// still match the `shuttle(-category)?` identifier shape.
+const AFFIRMATIVE_USE_VERB_RE =
+  /(?<=^|[.\n]\s*)use\s+(?:the\s+)?(shuttle(?:-[a-z0-9_-]+)?)\b(?:\s+agent)?/gi;
+
+const AFFIRMATIVE_ROUTE_PATTERNS = [
+  AFFIRMATIVE_VERB_TO_RE,
+  AFFIRMATIVE_LABEL_RE,
+  AFFIRMATIVE_ARROW_RE,
+  AFFIRMATIVE_LABELLED_ANSWER_RE,
+  AFFIRMATIVE_FALLBACK_VERB_RE,
+  AFFIRMATIVE_USE_VERB_RE,
+];
+
+/**
+ * Words that turn an otherwise affirmative-looking routing phrase into a
+ * hypothetical/considered-but-rejected mention, e.g. "would route to X",
+ * "could route to X", "considered routing to X". Checked in a short window
+ * immediately before the match.
+ */
+const HYPOTHETICAL_CONTEXT_RE = /\b(?:would|might|could|considered?)\b/i;
+
+function isHypotheticalContext(text: string, matchIndex: number): boolean {
+  const rawWindowStart = Math.max(0, matchIndex - 40);
+  const windowRaw = text.slice(rawWindowStart, matchIndex);
+  // Clamp to the current clause/sentence so an unrelated hypothetical word
+  // in an EARLIER, already-concluded sentence (e.g. "...was considered but
+  // rejected. Route to: X") does not falsely mark a later, unrelated
+  // affirmative-route utterance as hypothetical.
+  const boundaryIdx = Math.max(
+    windowRaw.lastIndexOf("; "),
+    windowRaw.lastIndexOf(", "),
+    windowRaw.lastIndexOf(". "),
+  );
+  const clauseWindow =
+    boundaryIdx >= 0 ? windowRaw.slice(boundaryIdx + 2) : windowRaw;
+  return HYPOTHETICAL_CONTEXT_RE.test(clauseWindow);
+}
+
+/**
+ * Return true when the affirmative-route candidate at `targetIndex` is
+ * actually negated — e.g. "do not route to shuttle-client-frontend because
+ * it is disabled". Reuses the same clause-aware negation windows as
+ * `isNegatedMention()` so an affirmative match in an EARLIER, negated clause
+ * never wins over a later, non-negated affirmative match (both may share the
+ * same verb+"to" phrasing, e.g. "do not route to X; route to Y").
+ */
+function isNegatedAffirmativeMatch(
+  text: string,
+  targetIndex: number,
+  targetLength: number,
+): boolean {
+  const rawWindowStart = Math.max(0, targetIndex - 40);
+  const windowRaw = text.slice(rawWindowStart, targetIndex);
+  const clauseBoundaryIdx = Math.max(
+    windowRaw.lastIndexOf("; "),
+    windowRaw.lastIndexOf(", "),
+  );
+  const clauseWindow =
+    clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
+
+  const windowAfter = text.slice(
+    targetIndex + targetLength,
+    targetIndex + targetLength + 40,
+  );
+  return (
+    NEGATION_PREFIXES_RE.test(clauseWindow) ||
+    NEGATION_SUFFIX_RE.test(windowAfter)
+  );
+}
+
+/**
+ * Strip markdown emphasis characters (`**bold**`, `` `code` ``) so
+ * affirmative-route patterns match regardless of markdown wrapping around
+ * the verb, label, or target name.
+ */
+function stripMarkdownEmphasis(content: string): string {
+  return content.replace(/\*\*/g, "").replace(/`/g, "");
+}
+
+/**
+ * Find the model's explicitly asserted primary route, regardless of where
+ * it appears in the text — as opposed to the first shuttle name merely
+ * mentioned (which may be a considered-and-rejected alternative discussed
+ * earlier in the reasoning).
+ *
+ * Returns the lowercased target name (`shuttle` or `shuttle-{category}`) of
+ * the earliest non-hypothetical affirmative-route utterance, or `undefined`
+ * if no such utterance is found (callers should fall back to first-mention
+ * extraction in that case).
+ *
+ * Exported for unit testing.
+ */
+export function findAffirmativeRouteTarget(
+  content: string,
+): string | undefined {
+  const stripped = stripMarkdownEmphasis(content);
+  const candidates: Array<{ index: number; target: string }> = [];
+
+  for (const pattern of AFFIRMATIVE_ROUTE_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of stripped.matchAll(pattern)) {
+      const index = match.index ?? 0;
+      if (isHypotheticalContext(stripped, index)) {
+        continue;
+      }
+      const target = match[1];
+      const targetIndex = index + match[0].length - target.length;
+      if (isNegatedAffirmativeMatch(stripped, targetIndex, target.length)) {
+        continue;
+      }
+      candidates.push({ index, target: target.toLowerCase() });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  candidates.sort((left, right) => left.index - right.index);
+  return candidates[0].target;
+}
+
+/**
+ * Matches a lone target identifier occupying the ENTIRE first non-blank
+ * line of a model response — e.g. `` `shuttle` ``, `**shuttle**`,
+ * `` **`shuttle`** ``, or `shuttle-client-frontend` — optionally followed by
+ * a short parenthetical/dash/colon description on the same line (e.g.
+ * `` `shuttle` — generic fallback ``, `**shuttle** (default)`).
+ *
+ * Real model output sometimes opens with a bare, unadorned decision (no
+ * routing verb, no "Route to:" label) and only explains the reasoning
+ * afterward, e.g.:
+ *
+ *   `shuttle`
+ *
+ *   Reason: the file matches `client-frontend`, which would normally route
+ *   to `shuttle-client-frontend`, but that agent is disabled...
+ *
+ * Neither `findAffirmativeRouteTarget()` (which requires an explicit verb or
+ * label) nor first-mention extraction (which picks up the FIRST shuttle name
+ * anywhere, including ones discussed later in the reasoning) correctly
+ * identify `shuttle` as the decision here. This pattern recognizes that
+ * specific "lone opening line" shape.
+ *
+ * Anchored to the full (trimmed) line so multi-target or full-sentence
+ * openers (e.g. "Consider shuttle or pattern", "The correct agent is
+ * shuttle") never match — only a standalone identifier (with optional
+ * markdown wrapping and a short trailing description) counts.
+ */
+// Deterministic two-step match (not one combined regex): a single regex
+// that allows both an optional hyphenated identifier suffix AND an
+// arbitrary trailing description is ambiguous under backtracking — e.g.
+// "shuttle-backend was considered..." can incorrectly backtrack the
+// hyphen-run down to bare "shuttle" and swallow "-backend was
+// considered..." as the "trailing description" group. Splitting into (1) a
+// deterministic maximal leading-token match and (2) separate validation of
+// that token and the remainder avoids the ambiguity entirely.
+const LEADING_TOKEN_RE = /^\*{0,2}`?([a-z][a-z0-9_-]*)`?\*{0,2}(.*)$/i;
+const VALID_LONE_TARGET_RE = /^shuttle(?:-[a-z0-9_-]+)?$/i;
+// Trailing description shape: either empty, or introduced by one of the
+// lead-in markers below. No length cap — see module docs for rationale. The
+// content that follows is validated separately by
+// `trailingPointsToDifferentTarget()`.
+const LONE_OPENING_TRAILING_RE = /^\s*(?:[-\u2014\u2013(:].*)?$/;
+
+/**
+ * Return true when the trailing description (the text after the opener
+ * token and its lead-in punctuation) contains an explicit route-verb
+ * phrase (`route to`, `delegate to`, `→`, `primary route`) pointing at a
+ * DIFFERENT valid target than `openerIdentifier`. In that case the opener
+ * is not actually the model's asserted decision — the real decision is
+ * stated later in the same line — so the lone-opener rule should NOT
+ * trigger (let `findAffirmativeRouteTarget()` take over instead).
+ *
+ * A trailing mention of a different target identifier WITHOUT a route verb
+ * (e.g. explaining why another target was rejected) does not disqualify the
+ * opener — see module docs for rationale.
+ */
+function trailingPointsToDifferentTarget(
+  rest: string,
+  openerIdentifier: string,
+): boolean {
+  const stripped = stripMarkdownEmphasis(rest);
+  for (const pattern of AFFIRMATIVE_ROUTE_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of stripped.matchAll(pattern)) {
+      const target = match[1].toLowerCase();
+      if (target !== openerIdentifier) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Find a lone target identifier occupying the entire first non-blank line
+ * of the response — see the comment on `LEADING_TOKEN_RE` for the matching
+ * strategy and module docs above for the recognized forms and rationale.
+ *
+ * Only the first non-blank line is ever considered: if it doesn't match the
+ * lone-identifier shape, this returns `undefined` immediately (callers fall
+ * back to `findAffirmativeRouteTarget()` and then first-mention extraction).
+ *
+ * Exported for unit testing.
+ */
+export function findLoneOpeningLineTarget(content: string): string | undefined {
+  for (const line of content.split(/\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === "") {
+      continue;
+    }
+    const match = LEADING_TOKEN_RE.exec(trimmed);
+    if (match === null) {
+      return undefined;
+    }
+    const identifier = match[1].toLowerCase();
+    const rest = match[2];
+    if (!VALID_LONE_TARGET_RE.test(identifier)) {
+      return undefined;
+    }
+    if (!LONE_OPENING_TRAILING_RE.test(rest)) {
+      return undefined;
+    }
+    if (trailingPointsToDifferentTarget(rest, identifier)) {
+      return undefined;
+    }
+    return identifier;
+  }
+  return undefined;
+}
+
 /**
  * Classification of a category-routing extraction result.
  *
@@ -467,8 +757,38 @@ export function analyzeCategoryRouting(
   acceptedAlternates: string[],
 ): CategoryRoutingAnalysis {
   const extractedCategoryShuttles = extractCategoryShuttles(content);
-  const genericShuttleMentioned = detectGenericShuttleFallback(content);
-  const primaryCategoryTarget = extractedCategoryShuttles[0];
+  const genericShuttleFallbackDetected = detectGenericShuttleFallback(content);
+
+  // Prefer a lone target identifier occupying the entire first non-blank
+  // line (e.g. `` `shuttle` `` opening a response whose reasoning below
+  // mentions other, rejected shuttle names) over both the explicit
+  // affirmative-marker search and first-mention order — see
+  // `findLoneOpeningLineTarget()` for the full rationale.
+  const loneOpeningTarget = findLoneOpeningLineTarget(content);
+
+  // Otherwise prefer an explicit affirmative-route utterance (e.g. `Route
+  // to: shuttle`, `**Route to: `shuttle`**`) over the first-mentioned
+  // shuttle name. Real model output often names a considered-but-rejected
+  // category shuttle earlier in the reasoning before stating the actual
+  // decision later — see `findAffirmativeRouteTarget()` for the full
+  // rationale. Only when neither is found do we fall back to first-mention
+  // order.
+  const affirmativeTarget =
+    loneOpeningTarget ?? findAffirmativeRouteTarget(content);
+
+  let primaryCategoryTarget: string | undefined;
+  let genericShuttleMentioned = genericShuttleFallbackDetected;
+
+  if (affirmativeTarget !== undefined) {
+    if (affirmativeTarget === GENERIC_SHUTTLE) {
+      primaryCategoryTarget = undefined;
+      genericShuttleMentioned = true;
+    } else {
+      primaryCategoryTarget = affirmativeTarget;
+    }
+  } else {
+    primaryCategoryTarget = extractedCategoryShuttles[0];
+  }
 
   const expectedLower = expectedTarget.toLowerCase();
   const acceptedTargets = [

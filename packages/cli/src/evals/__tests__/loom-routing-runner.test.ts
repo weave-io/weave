@@ -49,6 +49,7 @@ import {
   analyzeLoomRouting,
   buildRoutingRunnerDiagnostics,
   extractRoutedAgents,
+  findLoneOpeningLineAgent,
   LOOM_ROUTING_SUITE,
   LoomRoutingRunner,
   type LoomRoutingRunnerOptions,
@@ -621,6 +622,289 @@ describe("extractRoutedAgents", () => {
     // This is a best-effort heuristic — the test just verifies the function
     // doesn't throw and returns an array
     expect(Array.isArray(result)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractRoutedAgents — affirmative primary-route overrides earlier mentions
+// ---------------------------------------------------------------------------
+
+// Regression: real tcr-04/tcr-10 live-run failures (commit 7044e9f2). The
+// extractor previously picked the FIRST agent mentioned in the reasoning
+// rather than the model's asserted primary route, causing a
+// considered-but-disabled category to outrank the actual decision stated
+// later via an explicit "Route to: X" utterance. See task 9b. This mirrors
+// the equivalent coverage added to
+// `tapestry-category-routing-runner.test.ts`.
+describe("extractRoutedAgents — affirmative primary-route overrides earlier mentions", () => {
+  it("scores 'shuttle' when an explicit 'Route to:' utterance follows an earlier disabled-category mention (claude-opus-4.5 pattern)", () => {
+    const result = extractRoutedAgents(
+      "Based on the file patterns, this task would route to shuttle-client-frontend. " +
+        "However, that category is disabled for this project. **Route to: `shuttle`**",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("scores 'shuttle' when 'Route to:' appears on line 1 before the disabled-category explanation (claude-opus-5 pattern)", () => {
+    const result = extractRoutedAgents(
+      "**Route to: `shuttle`**\n\n" +
+        "The matching category shuttle-client-frontend is disabled, so the generic shuttle handles this.",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("scores 'shuttle' for 'would route to Y ... but Y is disabled, so route to X' phrasing", () => {
+    const result = extractRoutedAgents(
+      "I would route to shuttle-client-frontend, but shuttle-client-frontend is disabled, so route to shuttle.",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("scores 'shuttle' for 'Route the task to **X**' even when a disabled category is discussed after", () => {
+    const result = extractRoutedAgents(
+      "Route the task to **shuttle**. The matching shuttle-client-frontend agent is disabled for this project.",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("parses bold affirmative-route variant ('**Route to: X**')", () => {
+    const result = extractRoutedAgents(
+      "shuttle-backend was considered. **Route to: shuttle-client-frontend**",
+    );
+    expect(result[0]).toBe("shuttle-client-frontend");
+  });
+
+  it("parses inline-code affirmative-route variant ('`X`')", () => {
+    const result = extractRoutedAgents(
+      "shuttle-backend was considered but rejected. Route to: `shuttle-client-frontend`",
+    );
+    expect(result[0]).toBe("shuttle-client-frontend");
+  });
+
+  it("parses plain-text affirmative-route variant (no markdown)", () => {
+    const result = extractRoutedAgents(
+      "shuttle-backend was considered but rejected. Route to: shuttle-client-frontend",
+    );
+    expect(result[0]).toBe("shuttle-client-frontend");
+  });
+
+  it("does not treat a negated earlier mention as the winning affirmative route when a later valid affirmative route exists", () => {
+    const result = extractRoutedAgents(
+      "do not route to shuttle-client-frontend because it is disabled; route to shuttle",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+});
+
+// Regression: labelled-answer forms (e.g. "**Answer: `shuttle`**" from
+// deepseek run 3 on tcr-10) are a common "final decision" shape that neither
+// the verb+"to" nor label ("Route:") patterns recognize. See task
+// 9b-follow-up-3.
+describe("extractRoutedAgents — labelled-answer forms are recognized as affirmative routes", () => {
+  it.each([
+    ["Answer: shuttle", "Answer:"],
+    ["Decision: shuttle", "Decision:"],
+    ["Result: shuttle", "Result:"],
+    ["Conclusion: shuttle", "Conclusion:"],
+    ["Final: shuttle", "Final:"],
+    ["Final answer: shuttle", "Final answer:"],
+    ["Verdict: shuttle", "Verdict:"],
+    ["Chosen: shuttle", "Chosen:"],
+    ["Choice: shuttle", "Choice:"],
+    ["Recommendation: shuttle", "Recommendation:"],
+    ["Recommended: shuttle", "Recommended:"],
+    ["Selected: shuttle", "Selected:"],
+    ["Selection: shuttle", "Selection:"],
+    ["answer: shuttle", "lowercase answer:"],
+    ["ANSWER: shuttle", "uppercase ANSWER:"],
+    ["**Answer: `shuttle`**", "deepseek run 3 on tcr-10 shape"],
+    ["**Answer:** shuttle", "bold label only"],
+    ["**Decision:** `shuttle`", "bold label + backticked target"],
+    ["**Final answer:** `shuttle`", "bold 'Final answer:' + backticked target"],
+  ])("recognizes '%s' (%s)", (content) => {
+    const result = extractRoutedAgents(content);
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("recognizes a category-shuttle target after a labelled-answer lead word", () => {
+    const result = extractRoutedAgents("Answer: shuttle-client-frontend");
+    expect(result[0]).toBe("shuttle-client-frontend");
+  });
+
+  it("does NOT trigger when the lead word is not immediately followed by a colon ('Answer this: which agent...')", () => {
+    const result = extractRoutedAgents(
+      "Answer this: which agent should handle it? shuttle.",
+    );
+    // The bare "shuttle" mention here has no routing-context pattern around
+    // it (no quotes, backticks, "route to", etc.), so plain first-mention
+    // extraction also finds nothing — this documents that the
+    // labelled-answer rule doesn't misfire on "Answer this:" and produce a
+    // false match either.
+    expect(result).toEqual([]);
+  });
+
+  it("does not lock in a hypothetical labelled-answer mention when a later explicit 'route to' wins", () => {
+    const result = extractRoutedAgents(
+      "We considered the answer: shuttle-backend, but instead route to shuttle",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+});
+
+// Regression: deepseek run on tcr-10 opens with a "fallback verb" decision
+// ("**Fall back to `shuttle`.**") and only later mentions the disabled
+// `shuttle-client-frontend` category shuttle while explaining the routing
+// decision. Neither the lone-opening-line rule (the opening line contains a
+// verb, not a lone identifier) nor the pre-existing affirmative-route
+// patterns recognized this shape. See task 9b-follow-up-4.
+describe("extractRoutedAgents — fallback-verb forms are recognized as affirmative routes", () => {
+  it.each([
+    ["Fall back to shuttle", "Fall back to X"],
+    ["Falls back to shuttle", "Falls back to X"],
+    ["Falling back to shuttle", "Falling back to X"],
+    ["Fallback to shuttle", "Fallback to X"],
+    ["Fallback: shuttle", "Fallback: X"],
+    ["Fall back: shuttle", "Fall back: X"],
+    ["Default fallback: shuttle", "Default fallback: X"],
+    ["Default fallback to shuttle", "Default fallback to X"],
+    ["Default: shuttle", "Default: X"],
+    ["Default to shuttle", "Default to X"],
+    ["FALL BACK TO shuttle", "case-insensitive"],
+  ])("recognizes '%s' (%s)", (content) => {
+    const result = extractRoutedAgents(content);
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("recognizes the exact deepseek tcr-10 shape", () => {
+    const content =
+      "**Fall back to `shuttle`.**\n\n" +
+      "Routing decision:\n" +
+      "1. File matches `client-frontend` category pattern would route to `shuttle-client-frontend`\n" +
+      '2. That agent is disabled via `disable agents ["shuttle-client-frontend"]` cannot use it\n' +
+      "3. No other category matches, and no explicit category hint overrides **default fallback: `shuttle`**\n\n" +
+      "The generic `shuttle` agent handles the task.";
+    const result = extractRoutedAgents(content);
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("recognizes 'Use the X agent' form", () => {
+    const result = extractRoutedAgents("Use the shuttle agent");
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("does not lock into a negated fallback target ('Do not fall back to X, use Y instead')", () => {
+    const result = extractRoutedAgents(
+      "Do not fall back to shuttle-backend, use shuttle-frontend instead",
+    );
+    expect(result[0]).not.toBe("shuttle-backend");
+  });
+
+  it("does not trigger on a hypothetical fallback mention ('would fall back to X if disabled')", () => {
+    const result = extractRoutedAgents(
+      "The system would fall back to shuttle if disabled",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("does not trigger 'Use X' with an invalid identifier ('Use whichever agent seems appropriate')", () => {
+    const result = extractRoutedAgents("Use whichever agent seems appropriate");
+    expect(result).toEqual([]);
+  });
+});
+
+// Regression: openai/gpt-5.5 on tcr-10 opens with a bare inline-code
+// identifier and no routing verb at all ("`shuttle`\n\nReason: ..."); neither
+// the affirmative-marker search nor first-mention extraction recognized this
+// shape. Mirrors the equivalent coverage added to
+// `tapestry-category-routing-runner.test.ts`. See task 9b-follow-up.
+describe("extractRoutedAgents / findLoneOpeningLineAgent — lone opening-line target", () => {
+  const candidates = ["shuttle", "shuttle-client-frontend", "pattern"];
+
+  it("scores 'shuttle' for a bare inline-code opener followed by reasoning that mentions a disabled category", () => {
+    const result = extractRoutedAgents(
+      "`shuttle`\n\n" +
+        "Reason: the file matches `client-frontend`, which would normally route to " +
+        "`shuttle-client-frontend`, but that agent is disabled via config. " +
+        "So routing must fall back to the general implementation agent: `shuttle`.",
+    );
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("recognizes a bold opener ('**shuttle**')", () => {
+    const content =
+      "**shuttle**\n\n" +
+      "Reasoning: shuttle-client-frontend would normally apply but is disabled.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("recognizes a bold + inline-code opener ('**`shuttle`**')", () => {
+    const content =
+      "**`shuttle`**\n\n" +
+      "Reasoning: shuttle-client-frontend would normally apply but is disabled.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("recognizes a bare identifier with a trailing dash parenthetical ('`shuttle` — generic fallback')", () => {
+    const content =
+      "`shuttle` — generic fallback\n\nshuttle-client-frontend is disabled.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("recognizes a bare identifier with a trailing parenthetical ('`shuttle` (fallback)')", () => {
+    const content = "`shuttle` (fallback)\n\nshuttle-backend was considered.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("does NOT trigger for a multi-target opening line ('Consider shuttle or pattern')", () => {
+    const content = "Consider shuttle or pattern.\n\nRoute to: shuttle";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBeUndefined();
+  });
+
+  it("does NOT trigger for a full-sentence opening line ('The best choice here is to route to shuttle')", () => {
+    const content = "The best choice here is to route to shuttle.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBeUndefined();
+    // Falls through to normal extraction, which still finds "shuttle" via
+    // the "route to" phrase substring match.
+    const result = extractRoutedAgents(content);
+    expect(result[0]).toBe("shuttle");
+  });
+
+  it("returns undefined when the opening-line identifier is not a known candidate", () => {
+    const content = "`notarealagent`\n\nRoute to: shuttle";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBeUndefined();
+  });
+
+  it("skips leading blank lines to find the first non-blank line", () => {
+    const content = "\n\n`shuttle`\n\nshuttle-backend was considered.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("recognizes a bare opener with a long (>80 char) dash-led trailing description mentioning a different target", () => {
+    const content =
+      "`shuttle` - the default fallback when the matching category shuttle (`shuttle-client-frontend`) is disabled.";
+    expect(findLoneOpeningLineAgent(content, candidates)).toBe("shuttle");
+  });
+
+  it("recognizes a bare opener with a long em-dash-led trailing description mentioning multiple other targets", () => {
+    const withExtraCandidates = [...candidates, "shuttle-backend"];
+    const content =
+      "`shuttle` — long explanation of why other options were considered and rejected, " +
+      "mentioning shuttle-frontend and shuttle-backend as considered but rejected";
+    expect(findLoneOpeningLineAgent(content, withExtraCandidates)).toBe(
+      "shuttle",
+    );
+  });
+
+  it("does NOT trigger when the trailing description contains a route verb pointing to a different candidate", () => {
+    const withExtraCandidates = [...candidates, "shuttle-backend"];
+    const content = "`shuttle` - actually, route to shuttle-backend instead";
+    expect(
+      findLoneOpeningLineAgent(content, withExtraCandidates),
+    ).toBeUndefined();
+    // Falls through to the affirmative-marker rule, which picks up the
+    // explicit "route to shuttle-backend" phrase.
+    const result = extractRoutedAgents(content);
+    expect(result[0]).toBe("shuttle-backend");
   });
 });
 
