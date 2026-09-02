@@ -49,6 +49,7 @@ import {
   analyzeLoomRouting,
   buildRoutingRunnerDiagnostics,
   extractRoutedAgents,
+  findAffirmativeRoutedAgent,
   findLoneOpeningLineAgent,
   LOOM_ROUTING_SUITE,
   LoomRoutingRunner,
@@ -809,6 +810,76 @@ describe("extractRoutedAgents — fallback-verb forms are recognized as affirmat
   it("does not trigger 'Use X' with an invalid identifier ('Use whichever agent seems appropriate')", () => {
     const result = extractRoutedAgents("Use whichever agent seems appropriate");
     expect(result).toEqual([]);
+  });
+});
+
+// Regression: task 9b-follow-up-5. The fallback-verb and use-verb
+// affirmative-route recognizers added in 9b-follow-up-4 were not covered by
+// the same negation guard as the pre-existing affirmative-route patterns, so
+// negated mentions like "No fallback to generic shuttle is needed" and "does
+// not use the shuttle agent" were mis-classified as an affirmative primary
+// route. Mirrors the equivalent coverage added to
+// `tapestry-category-routing-runner.test.ts`.
+describe("findAffirmativeRoutedAgent — negation guard covers fallback-verb and use-verb patterns (9b-follow-up-5)", () => {
+  const candidates = ["shuttle", "shuttle-backend", "shuttle-frontend"];
+
+  it("live-evidence shape: 'No fallback to generic `shuttle` is needed' does not override the earlier affirmative category-shuttle route", () => {
+    const content =
+      "Route to **`shuttle-client-frontend`**.\n\n" +
+      "**Reasoning:**\n\n" +
+      '4. Per routing rules: "Match a configured category pattern → `shuttle-{category}`"\n\n' +
+      "No fallback to generic `shuttle` is needed\u2014the files don't span " +
+      "multiple categories and all match a single configured pattern.";
+    expect(
+      findAffirmativeRoutedAgent(content, [
+        ...candidates,
+        "shuttle-client-frontend",
+      ]),
+    ).toBe("shuttle-client-frontend");
+  });
+
+  it("recognizes the primary route when a later negated fallback-verb mention follows ('Route to shuttle-backend. Do not fall back to shuttle if disabled.')", () => {
+    const content =
+      "Route to shuttle-backend. Do not fall back to shuttle if disabled.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBe(
+      "shuttle-backend",
+    );
+  });
+
+  it("recognizes the primary route when a later negated fallback-verb mention uses 'is not required' phrasing ('Route to shuttle-frontend. Fallback to shuttle is not required here.')", () => {
+    const content =
+      "Route to shuttle-frontend. Fallback to shuttle is not required here.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBe(
+      "shuttle-frontend",
+    );
+  });
+
+  it("recognizes the primary route when a later bare negated fallback mention follows ('Route to shuttle-frontend. No fallback needed.')", () => {
+    const content = "Route to shuttle-frontend. No fallback needed.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBe(
+      "shuttle-frontend",
+    );
+  });
+
+  it("does not trigger on a standalone negated use-verb mention ('The system does not use the shuttle agent for this.')", () => {
+    const content = "The system does not use the shuttle agent for this.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBeUndefined();
+  });
+
+  it("does not trigger on a standalone 'is not required' fallback-verb mention", () => {
+    const content = "Fallback to shuttle is not required here.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBeUndefined();
+  });
+
+  it("does not trigger on a standalone 'is unnecessary' fallback-verb mention", () => {
+    const content = "Fallback to shuttle is unnecessary.";
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBeUndefined();
+  });
+
+  it("does not partially match a doc-style arrow placeholder ('→ `shuttle-{category}`') as a bare 'shuttle' target", () => {
+    const content =
+      'Per routing rules: "Match a configured category pattern → `shuttle-{category}`"';
+    expect(findAffirmativeRoutedAgent(content, candidates)).toBeUndefined();
   });
 });
 

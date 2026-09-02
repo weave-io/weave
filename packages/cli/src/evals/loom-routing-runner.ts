@@ -593,11 +593,16 @@ function collectRoutingAgentCandidates(content: string): string[] {
  *
  * Markdown emphasis is stripped before matching.
  */
+// A trailing `(?!-)` guard is applied after every captured identifier below
+// so a partial match against malformed/placeholder text (e.g. a literal
+// doc-style example `→ \`shuttle-{category}\`` where `{category}` isn't a
+// real suffix) never collapses to a false bare identifier match — see task
+// 9b-follow-up-5 for the concrete regression this guards against.
 const AFFIRMATIVE_VERB_TO_RE =
-  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*([a-z][a-z0-9_-]*)\b/gi;
+  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 const AFFIRMATIVE_LABEL_RE =
-  /\b(?:primary\s+route|route)\s*:\s*([a-z][a-z0-9_-]*)\b/gi;
-const AFFIRMATIVE_ARROW_RE = /→\s*([a-z][a-z0-9_-]*)\b/gi;
+  /\b(?:primary\s+route|route)\s*:\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
+const AFFIRMATIVE_ARROW_RE = /→\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 // Labelled-answer forms: same lead-word set as the Tapestry category-routing
 // runner. Markdown emphasis around the label or target is stripped by
 // `stripMarkdownEmphasis()` before matching. "final answer" is listed before
@@ -606,7 +611,7 @@ const AFFIRMATIVE_ARROW_RE = /→\s*([a-z][a-z0-9_-]*)\b/gi;
 // other affirmative patterns), so unrelated words before a stray colon never
 // falsely match a real agent name.
 const AFFIRMATIVE_LABELLED_ANSWER_RE =
-  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*([a-z][a-z0-9_-]*)\b/gi;
+  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 
 // "Fallback verb" forms: "Fall back to X", "Falls back to X", "Falling back
 // to X", "Fallback to X", "Fallback: X", "Fall back: X", "Default fallback:
@@ -617,13 +622,13 @@ const AFFIRMATIVE_LABELLED_ANSWER_RE =
 // validated against the candidate set by callers, same as the other
 // affirmative patterns.
 const AFFIRMATIVE_FALLBACK_VERB_RE =
-  /\b(?:fall(?:s)?\s*back|falling\s+back|fallback|default(?:\s+fallback)?)(?:\s+to|\s*:)?\s+([a-z][a-z0-9_-]*)\b/gi;
+  /\b(?:fall(?:s)?\s*back|falling\s+back|fallback|default(?:\s+fallback)?)(?:\s+to|\s*:)?\s+([a-z][a-z0-9_-]*)(?!-)\b/gi;
 // "Use X" / "Use the X agent" forms. Scoped to start-of-sentence/clause
 // (start of string, or immediately after ". " or a newline) so the common
 // word "use" does not spuriously match mid-sentence prose. The captured
 // identifier is validated against the candidate set by callers.
 const AFFIRMATIVE_USE_VERB_RE =
-  /(?<=^|[.\n]\s*)use\s+(?:the\s+)?([a-z][a-z0-9_-]*)\b(?:\s+agent)?/gi;
+  /(?<=^|[.\n]\s*)use\s+(?:the\s+)?([a-z][a-z0-9_-]*)(?!-)\b(?:\s+agent)?/gi;
 
 const AFFIRMATIVE_ROUTE_PATTERNS = [
   AFFIRMATIVE_VERB_TO_RE,
@@ -669,7 +674,7 @@ function isHypotheticalContext(text: string, matchIndex: number): boolean {
 const AFFIRMATIVE_NEGATION_PREFIXES_RE =
   /\b(?:not?|do not|cannot|can't|don'?t|skip|avoid|instead of|excluding?|without|bypass(?:ing)?)\s+/i;
 const AFFIRMATIVE_NEGATION_SUFFIX_RE =
-  /\s+(?:is\s+)?(?:disabled|unavailable|excluded)/i;
+  /\s+(?:is\s+)?(?:disabled|unavailable|excluded|unnecessary|not\s+(?:needed|required|necessary)|isn'?t\s+(?:needed|required|necessary))/i;
 
 function isNegatedAffirmativeMatch(
   text: string,
@@ -685,10 +690,28 @@ function isNegatedAffirmativeMatch(
   const clauseWindow =
     clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
 
-  const windowAfter = text.slice(
+  const windowAfterRaw = text.slice(
     targetIndex + targetLength,
     targetIndex + targetLength + 40,
   );
+  // Clamp the suffix window to the end of the current clause/sentence so a
+  // negation suffix in a LATER, unrelated clause (e.g. "Route to X. Fallback
+  // to Y is not required.") never bleeds back to negate an earlier,
+  // non-negated affirmative match. Mirrors the clause clamping already
+  // applied to the prefix window above. See task 9b-follow-up-5.
+  const suffixBoundaryIdx = (() => {
+    const candidates = [
+      windowAfterRaw.indexOf(". "),
+      windowAfterRaw.indexOf("; "),
+      windowAfterRaw.indexOf(", "),
+      windowAfterRaw.indexOf("\n"),
+    ].filter((idx) => idx >= 0);
+    return candidates.length > 0 ? Math.min(...candidates) : -1;
+  })();
+  const windowAfter =
+    suffixBoundaryIdx >= 0
+      ? windowAfterRaw.slice(0, suffixBoundaryIdx)
+      : windowAfterRaw;
   return (
     AFFIRMATIVE_NEGATION_PREFIXES_RE.test(clauseWindow) ||
     AFFIRMATIVE_NEGATION_SUFFIX_RE.test(windowAfter)

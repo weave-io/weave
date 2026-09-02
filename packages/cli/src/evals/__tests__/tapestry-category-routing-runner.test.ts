@@ -657,6 +657,75 @@ describe("analyzeCategoryRouting", () => {
     });
   });
 
+  // Regression: task 9b-follow-up-5. The fallback-verb and use-verb
+  // affirmative-route recognizers added in 9b-follow-up-4 were not covered
+  // by the same negation guard as the pre-existing affirmative-route
+  // patterns, so negated mentions like "No fallback to generic shuttle is
+  // needed" and "does not use the shuttle agent" were mis-classified as an
+  // affirmative primary route. The root cause was two-fold: (1) the arrow
+  // pattern partially matched a literal doc-style placeholder
+  // ("→ `shuttle-{category}`") down to a bare "shuttle", and (2) the
+  // negation-suffix guard did not recognize "is not needed/required" or "is
+  // unnecessary" phrasing.
+  describe("negation guard covers fallback-verb and use-verb patterns (9b-follow-up-5)", () => {
+    it("live-evidence shape: 'No fallback to generic `shuttle` is needed' does not override the earlier affirmative category-shuttle route", () => {
+      const content =
+        "The task should be routed to **`shuttle-client-frontend`**.\n\n" +
+        "**Reasoning:**\n\n" +
+        "1. All three files fall under `src/4.Presentation/DST.Client/`.\n" +
+        "2. The Weave config declares `category client-frontend { patterns [...] }`.\n" +
+        "3. All three files match the `client-frontend` category pattern.\n" +
+        '4. Per routing rules: "Match a configured category pattern → `shuttle-{category}`"\n\n' +
+        "No fallback to generic `shuttle` is needed\u2014the files don't span " +
+        "multiple categories and all match a single configured pattern.";
+      const analysis = analyzeCategoryRouting(
+        content,
+        "shuttle-client-frontend",
+        [],
+      );
+      expect(analysis.primaryCategoryTarget).toBe("shuttle-client-frontend");
+      expect(analysis.classification).toBe("exact-category-match");
+    });
+
+    it("recognizes the primary route when a later negated fallback-verb mention follows ('Route to shuttle-backend. Do not fall back to shuttle if disabled.')", () => {
+      const content =
+        "Route to shuttle-backend. Do not fall back to shuttle if disabled.";
+      expect(findAffirmativeRouteTarget(content)).toBe("shuttle-backend");
+    });
+
+    it("recognizes the primary route when a later negated fallback-verb mention uses 'is not required' phrasing ('Route to shuttle-frontend. Fallback to shuttle is not required here.')", () => {
+      const content =
+        "Route to shuttle-frontend. Fallback to shuttle is not required here.";
+      expect(findAffirmativeRouteTarget(content)).toBe("shuttle-frontend");
+    });
+
+    it("recognizes the primary route when a later bare negated fallback mention follows ('Route to shuttle-frontend. No fallback needed.')", () => {
+      const content = "Route to shuttle-frontend. No fallback needed.";
+      expect(findAffirmativeRouteTarget(content)).toBe("shuttle-frontend");
+    });
+
+    it("does not trigger on a standalone negated use-verb mention ('The system does not use the shuttle agent for this.')", () => {
+      const content = "The system does not use the shuttle agent for this.";
+      expect(findAffirmativeRouteTarget(content)).toBeUndefined();
+    });
+
+    it("does not trigger on a standalone 'is not required' fallback-verb mention", () => {
+      const content = "Fallback to shuttle is not required here.";
+      expect(findAffirmativeRouteTarget(content)).toBeUndefined();
+    });
+
+    it("does not trigger on a standalone 'is unnecessary' fallback-verb mention", () => {
+      const content = "Fallback to shuttle is unnecessary.";
+      expect(findAffirmativeRouteTarget(content)).toBeUndefined();
+    });
+
+    it("does not partially match a doc-style arrow placeholder ('→ `shuttle-{category}`') as a bare 'shuttle' target", () => {
+      const content =
+        'Per routing rules: "Match a configured category pattern → `shuttle-{category}`"';
+      expect(findAffirmativeRouteTarget(content)).toBeUndefined();
+    });
+  });
+
   // Regression: openai/gpt-5.5 on tcr-10 opens with a bare inline-code
   // identifier and no routing verb at all ("`shuttle`\n\nReason: ...");
   // neither the affirmative-marker search nor first-mention extraction

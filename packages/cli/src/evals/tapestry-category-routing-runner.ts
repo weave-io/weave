@@ -229,9 +229,12 @@ const NEGATION_PREFIXES_RE =
 
 /**
  * Suffixes immediately after a shuttle name that indicate exclusion.
- * Catches patterns like "shuttle-client-frontend is disabled".
+ * Catches patterns like "shuttle-client-frontend is disabled" as well as
+ * "is not needed/required/necessary" and "is unnecessary" phrasing (see task
+ * 9b-follow-up-5: "Fallback to shuttle is not required here.").
  */
-const NEGATION_SUFFIX_RE = /\s+(?:is\s+)?(?:disabled|unavailable|excluded)/i;
+const NEGATION_SUFFIX_RE =
+  /\s+(?:is\s+)?(?:disabled|unavailable|excluded|unnecessary|not\s+(?:needed|required|necessary)|isn'?t\s+(?:needed|required|necessary))/i;
 
 /**
  * Return true when the shuttle name at `matchIndex` within `line` is
@@ -314,11 +317,17 @@ function isRoutingLine(line: string): boolean {
  * name is stripped before matching so `**Route to: `shuttle`**` is
  * recognized the same as plain `Route to: shuttle`.
  */
+// A trailing `(?!-)` guard is applied after every captured shuttle target
+// below so a partial match against malformed/placeholder text (e.g. a
+// literal doc-style example `→ \`shuttle-{category}\`` where `{category}`
+// isn't a real category suffix) never collapses to a false bare `shuttle`
+// match — see task 9b-follow-up-5 for the concrete regression this guards
+// against.
 const AFFIRMATIVE_VERB_TO_RE =
-  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+  /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 const AFFIRMATIVE_LABEL_RE =
-  /\b(?:primary\s+route|route)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
-const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+  /\b(?:primary\s+route|route)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
+const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 // Labelled-answer forms: "Answer: X", "Decision: X", "Final answer: X", etc.
 // (see module docs above the pattern list for the full recognized lead-word
 // set). Markdown emphasis around the label or target is stripped by
@@ -327,7 +336,7 @@ const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
 // shuttle`. "final answer" is listed before "final" so the longer lead
 // phrase wins the alternation.
 const AFFIRMATIVE_LABELLED_ANSWER_RE =
-  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 
 // "Fallback verb" forms: "Fall back to X", "Falls back to X", "Falling back
 // to X", "Fallback to X", "Fallback: X", "Fall back: X", "Default fallback:
@@ -336,13 +345,13 @@ const AFFIRMATIVE_LABELLED_ANSWER_RE =
 // the other affirmative patterns. See task 9b-follow-up-4 (deepseek run on
 // tcr-10: "**Fall back to `shuttle`.**").
 const AFFIRMATIVE_FALLBACK_VERB_RE =
-  /\b(?:fall(?:s)?\s*back|falling\s+back|fallback|default(?:\s+fallback)?)(?:\s+to|\s*:)?\s+(shuttle(?:-[a-z0-9_-]+)?)\b/gi;
+  /\b(?:fall(?:s)?\s*back|falling\s+back|fallback|default(?:\s+fallback)?)(?:\s+to|\s*:)?\s+(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 // "Use X" / "Use the X agent" forms. Scoped to start-of-sentence/clause
 // (start of string, or immediately after ". " or a newline) so the common
 // word "use" does not spuriously match mid-sentence prose. The target must
 // still match the `shuttle(-category)?` identifier shape.
 const AFFIRMATIVE_USE_VERB_RE =
-  /(?<=^|[.\n]\s*)use\s+(?:the\s+)?(shuttle(?:-[a-z0-9_-]+)?)\b(?:\s+agent)?/gi;
+  /(?<=^|[.\n]\s*)use\s+(?:the\s+)?(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b(?:\s+agent)?/gi;
 
 const AFFIRMATIVE_ROUTE_PATTERNS = [
   AFFIRMATIVE_VERB_TO_RE,
@@ -400,10 +409,28 @@ function isNegatedAffirmativeMatch(
   const clauseWindow =
     clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
 
-  const windowAfter = text.slice(
+  const windowAfterRaw = text.slice(
     targetIndex + targetLength,
     targetIndex + targetLength + 40,
   );
+  // Clamp the suffix window to the end of the current clause/sentence so a
+  // negation suffix in a LATER, unrelated clause (e.g. "Route to X. Fallback
+  // to Y is not required.") never bleeds back to negate an earlier,
+  // non-negated affirmative match. Mirrors the clause clamping already
+  // applied to the prefix window above. See task 9b-follow-up-5.
+  const suffixBoundaryIdx = (() => {
+    const candidates = [
+      windowAfterRaw.indexOf(". "),
+      windowAfterRaw.indexOf("; "),
+      windowAfterRaw.indexOf(", "),
+      windowAfterRaw.indexOf("\n"),
+    ].filter((idx) => idx >= 0);
+    return candidates.length > 0 ? Math.min(...candidates) : -1;
+  })();
+  const windowAfter =
+    suffixBoundaryIdx >= 0
+      ? windowAfterRaw.slice(0, suffixBoundaryIdx)
+      : windowAfterRaw;
   return (
     NEGATION_PREFIXES_RE.test(clauseWindow) ||
     NEGATION_SUFFIX_RE.test(windowAfter)
