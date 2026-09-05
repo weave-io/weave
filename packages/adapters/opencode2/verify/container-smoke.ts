@@ -240,12 +240,189 @@ async function runAgentMaterialization(): Promise<number> {
   }
 }
 
+/**
+ * Layer 6 — Real-CLI Agent Materialization.
+ *
+ * Closes the seam left open by layer 4 (which proved the CLI ran the
+ * plugin's `setup()`/cleanup via marker files, but never queried the CLI's
+ * own view of agents). Layer 5 proved the invariant through the *embedded*
+ * `OpenCode.create({ plugins })` path; layer 6 proves it through the *real*
+ * `opencode2` CLI, using the exact `ctx` the CLI delivered to the plugin
+ * subprocess.
+ *
+ * Mechanism: the layer-6 fixture's `plugin-wrapper/server.ts` runs the real
+ * Weave adapter's `setup(ctx)` first (materializing agents via
+ * `ctx.agent.transform`), then calls `ctx.agent.list()`, unwraps the A4
+ * `{ location, data }` envelope, and writes the observed agents to
+ * `agent-list.marker.json`. This function reads that marker and asserts:
+ *
+ *   1. `setup.marker` and `cleanup.marker` exist (CLI ran the real plugin
+ *      lifecycle — same invariant as layer 4).
+ *   2. `agent-list.marker.json.error` is null (the ctx.agent.list RPC
+ *      call inside the CLI's plugin subprocess did not throw).
+ *   3. `agent-list.marker.json.agents` contains a `loom` entry whose
+ *      description starts with the V2-package-local
+ *      `WEAVE_OWNERSHIP_MARKER`.
+ *
+ * The trigger is the same one layer 4 uses (`opencode2 run hi --standalone
+ * --print-logs`) — that invocation is the harness's single sanctioned
+ * exception documented in `run.sh` and in layer 4's docstring. No
+ * assertion below depends on the model's response.
+ */
+async function runRealCliMaterialization(): Promise<number> {
+  const fixtureDir =
+    process.env.FIXTURE_DIR ?? `${process.cwd()}/verify/fixtures-layer6`;
+  const markerDir =
+    process.env.WEAVE_VERIFY_MARKER_DIR ?? "/tmp/weave-verify-markers-layer6";
+
+  // Ensure the marker directory exists before the CLI's plugin subprocess
+  // tries to write into it. `Bun.write` creates missing parents.
+  await Bun.write(`${markerDir}/.keep`, "");
+
+  // Fixture sanity check — the real V2 loader silently drops entries that
+  // resolve to a file (A2), so a broken fixture would fail with no CLI
+  // error, only a missing setup.marker. Fail loudly here instead.
+  const configExists = await Bun.file(
+    `${fixtureDir}/.weave/config.weave`,
+  ).exists();
+  const opencodeJsoncExists = await Bun.file(
+    `${fixtureDir}/opencode.jsonc`,
+  ).exists();
+  if (!configExists || !opencodeJsoncExists) {
+    console.error(
+      `FAIL: real-cli-materialization — fixture ${fixtureDir} missing .weave/config.weave or opencode.jsonc`,
+    );
+    return 1;
+  }
+
+  const { WEAVE_OWNERSHIP_MARKER } = (await import(
+    "@weaveio/weave-adapter-opencode2/server"
+  )) as { WEAVE_OWNERSHIP_MARKER?: string };
+  if (typeof WEAVE_OWNERSHIP_MARKER !== "string" || !WEAVE_OWNERSHIP_MARKER) {
+    console.error(
+      "FAIL: real-cli-materialization — WEAVE_OWNERSHIP_MARKER not exported from '@weaveio/weave-adapter-opencode2/server'",
+    );
+    return 1;
+  }
+
+  // Same trigger + shell-cd rationale as layer 4 — see the comments in
+  // runRealLoader() above. `--standalone` resolves to the free
+  // `muse-spark-1.3-contributor-free` model; no credentials required.
+  const proc = Bun.spawn({
+    cmd: [
+      "bash",
+      "-c",
+      `cd "${fixtureDir}" && exec opencode2 run hi --standalone --print-logs --log-level warn`,
+    ],
+    env: { ...process.env, WEAVE_VERIFY_MARKER_DIR: markerDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const timeoutMs = 20_000;
+  await Promise.race([
+    proc.exited,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+  if (proc.exitCode === null) proc.kill();
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  console.log(`${stdout}\n${stderr}`);
+
+  const combined = `${stdout}\n${stderr}`;
+  if (/@weaveio\/weave-adapter-opencode(?!2)/.test(combined)) {
+    console.error(
+      "FAIL: real-cli-materialization — output references the V1 adapter package",
+    );
+    return 1;
+  }
+
+  const setupInvoked = await Bun.file(`${markerDir}/setup.marker`).exists();
+  const cleanupInvoked = await Bun.file(`${markerDir}/cleanup.marker`).exists();
+  if (!setupInvoked) {
+    console.error(
+      "FAIL: real-cli-materialization — setup.marker not found; plugin setup() did not run",
+    );
+    return 1;
+  }
+  if (!cleanupInvoked) {
+    console.error(
+      "FAIL: real-cli-materialization — cleanup.marker not found; plugin cleanup did not run",
+    );
+    return 1;
+  }
+
+  const listMarkerPath = `${markerDir}/agent-list.marker.json`;
+  const listMarker = Bun.file(listMarkerPath);
+  if (!(await listMarker.exists())) {
+    console.error(
+      `FAIL: real-cli-materialization — ${listMarkerPath} not found; plugin-wrapper did not write ctx.agent.list() result`,
+    );
+    return 1;
+  }
+
+  type ListMarker = {
+    error: string | null;
+    count: number;
+    agents: Array<{ name: string | null; description: string | null }>;
+  };
+  const parsed = (await listMarker.json()) as ListMarker;
+
+  if (parsed.error !== null) {
+    console.error(
+      `FAIL: real-cli-materialization — ctx.agent.list() failed inside CLI plugin subprocess: ${parsed.error}`,
+    );
+    return 1;
+  }
+  if (parsed.count === 0) {
+    console.error(
+      "FAIL: real-cli-materialization — ctx.agent.list() returned empty data inside CLI plugin subprocess",
+    );
+    return 1;
+  }
+
+  const loom = parsed.agents.find((a) => a.name === "loom");
+  if (!loom) {
+    console.error(
+      `FAIL: real-cli-materialization — no agent named "loom" observed via CLI ctx.agent.list(); got: ${parsed.agents
+        .map((a) => a.name)
+        .join(", ")}`,
+    );
+    return 1;
+  }
+
+  const description = loom.description ?? "";
+  if (!description.startsWith(WEAVE_OWNERSHIP_MARKER)) {
+    console.error(
+      `FAIL: real-cli-materialization — loom description observed via CLI ctx.agent.list() does not start with WEAVE_OWNERSHIP_MARKER; got: ${JSON.stringify(description)}`,
+    );
+    return 1;
+  }
+
+  // Best-effort: surface the location.directory the CLI's plugin subprocess
+  // was handed, purely for the learnings writeup. Not asserted.
+  const locationMarker = Bun.file(`${markerDir}/location.marker.json`);
+  if (await locationMarker.exists()) {
+    const loc = (await locationMarker.json()) as { directory: string | null };
+    console.log(
+      `INFO: real-cli-materialization — ctx.location.directory inside CLI plugin subprocess = ${JSON.stringify(loc.directory)}`,
+    );
+  }
+
+  console.log(
+    `OK: real-cli-materialization — CLI's own ctx.agent.list() reports ${parsed.count} agent(s); "loom" is Weave-owned`,
+  );
+  return 0;
+}
+
 async function main(): Promise<number> {
   if (mode === "embedded") return runEmbedded();
   if (mode === "real-loader") return runRealLoader();
   if (mode === "agent-materialization") return runAgentMaterialization();
+  if (mode === "real-cli-materialization") return runRealCliMaterialization();
   console.error(
-    `Unknown mode "${mode}" — expected "embedded", "real-loader", or "agent-materialization"`,
+    `Unknown mode "${mode}" — expected "embedded", "real-loader", "agent-materialization", or "real-cli-materialization"`,
   );
   return 1;
 }

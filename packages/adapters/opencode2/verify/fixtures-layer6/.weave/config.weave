@@ -1,0 +1,11 @@
+# Layer 6 fixture Weave config for the real-CLI agent-materialization smoke.
+#
+# Loaded by `@weaveio/weave-config`'s `loadConfig()` when the real `opencode2`
+# CLI runs the Weave adapter's `setup(ctx)`. An empty config is enough:
+# `loadConfig` merges the built-in agents (Loom, Shuttle, ...) from
+# `@weaveio/weave-config`'s `builtins.ts`, so the resulting materialization
+# plan produces a `loom` descriptor that the plugin-wrapper then observes
+# via `ctx.agent.list()` and writes to a marker file.
+#
+# See layer-5 fixture (`../agent-materialization/.weave/config.weave`) for the
+# equivalent invariants exercised through the embedded SDK path.
