@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://weave.dev/schemas/opencode2-feasibility/results.schema.json",
+  "title": "OpenCode V2 Feasibility Harness Results",
+  "description": "Machine-readable results emitted by the Podman-based V2-only feasibility harness (.weave/feasibility/opencode2/). Each top-level key corresponds to a proof script's findings.",
+  "type": "object",
+  "properties": {
+    "harness": {
+      "type": "object",
+      "description": "Baseline scaffold checks (Task A1).",
+      "properties": {
+        "cliPackage": { "type": "string" },
+        "cliVersionPinned": { "type": "string" },
+        "opencode2OnPath": { "type": "boolean" },
+        "opencode2Version": { "type": "string" },
+        "v1Absent": { "type": "boolean" }
+      },
+      "required": ["cliPackage", "cliVersionPinned", "opencode2OnPath", "opencode2Version", "v1Absent"],
+      "additionalProperties": false
+    },
+    "plugin": {
+      "type": "object",
+      "description": "Real opencode2 plugin loader proof (Task A2).",
+      "properties": {
+        "setup": {
+          "type": "object",
+          "properties": { "invoked": { "type": "boolean" } },
+          "required": ["invoked"],
+          "additionalProperties": false
+        },
+        "cleanup": {
+          "type": "object",
+          "properties": { "invoked": { "type": "boolean" } },
+          "required": ["invoked"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "embedded": {
+      "type": "object",
+      "description": "Embedded SDK OpenCode.create() proof (Task A3).",
+      "properties": {
+        "setup": {
+          "type": "object",
+          "properties": { "invoked": { "type": "boolean" } },
+          "required": ["invoked"],
+          "additionalProperties": false
+        },
+        "dispose": {
+          "type": "object",
+          "properties": { "invoked": { "type": "boolean" } },
+          "required": ["invoked"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "apiProbe": {
+      "type": "object",
+      "description": "Observed behavior of required V2 ctx sub-APIs (Task A4): one entry per probed API (e.g. \"agent.transform\", \"agent.list\", \"catalog.model.list\", \"catalog.model.default\", \"skill.list\", \"command.transform\", \"event.subscribe\", \"registration.dispose\").",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "observed": {
+            "type": "boolean",
+            "description": "Whether the probe successfully exercised the API without throwing."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Verbatim observed behavior and any deviation from https://opencode.ai/v2/docs/build/."
+          }
+        },
+        "required": ["observed", "notes"],
+        "additionalProperties": false
+      }
+    },
+    "agentEditor": {
+      "type": "object",
+      "description": "Task A5 (hard blocker): whether AgentEditor can create a brand-new agent, and whether a foreign same-named agent can be classified read-only inside ctx.agent.transform().",
+      "properties": {
+        "create": {
+          "type": "object",
+          "description": "Whether some AgentEditor call sequence creates a new agent, and which one.",
+          "properties": {
+            "supported": {
+              "type": "boolean",
+              "description": "true if a new agent appeared in a subsequent ctx.agent.list() after the transform; false if no method allows creation (in which case Phase B must not proceed)."
+            },
+            "method": {
+              "type": ["string", "null"],
+              "description": "The exact AgentEditor method/call sequence used to create the new agent, or null when supported is false."
+            },
+            "evidence": {
+              "type": "object",
+              "description": "Runtime evidence supporting the supported/method verdict (editor method type dump, before/after snapshots, etc.).",
+              "additionalProperties": true
+            }
+          },
+          "required": ["supported", "method", "evidence"],
+          "additionalProperties": false
+        },
+        "foreignAgentClassification": {
+          "type": "object",
+          "description": "Whether a foreign (non-Weave-owned) same-named agent can be observed inside the transform without being mutated.",
+          "properties": {
+            "observedWithoutMutation": {
+              "type": "boolean",
+              "description": "true if the foreign agent was visible via the editor inside the transform before any mutation was attempted."
+            },
+            "unchangedAfterTransform": {
+              "type": "boolean",
+              "description": "true if the foreign agent's fields are identical before and after the transform completed."
+            },
+            "snapshotBeforeMutationAttempt": {
+              "type": ["object", "null"],
+              "additionalProperties": true
+            },
+            "snapshotAfterTransform": {
+              "type": ["object", "null"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["observedWithoutMutation", "unchangedAfterTransform", "snapshotBeforeMutationAttempt", "snapshotAfterTransform"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["create", "foreignAgentClassification"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["harness"],
+  "additionalProperties": true
+}
