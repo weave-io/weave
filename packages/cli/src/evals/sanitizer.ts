@@ -48,6 +48,7 @@
  *   - The `rawArtifact` field being present in any publishable object
  */
 
+import type { TrajectorySummary } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import {
   type BoundedExplanation,
@@ -197,6 +198,12 @@ export interface SanitizedCaseResultSummary {
       | "structured_signal"
       | "rubric_template";
   };
+  /**
+   * Publishable trajectory summary fields (four allowlisted fields only).
+   * Present only for `harness_trajectory` cases; absent for text-only cases.
+   * Never carries the full event stream or a raw artifact reference.
+   */
+  readonly trajectorySummary?: TrajectorySummary;
 }
 
 /**
@@ -253,6 +260,22 @@ export function sanitizeCaseResultSummary(
           publicExplanation: {
             text: summary.publicExplanation.text,
             source: summary.publicExplanation.source,
+          },
+        }
+      : {}),
+    // trajectorySummary is allowlisted: only the four closed publishable
+    // fields defined by TrajectorySummarySchema (harnessDelegatedCorrectly,
+    // observedSpawns, observedToolCalls, harnessCompletedWithoutError).
+    // Never the full event stream or a raw artifact reference.
+    ...(summary.trajectorySummary !== undefined
+      ? {
+          trajectorySummary: {
+            harnessDelegatedCorrectly:
+              summary.trajectorySummary.harnessDelegatedCorrectly,
+            observedSpawns: [...summary.trajectorySummary.observedSpawns],
+            observedToolCalls: summary.trajectorySummary.observedToolCalls,
+            harnessCompletedWithoutError:
+              summary.trajectorySummary.harnessCompletedWithoutError,
           },
         }
       : {}),

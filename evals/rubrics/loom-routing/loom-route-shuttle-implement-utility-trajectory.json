@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-shuttle-implement-utility-trajectory",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Trajectory pairing of the loom-route-shuttle-implement-utility case, run in a real sandbox harness instead of a text-only transcript. The harness must spawn shuttle and shuttle must invoke an edit tool call to satisfy the routing and implementation expectation. Treat category shuttles (e.g. shuttle-frontend) as equivalent to shuttle. Bounded to a 120 second wall clock budget since this is a small, single-file implementation task."
+  }
+}

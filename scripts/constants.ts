@@ -61,16 +61,16 @@ export type PrivateWorkspaceName = (typeof PRIVATE_WORKSPACE_NAMES)[number];
  * private repository. It is not part of this public release catalog.
  */
 export const PUBLIC_PACKAGES = {
-  "@weaveio/weave-cli": {
-    directory: "packages/cli",
-    channels: RELEASE_CHANNELS,
-  },
   "@weaveio/weave-adapter-opencode": {
     directory: "packages/adapters/opencode",
     channels: RELEASE_CHANNELS,
   },
   "@weaveio/weave-adapter-opencode2": {
     directory: "packages/adapters/opencode2",
+    channels: RELEASE_CHANNELS,
+  },
+  "@weaveio/weave-cli": {
+    directory: "packages/cli",
     channels: RELEASE_CHANNELS,
   },
   "@weaveio/weave-adapter-claude-code": {
@@ -86,9 +86,9 @@ export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 
 /** The publishable catalog in its canonical declaration order. */
 export const PUBLIC_PACKAGE_NAMES = [
-  "@weaveio/weave-cli",
   "@weaveio/weave-adapter-opencode",
   "@weaveio/weave-adapter-opencode2",
+  "@weaveio/weave-cli",
   "@weaveio/weave-adapter-claude-code",
 ] as const satisfies readonly PublicPackageName[];
 
@@ -136,30 +136,6 @@ export interface PublicDeclarationBuild {
 
 /** Entry points and assets that define each self-contained public runtime. */
 export const PUBLIC_PACKAGE_BUILDS = {
-  "@weaveio/weave-cli": {
-    entries: [
-      {
-        source: "packages/cli/src/index.ts",
-        output: "packages/cli/dist/index.js",
-      },
-      {
-        source: "packages/cli/src/main.ts",
-        output: "packages/cli/dist/main.js",
-        executable: true,
-      },
-    ],
-    declarations: [
-      {
-        config: "packages/cli/api-extractor.json",
-        output: "packages/cli/dist/index.d.ts",
-      },
-    ],
-    bootstrap: [
-      ".claude-plugin/plugin.json",
-      "hooks/hooks.json",
-      "skills/compose/SKILL.md",
-    ],
-  },
   "@weaveio/weave-adapter-opencode": {
     entries: [
       {
@@ -202,6 +178,30 @@ export const PUBLIC_PACKAGE_BUILDS = {
         config: "packages/adapters/opencode2/api-extractor.server.json",
         output: "packages/adapters/opencode2/dist/server.d.ts",
       },
+    ],
+  },
+  "@weaveio/weave-cli": {
+    entries: [
+      {
+        source: "packages/cli/src/index.ts",
+        output: "packages/cli/dist/index.js",
+      },
+      {
+        source: "packages/cli/src/main.ts",
+        output: "packages/cli/dist/main.js",
+        executable: true,
+      },
+    ],
+    declarations: [
+      {
+        config: "packages/cli/api-extractor.json",
+        output: "packages/cli/dist/index.d.ts",
+      },
+    ],
+    bootstrap: [
+      ".claude-plugin/plugin.json",
+      "hooks/hooks.json",
+      "skills/compose/SKILL.md",
     ],
   },
   "@weaveio/weave-adapter-claude-code": {

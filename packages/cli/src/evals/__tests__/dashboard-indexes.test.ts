@@ -94,7 +94,7 @@ function makeBundle(
   const suiteSummaries: PublicReportBundle["suiteSummaries"] =
     overrides.suiteSummaries ??
     suites.map((suite) => ({
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       suite,
       assembledAt: overrides.assembledAt ?? "2026-01-15T12:00:00.000Z",
       gitSha: overrides.gitSha ?? FIXED_GIT_SHA_1,
@@ -102,6 +102,7 @@ function makeBundle(
       passedCases: Math.floor(passedCases / suites.length),
       failedCases: Math.floor(failedCases / suites.length),
       suiteGreen: overrides.allSuitesGreen ?? true,
+      hasRuntimeVerifiedCases: false,
       cases: [
         {
           caseId: "route-to-shuttle",
@@ -453,7 +454,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
           suites: ["loom-routing", "tapestry-execution"],
           suiteSummaries: [
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: "loom-routing",
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -461,6 +462,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
               passedCases: 2,
               failedCases: 0,
               suiteGreen: true,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "route-to-shuttle",
@@ -485,7 +487,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
               ],
             },
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: "tapestry-execution",
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -493,6 +495,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
               passedCases: 1,
               failedCases: 1,
               suiteGreen: false,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "exec-backend",
@@ -539,7 +542,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
         assembledAt: "2026-01-15T12:00:00.000Z",
         suites,
         suiteSummaries: suites.map((suite, index) => ({
-          schemaVersion: 1 as const,
+          schemaVersion: 2 as const,
           suite,
           assembledAt: "2026-01-15T12:00:00.000Z",
           gitSha: FIXED_GIT_SHA_1,
@@ -547,6 +550,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
           passedCases: 1,
           failedCases: 0,
           suiteGreen: true,
+          hasRuntimeVerifiedCases: false,
           cases: [
             {
               caseId: `${suite}-case-${index + 1}`,
@@ -1316,7 +1320,7 @@ describe("buildScenarioHistories — single run, two models", () => {
           },
           suiteSummaries: [
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: SUITE,
               assembledAt: ASSEMBLED_AT,
               gitSha: FIXED_GIT_SHA_1,
@@ -1324,6 +1328,7 @@ describe("buildScenarioHistories — single run, two models", () => {
               passedCases: 2,
               failedCases: 0,
               suiteGreen: true,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "route-to-shuttle",
@@ -1482,7 +1487,7 @@ describe("buildScenarioHistories — aggregation status rules", () => {
         },
         suiteSummaries: [
           {
-            schemaVersion: 1 as const,
+            schemaVersion: 2 as const,
             suite: SUITE,
             assembledAt,
             gitSha: FIXED_GIT_SHA_1,
@@ -1490,6 +1495,7 @@ describe("buildScenarioHistories — aggregation status rules", () => {
             passedCases: entries.filter((e) => e.passed).length,
             failedCases: entries.filter((e) => !e.passed).length,
             suiteGreen: entries.every((e) => e.passed),
+            hasRuntimeVerifiedCases: false,
             cases: entries.map((e, i) => ({
               caseId,
               modelId: `model-${i}`,
@@ -1596,7 +1602,7 @@ describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
         },
         suiteSummaries: [
           {
-            schemaVersion: 1 as const,
+            schemaVersion: 2 as const,
             suite: SUITE,
             assembledAt,
             gitSha: FIXED_GIT_SHA_1,
@@ -1604,6 +1610,7 @@ describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
             passedCases: passed ? 1 : 0,
             failedCases: passed ? 0 : 1,
             suiteGreen: passed,
+            hasRuntimeVerifiedCases: false,
             cases: [
               {
                 caseId: "test-case",
@@ -1687,7 +1694,7 @@ describe("buildScenarioHistories — description from explanation", () => {
           },
           suiteSummaries: [
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: SUITE,
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -1695,6 +1702,7 @@ describe("buildScenarioHistories — description from explanation", () => {
               passedCases: 1,
               failedCases: 0,
               suiteGreen: true,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "no-explain-case",
@@ -1736,7 +1744,7 @@ describe("buildScenarioHistories — description from explanation", () => {
           },
           suiteSummaries: [
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: SUITE,
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -1744,6 +1752,7 @@ describe("buildScenarioHistories — description from explanation", () => {
               passedCases: 1,
               failedCases: 0,
               suiteGreen: true,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "explained-case",
@@ -1808,7 +1817,7 @@ describe("buildScenarioHistories — multi-suite", () => {
           suites: ["loom-routing", "tapestry-execution"],
           suiteSummaries: [
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: "loom-routing",
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -1816,6 +1825,7 @@ describe("buildScenarioHistories — multi-suite", () => {
               passedCases: 1,
               failedCases: 0,
               suiteGreen: true,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "loom-case",
@@ -1830,7 +1840,7 @@ describe("buildScenarioHistories — multi-suite", () => {
               ],
             },
             {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               suite: "tapestry-execution",
               assembledAt: "2026-01-15T12:00:00.000Z",
               gitSha: FIXED_GIT_SHA_1,
@@ -1838,6 +1848,7 @@ describe("buildScenarioHistories — multi-suite", () => {
               passedCases: 0,
               failedCases: 1,
               suiteGreen: false,
+              hasRuntimeVerifiedCases: false,
               cases: [
                 {
                   caseId: "tapestry-case",

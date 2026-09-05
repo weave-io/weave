@@ -199,10 +199,13 @@ export class PublicPackageBuilder {
           build.declarations,
         );
       })
-      .andThen(() => this.emitPublicDeclarations());
+      .andThen(() => this.emitOpenCodeDeclarations())
+      .andThen(() => this.build("@weaveio/weave-adapter-opencode"))
+      .andThen(() => this.emitCliDeclarations());
     for (const packageName of Object.keys(
       PUBLIC_PACKAGE_BUILDS,
     ) as PublicPackageName[]) {
+      if (packageName === "@weaveio/weave-adapter-opencode") continue;
       result = result.andThen(() => this.build(packageName));
     }
     return result;
@@ -230,12 +233,18 @@ export class PublicPackageBuilder {
     ]);
   }
 
-  private emitPublicDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+  private emitOpenCodeDeclarations(): ResultAsync<
+    void,
+    PublicPackageBuildError
+  > {
     return this.runTypeScriptProjects([
-      "packages/cli/tsconfig.build.json",
       "packages/adapters/opencode/tsconfig.build.json",
       "packages/adapters/opencode2/tsconfig.build.json",
     ]);
+  }
+
+  private emitCliDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+    return this.runTypeScriptProjects(["packages/cli/tsconfig.build.json"]);
   }
 
   private runTypeScriptProjects(

@@ -1,0 +1,71 @@
+# Weave OpenCode trajectory-eval sandbox.
+#
+# Contract: see sandboxes/opencode/README.md for the full mount/env/timeout
+# contract and the exact `podman run` invocation the runner uses.
+#
+# This image is referenced by `sandbox_profile: "opencode-default"` in the
+# harness-trajectory eval case schema (docs/specs/33-spec-harness-trajectory-evals).
+#
+# Pinning policy: base image is pinned by content digest (not a mutable tag)
+# and `opencode-ai` is pinned to an exact version. Both must be bumped
+# deliberately in a dedicated PR, never silently via `:latest`. Tracking
+# doc for the pinning policy: docs/adr/0008-harness-trajectory-evals.md
+# (rollout step 3). If a formal pinning-policy ADR is added later, update
+# this comment to point at it directly.
+
+# Pinned via digest: docker.io/library/node:22-slim resolved 2026-09-03.
+# Re-resolve with: podman inspect docker.io/library/node:22-slim --format '{{.RepoDigests}}'
+FROM docker.io/library/node@sha256:4d676821dff059fd00d277ee4261ef34ea712317fed0737c03941481b5760c96
+
+# Install runtime deps: git (opencode shells out to it), curl (for diagnostics),
+# ca-certificates (TLS to the model provider).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git curl ca-certificates unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Bun. The entrypoint is a Bun script (see entrypoint.ts); Bun must be
+# present in the image so the runner can shell into `bun run entrypoint.ts`.
+RUN curl -fsSL https://bun.sh/install | bash && \
+    ln -s /root/.bun/bin/bun /usr/local/bin/bun && \
+    bun --version
+
+# Install the OpenCode CLI at a pinned version. Bump deliberately; never track
+# `latest`. Verify the installed version at build time so a drifted registry
+# fails the build loudly instead of silently shipping a different CLI.
+ENV OPENCODE_VERSION=1.18.27
+RUN npm install -g opencode-ai@${OPENCODE_VERSION} && \
+    test "$(opencode --version)" = "${OPENCODE_VERSION}"
+
+# The Weave OpenCode plugin is not installed at image build time. Instead,
+# `entrypoint.ts` writes `opencode.jsonc` with a versioned plugin specifier
+# (`@weaveio/weave-adapter-opencode@<version>`), and OpenCode installs and
+# resolves the plugin itself on first run using its own plugin loader. This
+# matches how a real user configures the plugin (see the reference user
+# config at `~/.config/opencode/opencode.json`) and avoids duplicating
+# OpenCode's plugin resolution logic (NODE_PATH, global vs local
+# node_modules, etc.). Pin the version deliberately; bump via a code
+# change to entrypoint.ts, never track `latest`.
+ENV WEAVE_ADAPTER_OPENCODE_VERSION=0.1.2
+
+# Disable auto-update and telemetry inside the container. The sandbox must be
+# reproducible: no background CLI self-update, no phone-home beyond the
+# model provider endpoint configured by the runner.
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
+ENV OPENCODE_CONFIG_DIR=/root/.config/opencode
+
+# Copy the thin Bun entrypoint. It reads /workspace/prompt.txt, runs
+# `opencode run --print-logs --log-level DEBUG`, and writes
+# /artifacts/exit-code (and inherits its stderr to the parent podman process for
+# real-time trajectory capture on the host). See entrypoint.ts.
+WORKDIR /opt/weave-sandbox
+COPY package.json ./package.json
+COPY entrypoint.ts ./entrypoint.ts
+RUN bun install --production
+
+# Workspace and artifacts are bind-mounted at runtime by the caller
+# (`-v $workspace:/workspace`, `-v $artifacts:/artifacts`). No secrets are
+# baked into the image or copied in as files; OPENROUTER_API_KEY is passed
+# as an environment variable only, at `podman run` time.
+WORKDIR /workspace
+
+ENTRYPOINT ["bun", "run", "/opt/weave-sandbox/entrypoint.ts"]

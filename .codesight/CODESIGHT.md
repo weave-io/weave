@@ -1,11 +1,11 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 149 lib files | 12 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,700 tokens. Without it, AI exploration would cost ~51,000 tokens. **Saves ~37,200 tokens per conversation.**
-> **Last scanned:** 2026-09-05 12:03 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 155 lib files | 19 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,500 tokens. Without it, AI exploration would cost ~53,400 tokens. **Saves ~39,000 tokens per conversation.**
+> **Last scanned:** 2026-09-05 12:05 — re-run after significant changes
 
 ---
 
@@ -76,6 +76,20 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
+- `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
+- `packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts`
+  - function resolveSandboxProfileImage: (sandboxProfile) => string | undefined
+  - class DefaultLogParser
+  - class EphemeralWorkspaceFactory
+  - class OpenCodeTrajectoryRunner
+  - interface LogParser
+  - interface PromptProvider
+  - _...2 more_
+- `packages/adapters/opencode/src/trajectory/podman-client.ts`
+  - class BunPodmanClient
+  - interface PodmanRunResult
+  - interface PodmanClient
+  - type PodmanClientError
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/adapters/opencode2/src/adapter.ts`
   - class OpenCode2Adapter
@@ -252,6 +266,10 @@
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
+- `packages/cli/src/evals/opencode-trajectory-runner-adapter.ts`
+  - function createProductionTrajectoryRunner: (cases, env, string | undefined>) => void
+  - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
+  - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
@@ -370,6 +388,11 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/trajectory-scoring.ts`
+  - function scoreTrajectoryResult: (input) => NormalizedScoreRecord
+  - interface ScoreTrajectoryInput
+  - type HarnessTrajectoryOutcome
+  - const TRAJECTORY_PASS_THRESHOLD
 - `packages/cli/src/evals/types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
@@ -377,7 +400,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...51 more_
+  - _...52 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
@@ -595,6 +618,7 @@
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/secret-redaction.ts` — function redactSecrets: (raw, maxChars?) => string, const REDACTED_PLACEHOLDER
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
@@ -701,15 +725,22 @@
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `CI` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `WEAVE_ADAPTER_OPENCODE_VERSION` (has default) — sandboxes/opencode/entrypoint.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 
 ## Config Files
@@ -738,11 +769,11 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **42** files
+- `packages/cli/src/evals/types.ts` — imported by **45** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **18** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
@@ -761,11 +792,11 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +37 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +40 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +14 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
-- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
@@ -777,7 +808,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 138 test files found
+> 147 test files found
 
 ---
 
@@ -787,7 +818,7 @@
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
-| Agent Evals | workflow_dispatch | 2 | — | — |
+| Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Publish Package | push | 1 | — | — |
 | Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
@@ -798,6 +829,10 @@
 
 - **validate-inputs** on `ubuntu-latest` — 1 steps
 - **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs)
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
