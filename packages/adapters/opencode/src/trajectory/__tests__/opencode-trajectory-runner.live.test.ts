@@ -73,10 +73,18 @@ describe("OpenCodeTrajectoryRunner (live)", () => {
         repoRoot: process.cwd(),
       });
 
+      // Pass the empty-root placeholder documented in
+      // `OpenCodeTrajectoryRunner.run` and used by the real production caller
+      // (`packages/cli/src/evals/loom-routing-runner.ts`). A non-empty
+      // placeholder here would take the "honor caller's workspace" branch,
+      // which mounts the given (nonexistent) paths into the container
+      // instead of the runner's own ephemeral workspace — an immediate
+      // `podman run` failure (surfaced as `HarnessCrashed`) that has nothing
+      // to do with the harness itself.
       const start = Date.now();
       const result = await runner.run(testCase, MODEL, {
-        root: "unused-placeholder-root",
-        artifactsDir: "unused-placeholder-artifacts",
+        root: "",
+        artifactsDir: "",
       });
       const elapsedSeconds = (Date.now() - start) / 1000;
 

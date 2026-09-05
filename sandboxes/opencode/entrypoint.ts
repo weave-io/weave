@@ -127,6 +127,35 @@ interface RunResult {
   exitCode: number;
 }
 
+// The Weave OpenCode plugin's default log destination is
+// `<projectDirectory>/.weave/weave.log` (see
+// `packages/adapters/opencode/src/plugin.ts`). In this sandbox,
+// `/workspace/.weave` is bind-mounted read-only (see README's "Weave config
+// mount" row) so config discovery can find Loom/Shuttle/categories without
+// letting the container write back into the host's repo. Writing to that
+// path fails with EROFS, which makes the plugin's `Plugin` function throw
+// during OpenCode's plugin-load step — OpenCode swallows the failure and
+// silently falls back to its baked-in `build` agent with no Weave routing
+// at all (no error surfaced to entrypoint, no non-zero exit — the run
+// otherwise proceeds and looks "successful" while completely skipping Loom
+// delegation). `WEAVE_LOG_FILE` is the documented override for the plugin's
+// log destination (see `redirectLogsToFile` in
+// `packages/adapters/opencode/src/plugin.ts`); point it at a writable
+// location inside the container that isn't part of any read-only mount.
+// Respect a caller-supplied `WEAVE_LOG_FILE` (e.g. for local debugging)
+// instead of overriding it.
+const DEFAULT_SANDBOX_WEAVE_LOG_FILE = "/tmp/weave.log";
+
+function resolveOpencodeEnv(): Record<string, string> {
+  if (Bun.env.WEAVE_LOG_FILE) {
+    return Bun.env as Record<string, string>;
+  }
+  return { ...Bun.env, WEAVE_LOG_FILE: DEFAULT_SANDBOX_WEAVE_LOG_FILE } as Record<
+    string,
+    string
+  >;
+}
+
 function runOpencode(prompt: string, model: string): ResultAsync<RunResult, EntrypointError> {
   const spawnResult = Result.fromThrowable(
     () =>
@@ -143,7 +172,7 @@ function runOpencode(prompt: string, model: string): ResultAsync<RunResult, Entr
         ],
         {
           cwd: WORKSPACE_DIR,
-          env: Bun.env,
+          env: resolveOpencodeEnv(),
           stdout: "inherit",
           // Inherit stderr so it flows to `podman run`'s stderr on the host,
           // where the trajectory runner reads it directly. Do NOT pipe and

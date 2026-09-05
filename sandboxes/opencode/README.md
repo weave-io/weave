@@ -23,6 +23,7 @@ does not know about that format.
 | Workspace mount | `/workspace` (read-write; OpenCode's project directory and where `prompt.txt` lives) |
 | Weave plugin | Declared in `/workspace/opencode.jsonc` as `@weaveio/weave-adapter-opencode@<version>`. OpenCode installs and resolves the plugin itself on first run, exactly as a real user config does. The pinned version is baked into the sandbox image via `WEAVE_ADAPTER_OPENCODE_VERSION` in `Containerfile`. |
 | Weave config mount | `/workspace/.weave` (read-only; the repo's `.weave/` directory, so OpenCode's config discovery finds Loom, Shuttle, categories, etc.) |
+| Weave plugin log file | `/tmp/weave.log` inside the container (`WEAVE_LOG_FILE`, set by the entrypoint unless already present in the environment). The Weave plugin's default log destination is `<projectDirectory>/.weave/weave.log`, which would land under the read-only `.weave` mount above and fail with `EROFS`, silently disabling the plugin (see `entrypoint.ts` for the full explanation). Do not remove this override without also making the `.weave` mount writable. |
 | Artifacts mount | `/artifacts` (read-write; where `exit-code` lands) |
 | Auto-update | Disabled (`OPENCODE_DISABLE_AUTOUPDATE=true`) |
 | Timeout | Not enforced inside the container. The caller (runner) must enforce a wall-clock timeout externally, e.g. via `podman run --timeout <seconds>` or a `timeout(1)`-style wrapper, and treat a killed container as a sandbox failure. |

@@ -24,7 +24,7 @@ weave eval run
     ├── readEvalEnv()                  Require OPENROUTER_API_KEY (fail fast)
     │
     ├── loadModelMatrix()              Load evals/model-matrix.json
-    │   └── resolveDefaultModels()     Apply --model filter or use default 3
+    │   └── resolveDefaultModels()     Apply --model filter or use default-marked models
     │
     ├── EvalOrchestrator.run()
     │   ├── executeSuites()            Fan out: suite runners from the shared registry
@@ -47,7 +47,7 @@ The fixture tree is intentionally flat and registry-shaped. The shared eval suit
 
 ```
 evals/
-├── model-matrix.json              Canonical model allowlist (default 3 models)
+├── model-matrix.json              Canonical model allowlist (default-marked models; at least 3 enforced)
 ├── cases/
 │   ├── loom-routing/              Loom agent routing eval cases
 │   │   └── <case-id>.json
@@ -910,7 +910,7 @@ The default Spindle prompt now reinforces the same visible structure. It asks fo
 ## CLI Usage
 
 ```bash
-# Run all suites against all default models (3 by default)
+# Run all suites against all default-marked models (evals/model-matrix.json; at least 3 enforced)
 weave eval run
 
 # Filter to a single agent suite
@@ -971,7 +971,7 @@ All three filters use **strict exact-match** semantics:
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. If the value does not match any matrix entry, the run aborts with `EmptyModelSet` and lists the allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
-No filter means all values in that dimension are included. Default no-filter runs all three default models against all cases in all registered suites.
+No filter means all values in that dimension are included. Default no-filter runs all default-marked models (`evals/model-matrix.json`; at least 3 enforced) against all cases in all registered suites.
 
 ### Required environment variable for live runs
 

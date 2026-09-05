@@ -599,7 +599,12 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Build sandbox image
         if: steps.filter.outputs.trajectory == 'true'
-        run: podman build -t weave-sandbox-opencode sandboxes/opencode
+        # Tag must match resolveSandboxProfileImage()'s mapping for the
+        # "opencode-default" sandbox_profile in
+        # packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts
+        # (SANDBOX_PROFILE_IMAGES). workflow-sync.test.ts enforces this stays
+        # in sync with that source-of-truth mapping.
+        run: podman build -t weave-sandbox-opencode-default sandboxes/opencode
 
       # -----------------------------------------------------------------------
       # Step 8: Run the trajectory eval and publish results.

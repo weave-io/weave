@@ -122,6 +122,19 @@ function extractWorkflowAllowedSandboxProfiles(workflowText: string): string[] {
 }
 
 /**
+ * Read the workflow YAML file and extract the image tag passed to
+ * `podman build -t <tag>` in the "Build sandbox image" step.
+ *
+ * Returns `undefined` if no `podman build -t` invocation is found.
+ */
+function extractWorkflowSandboxImageTag(
+  workflowText: string,
+): string | undefined {
+  const match = workflowText.match(/podman build -t (\S+) /);
+  return match?.[1];
+}
+
+/**
  * Load every case fixture under evals/cases/** and return only those whose
  * `expected_outcome.kind` is `"harness_trajectory"` — the trajectory track.
  */
@@ -398,6 +411,37 @@ describe("workflow-sync — agent-evals.yml trajectory-track allowlists match ha
     }
     for (const wfProfile of workflowProfiles) {
       expect(fixtureProfiles.has(wfProfile)).toBe(true);
+    }
+  });
+
+  it("the podman build -t image tag matches resolveSandboxProfileImage() for every referenced sandbox profile", async () => {
+    // This is the regression guard for the drift where CI built
+    // `weave-sandbox-opencode` but the runner resolved `sandbox_profile`
+    // "opencode-default" to `weave-sandbox-opencode-default`, so the image
+    // the harness looked for was never the one CI built.
+    //
+    // The single sanctioned import site for the adapter's trajectory surface
+    // is packages/cli/src/evals/opencode-trajectory-runner-adapter.ts (dynamic
+    // import). This test dynamically imports the same module directly to
+    // stay consistent with that isolation policy while deriving the expected
+    // tag from the real source-of-truth mapping instead of a literal.
+    const { resolveSandboxProfileImage } = await import(
+      "@weaveio/weave-adapter-opencode"
+    );
+
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const workflowImageTag = extractWorkflowSandboxImageTag(workflowText);
+    const trajectoryCases = await discoverTrajectoryCases();
+
+    expect(workflowImageTag).toBeDefined();
+    expect(trajectoryCases.length).toBeGreaterThan(0);
+
+    for (const trajectoryCase of trajectoryCases) {
+      const expectedTag = resolveSandboxProfileImage(
+        trajectoryCase.sandboxProfile,
+      );
+      expect(expectedTag).toBeDefined();
+      expect(workflowImageTag).toBe(expectedTag);
     }
   });
 
