@@ -28,6 +28,10 @@ describe("checkSandboxImageExists", () => {
   });
 
   it("resolves ok(boolean) - never rejects - for a known sandbox profile even when podman/the image is unavailable", async () => {
+    // `checkSandboxImageExists` enforces a hard ~3s timeout around
+    // `podman image inspect` so this resolves well under the default 5s
+    // test timeout even on hosts where podman hangs waiting on a
+    // nonexistent machine socket (e.g. Ubuntu CI runners without podman).
     const result = await checkSandboxImageExists("opencode-default");
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {

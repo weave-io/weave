@@ -137,7 +137,24 @@ async function resolveAndInspect(sandboxProfile: string): Promise<boolean> {
       stdout: "ignore",
       stderr: "ignore",
     });
+
+    const timeoutMs = 3000;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, timeoutMs);
+
     const exitCode = await proc.exited;
+    clearTimeout(timer);
+
+    if (timedOut) {
+      // `podman image inspect` hung (e.g. waiting on a podman machine
+      // socket that doesn't exist on this host) — treat as "not present"
+      // rather than blocking the caller indefinitely.
+      return false;
+    }
+
     return exitCode === 0;
   } catch {
     // podman binary not installed/available — treat as "not present" rather
