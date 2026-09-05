@@ -3,6 +3,25 @@
  * `OpenCodeTrajectoryRunner`. Kept intentionally minimal: this class owns no
  * business logic, only process-spawning mechanics, so tests can substitute
  * `MockPodmanClient` without any real container runtime.
+ *
+ * # Secret handling
+ *
+ * `run()` accepts an optional `env` map of *values* that must reach the
+ * child process (e.g. `OPENROUTER_API_KEY`). These values are never placed
+ * into `args`/`argv` — Podman argv (and therefore process listings such as
+ * `ps`, `/proc/<pid>/cmdline`, and any logging of `args`) must never contain
+ * a secret value. Instead:
+ *
+ *   - Callers pass Podman *name-only* env pass-through flags in `args`
+ *     (e.g. `-e OPENROUTER_API_KEY` with no `=value`), which tells Podman to
+ *     forward that variable from its own process environment into the
+ *     container.
+ *   - `BunPodmanClient` merges the caller-supplied `env` values into the
+ *     `Bun.spawn` child process environment (inheriting the current
+ *     process's environment alongside them, so unrelated env vars such as
+ *     `PATH` still resolve), so the *podman* process itself has the secret
+ *     available to forward — but the secret never appears as a literal
+ *     command-line argument.
  */
 
 import { ResultAsync } from "neverthrow";
@@ -24,8 +43,19 @@ export interface PodmanClient {
   /**
    * Runs `podman run <args>` and resolves once the process exits (or is
    * killed). Collects stderr into memory as it streams.
+   *
+   * @param args - Podman CLI arguments. Must never contain a literal secret
+   *   value; secrets are name-only pass-through (`-e`, `VAR_NAME`) and the
+   *   actual value is supplied via `env`.
+   * @param env - Secret/sensitive environment variable values to make
+   *   available to the spawned `podman` process itself (not logged, not
+   *   placed in argv). `BunPodmanClient` merges these with the inherited
+   *   process environment.
    */
-  run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError>;
+  run(
+    args: string[],
+    env?: Record<string, string>,
+  ): ResultAsync<PodmanRunResult, PodmanClientError>;
 
   /**
    * Runs `podman kill <containerName>` to tear down a running container.
@@ -41,9 +71,12 @@ export interface PodmanClient {
  * used instead.
  */
 export class BunPodmanClient implements PodmanClient {
-  run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError> {
+  run(
+    args: string[],
+    env?: Record<string, string>,
+  ): ResultAsync<PodmanRunResult, PodmanClientError> {
     return ResultAsync.fromPromise(
-      this.spawnAndCollect(args),
+      this.spawnAndCollect(args, env),
       (cause): PodmanClientError => ({
         type: "PodmanSpawnFailed",
         message: cause instanceof Error ? cause.message : String(cause),
@@ -61,10 +94,18 @@ export class BunPodmanClient implements PodmanClient {
     );
   }
 
-  private async spawnAndCollect(args: string[]): Promise<PodmanRunResult> {
+  private async spawnAndCollect(
+    args: string[],
+    env?: Record<string, string>,
+  ): Promise<PodmanRunResult> {
+    // Merge onto the inherited process environment (never replace it wholesale)
+    // so unrelated variables (PATH, HOME, etc.) that podman itself needs still
+    // resolve. Only the caller-supplied secret values are added on top.
+    const spawnEnv = env === undefined ? undefined : { ...Bun.env, ...env };
     const proc = Bun.spawn(["podman", "run", ...args], {
       stdout: "ignore",
       stderr: "pipe",
+      env: spawnEnv,
     });
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;

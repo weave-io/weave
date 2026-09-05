@@ -18,11 +18,11 @@ does not know about that format.
 | Command run inside the container | `opencode run --print-logs --log-level DEBUG --model <model> "<prompt>"` |
 | stderr capture | Inherited to the parent `podman run` process on the host. The runner reads the container's stderr directly, in real time, from `podman run`'s stderr stream. The entrypoint does NOT write `/artifacts/stderr.log`: Windows Podman + WSL2 bind mounts do not flush writes to the host until the container exits, which loses the trajectory whenever the runner enforces a timeout. |
 | Exit code capture | `/artifacts/exit-code` (bare integer, no trailing newline guarantee) |
-| Secrets | `OPENROUTER_API_KEY` passed as an environment variable only; never mounted as a file, never written to disk by the entrypoint |
+| Secrets | `OPENROUTER_API_KEY` passed to the container as an environment variable only; never mounted as a file, never written to disk by the entrypoint. The runner (`BunPodmanClient`) forwards it to `podman run` via Podman's *name-only* `-e OPENROUTER_API_KEY` pass-through — the value itself is set only in the `podman` process's own environment (via `Bun.spawn`'s `env` option), never interpolated into `podman` argv. This means the key never appears in `ps`/`/proc/<pid>/cmdline` output or in any log line that includes the spawned `args`. |
 | Model selection | `WEAVE_TRAJECTORY_MODEL` env var (falls back to `openai/gpt-4o-mini` if unset, for manual container invocation without the runner) |
 | Workspace mount | `/workspace` (read-write; OpenCode's project directory and where `prompt.txt` lives) |
 | Weave plugin | Declared in `/workspace/opencode.jsonc` as `@weaveio/weave-adapter-opencode@<version>`. OpenCode installs and resolves the plugin itself on first run, exactly as a real user config does. The pinned version is baked into the sandbox image via `WEAVE_ADAPTER_OPENCODE_VERSION` in `Containerfile`. |
-| Weave config mount | `/workspace/.weave` (read-only; the repo's `.weave/` directory, so OpenCode's config discovery finds Loom, Shuttle, categories, etc.) |
+| Weave config mount | Two narrow, read-only mounts — `/workspace/.weave/config.weave` and (when present) `/workspace/.weave/prompts` — so OpenCode's config discovery finds Loom, Shuttle, categories, etc. The repo's whole `.weave/` directory is deliberately **not** mounted: config discovery (`packages/config/src/discovery.ts`, `packages/config/src/resolve.ts`) only ever reads `config.weave` and `prompt_file` entries under `prompts/`. The rest of `.weave/` — `runtime/` (session snapshots, the journal DB), `weave.log`, `plans/`, `learnings/` — can carry prior session content and must not be exposed inside an untrusted-model-controlled sandbox. |
 | Weave plugin log file | `/tmp/weave.log` inside the container (`WEAVE_LOG_FILE`, set by the entrypoint unless already present in the environment). The Weave plugin's default log destination is `<projectDirectory>/.weave/weave.log`, which would land under the read-only `.weave` mount above and fail with `EROFS`, silently disabling the plugin (see `entrypoint.ts` for the full explanation). Do not remove this override without also making the `.weave` mount writable. |
 | Artifacts mount | `/artifacts` (read-write; where `exit-code` lands) |
 | Auto-update | Disabled (`OPENCODE_DISABLE_AUTOUPDATE=true`) |
@@ -53,9 +53,13 @@ elements fix that:
   does (see `~/.config/opencode/opencode.json` for the reference form).
   The pinned version is set via `WEAVE_ADAPTER_OPENCODE_VERSION` in the
   Containerfile and read at runtime by `entrypoint.ts`.
-- The repo's `.weave/` directory is mounted read-only at `/workspace/.weave`,
-  so OpenCode's config discovery (workspace-local `opencode.jsonc`, then
-  `$OPENCODE_CONFIG_DIR/opencode.jsonc`) finds Loom, Shuttle, categories, etc.
+- The repo's `.weave/config.weave` (and `.weave/prompts/`, when present) are
+  mounted read-only at `/workspace/.weave/config.weave` and
+  `/workspace/.weave/prompts`, so OpenCode's config discovery
+  (workspace-local `opencode.jsonc`, then `$OPENCODE_CONFIG_DIR/opencode.jsonc`)
+  finds Loom, Shuttle, categories, etc. Only these two paths are mounted —
+  not the whole `.weave/` tree — because they are the only inputs config
+  discovery reads (see the "Weave config mount" row above).
 
 ## Running
 
@@ -64,14 +68,27 @@ This is the exact invocation shape the runner uses. `$workspace` and
 the container starts; `$workspace/prompt.txt` must exist before `podman run`
 is invoked. `$repoRoot` is the repository root (absolute path).
 
+**Secret handling**: `OPENROUTER_API_KEY` is passed to `podman run` as a
+*name-only* env pass-through (`-e OPENROUTER_API_KEY`, no `=value`). This
+tells Podman to forward the variable from its own process environment into
+the container — the value is never written into `podman` argv, so it never
+appears in a process listing or in any log line that captures the spawned
+command's arguments. The runner's `BunPodmanClient` sets the actual value
+only in the `podman` process's own environment (`Bun.spawn`'s `env` option).
+When invoking `podman run` manually from a shell, the equivalent is still
+`-e OPENROUTER_API_KEY` with the variable already exported in your shell —
+do **not** write `-e OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY` in scripts,
+CI logs, or anywhere argv might be captured or echoed.
+
 ```powershell
 podman run --rm `
   --timeout 300 `
-  -e OPENROUTER_API_KEY=$env:OPENROUTER_API_KEY `
+  -e OPENROUTER_API_KEY `
   -e WEAVE_TRAJECTORY_MODEL=openai/gpt-4o-mini `
   -v ${workspace}:/workspace:Z `
   -v ${artifacts}:/artifacts:Z `
-  -v ${repoRoot}/.weave:/workspace/.weave:ro `
+  -v ${repoRoot}/.weave/config.weave:/workspace/.weave/config.weave:ro `
+  -v ${repoRoot}/.weave/prompts:/workspace/.weave/prompts:ro `
   weave-sandbox-opencode-default
 ```
 
@@ -85,11 +102,25 @@ Notes:
 - `:Z` on the volume mounts relabels the bind mount for SELinux hosts. Drop it
   on non-SELinux hosts (e.g. plain Docker Desktop) if it causes mount errors.
 - No other environment variables are required. Do not add file-mounted
-  secrets; `OPENROUTER_API_KEY` must stay env-only per the sandbox contract.
+  secrets; `OPENROUTER_API_KEY` must stay env-only per the sandbox contract,
+  and must always use the name-only `-e OPENROUTER_API_KEY` form — never
+  `-e OPENROUTER_API_KEY=<value>` — so the value is never captured in argv.
+- The `.weave/prompts` mount is conditional on that directory existing in
+  `$repoRoot`; omit the `-v ${repoRoot}/.weave/prompts:...` line if the repo
+  has no `prompts/` directory yet.
 - After the container exits (or is killed by the timeout), the runner has
   already collected the container's stderr in memory (via `podman run`'s
   stderr stream) and parses it directly. `$artifacts/exit-code` is read to
   determine whether the underlying `opencode run` invocation succeeded.
+- Raw sandbox stderr can be dumped locally for debugging via
+  `WEAVE_TRAJECTORY_DUMP_STDERR=<dir>` (see
+  `packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts`).
+  The runner always redacts known secret-shaped substrings (API keys, bearer
+  tokens, GitHub tokens, hex blobs) before writing, refuses to write anything
+  at all when `CI` or `WEAVE_EVAL_PUBLISH_MODE` is set, and writes with
+  `0o600` permissions. This is a local-only diagnostic aid, never enabled by
+  default, and redaction is best-effort pattern matching — treat any dump
+  directory as sensitive and do not commit or upload its contents.
 
 ## Pinning
 

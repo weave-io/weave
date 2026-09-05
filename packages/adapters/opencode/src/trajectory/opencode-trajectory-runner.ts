@@ -37,6 +37,7 @@
  * four-field `TrajectorySummary` — is eligible for a publishable artifact.
  */
 
+import { existsSync } from "node:fs";
 import type {
   TrajectoryCase,
   TrajectoryEvent,
@@ -46,7 +47,7 @@ import type {
   TrajectorySummary,
   TrajectoryWorkspace,
 } from "@weaveio/weave-core";
-import { logger } from "@weaveio/weave-engine";
+import { logger, redactSecrets } from "@weaveio/weave-engine";
 import {
   err,
   errAsync,
@@ -62,6 +63,27 @@ import {
 import type { PodmanClient, PodmanRunResult } from "./podman-client.js";
 
 const log = logger.child({ module: "opencode-trajectory-runner" });
+
+/**
+ * Detects whether the current process is running in a CI or publish
+ * context, where the `WEAVE_TRAJECTORY_DUMP_STDERR` local diagnostic dump
+ * must be refused outright regardless of redaction. Mirrors the `isCI`
+ * check used by `packages/cli/src/evals/input-validation.ts` for
+ * `--raw-artifacts`, plus an explicit publish-mode signal.
+ */
+function isCIOrPublishContext(
+  env: Record<string, string | undefined>,
+): boolean {
+  const ci = env.CI;
+  const isCI = ci !== undefined && ci !== "" && ci !== "0" && ci !== "false";
+  const publish = env.WEAVE_EVAL_PUBLISH_MODE;
+  const isPublish =
+    publish !== undefined &&
+    publish !== "" &&
+    publish !== "0" &&
+    publish !== "false";
+  return isCI || isPublish;
+}
 
 // ---------------------------------------------------------------------------
 // Injected collaborator interfaces
@@ -315,6 +337,15 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     // (ubuntu-latest runs rootless Podman without SELinux enforcement).
     const volumeOpt = process.platform === "linux" ? ":Z" : "";
     const containerName = `weave-traj-${testCase.testCaseId}-${crypto.randomUUID()}`;
+    // SECURITY: `OPENROUTER_API_KEY` is passed to podman as a *name-only*
+    // env pass-through flag (`-e`, `OPENROUTER_API_KEY` — no `=value`). This
+    // tells Podman to forward the variable from its own process
+    // environment into the container. The actual secret value is supplied
+    // only via `PodmanClient.run`'s `env` parameter, which
+    // `BunPodmanClient` merges into `Bun.spawn`'s child process
+    // environment — never into argv. This means the key never appears in
+    // `args` (and therefore never in process listings, `/proc/<pid>/cmdline`,
+    // or any logging that includes `args`).
     const args = [
       "--rm",
       "--name",
@@ -322,21 +353,37 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       "--timeout",
       String(testCase.maxDurationSeconds),
       "-e",
-      `OPENROUTER_API_KEY=${this.openRouterApiKey}`,
+      "OPENROUTER_API_KEY",
       "-e",
       `WEAVE_TRAJECTORY_MODEL=${model}`,
       "-v",
       `${workspace.root}:/workspace${volumeOpt}`,
       "-v",
       `${workspace.artifactsDir}:/artifacts${volumeOpt}`,
+      // Only the two `.weave/` inputs OpenCode's config discovery actually
+      // reads are mounted — `config.weave` and `prompts/` (see
+      // `packages/config/src/resolve.ts`, which resolves `prompt_file`
+      // entries relative to the scope's `prompts/` sub-directory). The rest
+      // of `.weave/` (`runtime/` session snapshots and journal, `weave.log`,
+      // `plans/`, `learnings/`) is never read by config discovery and must
+      // not be exposed inside the sandbox, since `runtime/` and
+      // `weave.log` can carry prior session content. `prompts/` is mounted
+      // as a directory (not individually enumerated file mounts) because
+      // Podman `-v` requires the mount source to exist; if a project has no
+      // `prompts/` directory yet, skip that mount rather than failing.
       "-v",
-      `${this.repoRoot}/.weave:/workspace/.weave:ro`,
+      `${this.repoRoot}/.weave/config.weave:/workspace/.weave/config.weave:ro`,
+      ...(existsSync(`${this.repoRoot}/.weave/prompts`)
+        ? ["-v", `${this.repoRoot}/.weave/prompts:/workspace/.weave/prompts:ro`]
+        : []),
       image,
     ];
 
     return ResultAsync.fromSafePromise(
       this.raceWithTimeout(
-        this.podmanClient.run(args),
+        this.podmanClient.run(args, {
+          OPENROUTER_API_KEY: this.openRouterApiKey,
+        }),
         testCase.maxDurationSeconds,
       ),
     ).andThen((raced) => {
@@ -362,13 +409,15 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       if (raced.result.value.exitCode !== 0) {
         // Keep the tail bounded and behind a coarse ceiling so an opencode
         // DEBUG stream with embedded secrets or arbitrary content doesn't
-        // flood the log. 400 bytes is enough to surface the final error line
-        // without leaking substantial context.
+        // flood the log. Redact known secret shapes (API keys, bearer
+        // tokens, GitHub PATs, etc.) before slicing/logging — redaction
+        // must run regardless of the truncation boundary so a secret is
+        // never split across the cut point and partially leaked.
         log.error(
           {
             testCaseId: testCase.testCaseId,
             exitCode: raced.result.value.exitCode,
-            stderrTail: raced.result.value.stderr.slice(-400),
+            stderrTail: redactSecrets(raced.result.value.stderr).slice(-400),
           },
           "harness process exited non-zero",
         );
@@ -493,21 +542,39 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     // can inspect what the log parser is actually seeing. Local-only, opt-in,
     // never enabled by default. Failure to write is not fatal; we log and
     // continue so eval scoring still proceeds.
+    //
+    // SECURITY: the OpenCode DEBUG stream this dump captures can contain
+    // secrets (the `OPENROUTER_API_KEY` value, bearer tokens, etc.) if the
+    // harness logs its own outbound request headers. Two safeguards apply:
+    //   1. The dump mechanism is refused outright in CI/publish contexts —
+    //      those pipelines have no legitimate use for a local diagnostic
+    //      dump, and a stray env var leaking into a CI run must not produce
+    //      an on-disk artifact.
+    //   2. Content written to disk is always passed through `redactSecrets`
+    //      first; only the redacted text ever reaches the filesystem.
     const dumpDir = Bun.env.WEAVE_TRAJECTORY_DUMP_STDERR;
     if (dumpDir !== undefined && dumpDir.trim().length > 0) {
-      const path = `${dumpDir}/${testCase.testCaseId}.stderr.log`;
-      Bun.write(path, sandboxOutput.stderr).then(
-        () =>
-          log.info(
-            { testCaseId: testCase.testCaseId, path },
-            "dumped raw stderr",
-          ),
-        (cause) =>
-          log.warn(
-            { testCaseId: testCase.testCaseId, path, error: cause },
-            "failed to dump raw stderr",
-          ),
-      );
+      if (isCIOrPublishContext(Bun.env)) {
+        log.warn(
+          { testCaseId: testCase.testCaseId },
+          "WEAVE_TRAJECTORY_DUMP_STDERR is set but ignored in CI/publish contexts",
+        );
+      } else {
+        const path = `${dumpDir}/${testCase.testCaseId}.stderr.log`;
+        const redacted = redactSecrets(sandboxOutput.stderr);
+        Bun.write(path, redacted, { mode: 0o600 }).then(
+          () =>
+            log.info(
+              { testCaseId: testCase.testCaseId, path },
+              "dumped redacted stderr",
+            ),
+          (cause) =>
+            log.warn(
+              { testCaseId: testCase.testCaseId, path, error: cause },
+              "failed to dump redacted stderr",
+            ),
+        );
+      }
     }
     const parsed = this.logParser.parse(sandboxOutput.stderr);
     if (parsed.isErr()) {

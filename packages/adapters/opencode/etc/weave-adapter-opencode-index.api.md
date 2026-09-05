@@ -55,7 +55,7 @@ export class BunPodmanClient implements PodmanClient {
     // (undocumented)
     kill(containerName: string): ResultAsync<void, PodmanClientError>;
     // (undocumented)
-    run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError>;
+    run(args: string[], env?: Record<string, string>): ResultAsync<PodmanRunResult, PodmanClientError>;
 }
 
 // @public
@@ -235,7 +235,7 @@ export { PluginModule }
 // @public
 export interface PodmanClient {
     kill(containerName: string): ResultAsync<void, PodmanClientError>;
-    run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError>;
+    run(args: string[], env?: Record<string, string>): ResultAsync<PodmanRunResult, PodmanClientError>;
 }
 
 // @public (undocumented)
