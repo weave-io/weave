@@ -51,6 +51,14 @@ export function buildOpenCodeHealthReport(overrides?: {
 export function buildSkillInfoList(names: string[]): SkillInfo[];
 
 // @public
+export class BunPodmanClient implements PodmanClient {
+    // (undocumented)
+    kill(containerName: string): ResultAsync<void, PodmanClientError>;
+    // (undocumented)
+    run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError>;
+}
+
+// @public
 export function classifyExistingAgent(agentName: string, existingAgents: Agent[]): ReconcileDecision;
 
 // Warning: (ae-forgotten-export) The symbol "InMemoryRuntimeStoreOptions" needs to be exported by the entry point index.d.ts
@@ -68,6 +76,15 @@ export const DEFAULT_EXECUTION_WORKFLOW: "tapestry-execution";
 // @public
 export const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 
+// @public (undocumented)
+export class DefaultLogParser implements LogParser {
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryEvent" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryParseError" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    parse(stderr: string): Result<TrajectoryEvent[], TrajectoryParseError[]>;
+}
+
 // @public
 export const DEGRADED_AFFORDANCES: readonly {
     readonly command: string;
@@ -76,9 +93,24 @@ export const DEGRADED_AFFORDANCES: readonly {
 }[];
 
 // @public
+export class EphemeralWorkspaceFactory implements TrajectoryWorkspaceFactory {
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryWorkspace" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryRunnerError" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    create(testCaseId: string, prompt: string): ResultAsync<TrajectoryWorkspace, TrajectoryRunnerError>;
+}
+
+// @public
 export interface InspectStatusProjectionInput {
     readonly store: RuntimeStore;
     readonly workflowInstanceId: string;
+}
+
+// @public
+export interface LogParser {
+    // (undocumented)
+    parse(stderr: string): Result<TrajectoryEvent[], TrajectoryParseError[]>;
 }
 
 // @public
@@ -164,11 +196,64 @@ export interface OpenCodeModelContext {
     uiSelectedModel?: string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "TrajectoryRunner" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
+    constructor(options: OpenCodeTrajectoryRunnerOptions);
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryCase" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "TrajectoryResult" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    run(testCase: TrajectoryCase, model: string, workspace: TrajectoryWorkspace): ResultAsync<TrajectoryResult, TrajectoryRunnerError>;
+}
+
+// @public (undocumented)
+export interface OpenCodeTrajectoryRunnerOptions {
+    // (undocumented)
+    logParser: LogParser;
+    openRouterApiKey: string;
+    // (undocumented)
+    podmanClient: PodmanClient;
+    // (undocumented)
+    promptProvider: TrajectoryPromptProvider;
+    repoRoot: string;
+    timeoutDrainGraceMs?: number;
+    // (undocumented)
+    workspaceFactory: TrajectoryWorkspaceFactory;
+}
+
+// @public
+export function parseTrajectoryEvents(stderr: string): Result<TrajectoryEvent[], TrajectoryParseError[]>;
+
 export { Plugin_2 as Plugin }
 
 export { PluginInput }
 
 export { PluginModule }
+
+// @public
+export interface PodmanClient {
+    kill(containerName: string): ResultAsync<void, PodmanClientError>;
+    run(args: string[]): ResultAsync<PodmanRunResult, PodmanClientError>;
+}
+
+// @public (undocumented)
+export type PodmanClientError = {
+    type: "PodmanSpawnFailed";
+    message: string;
+} | {
+    type: "PodmanKillFailed";
+    message: string;
+};
+
+// @public (undocumented)
+export interface PodmanRunResult {
+    // (undocumented)
+    exitCode: number;
+    // (undocumented)
+    stderr: string;
+}
 
 // @public
 export interface ProjectionDegraded<T> {
@@ -238,6 +323,9 @@ export type ReconcileDecision = "create" | "update" | "collision";
 
 // @public
 export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<string, ModelResolutionError>;
+
+// @public
+export function resolveSandboxProfileImage(sandboxProfile: string): string | undefined;
 
 // @public
 export class RuntimeCommandProjection {
@@ -373,6 +461,18 @@ export interface StartPlanProjectionInput {
 
 // @public
 export function tagWithOwnership(config: AgentConfig): AgentConfig;
+
+// @public
+export interface TrajectoryPromptProvider {
+    // (undocumented)
+    getPrompt(testCase: TrajectoryCase): ResultAsync<string, TrajectoryRunnerError>;
+}
+
+// @public
+export interface TrajectoryWorkspaceFactory {
+    // (undocumented)
+    create(testCaseId: string, prompt: string): ResultAsync<TrajectoryWorkspace, TrajectoryRunnerError>;
+}
 
 // Warning: (ae-forgotten-export) The symbol "MissingSkillsError" needs to be exported by the entry point index.d.ts
 //

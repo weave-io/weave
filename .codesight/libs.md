@@ -65,6 +65,20 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
+- `packages\adapters\opencode\src\trajectory\log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
+- `packages\adapters\opencode\src\trajectory\opencode-trajectory-runner.ts`
+  - function resolveSandboxProfileImage: (sandboxProfile) => string | undefined
+  - class DefaultLogParser
+  - class EphemeralWorkspaceFactory
+  - class OpenCodeTrajectoryRunner
+  - interface LogParser
+  - interface PromptProvider
+  - _...2 more_
+- `packages\adapters\opencode\src\trajectory\podman-client.ts`
+  - class BunPodmanClient
+  - interface PodmanRunResult
+  - interface PodmanClient
+  - type PodmanClientError
 - `packages\adapters\opencode\src\translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages\cli\src\args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
@@ -194,6 +208,10 @@
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
+- `packages\cli\src\evals\opencode-trajectory-runner-adapter.ts`
+  - function createProductionTrajectoryRunner: (cases, env, string | undefined>) => void
+  - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
+  - type SandboxImageCheckError
 - `packages\cli\src\evals\openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
@@ -312,6 +330,11 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
+- `packages\cli\src\evals\trajectory-scoring.ts`
+  - function scoreTrajectoryResult: (input) => NormalizedScoreRecord
+  - interface ScoreTrajectoryInput
+  - type HarnessTrajectoryOutcome
+  - const TRAJECTORY_PASS_THRESHOLD
 - `packages\cli\src\evals\types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
@@ -319,7 +342,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...51 more_
+  - _...52 more_
 - `packages\cli\src\evals\warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

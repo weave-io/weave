@@ -177,6 +177,30 @@ describe("assembleCaseEntry (clean inputs)", () => {
     const entry = assembleCaseEntry(row, "loom-routing");
     expect(entry.explanation).toBeUndefined();
   });
+
+  it("forwards trajectorySummary when present on the score row", () => {
+    const row = makeScoreRow({
+      trajectorySummary: {
+        harnessDelegatedCorrectly: true,
+        observedSpawns: ["shuttle"],
+        observedToolCalls: 2,
+        harnessCompletedWithoutError: true,
+      },
+    });
+    const entry = assembleCaseEntry(row, "loom-routing");
+    expect(entry.trajectorySummary).toEqual({
+      harnessDelegatedCorrectly: true,
+      observedSpawns: ["shuttle"],
+      observedToolCalls: 2,
+      harnessCompletedWithoutError: true,
+    });
+  });
+
+  it("omits trajectorySummary when absent on the score row (text-only case)", () => {
+    const row = makeScoreRow({ trajectorySummary: undefined });
+    const entry = assembleCaseEntry(row, "loom-routing");
+    expect(entry.trajectorySummary).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -413,6 +437,39 @@ describe("assembleSuiteSummary (clean inputs)", () => {
       FIXED_TIMESTAMP,
     );
     expect(result._unsafeUnwrap().suiteGreen).toBe(true);
+  });
+
+  it("hasRuntimeVerifiedCases is true when a case carries a trajectorySummary", () => {
+    const scoreFile = makeBundleScoreFile({
+      results: [
+        makeScoreRow({
+          trajectorySummary: {
+            harnessDelegatedCorrectly: true,
+            observedSpawns: ["shuttle"],
+            observedToolCalls: 1,
+            harnessCompletedWithoutError: true,
+          },
+        }),
+      ],
+    });
+    const result = assembleSuiteSummary(
+      scoreFile,
+      FIXED_GIT_SHA,
+      FIXED_TIMESTAMP,
+    );
+    expect(result._unsafeUnwrap().hasRuntimeVerifiedCases).toBe(true);
+  });
+
+  it("hasRuntimeVerifiedCases is false when no case carries a trajectorySummary", () => {
+    const scoreFile = makeBundleScoreFile({
+      results: [makeScoreRow({ trajectorySummary: undefined })],
+    });
+    const result = assembleSuiteSummary(
+      scoreFile,
+      FIXED_GIT_SHA,
+      FIXED_TIMESTAMP,
+    );
+    expect(result._unsafeUnwrap().hasRuntimeVerifiedCases).toBe(false);
   });
 
   it("suiteGreen is false when a required case fails", () => {

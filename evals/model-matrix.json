@@ -49,6 +49,13 @@
       "provider": "deepseek",
       "default": true,
       "tags": ["fast", "cheap"]
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "display_name": "GPT-4o mini",
+      "provider": "openai",
+      "default": false,
+      "tags": ["cheap", "trajectory-only"]
     }
   ]
 }

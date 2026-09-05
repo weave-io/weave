@@ -29,6 +29,7 @@ on:
             loom-route-frontend-ui
             loom-route-ambiguous-direct-shuttle
             loom-route-shuttle-implement-utility
+            loom-route-shuttle-implement-utility-trajectory
             loom-route-shuttle-boundary-plan-first
             loom-route-pattern-plan-migration
             loom-route-pattern-boundary-small-fix
@@ -135,12 +136,12 @@ jobs:
           ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution tapestry-category-routing shuttle-execution spindle-tools pattern-planning weft-review warp-security"
 
           # Model allowlist: exact model IDs from evals/model-matrix.json.
-          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5 anthropic/claude-opus-5 openai/gpt-5.6-sol qwen/qwen3.8-max deepseek/deepseek-v4-flash-0731"
+          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5 anthropic/claude-opus-5 openai/gpt-5.6-sol qwen/qwen3.8-max deepseek/deepseek-v4-flash-0731 openai/gpt-4o-mini"
 
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI
           # validation and fixture set; workflow-sync.test.ts enforces parity.
-          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle loom-route-shuttle-implement-utility loom-route-shuttle-boundary-plan-first loom-route-pattern-plan-migration loom-route-pattern-boundary-small-fix loom-route-thread-explore-auth-flow loom-route-thread-boundary-prehop-then-implement loom-route-spindle-research-oauth-pkce loom-route-spindle-boundary-internal-exploration loom-route-weft-review-checkout-pr loom-route-weft-boundary-downstream-review loom-route-warp-security-audit-auth-flow loom-route-warp-boundary-downstream-audit tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings tcr-01-exact-match tcr-02-multiple-files tcr-03-windows-paths tcr-04-no-match tcr-05-cross-category tcr-06-overlap tcr-07-explicit-hint tcr-08-misleading-prose tcr-09-similar-names tcr-10-disabled-category"
+          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle loom-route-shuttle-implement-utility loom-route-shuttle-implement-utility-trajectory loom-route-shuttle-boundary-plan-first loom-route-pattern-plan-migration loom-route-pattern-boundary-small-fix loom-route-thread-explore-auth-flow loom-route-thread-boundary-prehop-then-implement loom-route-spindle-research-oauth-pkce loom-route-spindle-boundary-internal-exploration loom-route-weft-review-checkout-pr loom-route-weft-boundary-downstream-review loom-route-warp-security-audit-auth-flow loom-route-warp-boundary-downstream-audit tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings tcr-01-exact-match tcr-02-multiple-files tcr-03-windows-paths tcr-04-no-match tcr-05-cross-category tcr-06-overlap tcr-07-explicit-hint tcr-08-misleading-prose tcr-09-similar-names tcr-10-disabled-category"
 
           # Identifier regex: mirrors VALID_IDENTIFIER_RE from input-validation.ts.
           # Anchored; only alphanumerics, underscore, dot, slash, colon, at, hyphen.
@@ -404,4 +405,240 @@ jobs:
           path: eval-bundles/
           # Retain artifacts for 30 days. Evals are expensive; keep enough history
           # for regression analysis without indefinite storage growth.
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Trajectory eval track (harness-mediated cases).
+  #
+  # This job runs cases whose expected_outcome.kind is "harness_trajectory" -
+  # cases that need a real OpenCode harness session inside a sandbox container,
+  # not just a text-only model completion. It is a separate track from
+  # run-evals because it requires building and running a container image.
+  #
+  # This workflow is manual-dispatch-only (see the header comment above), so
+  # there is no push/pull_request trigger for GitHub Actions' native `paths:`
+  # filter to apply to. Instead this job uses dorny/paths-filter to compute
+  # whether trajectory-relevant paths changed since the base ref and skips the
+  # expensive steps (sandbox build, harness run) when nothing relevant
+  # changed. The gated paths are:
+  #   - evals/**
+  #   - packages/config/src/builtins.ts
+  #   - .weave/prompts/**
+  #   - sandboxes/**
+  #   - packages/cli/src/evals/**
+  #   - packages/adapters/opencode/src/**
+  #
+  # RISK (tracked from the plan's risks section):
+  #   Podman on the GitHub-hosted ubuntu-latest runner is the initial sandbox
+  #   backend target for this job. ubuntu-latest ships Podman but rootless
+  #   container networking and cgroup v2 behavior on hosted runners is less
+  #   battle-tested than a self-hosted runner. If Podman proves insufficient
+  #   here (slow image builds, networking failures, resource limits), the
+  #   fallback is to move this job to a self-hosted runner with a
+  #   pre-provisioned container backend.
+  # ---------------------------------------------------------------------------
+  trajectory-evals:
+    name: Run trajectory eval (harness track)
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    permissions:
+      contents: read
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout source repo (needed for paths-filter and the harness
+      # sandbox build).
+      # -----------------------------------------------------------------------
+      - name: Checkout source repo
+        # actions/checkout v4.2.2
+        # SHA pinned to the upstream commit for this tag — immune to tag mutation.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Step 2: Compute whether trajectory-relevant paths changed.
+      #
+      # This is the per-job equivalent of a `paths:` trigger filter, needed
+      # because the workflow trigger itself is workflow_dispatch-only (no
+      # push/pull_request event to attach a native `paths:` filter to).
+      #
+      # Implemented inline via `git diff` rather than a third-party action to
+      # stay within the repo's approved-action-owners allowlist (see
+      # scripts/ci/verify-action-pins.ts: only actions/* and oven-sh/* are
+      # permitted). The gated globs are enforced by workflow-sync.test.ts.
+      # -----------------------------------------------------------------------
+      - name: Detect trajectory-relevant changes
+        id: filter
+        # Gated glob paths (workflow-sync.test.ts verifies these substrings
+        # are present in this workflow file):
+        #   - evals/**
+        #   - packages/config/src/builtins.ts
+        #   - .weave/prompts/**
+        #   - sandboxes/**
+        #   - packages/cli/src/evals/**
+        #   - packages/adapters/opencode/src/**
+        env:
+          BASE_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # Gated paths: evals/**, packages/config/src/builtins.ts,
+          # .weave/prompts/**, sandboxes/**, packages/cli/src/evals/**,
+          # packages/adapters/opencode/src/**
+          PATTERN='^(evals/|packages/config/src/builtins\.ts$|\.weave/prompts/|sandboxes/|packages/cli/src/evals/|packages/adapters/opencode/src/)'
+          # For workflow_dispatch there is no PR base; diff against the default
+          # branch's tip. Fall back to HEAD~1 if the default branch ref is not
+          # resolvable (e.g. running from the default branch itself).
+          if git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD || true)
+          fi
+          MATCH=$(printf '%s\n' "${CHANGED}" | grep -E "${PATTERN}" || true)
+          if [ -n "${MATCH}" ]; then
+            echo "trajectory=true" >> "${GITHUB_OUTPUT}"
+            echo "Trajectory-relevant paths changed:"
+            printf '  %s\n' ${MATCH}
+          else
+            echo "trajectory=false" >> "${GITHUB_OUTPUT}"
+            echo "No trajectory-relevant paths changed; job steps will skip."
+          fi
+
+      # -----------------------------------------------------------------------
+      # Step 3: Hardcoded trajectory allowlists (defense-in-depth).
+      #
+      # Unlike run-evals, this job does not accept a dispatch-supplied case or
+      # model - the trajectory track currently runs a single fixed case. These
+      # allowlists are validated against a fixed target instead of a raw input,
+      # but they follow the same hardcoded-list pattern as ALLOWED_AGENTS and
+      # ALLOWED_CASES above so this job fails closed if the fixed values ever
+      # drift out of sync with the fixture set. workflow-sync.test.ts enforces
+      # that these allowlists stay in sync with evals/cases/** fixture reality.
+      # -----------------------------------------------------------------------
+      - name: Validate trajectory allowlists
+        if: steps.filter.outputs.trajectory == 'true'
+        run: |
+          set -euo pipefail
+
+          # Case allowlist: exact case IDs with expected_outcome.kind ==
+          # "harness_trajectory" from evals/cases/**
+          ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory"
+
+          # Model allowlist: exact model IDs used by trajectory cases'
+          # allowed_models field.
+          ALLOWED_TRAJECTORY_MODELS="openai/gpt-4o-mini"
+
+          # Sandbox profile allowlist: exact expected_outcome.sandbox_profile
+          # values referenced by trajectory cases.
+          ALLOWED_SANDBOX_PROFILES="opencode-default"
+
+          TRAJECTORY_CASE="loom-route-shuttle-implement-utility-trajectory"
+          TRAJECTORY_MODEL="openai/gpt-4o-mini"
+          TRAJECTORY_SANDBOX_PROFILE="opencode-default"
+
+          MATCHED=false
+          for c in ${ALLOWED_TRAJECTORY_CASES}; do
+            if [ "${TRAJECTORY_CASE}" = "${c}" ]; then MATCHED=true; break; fi
+          done
+          if [ "${MATCHED}" = "false" ]; then
+            echo "::error::Trajectory case '${TRAJECTORY_CASE}' not in ALLOWED_TRAJECTORY_CASES"
+            exit 1
+          fi
+
+          MATCHED=false
+          for m in ${ALLOWED_TRAJECTORY_MODELS}; do
+            if [ "${TRAJECTORY_MODEL}" = "${m}" ]; then MATCHED=true; break; fi
+          done
+          if [ "${MATCHED}" = "false" ]; then
+            echo "::error::Trajectory model '${TRAJECTORY_MODEL}' not in ALLOWED_TRAJECTORY_MODELS"
+            exit 1
+          fi
+
+          MATCHED=false
+          for p in ${ALLOWED_SANDBOX_PROFILES}; do
+            if [ "${TRAJECTORY_SANDBOX_PROFILE}" = "${p}" ]; then MATCHED=true; break; fi
+          done
+          if [ "${MATCHED}" = "false" ]; then
+            echo "::error::Sandbox profile '${TRAJECTORY_SANDBOX_PROFILE}' not in ALLOWED_SANDBOX_PROFILES"
+            exit 1
+          fi
+
+          echo "Trajectory allowlist validation passed."
+
+      # -----------------------------------------------------------------------
+      # Step 4: Set up Bun runtime.
+      # -----------------------------------------------------------------------
+      - name: Set up Bun
+        if: steps.filter.outputs.trajectory == 'true'
+        # oven-sh/setup-bun v2.2.0
+        # SHA pinned to the upstream commit for this tag.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.10"
+
+      # -----------------------------------------------------------------------
+      # Step 5: Install dependencies.
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        if: steps.filter.outputs.trajectory == 'true'
+        run: bun install --frozen-lockfile
+
+      # -----------------------------------------------------------------------
+      # Step 6: Build the CLI.
+      # -----------------------------------------------------------------------
+      - name: Build
+        if: steps.filter.outputs.trajectory == 'true'
+        run: bun run build
+
+      # -----------------------------------------------------------------------
+      # Step 7: Build the sandbox container image.
+      #
+      # See the RISK comment above the job: Podman on ubuntu-latest is the
+      # initial target. If this step proves unreliable in practice, move the
+      # job to a self-hosted runner with a pre-provisioned container backend.
+      # -----------------------------------------------------------------------
+      - name: Build sandbox image
+        if: steps.filter.outputs.trajectory == 'true'
+        run: podman build -t weave-sandbox-opencode sandboxes/opencode
+
+      # -----------------------------------------------------------------------
+      # Step 8: Run the trajectory eval and publish results.
+      #
+      # Uses the same publish contract as run-evals: OPENROUTER_API_KEY and
+      # EVAL_RESULTS_REPO_TOKEN are scoped to this step only, and the CLI's
+      # sanitizer pipeline (assertPublishSafe, assertJsonPublishSafe,
+      # enforcePublishPolicy) runs before any external push to
+      # weave-io/weave-agent-evals. Bundle shape and publisher target are
+      # unchanged from the text-only track.
+      # -----------------------------------------------------------------------
+      - name: Run trajectory eval
+        if: steps.filter.outputs.trajectory == 'true'
+        env:
+          # Secret: OpenRouter inference API key.
+          # Scoped to this step only - not available in any other step.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Secret: GitHub PAT for publishing to weave-io/weave-agent-evals.
+          # Scoped to this step only - not available in any other step.
+          EVAL_RESULTS_REPO_TOKEN: ${{ secrets.EVAL_RESULTS_REPO_TOKEN }}
+          WEAVE_EVAL_PUBLISH_MODE: "publish"
+          CI: "true"
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bun run eval:trajectory
+
+      # -----------------------------------------------------------------------
+      # Step 9: Upload local bundle artifacts (backup).
+      #
+      # Same bundle shape and path as the text-only track's upload step
+      # (eval-bundles/), and the same no-secrets, no-git-operations posture.
+      # -----------------------------------------------------------------------
+      - name: Upload trajectory eval bundle artifacts
+        # actions/upload-artifact v4.6.2
+        # SHA pinned to the upstream commit for this tag — immune to tag mutation.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.filter.outputs.trajectory == 'true'
+        with:
+          name: trajectory-eval-bundles-${{ github.run_id }}
+          path: eval-bundles/
           retention-days: 30

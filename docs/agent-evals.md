@@ -550,15 +550,36 @@ The deciding factor is not that prompt edits never helped. They did help in a fe
 
 In short, the final rubric lands on the eval-cleanup side, not the prompt-work side.
 
-### Text-only contract and explicit non-goal
+### Harness trajectory evals
 
-Current evals are for **assistant-text structure only**. They are not runtime-backed harness evals. That means:
+Weave supports two eval tracks, not one. Both are documented in [ADR 0008](adr/0008-harness-trajectory-evals.md) (Accepted, 2026-09-03) and formalized in [Spec 33](specs/33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md).
+
+**Track 1: text-only.** Described throughout this document. One chat completion per case, scored by regex/structural extraction over assistant text. This remains the primary surface: eight suites, all cases, all published history described above.
+
+**Track 2: harness trajectory.** A parallel track that observes a real harness session end to end, not just its final text. Trajectory cases use `expected_outcome.kind: "harness_trajectory"` and are gated to trajectory-capable suites by the same shared suite registry that gates `tool_call` outcomes. The engine defines a normalized `TrajectoryEvent` union; the adapter produces that event stream via either Channel A (runtime log parsing, e.g. OpenCode's `--print-logs --log-level DEBUG` output) or Channel B (a harness-native plugin subscribing to typed hooks). Weave-core knows only the normalized event stream, never which channel an adapter chose, preserving the engine/adapter boundary in `docs/adapter-boundary.md`.
+
+Trajectory sessions run in a Podman sandbox: an ephemeral per-case workspace, a JSONL trajectory artifact, a wall-clock timeout, auto-approved permissions, and no network egress beyond the model provider. The full raw trajectory JSONL stays in the local-only `raw/` subdirectory, the same boundary `RawCaseResultArtifact` already enforces for text-only cases. Only a small, bounded set of fields is publishable per case:
+
+- `harnessDelegatedCorrectly: boolean`
+- `observedSpawns: string[]` (child agent names, ordered)
+- `observedToolCalls: number` (count only, no arguments)
+- `harnessCompletedWithoutError: boolean`
+
+As of this writing, Phase 1 has shipped: Channel A only, one case (`loom-route-shuttle-implement-utility-trajectory`), one model (`openai/gpt-4o-mini`), one sandbox (`opencode-default`). The published bundle schema is at version 2, and `SuiteSummaryEntry.hasRuntimeVerifiedCases` plus a per-case `trajectorySummary` are present in the published bundle for suites that carry trajectory cases. This is a measured first step, not a broad claim: one case on one model proves the mechanism works end to end, not that trajectory suites are as mature or as broadly covered as the eight text-only suites. Read a green trajectory case as "the harness really did what the event stream shows," not as a substitute for the text-only suites' breadth. The actual dashboard renderer that visualizes this data lives in a downstream consumer repo, out of scope for this repository.
+
+Semantic correctness of trajectory-produced code, sandbox hardening beyond Podman defaults, and cross-harness trajectory comparison remain explicit non-goals of the current trajectory work; see ADR 0008's "Deferred" section for the full list.
+
+### Text-only contract, no longer an explicit non-goal for the whole eval surface
+
+Current text-only evals are for **assistant-text structure only**. They are not runtime-backed harness evals. That means, for the text-only track specifically:
 
 - supported assertions must be visible in plain user or assistant text
-- hidden tool telemetry, shell history, filesystem mutation, browser events, and network traces are out of scope
-- runtime-backed trajectory evals are an explicit non-goal of the current fixture contract and must not be encoded into present-day cases
+- hidden tool telemetry, shell history, filesystem mutation, browser events, and network traces are out of scope for text-only cases
+- text-only cases must not encode runtime-only assertions into present-day fixtures
 
-The CLI now enforces that contract **before any dry-run or live model execution**. Each suite is registered in a shared metadata registry (`packages/cli/src/evals/types.ts`) that defines:
+**Runtime-backed trajectory evals are no longer an explicit non-goal of the overall eval surface.** ADR 0008 and Spec 33 add them as a real, shipped, parallel track (see "Harness trajectory evals" above). The statement above is scoped to the text-only track only: text-only cases still cannot and should not assert on runtime behavior, but that is now a track-boundary rule, not a statement that Weave has no runtime-backed eval capability at all.
+
+The CLI now enforces the text-only contract **before any dry-run or live model execution**. Each suite is registered in a shared metadata registry (`packages/cli/src/evals/types.ts`) that defines:
 
 - the canonical suite ID
 - the accepted short `--agent` filter

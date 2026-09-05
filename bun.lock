@@ -17,7 +17,7 @@
     },
     "packages/adapters/claude-code": {
       "name": "@weaveio/weave-adapter-claude-code",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "mustache": "^4.2.0",
         "neverthrow": "^8.2.0",
@@ -31,7 +31,7 @@
     },
     "packages/adapters/opencode": {
       "name": "@weaveio/weave-adapter-opencode",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "dependencies": {
         "@opencode-ai/plugin": "~1.15.9",
         "@opencode-ai/sdk": "~1.15.9",
@@ -71,7 +71,7 @@
     },
     "packages/cli": {
       "name": "@weaveio/weave-cli",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "bin": {
         "weave": "./dist/main.js",
       },
@@ -89,6 +89,7 @@
       "devDependencies": {
         "@types/mustache": "^4.2.6",
         "@weaveio/weave-adapter-claude-code": "workspace:*",
+        "@weaveio/weave-adapter-opencode": "workspace:*",
         "@weaveio/weave-config": "workspace:*",
         "@weaveio/weave-core": "workspace:*",
         "@weaveio/weave-engine": "workspace:*",

@@ -86,6 +86,7 @@ function makeSuiteSummaryEntry(
     passedCases: 1,
     failedCases: 1,
     suiteGreen: false,
+    hasRuntimeVerifiedCases: false,
     cases: [makePublicCaseEntry()],
     ...overrides,
   };

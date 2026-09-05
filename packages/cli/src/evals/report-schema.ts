@@ -49,6 +49,7 @@
  * and rejects forbidden patterns.
  */
 
+import { TrajectorySummarySchema } from "@weaveio/weave-core";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +75,7 @@ export const REPORT_BUNDLE_SCHEMA_VERSION = 1;
 /**
  * Current schema version for suite summary (`SuiteSummaryEntry`).
  */
-export const SUITE_SUMMARY_SCHEMA_VERSION = 1;
+export const SUITE_SUMMARY_SCHEMA_VERSION = 2;
 
 /**
  * Current schema version for dashboard entry manifest (`DashboardManifest`).
@@ -415,6 +416,17 @@ export const PublicCaseEntrySchema = z
     explanation: BoundedExplanationSchema.optional(),
     /** ISO 8601 timestamp when the run was scored. */
     scoredAt: z.string().min(1, "scoredAt must be non-empty"),
+    /**
+     * Optional publishable trajectory summary for `harness_trajectory` cases.
+     *
+     * Present only when a case was scored against real harness runtime
+     * telemetry rather than assistant text alone. Contains exactly the four
+     * closed publishable fields defined by `TrajectorySummarySchema`
+     * (`harnessDelegatedCorrectly`, `observedSpawns`, `observedToolCalls`,
+     * `harnessCompletedWithoutError`). Never the raw event stream or a raw
+     * artifact reference — those stay in the local-only raw artifact path.
+     */
+    trajectorySummary: TrajectorySummarySchema.optional(),
   })
   .strict();
 
@@ -473,6 +485,13 @@ export const SuiteSummaryEntrySchema = z
      * When absent: the suiteGreen flag and pass/fail counts are self-explanatory.
      */
     explanation: BoundedExplanationSchema.optional(),
+    /**
+     * Whether at least one case in this suite carries a `trajectorySummary`
+     * (i.e. was scored against real harness runtime telemetry rather than
+     * assistant text alone). Dashboard consumers use this flag to render a
+     * "Runtime-verified" badge next to the suite name.
+     */
+    hasRuntimeVerifiedCases: z.boolean(),
     /** Ordered per-case public entries. */
     cases: z.array(PublicCaseEntrySchema),
   })

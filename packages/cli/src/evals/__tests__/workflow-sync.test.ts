@@ -90,6 +90,65 @@ function extractWorkflowAllowedAgents(workflowText: string): string[] {
 }
 
 /**
+ * Read the workflow YAML file and extract the `ALLOWED_TRAJECTORY_CASES`
+ * shell variable value as a space-separated list of case IDs.
+ */
+function extractWorkflowAllowedTrajectoryCases(workflowText: string): string[] {
+  const match = workflowText.match(/ALLOWED_TRAJECTORY_CASES\s*=\s*"([^"]+)"/);
+  if (match === null || match[1] === undefined) return [];
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Read the workflow YAML file and extract the `ALLOWED_TRAJECTORY_MODELS`
+ * shell variable value as a space-separated list of model IDs.
+ */
+function extractWorkflowAllowedTrajectoryModels(
+  workflowText: string,
+): string[] {
+  const match = workflowText.match(/ALLOWED_TRAJECTORY_MODELS\s*=\s*"([^"]+)"/);
+  if (match === null || match[1] === undefined) return [];
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Read the workflow YAML file and extract the `ALLOWED_SANDBOX_PROFILES`
+ * shell variable value as a space-separated list of sandbox profile names.
+ */
+function extractWorkflowAllowedSandboxProfiles(workflowText: string): string[] {
+  const match = workflowText.match(/ALLOWED_SANDBOX_PROFILES\s*=\s*"([^"]+)"/);
+  if (match === null || match[1] === undefined) return [];
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Load every case fixture under evals/cases/** and return only those whose
+ * `expected_outcome.kind` is `"harness_trajectory"` — the trajectory track.
+ */
+async function discoverTrajectoryCases() {
+  const casePaths = discoverCaseFilePaths();
+  const results = await Promise.all(casePaths.map((p) => loadCaseFile(p)));
+  const trajectoryCases: Array<{
+    id: string;
+    model: string[];
+    sandboxProfile: string;
+  }> = [];
+  for (const result of results) {
+    if (result.isErr()) {
+      throw new Error(`Failed to load case fixture: ${result.error.message}`);
+    }
+    const evalCase = result.value;
+    if (evalCase.expected_outcome.kind !== "harness_trajectory") continue;
+    trajectoryCases.push({
+      id: evalCase.id,
+      model: evalCase.allowed_models,
+      sandboxProfile: evalCase.expected_outcome.sandbox_profile,
+    });
+  }
+  return trajectoryCases;
+}
+
+/**
  * Glob all `*.json` files under `evals/cases/` and return their paths.
  */
 function discoverCaseFilePaths(): string[] {
@@ -263,5 +322,99 @@ describe("workflow-sync — agent-evals.yml ALLOWED_AGENTS matches known eval ag
     expect([...suitesWithWorkflowCases].sort()).toEqual(
       EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId).sort(),
     );
+  });
+});
+
+describe("workflow-sync — agent-evals.yml trajectory-track allowlists match harness_trajectory fixtures", () => {
+  it("loads the workflow file and finds all three trajectory allowlists", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    expect(text).toContain("ALLOWED_TRAJECTORY_CASES");
+    expect(text).toContain("ALLOWED_TRAJECTORY_MODELS");
+    expect(text).toContain("ALLOWED_SANDBOX_PROFILES");
+  });
+
+  it("ALLOWED_TRAJECTORY_CASES lists every harness_trajectory case ID under evals/cases/**", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const workflowCases = extractWorkflowAllowedTrajectoryCases(workflowText);
+    const trajectoryCases = await discoverTrajectoryCases();
+
+    expect(trajectoryCases.length).toBeGreaterThan(0);
+
+    for (const trajectoryCase of trajectoryCases) {
+      expect(workflowCases).toContain(trajectoryCase.id);
+    }
+  });
+
+  it("ALLOWED_TRAJECTORY_CASES does not contain stale/unknown case IDs", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const workflowCases = extractWorkflowAllowedTrajectoryCases(workflowText);
+    const trajectoryCases = await discoverTrajectoryCases();
+    const knownIds = new Set(trajectoryCases.map((c) => c.id));
+
+    for (const wfCase of workflowCases) {
+      expect(knownIds.has(wfCase)).toBe(true);
+    }
+
+    // Exact count parity: every trajectory fixture must be listed and no
+    // stale entries may remain.
+    expect(workflowCases.length).toBe(trajectoryCases.length);
+  });
+
+  it("ALLOWED_TRAJECTORY_MODELS lists every model referenced by a harness_trajectory case", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const workflowModels = extractWorkflowAllowedTrajectoryModels(workflowText);
+    const trajectoryCases = await discoverTrajectoryCases();
+
+    const fixtureModels = new Set<string>();
+    for (const trajectoryCase of trajectoryCases) {
+      for (const model of trajectoryCase.model) fixtureModels.add(model);
+    }
+
+    expect(fixtureModels.size).toBeGreaterThan(0);
+
+    for (const model of fixtureModels) {
+      expect(workflowModels).toContain(model);
+    }
+    for (const wfModel of workflowModels) {
+      expect(fixtureModels.has(wfModel)).toBe(true);
+    }
+  });
+
+  it("ALLOWED_SANDBOX_PROFILES lists every sandbox profile referenced by a harness_trajectory case", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const workflowProfiles =
+      extractWorkflowAllowedSandboxProfiles(workflowText);
+    const trajectoryCases = await discoverTrajectoryCases();
+
+    const fixtureProfiles = new Set<string>();
+    for (const trajectoryCase of trajectoryCases) {
+      fixtureProfiles.add(trajectoryCase.sandboxProfile);
+    }
+
+    expect(fixtureProfiles.size).toBeGreaterThan(0);
+
+    for (const profile of fixtureProfiles) {
+      expect(workflowProfiles).toContain(profile);
+    }
+    for (const wfProfile of workflowProfiles) {
+      expect(fixtureProfiles.has(wfProfile)).toBe(true);
+    }
+  });
+
+  it("the trajectory-evals job filters on the expected paths", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const expectedPaths = [
+      "evals/**",
+      "packages/config/src/builtins.ts",
+      ".weave/prompts/**",
+      "sandboxes/**",
+      "packages/cli/src/evals/**",
+      "packages/adapters/opencode/src/**",
+    ];
+
+    expect(workflowText).toContain("trajectory-evals:");
+    for (const path of expectedPaths) {
+      expect(workflowText).toContain(path);
+    }
   });
 });

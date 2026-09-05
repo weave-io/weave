@@ -63,7 +63,12 @@
  * `→ <agent>`, `delegate to <agent>`, or `route to <agent>`).
  */
 
-import { err, ok, ResultAsync } from "neverthrow";
+import type {
+  TrajectoryCase,
+  TrajectoryRunner,
+  TrajectoryWorkspace,
+} from "@weaveio/weave-core";
+import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
@@ -74,6 +79,7 @@ import {
   buildPublicExplanation,
 } from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
+import { scoreTrajectoryResult } from "./trajectory-scoring.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -1370,6 +1376,32 @@ export interface LoomRoutingRunnerOptions {
    * When omitted, the default `EVALS_ROOT` from `case-loader.ts` is used.
    */
   evalsRoot?: string;
+  /**
+   * `TrajectoryRunner` used for cases whose `expected_outcome.kind ===
+   * "harness_trajectory"`.
+   *
+   * When omitted, the runner lazily imports and constructs the production
+   * `OpenCodeTrajectoryRunner` (via `opencode-trajectory-runner-adapter.ts`)
+   * the first time a suite run contains at least one trajectory case. Tests
+   * inject a stub `TrajectoryRunner` here to avoid any real Podman/file-
+   * system access.
+   */
+  trajectoryRunner?: TrajectoryRunner;
+  /**
+   * Read-only sandbox image existence checker used ONLY on the `--dry-run`
+   * path for trajectory cases (`podman image inspect`, never `podman run`).
+   *
+   * When omitted, defaults to the production checker in
+   * `opencode-trajectory-runner-adapter.ts`. Tests inject a stub to avoid
+   * spawning a real `podman` process. Failures are swallowed (treated as
+   * "image not present") — the check never fails the dry run.
+   */
+  sandboxImageChecker?: (sandboxProfile: string) => Promise<boolean>;
+  /**
+   * Environment variable map used to construct the production trajectory
+   * runner (reads `OPENROUTER_API_KEY`). Defaults to `Bun.env`.
+   */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -1453,11 +1485,20 @@ export class LoomRoutingRunner {
   private readonly scorer: AgentEvalsScorer;
   private readonly promptProvider: PromptProvider;
   private readonly evalsRoot: string | undefined;
+  private readonly injectedTrajectoryRunner: TrajectoryRunner | undefined;
+  private readonly sandboxImageChecker: (
+    sandboxProfile: string,
+  ) => Promise<boolean>;
+  private readonly env: Record<string, string | undefined>;
 
   constructor(options: LoomRoutingRunnerOptions) {
     this.modelClient = options.modelClient;
     this.scorer = options.scorer;
     this.evalsRoot = options.evalsRoot;
+    this.injectedTrajectoryRunner = options.trajectoryRunner;
+    this.sandboxImageChecker =
+      options.sandboxImageChecker ?? defaultSandboxImageChecker;
+    this.env = options.env ?? Bun.env;
 
     // Priority: explicit promptProvider > inline loomSystemPrompt > default composed provider
     if (options.promptProvider !== undefined) {
@@ -1559,17 +1600,41 @@ export class LoomRoutingRunner {
       const workItems = this.buildWorkItems(cases, request.modelFilter);
 
       if (dryRun) {
-        const caseResults = workItems.map(({ evalCase, modelId }) =>
-          buildDryRunResult(evalCase, modelId),
+        // For `harness_trajectory` cases, run the read-only sandbox image
+        // existence check (`podman image inspect`, never `podman run`) as
+        // part of dry-run schema validation. The check result is
+        // best-effort and never fails the dry run — a dev box without the
+        // sandbox image built yet should still see a green dry run.
+        const caseResultsPromise = Promise.all(
+          workItems.map(async ({ evalCase, modelId }) => {
+            if (evalCase.expected_outcome.kind === "harness_trajectory") {
+              await this.sandboxImageChecker(
+                evalCase.expected_outcome.sandbox_profile,
+              );
+            }
+            return buildDryRunResult(evalCase, modelId);
+          }),
         );
         return ResultAsync.fromSafePromise(
-          Promise.resolve(this.assembleResult(LOOM_ROUTING_SUITE, caseResults)),
+          caseResultsPromise.then((caseResults) =>
+            this.assembleResult(LOOM_ROUTING_SUITE, caseResults),
+          ),
         );
       }
 
       // Resolve the Loom prompt once before executing work items.
       // Provider failure is a hard stop — no fallback to hardcoded prompts.
       // This guarantees prompt provenance for all runs.
+      const hasTrajectoryCase = workItems.some(
+        (item) => item.evalCase.expected_outcome.kind === "harness_trajectory",
+      );
+      const trajectoryRunnerAsync: ResultAsync<
+        TrajectoryRunner | undefined,
+        RunnerError
+      > = hasTrajectoryCase
+        ? this.resolveTrajectoryRunner(cases)
+        : okAsync(undefined);
+
       return this.promptProvider
         .getPrompt("loom")
         .mapErr(
@@ -1580,16 +1645,19 @@ export class LoomRoutingRunner {
           }),
         )
         .andThen((systemPrompt) =>
-          // Execute each work item sequentially to avoid overwhelming the model API
-          this.executeWorkItems(
-            workItems,
-            rubrics,
-            rawArtifacts,
-            systemPrompt,
-          ).andThen((caseResults) =>
-            ResultAsync.fromSafePromise(
-              Promise.resolve(
-                this.assembleResult(LOOM_ROUTING_SUITE, caseResults),
+          trajectoryRunnerAsync.andThen((trajectoryRunner) =>
+            // Execute each work item sequentially to avoid overwhelming the model API
+            this.executeWorkItems(
+              workItems,
+              rubrics,
+              rawArtifacts,
+              systemPrompt,
+              trajectoryRunner,
+            ).andThen((caseResults) =>
+              ResultAsync.fromSafePromise(
+                Promise.resolve(
+                  this.assembleResult(LOOM_ROUTING_SUITE, caseResults),
+                ),
               ),
             ),
           ),
@@ -1638,6 +1706,7 @@ export class LoomRoutingRunner {
     rubrics: EvalRubric[],
     rawArtifacts: boolean,
     systemPrompt: string,
+    trajectoryRunner: TrajectoryRunner | undefined,
   ): ResultAsync<CaseResult[], never> {
     const executeAll = workItems.reduce(
       (acc, item) =>
@@ -1648,12 +1717,48 @@ export class LoomRoutingRunner {
             rubrics,
             rawArtifacts,
             systemPrompt,
+            trajectoryRunner,
           ).map((result) => [...results, result]),
         ),
       ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
     );
 
     return executeAll as ResultAsync<CaseResult[], never>;
+  }
+
+  /**
+   * Resolve the `TrajectoryRunner` used for `harness_trajectory` cases.
+   *
+   * Returns the injected runner when supplied at construction (tests always
+   * inject a stub here). Otherwise lazily imports and constructs the
+   * production `OpenCodeTrajectoryRunner` via
+   * `opencode-trajectory-runner-adapter.ts` — real Podman/file-system
+   * dependencies are only pulled in on this path, never for text-only suites
+   * or dry runs.
+   */
+  private resolveTrajectoryRunner(
+    cases: EvalCase[],
+  ): ResultAsync<TrajectoryRunner, RunnerError> {
+    if (this.injectedTrajectoryRunner !== undefined) {
+      return okAsync(this.injectedTrajectoryRunner);
+    }
+    return ResultAsync.fromPromise(
+      this.buildDefaultTrajectoryRunner(cases),
+      (cause): RunnerError => ({
+        type: "PromptProviderFailed",
+        agentName: "loom-trajectory-runner",
+        message: `Trajectory runner construction failed: ${String(cause)}`,
+      }),
+    );
+  }
+
+  private async buildDefaultTrajectoryRunner(
+    cases: EvalCase[],
+  ): Promise<TrajectoryRunner> {
+    const { createProductionTrajectoryRunner } = await import(
+      "./opencode-trajectory-runner-adapter.js"
+    );
+    return createProductionTrajectoryRunner(cases, this.env);
   }
 
   /**
@@ -1668,7 +1773,18 @@ export class LoomRoutingRunner {
     rubrics: EvalRubric[],
     rawArtifacts: boolean,
     systemPrompt: string,
+    trajectoryRunner: TrajectoryRunner | undefined,
   ): ResultAsync<CaseResult, never> {
+    if (evalCase.expected_outcome.kind === "harness_trajectory") {
+      return this.executeTrajectoryCase(
+        evalCase,
+        modelId,
+        rubrics,
+        rawArtifacts,
+        trajectoryRunner,
+      );
+    }
+
     const userMessage = buildUserMessage(evalCase);
 
     const modelResultAsync = this.modelClient.complete({
@@ -1780,6 +1896,153 @@ export class LoomRoutingRunner {
   }
 
   /**
+   * Execute a single `harness_trajectory` case: run the real sandboxed
+   * harness via the injected/lazily-constructed `TrajectoryRunner` and score
+   * the observed event stream with `scoreTrajectoryResult`. Never routes
+   * through `modelClient`/`scorer` — those are for text-only cases only.
+   *
+   * Never returns `err` — the same zero-score `CaseResult` convention as
+   * `executeSingleCase` applies here.
+   */
+  private executeTrajectoryCase(
+    evalCase: EvalCase,
+    modelId: string,
+    rubrics: EvalRubric[],
+    rawArtifacts: boolean,
+    trajectoryRunner: TrajectoryRunner | undefined,
+  ): ResultAsync<CaseResult, never> {
+    if (evalCase.expected_outcome.kind !== "harness_trajectory") {
+      // Unreachable in practice — callers only route here for this kind.
+      return new ResultAsync(
+        Promise.resolve(
+          ok(
+            buildErrorResult(
+              evalCase,
+              modelId,
+              "UnknownEvalSuite",
+              rawArtifacts,
+            ),
+          ),
+        ),
+      );
+    }
+    const outcome = evalCase.expected_outcome;
+
+    if (trajectoryRunner === undefined) {
+      return new ResultAsync(
+        Promise.resolve(
+          ok(
+            buildErrorResult(
+              evalCase,
+              modelId,
+              "TrajectoryRunnerUnavailable",
+              rawArtifacts,
+              undefined,
+              "No TrajectoryRunner was resolved for this suite run.",
+            ),
+          ),
+        ),
+      );
+    }
+
+    const rubric = rubrics.find((r) => r.case_id === evalCase.id);
+    if (rubric === undefined) {
+      return new ResultAsync(
+        Promise.resolve(
+          ok(
+            buildErrorResult(
+              evalCase,
+              modelId,
+              "RubricNotFound",
+              rawArtifacts,
+              undefined,
+              `No rubric found for case "${evalCase.id}".`,
+            ),
+          ),
+        ),
+      );
+    }
+
+    const trajectoryCase: TrajectoryCase = {
+      testCaseId: evalCase.id,
+      expectedSpawns: outcome.expected_spawns,
+      expectedTools: outcome.expected_tools,
+      maxDurationSeconds: outcome.max_duration_seconds,
+      sandboxProfile: outcome.sandbox_profile,
+    };
+
+    // The workspace passed here is a placeholder: `OpenCodeTrajectoryRunner`
+    // constructs its own real ephemeral workspace internally via the
+    // injected `TrajectoryWorkspaceFactory` before invoking the sandbox.
+    const placeholderWorkspace: TrajectoryWorkspace = {
+      root: "",
+      artifactsDir: "",
+    };
+
+    const matchPromise = trajectoryRunner
+      .run(trajectoryCase, modelId, placeholderWorkspace)
+      .match<CaseResult>(
+        (result) => {
+          const scoreRecord = scoreTrajectoryResult({
+            caseId: evalCase.id,
+            modelId,
+            suite: evalCase.suite,
+            events: result.events,
+            expectedOutcome: outcome,
+            scoring: rubric.scoring,
+          });
+
+          const dimensionScores = buildDimensionScoreSummary(
+            scoreRecord.dimensions,
+          );
+          const publicExplanation = buildPublicExplanation(
+            scoreRecord,
+            evalCase,
+            false,
+          );
+
+          const summary: CaseResultSummary = {
+            caseId: evalCase.id,
+            modelId,
+            suite: evalCase.suite,
+            passed: scoreRecord.passed,
+            required: scoreRecord.required,
+            weightedTotal: scoreRecord.weightedTotal,
+            dimensionScores,
+            scoredAt: scoreRecord.scoredAt,
+            dryRun: false,
+            publicExplanation,
+            trajectorySummary: result.summary,
+          };
+
+          // `result.events` (the full trajectory) and `result.rawArtifactRef`
+          // are LOCAL-ONLY per docs/specs/33-spec-harness-trajectory-evals —
+          // only stored in the raw artifact, never in `summary`.
+          const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
+            ? {
+                caseId: evalCase.id,
+                modelId,
+                composedPrompt: "",
+                transcript: [],
+                rawContent: JSON.stringify(result.events),
+                dimensionRationales: buildDimensionRationales(
+                  scoreRecord.dimensions,
+                ),
+              }
+            : undefined;
+
+          return { summary, rawArtifact };
+        },
+        (error) =>
+          buildErrorResult(evalCase, modelId, error.type, rawArtifacts),
+      );
+
+    return new ResultAsync(
+      matchPromise.then((result) => ok<CaseResult, never>(result)),
+    );
+  }
+
+  /**
    * Assemble a `RunnerResult` from the collected per-case results.
    */
   private assembleResult(
@@ -1809,6 +2072,26 @@ export class LoomRoutingRunner {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Default `--dry-run` sandbox image existence checker.
+ *
+ * Lazily imports `opencode-trajectory-runner-adapter.ts` and delegates to
+ * `checkSandboxImageExists`, which shells out to `podman image inspect`
+ * (read-only, never `podman run`). Failures (missing podman binary, missing
+ * image) resolve to `false` rather than rejecting.
+ */
+async function defaultSandboxImageChecker(
+  sandboxProfile: string,
+): Promise<boolean> {
+  const { checkSandboxImageExists } = await import(
+    "./opencode-trajectory-runner-adapter.js"
+  );
+  return checkSandboxImageExists(sandboxProfile).match(
+    (exists) => exists,
+    () => false,
+  );
+}
 
 /**
  * Construct the default `PromptProvider` for the Loom runner.
