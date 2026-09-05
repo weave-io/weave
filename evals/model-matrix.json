@@ -51,6 +51,13 @@
       "tags": ["fast", "cheap"]
     },
     {
+      "id": "openai/gpt-6-astra",
+      "display_name": "GPT 6 Astra",
+      "provider": "openai",
+      "default": false,
+      "tags": ["high-quality"]
+    },
+    {
       "id": "openai/gpt-4o-mini",
       "display_name": "GPT-4o mini",
       "provider": "openai",
