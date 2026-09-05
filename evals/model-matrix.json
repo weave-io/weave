@@ -54,7 +54,7 @@
       "id": "openai/gpt-6-astra",
       "display_name": "GPT 6 Astra",
       "provider": "openai",
-      "default": false,
+      "default": true,
       "tags": ["high-quality"]
     },
     {
