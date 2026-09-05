@@ -12,24 +12,34 @@
 #      [weavePlugin] })` inside the Podman container.
 #   4. Real `opencode2` plugin-loader test — loads the built V2 adapter via
 #      a fixture `opencode.jsonc`, inside the Podman container.
-#   5. Agent-materialization test — boots `OpenCode.create({ plugins: [weavePlugin] })`
-#      against a fixture project directory with `.weave/config.weave`, then
-#      asserts `host.agent.list()` contains a Weave-owned `loom` entry. Runs
+#   5. Agent-materialization test (embedded SDK) — boots
+#      `OpenCode.create({ plugins: [weavePlugin] })` against a fixture
+#      project directory with `.weave/config.weave`, then asserts
+#      `host.agent.list()` contains a Weave-owned `loom` entry. Runs inside
+#      the Podman container.
+#   6. Agent-materialization test (real opencode2 CLI) — closes the seam
+#      layer 4 left open (marker files prove the real CLI ran the plugin's
+#      setup/cleanup but never assert the CLI's own view of agents). Runs
+#      the real `opencode2` CLI against a fixture whose plugin-wrapper,
+#      after calling the real adapter's `setup(ctx)`, calls
+#      `ctx.agent.list()` (envelope-unwrapped per A4) and writes the result
+#      to a marker file. The layer reads that marker and asserts the CLI's
+#      own ctx surfaces a `loom` entry with the V2 ownership marker. No
+#      embedded host is created; the observation is strictly CLI-side. Runs
 #      inside the Podman container.
-#   6. (Covered by layer 1) Assertions over the materialized V2 agent shape
+#   7. (Covered by layer 1) Assertions over the materialized V2 agent shape
 #      — `system`, structured model ref, ordered `permissions`, `mode`, and
 #      the V2-package-local ownership marker — live in
 #      `src/__tests__/translate-agent.test.ts` and `src/__tests__/adapter.test.ts`.
-#   6. (Covered by layer 1) Idempotence, foreign-agent collision,
-#      cleanup/disposal, model catalog, skill list, command
-#      registration/execution, and event cancellation — live across
-#      `src/__tests__/*.test.ts` (see `reconcile-agent.test.ts`,
-#      `adapter.test.ts`, `runtime-command-projection.test.ts`,
-#      `run-workflow.test.ts`).
-#   7. Source-boundary check — `verify/checks/source-boundary.ts`.
-#   8. Version-drift check — `verify/checks/version-drift.ts`.
+#      Idempotence, foreign-agent collision, cleanup/disposal, model
+#      catalog, skill list, command registration/execution, and event
+#      cancellation live across `src/__tests__/*.test.ts` (see
+#      `reconcile-agent.test.ts`, `adapter.test.ts`,
+#      `runtime-command-projection.test.ts`, `run-workflow.test.ts`).
+#   8. Source-boundary check — `verify/checks/source-boundary.ts`.
+#   9. Version-drift check — `verify/checks/version-drift.ts`.
 #
-# Layers 9 (no real LLM calls) and 10 (no V1 package/binary present) are
+# Layers 10 (no real LLM calls) and 11 (no V1 package/binary present) are
 # enforced structurally: no layer here ever creates a real session or sends
 # a prompt to a model, and the Containerfile (layers 3-4) asserts V1
 # absence as an image-build step.
@@ -84,38 +94,38 @@ print_summary() {
   echo "]"
 }
 
-echo "==> Layer 1/8: isolated unit tests (bun test)"
+echo "==> Layer 1/9: isolated unit tests (bun test)"
 if (cd "${PKG_DIR}" && bun test) ; then
   abort_on_failure "1-unit-tests" "passed" "bun test exited 0"
 else
   abort_on_failure "1-unit-tests" "failed" "bun test exited non-zero"
 fi
 
-echo "==> Layer 2/8: typecheck"
+echo "==> Layer 2/9: typecheck"
 if (cd "${PKG_DIR}" && bun run typecheck); then
   abort_on_failure "2-typecheck" "passed" "tsc --noEmit exited 0"
 else
   abort_on_failure "2-typecheck" "failed" "tsc --noEmit exited non-zero"
 fi
 
-echo "==> Layer 7/8: source-boundary check"
+echo "==> Layer 8/9: source-boundary check"
 if (cd "${PKG_DIR}" && bun run verify/checks/source-boundary.ts); then
-  abort_on_failure "7-source-boundary" "passed" "no forbidden V1 imports/identifiers found"
+  abort_on_failure "8-source-boundary" "passed" "no forbidden V1 imports/identifiers found"
 else
-  abort_on_failure "7-source-boundary" "failed" "forbidden V1 import or identifier found"
+  abort_on_failure "8-source-boundary" "failed" "forbidden V1 import or identifier found"
 fi
 
-echo "==> Layer 8/8: version-drift check"
+echo "==> Layer 9/9: version-drift check"
 if (cd "${PKG_DIR}" && bun run verify/checks/version-drift.ts); then
-  abort_on_failure "8-version-drift" "passed" "all V2 SDK pins match 0.0.0-beta-19151"
+  abort_on_failure "9-version-drift" "passed" "all V2 SDK pins match 0.0.0-beta-19151"
 else
-  abort_on_failure "8-version-drift" "failed" "a V2 SDK pin has drifted from 0.0.0-beta-19151"
+  abort_on_failure "9-version-drift" "failed" "a V2 SDK pin has drifted from 0.0.0-beta-19151"
 fi
 
 if ! command -v podman >/dev/null 2>&1; then
-  echo "Podman required for layers 3-4 (embedded SDK integration test, real plugin-loader test)." >&2
-  echo "Podman was not found on PATH — layers 3-4 were NOT run." >&2
-  abort_on_failure "3-4-container-layers" "skipped-not-run" "podman not found on PATH; layers 3-4 require Podman and were not executed"
+  echo "Podman required for layers 3-6 (embedded SDK integration, real plugin-loader, embedded materialization, real-CLI materialization)." >&2
+  echo "Podman was not found on PATH — layers 3-6 were NOT run." >&2
+  abort_on_failure "3-6-container-layers" "skipped-not-run" "podman not found on PATH; layers 3-6 require Podman and were not executed"
 fi
 
 echo "==> Staging build context for Podman"
@@ -130,7 +140,7 @@ if ! (cd "${PKG_DIR}" && bun build ./src/index.ts \
   --external @opencode-ai/plugin --external @opencode-ai/sdk \
   --external @opencode-ai/client --external mustache \
   --external neverthrow --external zod); then
-  abort_on_failure "3-4-build" "failed" "bun build of src/index.ts failed"
+  abort_on_failure "3-6-build" "failed" "bun build of src/index.ts failed"
 fi
 if ! (cd "${PKG_DIR}" && bun build ./src/server.ts \
   --outdir "${BUILD_STAGE}/adapter/dist" \
@@ -138,7 +148,7 @@ if ! (cd "${PKG_DIR}" && bun build ./src/server.ts \
   --external @opencode-ai/plugin --external @opencode-ai/sdk \
   --external @opencode-ai/client --external mustache \
   --external neverthrow --external zod); then
-  abort_on_failure "3-4-build" "failed" "bun build of src/server.ts failed"
+  abort_on_failure "3-6-build" "failed" "bun build of src/server.ts failed"
 fi
 
 # Container-facing package.json: exports map only, no workspace:* deps (the
@@ -160,28 +170,38 @@ JSON
 
 echo "==> Building Podman image"
 if ! podman build -t "${IMAGE_TAG}" -f "${VERIFY_DIR}/Containerfile" "${VERIFY_DIR}"; then
-  abort_on_failure "3-4-image-build" "failed" "podman build failed"
+  abort_on_failure "3-6-image-build" "failed" "podman build failed"
 fi
 
-echo "==> Layer 3/8: embedded SDK integration test (OpenCode.create)"
+echo "==> Layer 3/9: embedded SDK integration test (OpenCode.create)"
 if podman run --rm "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts embedded'; then
   abort_on_failure "3-embedded-sdk" "passed" "OpenCode.create + awaitActivation + close completed without throwing"
 else
   abort_on_failure "3-embedded-sdk" "failed" "embedded OpenCode.create smoke test failed"
 fi
 
-echo "==> Layer 4/8: real opencode2 plugin-loader test"
+echo "==> Layer 4/9: real opencode2 plugin-loader test"
 if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts real-loader'; then
   abort_on_failure "4-real-loader" "passed" "opencode2 run --standalone exited 0 against the fixture opencode.jsonc"
 else
   abort_on_failure "4-real-loader" "failed" "real opencode2 plugin-loader smoke test failed"
 fi
 
-echo "==> Layer 5/8: agent-materialization test (Loom via host.agent.list())"
+echo "==> Layer 5/9: agent-materialization test — embedded (Loom via host.agent.list())"
 if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures/agent-materialization "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts agent-materialization'; then
   abort_on_failure "5-agent-materialization" "passed" "host.agent.list() reports a Weave-owned loom agent"
 else
   abort_on_failure "5-agent-materialization" "failed" "host.agent.list() did not report a Weave-owned loom agent"
+fi
+
+echo "==> Layer 6/9: agent-materialization test — real opencode2 CLI (Loom via ctx.agent.list())"
+if podman run --rm \
+    -e FIXTURE_DIR=/work/verify/fixtures-layer6 \
+    -e WEAVE_VERIFY_MARKER_DIR=/tmp/weave-verify-markers-layer6 \
+    "${IMAGE_TAG}" -c 'cd /work && timeout 45 bun run verify/container-smoke.ts real-cli-materialization'; then
+  abort_on_failure "6-real-cli-materialization" "passed" "real opencode2 CLI's ctx.agent.list() reports a Weave-owned loom agent"
+else
+  abort_on_failure "6-real-cli-materialization" "failed" "real opencode2 CLI's ctx.agent.list() did not report a Weave-owned loom agent"
 fi
 
 print_summary

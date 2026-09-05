@@ -1,5 +1,40 @@
 # @weaveio/weave-adapter-opencode2
 
+## 0.1.2
+
+Real-CLI Loom check — closes the seam left open by 0.1.1.
+
+- 0.1.1's layer 5 proved Loom materializes and is visible via
+  `host.agent.list()` on the *embedded* `OpenCode.create({ plugins })`
+  path. The real `opencode2` CLI path was only proven up to
+  `setup()`/cleanup via marker files (layer 4); the CLI's own view of
+  agents was never asserted.
+- New **verify layer 6 — real-CLI agent materialization** closes that
+  seam. It reuses the same real-CLI trigger (`opencode2 run hi
+  --standalone --print-logs`) but against a new fixture whose
+  `plugin-wrapper/server.ts`, after the real adapter's `setup(ctx)`
+  resolves, calls `ctx.agent.list()` (envelope-unwrapped per A4) and
+  writes the observed agents to a marker JSON file. Layer 6 reads that
+  marker and asserts the CLI-observed `loom` entry's description starts
+  with the V2-package-local `WEAVE_OWNERSHIP_MARKER`.
+- The signal is strictly CLI-side: no embedded `OpenCode.create` host is
+  spawned; the observation comes from the exact `ctx` the real V2 loader
+  delivered to the plugin subprocess.
+- No new dependency on model output — assertions never depend on the
+  CLI's response text; the LLM call is only used to trigger project-
+  plugin loading (the harness's one sanctioned exception, unchanged
+  since 0.1.0 layer 4).
+- Layer 5 (embedded materialization) is preserved unchanged. `run.sh`
+  now advertises 9 layers total (up from 8) with the JSON summary and
+  numbering updated accordingly.
+- New fixture `verify/fixtures-layer6/` (sibling of `verify/fixtures/`,
+  intentionally outside it to avoid the real V2 CLI's ancestor-config
+  plugin merging picking up the layer-4 wrapper) — its own
+  `opencode.jsonc`, `plugin-wrapper/server.ts` (extended with a single
+  post-`setup` `ctx.agent.list()` call and a `location.marker.json`
+  probe for the learnings writeup), and an empty
+  `.weave/config.weave`.
+
 ## 0.1.1
 
 Agent materialization wired into `Plugin.define({ setup })`.

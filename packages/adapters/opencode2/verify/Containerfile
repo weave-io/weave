@@ -61,5 +61,6 @@ RUN if [ -d node_modules/opencode ]; then \
 # built adapter's ./server subpath export.
 COPY container-smoke.ts ./verify/container-smoke.ts
 COPY fixtures ./verify/fixtures
+COPY fixtures-layer6 ./verify/fixtures-layer6
 
 ENTRYPOINT ["/bin/bash"]
