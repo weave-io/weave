@@ -5,6 +5,7 @@
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
 - `CI` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
@@ -19,6 +20,7 @@
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 
 ## Config Files
 

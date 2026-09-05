@@ -1,0 +1,19 @@
+{
+  "name": "opencode2-verify-harness",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Ephemeral, V2-only container manifest for packages/adapters/opencode2/verify (Task E1). Pins the same four V2 SDK packages as packages/adapters/opencode2/package.json and links the pre-built adapter via a file: dependency. Must never depend on the V1 opencode package.",
+  "dependencies": {
+    "@opencode-ai/cli": "0.0.0-beta-19151",
+    "@opencode-ai/plugin": "0.0.0-beta-19151",
+    "@opencode-ai/sdk": "0.0.0-beta-19151",
+    "@opencode-ai/client": "0.0.0-beta-19151",
+    "mustache": "^4.2.0",
+    "neverthrow": "^8.2.0",
+    "zod": "^4.4.3",
+    "@weaveio/weave-adapter-opencode2": "file:./adapter"
+  },
+  "trustedDependencies": [
+    "@opencode-ai/cli"
+  ]
+}

@@ -5,6 +5,7 @@ on:
     tags:
       - 'cli@*'
       - 'opencode@*'
+      - 'opencode2@*'
       - 'claude-code@*'
 
 permissions:
@@ -36,8 +37,8 @@ jobs:
       - name: Validate tag format
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          if ! echo "$TAG" | grep -qE '^(cli|opencode|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Tag must match pattern: ^(cli|opencode|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$"
+          if ! echo "$TAG" | grep -qE '^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag must match pattern: ^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$"
             echo "::error::Got: $TAG"
             exit 1
           fi
@@ -80,6 +81,10 @@ jobs:
             opencode)
               echo "package_dir=packages/adapters/opencode" >> $GITHUB_OUTPUT
               echo "package_name=@weaveio/weave-adapter-opencode" >> $GITHUB_OUTPUT
+              ;;
+            opencode2)
+              echo "package_dir=packages/adapters/opencode2" >> $GITHUB_OUTPUT
+              echo "package_name=@weaveio/weave-adapter-opencode2" >> $GITHUB_OUTPUT
               ;;
             claude-code)
               echo "package_dir=packages/adapters/claude-code" >> $GITHUB_OUTPUT

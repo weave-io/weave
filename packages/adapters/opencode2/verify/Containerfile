@@ -1,0 +1,65 @@
+# Podman-authoritative verification container for the V2 (`opencode2`)
+# adapter's `verify:opencode2` harness (Task E1). Mirrors the Phase A
+# feasibility Containerfile's pins (`.weave/feasibility/opencode2/Containerfile`)
+# but installs the BUILT V2 adapter package alongside the pinned V2 SDK
+# packages, so layers 3–4 (embedded SDK integration + real plugin-loader)
+# exercise the actual adapter, not a throwaway minimal plugin.
+#
+# Docker compatibility is NOT supported — this image is built and run with
+# `podman build` / `podman run` only (see verify/run.sh). It must never
+# install, reference, or depend on the V1 `opencode` package/binary, and
+# must never import from packages/adapters/opencode/.
+FROM docker.io/oven/bun:1
+
+WORKDIR /work
+
+# The V2 CLI's binary is linked into node_modules/.bin rather than a global
+# bin directory; put it on PATH so `opencode2` resolves like a real install.
+ENV PATH="/work/node_modules/.bin:${PATH}"
+
+# Build context is `packages/adapters/opencode2/verify/` (see verify/run.sh,
+# which stages `verify/.build/adapter/` with the built dist + package.json
+# before invoking `podman build`).
+#
+# Container-local manifest: pins the four V2 SDK packages at the exact
+# approved version and links the built adapter package via a `file:`
+# dependency (populated below by `COPY .build/adapter ./adapter`). No V1
+# package name appears anywhere in this file.
+COPY container-package.json ./package.json
+
+# The pre-built V2 adapter: package.json + dist/ only (built on the host via
+# `bun run build` before `podman build` is invoked — see verify/run.sh).
+COPY .build/adapter ./adapter
+
+# No committed lockfile for this ephemeral verification manifest (unlike the
+# Phase A feasibility harness, which vendors bun.lock) — the container is
+# rebuilt from scratch on every `verify:opencode2` run against the exact
+# pinned versions in container-package.json, so a plain `bun install`
+# deterministically resolves the same four exact V2 versions without
+# needing a network-generated lockfile checked into source control.
+RUN bun install
+
+# Assert the opencode2 binary is on PATH.
+RUN test -x "$(command -v opencode2)" || (echo "FAIL: opencode2 binary not found on PATH" && exit 1)
+
+# Assert V1 `opencode` is absent and was never installed (layer 10).
+RUN if command -v opencode >/dev/null 2>&1; then \
+      echo "FAIL: V1 'opencode' binary is present in the image" && exit 1; \
+    else \
+      echo "OK: V1 'opencode' binary is absent"; \
+    fi
+RUN if [ -d node_modules/@weaveio/weave-adapter-opencode ] && [ ! -L node_modules/@weaveio/weave-adapter-opencode ]; then \
+      echo "FAIL: V1 adapter package '@weaveio/weave-adapter-opencode' is present in node_modules" && exit 1; \
+    fi
+RUN if [ -d node_modules/opencode ]; then \
+      echo "FAIL: V1 'opencode' package directory is present in node_modules" && exit 1; \
+    else \
+      echo "OK: no V1 package directory present"; \
+    fi
+
+# Container-side smoke script and the fixture opencode.jsonc referencing the
+# built adapter's ./server subpath export.
+COPY container-smoke.ts ./verify/container-smoke.ts
+COPY fixtures ./verify/fixtures
+
+ENTRYPOINT ["/bin/bash"]

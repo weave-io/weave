@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Points at `./plugin-wrapper` — a directory-shaped plugin entry (real V2
+  // loader requires `server.ts`/`index.ts` inside a directory; see A2 in
+  // `.weave/learnings/opencode2-adapter.md`) that imports and re-exports the
+  // real built adapter via its `@weaveio/weave-adapter-opencode2/server`
+  // subpath, wrapped only to write setup/cleanup marker files for
+  // deterministic assertion (see plugin-wrapper/server.ts header). A bare
+  // package-specifier plugin entry (e.g. the subpath string itself) was
+  // tried first and found to make the real loader attempt an npm-registry
+  // install rather than resolving the already-installed local package —
+  // this directory-relative form is what the real loader's
+  // `ConfigPluginSource.scan()` actually resolves against local state.
+  "plugins": ["./plugin-wrapper"]
+}

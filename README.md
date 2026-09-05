@@ -25,6 +25,13 @@ channels: `latest` (stable), `next`, and `nightly`.
 `@weaveio/weave-engine` are private workspace layers. Public builds bundle
 them; consumers do not install them directly.
 
+`@weaveio/weave-adapter-opencode2` (`packages/adapters/opencode2/`) is an
+independent, currently-private OpenCode V2 adapter package — it shares no
+code with `@weaveio/weave-adapter-opencode` and does not replace or sunset
+it. See [Spec 34](docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md),
+[ADR 0010](docs/adr/0010-opencode2-independent-adapter.md), and
+[`docs/opencode2-adapter.md`](docs/opencode2-adapter.md).
+
 ## Requirements
 
 - Bun 1.1 or newer for the CLI and local development.

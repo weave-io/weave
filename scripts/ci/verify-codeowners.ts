@@ -13,6 +13,7 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   ".github/workflows/ci.yml",
   ".github/workflows/deploy-docs.yml",
   ".github/workflows/publish-tag.yml",
+  ".github/workflows/verify-opencode2.yml",
   ".github/CODEOWNERS",
   ".github/dependabot.yml",
   "scripts/ci/verify-action-pins.ts",
@@ -27,6 +28,7 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "packages/config/package.json",
   "packages/cli/package.json",
   "packages/adapters/opencode/package.json",
+  "packages/adapters/opencode2/package.json",
   "packages/adapters/claude-code/package.json",
   "bun.lock",
   "config/api-extractor.base.json",
@@ -39,6 +41,9 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "packages/adapters/opencode/api-extractor.index.json",
   "packages/adapters/opencode/api-extractor.plugin.json",
   "packages/adapters/opencode/tsconfig.build.json",
+  "packages/adapters/opencode2/api-extractor.index.json",
+  "packages/adapters/opencode2/api-extractor.server.json",
+  "packages/adapters/opencode2/tsconfig.build.json",
   "packages/adapters/claude-code/api-extractor.json",
   "packages/adapters/claude-code/tsconfig.build.json",
   "scripts/constants.ts",
@@ -48,6 +53,7 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "packages/config/src/index.ts",
   "packages/engine/src/index.ts",
   "packages/adapters/opencode/src/index.ts",
+  "packages/adapters/opencode2/src/index.ts",
   "packages/adapters/claude-code/src/index.ts",
 ] as const;
 

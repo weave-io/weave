@@ -80,6 +80,53 @@
   - interface PodmanClient
   - type PodmanClientError
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode2/src/adapter.ts`
+  - class OpenCode2Adapter
+  - interface OpenCode2AdapterOptions
+  - type OpenCode2AdapterHarnessError
+- `packages/adapters/opencode2/src/errors.ts`
+  - function pluginContextInitError: (stage, cause?) => PluginContextInitError
+  - function agentReconciliationError: (agentId, stage, cause?) => AgentReconciliationError
+  - function foreignAgentCollision: (agentId, foreignAgent?) => ForeignAgentCollision
+  - function missingCatalogEntry: (agentId, modelId) => MissingCatalogEntry
+  - function catalogUnavailable: (stage, cause?) => CatalogUnavailable
+  - function skillListError: (cause?) => SkillListError
+  - _...17 more_
+- `packages/adapters/opencode2/src/model-resolution.ts`
+  - function resolveModelContext: (facade, descriptor) => ResultAsync<ResolvedModelContext, OpenCode2AdapterError>
+  - interface ResolvedModelContext
+  - interface ModelResolutionDescriptor
+- `packages/adapters/opencode2/src/plugin-context.ts`
+  - function fromLiveContext: (ctx) => PluginContextFacade
+  - interface PluginContextAgentFacade
+  - interface PluginContextCatalogFacade
+  - interface PluginContextSkillFacade
+  - interface PluginContextCommandFacade
+  - interface PluginContextSessionFacade
+  - _...3 more_
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade) => Promise<V2Cleanup>
+- `packages/adapters/opencode2/src/projection-helpers.ts`
+  - function renderPrompt: (template, context, string>>) => string
+  - function slugify: (input) => string
+  - function composeDelegatedPrompt: (effect) => string
+- `packages/adapters/opencode2/src/reconcile-agent.ts` — function reconcileAgent: (facade, agentInfo) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/run-workflow.ts`
+  - function buildProjectEffect: (facade, sessionID, signal) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>
+  - function runWorkflow: (facade, input, abortSignal?) => ResultAsync<WorkflowRunnerOutput, OpenCode2AdapterError>
+  - interface RunWorkflowInput
+- `packages/adapters/opencode2/src/runtime-command-projection.ts`
+  - function buildExecuteCallback: (facade, template, deliveryMode) => (input: V2CommandInvocation) => Promise<void>
+  - function registerCommands: (facade, templates, deliveryMode) => ResultAsync<readonly V2Registration[], OpenCode2AdapterError>
+  - type CommandDeliveryMode
+  - const DEFAULT_COMMAND_DELIVERY: CommandDeliveryMode
+- `packages/adapters/opencode2/src/skill-discovery.ts` — function loadAvailableSkillsV2: (facade) => Promise<SkillInfo[]>, function registerWeaveManagedSkills: (facade, skills) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/start-plan-execution.ts` — function startPlanExecution: (facade, input) => ResultAsync<V2SessionPromptOutput, OpenCode2AdapterError>, interface StartPlanExecutionInput
+- `packages/adapters/opencode2/src/tool-policy-mapping.ts` — function toPermissionRules: (policy) => V2Rule[], type ToolPolicyEffective
+- `packages/adapters/opencode2/src/translate-agent.ts`
+  - function translateAgent: (descriptor, resolvedModel) => V2AgentInfo
+  - interface TranslatableAgentDescriptor
+  - interface ResolvedAgentModel
+  - const WEAVE_OWNERSHIP_MARKER
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs

@@ -1,11 +1,11 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 142 lib files | 17 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,400 tokens. Without it, AI exploration would cost ~49,800 tokens. **Saves ~36,400 tokens per conversation.**
-> **Last scanned:** 2026-09-05 11:21 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 155 lib files | 19 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,500 tokens. Without it, AI exploration would cost ~53,400 tokens. **Saves ~39,000 tokens per conversation.**
+> **Last scanned:** 2026-09-05 12:05 — re-run after significant changes
 
 ---
 
@@ -91,6 +91,53 @@
   - interface PodmanClient
   - type PodmanClientError
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode2/src/adapter.ts`
+  - class OpenCode2Adapter
+  - interface OpenCode2AdapterOptions
+  - type OpenCode2AdapterHarnessError
+- `packages/adapters/opencode2/src/errors.ts`
+  - function pluginContextInitError: (stage, cause?) => PluginContextInitError
+  - function agentReconciliationError: (agentId, stage, cause?) => AgentReconciliationError
+  - function foreignAgentCollision: (agentId, foreignAgent?) => ForeignAgentCollision
+  - function missingCatalogEntry: (agentId, modelId) => MissingCatalogEntry
+  - function catalogUnavailable: (stage, cause?) => CatalogUnavailable
+  - function skillListError: (cause?) => SkillListError
+  - _...17 more_
+- `packages/adapters/opencode2/src/model-resolution.ts`
+  - function resolveModelContext: (facade, descriptor) => ResultAsync<ResolvedModelContext, OpenCode2AdapterError>
+  - interface ResolvedModelContext
+  - interface ModelResolutionDescriptor
+- `packages/adapters/opencode2/src/plugin-context.ts`
+  - function fromLiveContext: (ctx) => PluginContextFacade
+  - interface PluginContextAgentFacade
+  - interface PluginContextCatalogFacade
+  - interface PluginContextSkillFacade
+  - interface PluginContextCommandFacade
+  - interface PluginContextSessionFacade
+  - _...3 more_
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade) => Promise<V2Cleanup>
+- `packages/adapters/opencode2/src/projection-helpers.ts`
+  - function renderPrompt: (template, context, string>>) => string
+  - function slugify: (input) => string
+  - function composeDelegatedPrompt: (effect) => string
+- `packages/adapters/opencode2/src/reconcile-agent.ts` — function reconcileAgent: (facade, agentInfo) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/run-workflow.ts`
+  - function buildProjectEffect: (facade, sessionID, signal) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>
+  - function runWorkflow: (facade, input, abortSignal?) => ResultAsync<WorkflowRunnerOutput, OpenCode2AdapterError>
+  - interface RunWorkflowInput
+- `packages/adapters/opencode2/src/runtime-command-projection.ts`
+  - function buildExecuteCallback: (facade, template, deliveryMode) => (input: V2CommandInvocation) => Promise<void>
+  - function registerCommands: (facade, templates, deliveryMode) => ResultAsync<readonly V2Registration[], OpenCode2AdapterError>
+  - type CommandDeliveryMode
+  - const DEFAULT_COMMAND_DELIVERY: CommandDeliveryMode
+- `packages/adapters/opencode2/src/skill-discovery.ts` — function loadAvailableSkillsV2: (facade) => Promise<SkillInfo[]>, function registerWeaveManagedSkills: (facade, skills) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/start-plan-execution.ts` — function startPlanExecution: (facade, input) => ResultAsync<V2SessionPromptOutput, OpenCode2AdapterError>, interface StartPlanExecutionInput
+- `packages/adapters/opencode2/src/tool-policy-mapping.ts` — function toPermissionRules: (policy) => V2Rule[], type ToolPolicyEffective
+- `packages/adapters/opencode2/src/translate-agent.ts`
+  - function translateAgent: (descriptor, resolvedModel) => V2AgentInfo
+  - interface TranslatableAgentDescriptor
+  - interface ResolvedAgentModel
+  - const WEAVE_OWNERSHIP_MARKER
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -679,6 +726,7 @@
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
 - `CI` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
@@ -693,6 +741,7 @@
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 
 ## Config Files
 
@@ -730,6 +779,7 @@
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
+- `packages/adapters/opencode2/src/sdk-types.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
@@ -738,8 +788,7 @@
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
+- `packages/adapters/opencode2/src/__tests__/mock-plugin-context.ts` — imported by **8** files
 
 ## Import Map (who imports what)
 
@@ -759,19 +808,20 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 136 test files found
+> 147 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (3 workflows)
+## GitHub Actions (4 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Publish Package | push | 1 | — | — |
+| Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
 
 ### Agent Evals
 
@@ -794,7 +844,7 @@
 - `WEAVEIO_NPM_TOKEN`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/publish-tag.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/publish-tag.yml, .github/workflows/verify-opencode2.yml_
 _Generated by codesight-cicd-plugin_
 
 ---
