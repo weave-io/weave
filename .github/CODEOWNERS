@@ -22,4 +22,5 @@
 /packages/config/ @weave-io/release-maintainers
 /packages/engine/ @weave-io/release-maintainers
 /packages/adapters/opencode/ @weave-io/release-maintainers
+/packages/adapters/opencode2/ @weave-io/release-maintainers
 /packages/adapters/claude-code/ @weave-io/release-maintainers

@@ -30,6 +30,7 @@ const protectedRules = `
 /scripts/build-public-packages.ts ${OWNER}
 /packages/cli/ ${OWNER}
 /packages/adapters/opencode/ ${OWNER}
+/packages/adapters/opencode2/ ${OWNER}
 /packages/adapters/claude-code/ ${OWNER}
 `;
 

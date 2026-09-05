@@ -53,8 +53,8 @@ export const PRIVATE_WORKSPACE_NAMES = [
 export type PrivateWorkspaceName = (typeof PRIVATE_WORKSPACE_NAMES)[number];
 
 /**
- * The canonical release catalog: exactly three public packages, each releasing
- * on every channel. Adding a fourth package is a deliberate catalog change, not
+ * The canonical release catalog: exactly four public packages, each releasing
+ * on every channel. Adding a fifth package is a deliberate catalog change, not
  * a configuration detail.
  *
  * Note: @weaveio/weave-adapter-pi is developed and released separately from a
@@ -67,6 +67,10 @@ export const PUBLIC_PACKAGES = {
   },
   "@weaveio/weave-adapter-opencode": {
     directory: "packages/adapters/opencode",
+    channels: RELEASE_CHANNELS,
+  },
+  "@weaveio/weave-adapter-opencode2": {
+    directory: "packages/adapters/opencode2",
     channels: RELEASE_CHANNELS,
   },
   "@weaveio/weave-adapter-claude-code": {
@@ -84,6 +88,7 @@ export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 export const PUBLIC_PACKAGE_NAMES = [
   "@weaveio/weave-cli",
   "@weaveio/weave-adapter-opencode",
+  "@weaveio/weave-adapter-opencode2",
   "@weaveio/weave-adapter-claude-code",
 ] as const satisfies readonly PublicPackageName[];
 
@@ -95,6 +100,7 @@ export const PUBLIC_RUNTIME_EXTERNALS = [
   "@earendil-works/pi-tui",
   "@langchain/core",
   "@langchain/openai",
+  "@opencode-ai/client",
   "@opencode-ai/plugin",
   "@opencode-ai/sdk",
   "agentevals",
@@ -173,6 +179,28 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         config: "packages/adapters/opencode/api-extractor.plugin.json",
         output: "packages/adapters/opencode/dist/plugin.d.ts",
+      },
+    ],
+  },
+  "@weaveio/weave-adapter-opencode2": {
+    entries: [
+      {
+        source: "packages/adapters/opencode2/src/index.ts",
+        output: "packages/adapters/opencode2/dist/index.js",
+      },
+      {
+        source: "packages/adapters/opencode2/src/server.ts",
+        output: "packages/adapters/opencode2/dist/server.js",
+      },
+    ],
+    declarations: [
+      {
+        config: "packages/adapters/opencode2/api-extractor.index.json",
+        output: "packages/adapters/opencode2/dist/index.d.ts",
+      },
+      {
+        config: "packages/adapters/opencode2/api-extractor.server.json",
+        output: "packages/adapters/opencode2/dist/server.d.ts",
       },
     ],
   },

@@ -95,8 +95,7 @@ export interface CommandRegistrationError {
 }
 
 /**
- * One of `ctx.session.create/get/prompt/wait/generate/switchAgent/
- * switchModel/interrupt/rename` rejected.
+ * One of `ctx.session.create/get/prompt/wait/generate/switchAgent/switchModel/interrupt/rename` rejected.
  */
 export interface SessionOperationError {
   readonly type: "SessionOperationError";

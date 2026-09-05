@@ -234,6 +234,7 @@ export class PublicPackageBuilder {
     return this.runTypeScriptProjects([
       "packages/cli/tsconfig.build.json",
       "packages/adapters/opencode/tsconfig.build.json",
+      "packages/adapters/opencode2/tsconfig.build.json",
     ]);
   }
 
@@ -341,7 +342,15 @@ export class PublicPackageBuilder {
     declaration: PublicDeclarationBuild,
   ): ResultAsync<void, PublicPackageBuildError> {
     return this.fileSystem.readText(declaration.output).andThen((contents) => {
+      // Longer/more-specific package names must be replaced before shorter
+      // prefixes: "@weaveio/weave-adapter-opencode" is a substring of
+      // "@weaveio/weave-adapter-opencode2", so it must run second or it
+      // would corrupt the V2 replacement (leaving a stray "2").
       const sanitized = contents
+        .replaceAll(
+          "@weaveio/weave-adapter-opencode2",
+          "the OpenCode V2 adapter",
+        )
         .replaceAll("@weaveio/weave-adapter-opencode", "the OpenCode adapter")
         .replaceAll("@weaveio/weave-adapter-claude-code", "the Claude adapter")
         .replaceAll("@weaveio/weave-config", "the configuration package")
