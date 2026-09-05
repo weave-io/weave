@@ -28,8 +28,8 @@ them; consumers do not install them directly.
 `@weaveio/weave-adapter-opencode2` (`packages/adapters/opencode2/`) is an
 independent, currently-private OpenCode V2 adapter package — it shares no
 code with `@weaveio/weave-adapter-opencode` and does not replace or sunset
-it. See [Spec 33](docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md),
-[ADR 0008](docs/adr/0008-opencode2-independent-adapter.md), and
+it. See [Spec 34](docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md),
+[ADR 0010](docs/adr/0010-opencode2-independent-adapter.md), and
 [`docs/opencode2-adapter.md`](docs/opencode2-adapter.md).
 
 ## Requirements

@@ -11,9 +11,9 @@
  *
  * This file MUST NOT import anything from `packages/adapters/opencode/`
  * (the V1 adapter). The V1 and V2 adapters are independent, parallel
- * implementations — see `docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`.
+ * implementations — see `docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`.
  *
- * Only types the V2 adapter actively consumes (per Spec 33, tasks C3-C12)
+ * Only types the V2 adapter actively consumes (per Spec 34, tasks C3-C12)
  * are re-exported here. Unused SDK surface is intentionally omitted to keep
  * this boundary minimal and reviewable.
  */

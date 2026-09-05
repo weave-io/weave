@@ -1,7 +1,7 @@
 /**
  * `OpenCode2Adapter` — the V2 `HarnessAdapter` implementation.
  *
- * Implements Spec 33 (`docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`).
+ * Implements Spec 34 (`docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`).
  * Composes the Phase C modules built for tasks C4–C12 into the single
  * `HarnessAdapter` surface (`packages/engine/src/adapter.ts`) the engine's
  * bootstrap sequence calls:

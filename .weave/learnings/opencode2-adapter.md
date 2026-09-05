@@ -8,7 +8,7 @@
 - `.weave/` is gitignored but sibling directories are force-added; use `git add -f` for new feasibility files if committing later.
 
 ## A2
-- **Critical**: the real V2 loader (`ConfigPluginSource.scan()`) silently drops any configured `plugins` entry that resolves to a file. Only directories with `server.ts` or `index.ts` inside are accepted. `Host.resolve({ directory })` handles the entry point. This must be reflected in Spec 33 and the V2 adapter's `./server` subpath export.
+- **Critical**: the real V2 loader (`ConfigPluginSource.scan()`) silently drops any configured `plugins` entry that resolves to a file. Only directories with `server.ts` or `index.ts` inside are accepted. `Host.resolve({ directory })` handles the entry point. This must be reflected in Spec 34 and the V2 adapter's `./server` subpath export.
 - Only `opencode2 run "<msg>" --standalone` (and presumably the interactive TUI) triggers project-plugin loading. `serve`, `models`, `debug agents`, `plugin list` do NOT.
 - `opencode2 run --standalone` resolves to a free built-in default model `muse-spark-1.3-contributor-free` requiring no credentials — safe for unattended feasibility runs.
 - Bun's module resolution requires an ancestor `node_modules`; ephemeral run dirs must be descendants of the workspace where deps are installed (e.g. `/work/.proof-tmp/...`), not `/tmp` directly.
@@ -16,7 +16,7 @@
 ## A3
 - **Critical**: `OpenCode.create({ plugins })` does NOT run `setup()` immediately — plugins are stored in an SDK registry and activated lazily by the `PluginSupervisor` per-location. Use `host.plugin.awaitActivation()` (SDK client method / `POST /api/plugin/await-activation`) to force activation without opening a session or making an LLM call.
 - `host.close()` triggers cleanup (Promise-plugin's returned dispose function).
-- Adapter's embedded-mode init must call `awaitActivation()` if it needs setup effects (e.g. agent transforms) to be visible before returning from `init()`. Spec 33 must document this.
+- Adapter's embedded-mode init must call `awaitActivation()` if it needs setup effects (e.g. agent transforms) to be visible before returning from `init()`. Spec 34 must document this.
 
 ## A4
 - All 8 targeted `ctx` sub-APIs exist and are usable.

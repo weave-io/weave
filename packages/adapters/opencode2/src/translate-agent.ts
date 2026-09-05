@@ -1,7 +1,7 @@
 /**
  * Pure descriptor → V2 `Agent.Info` translation.
  *
- * Implements Spec 33 §3 (`docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`).
+ * Implements Spec 34 §3 (`docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`).
  * `translateAgent()` takes a Weave `AgentDescriptor` (`@weaveio/weave-engine`,
  * `packages/engine/src/compose.ts`) plus an already-resolved model, and
  * produces a V2 `Agent.Info`-shaped object. Model catalog resolution
@@ -16,7 +16,7 @@
  *
  * This module MUST NOT import from `packages/adapters/opencode/` (the V1
  * adapter) — the ownership marker and field mapping here are defined
- * independently for the V2 package. See Spec 33 and the module header in
+ * independently for the V2 package. See Spec 34 and the module header in
  * `./sdk-types.ts` for the sealed-SDK-boundary rule this module respects
  * (it imports only `./sdk-types` and `./tool-policy-mapping`, never
  * `@opencode-ai/*` directly).
@@ -32,7 +32,7 @@ import {
  * Ownership marker prepended to every Weave-managed V2 agent's `description`
  * field. Defined locally to this package only — do NOT import an
  * equivalent constant from `packages/adapters/opencode/`. The V1 and V2
- * adapters are independent, parallel implementations (Spec 33) and must not
+ * adapters are independent, parallel implementations (Spec 34) and must not
  * share this marker's value or source.
  */
 export const WEAVE_OWNERSHIP_MARKER = "[weave-managed]";

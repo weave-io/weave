@@ -1,7 +1,7 @@
 /**
  * Abstract tool policy → V2 `permissions: Rule[]` mapping.
  *
- * Implements Spec 33 §4 (`docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`).
+ * Implements Spec 34 §4 (`docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`).
  * V2 represents an agent's permissions as an ordered array of `Rule` values,
  * evaluated last-match-wins (later entries override earlier ones for
  * overlapping scope) rather than a singular `permission` field or a `tools`
@@ -36,7 +36,7 @@ export type ToolPolicyEffective = {
 
 /**
  * The fixed, documented dimension order in which rules are emitted.
- * Must match Spec 33 §4.3 exactly — do not reorder without a spec change.
+ * Must match Spec 34 §4.3 exactly — do not reorder without a spec change.
  */
 const DIMENSION_ORDER: readonly (keyof ToolPolicyEffective)[] = [
   "read",
@@ -49,7 +49,7 @@ const DIMENSION_ORDER: readonly (keyof ToolPolicyEffective)[] = [
 /**
  * Action scope pattern for each abstract capability dimension. These are
  * glob-style action identifiers scoped to the V2 tool/action categories
- * described in Spec 33 §4.3 — independently defined from any V1 tool-name
+ * described in Spec 34 §4.3 — independently defined from any V1 tool-name
  * table.
  */
 const DIMENSION_ACTION: Record<keyof ToolPolicyEffective, string> = {
@@ -63,13 +63,13 @@ const DIMENSION_ACTION: Record<keyof ToolPolicyEffective, string> = {
 /**
  * Resource scope for each dimension. All dimensions currently scope to every
  * resource (`*`) — a single abstract capability maps to exactly one `Rule`
- * entry per Spec 33 §4.3.
+ * entry per Spec 34 §4.3.
  */
 const DIMENSION_RESOURCE = "*";
 
 /**
  * Maps an abstract `ToolPolicyEffective` to an ordered array of V2
- * `PermissionRule` (`V2Rule`) entries per Spec 33 §4.3.
+ * `PermissionRule` (`V2Rule`) entries per Spec 34 §4.3.
  *
  * Pure function: deterministic, byte-identical output for identical input.
  * Emits exactly one rule per dimension, in the fixed order `read`, `write`,

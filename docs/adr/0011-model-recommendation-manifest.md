@@ -1,4 +1,4 @@
-# ADR 0009: Advisory Model Recommendation Manifest
+# ADR 0011: Advisory Model Recommendation Manifest
 
 **Status**: Proposed
 **Date**: 2026-09-05

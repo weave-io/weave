@@ -8,8 +8,8 @@ This adapter is a **separate, independent package** with no relation to any othe
 
 For the normative design and full rationale, see:
 
-- [Spec 33: OpenCode V2 Adapter (Independent Package)](specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md)
-- [ADR 0008: OpenCode V2 Adapter as a Separate Independent Package with Transform-Based Reconciliation](adr/0008-opencode2-independent-adapter.md)
+- [Spec 34: OpenCode V2 Adapter (Independent Package)](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md)
+- [ADR 0010: OpenCode V2 Adapter as a Separate Independent Package with Transform-Based Reconciliation](adr/0010-opencode2-independent-adapter.md)
 
 ## Install
 
@@ -70,7 +70,7 @@ Weave's abstract `tool_policy` has five dimensions (`read`, `write`, `execute`, 
 | `delegate` | Emits a permissive `Rule` scoped to subagent/delegation-invocation categories. | Emits a denying `Rule` scoped to the same delegation categories. | Emits an ask-mode `Rule` scoped to the same delegation categories. |
 | `network` | Emits a permissive `Rule` scoped to outbound-network-capable categories (fetch, webfetch-equivalent). | Emits a denying `Rule` scoped to the same network categories. | Emits an ask-mode `Rule` scoped to the same network categories. |
 
-Rules are emitted in a stable, documented order (`read`, `write`, `execute`, `delegate`, `network`), so if you or another plugin append further overrides after this adapter runs, last-match-wins semantics stay predictable. See [Spec 33, Section 4](specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md#4-abstract-tool-policy--v2-permissions-rule-mapping) for the full normative mapping and testing requirements.
+Rules are emitted in a stable, documented order (`read`, `write`, `execute`, `delegate`, `network`), so if you or another plugin append further overrides after this adapter runs, last-match-wins semantics stay predictable. See [Spec 34, Section 4](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md#4-abstract-tool-policy--v2-permissions-rule-mapping) for the full normative mapping and testing requirements.
 
 ## Verification
 
@@ -89,5 +89,5 @@ In embedded mode, after `awaitActivation()` resolves, call `host.client` RPC met
 
 ## Cross-references
 
-- [Spec 33: OpenCode V2 Adapter (Independent Package)](specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md) — normative design, full permission mapping, reconciliation semantics, and testing requirements.
-- [ADR 0008: OpenCode V2 Adapter as a Separate Independent Package with Transform-Based Reconciliation](adr/0008-opencode2-independent-adapter.md) — the decision record for packaging, lifecycle, and reconciliation-model questions.
+- [Spec 34: OpenCode V2 Adapter (Independent Package)](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) — normative design, full permission mapping, reconciliation semantics, and testing requirements.
+- [ADR 0010: OpenCode V2 Adapter as a Separate Independent Package with Transform-Based Reconciliation](adr/0010-opencode2-independent-adapter.md) — the decision record for packaging, lifecycle, and reconciliation-model questions.

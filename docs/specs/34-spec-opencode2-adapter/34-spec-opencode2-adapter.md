@@ -1,4 +1,4 @@
-# Spec 33: OpenCode V2 Adapter (Independent Package)
+# Spec 34: OpenCode V2 Adapter (Independent Package)
 
 **Status**: Active
 **Related package**: `@weaveio/weave-adapter-opencode2` at `packages/adapters/opencode2/` (implemented in Phase C of this spec's plan; not yet scaffolded as of this writing)

@@ -1,7 +1,7 @@
 /**
  * Transform-based agent reconciliation for the V2 adapter.
  *
- * Implements Spec 33 §5–§6 (`docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`).
+ * Implements Spec 34 §5–§6 (`docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`).
  * `reconcileAgent()` takes an already-translated `V2AgentInfo` (produced by
  * `./translate-agent`'s `translateAgent()`, marker already prepended to
  * `description`) and upserts it into the V2 runtime via
@@ -24,7 +24,7 @@
  * starts with `WEAVE_OWNERSHIP_MARKER` (`./translate-agent`).
  *
  * This module MUST NOT import from `packages/adapters/opencode/` (the V1
- * adapter) — see Spec 33 and `./errors.ts` header for the independent V2
+ * adapter) — see Spec 34 and `./errors.ts` header for the independent V2
  * error union rationale.
  */
 

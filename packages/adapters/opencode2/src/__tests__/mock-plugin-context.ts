@@ -7,7 +7,7 @@
  * re-exported by `../sdk-types`. This file must never import from, alias,
  * or resemble any mock in `packages/adapters/opencode/` — the V1 and V2
  * adapters are independent, parallel implementations (see
- * `docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`).
+ * `docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`).
  *
  * Every facade method call is recorded in `calls` so tests can assert on
  * call order and arguments without a live `opencode2` process.

@@ -148,7 +148,7 @@ agents (builtins and other plugins), not config-declared ones.
 before the probe plugin in the host's `plugins` array, with an explicit
 `await ctx.agent.list()` flush in between to guarantee ordering. This
 simulates a real foreign registrant (another plugin/tool), which is the
-scenario Spec 33's ownership-marker reconciliation actually needs to defend
+scenario Spec 34's ownership-marker reconciliation actually needs to defend
 against, and it correctly appears in the probe's `editor.list()`.
 
 Result: inside the probe plugin's `ctx.agent.transform()` callback,
@@ -179,4 +179,4 @@ upsert, and foreign same-named agents (registered via another plugin's own
 proceed on this point, with the caveat recorded in §5 that config-only
 foreign agents require cross-referencing `ctx.agent.list()` rather than
 relying solely on `editor.list()` inside `transform()` — this must be
-reflected in Spec 33's `reconcile-agent.ts` design (Task C7).
+reflected in Spec 34's `reconcile-agent.ts` design (Task C7).

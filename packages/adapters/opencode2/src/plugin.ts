@@ -2,7 +2,7 @@
  * `Plugin.define` entry point for the OpenCode V2 (`opencode2`) Weave
  * plugin.
  *
- * Implements Spec 33 (`docs/specs/33-spec-opencode2-adapter/33-spec-opencode2-adapter.md`)
+ * Implements Spec 34 (`docs/specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md`)
  * task C12. Wires together every prior Phase C module into the single
  * `Plugin.define({ id, setup })` shape the real V2 loader expects:
  *

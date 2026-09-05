@@ -2,8 +2,8 @@
 
 **Decision: GO**
 
-Spec 33 (opencode2 adapter) may proceed to Phase B, subject to the spec
-revisions enumerated in "Spec 33 must document" below.
+Spec 34 (opencode2 adapter) may proceed to Phase B, subject to the spec
+revisions enumerated in "Spec 34 must document" below.
 
 Plan: [`.weave/plans/opencode2-adapter.md`](../../../.weave/plans/opencode2-adapter.md)
 Full findings: [`.weave/learnings/opencode2-adapter.md`](../../../.weave/learnings/opencode2-adapter.md)
@@ -29,10 +29,10 @@ All seven criteria pass. No criterion failed. Decision is **GO**.
 
 ---
 
-## Spec 33 must document (normative revisions required before/alongside Phase B)
+## Spec 34 must document (normative revisions required before/alongside Phase B)
 
 The following runtime deviations from the assumed/documented V2 behavior must
-be codified as normative adapter behavior in Spec 33:
+be codified as normative adapter behavior in Spec 34:
 
 1. **Plugin entry point must be a directory.** `ConfigPluginSource.scan()`
    silently drops any `plugins` entry that resolves to a file — only
@@ -88,5 +88,5 @@ be codified as normative adapter behavior in Spec 33:
 
 This directory (`docs/artifacts/opencode2-feasibility/`) is the promoted,
 non-normative copy of the feasibility evidence, retained for discoverability
-from Spec 33. See [`README.md`](README.md) in this directory for
+from Spec 34. See [`README.md`](README.md) in this directory for
 classification details.
