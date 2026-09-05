@@ -19,6 +19,7 @@
  *     validated separately so runners can load them independently.
  */
 
+import type { TrajectorySummary } from "@weaveio/weave-core";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,16 @@ export const EXPECTED_OUTCOME_KINDS = [
   "task_completion",
   "delegation_chain",
   "tool_call",
+  "harness_trajectory",
 ] as const;
+
+/**
+ * Upper bound (in seconds) for `harness_trajectory.max_duration_seconds`.
+ *
+ * Keeps trajectory case wall-clock budgets bounded so a misconfigured
+ * fixture cannot request an unbounded sandbox session.
+ */
+export const MAX_TRAJECTORY_DURATION_SECONDS = 600;
 
 export type ExpectedOutcomeKind = (typeof EXPECTED_OUTCOME_KINDS)[number];
 
@@ -111,7 +121,7 @@ export const EVAL_SUITE_REGISTRY: readonly EvalSuiteMetadata[] = [
   {
     suiteId: "loom-routing",
     shortAgentFilter: "loom",
-    allowedExpectedOutcomeKinds: ["agent_routing"],
+    allowedExpectedOutcomeKinds: ["agent_routing", "harness_trajectory"],
     allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
     allowedContentRoles: ["user", "assistant"],
   },
@@ -201,6 +211,10 @@ export function isKnownEvalSuiteId(suiteId: string): boolean {
  *                        in the expected order (Tapestry delegation cases).
  * - `tool_call`        — verify that a specific tool was called (optional
  *                        payload match) at some point in the transcript.
+ * - `harness_trajectory` — verify a real harness session's observed event
+ *                          stream (spawns, tool calls, duration, sandbox
+ *                          completion) rather than assistant text alone.
+ *                          See docs/specs/33-spec-harness-trajectory-evals.
  */
 export const ExpectedOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -236,6 +250,27 @@ export const ExpectedOutcomeSchema = z.discriminatedUnion("kind", [
     tool_name: IdentifierSchema,
     /** Optional JSON payload that must be present in the tool call arguments. */
     payload_contains: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    kind: z.literal("harness_trajectory"),
+    /** Ordered list of child agent names the harness is expected to spawn. */
+    expected_spawns: z.array(IdentifierSchema),
+    /** Tool names the harness is expected to invoke at least once. */
+    expected_tools: z.array(IdentifierSchema),
+    /**
+     * Wall-clock budget (seconds) for the whole session. Bounded to
+     * `MAX_TRAJECTORY_DURATION_SECONDS` so a misconfigured fixture cannot
+     * request an unbounded sandbox session.
+     */
+    max_duration_seconds: z
+      .number()
+      .positive()
+      .max(MAX_TRAJECTORY_DURATION_SECONDS),
+    /**
+     * Symbolic reference to an adapter-owned sandbox profile (e.g.
+     * `"opencode-default"`), not a literal Containerfile path.
+     */
+    sandbox_profile: IdentifierSchema,
   }),
 ]);
 
@@ -1079,6 +1114,17 @@ export interface CaseResultSummary {
     /** The declared source of the explanation text. */
     source: "score_bucket_label" | "structured_signal" | "rubric_template";
   };
+  /**
+   * Publishable trajectory summary fields for `harness_trajectory` cases.
+   *
+   * Populated only for cases executed via a `TrajectoryRunner` (see
+   * `executeTrajectoryCase` in `loom-routing-runner.ts`). Text-only cases
+   * leave this field `undefined`. Contains only the four allowlisted
+   * publishable fields defined by `TrajectorySummarySchema` in
+   * `@weaveio/weave-core` — never the full event stream or raw artifact
+   * reference, which remain local-only.
+   */
+  trajectorySummary?: TrajectorySummary;
 }
 
 /**
@@ -1371,6 +1417,11 @@ export interface BundleScoreFile {
       text: string;
       source: "score_bucket_label" | "structured_signal" | "rubric_template";
     };
+    /**
+     * Publishable trajectory summary (four allowlisted fields only). Present
+     * only for `harness_trajectory` cases; absent for text-only cases.
+     */
+    trajectorySummary?: TrajectorySummary;
   }>;
   /** Aggregate pass/fail totals. */
   totals: {

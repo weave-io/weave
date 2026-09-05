@@ -91,6 +91,7 @@ function makeValidSuiteSummaryEntry(overrides: Record<string, unknown> = {}) {
     passedCases: 8,
     failedCases: 2,
     suiteGreen: false,
+    hasRuntimeVerifiedCases: false,
     cases: [makeValidPublicCaseEntry()],
     ...overrides,
   };
@@ -814,6 +815,54 @@ describe("PublicCaseEntrySchema", () => {
     delete (entry as Record<string, unknown>).explanation;
     expect(PublicCaseEntrySchema.safeParse(entry).success).toBe(true);
   });
+
+  it("accepts a case entry with a valid trajectorySummary", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({
+        trajectorySummary: {
+          harnessDelegatedCorrectly: true,
+          observedSpawns: ["shuttle"],
+          observedToolCalls: 3,
+          harnessCompletedWithoutError: true,
+        },
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("case entry without trajectorySummary field is valid (text-only cases)", () => {
+    const entry = makeValidPublicCaseEntry();
+    delete (entry as Record<string, unknown>).trajectorySummary;
+    expect(PublicCaseEntrySchema.safeParse(entry).success).toBe(true);
+  });
+
+  it("rejects a trajectorySummary missing a required field", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({
+        trajectorySummary: {
+          harnessDelegatedCorrectly: true,
+          observedSpawns: ["shuttle"],
+          harnessCompletedWithoutError: true,
+        },
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a trajectorySummary with an unknown extra field (closed allowlist)", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({
+        trajectorySummary: {
+          harnessDelegatedCorrectly: true,
+          observedSpawns: ["shuttle"],
+          observedToolCalls: 3,
+          harnessCompletedWithoutError: true,
+          rawEvents: [{ type: "tool_call", args: { secret: "x" } }],
+        },
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -856,6 +905,32 @@ describe("SuiteSummaryEntrySchema", () => {
       makeValidSuiteSummaryEntry({ schemaVersion: -1 }),
     );
     expect(result.success).toBe(false);
+  });
+
+  it("requires hasRuntimeVerifiedCases field", () => {
+    const entry = makeValidSuiteSummaryEntry();
+    delete (entry as Record<string, unknown>).hasRuntimeVerifiedCases;
+    const result = SuiteSummaryEntrySchema.safeParse(entry);
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts hasRuntimeVerifiedCases true when a trajectory case is present", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(
+      makeValidSuiteSummaryEntry({
+        hasRuntimeVerifiedCases: true,
+        cases: [
+          makeValidPublicCaseEntry({
+            trajectorySummary: {
+              harnessDelegatedCorrectly: true,
+              observedSpawns: ["shuttle"],
+              observedToolCalls: 1,
+              harnessCompletedWithoutError: true,
+            },
+          }),
+        ],
+      }),
+    );
+    expect(result.success).toBe(true);
   });
 
   it("rejects empty suite name", () => {

@@ -153,6 +153,28 @@ export {
 } from "./skill-discovery.js";
 
 // ---------------------------------------------------------------------------
+// Harness trajectory eval runner (Spec 33)
+// ---------------------------------------------------------------------------
+
+export { parseTrajectoryEvents } from "./trajectory/log-parser.js";
+export {
+  DefaultLogParser,
+  EphemeralWorkspaceFactory,
+  type LogParser,
+  OpenCodeTrajectoryRunner,
+  type OpenCodeTrajectoryRunnerOptions,
+  type PromptProvider as TrajectoryPromptProvider,
+  resolveSandboxProfileImage,
+  type TrajectoryWorkspaceFactory,
+} from "./trajectory/opencode-trajectory-runner.js";
+export {
+  BunPodmanClient,
+  type PodmanClient,
+  type PodmanClientError,
+  type PodmanRunResult,
+} from "./trajectory/podman-client.js";
+
+// ---------------------------------------------------------------------------
 // OpenCode plugin entry point
 // ---------------------------------------------------------------------------
 

@@ -45,6 +45,7 @@
   "devDependencies": {
     "@types/mustache": "^4.2.6",
     "@weaveio/weave-adapter-claude-code": "workspace:*",
+    "@weaveio/weave-adapter-opencode": "workspace:*",
     "@weaveio/weave-config": "workspace:*",
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
