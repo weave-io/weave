@@ -1,0 +1,15 @@
+# Minimal fixture Weave config for the layer-5 agent-materialization smoke.
+#
+# The V2 adapter loads this via `@weaveio/weave-config`'s `loadConfig()` when
+# `setup(ctx)` runs. An empty config is enough: `loadConfig` merges the built-in
+# agents (Loom, Shuttle, Weft, Warp, ...) from `@weaveio/weave-config`'s
+# `builtins.ts`, so the resulting materialization plan produces at least a
+# `loom` descriptor. The smoke test asserts `host.agent.list()` contains a
+# `loom` entry whose description starts with the V2-package-local ownership
+# marker.
+#
+# Loom is `mode primary` with `models ["claude-sonnet-4-5"]`. The embedded
+# container catalog does not carry that model — but `resolveModelContext`
+# only fail-fast rejects subagents (see model-resolution.ts). Primary agents
+# fall back to the harness `systemDefault`, so materialization still succeeds
+# in the container.

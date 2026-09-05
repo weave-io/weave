@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 155 lib files | 19 env vars | 6 middleware | 0% test coverage
 > **Token savings:** this file is ~14,500 tokens. Without it, AI exploration would cost ~53,400 tokens. **Saves ~39,000 tokens per conversation.**
-> **Last scanned:** 2026-09-05 12:30 — re-run after significant changes
+> **Last scanned:** 2026-09-05 16:29 — re-run after significant changes
 
 ---
 
@@ -115,7 +115,7 @@
   - interface PluginContextCommandFacade
   - interface PluginContextSessionFacade
   - _...3 more_
-- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade) => Promise<V2Cleanup>
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade, options) => Promise<V2Cleanup>, interface SetupWeavePluginOptions
 - `packages/adapters/opencode2/src/projection-helpers.ts`
   - function renderPrompt: (template, context, string>>) => string
   - function slugify: (input) => string
