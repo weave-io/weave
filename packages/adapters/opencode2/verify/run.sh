@@ -12,7 +12,11 @@
 #      [weavePlugin] })` inside the Podman container.
 #   4. Real `opencode2` plugin-loader test — loads the built V2 adapter via
 #      a fixture `opencode.jsonc`, inside the Podman container.
-#   5. (Covered by layer 1) Assertions over the materialized V2 agent shape
+#   5. Agent-materialization test — boots `OpenCode.create({ plugins: [weavePlugin] })`
+#      against a fixture project directory with `.weave/config.weave`, then
+#      asserts `host.agent.list()` contains a Weave-owned `loom` entry. Runs
+#      inside the Podman container.
+#   6. (Covered by layer 1) Assertions over the materialized V2 agent shape
 #      — `system`, structured model ref, ordered `permissions`, `mode`, and
 #      the V2-package-local ownership marker — live in
 #      `src/__tests__/translate-agent.test.ts` and `src/__tests__/adapter.test.ts`.
@@ -171,6 +175,13 @@ if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures "${IMAGE_TAG}" -c 'cd /w
   abort_on_failure "4-real-loader" "passed" "opencode2 run --standalone exited 0 against the fixture opencode.jsonc"
 else
   abort_on_failure "4-real-loader" "failed" "real opencode2 plugin-loader smoke test failed"
+fi
+
+echo "==> Layer 5/8: agent-materialization test (Loom via host.agent.list())"
+if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures/agent-materialization "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts agent-materialization'; then
+  abort_on_failure "5-agent-materialization" "passed" "host.agent.list() reports a Weave-owned loom agent"
+else
+  abort_on_failure "5-agent-materialization" "failed" "host.agent.list() did not report a Weave-owned loom agent"
 fi
 
 print_summary

@@ -142,11 +142,110 @@ async function runRealLoader(): Promise<number> {
   return 0;
 }
 
+/**
+ * Layer 5 — Agent Materialization.
+ *
+ * Boots the embedded SDK path with `OpenCode.create({ plugins: [weavePlugin] })`
+ * against a fixture project directory containing an empty `.weave/config.weave`
+ * — enough for `@weaveio/weave-config`'s built-in agents (Loom, Shuttle, ...)
+ * to be composed into the materialization plan. `awaitActivation()` forces the
+ * plugin's `setup()` to run, which then calls `adapter.spawnSubagent()` for
+ * every plan agent.
+ *
+ * Assertions (via `host.agent.list()`, unwrapped per A4):
+ *   1. `data` is non-empty.
+ *   2. At least one entry has `name === "loom"`.
+ *   3. That entry's `description` starts with the V2-package-local
+ *      `WEAVE_OWNERSHIP_MARKER` — imported from the package's `./server`
+ *      subpath so this check verifies the exact same constant Weave writes.
+ *
+ * Never sends a prompt / triggers a real LLM call.
+ */
+async function runAgentMaterialization(): Promise<number> {
+  const fixtureDir =
+    process.env.FIXTURE_DIR ??
+    `${process.cwd()}/verify/fixtures/agent-materialization`;
+
+  const marker = await Bun.file(`${fixtureDir}/.weave/config.weave`).exists();
+  if (!marker) {
+    console.error(
+      `FAIL: agent-materialization — fixture ${fixtureDir}/.weave/config.weave not found`,
+    );
+    return 1;
+  }
+
+  // The embedded host reads `location.directory` from `process.cwd()` at
+  // `OpenCode.create` time. Change into the fixture before creating.
+  process.chdir(fixtureDir);
+
+  const { OpenCode } = await import("@opencode-ai/sdk");
+  const weavePluginModule = await import(
+    "@weaveio/weave-adapter-opencode2/server"
+  );
+  const weavePlugin = weavePluginModule.default;
+  const WEAVE_OWNERSHIP_MARKER =
+    weavePluginModule.WEAVE_OWNERSHIP_MARKER as string;
+
+  if (typeof WEAVE_OWNERSHIP_MARKER !== "string" || !WEAVE_OWNERSHIP_MARKER) {
+    console.error(
+      "FAIL: agent-materialization — WEAVE_OWNERSHIP_MARKER not exported from '@weaveio/weave-adapter-opencode2/server'",
+    );
+    return 1;
+  }
+
+  const host = await OpenCode.create({ plugins: [weavePlugin] });
+  try {
+    await host.plugin.awaitActivation();
+
+    // A4 finding: `agent.list()` returns `{ location, data }`. Unwrap `.data`.
+    const envelope = await host.agent.list();
+    const data =
+      (
+        envelope as unknown as {
+          data?: Array<{ name?: string; description?: string }>;
+        }
+      ).data ?? [];
+
+    if (data.length === 0) {
+      console.error(
+        "FAIL: agent-materialization — host.agent.list() returned empty data",
+      );
+      return 1;
+    }
+
+    const loom = data.find((entry) => entry.name === "loom");
+    if (!loom) {
+      console.error(
+        `FAIL: agent-materialization — no agent named "loom" found; got: ${data
+          .map((e) => e.name)
+          .join(", ")}`,
+      );
+      return 1;
+    }
+
+    const description = loom.description ?? "";
+    if (!description.startsWith(WEAVE_OWNERSHIP_MARKER)) {
+      console.error(
+        `FAIL: agent-materialization — loom description does not start with WEAVE_OWNERSHIP_MARKER; got: ${JSON.stringify(description)}`,
+      );
+      return 1;
+    }
+
+    console.log(
+      `OK: agent-materialization — host.agent.list() contains ${data.length} agent(s); "loom" is Weave-owned`,
+    );
+    return 0;
+  } finally {
+    await host.close();
+  }
+}
+
 async function main(): Promise<number> {
   if (mode === "embedded") return runEmbedded();
   if (mode === "real-loader") return runRealLoader();
+  if (mode === "agent-materialization") return runAgentMaterialization();
   console.error(
-    `Unknown mode "${mode}" — expected "embedded" or "real-loader"`,
+    `Unknown mode "${mode}" — expected "embedded", "real-loader", or "agent-materialization"`,
   );
   return 1;
 }

@@ -11,3 +11,4 @@
 export { OpenCode2Adapter } from "./adapter.js";
 export type { OpenCode2AdapterError } from "./errors.js";
 export { default } from "./plugin.js";
+export { WEAVE_OWNERSHIP_MARKER } from "./translate-agent.js";

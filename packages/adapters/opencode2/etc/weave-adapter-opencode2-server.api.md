@@ -57,6 +57,9 @@ export type OpenCode2AdapterError = PluginContextInitError | AgentReconciliation
 const plugin: Plugin_2.Plugin;
 export default plugin;
 
+// @public
+export const WEAVE_OWNERSHIP_MARKER = "[weave-managed]";
+
 // (No @packageDocumentation comment for this package)
 
 ```

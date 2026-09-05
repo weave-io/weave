@@ -104,7 +104,7 @@
   - interface PluginContextCommandFacade
   - interface PluginContextSessionFacade
   - _...3 more_
-- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade) => Promise<V2Cleanup>
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade, options) => Promise<V2Cleanup>, interface SetupWeavePluginOptions
 - `packages/adapters/opencode2/src/projection-helpers.ts`
   - function renderPrompt: (template, context, string>>) => string
   - function slugify: (input) => string
