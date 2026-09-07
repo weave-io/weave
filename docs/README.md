@@ -23,6 +23,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
 | [OpenCode V2 Adapter](opencode2-adapter.md) | `@weaveio/weave-adapter-opencode2` — independent V2 adapter package (no shared code with V1); see [Spec 34](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) and [ADR 0010](adr/0010-opencode2-independent-adapter.md) |
+| [OpenCode Active-Agent Proofs](active-agent-proofs.md) | One-command proofs that the locally-built V1, V2, and Claude Code adapters make `loom` the active agent in a real harness environment |
 | [Claude Code Adapter Guide](adapters/claude-code.md) | Two-plugin model, installation, tool policy mapping, model aliases, edge cases |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
 | [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |

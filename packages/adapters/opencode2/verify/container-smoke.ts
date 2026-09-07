@@ -416,13 +416,125 @@ async function runRealCliMaterialization(): Promise<number> {
   return 0;
 }
 
+/**
+ * Extended active-agent proof (invoked by scripts/proof/opencode-v2-active-agent.sh).
+ *
+ * Reuses the layer-6 marker-file plumbing but asserts a strictly larger set
+ * of claims than `runRealCliMaterialization` — bounded by what V2's
+ * `ctx.agent.list()` actually exposes (see issue #165 for the introspection
+ * gap that limits us to primary-mode agents and a summary shape).
+ *
+ * Claims that ARE checkable via V2's current surface:
+ *
+ *   A. setup + cleanup markers present (plugin lifecycle ran)
+ *   B. ctx.agent.list() succeeded, non-empty
+ *   C. Both primary-mode Weave-owned builtins observed: `loom` AND
+ *      `tapestry` (the only Weave agents whose mode is `primary`; all
+ *      other builtins are `subagent`, which V2's ctx.agent.list() does
+ *      not surface — see issue #165)
+ *   D. Both are Weave-owned (description starts with V2 ownership marker)
+ *   E. Both have a `mode` string reported by the CLI
+ *
+ * Claims that CANNOT be checked via `ctx.agent.list()` today (V2 gap;
+ * covered by unit tests in src/__tests__/ against MockPluginContext):
+ *   - subagent-mode Weave agents (shuttle, pattern, thread, spindle,
+ *     weft, warp) — not returned by ctx.agent.list()
+ *   - tool policy → permission mapping — .permission not present in the
+ *     ctx.agent.list() summary shape
+ *   - prompt composition — .prompt not present in the summary shape
+ *
+ * When V2 grows a resolved-config dump equivalent to V1's
+ * `opencode debug config` (issue #165), these unchecked claims become
+ * observable and this function will be extended to assert them here.
+ */
+async function runActiveAgentProofExtended(): Promise<number> {
+  // Piggyback on the base run — same trigger, same fixture, same marker
+  // shape (extended additively).
+  const base = await runRealCliMaterialization();
+  if (base !== 0) return base;
+
+  const markerDir =
+    process.env.WEAVE_VERIFY_MARKER_DIR ?? "/tmp/weave-verify-markers-layer6";
+  const parsed = (await Bun.file(
+    `${markerDir}/agent-list.marker.json`,
+  ).json()) as {
+    error: string | null;
+    count: number;
+    agents: Array<{
+      name: string | null;
+      description: string | null;
+      mode: string | null;
+      permissionKeys: string[] | null;
+      promptLength: number | null;
+      promptContainsLoomHeader: boolean | null;
+      promptContainsDelegation: boolean | null;
+    }>;
+  };
+
+  const { WEAVE_OWNERSHIP_MARKER } = (await import(
+    "@weaveio/weave-adapter-opencode2/server"
+  )) as { WEAVE_OWNERSHIP_MARKER?: string };
+  if (typeof WEAVE_OWNERSHIP_MARKER !== "string" || !WEAVE_OWNERSHIP_MARKER) {
+    console.error(
+      "FAIL: extended proof — WEAVE_OWNERSHIP_MARKER not exported from '@weaveio/weave-adapter-opencode2/server'",
+    );
+    return 1;
+  }
+
+  // V2's ctx.agent.list() surfaces only primary-mode agents. Weave's
+  // primary-mode builtins are exactly loom + tapestry.
+  const expectedPrimaryBuiltins = ["loom", "tapestry"];
+  const byName = new Map<string, (typeof parsed.agents)[number]>();
+  for (const a of parsed.agents) {
+    if (a.name !== null) byName.set(a.name, a);
+  }
+
+  const missing = expectedPrimaryBuiltins.filter((n) => !byName.has(n));
+  if (missing.length > 0) {
+    console.error(
+      `FAIL: extended proof — primary-mode Weave builtins missing from CLI ctx.agent.list(): ${missing.join(", ")}. Observed: ${[...byName.keys()].join(", ")}`,
+    );
+    return 1;
+  }
+
+  for (const name of expectedPrimaryBuiltins) {
+    const agent = byName.get(name);
+    if (!agent) {
+      console.error(
+        `FAIL: extended proof — ${name} missing (unreachable after presence check)`,
+      );
+      return 1;
+    }
+    const description = agent.description ?? "";
+    if (!description.startsWith(WEAVE_OWNERSHIP_MARKER)) {
+      console.error(
+        `FAIL: extended proof — ${name} description does not start with WEAVE_OWNERSHIP_MARKER; got: ${JSON.stringify(description)}`,
+      );
+      return 1;
+    }
+    if (typeof agent.mode !== "string" || agent.mode.length === 0) {
+      console.error(
+        `FAIL: extended proof — ${name}.mode is not a non-empty string; got: ${JSON.stringify(agent.mode)}`,
+      );
+      return 1;
+    }
+  }
+
+  console.log(
+    `OK: extended proof — both primary-mode Weave builtins (${expectedPrimaryBuiltins.join(", ")}) present, Weave-owned, and mode-labelled in real CLI ctx.agent.list() (${parsed.count} total agents including opencode2 builtins)`,
+  );
+  return 0;
+}
+
 async function main(): Promise<number> {
   if (mode === "embedded") return runEmbedded();
   if (mode === "real-loader") return runRealLoader();
   if (mode === "agent-materialization") return runAgentMaterialization();
   if (mode === "real-cli-materialization") return runRealCliMaterialization();
+  if (mode === "active-agent-proof-extended")
+    return runActiveAgentProofExtended();
   console.error(
-    `Unknown mode "${mode}" — expected "embedded", "real-loader", "agent-materialization", or "real-cli-materialization"`,
+    `Unknown mode "${mode}" — expected "embedded", "real-loader", "agent-materialization", "real-cli-materialization", or "active-agent-proof-extended"`,
   );
   return 1;
 }
