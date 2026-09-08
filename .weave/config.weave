@@ -28,7 +28,6 @@ category core {
   description "DSL lexer, parser, AST, Zod schemas — @weave/core"
   models ["claude-sonnet-4-5"]
   patterns ["packages/core/**"]
-  temperature 0.1
   prompt_append "This is the parsing and type layer. Preserve neverthrow Result return types, keep all exported types Zod-inferred, and maintain the lexer/parser/validate separation."
 
   tool_policy {
@@ -44,7 +43,6 @@ category engine {
   description "WeaveRunner, HarnessAdapter, config loader — @weave/engine"
   models ["claude-sonnet-4-5"]
   patterns ["packages/engine/**"]
-  temperature 0.1
   prompt_append "This is the orchestration layer. The runner must stay adapter-agnostic. All fallible paths return Result types. Pino logger is the only logging mechanism."
 
   tool_policy {
@@ -60,7 +58,6 @@ category adapters {
   description "Harness adapter implementations — @weave/adapter-*"
   models ["claude-sonnet-4-5"]
   patterns ["packages/adapters/**"]
-  temperature 0.2
   prompt_append "Each adapter implements HarnessAdapter exactly. No adapter should import from another adapter. Keep harness-specific logic fully contained."
 
   tool_policy {
@@ -76,7 +73,6 @@ category docs {
   description "Specs, ADRs, proof artifacts, and guides"
   models ["claude-sonnet-4-5"]
   patterns ["docs/**", "*.md"]
-  temperature 0.2
   prompt_append "Documentation is a first-class deliverable. Every non-trivial change must be reflected in docs/. Specs live in docs/specs/, ADRs in docs/. Cross-link liberally."
 
   tool_policy {
@@ -92,7 +88,6 @@ category scripts {
   description "Build scripts, validation tooling, and dev utilities"
   models ["claude-sonnet-4-5"]
   patterns ["scripts/**"]
-  temperature 0.1
   prompt_append "Scripts run with Bun. Use Bun.file() for I/O, never Node.js fs. CLI entry points convert Result to process.exit at the boundary."
 
   tool_policy {

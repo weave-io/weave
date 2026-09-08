@@ -73,7 +73,6 @@ agent loom {
   prompt_file "loom.md"
   models ["claude-sonnet-4-5"]
   mode primary
-  temperature 0.1
 
   tool_policy {
     read allow
@@ -90,7 +89,6 @@ agent tapestry {
   prompt_file "tapestry.md"
   models ["claude-sonnet-4-5"]
   mode primary
-  temperature 0.1
 
   tool_policy {
     read allow
@@ -106,7 +104,6 @@ agent shuttle {
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.2
 
   tool_policy {
     read allow
@@ -129,7 +126,6 @@ agent pattern {
   prompt_file "pattern.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.3
 
   tool_policy {
     read allow
@@ -151,7 +147,6 @@ agent thread {
   prompt_file "thread.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.0
 
   tool_policy {
     read allow
@@ -173,7 +168,6 @@ agent spindle {
   prompt_file "spindle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.1
 
   tool_policy {
     read allow
@@ -195,7 +189,6 @@ agent weft {
   prompt_file "weft.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.1
 
   tool_policy {
     read allow
@@ -217,7 +210,6 @@ agent warp {
   prompt_file "warp.md"
   models ["claude-sonnet-4-5"]
   mode subagent
-  temperature 0.1
 
   tool_policy {
     read allow

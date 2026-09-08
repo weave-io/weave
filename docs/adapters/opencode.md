@@ -206,6 +206,21 @@ same read-only RPC but do not load the CLI contribution.
 The periodic transport check refreshes the panel without closing an open task
 dialog. Session invalidation and component disposal can close that dialog.
 
+## Sampling defaults
+
+Built-in agents and this repository's category config leave temperature unset.
+This lets the provider use its model defaults instead of sending sampling
+overrides that some models reject. Global and project temperature settings
+still override these defaults; remove those settings as well when diagnosing
+a provider rejection. Model choices and reasoning variants are unchanged.
+
+A live diagnostic on OpenCode `0.0.0-beta-19271` reproduced HTTP 400 with
+Loom on `openai/gpt-5.6-sol#high`, while Build on the same model succeeded.
+After removing the built-in and global temperature overrides and rebuilding,
+Loom returned `OK` in the same diagnostic session. The provider's detailed
+rejection body was not available, so this verifies the workaround rather than
+the exact rejected parameter. Weave does not configure `top_p`/`topP`.
+
 ## Native delegation
 
 Weave uses OpenCode's native `subagent` action. It does not create a parallel
