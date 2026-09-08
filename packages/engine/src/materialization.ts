@@ -5,6 +5,9 @@ import {
   type AgentDescriptor,
   type ComposeError,
   composeAgentDescriptor,
+  defaultPromptFileReader,
+  type PromptFileReader,
+  type PromptFileReadFailure,
 } from "./compose.js";
 import {
   type CategoryShuttleConflictError,
@@ -21,6 +24,8 @@ import {
 export interface MaterializationInput {
   /** Fully resolved and validated Weave configuration. */
   config: WeaveConfig;
+  /** Read each prompt path once per call, including shared failures. */
+  promptFileReader?: PromptFileReader;
 }
 
 /** A composed agent descriptor paired with its deterministic materialization key. */
@@ -80,6 +85,24 @@ export type MaterializationError =
       cause: ComposeError;
     };
 
+/** One instance per materialization, so concurrent descriptors share reads. */
+class MaterializationPromptReader implements PromptFileReader {
+  private readonly reads = new Map<
+    string,
+    ResultAsync<string, PromptFileReadFailure>
+  >();
+
+  constructor(private readonly reader: PromptFileReader) {}
+
+  read(path: string): ResultAsync<string, PromptFileReadFailure> {
+    const cached = this.reads.get(path);
+    if (cached !== undefined) return cached;
+    const pending = this.reader.read(path);
+    this.reads.set(path, pending);
+    return pending;
+  }
+}
+
 function filterDisabled(
   entries: [string, AgentConfig][],
   disabled: readonly string[],
@@ -103,6 +126,9 @@ export function materializeAgents(
 ): ResultAsync<MaterializationPlan, never> {
   const { config } = input;
   const disabled = config.disabled.agents;
+  const promptFileReader = new MaterializationPromptReader(
+    input.promptFileReader ?? defaultPromptFileReader,
+  );
 
   const generatedShuttlesResult = generateCategoryShuttles(config);
 
@@ -228,6 +254,7 @@ export function materializeAgents(
         category,
         isPrimary ? prebuiltReviewVariants : undefined,
         generatedShuttles,
+        promptFileReader,
       ).match<
         | {
             ok: true;

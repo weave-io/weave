@@ -12,7 +12,16 @@
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { getBuiltinConfig } from "../builtins.js";
+import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "../builtins.js";
+
+it("Pattern separates executable tasks from implementation steps and pitfalls", () => {
+  const content = BUILTIN_PROMPT_CONTENTS.pattern;
+  expect(content).toContain("**Implementation outline**");
+  expect(content).toContain("**Pitfalls / non-goals**");
+  expect(content).toContain("only for **executable top-level plan tasks**");
+  expect(content).toContain("never nested checkboxes");
+  expect(content).toContain("**Acceptance**");
+});
 
 /**
  * Tokens that must not appear in shipped builtin prompt files.

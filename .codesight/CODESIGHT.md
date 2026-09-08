@@ -3,54 +3,49 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 136 lib files | 10 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~12.500 tokens. Without it, AI exploration would cost ~47.300 tokens. **Saves ~34.800 tokens per conversation.**
-> **Last scanned:** 2026-09-02 19:22 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 165 lib files | 12 env vars | 6 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~55,300 tokens. **Saves ~40,600 tokens per conversation.**
+> **Last scanned:** 2026-09-08 21:58 — re-run after significant changes
 
 ---
 
 # Libraries
 
-- `packages\adapters\claude-code\src\adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
-- `packages\adapters\claude-code\src\agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
-- `packages\adapters\claude-code\src\bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
-- `packages\adapters\claude-code\src\model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
-- `packages\adapters\claude-code\src\skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
-- `packages\adapters\claude-code\src\tool-classification.ts`
+- `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
+- `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
+- `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
+- `packages/adapters/claude-code/src/model-resolution.ts` — function buildClaudeCodeModelInput: (descriptor) => ModelResolutionInput, const CLAUDE_CODE_AVAILABLE_MODELS: Set<string>
+- `packages/adapters/claude-code/src/skill-discovery.ts` — function discoverClaudeCodeSkills: (projectRoot, homeDir, readDir) => void
+- `packages/adapters/claude-code/src/tool-classification.ts`
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_IDS: readonly string[]
-- `packages\adapters\opencode\src\adapter.ts`
+- `packages/adapters/opencode/src/adapter.ts`
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
-- `packages\adapters\opencode\src\model-resolution.ts`
+- `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext
   - type ModelResolutionError
-- `packages\adapters\opencode\src\opencode-client.ts`
+- `packages/adapters/opencode/src/opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
-- `packages\adapters\opencode\src\plugin.ts`
-  - function createWeavePlugin: (options) => Plugin
-  - interface WeavePluginOptions
-  - const WeavePlugin: Plugin
-  - const server
-- `packages\adapters\opencode\src\projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
-- `packages\adapters\opencode\src\reconcile-agent.ts`
+- `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
+- `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
   - function reconcileAgent: (agentName, config, client) => ResultAsync<void, ReconcileAgentError>
   - type ReconcileAgentError
   - type ReconcileDecision
   - const WEAVE_OWNERSHIP_TAG
-- `packages\adapters\opencode\src\run-workflow.ts`
+- `packages/adapters/opencode/src/run-workflow.ts`
   - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
-- `packages\adapters\opencode\src\runtime-command-projection.ts`
+- `packages/adapters/opencode/src/runtime-command-projection.ts`
   - function buildOpenCodeHealthReport: (overrides?) => AdapterHealthReport
   - class RuntimeCommandProjection
   - interface ProjectionSuccess
@@ -58,55 +53,123 @@
   - interface ProjectionDegraded
   - interface StartPlanProjectionInput
   - _...7 more_
-- `packages\adapters\opencode\src\skill-discovery.ts`
+- `packages/adapters/opencode/src/skill-discovery.ts`
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
   - interface MissingSkillsError
-- `packages\adapters\opencode\src\start-plan-execution.ts`
+- `packages/adapters/opencode/src/start-plan-execution.ts`
   - function startPlanExecution: (input) => ResultAsync<RunWorkflowResult, StartPlanExecutionError>
   - interface StartPlanExecutionInput
   - type StartPlanExecutionError
   - const WEAVE_START_COMMAND
   - const WEAVE_START_LEGACY_COMMAND
   - const DEFAULT_EXECUTION_WORKFLOW
-- `packages\adapters\opencode\src\tool-policy-mapping.ts`
+- `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
   - function mapToolPolicy: (policy) => void
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages\adapters\opencode\src\translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
-- `packages\cli\src\args.ts`
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
+- `packages/adapters/opencode/src/v2/catalog.ts`
+  - function buildOpenCode2Catalog: (input) => ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error>
+  - interface OpenCode2CatalogAgent
+  - interface OpenCode2CatalogCandidate
+  - interface BuildOpenCode2CatalogInput
+  - type OpenCode2CatalogIssue
+- `packages/adapters/opencode/src/v2/commands.ts`
+  - class OpenCode2Commands
+  - interface OpenCode2CommandDependencies
+  - const WEAVE_START_COMMAND
+- `packages/adapters/opencode/src/v2/config-refresh.ts`
+  - class OpenCode2CatalogController
+  - interface OpenCode2RefreshStatus
+  - interface OpenCode2RefreshDependencies
+  - type OpenCode2RefreshState
+- `packages/adapters/opencode/src/v2/config-source.ts`
+  - function probeCatalogSources: (sources, io) => void
+  - class BunCatalogSourceIo
+  - class CatalogSourceCache
+  - interface CatalogSourceEntry
+  - interface CatalogSourceIo
+  - type CatalogSourceIoError
+  - _...2 more_
+- `packages/adapters/opencode/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
+- `packages/adapters/opencode/src/v2/errors.ts`
+  - function fromOpenCode2Promise: (operation) => void
+  - interface OpenCode2Error
+  - type OpenCode2ErrorCode
+- `packages/adapters/opencode/src/v2/health.ts`
+  - function buildOpenCode2Health: (catalog, refresh, ownedAgents) => void
+  - interface OpenCode2HealthIssue
+  - interface OpenCode2HealthReport
+  - interface OpenCode2RegistrationReadiness
+- `packages/adapters/opencode/src/v2/model-resolution.ts`
+  - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
+  - interface OpenCode2ModelResolution
+  - type OpenCode2ModelResolutionError
+- `packages/adapters/opencode/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode/src/v2/plan-session-state.ts`
+  - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
+  - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection
+  - class OpenCode2PlanSessionState
+  - interface StoredPlanSelection
+- `packages/adapters/opencode/src/v2/plan-ui-state.ts`
+  - function taskDialogOptions: (plan) => Array<
+  - class PlanUiController
+  - interface PlanUiScope
+  - interface PlanUiTask
+  - interface PlanUiDisplay
+  - interface PlanUiRpcResponse
+  - _...2 more_
+- `packages/adapters/opencode/src/v2/plugin.ts`
+  - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
+  - interface OpenCode2PluginDependencies
+  - const WeavePlugin
+  - const server
+- `packages/adapters/opencode/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
+- `packages/adapters/opencode/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
+- `packages/adapters/opencode/src/v2/session-scope.ts`
+  - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
+  - interface OpenCode2SessionScope
+  - type SessionScopeError
+- `packages/adapters/opencode/src/v2/tool-policy-mapping.ts`
+  - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
+  - interface NativePermissionRule
+  - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
+- `packages/adapters/opencode/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
+- `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
   - type Command
   - type ArgParseError
-- `packages\cli\src\cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages\cli\src\commands\compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
-- `packages\cli\src\commands\eval.ts`
+- `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
+- `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - interface LangChainOpenAIModule
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
-- `packages\cli\src\commands\init.ts`
+- `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-- `packages\cli\src\commands\migrate.ts`
+- `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string
   - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
   - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
   - interface MigrateContext
   - type InitScope
   - type InitPlan
-- `packages\cli\src\commands\prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
-- `packages\cli\src\commands\runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages\cli\src\commands\validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
-- `packages\cli\src\config\starter-config.ts` — function starterConfig: (scope) => string
-- `packages\cli\src\detect\index.ts`
+- `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
+- `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
+- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
+- `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
+- `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
   - function detectHarnesses: (probes) => void
   - function formatDetectionSummary: (harnesses) => string[]
@@ -114,12 +177,12 @@
   - type DetectedHarness
   - type DetectionError
   - _...1 more_
-- `packages\cli\src\detect\probes.ts`
+- `packages/cli/src/detect/probes.ts`
   - class BunDetectionProbes
   - class MemoryDetectionProbes
   - interface DetectionProbes
   - type ProbeError
-- `packages\cli\src\errors.ts`
+- `packages/cli/src/errors.ts`
   - function formatCliError: (error) => string
   - type CliError
   - type InvalidArgsError
@@ -127,7 +190,7 @@
   - type FileReadError
   - type ParseFailureError
   - _...5 more_
-- `packages\cli\src\evals\artifact-bundle.ts`
+- `packages/cli/src/evals/artifact-bundle.ts`
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
@@ -135,7 +198,7 @@
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
   - _...11 more_
-- `packages\cli\src\evals\case-loader.ts`
+- `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
   - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
@@ -143,7 +206,7 @@
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - const EVALS_ROOT
   - _...1 more_
-- `packages\cli\src\evals\dashboard-indexes.ts`
+- `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
   - function buildScenarioHistories: (runsOldestFirst, updatedAt) => Map<string, ScenarioHistoryIndex>
@@ -151,14 +214,14 @@
   - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
   - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
   - _...19 more_
-- `packages\cli\src\evals\env.ts`
+- `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
   - type EvalEnvError
   - const DEFAULT_OPENROUTER_BASE_URL
   - const OPENROUTER_API_KEY_ENV_VAR
   - const OPENROUTER_BASE_URL_ENV_VAR
-- `packages\cli\src\evals\github-contents-publisher.ts`
+- `packages/cli/src/evals/github-contents-publisher.ts`
   - function isIndexArtifactAllowed: (fileName) => boolean
   - class GitHubContentsPublisher
   - type FetchImpl
@@ -166,14 +229,14 @@
   - const TARGET_REPO
   - const TARGET_BRANCH
   - _...9 more_
-- `packages\cli\src\evals\input-validation.ts`
+- `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
   - type EvalRunInputs
   - type EvalInputValidationError
   - const KNOWN_EVAL_AGENTS
   - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
-- `packages\cli\src\evals\langchain-agent-evals.ts`
+- `packages/cli/src/evals/langchain-agent-evals.ts`
   - function buildRationaleProjection: (run) => string
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
@@ -182,7 +245,7 @@
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
   - _...10 more_
-- `packages\cli\src\evals\loom-delegation-matrix.ts`
+- `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
   - function runLoomDelegationMatrixPreflight: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>
@@ -190,7 +253,7 @@
   - interface LoomDelegationMatrixCoverageIssue
   - interface RunLoomDelegationMatrixPreflightOptions
   - _...8 more_
-- `packages\cli\src\evals\loom-routing-runner.ts`
+- `packages/cli/src/evals/loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
   - function findAffirmativeRoutedAgent: (content, candidates) => string | undefined
@@ -198,14 +261,14 @@
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
   - _...5 more_
-- `packages\cli\src\evals\model-matrix.ts`
+- `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
   - function filterMatrix: (matrix, filterId) => ModelMatrixEntry[]
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
-- `packages\cli\src\evals\openrouter-client.ts`
+- `packages/cli/src/evals/openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
   - interface ChatMessage
@@ -213,7 +276,7 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
-- `packages\cli\src\evals\pattern-planning-runner.ts`
+- `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractPlanningSignals: (content) => void
   - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
   - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
@@ -221,7 +284,7 @@
   - function buildUserMessage: (evalCase) => string
   - class PatternPlanningRunner
   - _...3 more_
-- `packages\cli\src\evals\prompt-snapshots.ts`
+- `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
@@ -229,7 +292,7 @@
   - interface ComposeAgentSnapshotsOptions
   - interface ComposeAgentSnapshotsResult
   - _...1 more_
-- `packages\cli\src\evals\provenance.ts`
+- `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
   - function buildManifest: (records, gitSha, producedAt) => void
@@ -237,7 +300,7 @@
   - function deriveProvenanceManifest: (snapshots, options) => Result<PromptProvenanceManifest, ProvenanceError>
   - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
-- `packages\cli\src\evals\raw-artifacts.ts`
+- `packages/cli/src/evals/raw-artifacts.ts`
   - function sanitizeFilenamePart: (raw) => string
   - function rawCaseResultFilename: (caseId, modelId, date) => string
   - function rawPromptFilename: (agentName, date) => string
@@ -245,7 +308,7 @@
   - class RawArtifactsWriter
   - class MemoryFileWriter
   - _...3 more_
-- `packages\cli\src\evals\report-bundle.ts`
+- `packages/cli/src/evals/report-bundle.ts`
   - function assembleCaseEntry: (row, suite) => PublicCaseEntry
   - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
   - function assemblePublicReportBundle: (bundle, runId) => Result<PublicReportBundle, ReportAssemblyError>
@@ -253,13 +316,13 @@
   - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
   - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
   - _...2 more_
-- `packages\cli\src\evals\report-markdown.ts`
+- `packages/cli/src/evals/report-markdown.ts`
   - function isMarkdownSafe: (text) => boolean
   - function sanitizeMdValue: (text) => string
   - function renderCaseRow: (entry) => string
   - function renderSuiteSummary: (summary) => string
   - function renderPublicReportBundle: (bundle) => string
-- `packages\cli\src\evals\report-schema.ts`
+- `packages/cli/src/evals/report-schema.ts`
   - function computeScoreBucket: (weightedTotal, dryRun) => ScoreBucket
   - type ExplanationSource
   - type ScoreBucket
@@ -267,7 +330,7 @@
   - type PublicCaseEntry
   - type SuiteSummaryEntry
   - _...36 more_
-- `packages\cli\src\evals\results-repo.ts`
+- `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
   - function enforcePublishPolicy: (bundle) => ResultAsync<undefined, ResultsRepoError>
@@ -275,7 +338,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
-- `packages\cli\src\evals\runner.ts`
+- `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
   - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
@@ -283,7 +346,7 @@
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
   - _...16 more_
-- `packages\cli\src\evals\sanitizer.ts`
+- `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
   - function sanitizeProvenanceRecord: (record) => SanitizedProvenanceRecord
@@ -291,7 +354,7 @@
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
   - _...11 more_
-- `packages\cli\src\evals\shuttle-execution-runner.ts`
+- `packages/cli/src/evals/shuttle-execution-runner.ts`
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -299,7 +362,7 @@
   - interface ShuttleExecutionSignals
   - interface ShuttleExecutionRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\spindle-tools-runner.ts`
+- `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -307,7 +370,7 @@
   - interface SpindleResearchSignals
   - interface SpindleToolsRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\tapestry-category-routing-runner.ts`
+- `packages/cli/src/evals/tapestry-category-routing-runner.ts`
   - function findAffirmativeRouteTarget: (content) => string | undefined
   - function findLoneOpeningLineTarget: (content) => string | undefined
   - function extractCategoryShuttles: (content) => string[]
@@ -315,7 +378,7 @@
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
   - _...13 more_
-- `packages\cli\src\evals\tapestry-execution-runner.ts`
+- `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
   - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
@@ -323,7 +386,7 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\types.ts`
+- `packages/cli/src/evals/types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
   - interface EvalSuiteMetadata
@@ -331,7 +394,7 @@
   - interface PromptSnapshot
   - interface RawPromptArtifact
   - _...51 more_
-- `packages\cli\src\evals\warp-security-runner.ts`
+- `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -339,7 +402,7 @@
   - interface SecuritySignals
   - interface WarpSecurityRunnerOptions
   - _...2 more_
-- `packages\cli\src\evals\weft-review-runner.ts`
+- `packages/cli/src/evals/weft-review-runner.ts`
   - function extractReviewSignals: (content) => ReviewSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
@@ -347,13 +410,13 @@
   - interface ReviewSignals
   - interface WeftReviewRunnerOptions
   - _...2 more_
-- `packages\cli\src\fs\file-system.ts`
+- `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
   - type FileSystemError
-- `packages\cli\src\installers\index.ts`
+- `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
@@ -362,82 +425,129 @@
   - type InstallRequest
   - type InstallResult
   - _...1 more_
-- `packages\cli\src\installers\opencode.ts` — class OpenCodeInstaller
-- `packages\cli\src\io\terminal.ts`
+- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/installers/opencode2.ts` — class OpenCode2Installer, const OPENCODE2_PLUGIN_PACKAGE
+- `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
-- `packages\cli\src\migration\conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages\cli\src\migration\legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
-- `packages\cli\src\migration\migration-plan.ts`
+- `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
+- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
+  - function boundConversionWarning: (warning) => ConversionWarning
+  - function createConversionWarnings: () => ConversionWarning[]
+  - class ConversionWarnings
+  - const MAX_CONVERSION_WARNINGS
+  - const MAX_WARNING_FIELD_LENGTH
+  - const MAX_WARNING_REASON_LENGTH
+  - _...3 more_
+- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
+  - function isDslIdentifierSyntax: (value) => boolean
+  - function isDangerousDslName: (value) => boolean
+  - function isSafeDslName: (value) => boolean
+- `packages/cli/src/migration/legacy-jsonc-converter.ts`
+  - function stripJsoncComments: (source) => string
+  - function convertLegacyValue: (value) => ConversionResult
+  - function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-inspect.ts`
+  - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
+  - type LegacyJsoncInspectError
+  - const MAX_LEGACY_JSONC_SOURCE_LENGTH
+- `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
   - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
-- `packages\cli\src\migration\migration-write.ts`
+- `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
-- `packages\cli\src\prompt\index.ts`
+- `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
   - interface PromptAdapter
   - type PromptError
   - type PromptOption
-- `packages\cli\src\prompts\self-modify.ts`
+- `packages/cli/src/prompts/self-modify.ts`
   - function resolveSelfModifyPaths: (ctx) => SelfModifyPaths
   - function renderSelfModifyPrompt: (ctx) => string
   - interface SelfModifyContext
   - interface SelfModifyPaths
   - type SelfModifyScope
-- `packages\cli\src\theme\ascii-logo.ts`
+- `packages/cli/src/theme/ascii-logo.ts`
   - function renderLogo: (theme) => string[]
   - const PLAIN_LOGO_LINES: string[]
   - const LOGO_WIDTH
-- `packages\cli\src\theme\colors.ts`
+- `packages/cli/src/theme/colors.ts`
   - class ThemeManager
   - interface ThemeColors
   - interface ThemeManagerDeps
   - const defaultThemeManager
-- `packages\cli\src\theme\render.ts`
+- `packages/cli/src/theme/render.ts`
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages\config\src\builtins.ts`
+- `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
-- `packages\config\src\discovery.ts`
+- `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
   - type DiscoveredConfig
   - const bunFileReader: FileReader
-- `packages\config\src\loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
-- `packages\config\src\merge.ts`
+- `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
-- `packages\config\src\normalize-path.ts` — function normalizePath: (p) => string
-- `packages\config\src\plan-state-provider.ts` — class BunFilesystemPlanStateProvider
-- `packages\config\src\resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
-- `packages\core\src\errors.ts`
+- `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
+- `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
+- `packages/config/src/plan-task-parser.ts`
+  - function parsePlanTasks: (input) => Result<PlanTaskSnapshot, PlanTaskSnapshotError>
+  - interface ParsePlanTasksInput
+  - const MAX_PLAN_BYTES
+  - const MAX_PLAN_TASKS
+  - const MAX_PLAN_TITLE_LENGTH
+  - const MAX_PLAN_NAME_LENGTH
+- `packages/config/src/plan-task-reader.ts`
+  - class BunPlanTaskFileReader
+  - class ConfigPlanTaskReader
+  - interface PlanTaskPathInfo
+  - interface PlanTaskFileReader
+  - type PlanTaskFileIoError
+- `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/config-error-policy.ts`
+  - function boundConfigErrors: (errors, marker) => void
+  - const MAX_CONFIG_ERROR_ISSUES
+  - const MAX_CONFIG_ERROR_PATH_LENGTH
+  - const MAX_CONFIG_ERROR_FIELD_LENGTH
+  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
+  - const CONFIG_ERROR_COLLECTION_LIMIT
+  - _...2 more_
+- `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
   - type ParseError
   - type ValidationError
   - type ConfigError
-- `packages\core\src\lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
-- `packages\core\src\parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
-- `packages\core\src\parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
-- `packages\core\src\prompt-schema-helpers.ts`
+- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
+- `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
+- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
+- `packages/core/src/prompt-schema-helpers.ts`
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
-- `packages\core\src\validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
-- `packages\docs\src\utils\base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
-- `packages\engine\src\capability-contract.ts`
+- `packages/core/src/safe-graph-copy.ts`
+  - function copySafeGraph: (value, budget) => Result<SafeGraphValue, SafeGraphCopyError>
+  - interface SafeGraphCopyBudget
+  - type SafeGraphValue
+  - type SafeGraphCopyError
+  - const DEFAULT_SAFE_GRAPH_COPY_BUDGET: SafeGraphCopyBudget
+- `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
+- `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function buildAdapterHealthReport: (input) => AdapterHealthReport
   - function buildHumanRows: (report) => HumanReadinessRow[]
@@ -445,25 +555,25 @@
   - function toJson: (report) => string
   - interface CapabilityEntry
   - _...18 more_
-- `packages\engine\src\compose.ts`
+- `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
-  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - _...7 more_
-- `packages\engine\src\descriptors.ts`
+  - _...10 more_
+- `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
   - type CategoryShuttleConflictError
-- `packages\engine\src\env.ts`
+- `packages/engine/src/env.ts`
   - function parseEnv: (raw, string | undefined>) => Result<Env, EnvValidationError>
   - type Env
   - type EnvValidationError
   - const envSchema
   - const env: Env
-- `packages\engine\src\execution-lifecycle\artifacts.ts`
+- `packages/engine/src/execution-lifecycle/artifacts.ts`
   - function latestArtifactByName: (instance, name) => ArtifactRef | undefined
   - function latestAttemptForStep: (instance, stepName) => StepAttemptRecord | undefined
   - function isApprovalInvalidated: (instance, artifactName) => boolean
@@ -471,52 +581,57 @@
   - function inputRole: (input) => "normative" | "informational"
   - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
   - _...3 more_
-- `packages\engine\src\execution-lifecycle\authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
-- `packages\engine\src\execution-lifecycle\before-tool.ts` — function beforeTool: (input) => BeforeToolResult
-- `packages\engine\src\execution-lifecycle\completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\dispatch.ts`
+- `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/dispatch.ts`
   - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
   - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
   - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\errors.ts`
+- `packages/engine/src/execution-lifecycle/errors.ts`
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-- `packages\engine\src\execution-lifecycle\inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
-- `packages\engine\src\execution-lifecycle\interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\lease.ts`
+- `packages/engine/src/execution-lifecycle/inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
+- `packages/engine/src/execution-lifecycle/interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/lease.ts`
   - function mapStoreError: (storeError) => LifecyclePersistenceError
   - function mapConflictToLeaseConflict: (workflowInstanceId, storeError) => LifecycleLeaseConflictError
   - function validateActiveLease: (activeLease, workflowInstanceId, leaseId) => Result<ExecutionLease, LifecycleError>
-- `packages\engine\src\execution-lifecycle\metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
-- `packages\engine\src\execution-lifecycle\prompt-context.ts`
+- `packages/engine/src/execution-lifecycle/metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/prompt-context.ts`
   - function buildStepPromptContext: (instance, step) => TemplateContext
   - function renderStepPrompt: (promptTemplate, context, artifactNames) => Result<
   - function renderPlanName: (planNameTemplate, instance) => Result<string, LifecycleError>
-- `packages\engine\src\execution-lifecycle\reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
-- `packages\engine\src\execution-lifecycle\resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
-- `packages\engine\src\execution-lifecycle\terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
-- `packages\engine\src\logger.ts`
+- `packages/engine/src/execution-lifecycle/reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
+- `packages/engine/src/execution-lifecycle/resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
+- `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
   - const logger
-- `packages\engine\src\materialization.ts`
+- `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
   - interface MaterializedAgent
   - interface MaterializationPlan
   - type MaterializationError
-- `packages\engine\src\model-resolution.ts`
+- `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages\engine\src\review-orchestration.ts`
+- `packages/engine/src/plan-active-task.ts`
+  - function selectActivePlanTask: (snapshot) => Result<ActivePlanTask, PlanActiveTaskError>
+  - function selectNextPlanTask: (snapshot) => ActivePlanTask | undefined
+  - interface ActivePlanTask
+  - type PlanActiveTaskError
+- `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
   - class ReviewOrchestrator
@@ -524,12 +639,12 @@
   - type ReviewOrchestrationError
   - type ReviewExecutionResult
   - _...4 more_
-- `packages\engine\src\review-variants.ts`
+- `packages/engine/src/review-variants.ts`
   - function reviewVariantName: (agentName, model) => string
   - function generateReviewVariants: (config) => Result<Record<string, GeneratedReviewVariant>, ReviewVariantConflictError>
   - interface GeneratedReviewVariant
   - type ReviewVariantConflictError
-- `packages\engine\src\runtime\errors.ts`
+- `packages/engine/src/runtime/errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
   - function serializationError: (message, cause?) => RuntimeStoreSerializationError
@@ -537,27 +652,27 @@
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
   - _...11 more_
-- `packages\engine\src\runtime\fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
-- `packages\engine\src\runtime\journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
-- `packages\engine\src\runtime\memory-store.ts`
+- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
+- `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/memory-store.ts`
   - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages\engine\src\runtime\sanitizer.ts`
+- `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
-- `packages\engine\src\runtime\sqlite\kysely-bun-sqlite.ts` — class BunSqliteDialect
-- `packages\engine\src\runtime\sqlite\migrations.ts`
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
   - function readSchemaVersion: (db) => number
   - const CURRENT_SCHEMA_VERSION
-- `packages\engine\src\runtime\sqlite\store.ts`
+- `packages/engine/src/runtime/sqlite/store.ts`
   - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
-- `packages\engine\src\runtime\types.ts`
+- `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
@@ -565,27 +680,27 @@
   - function createOwnerId: (raw) => OwnerId
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
-- `packages\engine\src\runtime-command-operations\control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
-- `packages\engine\src\runtime-command-operations\health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
-- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
-- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect) => void
-- `packages\engine\src\runtime-command-operations\status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
-- `packages\engine\src\runtime-command-operations\workflow-runner.ts`
+- `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
+- `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
+- `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
   - function mapRunnerErrorToCommandError: (error, operation) => CommandOperationError
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
-- `packages\engine\src\skill-resolution.ts`
+- `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - function resolveAvailableSkillsForAgent: (input) => Result<AvailableSkillResolution, never>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - function resolveAvailableSkillsForConfig: (input) => Result<AvailableConfigSkillResolution, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
-  - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
-- `packages\engine\src\template-context.ts`
+  - _...6 more_
+- `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry
   - interface CategoryContextEntry
@@ -593,13 +708,13 @@
   - interface DelegationTargetContextEntry
   - interface DelegationContextEntry
   - _...8 more_
-- `packages\engine\src\template-renderer.ts`
+- `packages/engine/src/template-renderer.ts`
   - function renderTemplate: (source, context, options) => Result<string, RendererError>
   - function extractTemplatePaths: (source) => Result<string[], RendererError>
   - interface TemplateContext
   - interface RenderOptions
   - type RendererError
-- `packages\engine\src\tool-policy.ts`
+- `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
   - type EffectiveToolPolicy
@@ -607,20 +722,20 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
-- `scripts\build-public-packages.ts`
+- `scripts/build-public-packages.ts`
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
   - class BunPublicPackageFileSystem
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
-- `scripts\ci\verify-action-pins.ts`
+- `scripts/ci/verify-action-pins.ts`
   - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
   - function loadActionFiles: (root) => Promise<Record<string, string>>
   - type ActionPinError
   - const ALLOWED_ACTION_OWNERS
   - const REQUIRED_ARTIFACT_ACTION_PINS
-- `scripts\ci\verify-codeowners.ts`
+- `scripts/ci/verify-codeowners.ts`
   - function parseCodeowners: (source) => Result<readonly CodeownersRule[], CodeownersError[]>
   - function matchesCodeownersPattern: (pattern, path) => boolean
   - function resolveCodeowners: (rules, path) => readonly string[] | undefined
@@ -628,12 +743,12 @@
   - function loadCodeowners: (root) => Promise<string>
   - type CodeownersRule
   - _...3 more_
-- `scripts\docs\check-links.ts`
+- `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
-- `scripts\evals\verify-agent-eval-run.ts`
+- `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
   - function parseCliPackageVersion: (sourceText) => Result<string, VerifyEvalRunError>
@@ -641,7 +756,23 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
-- `scripts\validate-api-extractor-configs.ts`
+- `scripts/opencode2/fixtures/provider.ts`
+  - class ProofProviderFixture
+  - interface ProofProviderRequest
+  - type ProofProviderError
+- `scripts/opencode2/proof-cases.ts`
+  - class OpenCode2ProofCases
+  - interface OpenCode2ProofVerdict
+  - interface OpenCode2ProofReport
+  - type OpenCode2ProofCaseID
+  - type OpenCode2ProofFailure
+  - const REQUIRED_OPENCODE2_PROOF_CASES
+- `scripts/opencode2/proof-environment.ts`
+  - class OpenCode2ProofEnvironment
+  - type ProofEnvironmentError
+  - const OPENCODE2_PROOF_HOST_VERSION
+  - const OPENCODE2_PROOF_ROOT
+- `scripts/validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<
   - const CONFIG_PATHS
@@ -652,16 +783,18 @@
 
 ## Environment Variables
 
-- `BASE_PATH` (has default) — packages\docs\astro.config.mjs
-- `BASE_URL` **required** — packages\docs\src\data\docs-search.ts
-- `HOME` (has default) — packages\cli\src\detect\probes.ts
-- `LOG_LEVEL` (has default) — packages\config\src\logger.ts
-- `PWD` (has default) — packages\adapters\opencode\dist-types\adapter.d.ts
-- `RUN_HARNESS_SMOKE` **required** — packages\adapters\opencode\src\__tests__\category-routing-smoke.test.ts
-- `SITE_URL` (has default) — packages\docs\astro.config.mjs
-- `USERPROFILE` (has default) — packages\cli\src\detect\probes.ts
-- `WEAVE_CLI_VERSION` (has default) — packages\cli\src\theme\render.ts
-- `WEAVE_LOG_FILE` **required** — packages\engine\src\env.ts
+- `BASE_PATH` (has default) — packages/docs/astro.config.mjs
+- `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
+- `SITE_URL` (has default) — packages/docs/astro.config.mjs
+- `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
+- `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 
 ## Config Files
 
@@ -672,16 +805,16 @@
 # Middleware
 
 ## validation
-- migrate.d — `packages\cli\dist-types\commands\migrate.d.ts`
-- migrate — `packages\cli\src\commands\migrate.ts`
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
+- migrate — `packages/cli/src/commands/migrate.ts`
 
 ## custom
-- migrate-conversion.test — `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`
-- migrate.test — `packages\cli\src\commands\__tests__\migrate.test.ts`
+- migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
+- migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 
 ## auth
-- authorization — `packages\engine\src\execution-lifecycle\authorization.ts`
-- authorization.test — `packages\engine\src\__tests__\execution-lifecycle\authorization.test.ts`
+- authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
+- authorization — `packages/engine/src/execution-lifecycle/authorization.ts`
 
 ---
 
@@ -689,46 +822,52 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages\cli\src\evals\types.ts` — imported by **42** files
-- `packages\cli\src\theme\colors.ts` — imported by **20** files
-- `packages\cli\src\io\terminal.ts` — imported by **18** files
-- `packages\cli\src\evals\openrouter-client.ts` — imported by **18** files
-- `packages\cli\src\evals\report-schema.ts` — imported by **18** files
-- `packages\engine\src\runtime\types.ts` — imported by **16** files
-- `packages\cli\src\args.ts` — imported by **14** files
-- `packages\engine\src\runtime\store.ts` — imported by **13** files
-- `packages\cli\src\fs\file-system.ts` — imported by **12** files
-- `packages\engine\src\logger.ts` — imported by **12** files
-- `packages\engine\src\compose.ts` — imported by **11** files
-- `packages\engine\src\execution-lifecycle\metadata.ts` — imported by **11** files
-- `packages\engine\src\runtime\errors.ts` — imported by **11** files
-- `packages\cli\src\errors.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\lease.ts` — imported by **10** files
-- `packages\engine\src\execution-lifecycle\errors.ts` — imported by **10** files
-- `packages\adapters\opencode\src\sdk-types.ts` — imported by **9** files
-- `packages\cli\src\evals\prompt-snapshots.ts` — imported by **9** files
-- `packages\core\src\tokens.ts` — imported by **8** files
-- `packages\adapters\opencode\src\adapter.ts` — imported by **7** files
+- `packages/cli/src/evals/types.ts` — imported by **42** files
+- `packages/cli/src/theme/colors.ts` — imported by **21** files
+- `packages/cli/src/io/terminal.ts` — imported by **19** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **18** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
+- `packages/engine/src/runtime/types.ts` — imported by **16** files
+- `packages/cli/src/args.ts` — imported by **15** files
+- `packages/cli/src/fs/file-system.ts` — imported by **13** files
+- `packages/engine/src/runtime/store.ts` — imported by **13** files
+- `packages/engine/src/logger.ts` — imported by **12** files
+- `packages/engine/src/compose.ts` — imported by **11** files
+- `packages/engine/src/runtime/errors.ts` — imported by **11** files
+- `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/adapters/opencode/src/v2/catalog.ts` — imported by **10** files
+- `packages/cli/src/errors.ts` — imported by **10** files
+- `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
+- `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
+- `packages/adapters/opencode/src/__tests__/v2-fixtures.ts` — imported by **9** files
+- `packages/adapters/opencode/src/v2/errors.ts` — imported by **9** files
+- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
-- `packages\cli\src\evals\types.ts` ← `packages\cli\src\evals\github-contents-publisher.ts`, `packages\cli\src\evals\input-validation.ts`, `packages\cli\src\evals\loom-delegation-matrix.ts`, `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\loom-routing-runner.ts` +37 more
-- `packages\cli\src\theme\colors.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +15 more
-- `packages\cli\src\io\terminal.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +13 more
-- `packages\cli\src\evals\openrouter-client.ts` ← `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\pattern-planning-runner.ts`, `packages\cli\src\evals\runner.ts`, `packages\cli\src\evals\shuttle-execution-runner.ts`, `packages\cli\src\evals\spindle-tools-runner.ts` +13 more
-- `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +13 more
-- `packages\engine\src\runtime\types.ts` ← `packages\engine\src\execution-lifecycle\resume.ts`, `packages\engine\src\execution-lifecycle\start.ts`, `packages\engine\src\execution-lifecycle\types.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sanitizer.ts` +11 more
-- `packages\cli\src\args.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +9 more
-- `packages\engine\src\runtime\store.ts` ← `packages\engine\src\execution-lifecycle\artifacts.ts`, `packages\engine\src\execution-lifecycle\dispatch.ts`, `packages\engine\src\execution-lifecycle\inspection.ts`, `packages\engine\src\execution-lifecycle\interrupts.ts`, `packages\engine\src\execution-lifecycle\reconciliation.ts` +8 more
-- `packages\cli\src\fs\file-system.ts` ← `packages\cli\src\commands\migrate.ts`, `packages\cli\src\commands\validate.ts`, `packages\cli\src\commands\__tests__\init.test.ts`, `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`, `packages\cli\src\commands\__tests__\migrate.test.ts` +7 more
-- `packages\engine\src\logger.ts` ← `packages\engine\src\compose.ts`, `packages\engine\src\index.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sqlite\store.ts`, `packages\engine\src\runtime-command-operations\control.ts` +7 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +37 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +16 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +14 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +8 more
+- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
+- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
+
+---
+
+# Events & Queues
+
+- `plan.changed` [event] — `packages/adapters/opencode/src/v2/plugin.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 121 test files found
+> 151 test files found
 
 ---
 
@@ -738,9 +877,19 @@
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
-| Agent Evals | — | 0 | — | — |
-| CI | — | 0 | — | — |
+| Agent Evals | workflow_dispatch | 2 | — | — |
+| CI | push, pull_request | 1 | — | — |
 | Publish Package | push | 1 | — | — |
+
+### Agent Evals
+
+> `.github/workflows/agent-evals.yml`
+
+- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
 
 ### Secrets
 

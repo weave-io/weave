@@ -3,7 +3,7 @@
  * returning a fully-typed `WeaveConfig` or an array of `ValidationError`s.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import type { ZodError } from "zod";
 import type {
   AstNode,
@@ -12,8 +12,120 @@ import type {
   IdentifierValue,
   Property,
 } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+} from "./config-error-policy.js";
 import type { ValidationError } from "./errors.js";
+import { copySafeGraph } from "./safe-graph-copy.js";
 import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
+
+const UNSAFE_NAMES = new Set(["__proto__", "prototype", "constructor"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPosition(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Number.isSafeInteger(value.line) &&
+    Number.isSafeInteger(value.column) &&
+    (value.line as number) >= 0 &&
+    (value.column as number) >= 0
+  );
+}
+
+function isName(value: unknown): value is string {
+  return typeof value === "string" && !UNSAFE_NAMES.has(value);
+}
+
+function isAstValue(value: unknown): value is AstValue {
+  if (!isRecord(value) || !isPosition(value.pos)) return false;
+  switch (value.kind) {
+    case "string":
+    case "identifier":
+      return typeof value.value === "string";
+    case "number":
+      return typeof value.value === "number" && Number.isFinite(value.value);
+    case "boolean":
+      return typeof value.value === "boolean";
+    case "array":
+      return Array.isArray(value.elements) && value.elements.every(isAstValue);
+    case "block":
+      return isProperties(value.properties);
+    default:
+      return false;
+  }
+}
+
+function isProperties(value: unknown): value is Property[] {
+  if (!Array.isArray(value)) return false;
+  const names = new Set<string>();
+  for (const property of value) {
+    if (
+      !isRecord(property) ||
+      !isName(property.key) ||
+      names.has(property.key) ||
+      !isPosition(property.pos) ||
+      !isAstValue(property.value)
+    )
+      return false;
+    names.add(property.key);
+  }
+  return true;
+}
+
+function isAstNode(value: unknown): value is AstNode {
+  if (!isRecord(value) || !isPosition(value.pos)) return false;
+  switch (value.type) {
+    case "agent":
+    case "category":
+      return isName(value.name) && isProperties(value.properties);
+    case "workflow": {
+      if (
+        !isName(value.name) ||
+        !isProperties(value.properties) ||
+        !Array.isArray(value.steps) ||
+        (value.extends !== undefined && typeof value.extends !== "string")
+      )
+        return false;
+      const names = new Set<string>();
+      return value.steps.every((step) => {
+        if (
+          !isRecord(step) ||
+          !isName(step.name) ||
+          names.has(step.name) ||
+          !isPosition(step.pos) ||
+          !isProperties(step.properties) ||
+          (step.insert_before !== undefined &&
+            typeof step.insert_before !== "string") ||
+          (step.insert_after !== undefined &&
+            typeof step.insert_after !== "string")
+        )
+          return false;
+        names.add(step.name);
+        return true;
+      });
+    }
+    case "setting":
+      return isName(value.key) && isAstValue(value.value);
+    case "disable":
+      return (
+        typeof value.target === "string" &&
+        ["agents", "hooks", "skills"].includes(value.target) &&
+        Array.isArray(value.items) &&
+        value.items.every((item) => typeof item === "string")
+      );
+    case "extend_before_plan":
+      return (
+        Array.isArray(value.steps) &&
+        value.steps.every((step) => typeof step === "string")
+      );
+    default:
+      return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // AST → plain object helpers
@@ -43,7 +155,7 @@ function astValueToPlain(value: AstValue): unknown {
  * Convert a `Property[]` array into a plain key-value object.
  */
 function propertiesToObject(props: Property[]): Record<string, unknown> {
-  const obj: Record<string, unknown> = {};
+  const obj: Record<string, unknown> = Object.create(null);
   for (const prop of props) {
     obj[prop.key] = astValueToPlain(prop.value);
   }
@@ -65,7 +177,7 @@ function transformStepProperties(
   stepName: string,
   properties: Property[],
 ): Record<string, unknown> {
-  const obj: Record<string, unknown> = {};
+  const obj: Record<string, unknown> = Object.create(null);
   obj.name = stepName;
 
   for (const prop of properties) {
@@ -108,7 +220,7 @@ function transformStepProperties(
 function normalizeExtensionPoints(
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const result: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(raw)) {
     const normalized = key === "before-plan" ? "before_plan" : key;
     result[normalized] = value;
@@ -127,10 +239,10 @@ function astToPlainObject(nodes: AstNode[]): {
   topLevelLogLevel: boolean;
   invalidSettingsShape: boolean;
 } {
-  const agents: Record<string, unknown> = {};
-  const categories: Record<string, unknown> = {};
-  const disabled: Record<string, string[]> = {};
-  const workflows: Record<string, unknown> = {};
+  const agents: Record<string, unknown> = Object.create(null);
+  const categories: Record<string, unknown> = Object.create(null);
+  const disabled: Record<string, string[]> = Object.create(null);
+  const workflows: Record<string, unknown> = Object.create(null);
   const extendBeforePlanSteps: string[] = [];
   const seenExtendBeforePlanSteps = new Set<string>();
   let settingsBlock: Record<string, unknown> | undefined;
@@ -248,6 +360,35 @@ function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
  * placed inside a `settings { log_level INFO }` block.
  */
 export function validate(
+  ast: AstNode[],
+): Result<WeaveConfig, ValidationError[]> {
+  const invalid: ValidationError[] = [
+    {
+      type: "ValidationError",
+      path: "",
+      message:
+        "AST input must be bounded plain data with valid nodes, safe names, and unique properties",
+    },
+  ];
+  const copied = copySafeGraph(ast);
+  if (copied.isErr()) return err(invalid);
+  const safeAst: unknown = copied.value;
+  if (!Array.isArray(safeAst) || !safeAst.every(isAstNode)) return err(invalid);
+  return Result.fromThrowable(
+    () => validateCopiedAst(safeAst),
+    () => invalid,
+  )()
+    .andThen((result) => result)
+    .mapErr((errors) =>
+      boundConfigErrors(errors, () => ({
+        type: "ValidationError",
+        path: "",
+        message: CONFIG_ERRORS_TRUNCATED,
+      })),
+    );
+}
+
+function validateCopiedAst(
   ast: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
   const { plain, topLevelLogLevel, invalidSettingsShape } =

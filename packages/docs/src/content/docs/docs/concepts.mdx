@@ -88,7 +88,7 @@ Weave separates configuration from execution. The CLI can validate workflows and
 For OpenCode today, explicit work starts through prompt commands registered by the plugin:
 
 - `/weave:start`
-- `/start-work`
+- `/weave:start <plan-name>` in the OpenCode 2 adapter
 
 Other labels such as `/weave:run` or `/weave:status` may appear in runtime projection code, but they are not registered OpenCode commands unless an adapter wires them.
 
@@ -103,8 +103,8 @@ By default, journal failures are best-effort so the surrounding operation can co
 | Boundary | Current state |
 | --- | --- |
 | Implemented adapters | Stable OpenCode; CLI-bundled Claude Code materialization (standalone adapter is nightly-only). |
-| OpenCode plugin package | `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. |
-| Registered OpenCode commands | `/weave:start` and `/start-work`. |
+| OpenCode 2 plugin package | `@weaveio/weave-adapter-opencode@<exact-version>` in plural `plugins`. |
+| Registered OpenCode commands | `/weave:start <plan-name>` only. |
 | CLI launcher | No launcher; `weave run` refuses execution. |
 | Future adapters | Claude Code and Pi are product targets, not current implementation guarantees. |
 

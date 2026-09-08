@@ -12,6 +12,9 @@
   "module": "./dist/index.js",
   "files": [
     "dist",
+    "server.js",
+    "rpc.js",
+    "tui.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -28,6 +31,14 @@
     "./server": {
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "import": "./dist/rpc.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {
@@ -36,7 +47,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "~1.15.9",
+    "@opencode-ai/client": "0.0.0-beta-19086",
+    "@opencode-ai/plugin": "0.0.0-beta-19086",
     "@opencode-ai/sdk": "~1.15.9",
     "mustache": "^4.2.0",
     "neverthrow": "^8.2.0",
@@ -47,6 +59,16 @@
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
     "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.10",
+    "@opentui/solid": ">=0.5.10",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": { "optional": true },
+    "@opentui/solid": { "optional": true },
+    "solid-js": { "optional": true }
   },
   "repository": {
     "type": "git",

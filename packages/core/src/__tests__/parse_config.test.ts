@@ -1,7 +1,40 @@
 import { describe, expect, it } from "bun:test";
+import { CONFIG_ERRORS_TRUNCATED } from "../config-error-policy.js";
 import { parseConfig } from "../parse-config.js";
 
+it("rejects prototype assignments and bounds validation diagnostics", () => {
+  for (const source of [
+    'agent __proto__ { prompt "bad" }',
+    "agent helper { tool_policy { __proto__ { polluted true } } }",
+    "constructor { polluted true }",
+    'agent helper { prompt "one" prompt "two" }',
+  ]) {
+    expect(parseConfig(source).isErr()).toBe(true);
+  }
+  expect(Object.prototype).not.toHaveProperty("polluted");
+  const source = Array.from(
+    { length: 100 },
+    (_, i) => `agent a${i} { temperature 900 }`,
+  ).join("\n");
+  const errors = parseConfig(source)._unsafeUnwrapErr();
+  expect(errors.length).toBeLessThanOrEqual(32);
+  expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
+  expect(JSON.stringify(errors).length).toBeLessThan(8192);
+});
+
 describe("parseConfig — valid sources", () => {
+  it.each([
+    "\n",
+    "\r\n",
+    "\r",
+  ])("normalizes multiline prompts in the full pipeline (%j)", (ending) => {
+    const content = ["", "    first", "", "      second", ""].join(ending);
+    const config = parseConfig(
+      `agent helper { prompt """${content}""" }`,
+    )._unsafeUnwrap();
+    expect(config.agents.helper?.prompt).toBe("first\n\n  second");
+  });
+
   it("minimal valid source: single agent with inline prompt", () => {
     const src = `agent helper {
   prompt "You are a helpful assistant."

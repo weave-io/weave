@@ -69,7 +69,7 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {
-  description "Loom (Main Orchestrator)"
+  description "Main orchestrator: classifies requests, routes bounded work to specialists, and sends plan-sized work to pattern; may read, write, execute, and delegate; select for requests that need coordination across several agents"
   prompt_file "loom.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -86,7 +86,7 @@ agent loom {
 
 
 agent tapestry {
-  description "Tapestry (Plan Execution)"
+  description "Plan execution coordinator: follows an approved plan task by task, delegates implementation, and verifies acceptance criteria; may read, write, execute, and delegate, but never implements itself; select to execute an existing plan"
   prompt_file "tapestry.md"
   models ["claude-sonnet-4-5"]
   mode primary
@@ -102,7 +102,7 @@ agent tapestry {
 }
 
 agent shuttle {
-  description "Shuttle (Domain Specialist)"
+  description "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -125,7 +125,7 @@ agent shuttle {
 }
 
 agent pattern {
-  description "Pattern (Strategic Planner)"
+  description "Strategic planner: turns a goal into a file-backed, sequenced plan with per-task acceptance criteria; writes plan files only and cannot execute or delegate; select before multi-file features or complex refactors"
   prompt_file "pattern.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -147,7 +147,7 @@ agent pattern {
 }
 
 agent thread {
-  description "Thread (Codebase Explorer)"
+  description "Codebase explorer: traces symbols, call graphs, and data flow with exact file and line evidence; read-only, cannot execute or delegate; select for internal investigation before planning or editing"
   prompt_file "thread.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -169,7 +169,7 @@ agent thread {
 }
 
 agent spindle {
-  description "Spindle (External Researcher)"
+  description "External researcher: checks official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision needs facts outside this repository"
   prompt_file "spindle.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -191,7 +191,7 @@ agent spindle {
 }
 
 agent weft {
-  description "Weft (Reviewer)"
+  description "Code reviewer: checks correctness, quality, and maintainability and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select after non-trivial changes"
   prompt_file "weft.md"
   models ["claude-sonnet-4-5"]
   mode subagent
@@ -213,7 +213,7 @@ agent weft {
 }
 
 agent warp {
-  description "Warp (Security Auditor)"
+  description "Security auditor: checks vulnerabilities, unsafe patterns, and specification compliance and returns an approve or block verdict; read-only, cannot execute or delegate; select when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
   models ["claude-sonnet-4-5"]
   mode subagent

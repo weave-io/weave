@@ -13,7 +13,7 @@
  * - Function/callable values in context
  * - Unsupported tags (partials, delimiter changes)
  * - Malformed template syntax
- * - Unresolved tags after rendering
+ * - Literal template-shaped context values
  */
 
 import { describe, expect, it } from "bun:test";
@@ -466,14 +466,37 @@ describe("renderTemplate — malformed syntax", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unresolved tags
+// Source-aware validation
 // ---------------------------------------------------------------------------
 
-describe("renderTemplate — unresolved tags", () => {
-  it("returns UnresolvedTag error when a variable has no value in context", () => {
-    // When Mustache renders {{missing}} with no value, it outputs empty string
-    // So this test verifies that missing values render as empty (Mustache default)
-    // and do NOT trigger the unresolved-tag check
+describe("renderTemplate — source-aware validation", () => {
+  it.each([
+    "{{example}}",
+    "{{{example}}}",
+    "{{> footer}}",
+    "{{constructor.name}}",
+    "{{= <% %> =}}",
+  ])("preserves %s supplied by a context value", (literal) => {
+    expect(
+      render(
+        "{{{description}}}",
+        { description: literal },
+        allowed("description"),
+      ),
+    ).toBe(literal);
+  });
+
+  it("still rejects unknown tags in an unused source branch", () => {
+    expect(
+      renderErr(
+        "{{#show}}{{example}}{{/show}}",
+        { show: false },
+        allowed("show"),
+      ).type,
+    ).toBe("UnknownPath");
+  });
+
+  it("renders an allowed missing value as empty", () => {
     const output = render("{{name}}", {}, allowed("name"));
     // Mustache renders missing values as empty string
     expect(output).toBe("");
@@ -489,9 +512,7 @@ describe("renderTemplate — unresolved tags", () => {
     expect(result._unsafeUnwrap()).toBe("");
   });
 
-  it("restored escaped literals do not trigger unresolved-tag check", () => {
-    // After restoration, output contains {{ but it came from escaped input
-    // The check runs BEFORE restoration, so this should pass
+  it("restores escaped source literals", () => {
     const output = render("\\{{path}} is literal", {}, allowed());
     expect(output).toBe("{{path}} is literal");
   });

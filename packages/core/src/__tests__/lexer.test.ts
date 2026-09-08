@@ -1,8 +1,52 @@
 import { describe, expect, it } from "bun:test";
+import {
+  CONFIG_ERRORS_TRUNCATED,
+  CONFIG_INPUT_LIMITS,
+} from "../config-error-policy.js";
 import { tokenize } from "../lexer.js";
 import { TokenType } from "../tokens.js";
 
+it("bounds source, tokens, and collected lexer diagnostics", () => {
+  expect(
+    tokenize("a".repeat(CONFIG_INPUT_LIMITS.sourceLength + 1)).isErr(),
+  ).toBe(true);
+  expect(tokenize("a ".repeat(CONFIG_INPUT_LIMITS.tokens)).isErr()).toBe(true);
+  const errors = tokenize("!".repeat(1000))._unsafeUnwrapErr();
+  expect(errors.length).toBeLessThanOrEqual(32);
+  expect(JSON.stringify(errors)).toContain(CONFIG_ERRORS_TRUNCATED);
+});
+
 describe("Lexer — valid tokenization", () => {
+  it.each([
+    "\n",
+    "\r\n",
+    "\r",
+  ])("normalizes multiline content with %j endings", (ending) => {
+    const source = [
+      '"""',
+      "    first",
+      "",
+      "      second \\n",
+      "    # raw { text }",
+      '"""',
+    ].join(ending);
+    expect(tokenize(source)._unsafeUnwrap()[0]).toMatchObject({
+      type: TokenType.String,
+      value: "first\n\n  second \\n\n# raw { text }",
+      line: 1,
+      column: 1,
+    });
+  });
+
+  it("preserves same-line raw literals and opening-position errors", () => {
+    expect(tokenize('"""raw \\t \\n"""')._unsafeUnwrap()[0]?.value).toBe(
+      "raw \\t \\n",
+    );
+    expect(tokenize('  """\r\n  unfinished')._unsafeUnwrapErr()).toEqual([
+      { type: "UnterminatedString", line: 1, column: 3 },
+    ]);
+  });
+
   it("tokenizes a simple agent block", () => {
     const result = tokenize("agent loom { temperature 0.1 }");
     expect(result.isOk()).toBe(true);

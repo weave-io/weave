@@ -10,7 +10,10 @@ tableOfContents:
 
 Workflows describe repeatable, multi-step intent: plan this task, ask for confirmation, implement it, then review the result. They are not background daemons and they do not turn ordinary chat into implicit automation. Weave keeps workflow execution explicit so a user or harness surface has to authorize the start of work.
 
-The CLI validates and inspects workflows. It does not execute them. `weave run` intentionally refuses to start harness runtimes. In the implemented OpenCode adapter, ordinary plan-first execution is started from `/weave:start` or `/start-work` inside OpenCode.
+The CLI validates and inspects workflows. It does not execute them. `weave run`
+intentionally refuses to start harness runtimes. In the OpenCode 2 core
+release, `/weave:start <plan-name>` starts foreground work over one existing
+plan. It does not start the durable workflow runtime described on this page.
 
 ## When To Use A Workflow
 
@@ -148,7 +151,7 @@ The safe start boundary is adapter-owned. For OpenCode today:
 
 ```text
 /weave:start my-plan
-/start-work my-plan
+/weave:start my-plan
 ```
 
 Those commands are prompt-based. They instruct the OpenCode agent to load Weave runtime state, reconcile plan context, and continue with the explicit plan. The CLI-side `weave run` command refuses execution by design.
@@ -179,7 +182,9 @@ bun packages/cli/src/main.ts prompt list
 bun packages/cli/src/main.ts prompt inspect loom
 ```
 
-Then verify the adapter surface inside OpenCode by checking `opencode debug config` for the pinned `@weaveio/weave-adapter-opencode` plugin entry and using `/weave:start` or `/start-work` for plan-first execution.
+Then verify the adapter surface inside OpenCode 2 and use
+`/weave:start <plan-name>` for foreground plan work. Do not treat this as a
+durable workflow run.
 
 ## Troubleshooting
 

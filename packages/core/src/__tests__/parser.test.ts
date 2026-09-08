@@ -617,3 +617,23 @@ describe("Parser — agent review_models field", () => {
     expect(prop).toBeUndefined();
   });
 });
+it("rejects excessive nesting and always advances during array recovery", () => {
+  for (const source of [
+    "agent a { models [ }",
+    "agent a { models " + "[".repeat(70),
+    "agent a { models " + "[ } ".repeat(100),
+  ]) {
+    expect(parse(tokenize(source)._unsafeUnwrap()).isErr()).toBe(true);
+  }
+  expect(parse([{ type: "invalid" } as never]).isErr()).toBe(true);
+  let read = false;
+  const tokens = Object.defineProperty([], "0", {
+    enumerable: true,
+    get: () => {
+      read = true;
+      return {};
+    },
+  });
+  expect(parse(tokens).isErr()).toBe(true);
+  expect(read).toBe(false);
+});

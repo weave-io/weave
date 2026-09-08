@@ -25,7 +25,14 @@ import type {
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+import {
+  boundConfigErrors,
+  CONFIG_ERROR_COLLECTION_LIMIT,
+  CONFIG_ERRORS_TRUNCATED,
+  CONFIG_INPUT_LIMITS,
+} from "./config-error-policy.js";
 import type { ParseError } from "./errors.js";
+import { copySafeGraph } from "./safe-graph-copy.js";
 import type { SourcePos } from "./tokens.js";
 import { type Token, TokenType } from "./tokens.js";
 
@@ -43,6 +50,8 @@ class Parser {
   // ---------------------------------------------------------------------------
 
   #current(): Token {
+    if (this.#errors.length >= CONFIG_ERROR_COLLECTION_LIMIT)
+      return { type: TokenType.EOF, value: "", line: 0, column: 0 };
     return (
       this.#tokens[this.#cursor] ?? {
         type: TokenType.EOF,
@@ -604,8 +613,11 @@ class Parser {
       this.#current().type !== TokenType.RBracket &&
       this.#current().type !== TokenType.EOF
     ) {
+      const before = this.#cursor;
       const el = this.#parseValue();
       if (el) elements.push(el);
+      if (this.#cursor === before && this.#current().type !== TokenType.EOF)
+        this.#advance();
 
       this.#skipNewlines();
 
@@ -668,7 +680,16 @@ class Parser {
       }
     }
 
-    if (this.#errors.length > 0) return err(this.#errors);
+    if (this.#errors.length > 0)
+      return err(
+        boundConfigErrors(this.#errors, () => ({
+          type: "UnexpectedToken",
+          line: 0,
+          column: 0,
+          found: CONFIG_ERRORS_TRUNCATED,
+          expected: "valid input",
+        })),
+      );
     return ok(nodes);
   }
 }
@@ -682,5 +703,54 @@ class Parser {
  * Errors are collected and returned together.
  */
 export function parse(tokens: Token[]): Result<AstNode[], ParseError[]> {
-  return new Parser(tokens).parse();
+  const invalid: ParseError[] = [
+    {
+      type: "UnexpectedToken",
+      line: 0,
+      column: 0,
+      found: "[invalid or excessive token input]",
+      expected: "bounded Token[] with valid positions and nesting",
+    },
+  ];
+  const copied = copySafeGraph(tokens, {
+    maxDepth: 4,
+    maxNodes: CONFIG_INPUT_LIMITS.tokens * 5 + 1,
+    maxProperties: CONFIG_INPUT_LIMITS.tokens * 5 + 1,
+    maxPropertiesPerObject: 4,
+    maxArrayLength: CONFIG_INPUT_LIMITS.tokens,
+    maxStringLength: CONFIG_INPUT_LIMITS.sourceLength * 4,
+  });
+  if (copied.isErr() || !Array.isArray(copied.value)) return err(invalid);
+  const safe: Token[] = [];
+  const nesting: TokenType[] = [];
+  let eof = false;
+  for (const token of copied.value) {
+    if (token === null || typeof token !== "object" || Array.isArray(token))
+      return err(invalid);
+    const { type, value, line, column } = token;
+    if (
+      typeof type !== "string" ||
+      !Object.values(TokenType).includes(type as TokenType) ||
+      typeof value !== "string" ||
+      typeof line !== "number" ||
+      typeof column !== "number" ||
+      !Number.isSafeInteger(line) ||
+      !Number.isSafeInteger(column) ||
+      line < 0 ||
+      column < 0 ||
+      eof
+    )
+      return err(invalid);
+    if (type === TokenType.LBrace || type === TokenType.LBracket)
+      nesting.push(type);
+    if (
+      (type === TokenType.RBrace && nesting.at(-1) === TokenType.LBrace) ||
+      (type === TokenType.RBracket && nesting.at(-1) === TokenType.LBracket)
+    )
+      nesting.pop();
+    if (nesting.length > CONFIG_INPUT_LIMITS.nesting) return err(invalid);
+    eof = type === TokenType.EOF;
+    safe.push({ type: type as TokenType, value, line, column });
+  }
+  return new Parser(safe).parse();
 }

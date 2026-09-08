@@ -50,8 +50,8 @@ These boundaries are repeated across the guides because they prevent common setu
 | Topic | Current behavior |
 | --- | --- |
 | Adapter support | OpenCode is stable; Claude Code supports CLI-bundled file materialization and a nightly standalone adapter. |
-| OpenCode plugin entry | Use `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. |
-| Registered OpenCode commands | The plugin registers `/weave:start` and `/start-work` prompt commands. |
+| OpenCode 2 plugin entry | Use `@weaveio/weave-adapter-opencode@<exact-version>` in plural `plugins`. |
+| Registered OpenCode commands | The V2 plugin registers only `/weave:start <plan-name>`. |
 | Other `/weave:*` labels | `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, and `/weave:health` are projection/helper labels unless an adapter explicitly wires them. |
 | CLI execution | The CLI does not start harness runtimes. |
 | Eval support | `weave eval run` supports seven text-only suite families. Runtime-backed evals are not part of the current public surface. |

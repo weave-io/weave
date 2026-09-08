@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weaveio/weave-core";
+import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import type { Result } from "neverthrow";
 import type {
   ConfigSkillResolutionResult,
@@ -22,9 +22,62 @@ import type {
   SkillResolutionInput,
 } from "../skill-resolution.js";
 import {
+  resolveAvailableSkillsForAgent,
+  resolveAvailableSkillsForConfig,
   resolveSkillsForAgent,
   resolveSkillsForConfig,
 } from "../skill-resolution.js";
+
+describe("available skill resolution", () => {
+  it("returns matches and missing warnings without changing strict callers", () => {
+    const skillInfo = { name: "present", metadata: { opaque: true } };
+    const input = {
+      agentName: "helper",
+      agentSkills: ["present", "missing", "present", "disabled"],
+      availableSkills: [skillInfo],
+      disabledSkills: ["disabled"],
+    };
+    const result = resolveAvailableSkillsForAgent(input)._unsafeUnwrap();
+    expect(result.resolved.map((skill) => skill.name)).toEqual([
+      "present",
+      "present",
+    ]);
+    expect(result.resolved[0]?.skillInfo).toBe(skillInfo);
+    expect(result.warnings).toEqual([
+      { type: "MissingSkill", agentName: "helper", skillName: "missing" },
+    ]);
+    expect(resolveSkillsForAgent(input)._unsafeUnwrapErr()).toEqual(
+      result.warnings,
+    );
+  });
+
+  it("keeps disabled filtering and reports category conflicts explicitly", () => {
+    const config = parseConfig(`
+      agent shuttle { prompt "Worker" skills ["present", "missing"] }
+      agent disabled { prompt "Disabled" skills ["other"] }
+      category backend { patterns ["src/**"] }
+      disable agents ["disabled"]
+    `)._unsafeUnwrap();
+    const input = { config, availableSkills: [{ name: "present" }] };
+    const result = resolveAvailableSkillsForConfig(input)._unsafeUnwrap();
+    expect(Object.keys(result.resolved)).toEqual([
+      "shuttle",
+      "shuttle-backend",
+    ]);
+    expect(result.warnings).toHaveLength(2);
+    expect(result.resolved["shuttle-backend"]?.[0]?.name).toBe("present");
+    expect(resolveSkillsForConfig(input)._unsafeUnwrapErr()).toEqual(
+      result.warnings,
+    );
+    config.agents["shuttle-backend"] = { prompt: "Collision" };
+    expect(resolveAvailableSkillsForConfig(input)._unsafeUnwrapErr().type).toBe(
+      "CategoryShuttleConflictError",
+    );
+    expect(resolveSkillsForConfig(input)._unsafeUnwrapErr()[0]?.skillName).toBe(
+      "__category_shuttle_conflict__",
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Type-level helpers — prove the shape at compile time

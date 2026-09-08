@@ -3,6 +3,17 @@ import { parseConfig } from "@weaveio/weave-core";
 import { BUILTIN_WEAVE_SOURCE, getBuiltinConfig } from "../builtins.js";
 
 describe("getBuiltinConfig", () => {
+  it("describes each builtin's role, capabilities, and selection criteria", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const agent of Object.values(config.agents)) {
+      expect(agent.description).toContain(":");
+      expect(agent.description).toContain("; select");
+    }
+    expect(config.agents.thread?.description).toContain("read-only");
+    expect(config.agents.pattern?.description).toContain("plan files only");
+    expect(config.agents.shuttle?.triggers?.[0]).toHaveProperty("domain");
+  });
+
   it("(a) returns ok — not err", () => {
     const result = getBuiltinConfig();
     expect(result.isOk()).toBe(true);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import { errAsync, okAsync } from "neverthrow";
 
 import {
   composeAgentDescriptor,
@@ -43,6 +44,90 @@ describe("materialization barrel exports", () => {
 });
 
 describe("materializeAgents", () => {
+  it("shares prompt reads across explicit, review, category and append sources only within one call", async () => {
+    const config = cfg(`
+      agent shuttle { prompt_file "shared.md" prompt_append_file "shared.md" models ["base"] review_models ["review"] }
+      agent helper { prompt_file "shared.md" }
+      category backend { models ["category"] patterns ["src/**"] }
+    `);
+    let reads = 0;
+    const promptFileReader = { read: () => okAsync(`version ${++reads}`) };
+    const first = (
+      await materializeAgents({ config, promptFileReader })
+    )._unsafeUnwrap();
+    expect(first.errors).toEqual([]);
+    expect(
+      first.agents.some((agent) => agent.source === "review-variant"),
+    ).toBe(true);
+    expect(
+      first.agents.every((agent) =>
+        agent.descriptor.composedPrompt.startsWith("version 1"),
+      ),
+    ).toBe(true);
+    expect(reads).toBe(1);
+    const second = (
+      await materializeAgents({ config, promptFileReader })
+    )._unsafeUnwrap();
+    expect(reads).toBe(2);
+    expect(second.agents[0]?.descriptor.composedPrompt).toBe(
+      "version 2\n\nversion 2",
+    );
+  });
+
+  it("shares failed reads and reports each affected agent", async () => {
+    const config = cfg(
+      'agent first { prompt_file "missing.md" } agent second { prompt_file "missing.md" }',
+    );
+    let reads = 0;
+    const plan = (
+      await materializeAgents({
+        config,
+        promptFileReader: {
+          read: () => {
+            reads++;
+            return errAsync({ message: "missing" });
+          },
+        },
+      })
+    )._unsafeUnwrap();
+    expect(reads).toBe(1);
+    expect(plan.agents).toEqual([]);
+    expect(plan.errors).toHaveLength(2);
+  });
+
+  it("isolates descriptor arrays, policies and trigger objects from config and other descriptors", async () => {
+    const config = cfg(`
+      agent router { prompt "Router" tool_policy { delegate ask } }
+      agent shuttle { prompt "Worker" models ["model"] skills ["skill"] triggers [{ domain "code" trigger "implement" }] tool_policy { read allow delegate deny } }
+      category backend { patterns ["src/**"] variant "high" }
+      category frontend { patterns ["ui/**"] }
+    `);
+    const plan = (await materializeAgents({ config }))._unsafeUnwrap();
+    const backend = plan.agents.find(
+      (agent) => agent.agentName === "shuttle-backend",
+    )?.descriptor;
+    if (backend === undefined) throw new Error("missing category descriptor");
+    backend.models.push("other");
+    backend.skills.push("other");
+    backend.category?.patterns.push("other");
+    if (backend.rawToolPolicy) backend.rawToolPolicy.read = "deny";
+    const router = plan.agents[0]?.descriptor;
+    const trigger = router?.delegationTargets.find(
+      (target) => target.name === "shuttle",
+    )?.triggers[0];
+    if (trigger) trigger.domain = "changed";
+    expect(config.agents.shuttle?.models).toEqual(["model"]);
+    expect(config.agents.shuttle?.skills).toEqual(["skill"]);
+    expect(config.agents.shuttle?.triggers?.[0]?.domain).toBe("code");
+    expect(config.agents.shuttle?.tool_policy?.read).toBe("allow");
+    expect(config.categories.backend?.patterns).toEqual(["src/**"]);
+    expect(
+      plan.agents.find((agent) => agent.agentName === "shuttle-frontend")
+        ?.descriptor.models,
+    ).toEqual(["model"]);
+    expect(backend.variant).toBe("high");
+  });
+
   describe("builtin agents", () => {
     it("produces descriptors for builtin-named declared agents", async () => {
       const plan = await materializeConfig(`

@@ -1429,3 +1429,24 @@ describe("validate — variant field", () => {
     expect(config.categories.mycat?.variant).toBe("low");
   });
 });
+it("rejects unsafe or malformed direct AST input without invoking accessors", () => {
+  let reads = 0;
+  const accessor = Object.defineProperty({}, "type", {
+    enumerable: true,
+    get: () => {
+      reads++;
+      return "agent";
+    },
+  });
+  const cyclic: unknown[] = [];
+  cyclic.push(cyclic);
+  for (const input of [
+    [accessor],
+    cyclic,
+    [{}],
+    [{ type: "unknown", pos: { line: 1, column: 1 } }],
+  ]) {
+    expect(validate(input as never).isErr()).toBe(true);
+  }
+  expect(reads).toBe(0);
+});

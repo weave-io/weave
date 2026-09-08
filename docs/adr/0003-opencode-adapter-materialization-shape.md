@@ -1,8 +1,31 @@
 # ADR 0003: OpenCode Adapter Materialization Shape
 
-**Status**: Accepted  
+**Status**: Superseded in part by the OpenCode 2 native ABI
 **Date**: 2026-05-26  
 **Related**: [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
+
+---
+
+## 2026-09-08 OpenCode 2 addendum
+
+The SDK-first V1 runtime shape below remains historical context for preserved
+library helpers. It no longer defines the package's live plugin ABI. The
+OpenCode 2 core release targets exactly `0.0.0-beta-19086` and uses public
+`@opencode-ai/plugin/promise/*` domains:
+
+- the default, `./server`, and `./plugin` entries export `Plugin.define`;
+- native agent and command transforms replace config-map injection and SDK
+  reconciliation;
+- the Location-scoped host supplies live model and skill catalogs;
+- replay ownership is based on IDs inserted into the current native editor;
+- the package has separate read-only RPC and Solid TUI entries;
+- `/weave:start` is the only V2 plan command and is not a durable-workflow
+  entry point.
+
+The V2 adapter does not import Pi's runtime and does not use private OpenCode
+paths. See the [current adapter guide](../adapters/opencode.md) and [contract
+audit](../artifacts/opencode2-core-contract-audit.md). The rest of this ADR is
+V1 history and must not be used as current install guidance.
 
 ---
 

@@ -6,10 +6,9 @@
 
 import { Agent } from '@opencode-ai/sdk';
 import { AgentConfig } from '@opencode-ai/sdk';
+import { Plugin as OpenCode2Plugin } from '@opencode-ai/plugin/promise/plugin';
 import { OpencodeClient } from '@opencode-ai/sdk';
 import { Plugin as Plugin_2 } from '@opencode-ai/plugin';
-import { PluginInput } from '@opencode-ai/plugin';
-import { PluginModule } from '@opencode-ai/plugin';
 import { Result } from 'neverthrow';
 import { ResultAsync } from 'neverthrow';
 import { z } from 'zod';
@@ -60,12 +59,9 @@ export function classifyExistingAgent(agentName: string, existingAgents: Agent[]
 export function createDefaultStore(options?: InMemoryRuntimeStoreOptions): InMemoryRuntimeStore;
 
 // @public
-export function createWeavePlugin(options?: WeavePluginOptions): Plugin_2;
-
-// @public
 export const DEFAULT_EXECUTION_WORKFLOW: "tapestry-execution";
 
-// @public
+// @public @deprecated
 export const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 
 // @public
@@ -93,6 +89,18 @@ export type ModelResolutionError = {
     agentName: string;
     message: string;
 };
+
+// @public (undocumented)
+export interface OpenCode2Options {
+    // (undocumented)
+    readonly defaultAgent?: string;
+    // (undocumented)
+    readonly projectConfig: boolean;
+    // (undocumented)
+    readonly refreshIntervalMs: number;
+}
+
+export { OpenCode2Plugin }
 
 // Warning: (ae-forgotten-export) The symbol "HarnessAdapter" needs to be exported by the entry point index.d.ts
 //
@@ -163,12 +171,6 @@ export interface OpenCodeModelContext {
     systemDefault?: string;
     uiSelectedModel?: string;
 }
-
-export { Plugin_2 as Plugin }
-
-export { PluginInput }
-
-export { PluginModule }
 
 // @public
 export interface ProjectionDegraded<T> {
@@ -401,20 +403,13 @@ export const WEAVE_START_COMMAND_TEMPLATE: string;
 // @public
 export const WEAVE_START_LEGACY_COMMAND: "/start-work";
 
-// @public
-const WeavePlugin: Plugin_2;
+// @public (undocumented)
+const WeavePlugin: Plugin_2.Plugin;
 export { WeavePlugin }
 export default WeavePlugin;
 
-// @public
-export interface WeavePluginOptions {
-    readonly clientFacade?: OpenCodeClientFacade;
-    // Warning: (ae-forgotten-export) The symbol "FileReader_2" needs to be exported by the entry point index.d.ts
-    readonly fileReader?: FileReader_2;
-}
-
-// @public
-export const WeavePluginServer: Plugin_2;
+// @public (undocumented)
+export const WeavePluginServer: Plugin_2.Plugin;
 
 // Warnings were encountered during analysis:
 //

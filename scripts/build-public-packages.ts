@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import solidTransformPlugin from "@opentui/solid/bun-plugin";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
@@ -358,6 +359,7 @@ export class PublicPackageBuilder {
       source: string;
       output: string;
       executable?: boolean;
+      solid?: boolean;
     }[],
   ): ResultAsync<void, PublicPackageBuildError> {
     let result = this.getBuildDefines(packageName);
@@ -370,6 +372,7 @@ export class PublicPackageBuilder {
             target: "bun",
             format: "esm",
             external: [...PUBLIC_RUNTIME_EXTERNALS],
+            plugins: entry.solid ? [solidTransformPlugin] : [],
             define,
           }),
           () => ({

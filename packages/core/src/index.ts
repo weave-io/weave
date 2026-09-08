@@ -28,6 +28,15 @@ export type {
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+export {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+  CONFIG_INPUT_LIMITS,
+  MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE,
+  MAX_CONFIG_ERROR_FIELD_LENGTH,
+  MAX_CONFIG_ERROR_ISSUES,
+  MAX_CONFIG_ERROR_PATH_LENGTH,
+} from "./config-error-policy.js";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -47,6 +56,15 @@ export { tokenize } from "./lexer.js";
 // ---------------------------------------------------------------------------
 export { parseConfig } from "./parse-config.js";
 export { parse } from "./parser.js";
+export type {
+  SafeGraphCopyBudget,
+  SafeGraphCopyError,
+  SafeGraphValue,
+} from "./safe-graph-copy.js";
+export {
+  copySafeGraph,
+  DEFAULT_SAFE_GRAPH_COPY_BUDGET,
+} from "./safe-graph-copy.js";
 // ---------------------------------------------------------------------------
 // Inferred config types
 // ---------------------------------------------------------------------------

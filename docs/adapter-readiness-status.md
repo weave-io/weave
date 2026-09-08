@@ -69,14 +69,43 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ---
 
-## OpenCode Adapter — First-Slice Materialization
+## OpenCode 2 core release
 
-`@weaveio/weave-adapter-opencode` is a real first-slice materialization path as of
+The native OpenCode 2 path targets exactly `0.0.0-beta-19086`. It uses the
+server `Plugin.define` ABI, live model and skill catalogs, native agent and
+command transforms, read-only RPC, and a separate Solid CLI plugin. See the
+[OpenCode 2 adapter guide](adapters/opencode.md).
+
+| Operation | Adapter status | Notes |
+| --- | --- | --- |
+| Native agents | Ready | Inserts absent IDs and preserves foreign same-ID agents |
+| Model and variant intent | Ready | Validates live `provider/model#variant`; bare IDs must be unique |
+| Tool policy | Ready | Maps current native actions and preserves `allow`/`deny`/`ask` |
+| Request temperature | Ready | Applies only to owned agents in the same session Location |
+| Configured skills | Degraded | Missing skills are nonfatal; attached skills do not pass a native prompt-admission permission assertion on this host |
+| `/weave:start` | Ready with reserved-name semantics | The host has no atomic command presence check; Weave reserves and can replace this name |
+| Plan display and task list | Ready on the pinned CLI | Read-only session metadata and RPC; no workflow authority |
+| Native delegation | Ready through native surface | Uses OpenCode `subagent`; no private scheduler or child-session creation |
+| Durable workflows | Unsupported in this release | No run/resume/advance, leases, or artifact approvals |
+
+The adapter-owned health report exposes the first set of live operations. It
+also reports `durableWorkflows: false`. This release does **not** satisfy the
+existing engine Core Readiness Profile because that profile requires durable
+workflow capabilities. Do not weaken or rename the shared profile to describe
+this smaller release.
+
+The package's default, `./plugin`, and `./server` entries now use the V2 ABI.
+The legacy SDK library APIs remain exported, but V1 plugin loading does not.
+
+---
+
+## Legacy OpenCode library slice
+
+The preserved V1 SDK library helpers originated as a first-slice materialization path in
 [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md).
-It is an **OpenCode plugin**: users install it by adding the package to the
-`plugin` array in their `opencode.json` config. OpenCode loads the plugin at
-startup and calls the plugin entry point with a runtime context that includes
-a pre-constructed SDK client.
+This section is historical library context. Do not use its legacy plugin shape
+to configure the V2 runtime. Use the [OpenCode 2 adapter
+guide](adapters/opencode.md).
 
 ### What is implemented (first slice)
 
@@ -108,7 +137,7 @@ future specs:
   `SkillInfo[]` list but does not load skill file content. Content loading is
   harness-owned and out of scope.
 
-### Installation and runtime story
+### Historical installation and runtime story
 
 ```jsonc
 // opencode.json
@@ -117,7 +146,11 @@ future specs:
 }
 ```
 
-> **Important**: Use the `@weaveio/weave-adapter-opencode/plugin` subpath export, not the bare package name.
+> **Historical only**: The instructions below describe the removed V1 plugin ABI.
+> They are retained to explain the preserved SDK library helpers, not as current setup guidance.
+> Use the native V2 package entry from the [current adapter guide](adapters/opencode.md).
+>
+> The former V1 guidance required `@weaveio/weave-adapter-opencode/plugin`, not the bare package name.
 > The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
 > type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw
 > `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports
@@ -156,10 +189,11 @@ for the normative spec.
 
 ---
 
-## SDK Version Pin
+## Legacy SDK version pin
 
-The OpenCode adapter (`@weaveio/weave-adapter-opencode`) pins `@opencode-ai/sdk` at
-`~1.15.9` (currently resolved to `1.15.10`).
+The preserved V1 library helpers pin `@opencode-ai/sdk` at `~1.15.9`. The V2
+server boundary instead pins `@opencode-ai/plugin` and `@opencode-ai/client` at
+`0.0.0-beta-19086`.
 
 > **Review on SDK major bumps.** The `~` range allows patch updates but not
 > minor or major bumps. When `@opencode-ai/sdk` releases a new major version,
@@ -208,7 +242,8 @@ path (skill, script, or UI). `degraded` and `unsupported` fail the profile.
 command name. For command-capable adapters, `/weave:start` is the preferred
 concrete spelling when feasible — it signals Weave ownership and avoids
 collision with harness-native commands. `/start-work` is legacy/compatibility
-language for the OpenCode adapter only. `/run-workflow` is an explicit
+language for the historical OpenCode V1 library only; the V2 adapter does not
+register it. `/run-workflow` is an explicit
 named-workflow helper (not the general execution entry point) — use it when the
 user wants to invoke a specific named workflow by name rather than starting the
 default execution path.
@@ -268,9 +303,13 @@ See [Claude Code Adapter](claude-code-adapter.md) for the full execution trigger
 
 ---
 
-## OpenCode Adapter Delivery Evidence (Task 6.3)
+## Historical OpenCode V1 delivery evidence (Task 6.3)
 
-`@weaveio/weave-adapter-opencode` provides the canonical example of an adapter-owned projection of the engine-owned execution contract. The delivery path is `packages/adapters/opencode/src/run-workflow.ts` — an explicit user-driven helper that calls `startExecution` only when invoked deliberately by a user-authorized trigger.
+The preserved V1 library helper in
+`packages/adapters/opencode/src/run-workflow.ts` is historical evidence for an
+adapter-owned projection of the engine-owned durable execution contract. The
+native V2 plugin does not call this helper and does not claim durable workflow
+readiness.
 
 ### What the evidence proves
 

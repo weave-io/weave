@@ -1,45 +1,38 @@
 /**
  * @weaveio/weave-adapter-opencode
  *
- * OpenCode harness adapter and plugin entry point for the Weave orchestration
- * framework.
+ * Native OpenCode 2 integration and preserved OpenCode library helpers.
  *
  * This package serves two roles:
  *
- * 1. **OpenCode plugin** — When listed in `opencode.json`'s `plugin` array,
- *    OpenCode loads this package at startup and calls the default-exported
- *    `WeavePlugin` function. The plugin materializes all agents declared in
- *    `.weave/config.weave` into the running OpenCode instance.
+ * 1. **OpenCode 2 plugin** — When listed in the plural `plugins` field,
+ *    OpenCode loads the default `Plugin.define` definition. The exact supported
+ *    host is `0.0.0-beta-19086`. The package also ships physical `server.js`,
+ *    `rpc.js`, and `tui.js` entries for native host discovery.
  *
- * 2. **Harness adapter library** — `OpenCodeAdapter` implements the
- *    `HarnessAdapter` interface and can be used programmatically by any caller
- *    that wants to materialize Weave agents into OpenCode.
+ * 2. **Preserved library helpers** — `OpenCodeAdapter` and the V1
+ *    reconciliation and workflow helpers remain available to source consumers.
+ *    They do not define the OpenCode 2 runtime ABI.
  *
  * ## Installation as an OpenCode plugin
  *
- * Add the package to the `plugin` array in `opencode.json`:
+ * Add the package to the `plugins` array in `opencode.jsonc`:
  *
  * ```jsonc
- * // opencode.json
+ * // opencode.jsonc
  * {
- *   "plugin": ["@weaveio/weave-adapter-opencode"]
+ *   "plugins": ["@weaveio/weave-adapter-opencode@<exact-version>"]
  * }
  * ```
  *
- * OpenCode resolves the `./server` subpath export from `package.json`, which
- * points to `dist/plugin.js`. This module exports only the plugin function,
- * satisfying OpenCode's plugin loader requirements.
- *
- * Restart OpenCode after adding the plugin. The plugin entry point receives
- * the runtime context, constructs an `OpenCodeAdapter` with the injected SDK
- * client, and materializes all agents declared in `.weave/config.weave`.
+ * OpenCode loads the package root server definition. The native runtime reads
+ * live model and skill catalogs, materializes Weave agents through public host
+ * transforms, and exposes separate read-only RPC and CLI UI entries.
  *
  * ## Boundary rule
  *
- * This package is the only consumer of `@opencode-ai/sdk` and
- * `@opencode-ai/plugin`. All SDK type imports flow through `./sdk-types` —
- * never directly from the SDK package. Plugin types are confined to
- * `./plugin.ts`.
+ * V2 code uses only public `@opencode-ai/client` and `@opencode-ai/plugin`
+ * exports. Preserved V1 library code keeps its SDK facade in `./sdk-types`.
  */
 
 // ---------------------------------------------------------------------------
@@ -156,33 +149,24 @@ export {
 // OpenCode plugin entry point
 // ---------------------------------------------------------------------------
 
-export type { Plugin, PluginInput, PluginModule } from "@opencode-ai/plugin";
-export type { WeavePluginOptions } from "./plugin.js";
+export type { Plugin as OpenCode2Plugin } from "@opencode-ai/plugin/promise/plugin";
+export type { OpenCode2Options } from "./v2/options.js";
 
 /**
- * Default log file path relative to the project directory.
+ * Historical V1 log subpath. The OpenCode 2 plugin uses the shared engine
+ * logger and does not redirect logs to this file.
  *
- * When the OpenCode plugin runs without an explicit `WEAVE_LOG_FILE` env var,
- * Weave logs are written to this path under the project root. The `.weave/`
- * directory is already the conventional home for Weave project state, so
- * placing the log file there keeps everything in one place.
- *
- * Example: `/path/to/project/.weave/weave.log`
- *
- * Defined here (not re-exported from `plugin.ts`) because the plugin entry
- * point must export only functions to satisfy OpenCode's `getLegacyPlugins`
- * loader. This constant is safe to export from the barrel.
+ * @deprecated Preserved for source compatibility with V1 library consumers.
  */
 export const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 
 /**
- * Default export: the OpenCode `Plugin` function.
+ * Default export: the OpenCode 2 native plugin definition.
  *
  * OpenCode loads this as the plugin entry point when `@weaveio/weave-adapter-opencode`
- * is listed in `opencode.json`'s `plugin` array.
+ * is listed in `opencode.jsonc`'s plural `plugins` array.
  */
 export {
-  createWeavePlugin,
   server as WeavePluginServer,
   WeavePlugin,
   WeavePlugin as default,

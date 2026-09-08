@@ -44,7 +44,7 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 | Skill discovery/loading                            | Adapter                  | Skill locations and formats are harness-specific                        |
 | Skill matching/filtering                           | Engine (`@weaveio/weave-engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
 | `.weave/runtime/**` Runtime Store                  | Engine (`@weaveio/weave-engine`) | Runtime records are Weave product state, not harness resources          |
-| Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
+| Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O is harness/environment-specific; engine owns portable state and snapshot interfaces only |
 | Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weaveio/weave-engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
 | Artifact digest computation (reading file, hashing) | Adapter                 | Adapters read artifact files and compute SHA-256 digests before calling `dispatchStep`; the engine never reads artifact file contents |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
@@ -224,6 +224,27 @@ Key rules:
 - Earlier drafts used a placeholder `loadSkill()` method on `HarnessAdapter`. That method has been removed from the interface; adapters should implement `loadAvailableSkills()` only.
 
 See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) for the full vocabulary, resolution semantics, and proof artifacts.
+
+For nonfatal matching, `resolveAvailableSkillsForAgent` returns `resolved` entries
+and typed `MissingSkill` warnings together. `resolveAvailableSkillsForConfig`
+does the same across enabled agents and generated category shuttles, but returns
+a category-name conflict as an explicit error. Existing `resolveSkillsForAgent`
+and `resolveSkillsForConfig` callers remain strict. All APIs preserve declaration
+order, duplicate declarations, disabled filtering, and opaque adapter metadata.
+Adapters must deduplicate native activation and enforce harness skill permissions;
+a matched skill is not permission to load it.
+
+**Accepted OpenCode 2 beta exception:** host `0.0.0-beta-19086` does not expose
+its native skill permission assertion at prompt admission. The core V2 release
+can attach configured, available skill IDs without that assertion as explicit
+degraded behavior. The adapter guide must disclose this. This exception is not
+architectural precedent for another host or a later OpenCode version.
+
+For display-only plan data, adapters or the config package can implement
+`PlanTaskSnapshotReader` and pass an immutable snapshot into engine selection
+helpers. This grants no plan mutation authority. The engine must not discover
+plan directories, and a harness UI must not bypass the adapter RPC to read plan
+files locally.
 
 ---
 

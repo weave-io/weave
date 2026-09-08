@@ -505,7 +505,9 @@ export async function installHarnesses(input: {
   for (const harnessId of plan.selectedHarnesses) {
     const installer = registry[harnessId];
     const detected = harnesses.find((harness) => harness.id === harnessId);
-    if (detected === undefined) {
+    const explicitUndetectedV2 =
+      harnessId === "opencode2" && ctx.flags.harness === "opencode2";
+    if (detected === undefined && !explicitUndetectedV2) {
       ctx.terminal.stderr(`${harnessId} was requested but was not detected.`);
       exitCode = 1;
       continue;
@@ -523,9 +525,10 @@ export async function installHarnesses(input: {
 
     const result = await installer.install({
       harness: harnessId,
-      configPath: detected.configPath,
+      configPath: detected?.configPath ?? "<scope-resolved>",
       selectedModules: plan.selectedModules[harnessId] ?? [],
       force: ctx.flags.force,
+      scope: plan.scope,
     });
     if (result.isErr()) {
       ctx.terminal.stderr(formatInstallError(result.error));

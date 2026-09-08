@@ -1,76 +1,61 @@
 # @weaveio/weave-adapter-opencode
 
-The Weave adapter for OpenCode. It loads `.weave/config.weave`, materializes
-Weave agents into OpenCode, and exposes the adapter's OpenCode commands and
-runtime hooks.
+Native Weave integration for OpenCode 2. This release supports the exact host
+version `0.0.0-beta-19086`.
 
 ## Install
 
-Add the package name to the `plugin` array in `opencode.json` or
-`opencode.jsonc`:
+Use explicit OpenCode 2 installation:
 
-```json
+```bash
+weave init --harness opencode2 --scope local --yes
+```
+
+Or add the package manually to the plural `plugins` field:
+
+```jsonc
 {
-  "plugin": [
-    "@weaveio/weave-adapter-opencode@<exact-version>"
-  ]
+  "plugins": [
+    "@weaveio/weave-adapter-opencode@<exact-version>",
+  ],
 }
 ```
 
-The package name is the canonical OpenCode plugin spec. OpenCode resolves the
-package's `server` export to the plugin entry point. Use an exact version for
-reproducible installs. Replace it with `latest`, `next`, or `nightly` when you
-want npm to resolve a channel tag.
+Use `--scope global` to edit the XDG global OpenCode config. The CLI preserves
+JSONC comments and existing plugin options. It stops on malformed or ambiguous
+config files.
 
-There is no separate `npm install` step for the OpenCode plugin. OpenCode
-fetches the package at startup. Restart OpenCode after changing the plugin
-version.
+## Behavior
 
-## Minimal use
+The package ships separate server, RPC, and TUI entries. It materializes Weave
+agents through native OpenCode transforms and maps:
 
-Create and validate a Weave project, then start OpenCode:
+- composed role prompts to native agent `system`;
+- live `provider/model#variant` choices to native model references;
+- temperature to the context hook;
+- read, write, execute, delegate, and network policy to current native actions;
+- configured available skills to native prompt skill mentions;
+- eligible specialists to OpenCode's native foreground/background subagents.
 
-```bash
-bun add --global @weaveio/weave-cli@latest
-weave init --scope local --yes
-weave validate --project
-opencode
-```
+The V2 plugin reserves `/weave:start <plan-name>`. It does not register
+`/start-work`. Plan selection and the CLI task list are read-only display state,
+not durable workflow state.
 
-The plugin maps normalized agents, prompts, model preferences, skills, and
-supported tool policy into OpenCode. It provides `/weave:start` and the
-`/start-work` compatibility alias. It does not claim provider acceleration:
-`fast true` remains unsupported on OpenCode because the plugin has no
-correlated response evidence for the same request.
+OpenCode `0.0.0-beta-19086` does not expose native skill permission validation
+at prompt admission. Configured available skill IDs attach without that check.
+Disable a configured skill when this limit is not acceptable.
 
-Verify loading with OpenCode's diagnostics:
+## Compatibility
 
-```bash
-opencode debug config
-opencode debug info
-```
+The server/plugin default export uses the OpenCode 2 `Plugin.define` ABI. It is
+not a V1 plugin. Legacy V1 SDK library helpers remain in the package root for
+source compatibility.
 
-For local development, use an absolute file URL to the built plugin bundle:
+Not delivered: durable workflows, usage rollups, a child dashboard, model
+fallback, provider acceleration, or `/weave:goal`.
 
-```json
-{
-  "plugin": [
-    "file:///absolute/path/to/packages/adapters/opencode/dist/plugin.js"
-  ]
-}
-```
-
-## Supported host versions
-
-| Host | Support |
-| --- | --- |
-| OpenCode | No independent version floor is encoded. The package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; use an OpenCode release compatible with those APIs. |
-| Bun | Required for repository development and local builds. |
-
-## Documentation
-
-See the [OpenCode adapter reference](https://tryweave.io/docs/reference/adapters/opencode/)
-for behavior, commands, logging, and capability limits.
+See the [full adapter guide](https://github.com/weave-io/weave/blob/main/docs/adapters/opencode.md)
+and [isolated verification procedure](https://github.com/weave-io/weave/blob/main/docs/testing/opencode2-verification.md).
 
 ## License
 

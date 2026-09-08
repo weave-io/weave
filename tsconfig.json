@@ -8,6 +8,8 @@
     "declaration": false,
     "sourceMap": true,
     "esModuleInterop": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,

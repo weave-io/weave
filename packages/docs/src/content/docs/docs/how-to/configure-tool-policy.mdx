@@ -6,3 +6,7 @@ description: Compatibility route for policy docs.
 This page is kept for existing links after the public docs consolidation. Tool policy guidance now lives in [Prompts, Models, and Policy](../../prompts-models-policy/), with adapter mapping details in [Adapters](../../reference/adapters/).
 
 Current support note: tool policy is abstract capability intent; adapters map it to concrete harness tools.
+
+OpenCode 2 maps `read` to `read`/`glob`/`grep`, `write` to `edit`, `execute` to
+`shell`, `network` to `webfetch`/`websearch`, and eligible delegation to native
+`subagent` rules. It preserves `allow`, `deny`, and `ask`.

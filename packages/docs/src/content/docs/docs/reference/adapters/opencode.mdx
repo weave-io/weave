@@ -1,69 +1,72 @@
 ---
-title: OpenCode
-description: Install and configure the published Weave adapter for OpenCode.
+title: OpenCode 2
+description: Install and use the native Weave adapter for OpenCode 2.
 ---
+
+## Supported host
+
+This core release supports exactly OpenCode `0.0.0-beta-19086`. OpenCode 1 and
+OpenCode 2 use different plugin ABIs.
 
 ## Install
 
-Add the canonical package name to OpenCode's `opencode.json` or `opencode.jsonc`:
+```sh
+weave init --harness opencode2 --scope local --yes
+```
 
-```json
+The installer edits the plural `plugins` field in project JSONC. Use
+`--scope global` for the XDG OpenCode config. A manual entry is:
+
+```jsonc
 {
-  "plugin": [
-    "@weaveio/weave-adapter-opencode@<exact-version>"
-  ]
+  "plugins": [
+    "@weaveio/weave-adapter-opencode@<exact-version>",
+  ],
 }
 ```
 
-OpenCode resolves the package's `server` export to the plugin entry point.
-Use an exact version for reproducible installs. Replace it with `latest`,
-`next`, or `nightly` when you explicitly want a channel tag. Do not point the
-plugin at `dist/index.js` or a source file.
+The package root resolves its native server entry. Do not append `/plugin`.
+Restart OpenCode after changing package versions.
 
-## Supported versions and channels
+## Native behavior
 
-The adapter is published on `latest` (stable), `next`, and `nightly`. Its
-package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; no
-independent OpenCode version floor is encoded. Use an OpenCode release
-compatible with those APIs.
+The adapter registers materialized Weave agents, live model and variant
+references, request temperature, configured skills, and current native
+permission rules. It preserves foreign same-ID agents. It delegates through
+OpenCode's native `subagent` action for both foreground and background work.
 
-## Configure Weave
+Use one plan command:
 
-Create `.weave/config.weave`, then validate it:
-
-```sh
-weave init --scope local --yes
-weave validate --project
+```text
+/weave:start <plan-name>
 ```
 
-OpenCode fetches the plugin package at startup. Restart OpenCode after changing the plugin version or Weave configuration.
+The V2 plugin does not register `/start-work`. Plan selection and the CLI task
+list are read-only display metadata. They do not create or resume a durable
+workflow.
 
-## Commands
+## Tool mapping
 
-The adapter registers:
+| Weave capability | OpenCode actions |
+| --- | --- |
+| `read` | `read`, `glob`, `grep` |
+| `write` | `edit` |
+| `execute` | `shell` |
+| `delegate` | `subagent` for eligible targets |
+| `network` | `webfetch`, `websearch` |
 
-- `/weave:start` to start work from the configured workflow surface.
-- `/start-work` as a compatibility alias for `/weave:start`.
+`allow`, `deny`, and `ask` remain distinct. Arbitrary MCP or custom tool
+mappings are not part of this release.
 
-The adapter also maps Weave agents, model preferences, prompt composition, and supported policy fields to OpenCode's native configuration.
+## Known limits
 
-## Provider acceleration is unsupported
+OpenCode `0.0.0-beta-19086` does not expose its native skill permission
+assertion at prompt admission. Configured available skills attach without that
+check. Disable the skill in `.weave` when this limit is not acceptable.
 
-An agent's `fast true` is neutral intent. OpenCode's plugin surface can change a request through `chat.params` and `chat.headers`, but its public plugin events and assistant messages expose no correlated official response-body evidence — no OpenAI `service_tier` and no Anthropic `usage.speed` — for a successful call. A successful status, an error payload, or ordinary token usage is not evidence.
+Durable workflows, usage rollups, a child dashboard, automatic model fallback,
+provider acceleration, and `/weave:goal` are not delivered. The current DSL
+does not define `fast`.
 
-The adapter therefore sends no acceleration control and changes no request option or header. The `provider-fast-activation` capability reports `unsupported` with the bounded reason `response-proof-unavailable`. Materialized agent configuration never claims that acceleration was requested or applied.
-
-This is an optional-capability gap. It warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle.
-
-Support can be enabled only after the plugin contract exposes correlated official response-body evidence for the same attempt, proven in a real harness. Mocked unit coverage is not that proof.
-
-## Verify loading
-
-Use OpenCode's own diagnostics:
-
-```sh
-opencode debug config
-opencode debug info
-```
-
-These commands verify the resolved plugin and configuration. See the [support matrix](./) for the boundary between implementation and release status.
+See the repository's OpenCode adapter guide for refresh, RPC, TUI, and isolated
+verification details.

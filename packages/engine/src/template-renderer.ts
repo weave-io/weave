@@ -11,8 +11,10 @@
  * - Reject unsafe paths (prototype traversal: __proto__, prototype, constructor)
  * - Reject function/callable values in the template context
  * - Render with default HTML escaping (double braces) and raw output (triple braces)
- * - Post-render unresolved-tag check
  * - Restore escaped literal tags after rendering
+ *
+ * Validate source tokens, not rendered output. Interpolated values are opaque
+ * text and can contain literal Mustache-shaped examples.
  *
  * This module has NO filesystem, environment, process, helper, lambda, or
  * partial-loading behavior. All functions return neverthrow Result types.
@@ -21,7 +23,7 @@
  */
 
 import Mustache from "mustache";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 
 import { logger } from "./logger.js";
 
@@ -117,11 +119,6 @@ export type RendererError =
       type: "FunctionValue";
       path: string;
       message: string;
-    }
-  | {
-      type: "UnresolvedTag";
-      tag: string;
-      message: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -198,17 +195,13 @@ function escapeRegex(s: string): string {
  * Returns a typed Result — never throws for expected parse failures.
  */
 function parseTemplate(source: string): Result<MustacheToken[], RendererError> {
-  try {
-    const tokens = Mustache.parse(source) as MustacheToken[];
-    return ok(tokens);
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    log.debug({ cause }, "Mustache parse failed");
-    return err({
+  return Result.fromThrowable(
+    () => Mustache.parse(source) as MustacheToken[],
+    (cause): RendererError => ({
       type: "MalformedTemplate",
-      message: `Template parse error: ${message}`,
-    });
-  }
+      message: `Template parse error: ${cause instanceof Error ? cause.message : String(cause)}`,
+    }),
+  )();
 }
 
 // ---------------------------------------------------------------------------
@@ -456,64 +449,6 @@ function validateNoFunctionValues(
 }
 
 // ---------------------------------------------------------------------------
-// Post-render unresolved-tag check
-// ---------------------------------------------------------------------------
-
-/**
- * After rendering, scan for any remaining unresolved Mustache tags.
- *
- * Allows:
- * - Restored escaped literals (which produce literal `{{` or `{{{` text)
- *
- * Rejects:
- * - Any remaining `{{...}}` or `{{{...}}}` that were not resolved
- *
- * Strategy: after restoreEscapedLiterals(), the output may contain literal
- * `{{` sequences that came from escaped inputs. We need to distinguish those
- * from real unresolved tags.
- *
- * We do this by checking the rendered output BEFORE restoration for any
- * remaining `{{` patterns (excluding our placeholders).
- */
-function checkUnresolvedTags(
-  renderedBeforeRestore: string,
-): Result<void, RendererError> {
-  // After Mustache renders, any remaining {{ or {{{ are unresolved tags.
-  // Our placeholders don't contain {{ so they won't match.
-  //
-  // We use a precise regex that matches only Mustache-style identifiers:
-  // - Optional section/partial/comment prefix: #, ^, /, !, >, &
-  // - Followed by an identifier: letters, digits, underscores, dots, hyphens
-  //
-  // This avoids false positives from Mermaid hexagon node syntax like
-  // {{"weft"}} which contains quotes and is not a Mustache tag.
-  const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
-  const unresolvedMatch = renderedBeforeRestore.match(mustacheTagPattern);
-  if (unresolvedMatch !== null) {
-    const tag = unresolvedMatch[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  // Also check for triple-brace unresolved (same precision)
-  const mustacheTriplePattern = /\{\{\{[#^/!>&]?[\w.-][\w.-]*\}\}\}/;
-  const unresolvedTriple = renderedBeforeRestore.match(mustacheTriplePattern);
-  if (unresolvedTriple !== null) {
-    const tag = unresolvedTriple[0];
-    return err({
-      type: "UnresolvedTag",
-      tag,
-      message: `Unresolved template tag "${tag}" after rendering — check that all referenced paths have values`,
-    });
-  }
-
-  return ok(undefined);
-}
-
-// ---------------------------------------------------------------------------
 // Main render function
 // ---------------------------------------------------------------------------
 
@@ -534,8 +469,10 @@ export interface RenderOptions {
  * 3. Validate tokens (unsupported features, unsafe paths, unknown paths)
  * 4. Validate no function/callable values in context
  * 5. Render with Mustache (HTML escaping for {{...}}, raw for {{{...}}})
- * 6. Check for unresolved tags in rendered output (before restoration)
- * 7. Restore escaped literal placeholders
+ * 6. Restore escaped literal placeholders
+ *
+ * Never render or validate interpolated values a second time. Allowed paths
+ * that have no value render empty, following Mustache's normal behavior.
  *
  * Returns Result<string, RendererError> — never throws for expected failures.
  */
@@ -563,24 +500,17 @@ export function renderTemplate(
   if (funcValidation.isErr()) return err(funcValidation.error);
 
   // Step 5: Render
-  let rendered: string;
-  try {
-    rendered = Mustache.render(preprocessed, context);
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    log.debug({ cause }, "Mustache render failed");
-    return err({
+  const rendered = Result.fromThrowable(
+    () => Mustache.render(preprocessed, context),
+    (cause): RendererError => ({
       type: "MalformedTemplate",
-      message: `Template render error: ${message}`,
-    });
-  }
+      message: `Template render error: ${cause instanceof Error ? cause.message : String(cause)}`,
+    }),
+  )();
+  if (rendered.isErr()) return rendered;
 
-  // Step 6: Check for unresolved tags (before restoration)
-  const unresolvedCheck = checkUnresolvedTags(rendered);
-  if (unresolvedCheck.isErr()) return err(unresolvedCheck.error);
-
-  // Step 7: Restore escaped literals
-  const final = restoreEscapedLiterals(rendered);
+  // Step 6: Restore escaped literals
+  const final = restoreEscapedLiterals(rendered.value);
 
   log.debug({ outputLength: final.length }, "Template rendered successfully");
   return ok(final);

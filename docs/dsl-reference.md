@@ -53,6 +53,30 @@ Plan files are always stored under `.weave/plans/`. Plan-related learnings and e
 | Named blocks | `keyword name { ... }` |
 | Scalar key-value | `key value` (no colon, no semicolon) |
 
+Triple-quoted strings contain raw text: backslashes and DSL punctuation remain
+literal. The first closing `"""` ends the string. One opening LF or CRLF is
+skipped. Content CRLF and lone CR line endings become LF before common-indent
+removal. Leading and trailing blank lines are removed; interior blank lines
+remain. Ordinary LF values and same-line literals keep their existing meaning.
+An unterminated literal reports the opening delimiter's line and column.
+
+### Input limits
+
+Core processing rejects sources over 1,048,576 UTF-16 code units, token streams
+over 65,536 tokens, and delimiter nesting over 64 levels. Parser recovery always
+consumes input or stops. Direct parser and validator calls copy plain data
+descriptors before reading values. Accessors, functions, cycles, nonfinite
+numbers, unusual prototypes, sparse arrays, and unsupported values return typed
+errors. Prototype names (`__proto__`, `prototype`, `constructor`) are not valid
+declaration or property names. Duplicate properties are rejected.
+
+The default graph-copy budget permits 64 levels, 16,384 values and properties,
+1,024 keys per object, 4,096 elements per array, and 1,048,576 string code units
+including keys. Token input uses its own token-shaped budget. Diagnostic output
+has at most 32 issues, 256 characters per path, 512 per other field, and an 8 KiB
+aggregate budget. A final marker reports truncation. These limits do not make
+reflection on arbitrary in-process JavaScript proxies a sandbox.
+
 ---
 
 ## Agents
@@ -105,6 +129,7 @@ agent my-helper {
 | `models` | string[] | Ordered model preference list. Adapters translate to concrete harness model fields. |
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
+| `fast` | boolean | Optional fast-service intent. `false` explicitly disables it; omission leaves harness defaults unchanged. Provider support and billing are harness-owned. |
 | `variant` | string | Free-form string for model variant selection (e.g. `"preview"`, `"latest"`). Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
@@ -201,6 +226,7 @@ category frontend {
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
 | `prompt_append_file` | string | File path appended to the base shuttle prompt |
 | `temperature` | number | Temperature hint for this category's shuttle agent |
+| `fast` | boolean | Overrides the base shuttle's fast-service intent, including an explicit `false`. |
 | `variant` | string | Free-form string for model variant selection. Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Tool policy overrides for this category's shuttle agent |
 
@@ -367,6 +393,22 @@ analytics {
 | `disable skills ["name", …]` | Disable named skills globally |
 
 ### `settings` Block
+
+```weave
+settings {
+  delegation {
+    max_concurrency 5
+  }
+}
+```
+
+`delegation.max_concurrency` is an optional positive safe integer. Adapters own
+enforcement of this limit on simultaneous delegated work. Omission preserves
+the harness default; it does not imply unlimited work. Zero, non-integer values,
+strings, and unknown fields inside `delegation` are rejected.
+Numeric validation uses the parsed JavaScript number; see
+[Execution Controls](specs/33-spec-execution-controls/33-spec-execution-controls.md)
+for precision limits and adapter responsibilities.
 
 | Field | Values | Description |
 | --- | --- | --- |

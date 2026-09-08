@@ -6,3 +6,7 @@ description: Compatibility route for model preference docs.
 This page is kept for existing links after the public docs consolidation. Model preference guidance now lives in [Prompts, Models, and Policy](../../prompts-models-policy/), with adapter support details in [Adapters](../../reference/adapters/).
 
 Current support note: model lists express preference order; concrete availability and selected model lookup are adapter-owned.
+
+OpenCode 2 resolves `provider/model#variant` against its live model catalog. A
+bare model ID must match exactly one provider. An entry-level variant overrides
+the descriptor-level `variant`.
