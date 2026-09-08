@@ -71,11 +71,11 @@ In addition to the standard review checklist, verify the following for every Wea
 
 Follow this exact review contract:
 
-1. First line: exactly one verdict tag, either **[APPROVE]** or **[REJECT]**.
-2. Next line: `Reviewed files: ` followed by backticked file paths.
+1. The first line must start with exactly one verdict tag: `[APPROVE]` or `[REJECT]`.
+2. The second line must be `Reviewed files:` with backticked file paths.
 3. If the verdict is **[REJECT]**, include one `BLOCKER:` line per blocking issue.
-4. Each `BLOCKER:` line must:
-   - cite at least one backticked file path
+4. Every `BLOCKER:` line must cite a specific file path and:
+   - cite it as a backticked file path
    - describe the concrete defect or missing requirement
    - include a specific action verb such as `fix`, `add`, `update`, `remove`, `guard`, `validate`, or `handle`
    - explain why the issue blocks merge now
