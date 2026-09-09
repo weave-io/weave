@@ -1,8 +1,45 @@
 # Config Loading
 
+## Safe merge inputs
+
+`mergeConfigsResult` validates bounded copies of every input layer and the merged
+result, including zero- and one-layer calls. It accepts at most 128 layers.
+Invalid inputs return `ConfigValidationError` with a layer index (zero-based) or
+`merged` and bounded validation details. CLI compose, prompt, and validate commands
+display both this error and the existing workflow-extension errors.
+
+Validation does not insert defaults into override layers. The normalized empty
+`extend_before_plan.steps` default remains valid when a parsed config is checked
+again. Scalar priority, override-first array unions, workflow step insertion,
+category patterns, and variants are unchanged. The legacy `mergeConfigs` wrapper
+still throws its first error for callers that require that contract.
+
 `@weaveio/weave-config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts) · [CLI — `weave prompt self-modify`](./cli.md#weave-prompt-self-modify)
+
+---
+
+## OpenCode 2 exact-byte attempts
+
+The native OpenCode 2 adapter injects one `CatalogSourceCache` into config and
+prompt loading for each refresh attempt. The cache reads each source at most
+once, decodes UTF-8 strictly, hashes the exact bytes used by composition, and
+records missing sources so later file creation changes the revision. Each
+source and each complete attempt have byte and source-count limits.
+
+The adapter publishes only a complete valid catalog. A malformed edit does not
+partially replace native agents; the last valid candidate stays active. Setting
+`projectConfig: false` masks only the current Location's project config path.
+It does not disable global config or read files from another Location.
+An existence-check failure is an I/O error, not proof that a source was
+deleted. The adapter rejects that refresh and keeps the last valid candidate.
+
+Plan display uses a separate `PlanTaskSnapshotReader` boundary. The config
+package reads only `.weave/plans/<safe-name>.md`, rejects traversal and symbolic
+links, limits file size and task count, and returns immutable display data. The
+engine does not discover plan files and the OpenCode TUI does not read them
+locally.
 
 ---
 
@@ -201,6 +238,11 @@ Each scope has a `rootDir` (see [`packages/config/src/types.ts`](../packages/con
 A `prompt_file: "loom.md"` in scope `{ rootDir: "/my/project/.weave" }` resolves to `/my/project/.weave/prompts/loom.md`.
 
 Resolution happens before merging so that when two layers both define the same agent's `prompt_file`, the winning value is already an absolute path pointing to the correct scope's `prompts/` directory.
+
+`mergeConfigsResult()` permits these resolved absolute paths, but it still
+checks prompt-source exclusivity before it removes path fields for schema-only
+validation. A layer that contains both `prompt` and `prompt_file`, or both
+append fields, is invalid even when its file path is already absolute.
 
 ### Migration and prompt-file translation
 

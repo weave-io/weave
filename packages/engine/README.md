@@ -15,6 +15,12 @@ Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 
 ## Boundary Rule
 
+Use `resolveAvailableSkillsForAgent()` or `resolveAvailableSkillsForConfig()` to
+keep available matches and typed missing-skill warnings together. The existing
+`resolveSkillsForAgent()` and `resolveSkillsForConfig()` APIs remain strict.
+The nonfatal config API returns category conflicts as explicit errors. Matching
+does not discover files, activate skills, or grant native skill permissions.
+
 The engine may orchestrate and call adapters through abstract interfaces, but it must not make harness-specific assumptions.
 
 ```ts

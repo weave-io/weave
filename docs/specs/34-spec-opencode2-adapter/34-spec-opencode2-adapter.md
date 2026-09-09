@@ -1,6 +1,17 @@
 # Spec 34: OpenCode V2 Adapter (Independent Package)
 
 **Status**: Active
+**Native core integration update (2026-09-09):** The package separation rules
+remain in force. The native `./server` entry now uses the catalog-backed
+implementation under `src/v2/`, described in the
+[core integration contract](../../adapters/opencode2-core.md). That contract
+governs the native server where the facade lifecycle sections below differ.
+The root `OpenCode2Adapter` and older plugin implementation remain compatibility
+surfaces. Server SDK imports stay in `src/sdk-types.ts`; the optional TUI runtime
+has its own `src/sdk-ui.ts` boundary to keep UI dependencies out of headless
+server imports. Native registration still uses transform/disposal, labels
+inserted agents with the V2 marker, and never adopts an existing foreign agent
+merely because its description contains that marker.
 **Related package**: `@weaveio/weave-adapter-opencode2` at `packages/adapters/opencode2/` (implemented in Phase C of this spec's plan; not yet scaffolded as of this writing)
 **Related plan**: [`.weave/plans/opencode2-adapter.md`](../../../.weave/plans/opencode2-adapter.md)
 **Related specs**:

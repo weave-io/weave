@@ -35,12 +35,15 @@ export type {
   CategoryMetadata,
   ComposeError,
   DelegationTarget,
+  PromptFileReader,
+  PromptFileReadFailure,
   PromptTemplateReason,
   WorkflowStepComposedPrompt,
 } from "./compose.js";
 export {
   composeAgentDescriptor,
   composeWorkflowStepPrompt,
+  defaultPromptFileReader,
   detectAppendCollisions,
 } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
@@ -137,9 +140,25 @@ export {
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
 export type {
+  ActivePlanTask,
+  PlanActiveTaskError,
+} from "./plan-active-task.js";
+export {
+  selectActivePlanTask,
+  selectNextPlanTask,
+} from "./plan-active-task.js";
+export type {
   PlanStateError,
   PlanStateProvider,
 } from "./plan-state-provider.js";
+export type {
+  PlanTaskFormat,
+  PlanTaskNode,
+  PlanTaskSnapshot,
+  PlanTaskSnapshotError,
+  PlanTaskSnapshotReader,
+  PlanTaskState,
+} from "./plan-task-snapshot.js";
 export type {
   CollatedReview,
   CollatedReviewAllFailedError,
@@ -321,6 +340,8 @@ export {
   startPlan,
 } from "./runtime-command-operations/index.js";
 export type {
+  AvailableConfigSkillResolution,
+  AvailableSkillResolution,
   ConfigSkillResolutionResult,
   ResolvedSkill,
   SkillInfo,
@@ -329,6 +350,8 @@ export type {
   SkillResolutionInput,
 } from "./skill-resolution.js";
 export {
+  resolveAvailableSkillsForAgent,
+  resolveAvailableSkillsForConfig,
   resolveSkillsForAgent,
   resolveSkillsForConfig,
 } from "./skill-resolution.js";

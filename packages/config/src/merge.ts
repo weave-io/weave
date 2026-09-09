@@ -1,10 +1,15 @@
 import {
+  boundConfigErrors,
+  CONFIG_ERRORS_TRUNCATED,
+  copySafeGraph,
+  type SafeGraphValue,
+  type ValidationError,
   type WeaveConfig,
   WeaveConfigSchema,
   type WorkflowConfig,
   type WorkflowStep,
 } from "@weaveio/weave-core";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------
 // WorkflowExtensionError — discriminated union
@@ -53,10 +58,240 @@ export type WorkflowExtensionError =
  * Top-level merge error type. Currently wraps `WorkflowExtensionError`
  * entries produced during step-aware workflow merging.
  */
-export type MergeError = {
-  type: "WorkflowExtensionError";
-  error: WorkflowExtensionError;
-};
+export type MergeError =
+  | {
+      type: "WorkflowExtensionError";
+      error: WorkflowExtensionError;
+    }
+  | {
+      type: "ConfigValidationError";
+      layer: number | "merged";
+      errors: ValidationError[];
+    };
+
+const MAX_CONFIG_LAYERS = 128;
+
+function containsUnsafeKey(value: SafeGraphValue): boolean {
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value).some(
+    ([key, nested]) =>
+      key === "__proto__" ||
+      key === "constructor" ||
+      key === "prototype" ||
+      containsUnsafeKey(nested),
+  );
+}
+
+function isSafeRecord(
+  value: SafeGraphValue,
+): value is { [key: string]: SafeGraphValue } {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneSafeRecord(value: { [key: string]: SafeGraphValue }): {
+  [key: string]: SafeGraphValue;
+} {
+  return Object.assign(
+    Object.create(null) as { [key: string]: SafeGraphValue },
+    value,
+  );
+}
+
+function promptSourceErrors(value: {
+  [key: string]: SafeGraphValue;
+}): ValidationError[] {
+  const errors: ValidationError[] = [];
+  for (const field of ["agents", "categories"]) {
+    const owners = value[field];
+    if (!isSafeRecord(owners)) continue;
+    for (const [name, owner] of Object.entries(owners)) {
+      if (!isSafeRecord(owner)) continue;
+      if (
+        field === "agents" &&
+        owner.prompt !== undefined &&
+        owner.prompt_file !== undefined
+      ) {
+        errors.push({
+          type: "ValidationError",
+          path: `${field}.${name}`,
+          message: "prompt and prompt_file are mutually exclusive",
+        });
+      }
+      if (
+        owner.prompt_append !== undefined &&
+        owner.prompt_append_file !== undefined
+      ) {
+        errors.push({
+          type: "ValidationError",
+          path: `${field}.${name}`,
+          message:
+            "prompt_append and prompt_append_file are mutually exclusive",
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+/** Remove already-resolved absolute prompt paths from schema-only input. */
+function withoutResolvedPromptPaths(value: { [key: string]: SafeGraphValue }): {
+  [key: string]: SafeGraphValue;
+} {
+  const result = cloneSafeRecord(value);
+  for (const field of ["agents", "categories"]) {
+    const owners = result[field];
+    if (!isSafeRecord(owners)) continue;
+
+    const ownerCopies = cloneSafeRecord(owners);
+    for (const [name, owner] of Object.entries(owners)) {
+      if (!isSafeRecord(owner)) continue;
+      const copy = cloneSafeRecord(owner);
+      let changed = false;
+      for (const pathField of ["prompt_file", "prompt_append_file"]) {
+        const path = copy[pathField];
+        if (typeof path !== "string" || !path.startsWith("/")) continue;
+        delete copy[pathField];
+        changed = true;
+      }
+      if (changed) ownerCopies[name] = copy;
+    }
+    result[field] = ownerCopies;
+  }
+  return result;
+}
+
+function restoreResolvedPromptPaths(
+  config: WeaveConfig,
+  source: { [key: string]: SafeGraphValue },
+): WeaveConfig {
+  const agents = { ...config.agents };
+  const sourceAgents = source.agents;
+  if (isSafeRecord(sourceAgents)) {
+    for (const [name, sourceAgent] of Object.entries(sourceAgents)) {
+      const targetAgent = agents[name];
+      if (!isSafeRecord(sourceAgent) || targetAgent === undefined) continue;
+      const promptFile = sourceAgent.prompt_file;
+      const promptAppendFile = sourceAgent.prompt_append_file;
+      agents[name] = {
+        ...targetAgent,
+        ...(typeof promptFile === "string" && promptFile.startsWith("/")
+          ? { prompt_file: promptFile }
+          : {}),
+        ...(typeof promptAppendFile === "string" &&
+        promptAppendFile.startsWith("/")
+          ? { prompt_append_file: promptAppendFile }
+          : {}),
+      };
+    }
+  }
+
+  const categories = { ...config.categories };
+  const sourceCategories = source.categories;
+  if (isSafeRecord(sourceCategories)) {
+    for (const [name, sourceCategory] of Object.entries(sourceCategories)) {
+      const targetCategory = categories[name];
+      if (!isSafeRecord(sourceCategory) || targetCategory === undefined)
+        continue;
+      const promptAppendFile = sourceCategory.prompt_append_file;
+      if (
+        typeof promptAppendFile !== "string" ||
+        !promptAppendFile.startsWith("/")
+      )
+        continue;
+      categories[name] = {
+        ...targetCategory,
+        prompt_append_file: promptAppendFile,
+      };
+    }
+  }
+
+  return { ...config, agents, categories };
+}
+
+function validateConfigLayer(
+  value: unknown,
+  layer: number | "merged",
+): Result<WeaveConfig, MergeError[]> {
+  const invalid: MergeError[] = [
+    {
+      type: "ConfigValidationError",
+      layer,
+      errors: [
+        {
+          type: "ValidationError",
+          path: "",
+          message:
+            "config must contain bounded plain data with safe property names",
+        },
+      ],
+    },
+  ];
+  const copied = copySafeGraph(value);
+  if (
+    copied.isErr() ||
+    copied.value === null ||
+    typeof copied.value !== "object" ||
+    Array.isArray(copied.value) ||
+    containsUnsafeKey(copied.value)
+  )
+    return err(invalid);
+  const sourceErrors = promptSourceErrors(copied.value);
+  if (sourceErrors.length > 0) {
+    return err([
+      {
+        type: "ConfigValidationError",
+        layer,
+        errors: boundConfigErrors(sourceErrors, () => ({
+          type: "ValidationError",
+          path: "",
+          message: CONFIG_ERRORS_TRUNCATED,
+        })),
+      },
+    ]);
+  }
+  const validationInput = withoutResolvedPromptPaths(copied.value);
+  const extension = validationInput.extend_before_plan;
+  // The schema emits this empty default but its declaration schema requires
+  // at least one step. Accept the normalized empty sentinel on revalidation.
+  if (
+    extension !== null &&
+    typeof extension === "object" &&
+    !Array.isArray(extension) &&
+    Object.keys(extension).length === 1 &&
+    Array.isArray(extension.steps) &&
+    extension.steps.length === 0
+  )
+    delete validationInput.extend_before_plan;
+  const checked = Result.fromThrowable(
+    () => WeaveConfigSchema.safeParse(validationInput),
+    () => invalid,
+  )();
+  if (checked.isErr()) return err(checked.error);
+  if (!checked.value.success)
+    return err([
+      {
+        type: "ConfigValidationError",
+        layer,
+        errors: boundConfigErrors(
+          checked.value.error.issues.map(
+            (issue): ValidationError => ({
+              type: "ValidationError",
+              path: issue.path.join("."),
+              message: issue.message,
+            }),
+          ),
+          () => ({
+            type: "ValidationError",
+            path: "",
+            message: CONFIG_ERRORS_TRUNCATED,
+          }),
+        ),
+      },
+    ]);
+  // Defaults must not introduce new overrides while folding layers.
+  if (layer !== "merged") return ok(copied.value as WeaveConfig);
+  return ok(restoreResolvedPromptPaths(checked.value.data, copied.value));
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -109,6 +344,17 @@ function mergeValues(base: unknown, override: unknown): unknown {
 
   if (isPlainObject(base) && isPlainObject(override)) {
     const merged: Record<string, unknown> = { ...base };
+
+    // A higher-priority prompt source owns its mutually exclusive source pair.
+    // Delete the lower-priority source before the ordinary deep merge so a
+    // valid pair of layers cannot create an invalid combined agent/category.
+    if (Object.hasOwn(override, "prompt")) delete merged.prompt_file;
+    if (Object.hasOwn(override, "prompt_file")) delete merged.prompt;
+    if (Object.hasOwn(override, "prompt_append"))
+      delete merged.prompt_append_file;
+    if (Object.hasOwn(override, "prompt_append_file"))
+      delete merged.prompt_append;
+
     for (const key of Object.keys(override)) {
       merged[key] = mergeValues(
         (base as Record<string, unknown>)[key],
@@ -432,21 +678,53 @@ function deepMerge2Result(
 export function mergeConfigsResult(
   ...configs: WeaveConfig[]
 ): Result<WeaveConfig, MergeError[]> {
-  if (configs.length === 0) {
-    return ok(WeaveConfigSchema.parse({}));
+  if (configs.length > MAX_CONFIG_LAYERS)
+    return err([
+      {
+        type: "ConfigValidationError",
+        layer: "merged",
+        errors: [
+          {
+            type: "ValidationError",
+            path: "",
+            message: "at most 128 config layers are allowed",
+          },
+        ],
+      },
+    ]);
+  const layers: WeaveConfig[] = [];
+  for (const [index, config] of configs.entries()) {
+    const checked = validateConfigLayer(config, index);
+    if (checked.isErr()) return checked;
+    layers.push(checked.value);
   }
-  if (configs.length === 1) {
-    return ok(configs[0] as WeaveConfig);
-  }
-
-  let acc: WeaveConfig = configs[0] as WeaveConfig;
-  for (let i = 1; i < configs.length; i++) {
-    const next = configs[i] as WeaveConfig;
-    const result = deepMerge2Result(acc, next);
-    if (result.isErr()) return err(result.error);
-    acc = result.value;
-  }
-  return ok(acc);
+  return Result.fromThrowable(
+    (): Result<WeaveConfig, MergeError[]> => {
+      let acc = layers[0];
+      if (acc === undefined) return validateConfigLayer({}, "merged");
+      for (const next of layers.slice(1)) {
+        const result = deepMerge2Result(acc, next);
+        if (result.isErr()) return result;
+        const bounded = validateConfigLayer(result.value, layers.length);
+        if (bounded.isErr()) return bounded;
+        acc = bounded.value;
+      }
+      return validateConfigLayer(acc, "merged");
+    },
+    (): MergeError[] => [
+      {
+        type: "ConfigValidationError",
+        layer: "merged",
+        errors: [
+          {
+            type: "ValidationError",
+            path: "",
+            message: "config merge exceeded the supported input boundary",
+          },
+        ],
+      },
+    ],
+  )().andThen((result) => result);
 }
 
 /**
@@ -469,7 +747,7 @@ export function mergeConfigsResult(
  *
  * @param configs - Zero or more configs to merge. If no configs are provided,
  *   returns the default (empty) `WeaveConfig`. If exactly one config is
- *   provided, returns it as-is.
+ *   provided, returns a validated copy.
  *
  * @deprecated Prefer `mergeConfigsResult` which returns `Result<WeaveConfig, MergeError[]>`
  *   and avoids throwing. This wrapper throws a `MergeError` aggregate on the first

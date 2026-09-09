@@ -6,6 +6,16 @@
  * unsupported fields are skipped with explicit warnings.
  */
 
+import {
+  copySafeGraph,
+  parseConfig,
+  type SafeGraphValue,
+} from "@weaveio/weave-core";
+import { type ParseError, parse as parseJsonc } from "jsonc-parser";
+import { Result } from "neverthrow";
+import { createConversionWarnings } from "./legacy-conversion-diagnostics.js";
+import { isSafeDslName } from "./legacy-dsl-identifiers.js";
+import { inspectLegacyJsonc } from "./legacy-jsonc-inspect.js";
 import type { ConversionResult, ConversionWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -16,16 +26,24 @@ import type { ConversionResult, ConversionWarning } from "./types.js";
  * Legacy top-level fields that are explicitly unsupported in migration v1.
  * Each entry maps the field name to the human-readable skip reason.
  */
-const UNSUPPORTED_LEGACY_FIELDS: Record<string, string> = {
-  workflows:
+const UNSUPPORTED_LEGACY_FIELDS = new Map<string, string>([
+  [
+    "workflows",
     "legacy workflow definitions are not supported in migration v1; define workflows using the current DSL workflow syntax",
-  continuation:
+  ],
+  [
+    "continuation",
     "legacy continuation settings are not supported in migration v1; use the current DSL continuation block if needed",
-  analytics:
+  ],
+  [
+    "analytics",
     "legacy analytics settings are not supported in migration v1; use the current DSL analytics block if needed",
-  background:
+  ],
+  [
+    "background",
     "legacy background settings are not supported in migration v1; no equivalent exists in the current DSL",
-};
+  ],
+]);
 
 /**
  * The set of builtin agent names in the current unified agent namespace.
@@ -51,23 +69,23 @@ const BUILTIN_AGENT_NAMES = new Set([
  *
  * Capability buckets: read | write | execute | delegate | network
  */
-const LEGACY_TOOL_TO_CAPABILITY: Record<
+const LEGACY_TOOL_TO_CAPABILITY = new Map<
   string,
   "read" | "write" | "execute" | "delegate" | "network"
-> = {
+>([
   // Read-only tools
-  read: "read",
+  ["read", "read"],
   // Write tools
-  write: "write",
-  edit: "write",
+  ["write", "write"],
+  ["edit", "write"],
   // Execute tools
-  bash: "execute",
+  ["bash", "execute"],
   // Delegate tools
-  task: "delegate",
+  ["task", "delegate"],
   // Network tools
-  web_search: "network",
-  web_fetch: "network",
-};
+  ["web_search", "network"],
+  ["web_fetch", "network"],
+]);
 
 /**
  * Legacy tool names that are ambiguous or harness-specific and cannot be
@@ -112,22 +130,16 @@ const VALID_LOG_LEVELS = new Set([
  * returns, tabs, and other ASCII control characters (U+0000–U+001F except
  * \n, \r, \t, and U+007F) so that any legacy prompt value produces valid DSL.
  */
-// Regex for ASCII control characters not covered by named escape sequences
-// (\n, \r, \t). Covers U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — this regex exists specifically to detect and escape control characters
-const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
 function escapeForDsl(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(CONTROL_CHAR_RE, (ch) => {
-      const hex = ch.charCodeAt(0).toString(16).padStart(4, "0");
-      return `\\u${hex}`;
-    });
+    .replace(/\t/g, "\\t");
+}
+
+function quoteForDsl(value: string): string {
+  return `"${escapeForDsl(value)}"`;
 }
 
 export function stripJsoncComments(source: string): string {
@@ -230,7 +242,7 @@ function convertLegacyTools(
   tools: Record<string, boolean>,
   contextLabel: string,
 ): { lines: string[]; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
+  const warnings = createConversionWarnings();
   const capabilities: Record<
     "read" | "write" | "execute" | "delegate" | "network",
     "allow" | "deny"
@@ -240,25 +252,28 @@ function convertLegacyTools(
   >;
 
   for (const [toolName, allowed] of Object.entries(tools)) {
+    const warningName = isSafeDslName(toolName) ? toolName : "<entry>";
     if (AMBIGUOUS_LEGACY_TOOLS.has(toolName)) {
       warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
-        reason: `"${toolName}" is a harness-specific tool name that cannot be mapped to an abstract tool_policy capability; skipped`,
+        field: `${contextLabel}.tools.${warningName}`,
+        reason:
+          "tool name is harness-specific and cannot be mapped to an abstract tool_policy capability; skipped",
       });
       continue;
     }
     if (typeof allowed !== "boolean") {
       warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
+        field: `${contextLabel}.tools.${warningName}`,
         reason: "tool permission must be a boolean; skipped",
       });
       continue;
     }
-    const capability = LEGACY_TOOL_TO_CAPABILITY[toolName];
+    const capability = LEGACY_TOOL_TO_CAPABILITY.get(toolName);
     if (capability === undefined) {
       warnings.push({
-        field: `${contextLabel}.tools.${toolName}`,
-        reason: `"${toolName}" is an unknown legacy tool name that cannot be mapped to an abstract tool_policy capability; skipped`,
+        field: `${contextLabel}.tools.${warningName}`,
+        reason:
+          "unknown legacy tool name cannot be mapped to an abstract tool_policy capability; skipped",
       });
       continue;
     }
@@ -286,7 +301,7 @@ function convertLegacyModels(
   entry: Record<string, unknown>,
   contextLabel: string,
 ): { lines: string[]; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
+  const warnings = createConversionWarnings();
   const models: string[] = [];
 
   if (entry["model"] !== undefined) {
@@ -315,7 +330,7 @@ function convertLegacyModels(
 
   if (models.length === 0) return { lines: [], warnings };
 
-  const items = models.map((m) => JSON.stringify(m)).join(", ");
+  const items = models.map(quoteForDsl).join(", ");
   return { lines: [`  models [${items}]`], warnings };
 }
 
@@ -329,7 +344,7 @@ function convertLegacyPromptFile(
   value: unknown,
   contextLabel: string,
 ): { line: string | undefined; warnings: ConversionWarning[] } {
-  const warnings: ConversionWarning[] = [];
+  const warnings = createConversionWarnings();
 
   if (typeof value !== "string") {
     warnings.push({
@@ -342,7 +357,8 @@ function convertLegacyPromptFile(
   if (!isPromptFileSafe(value)) {
     warnings.push({
       field: `${contextLabel}.prompt_file`,
-      reason: `"${value}" contains directory components and cannot be safely translated to the current .weave/prompts/ convention; skipped`,
+      reason:
+        "prompt_file contains directory components and cannot be safely translated to the current .weave/prompts/ convention; skipped",
     });
     return { line: undefined, warnings };
   }
@@ -479,7 +495,8 @@ function convertLegacyCustomAgent(
     } else {
       warnings.push({
         field: `custom_agents.${name}.mode`,
-        reason: `"${entry["mode"]}" is not a valid mode (expected primary, subagent, or all); skipped`,
+        reason:
+          "value is not a valid mode (expected primary, subagent, or all); skipped",
       });
     }
   }
@@ -544,16 +561,31 @@ function convertLegacyCategory(
   }
 
   if (Array.isArray(entry["patterns"])) {
-    const items = entry["patterns"]
-      .filter((p): p is string => typeof p === "string")
-      .map((p) => JSON.stringify(p))
-      .join(", ");
+    const patterns = entry["patterns"].filter(
+      (p): p is string => typeof p === "string",
+    );
+    if (patterns.length === 0) {
+      warnings.push({
+        field: `categories.${name}.patterns`,
+        reason:
+          "at least one string glob pattern is required; category skipped",
+      });
+      return [];
+    }
+    const items = patterns.map(quoteForDsl).join(", ");
     lines.push(`  patterns [${items}]`);
   } else if (entry["patterns"] !== undefined) {
     warnings.push({
       field: `categories.${name}.patterns`,
       reason: "expected an array of glob patterns; skipped",
     });
+    return [];
+  } else {
+    warnings.push({
+      field: `categories.${name}.patterns`,
+      reason: "at least one glob pattern is required; category skipped",
+    });
+    return [];
   }
 
   const modelsResult = convertLegacyModels(entry, `categories.${name}`);
@@ -612,26 +644,40 @@ function convertLegacyCategory(
  * Explicitly unsupported (warn + skip):
  * - `workflows`, `continuation`, `analytics`, `background`
  */
-export function convertLegacyJsonc(source: string): ConversionResult {
-  const warnings: ConversionWarning[] = [];
+function isSafeRecord(
+  value: SafeGraphValue,
+): value is { [key: string]: SafeGraphValue } {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function appendValidBlock(
+  dslLines: string[],
+  blockLines: string[],
+  warnings: ConversionWarning[],
+  field: string,
+): void {
+  const block = blockLines.join("\n");
+  if (parseConfig(block).isOk()) {
+    dslLines.push(block);
+    return;
+  }
+  warnings.push({
+    field,
+    reason:
+      "converted DSL did not validate against the current schema; omitted",
+  });
+}
+
+function convertCopiedRoot(parsed: {
+  [key: string]: SafeGraphValue;
+}): ConversionResult {
+  const warnings = createConversionWarnings();
   const dslLines: string[] = [];
 
-  let parsed: Record<string, unknown>;
-  try {
-    const stripped = stripJsoncComments(source);
-    parsed = JSON.parse(stripped) as Record<string, unknown>;
-  } catch {
-    warnings.push({
-      field: "<source>",
-      reason:
-        "failed to parse legacy JSONC source; no fields could be converted",
-    });
-    return { dsl: "", warnings };
-  }
-
   for (const [key, value] of Object.entries(parsed)) {
-    if (key in UNSUPPORTED_LEGACY_FIELDS) {
-      warnings.push({ field: key, reason: UNSUPPORTED_LEGACY_FIELDS[key]! });
+    const unsupportedReason = UNSUPPORTED_LEGACY_FIELDS.get(key);
+    if (unsupportedReason !== undefined) {
+      warnings.push({ field: key, reason: unsupportedReason });
       continue;
     }
 
@@ -645,7 +691,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       }
       const items = value
         .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
+        .map(quoteForDsl)
         .join(", ");
       dslLines.push(`disable agents [${items}]`);
       continue;
@@ -661,7 +707,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       }
       const items = value
         .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
+        .map(quoteForDsl)
         .join(", ");
       dslLines.push(`disable hooks [${items}]`);
       continue;
@@ -677,7 +723,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       }
       const items = value
         .filter((v): v is string => typeof v === "string")
-        .map((v) => JSON.stringify(v))
+        .map(quoteForDsl)
         .join(", ");
       dslLines.push(`disable skills [${items}]`);
       continue;
@@ -695,7 +741,8 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       if (!VALID_LOG_LEVELS.has(normalized)) {
         warnings.push({
           field: key,
-          reason: `"${value}" is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped`,
+          reason:
+            "value is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped",
         });
         continue;
       }
@@ -716,10 +763,18 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       for (const [agentName, agentEntry] of Object.entries(
         value as Record<string, unknown>,
       )) {
+        if (!isSafeDslName(agentName)) {
+          warnings.push({
+            field: "agents.<entry>",
+            reason: "name is not a safe DSL identifier; skipped",
+          });
+          continue;
+        }
         if (!BUILTIN_AGENT_NAMES.has(agentName)) {
           warnings.push({
             field: `agents.${agentName}`,
-            reason: `"${agentName}" is not a builtin agent name; entries under "agents" are overrides of existing builtins only — use "custom_agents" to create new agents`,
+            reason:
+              "name is not a builtin agent name; use custom_agents to create a new agent",
           });
           continue;
         }
@@ -739,7 +794,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
           agentEntry as Record<string, unknown>,
           warnings,
         );
-        dslLines.push(...agentLines);
+        appendValidBlock(dslLines, agentLines, warnings, `agents.${agentName}`);
       }
       continue;
     }
@@ -755,10 +810,18 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       for (const [agentName, agentEntry] of Object.entries(
         value as Record<string, unknown>,
       )) {
+        if (!isSafeDslName(agentName)) {
+          warnings.push({
+            field: "custom_agents.<entry>",
+            reason: "name is not a safe DSL identifier; skipped",
+          });
+          continue;
+        }
         if (BUILTIN_AGENT_NAMES.has(agentName)) {
           warnings.push({
             field: `custom_agents.${agentName}`,
-            reason: `"${agentName}" collides with a builtin agent name; skipped to avoid silently overriding the builtin`,
+            reason:
+              "name collides with a builtin agent; skipped to avoid an override",
           });
           continue;
         }
@@ -778,7 +841,12 @@ export function convertLegacyJsonc(source: string): ConversionResult {
           agentEntry as Record<string, unknown>,
           warnings,
         );
-        dslLines.push(...agentLines);
+        appendValidBlock(
+          dslLines,
+          agentLines,
+          warnings,
+          `custom_agents.${agentName}`,
+        );
       }
       continue;
     }
@@ -794,6 +862,13 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       for (const [catName, catEntry] of Object.entries(
         value as Record<string, unknown>,
       )) {
+        if (!isSafeDslName(catName)) {
+          warnings.push({
+            field: "categories.<entry>",
+            reason: "name is not a safe DSL identifier; skipped",
+          });
+          continue;
+        }
         if (
           catEntry === null ||
           typeof catEntry !== "object" ||
@@ -810,7 +885,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
           catEntry as Record<string, unknown>,
           warnings,
         );
-        dslLines.push(...catLines);
+        appendValidBlock(dslLines, catLines, warnings, `categories.${catName}`);
       }
       continue;
     }
@@ -821,5 +896,59 @@ export function convertLegacyJsonc(source: string): ConversionResult {
     });
   }
 
-  return { dsl: dslLines.join("\n"), warnings };
+  const dsl = dslLines.join("\n");
+  if (dsl.length === 0 || parseConfig(dsl).isOk()) return { dsl, warnings };
+  warnings.push({
+    field: "<dsl>",
+    reason:
+      "converted DSL did not validate against the current schema; output omitted",
+  });
+  return { dsl: "", warnings };
+}
+
+const parseJsoncSource = Result.fromThrowable(
+  (source: string): unknown => {
+    const errors: ParseError[] = [];
+    const value = parseJsonc(source, errors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+      allowEmptyContent: false,
+    });
+    if (errors.length > 0) return undefined;
+    return value;
+  },
+  (): undefined => undefined,
+);
+
+/** Convert an already-parsed legacy value through the descriptor-safe graph boundary. */
+export function convertLegacyValue(value: unknown): ConversionResult {
+  const copied = copySafeGraph(value);
+  if (copied.isErr() || !isSafeRecord(copied.value)) {
+    const warnings = createConversionWarnings();
+    warnings.push({
+      field: "<source>",
+      reason: copied.isErr()
+        ? "legacy value contains unsafe or excessive structure; no fields could be converted"
+        : "legacy JSONC root must be an object; no fields could be converted",
+    });
+    return { dsl: "", warnings };
+  }
+  return convertCopiedRoot(copied.value);
+}
+
+export function convertLegacyJsonc(source: string): ConversionResult {
+  const inspected = inspectLegacyJsonc(source);
+  if (inspected.isErr()) return { dsl: "", warnings: inspected.error.warnings };
+
+  const parsed = parseJsoncSource(source);
+  if (parsed.isErr() || parsed.value === undefined) {
+    const warnings = createConversionWarnings();
+    warnings.push({
+      field: "<source>",
+      reason:
+        "failed to parse legacy JSONC source; no fields could be converted",
+    });
+    return { dsl: "", warnings };
+  }
+  return convertLegacyValue(parsed.value);
 }

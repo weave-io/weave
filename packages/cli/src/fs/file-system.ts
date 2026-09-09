@@ -25,6 +25,7 @@ export interface FileSystem {
   copyFile(from: string, to: string): ResultAsync<void, FileSystemError>;
   cwd(): string;
   home(): string;
+  xdgConfigHome(): string | undefined;
   resolvePath(path: string): string;
 }
 
@@ -93,6 +94,10 @@ export class BunFileSystem implements FileSystem {
     return Bun.env.HOME ?? Bun.env.USERPROFILE ?? homedir();
   }
 
+  xdgConfigHome(): string | undefined {
+    return Bun.env.XDG_CONFIG_HOME;
+  }
+
   resolvePath(path: string): string {
     if (path === "~") return this.home();
     if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
@@ -148,6 +153,7 @@ export class MemoryFileSystem implements FileSystem {
     initialFiles: Record<string, string> = {},
     private readonly currentDirectory = "/project",
     private readonly homeDirectory = "/home/user",
+    private readonly configHome?: string,
   ) {
     for (const [path, content] of Object.entries(initialFiles)) {
       const resolved = this.resolvePath(path);
@@ -162,6 +168,10 @@ export class MemoryFileSystem implements FileSystem {
 
   home(): string {
     return this.homeDirectory;
+  }
+
+  xdgConfigHome(): string | undefined {
+    return this.configHome;
   }
 
   resolvePath(path: string): string {

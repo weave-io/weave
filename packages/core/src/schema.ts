@@ -65,6 +65,7 @@ export const AgentConfigSchema = z
     models: z.array(z.string()).optional(),
     review_models: z.array(z.string()).min(1).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    fast: z.boolean().optional(),
     variant: z.string().optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
@@ -90,6 +91,7 @@ export const CategoryConfigSchema = z
       .min(1, "patterns must have at least one entry"),
     models: z.array(z.string()).optional(),
     temperature: z.number().min(0).max(2).optional(),
+    fast: z.boolean().optional(),
     variant: z.string().optional(),
     tool_policy: ToolPolicySchema.optional(),
     prompt_append: z.string().optional(),
@@ -502,6 +504,17 @@ export const RuntimeSettingsSchema = z
 export const SettingsConfigSchema = z
   .object({
     log_level: LogLevelSchema.default("INFO"),
+    delegation: z
+      .object({
+        max_concurrency: z
+          .number()
+          .int()
+          .positive()
+          .max(Number.MAX_SAFE_INTEGER)
+          .optional(),
+      })
+      .strict()
+      .optional(),
     runtime: RuntimeSettingsSchema,
   })
   .default({ log_level: "INFO", runtime: { journal: { strict: false } } });

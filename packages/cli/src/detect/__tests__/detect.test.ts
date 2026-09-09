@@ -10,6 +10,7 @@ import {
 
 const files = {
   "/home/user/.config/opencode/config.json": { readable: true },
+  "/home/user/.config/opencode/opencode.jsonc": { readable: true },
   "/home/user/.claude/settings.json": { readable: true },
   "/home/user/.pi/config.json": { readable: true },
 };
@@ -40,11 +41,13 @@ describe("harness detection", () => {
       files,
       binaries: {
         opencode: "/bin/opencode",
+        opencode2: "/bin/opencode2",
         claude: "/bin/claude",
         pi: "/bin/pi",
       },
       versions: {
         opencode: "opencode 1.0.0",
+        opencode2: "opencode2 0.0.0-beta-19086",
         claude: "claude 2.0.0",
         pi: "pi 3.0.0",
       },
@@ -52,8 +55,26 @@ describe("harness detection", () => {
     const result = await detectHarnesses(probes);
     expect(result._unsafeUnwrap().map((harness) => harness.id)).toEqual([
       "opencode",
+      "opencode2",
       "claude-code",
       "pi",
+    ]);
+  });
+
+  it("detects OpenCode 2 under XDG_CONFIG_HOME", async () => {
+    const probes = new MemoryDetectionProbes({
+      xdgConfigHome: "/xdg",
+      files: { "/xdg/opencode/opencode.json": { readable: true } },
+    });
+    const result = await detectHarnesses(probes);
+    expect(result._unsafeUnwrap()).toEqual([
+      {
+        id: "opencode2",
+        configPath: "/xdg/opencode/opencode.json",
+        binaryPath: undefined,
+        version: undefined,
+        readable: true,
+      },
     ]);
   });
 

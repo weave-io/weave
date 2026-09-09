@@ -12,7 +12,7 @@ disableManifest = false
 # coverageDir = "coverage"
 timeout = 5000
 smol = true
-preload = ["./scripts/test-setup.ts"]
+preload = ["./scripts/test-setup.ts", "@opentui/solid/preload"]
 
 [bundle]
 # External packages not to be bundled

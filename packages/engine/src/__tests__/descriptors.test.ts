@@ -16,6 +16,23 @@ function shuttles(source: string) {
 }
 
 describe("generateCategoryShuttles", () => {
+  it("copies inherited and overridden arrays for each generated config", () => {
+    const config = cfg(`
+      agent shuttle { prompt "Worker" models ["base"] skills ["skill"] triggers [{ domain "code" trigger "implement" }] }
+      category backend { models ["backend"] patterns ["src/**"] }
+      category frontend { patterns ["ui/**"] }
+    `);
+    const generated = generateCategoryShuttles(config)._unsafeUnwrap();
+    generated["shuttle-backend"]?.config.models?.push("other");
+    generated["shuttle-backend"]?.config.skills?.push("other");
+    const trigger = generated["shuttle-frontend"]?.config.triggers?.[0];
+    if (trigger) trigger.domain = "changed";
+    expect(config.categories.backend?.models).toEqual(["backend"]);
+    expect(config.agents.shuttle?.skills).toEqual(["skill"]);
+    expect(config.agents.shuttle?.triggers?.[0]?.domain).toBe("code");
+    expect(generated["shuttle-frontend"]?.config.skills).toEqual(["skill"]);
+  });
+
   describe("generation", () => {
     it("(a) returns empty object when config has no categories", () => {
       const result = shuttles(`

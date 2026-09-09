@@ -1,13 +1,14 @@
 /**
  * Sealed V2 SDK boundary.
  *
- * This is the ONLY file in `@weaveio/weave-adapter-opencode2` permitted to
+ * This is the server SDK boundary in `@weaveio/weave-adapter-opencode2`, permitted to
  * import from `@opencode-ai/plugin`, `@opencode-ai/sdk`, or
  * `@opencode-ai/client`. All other adapter modules MUST import the
  * Weave-local `V2*` aliases re-exported from this module instead of reaching
  * into the SDK directly. This insulates the rest of the adapter from V2 SDK
  * version churn and keeps the harness boundary auditable at a glance (one
- * `grep` for `@opencode-ai/` outside this file should return nothing).
+ * `grep` for server SDK imports outside this file should return nothing).
+ * The optional UI runtime is isolated in sdk-ui.ts so server imports never load it.
  *
  * This file MUST NOT import anything from `packages/adapters/opencode/`
  * (the V1 adapter). The V1 and V2 adapters are independent, parallel
@@ -25,7 +26,13 @@ import type {
   Skill as SkillNamespace,
 } from "@opencode-ai/plugin";
 
+export type {
+  OpenCodeEvent as V2OpenCodeEvent,
+  SkillInfo as V2NativeSkillInfo,
+} from "@opencode-ai/client";
 export {
+  Agent as V2Agent,
+  Model as V2Model,
   /**
    * Namespace-style export of the `Plugin` module (`Plugin.define`,
    * `Plugin.Context`, `Plugin.Plugin`, `Plugin.Cleanup`) — re-exported under
@@ -33,7 +40,15 @@ export {
    * directly.
    */
   Plugin as V2PluginModule,
+  Provider as V2Provider,
+  Skill as V2Skill,
 } from "@opencode-ai/plugin";
+export type {
+  RpcHandlers as V2RpcHandlers,
+  RpcRegistration as V2RpcRegistration,
+} from "@opencode-ai/plugin/promise/rpc";
+export { Rpc as V2Rpc } from "@opencode-ai/plugin/rpc";
+export type { Context as V2TuiContext } from "@opencode-ai/plugin/tui/context";
 
 /**
  * The plugin definition shape passed to `Plugin.define()` — used when the

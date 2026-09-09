@@ -53,12 +53,16 @@ export class OpenCode2Adapter implements HarnessAdapter {
 // @public
 export type OpenCode2AdapterError = PluginContextInitError | AgentReconciliationError | ForeignAgentCollision | MissingCatalogEntry | CatalogUnavailable | SkillListError | SkillRegistrationError | CommandRegistrationError | SessionOperationError | EventSubscriptionError | RegistrationDisposeError;
 
-// @public
-const plugin: Plugin_2.Plugin;
-export default plugin;
+// @public (undocumented)
+export const server: Plugin_2.Plugin;
 
 // @public
 export const WEAVE_OWNERSHIP_MARKER = "[weave-managed]";
+
+// @public (undocumented)
+const WeavePlugin: Plugin_2.Plugin;
+export { WeavePlugin }
+export default WeavePlugin;
 
 // (No @packageDocumentation comment for this package)
 

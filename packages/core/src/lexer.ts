@@ -6,6 +6,12 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import {
+  boundConfigErrors,
+  CONFIG_ERROR_COLLECTION_LIMIT,
+  CONFIG_ERRORS_TRUNCATED,
+  CONFIG_INPUT_LIMITS,
+} from "./config-error-policy.js";
 import type { LexError } from "./errors.js";
 import { type Token, TokenType } from "./tokens.js";
 
@@ -104,7 +110,8 @@ class Lexer {
     this.#advance();
     this.#advance();
 
-    // skip optional leading newline immediately after opening """
+    // Skip one optional LF or CRLF after the opening delimiter.
+    if (this.#peek() === "\r" && this.#peek(1) === "\n") this.#advance();
     if (this.#peek() === "\n") this.#advance();
 
     let raw = "";
@@ -118,7 +125,7 @@ class Lexer {
         this.#advance();
         this.#advance();
         this.#advance();
-        return ok(trimIndent(raw));
+        return ok(trimIndent(raw.replace(/\r\n?/g, "\n")));
       }
       raw += this.#advance();
     }
@@ -183,6 +190,16 @@ class Lexer {
     let lastWasNewline = false;
 
     while (this.#pos < this.#source.length) {
+      if (errors.length >= CONFIG_ERROR_COLLECTION_LIMIT) break;
+      if (tokens.length >= CONFIG_INPUT_LIMITS.tokens - 1) {
+        errors.push({
+          type: "UnexpectedCharacter",
+          line: this.#line,
+          column: this.#col,
+          char: "[token limit exceeded]",
+        });
+        break;
+      }
       this.#skipWhitespace();
 
       if (this.#pos >= this.#source.length) break;
@@ -320,7 +337,15 @@ class Lexer {
       column: this.#col,
     });
 
-    if (errors.length > 0) return err(errors);
+    if (errors.length > 0)
+      return err(
+        boundConfigErrors(errors, () => ({
+          type: "UnexpectedCharacter",
+          line: this.#line,
+          column: this.#col,
+          char: CONFIG_ERRORS_TRUNCATED,
+        })),
+      );
     return ok(tokens);
   }
 }
@@ -334,6 +359,18 @@ class Lexer {
  * Collects all lex errors and returns them together.
  */
 export function tokenize(source: string): Result<Token[], LexError[]> {
+  if (
+    typeof source !== "string" ||
+    source.length > CONFIG_INPUT_LIMITS.sourceLength
+  )
+    return err([
+      {
+        type: "UnexpectedCharacter",
+        line: 1,
+        column: 1,
+        char: "[source must be a string of at most 1048576 code units]",
+      },
+    ]);
   return new Lexer(source).tokenize();
 }
 

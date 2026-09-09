@@ -87,6 +87,7 @@ export async function run(
           "  To start a harness, use its own launch command:",
           "",
           `    ${theme.dim("$")} opencode          ${theme.dim("# OpenCode")}`,
+          `    ${theme.dim("$")} opencode2         ${theme.dim("# OpenCode 2")}`,
           `    ${theme.dim("$")} claude             ${theme.dim("# Claude Code")}`,
           `    ${theme.dim("$")} pi                 ${theme.dim("# Pi")}`,
           "",

@@ -183,6 +183,25 @@ describe("init command", () => {
       "Installed Weave OpenCode integration",
     );
   });
+
+  it("installs explicitly selected OpenCode 2 at local scope without prior detection", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const { terminal, ctx } = initContext({
+      fs,
+      overrides: {
+        scope: "local",
+        installDir: "/project/.weave",
+        harness: "opencode2",
+        yes: true,
+      },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    expect(fs.snapshot()["/project/opencode.jsonc"]).toContain(
+      "@weaveio/weave-adapter-opencode",
+    );
+    expect(terminal.out.join("\n")).toContain("Configured OpenCode 2 plugin");
+  });
 });
 
 // ---------------------------------------------------------------------------

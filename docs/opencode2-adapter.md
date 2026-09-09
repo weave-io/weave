@@ -13,6 +13,14 @@ For the normative design and full rationale, see:
 
 ## Install
 
+**Current native runtime:** `./server` now loads the catalog-backed core
+integration described in the [V2 core guide](adapters/opencode2-core.md).
+Use that guide for plugin options, native commands, model selection, skill
+attachment, RPC, UI, and current limits. The `OpenCode2Adapter` class and the
+older plugin module remain compatibility surfaces; the facade-specific
+behavior described below does not select the native server implementation.
+Both implementations remain inside this V2 package. V1 is unchanged.
+
 ```bash
 bun add @weaveio/weave-adapter-opencode2
 ```

@@ -1,6 +1,6 @@
 ---
 name: weave:spindle
-description: Spindle (External Researcher)
+description: "External researcher: checks official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision needs facts outside this repository"
 tools:
   - read
   - Read

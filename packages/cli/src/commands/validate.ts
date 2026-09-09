@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import { loadConfig } from "@weaveio/weave-config";
-import { formatError, parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import {
+  formatError,
+  parseConfig,
+  type WeaveConfig,
+} from "@weaveio/weave-core";
 import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
@@ -113,7 +117,13 @@ function validateEffective(
           if (error.type === "BuiltinParseError")
             return error.errors.map((e) => `builtins:${formatError(e)}`);
           if (error.type === "MergeError")
-            return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
+            return error.errors.flatMap((e) =>
+              e.type === "ConfigValidationError"
+                ? e.errors.map(
+                    (issue) => `merge:${e.layer}:${formatError(issue)}`,
+                  )
+                : [`merge:${e.type}:${e.error.type}`],
+            );
           return error.errors.map((e) => `${error.path}:${formatError(e)}`);
         }),
       }),

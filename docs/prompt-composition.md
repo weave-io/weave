@@ -500,7 +500,8 @@ allowed-path set applies to both.
 
 Template failures are reported as `ComposeError` with a `PromptTemplateError`
 variant and a nested reason such as malformed syntax, unsupported tag, unknown
-path, unsafe path, function value, section mismatch, or unresolved rendered tag.
+path, unsafe path, or function value. The public `SectionMismatch` and
+`UnresolvedTag` reason types remain for source compatibility but are not emitted.
 
 Template errors include:
 
@@ -521,12 +522,38 @@ Because rendering uses schema-aware strict paths:
 - `{{#category}}...{{/category}}` is valid and falsey for non-category agents
 - `{{agent.__proto__}}` and `{{constructor.name}}` fail as unsafe paths
 
-Rendered output is also checked for unresolved unescaped Mustache tags. Escaped
-literal tags produced from `\{{...}}` are allowed.
+Validation checks parsed source tags before rendering. It does not scan rendered
+output. A description or trigger field containing `{{example}}` remains literal
+when interpolated. The same unknown tag in template source fails. Interpolated
+values are never rendered again. Allowed paths with missing values render empty.
+Escaped source tags such as `\{{example}}` also produce literal text.
+
+### Exact prompt reads and descriptor isolation
+
+`composeAgentDescriptor` accepts an optional eighth `PromptFileReader`, after the
+category shuttle map. `composeWorkflowStepPrompt` accepts it as the fifth
+argument. Existing callers can omit it and keep the default Bun reader.
+`MaterializationInput.promptFileReader` supplies the same boundary for a catalog.
+Each materialization caches one in-flight Result per path, including failures,
+across ordinary agents, category shuttles, review variants, and append sources.
+The next materialization starts a new cache and can read changed text.
+
+Descriptors copy model and skill arrays, policies, category metadata, and trigger
+objects. Mutating a returned descriptor does not mutate source config or another
+descriptor. `variant` remains intact. Both `allow` and `ask` delegation policies
+retain eligible targets; `deny` retains none. Approval still belongs to the
+adapter. Disabled, primary-only, self, and explicitly excluded targets remain
+excluded.
 
 ---
 
 ## Compatibility with Existing Prompts
+
+Builtin descriptions state the role, capabilities, and selection criteria of each
+specialist. Trigger objects and routing rules are unchanged. Pattern's plan
+template uses checkboxes only for executable top-level tasks. Each implementation
+task includes numbered implementation steps, pitfalls/non-goals, and acceptance
+criteria; internal steps are not separate checkbox tasks.
 
 Existing static prompts remain valid because every prompt source is rendered as a
 Prompt Template, but sources without Mustache tags render to the same text.
@@ -658,7 +685,7 @@ with the rest of the engine pipeline without `try/catch` control flow.
 | File | Contents |
 | --- | --- |
 | [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()`, `composeWorkflowStepPrompt()`, `detectAppendCollisions()`, `AppendCollision`, `AppendScope`, `WorkflowStepComposedPrompt` |
-| `packages/engine/src/template-renderer.ts` | Mustache wrapper, parse/render helpers, reference extraction, unsupported-feature and unresolved-tag checks |
+| `packages/engine/src/template-renderer.ts` | Mustache wrapper, source-tag validation, parse/render helpers, and reference extraction |
 | `packages/engine/src/template-context.ts` | Agent prompt Template Context types, `ALLOWED_TEMPLATE_PATHS`, delegation target projection |
 | [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` carrying the composed descriptor |
 | [`packages/engine/src/tool-policy.ts`](../packages/engine/src/tool-policy.ts) | `evaluateEffectiveToolPolicy()` and `EffectiveToolPolicy` |

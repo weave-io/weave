@@ -43,7 +43,7 @@ export type ConfigLoadError =
     }
 
   /**
-   * One or more workflow extension errors occurred during config merging.
+   * Config validation or workflow extension errors occurred during merging.
    * `errors` contains all `MergeError` entries from `mergeConfigsResult`.
    */
   | {

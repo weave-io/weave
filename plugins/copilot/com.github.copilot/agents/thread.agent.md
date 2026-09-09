@@ -1,6 +1,6 @@
 ---
 name: weave:thread
-description: Thread (Codebase Explorer)
+description: "Codebase explorer: traces symbols, call graphs, and data flow with exact file and line evidence; read-only, cannot execute or delegate; select for internal investigation before planning or editing"
 tools:
   - read
   - Read

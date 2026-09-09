@@ -1,6 +1,6 @@
 ---
 name: weave:warp
-description: Warp (Security Auditor)
+description: "Security auditor: checks vulnerabilities, unsafe patterns, and specification compliance and returns an approve or block verdict; read-only, cannot execute or delegate; select when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
 tools:
   - read
   - Read

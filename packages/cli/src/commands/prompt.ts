@@ -74,8 +74,12 @@ function mapConfigLoadErrors(
       }
 
       if (error.type === "MergeError") {
-        return error.errors.map(
-          (mergeError) => `merge:${mergeError.type}:${mergeError.error.type}`,
+        return error.errors.flatMap((mergeError) =>
+          mergeError.type === "ConfigValidationError"
+            ? mergeError.errors.map(
+                (issue) => `merge:${mergeError.layer}:${formatError(issue)}`,
+              )
+            : [`merge:${mergeError.type}:${mergeError.error.type}`],
         );
       }
 
