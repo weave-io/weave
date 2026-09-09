@@ -21,6 +21,14 @@ model for every builtin. They must not rely on primary-agent model fallback,
 the host's changing free-model catalog, or remote credentials. These fixtures
 exercise the native `./server` implementation, not the compatibility facade.
 
+Provider configuration can activate after Weave's setup returns. An initial
+agent-list response can therefore contain only host builtins. The embedded
+check waits up to ten seconds for an owned Loom. The CLI wrapper starts a
+bounded observation, returns from setup to let host activation finish, and
+awaits that observation before cleanup. It requires owned Loom and Tapestry;
+missing agents still fail the checks. Waiting inside setup would prevent the
+host from completing the activation that the check needs to observe.
+
 - Run from a clean Weave worktree.
 - Use Bun.
 - Keep the exact supported host at `0.0.0-beta-19151`.
