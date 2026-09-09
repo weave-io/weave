@@ -25,6 +25,59 @@ import {
 // @weaveio/weave-core barrel — public API assertions
 // ---------------------------------------------------------------------------
 
+describe("execution control schemas", () => {
+  it.each([
+    true,
+    false,
+  ])("accepts fast=%s for agents and categories", (fast) => {
+    expect(AgentConfigSchema.parse({ fast }).fast).toBe(fast);
+    expect(
+      CategoryConfigSchema.parse({ patterns: ["src/**"], fast }).fast,
+    ).toBe(fast);
+  });
+  it.each(["true", 1, null])("rejects non-boolean fast=%j", (fast) => {
+    expect(AgentConfigSchema.safeParse({ fast }).success).toBe(false);
+    expect(
+      CategoryConfigSchema.safeParse({ patterns: ["src/**"], fast }).success,
+    ).toBe(false);
+  });
+  it.each([
+    1,
+    5,
+    Number.MAX_SAFE_INTEGER,
+  ])("accepts concurrency %s", (max_concurrency) => {
+    expect(
+      SettingsConfigSchema.parse({ delegation: { max_concurrency } }).delegation
+        ?.max_concurrency,
+    ).toBe(max_concurrency);
+  });
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    "5",
+    null,
+  ])("rejects concurrency %j", (max_concurrency) => {
+    const parsed = SettingsConfigSchema.safeParse({
+      delegation: { max_concurrency },
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.issues[0]?.path).toEqual([
+        "delegation",
+        "max_concurrency",
+      ]);
+  });
+  it("preserves omission and rejects unknown delegation keys", () => {
+    expect(AgentConfigSchema.parse({}).fast).toBeUndefined();
+    expect(SettingsConfigSchema.parse({}).delegation).toBeUndefined();
+    expect(
+      SettingsConfigSchema.safeParse({ delegation: { unknown: 1 } }).success,
+    ).toBe(false);
+  });
+});
+
 describe("@weaveio/weave-core barrel exports", () => {
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();

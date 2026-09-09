@@ -22,6 +22,46 @@ it("rejects prototype assignments and bounds validation diagnostics", () => {
   expect(JSON.stringify(errors).length).toBeLessThan(8192);
 });
 
+describe("parseConfig — execution controls", () => {
+  it.each([
+    true,
+    false,
+  ])("preserves fast=%s and concurrency through the full pipeline", (fast) => {
+    const config = parseConfig(
+      `agent worker { fast ${fast} } category web { patterns ["src/**"] fast ${fast} } settings { delegation { max_concurrency 5 } }`,
+    )._unsafeUnwrap();
+    expect(config.agents.worker?.fast).toBe(fast);
+    expect(config.categories.web?.fast).toBe(fast);
+    expect(config.settings.delegation?.max_concurrency).toBe(5);
+  });
+  it.each([
+    "0",
+    "1.5",
+    "9007199254740992",
+    '"5"',
+  ])("rejects invalid concurrency %s", (value) => {
+    expect(
+      parseConfig(
+        `settings { delegation { max_concurrency ${value} } }`,
+      )._unsafeUnwrapErr()[0],
+    ).toMatchObject({ path: "settings.delegation.max_concurrency" });
+  });
+  it("rejects negative concurrency at the lexer boundary", () => {
+    expect(
+      parseConfig(
+        "settings { delegation { max_concurrency -1 } }",
+      )._unsafeUnwrapErr()[0],
+    ).toMatchObject({ type: "UnexpectedCharacter", char: "-" });
+  });
+  it.each([
+    'agent worker { fast "yes" }',
+    'category web { patterns ["src/**"] fast 1 }',
+    "settings { delegation { unknown 5 } }",
+  ])("rejects invalid control declarations: %s", (source) => {
+    expect(parseConfig(source).isErr()).toBe(true);
+  });
+});
+
 describe("parseConfig — valid sources", () => {
   it.each([
     "\n",

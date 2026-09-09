@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 195 lib files | 23 env vars | 7 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~17,500 tokens. Without it, AI exploration would cost ~64,800 tokens. **Saves ~47,300 tokens per conversation.**
-> **Last scanned:** 2026-09-13 07:17 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 195 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~17,500 tokens. Without it, AI exploration would cost ~64,900 tokens. **Saves ~47,400 tokens per conversation.**
+> **Last scanned:** 2026-09-13 07:23 — re-run after significant changes
 
 ---
 
@@ -914,6 +914,7 @@
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
 - `WEAVE_TRAJECTORY_START_AGENT` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_BASE_URL` **required** — packages/adapters/opencode2/verify/container-smoke.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 

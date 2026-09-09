@@ -15,6 +15,12 @@ records above describe the pre-merge layout and are not current package hashes.
 
 ## Requirements
 
+The retained Podman verifier uses an explicit `proof/proof-model` catalog
+entry and a local deterministic HTTP provider. Its Weave fixtures declare that
+model for every builtin. They must not rely on primary-agent model fallback,
+the host's changing free-model catalog, or remote credentials. These fixtures
+exercise the native `./server` implementation, not the compatibility facade.
+
 - Run from a clean Weave worktree.
 - Use Bun.
 - Keep the exact supported host at `0.0.0-beta-19151`.

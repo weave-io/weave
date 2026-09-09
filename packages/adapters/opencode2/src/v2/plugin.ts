@@ -100,6 +100,7 @@ export async function setupOpenCode2(
         })),
       reload: async () => {
         await context.agent.reload();
+        await context.agent.list();
         await context.command.reload();
       },
     },
@@ -156,6 +157,22 @@ export async function setupOpenCode2(
     return async () => undefined;
   }
   registrations.push(agentRegistration.value);
+
+  // Agent transforms are lazy. Resolve their ownership set before commands
+  // inspect it, even when the host emits no catalog update after activation.
+  const agentsReady = await fromOpenCode2Promise(
+    () => context.agent.list(),
+    "host_unavailable",
+    "Weave agent registration could not be observed",
+  );
+  if (agentsReady.isErr()) {
+    controller.dispose();
+    inventoryAbort.abort();
+    await inventoryObservation;
+    await disposeRegistrations(registrations);
+    log.warn({ code: agentsReady.error.code }, agentsReady.error.message);
+    return async () => undefined;
+  }
 
   const sessionHooks = new OpenCode2SessionHooks({
     location: context.location.directory,
@@ -219,7 +236,7 @@ export async function setupOpenCode2(
           ownsAgent: (agent) => inserted.has(agent),
           registration: () => ({
             requestIntent: readiness.prompt && readiness.context,
-            foregroundPlans: readiness.command,
+            foregroundPlans: readiness.command && inserted.has("tapestry"),
             planDisplay: readiness.rpc,
           }),
         }),

@@ -16,6 +16,13 @@ function shuttles(source: string) {
 }
 
 describe("generateCategoryShuttles", () => {
+  it("inherits fast and preserves an explicit category false override", () => {
+    const generated = shuttles(
+      'agent shuttle { prompt "Worker" fast true } category inherited { patterns ["src/**"] } category slow { patterns ["ui/**"] fast false }',
+    );
+    expect(generated["shuttle-inherited"]?.config.fast).toBe(true);
+    expect(generated["shuttle-slow"]?.config.fast).toBe(false);
+  });
   it("copies inherited and overridden arrays for each generated config", () => {
     const config = cfg(`
       agent shuttle { prompt "Worker" models ["base"] skills ["skill"] triggers [{ domain "code" trigger "implement" }] }
