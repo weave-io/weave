@@ -1,5 +1,9 @@
 # OpenCode 2 Core UI Proof
 
+This is historical evidence for the pre-merge package layout. It is not a new
+interactive UI proof for the independent `@weaveio/weave-adapter-opencode2`
+package on beta-19151. See the [current guide](../adapters/opencode2-core.md).
+
 > Non-normative verification record. See [the verification
 > guide](../testing/opencode2-verification.md) for the maintained procedure.
 

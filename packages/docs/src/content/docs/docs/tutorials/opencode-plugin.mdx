@@ -5,6 +5,4 @@ description: Compatibility route for the consolidated OpenCode guide.
 
 This page is kept for existing links after the public docs consolidation. The current OpenCode setup guide lives in [OpenCode](../../opencode/), and the adapter support matrix lives in [Adapters](../../reference/adapters/).
 
-Current support note: run `weave init --harness opencode2 --scope local --yes`.
-The native config uses plural `plugins` with the bare exact-version package
-name. OpenCode `0.0.0-beta-19086` is the supported host.
+Current support note: OpenCode is the stable runtime adapter and the plugin entry is `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. Claude Code is file materialization bundled in the CLI.

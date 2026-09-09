@@ -1,0 +1,111 @@
+{
+  "harness": {
+    "cliPackage": "@opencode-ai/cli",
+    "cliVersionPinned": "0.0.0-beta-19151",
+    "opencode2OnPath": true,
+    "opencode2Version": "opencode2 v0.0.0-beta-19151",
+    "v1Absent": true
+  },
+  "plugin": {
+    "setup": {
+      "invoked": true
+    },
+    "cleanup": {
+      "invoked": true
+    }
+  },
+  "embedded": {
+    "setup": {
+      "invoked": true
+    },
+    "dispose": {
+      "invoked": true
+    }
+  },
+  "apiProbe": {
+    "agent.transform": {
+      "observed": true,
+      "notes": "ctx.agent.transform(callback) exists and matches the assumed shape: (callback: (editor: AgentEditor) => void) => Promise<Registration>. callbackRan synchronously (immediately after await)=false. DEVIATION (timing): unlike ctx.command.transform (whose effect was visible via ctx.command.list() immediately after the awaited transform() call), this callback had NOT run synchronously by the time transform()'s Promise resolved. The callback receives a SYNCHRONOUS, in-process AgentEditor (list/get/default/update/remove) — distinct from the async RPC ctx.agent.list()."
+    },
+    "agent.list": {
+      "observed": true,
+      "notes": "ctx.agent.list() exists as an async RPC call (AgentDomain extends AgentApi = Client[\"agent\"]). DEVIATION: it does NOT resolve a bare array of agents — the resolved value is an envelope { location, data: Array<AgentInfo> }. Observed data.length=7, location field present=true."
+    },
+    "catalog.model.list": {
+      "observed": true,
+      "notes": "ctx.catalog.model.list() exists as an async RPC call (CatalogDomain extends CatalogApi = { provider, model: Client[\"model\"] }). Resolves the same { location, data } envelope shape as ctx.agent.list(). Observed data.length=7. DEVIATION (timing): the ctx.catalog.transform(callback) Promise resolved WITHOUT synchronously invoking the callback — callbackRan=false immediately after `await ctx.catalog.transform(...)`. This means the transform callback runs lazily (e.g. on next catalog reload/build), not eagerly on registration, which differs from an assumption that transform() applies the edit immediately."
+    },
+    "catalog.model.default": {
+      "observed": true,
+      "notes": "ctx.catalog.model.default() exists as an async RPC call, resolving { location, data: ModelInfo | null }. Observed data=object. DEVIATION (timing): ctx.catalog.transform(callback) resolved WITHOUT synchronously invoking the callback (callbackRan=false), so CatalogEditor.model.default's shape could not be probed at runtime in-line with registration; see the catalog.model.list probe notes for the same timing deviation."
+    },
+    "skill.list": {
+      "observed": true,
+      "notes": "ctx.skill.list() exists as an async RPC call (SkillDomain extends SkillApi = Client[\"skill\"]). Same { location, data } envelope shape as agent.list/catalog.model.list. Observed data.length=2."
+    },
+    "command.transform": {
+      "observed": true,
+      "notes": "ctx.command.transform(callback) exists. The callback receives a CommandEditor exposing ONLY add(definition) — no list/get/remove on the editor itself; reading commands back requires the RPC ctx.command.list(). Registration returned. Before=2 commands, after transform=3 commands, probe command found=true."
+    },
+    "event.subscribe": {
+      "observed": true,
+      "notes": "ctx.event.subscribe(options?: { signal?: AbortSignal, headers? }) exists — DEVIATION: the shape is subscribe(options), NOT subscribe(callback). It returns an AsyncIterable<V2Event> intended for a `for await` loop; there is no Registration/unsubscribe function returned from subscribe() itself (unlike agent/catalog/command/skill .transform(), which all return Promise<Registration>). Cancellation is performed purely by aborting the AbortSignal passed in the options object. Observed: sawAnyEvent=false, loopEndedNormallyAfterAbort=true, terminalError=none."
+    },
+    "registration.dispose": {
+      "observed": true,
+      "notes": "Disposed 2 Registration(s) [agent.transform, command.transform]. ctx.command.list() data.length returned to the pre-transform baseline (2), and probe command \"weave-feasibility-probe-command\" is no longer present (stillPresent=false). Confirms dispose() removes only the proof-owned effect and leaves other registered commands untouched."
+    }
+  },
+  "agentEditor": {
+    "create": {
+      "supported": true,
+      "method": "editor.update(id, (agent) => { ...mutate... }) — upsert semantics: when `id` is not already present, update() creates a fresh Agent.Info draft (internally seeded from the @opencode-ai/schema Agent.Info.default(id) helper) and commits it as a new agent on transform flush. There is no dedicated add()/create()/insert()/set() method on AgentEditor.",
+      "evidence": {
+        "runtimeEditorMethodTypes": {
+          "list": "function",
+          "get": "function",
+          "default": "function",
+          "update": "function",
+          "remove": "function",
+          "add": "undefined",
+          "create": "undefined",
+          "insert": "undefined",
+          "set": "undefined"
+        },
+        "runtimeEditorOwnKeys": "default,get,list,remove,update",
+        "callbackRanBeforeFirstListPoll": true,
+        "updateThrew": null,
+        "newAgentPresentAfterUpdateInsideCallback": true,
+        "newAgentSnapshotInsideCallback": {
+          "id": "weave-a5-probe",
+          "description": "Weave A5 probe agent — created via AgentEditor.update() upsert",
+          "mode": "subagent",
+          "hidden": false
+        },
+        "newAgentAppearedInSubsequentAgentList": true,
+        "newAgentSnapshotAfterTransform": {
+          "id": "weave-a5-probe",
+          "description": "Weave A5 probe agent — created via AgentEditor.update() upsert",
+          "mode": "subagent",
+          "hidden": false
+        }
+      }
+    },
+    "foreignAgentClassification": {
+      "observedWithoutMutation": true,
+      "unchangedAfterTransform": true,
+      "snapshotBeforeMutationAttempt": {
+        "id": "weave-a5-foreign",
+        "description": "seeded by an independent foreign plugin — not owned by Weave, must not be mutated",
+        "mode": "subagent",
+        "hidden": false
+      },
+      "snapshotAfterTransform": {
+        "id": "weave-a5-foreign",
+        "description": "seeded by an independent foreign plugin — not owned by Weave, must not be mutated",
+        "mode": "subagent",
+        "hidden": false
+      }
+    }
+  }
+}

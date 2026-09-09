@@ -7,12 +7,14 @@ Weave separates an adapter's implementation from its release and distribution ch
 
 | Harness | Public surface | Current behavior | Distribution status |
 | --- | --- | --- | --- |
-| OpenCode 2 | `@weaveio/weave-adapter-opencode` plugin | Native `0.0.0-beta-19086` plugin with `/weave:start`; no durable workflow claim. | Pin an exact package version in the plural `plugins` field. |
+| OpenCode | `@weaveio/weave-adapter-opencode` plugin | Native plugin with `/weave:start` and `/start-work` compatibility alias. | `latest` (stable), `next`, and `nightly`; pin an exact version in OpenCode configuration. |
+| OpenCode V2 | `@weaveio/weave-adapter-opencode2` plugin | Independent V2 core integration with native delegation and read-only plan RPC/UI. V1 remains available separately. | Beta; requires the exact supported host and package versions. |
 | Claude Code | `weave compose --adapter claude-code` | Materializes agents and compose output under `.weave/plugins/claude-code/`; `--init` separately creates the bootstrap plugin. | CLI and standalone adapter are available on `latest`, `next`, and `nightly`. |
 | Pi | `@weaveio/weave-adapter-pi` extension | Shipped extension with activation, health-only fallback, agent switching, commands, workflows, and private children. | `latest` (stable), `next`, and `nightly`; requires a compatible Pi installation. |
 
 All adapters consume the same normalized configuration, but runtime parity is not automatic. Choose the adapter page for installation and behavior:
 
 - [OpenCode](./opencode/)
+- [OpenCode V2](./opencode2/)
 - [Claude Code](./claude-code/)
 - [Pi](./pi/)

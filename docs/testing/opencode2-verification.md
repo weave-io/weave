@@ -5,15 +5,19 @@ developer's OpenCode installation or shared service.
 
 **Audience:** Weave maintainers preparing an OpenCode 2 core release.
 
-**Related:** [OpenCode 2 adapter](../adapters/opencode.md) · [runtime proof
+**Related:** [OpenCode 2 adapter](../adapters/opencode2-core.md) · [runtime proof
 record](../artifacts/opencode2-core-runtime-proof.md) · [UI proof
 record](../artifacts/opencode2-core-ui-proof.md)
+
+The [separate-package merge proof](../artifacts/opencode2-package-merge-proof.md)
+records the beta-19151 packaged runtime and V1 fallback checks. The older
+records above describe the pre-merge layout and are not current package hashes.
 
 ## Requirements
 
 - Run from a clean Weave worktree.
 - Use Bun.
-- Keep the exact supported host at `0.0.0-beta-19086`.
+- Keep the exact supported host at `0.0.0-beta-19151`.
 - Do not stop or upgrade the user's shared OpenCode service.
 - Put all live proof data under the approved temporary root used by
   `scripts/opencode2/proof-environment.ts`.
@@ -23,7 +27,7 @@ record](../artifacts/opencode2-core-ui-proof.md)
 ```bash
 bun install
 bun test packages/core/src/__tests__ packages/config/src/__tests__ packages/engine/src/__tests__
-bun test packages/adapters/opencode/src/__tests__
+bun test packages/adapters/opencode2/src/__tests__
 bun test packages/cli/src/detect/__tests__ packages/cli/src/installers/__tests__ packages/cli/src/commands/__tests__ packages/cli/src/migration/__tests__
 bun test
 bun run typecheck
@@ -45,7 +49,7 @@ bun scripts/opencode2/verify-runtime.ts
 
 The script does the following work:
 
-1. builds and packs `@weaveio/weave-adapter-opencode`;
+1. builds and packs `@weaveio/weave-adapter-opencode2`;
 2. installs the tarball and exact OpenCode CLI/client packages in an isolated
    root;
 3. starts an isolated service on an ephemeral port;

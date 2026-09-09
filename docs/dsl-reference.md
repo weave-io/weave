@@ -407,7 +407,7 @@ enforcement of this limit on simultaneous delegated work. Omission preserves
 the harness default; it does not imply unlimited work. Zero, non-integer values,
 strings, and unknown fields inside `delegation` are rejected.
 Numeric validation uses the parsed JavaScript number; see
-[Execution Controls](specs/33-spec-execution-controls/33-spec-execution-controls.md)
+[Execution Controls](specs/35-spec-execution-controls/35-spec-execution-controls.md)
 for precision limits and adapter responsibilities.
 
 | Field | Values | Description |

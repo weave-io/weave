@@ -88,6 +88,7 @@ describe("loadModelMatrix — real fixture", () => {
       "deepseek/deepseek-v4-flash-0731",
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
+      "openai/gpt-6-astra",
       "qwen/qwen3.8-max",
     ]);
   });
@@ -105,6 +106,7 @@ describe("loadModelMatrix — real fixture", () => {
       "deepseek/deepseek-v4-flash-0731",
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
+      "openai/gpt-6-astra",
       "qwen/qwen3.8-max",
     ]);
   });

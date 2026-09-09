@@ -18,6 +18,7 @@
     "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",
     "docs:check-links": "bun scripts/docs/check-links.ts",
     "validate-config": "bun packages/cli/src/main.ts validate --project",
+    "eval:trajectory": "bun packages/cli/src/main.ts eval run --agent loom-routing --case loom-route-shuttle-implement-utility-trajectory --model openai/gpt-4o-mini",
     "build": "bun scripts/build-public-packages.ts && bun run --filter '@weaveio/weave-docs' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/tsconfig.json && bun run --filter '*' typecheck",
@@ -32,7 +33,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
     "@microsoft/api-extractor": "^7.55.1",
-    "@opencode-ai/client": "0.0.0-beta-19086",
+    "@opencode-ai/client": "0.0.0-beta-19151",
     "@opentui/solid": "0.5.10",
     "bun-types": "latest",
     "husky": "^9.1.7",

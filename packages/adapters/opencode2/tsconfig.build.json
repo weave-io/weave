@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.build.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "rootDir": "./src",
+    "outDir": "./dist-types",
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "types": ["bun-types"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/__tests__"]
+}

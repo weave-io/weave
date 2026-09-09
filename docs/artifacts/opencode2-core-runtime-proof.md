@@ -5,6 +5,11 @@
 
 Proof date: 2026-09-08
 
+This record describes the pre-merge package layout and beta-19086 host only.
+The V2 implementation now ships separately in `@weaveio/weave-adapter-opencode2`;
+use the [current verification procedure](../testing/opencode2-verification.md).
+The hashes below are historical and do not identify the relocated package.
+
 ## Identity
 
 - Weave baseline: `3b1210f17adb2580b3e820acd6fabd3b02b68532`

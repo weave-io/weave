@@ -12,7 +12,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | --- | --- |
 | [Product Vision](product-vision.md) | Harness-agnostic architecture, core mental model, boundary rules |
 | [Adapter Boundary](adapter-boundary.md) | Engine/adapter ownership matrix, correct data-flow examples, anti-patterns |
-| [OpenCode 2 Adapter](adapters/opencode.md) | Native OpenCode 2 installation, mappings, commands, RPC, TUI, and limits |
+| [OpenCode 2 Core Integration](adapters/opencode2-core.md) | Native OpenCode 2 installation, mappings, commands, RPC, TUI, and limits; V1 remains separate |
 | [OpenCode 2 Verification](testing/opencode2-verification.md) | Isolated package, runtime, and interactive proof procedure |
 | [Adapter Bootstrap Guide](adapter-bootstrap.md) | `loadConfig` → `materializeAgents` → adapter loop pattern |
 | [Config Loading](config-loading.md) | Three-layer merge, builtin agents, config discovery, prompt file resolution |
@@ -24,10 +24,12 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [DSL Reference](dsl-reference.md) | Canonical `.weave` DSL syntax reference (agents, categories, workflows, settings) |
 | [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
+| [OpenCode V2 Adapter](opencode2-adapter.md) | `@weaveio/weave-adapter-opencode2` — independent V2 adapter package (no shared code with V1); see [Spec 34](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) and [ADR 0010](adr/0010-opencode2-independent-adapter.md) |
+| [OpenCode Active-Agent Proofs](active-agent-proofs.md) | One-command proofs that the locally-built V1, V2, and Claude Code adapters make `loom` the active agent in a real harness environment |
 | [Claude Code Adapter Guide](adapters/claude-code.md) | Two-plugin model, installation, tool policy mapping, model aliases, edge cases |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
 | [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |
-| [Agent Evals](agent-evals.md) | Eval architecture, the shared eight-suite text-only registry surface, fixture layout, CLI usage, dry-run validation behavior, filter semantics, forbidden text-only assertion shapes, prompt snapshot coverage, registry-driven sync tests, recommended case-authoring pattern, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model, and the 2026-06-30 phase-1 fairness-gate plus phase-2 prompt-quality-gate decisions |
+| [Agent Evals](agent-evals.md) | Eval architecture, the shared eight-suite text-only registry surface plus the Phase 1 harness trajectory track (Spec 33, ADR 0008), fixture layout, CLI usage, dry-run validation behavior, filter semantics, forbidden text-only assertion shapes, prompt snapshot coverage, registry-driven sync tests, recommended case-authoring pattern, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model, and the 2026-06-30 phase-1 fairness-gate plus phase-2 prompt-quality-gate decisions |
 | [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy, `schemaVersion` and freshness rules, website data flow, `/evals/` legacy coexistence |
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
@@ -49,6 +51,9 @@ ADRs record decisions with meaningful trade-offs. They are durable — once acce
 | [ADR 0005 — Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
 | [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led, not workflow-driven. |
 | [ADR 0007 — Artifact-First OIDC Releases](adr/0007-artifact-first-oidc-releases.md) | **Superseded** — Bundled public packs, OIDC channels, immutable release records, and no-unpublish policy. See [`RELEASING.md`](../RELEASING.md) for the current tag-based release system. |
+| [ADR 0008 — Harness Trajectory Evals via Two-Channel Observation](adr/0008-harness-trajectory-evals.md) | **Accepted (2026-09-03)** — Adds a runtime-backed trajectory eval track alongside the text-only surface; adapters observe via runtime log parsing (Channel A) or plugin hooks (Channel B). Phase 1 shipped Channel A only. See [Spec 33](specs/33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) for the formal contract. |
+| [ADR 0010 — OpenCode V2 Adapter as a Separate Independent Package](adr/0010-opencode2-independent-adapter.md) | Separate independent V2 adapter package, no auto-selection, V1 remains fully supported, `ctx.agent.transform` + `Registration.dispose()` reconciliation |
+| [ADR 0011 — Model Recommendation Manifest](adr/0011-model-recommendation-manifest.md) | Model recommendation manifest format and resolution semantics for the opencode2 adapter |
 
 ---
 

@@ -1,9 +1,9 @@
 /**
  * Command templates for OpenCode slash commands.
  *
- * These templates remain available to legacy library consumers. The OpenCode
- * 2 server plugin registers only `/weave:start` through its native command
- * callback and does not use these prompt templates.
+ * These templates are injected into the conversation when the user types
+ * `/start-work` or `/weave:start` in the OpenCode TUI. They instruct the
+ * Tapestry agent to execute a Weave plan.
  *
  * ## How OpenCode commands work
  *
@@ -47,34 +47,56 @@ function renderCommandEnvelope(commandName: string): string {
 // Shared execution instructions (Tapestry agent prompt)
 // ---------------------------------------------------------------------------
 
-const EXECUTION_INSTRUCTIONS = `You are being activated to execute one explicitly selected Weave plan in the foreground.
+const EXECUTION_INSTRUCTIONS = `You are being activated by the /start-work command to execute a Weave plan.
 
 ## Your Mission
-Read the selected plan and follow its tasks. Use the harness's native subagent
-tool when delegation is appropriate. Follow the Tapestry role instructions for
-coordination, verification, and progress reporting.
+Read the plan and execute it by delegating each unchecked task to Shuttle via the Task tool.
+You do NOT implement work directly — you coordinate, delegate, verify, and track progress.
+
+Execution is non-terminal while any \`- [ ]\` task remains.
+Do not stop, ask what to do next, or wait for acknowledgment while unchecked tasks remain.
 
 ## Startup Procedure
 
-1. Require one explicit plan name from the command invocation.
-2. Read only \`.weave/plans/<plan-name>.md\` for that selection.
-3. Start from the first task that is in progress, or the first pending task.
-4. Treat the selected-plan record as display metadata, not workflow state or automatic-resume authority.
+1. **Check for active work state**: Read \`.weave/state.json\` to see if there's a plan already in progress.
+2. **If resuming**: The system has injected context below with the active plan path and progress. Read the plan file, find the first unchecked \`- [ ]\` task, and continue from there.
+3. **If starting fresh**: The system has selected a plan and created work state. Read the plan file and begin from the first unchecked task.
 
 ## Execution Loop
 
-For each executable task, read its description, files, dependencies, pitfalls,
-and acceptance criteria. Delegate or implement it according to the Tapestry
-role. Verify the result before moving to the next task.
+For each unchecked \`- [ ]\` task in the plan:
+
+1. **Read** the task description, acceptance criteria, and any references
+2. **Delegate** the task to Shuttle via the Task tool using this prompt format:
+   \`\`\`
+   Task [N/M]: [Task Title]
+   **What**: [full task description from plan]
+   **Files**: [file paths from plan]
+   **Acceptance**: [acceptance criteria from plan]
+   **Context from completed tasks**: [any output or decisions from prior tasks that affect this one]
+   **Learnings**: [relevant entries from .weave/learnings/{plan-name}.md if the file exists]
+   \`\`\`
+3. **Verify** Shuttle's result — re-read modified files, check acceptance criteria are met
+4. **Mark complete** — use the Edit tool to change \`- [ ]\` to \`- [x]\` in the plan file
+5. **Report progress** — "Completed task N/M: [title]"
+6. **Continue immediately** — find the next unchecked task and delegate it without waiting for user acknowledgment
 
 ## Rules
 
 - Work through tasks **top to bottom** unless dependencies require a different order
-- Do not read or create \`.weave/state.json\`.
-- Do not claim that selecting a plan created, resumed, or advanced a durable workflow.
-- Do not infer exactly-once execution from a command retry.
-- Keep foreground work in the invoking session and leave background result delivery to the native harness.
-- Stop when the role instructions, user direction, or a real blocker require it.`;
+- **Delegate every task to Shuttle** — do not implement work directly yourself
+- **Verify every task** before marking it complete; if verification fails, re-delegate to Shuttle with the failure details
+- A progress update is **not** a stopping point
+- Do **not** ask the user what to do next while unchecked tasks remain
+- Do **not** mention terminal validation, review, reviewers, final summary, completion, or post-execution steps while unchecked tasks remain
+- If asked what to do now while unchecked tasks remain, answer with only the immediate next delegation action
+- Keep mid-plan responses to one sentence or one short bullet
+- If the current task is blocked, document the reason and move to the next unchecked task that is not blocked
+- Stop only when:
+  1. all checkboxes are checked, or
+  2. the user explicitly tells you to stop, or
+  3. every remaining unchecked task is truly blocked
+- When all tasks are complete, switch to terminal-state behavior`;
 
 // ---------------------------------------------------------------------------
 // Exported command templates
@@ -83,7 +105,8 @@ role. Verify the result before moving to the next task.
 /**
  * Template for the `/start-work` slash command (legacy name).
  *
- * This is a legacy library template. The V2 plugin does not register the alias.
+ * Registered as `cfg.command["start-work"]` in the plugin config hook.
+ * When invoked, OpenCode sends this template to the Tapestry agent.
  */
 export const START_WORK_COMMAND_TEMPLATE = `<command-instruction>
 ${EXECUTION_INSTRUCTIONS}
@@ -95,7 +118,8 @@ ${renderCommandEnvelope("start-work")}
 /**
  * Template for the `/weave:start` slash command (preferred name).
  *
- * This is a legacy library template. The V2 plugin uses a native callback.
+ * Registered as `cfg.command["weave:start"]` in the plugin config hook.
+ * When invoked, OpenCode sends this template to the Tapestry agent.
  */
 export const WEAVE_START_COMMAND_TEMPLATE = `<command-instruction>
 ${EXECUTION_INSTRUCTIONS}

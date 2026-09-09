@@ -1,11 +1,11 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 165 lib files | 12 env vars | 6 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~55,300 tokens. **Saves ~40,600 tokens per conversation.**
-> **Last scanned:** 2026-09-08 22:02 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 185 lib files | 21 env vars | 6 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~16,800 tokens. Without it, AI exploration would cost ~61,700 tokens. **Saves ~44,900 tokens per conversation.**
+> **Last scanned:** 2026-09-09 15:06 — re-run after significant changes
 
 ---
 
@@ -32,6 +32,11 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
+- `packages/adapters/opencode/src/plugin.ts`
+  - function createWeavePlugin: (options) => Plugin
+  - interface WeavePluginOptions
+  - const WeavePlugin: Plugin
+  - const server
 - `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
@@ -71,24 +76,85 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
+- `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
+- `packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts`
+  - function resolveSandboxProfileImage: (sandboxProfile) => string | undefined
+  - class DefaultLogParser
+  - class EphemeralWorkspaceFactory
+  - class OpenCodeTrajectoryRunner
+  - interface LogParser
+  - interface PromptProvider
+  - _...2 more_
+- `packages/adapters/opencode/src/trajectory/podman-client.ts`
+  - class BunPodmanClient
+  - interface PodmanRunResult
+  - interface PodmanClient
+  - type PodmanClientError
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
-- `packages/adapters/opencode/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
-- `packages/adapters/opencode/src/v2/catalog.ts`
+- `packages/adapters/opencode2/src/adapter.ts`
+  - class OpenCode2Adapter
+  - interface OpenCode2AdapterOptions
+  - type OpenCode2AdapterHarnessError
+- `packages/adapters/opencode2/src/errors.ts`
+  - function pluginContextInitError: (stage, cause?) => PluginContextInitError
+  - function agentReconciliationError: (agentId, stage, cause?) => AgentReconciliationError
+  - function foreignAgentCollision: (agentId, foreignAgent?) => ForeignAgentCollision
+  - function missingCatalogEntry: (agentId, modelId) => MissingCatalogEntry
+  - function catalogUnavailable: (stage, cause?) => CatalogUnavailable
+  - function skillListError: (cause?) => SkillListError
+  - _...17 more_
+- `packages/adapters/opencode2/src/model-resolution.ts`
+  - function resolveModelContext: (facade, descriptor) => ResultAsync<ResolvedModelContext, OpenCode2AdapterError>
+  - interface ResolvedModelContext
+  - interface ModelResolutionDescriptor
+- `packages/adapters/opencode2/src/plugin-context.ts`
+  - function fromLiveContext: (ctx) => PluginContextFacade
+  - interface PluginContextAgentFacade
+  - interface PluginContextCatalogFacade
+  - interface PluginContextSkillFacade
+  - interface PluginContextCommandFacade
+  - interface PluginContextSessionFacade
+  - _...3 more_
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade, options) => Promise<V2Cleanup>, interface SetupWeavePluginOptions
+- `packages/adapters/opencode2/src/projection-helpers.ts`
+  - function renderPrompt: (template, context, string>>) => string
+  - function slugify: (input) => string
+  - function composeDelegatedPrompt: (effect) => string
+- `packages/adapters/opencode2/src/reconcile-agent.ts` — function reconcileAgent: (facade, agentInfo) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/run-workflow.ts`
+  - function buildProjectEffect: (facade, sessionID, signal) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>
+  - function runWorkflow: (facade, input, abortSignal?) => ResultAsync<WorkflowRunnerOutput, OpenCode2AdapterError>
+  - interface RunWorkflowInput
+- `packages/adapters/opencode2/src/runtime-command-projection.ts`
+  - function buildExecuteCallback: (facade, template, deliveryMode) => (input: V2CommandInvocation) => Promise<void>
+  - function registerCommands: (facade, templates, deliveryMode) => ResultAsync<readonly V2Registration[], OpenCode2AdapterError>
+  - type CommandDeliveryMode
+  - const DEFAULT_COMMAND_DELIVERY: CommandDeliveryMode
+- `packages/adapters/opencode2/src/skill-discovery.ts` — function loadAvailableSkillsV2: (facade) => Promise<SkillInfo[]>, function registerWeaveManagedSkills: (facade, skills) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/start-plan-execution.ts` — function startPlanExecution: (facade, input) => ResultAsync<V2SessionPromptOutput, OpenCode2AdapterError>, interface StartPlanExecutionInput
+- `packages/adapters/opencode2/src/tool-policy-mapping.ts` — function toPermissionRules: (policy) => V2Rule[], type ToolPolicyEffective
+- `packages/adapters/opencode2/src/translate-agent.ts`
+  - function translateAgent: (descriptor, resolvedModel) => V2AgentInfo
+  - interface TranslatableAgentDescriptor
+  - interface ResolvedAgentModel
+  - const WEAVE_OWNERSHIP_MARKER
+- `packages/adapters/opencode2/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
+- `packages/adapters/opencode2/src/v2/catalog.ts`
   - function buildOpenCode2Catalog: (input) => ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error>
   - interface OpenCode2CatalogAgent
   - interface OpenCode2CatalogCandidate
   - interface BuildOpenCode2CatalogInput
   - type OpenCode2CatalogIssue
-- `packages/adapters/opencode/src/v2/commands.ts`
+- `packages/adapters/opencode2/src/v2/commands.ts`
   - class OpenCode2Commands
   - interface OpenCode2CommandDependencies
   - const WEAVE_START_COMMAND
-- `packages/adapters/opencode/src/v2/config-refresh.ts`
+- `packages/adapters/opencode2/src/v2/config-refresh.ts`
   - class OpenCode2CatalogController
   - interface OpenCode2RefreshStatus
   - interface OpenCode2RefreshDependencies
   - type OpenCode2RefreshState
-- `packages/adapters/opencode/src/v2/config-source.ts`
+- `packages/adapters/opencode2/src/v2/config-source.ts`
   - function probeCatalogSources: (sources, io) => void
   - class BunCatalogSourceIo
   - class CatalogSourceCache
@@ -96,27 +162,27 @@
   - interface CatalogSourceIo
   - type CatalogSourceIoError
   - _...2 more_
-- `packages/adapters/opencode/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
-- `packages/adapters/opencode/src/v2/errors.ts`
+- `packages/adapters/opencode2/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
+- `packages/adapters/opencode2/src/v2/errors.ts`
   - function fromOpenCode2Promise: (operation) => void
   - interface OpenCode2Error
   - type OpenCode2ErrorCode
-- `packages/adapters/opencode/src/v2/health.ts`
+- `packages/adapters/opencode2/src/v2/health.ts`
   - function buildOpenCode2Health: (catalog, refresh, ownedAgents) => void
   - interface OpenCode2HealthIssue
   - interface OpenCode2HealthReport
   - interface OpenCode2RegistrationReadiness
-- `packages/adapters/opencode/src/v2/model-resolution.ts`
+- `packages/adapters/opencode2/src/v2/model-resolution.ts`
   - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
   - interface OpenCode2ModelResolution
   - type OpenCode2ModelResolutionError
-- `packages/adapters/opencode/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
-- `packages/adapters/opencode/src/v2/plan-session-state.ts`
+- `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode2/src/v2/plan-session-state.ts`
   - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
   - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection
   - class OpenCode2PlanSessionState
   - interface StoredPlanSelection
-- `packages/adapters/opencode/src/v2/plan-ui-state.ts`
+- `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
   - function taskDialogOptions: (plan) => Array<
   - class PlanUiController
   - interface PlanUiScope
@@ -124,22 +190,22 @@
   - interface PlanUiDisplay
   - interface PlanUiRpcResponse
   - _...2 more_
-- `packages/adapters/opencode/src/v2/plugin.ts`
+- `packages/adapters/opencode2/src/v2/plugin.ts`
   - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
   - interface OpenCode2PluginDependencies
   - const WeavePlugin
   - const server
-- `packages/adapters/opencode/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
-- `packages/adapters/opencode/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
-- `packages/adapters/opencode/src/v2/session-scope.ts`
+- `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
+- `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
+- `packages/adapters/opencode2/src/v2/session-scope.ts`
   - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
   - interface OpenCode2SessionScope
   - type SessionScopeError
-- `packages/adapters/opencode/src/v2/tool-policy-mapping.ts`
+- `packages/adapters/opencode2/src/v2/tool-policy-mapping.ts`
   - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
   - interface NativePermissionRule
   - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
-- `packages/adapters/opencode/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
+- `packages/adapters/opencode2/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -268,6 +334,10 @@
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
+- `packages/cli/src/evals/opencode-trajectory-runner-adapter.ts`
+  - function createProductionTrajectoryRunner: (cases, env, string | undefined>) => void
+  - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
+  - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
@@ -386,6 +456,11 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/trajectory-scoring.ts`
+  - function scoreTrajectoryResult: (input) => NormalizedScoreRecord
+  - interface ScoreTrajectoryInput
+  - type HarnessTrajectoryOutcome
+  - const TRAJECTORY_PASS_THRESHOLD
 - `packages/cli/src/evals/types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
@@ -393,7 +468,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...51 more_
+  - _...52 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
@@ -663,6 +738,7 @@
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/secret-redaction.ts` — function redactSecrets: (raw, maxChars?) => string, const REDACTED_PLACEHOLDER
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
@@ -785,15 +861,24 @@
 
 - `BASE_PATH` (has default) — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `CI` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
+- `WEAVE_ADAPTER_OPENCODE_VERSION` (has default) — sandboxes/opencode/entrypoint.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
+- `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 
 ## Config Files
@@ -822,11 +907,12 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **42** files
+- `packages/cli/src/evals/types.ts` — imported by **45** files
 - `packages/cli/src/theme/colors.ts` — imported by **21** files
+- `packages/adapters/opencode2/src/sdk-types.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **19** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **18** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **15** files
 - `packages/cli/src/fs/file-system.ts` — imported by **13** files
@@ -835,51 +921,52 @@
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/adapters/opencode/src/v2/catalog.ts` — imported by **10** files
+- `packages/adapters/opencode2/src/v2/catalog.ts` — imported by **10** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `packages/adapters/opencode/src/__tests__/v2-fixtures.ts` — imported by **9** files
-- `packages/adapters/opencode/src/v2/errors.ts` — imported by **9** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
+- `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `packages/adapters/opencode2/src/__tests__/v2-fixtures.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +37 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +40 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +16 more
+- `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +14 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +14 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
-- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
 
 ---
 
 # Events & Queues
 
-- `plan.changed` [event] — `packages/adapters/opencode/src/v2/plugin.ts`
+- `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 151 test files found
+> 179 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (3 workflows)
+## GitHub Actions (5 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
-| Agent Evals | workflow_dispatch | 2 | — | — |
+| Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
+| Proof — Active agent is Loom | push, pull_request | 3 | — | — |
 | Publish Package | push | 1 | — | — |
+| Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
 
 ### Agent Evals
 
@@ -890,6 +977,26 @@
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+
+### Proof — Active agent is Loom
+
+> `.github/workflows/proof-active-agent.yml`
+
+> Concurrency: `${{ github.workflow }}-${{ github.ref }}`
+
+- **proof-v1** on `ubuntu-latest` — 6 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **proof-v2** on `ubuntu-latest` — 5 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **proof-claude-code** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 
 ### Secrets
 
@@ -898,7 +1005,7 @@
 - `WEAVEIO_NPM_TOKEN`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/publish-tag.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/proof-active-agent.yml, .github/workflows/publish-tag.yml, .github/workflows/verify-opencode2.yml_
 _Generated by codesight-cicd-plugin_
 
 ---

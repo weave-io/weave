@@ -234,7 +234,8 @@ order, duplicate declarations, disabled filtering, and opaque adapter metadata.
 Adapters must deduplicate native activation and enforce harness skill permissions;
 a matched skill is not permission to load it.
 
-**Accepted OpenCode 2 beta exception:** host `0.0.0-beta-19086` does not expose
+**Accepted OpenCode 2 beta exception:** hosts `0.0.0-beta-19086` and
+`0.0.0-beta-19151` do not expose
 its native skill permission assertion at prompt admission. The core V2 release
 can attach configured, available skill IDs without that assertion as explicit
 degraded behavior. The adapter guide must disclose this. This exception is not

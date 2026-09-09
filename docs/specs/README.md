@@ -38,7 +38,9 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | 30 | [Minimal Runtime Command Lifecycle](30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md) | Harness-agnostic command-operation semantics for OpenCode dogfood: start, named workflow, status, abort/cancel, blocked-step advancement, health, and runtime evidence |
 | 31 | [Weave Agent Evals Reporting](31-spec-weave-agent-evals-reporting/31-spec-weave-agent-evals-reporting.md) | Versioned public report bundle schemas, sanitization envelope, bounded explanation fields, score buckets, and forbidden-pattern guards for all publishable eval dashboard artifacts |
 | 32 | [Review Models](32-spec-review-models/32-spec-review-models.md) | `review_models` field syntax, review variant naming and descriptor generation, fan-out intent emission, collation semantics, and partial-failure policy |
-| 33 | [Execution Controls](33-spec-execution-controls/33-spec-execution-controls.md) | Fast-service intent and delegation concurrency limits |
+| 33 | [Harness Trajectory Evals](33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) | `TrajectoryEvent` union, two-channel adapter observation contract, `expected_outcome.kind: "harness_trajectory"` case schema, `TrajectoryRunner` interface, publishable trajectory summary fields, and suite-registry gating |
+| 34 | [OpenCode V2 Adapter](34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) | Normative design for `@weaveio/weave-adapter-opencode2`, a separate independent adapter package for OpenCode V2; schema mapping, permission mapping, transform-based reconciliation, and V2-only authority rules. Does not modify or supersede the V1 OpenCode adapter. |
+| 35 | [Execution Controls](35-spec-execution-controls/35-spec-execution-controls.md) | Fast-service intent and delegation concurrency limits |
 
 ---
 
@@ -61,4 +63,4 @@ Specs 01–06 were produced during the alpha phase and are no longer maintained 
 
 - **10a / 10b**: Two specs share the `10-` prefix due to a historical naming collision. Both directories are preserved; `10-spec-workflow-engine` is the earlier design document and `10-spec-builtin-prompt-defaults` is the implementation spec.
 - **21a / 21b**: Two specs share the `21-` prefix. `21-spec-cli-legacy-config-migration` is the active CLI migration spec; `21-spec-workflow-first-execution` is an earlier draft superseded by Spec 22.
-- New specs should use the next available integer after 33.
+- New specs should use the next available integer after 35.

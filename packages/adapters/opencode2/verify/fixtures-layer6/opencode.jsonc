@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Layer 6 fixture — real `opencode2` CLI plugin-loader path with an
+  // extended plugin-wrapper that, after the real Weave adapter's `setup(ctx)`
+  // resolves, calls `ctx.agent.list()` and writes the (envelope-unwrapped)
+  // JSON to a marker file the host reads. The invariant: the CLI itself
+  // (not an embedded SDK host) reports Loom with the V2 ownership marker
+  // after loading the plugin. See `plugin-wrapper/server.ts` for details.
+  //
+  // Directory-shaped plugin entry: same reasoning as the layer-4 fixture
+  // (`../fixtures/opencode.jsonc`) — the real V2 loader's
+  // `ConfigPluginSource.scan()` resolves relative directories against local
+  // disk state; bare package specifiers trigger an npm-registry install
+  // attempt.
+  //
+  // Note: this fixture is intentionally placed OUTSIDE `verify/fixtures/`
+  // (in a sibling `verify/fixtures-layer6/` directory) so the real V2 CLI's
+  // ancestor-config walking does not merge the layer-4 fixture's
+  // `opencode.jsonc` (which references a different plugin-wrapper) into the
+  // layer-6 run. Ancestor-config merging would otherwise cause BOTH
+  // wrappers to load and double-invoke the real adapter's setup(ctx).
+  "plugins": ["./plugin-wrapper"]
+}

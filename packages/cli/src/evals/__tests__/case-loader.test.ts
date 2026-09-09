@@ -333,6 +333,55 @@ describe("loadCaseFile — happy paths", () => {
     expect(c.allowed_agents).toEqual(["warp"]);
   });
 
+  it("loads a valid harness_trajectory case fixture for loom-routing", async () => {
+    const filePath = await writeTempJson(
+      "valid-harness-trajectory",
+      makeCase({
+        expected_outcome: {
+          kind: "harness_trajectory",
+          expected_spawns: ["shuttle"],
+          expected_tools: ["edit", "bash"],
+          max_duration_seconds: 300,
+          sandbox_profile: "opencode-default",
+        },
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.expected_outcome.kind).toBe("harness_trajectory");
+    if (c.expected_outcome.kind === "harness_trajectory") {
+      expect(c.expected_outcome.expected_spawns).toEqual(["shuttle"]);
+      expect(c.expected_outcome.expected_tools).toEqual(["edit", "bash"]);
+      expect(c.expected_outcome.max_duration_seconds).toBe(300);
+      expect(c.expected_outcome.sandbox_profile).toBe("opencode-default");
+    }
+  });
+
+  it("rejects a harness_trajectory case fixture on a suite that has not opted in", async () => {
+    const filePath = await writeTempJson(
+      "invalid-harness-trajectory-suite",
+      makeCase({
+        suite: "warp-security",
+        allowed_agents: ["warp"],
+        expected_outcome: {
+          kind: "harness_trajectory",
+          expected_spawns: [],
+          expected_tools: ["bash"],
+          max_duration_seconds: 120,
+          sandbox_profile: "opencode-default",
+        },
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("UnsupportedTextEvalAssertion");
+    if (e.type === "UnsupportedTextEvalAssertion") {
+      expect(e.suite).toBe("warp-security");
+    }
+  });
+
   it("rejects a tool_call case fixture for a text-only suite", async () => {
     const filePath = await writeTempJson(
       "invalid-tool-call",
@@ -501,6 +550,39 @@ describe("loadCaseFile — schema validation failures", () => {
     const filePath = await writeTempJson(
       "empty-models",
       makeCase({ allowed_models: [] }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("FixtureValidationFailed");
+  });
+
+  it("returns FixtureValidationFailed for harness_trajectory with max_duration_seconds over the cap", async () => {
+    const filePath = await writeTempJson(
+      "trajectory-duration-over-cap",
+      makeCase({
+        expected_outcome: {
+          kind: "harness_trajectory",
+          expected_spawns: ["shuttle"],
+          expected_tools: ["bash"],
+          max_duration_seconds: 601,
+          sandbox_profile: "opencode-default",
+        },
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("FixtureValidationFailed");
+  });
+
+  it("returns FixtureValidationFailed for harness_trajectory missing required fields", async () => {
+    const filePath = await writeTempJson(
+      "trajectory-missing-fields",
+      makeCase({
+        expected_outcome: {
+          kind: "harness_trajectory",
+          expected_spawns: ["shuttle"],
+        },
+      }),
     );
     const result = await loadCaseFile(filePath);
     expect(result.isErr()).toBe(true);

@@ -226,6 +226,10 @@ export {
   sanitizeSnapshotMetadata,
 } from "./runtime/sanitizer.js";
 export {
+  REDACTED_PLACEHOLDER,
+  redactSecrets,
+} from "./runtime/secret-redaction.js";
+export {
   CURRENT_SCHEMA_VERSION,
   readSchemaVersion,
   runMigrations,

@@ -120,7 +120,7 @@ describe("harness installers", () => {
     );
     const once = fs.snapshot()[path];
     expect(once).toContain("// keep");
-    expect(once).toContain("@weaveio/weave-adapter-opencode");
+    expect(once).toContain("@weaveio/weave-adapter-opencode2");
     expect((await installer.install(request))._unsafeUnwrap().changed).toBe(
       false,
     );
@@ -154,7 +154,7 @@ describe("harness installers", () => {
     expect(installed).toContain("// keep plugin comment");
     expect(installed).toContain("// keep option comment");
     expect(installed).toContain('"enabled": true');
-    expect(installed).toContain("@weaveio/weave-adapter-opencode");
+    expect(installed).toContain("@weaveio/weave-adapter-opencode2");
   });
 
   it("uses XDG global config and rejects ambiguous native config files", async () => {

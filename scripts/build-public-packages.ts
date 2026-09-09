@@ -200,10 +200,13 @@ export class PublicPackageBuilder {
           build.declarations,
         );
       })
-      .andThen(() => this.emitPublicDeclarations());
+      .andThen(() => this.emitOpenCodeDeclarations())
+      .andThen(() => this.build("@weaveio/weave-adapter-opencode"))
+      .andThen(() => this.emitCliDeclarations());
     for (const packageName of Object.keys(
       PUBLIC_PACKAGE_BUILDS,
     ) as PublicPackageName[]) {
+      if (packageName === "@weaveio/weave-adapter-opencode") continue;
       result = result.andThen(() => this.build(packageName));
     }
     return result;
@@ -231,11 +234,18 @@ export class PublicPackageBuilder {
     ]);
   }
 
-  private emitPublicDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+  private emitOpenCodeDeclarations(): ResultAsync<
+    void,
+    PublicPackageBuildError
+  > {
     return this.runTypeScriptProjects([
-      "packages/cli/tsconfig.build.json",
       "packages/adapters/opencode/tsconfig.build.json",
+      "packages/adapters/opencode2/tsconfig.build.json",
     ]);
+  }
+
+  private emitCliDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+    return this.runTypeScriptProjects(["packages/cli/tsconfig.build.json"]);
   }
 
   private runTypeScriptProjects(
@@ -342,7 +352,15 @@ export class PublicPackageBuilder {
     declaration: PublicDeclarationBuild,
   ): ResultAsync<void, PublicPackageBuildError> {
     return this.fileSystem.readText(declaration.output).andThen((contents) => {
+      // Longer/more-specific package names must be replaced before shorter
+      // prefixes: "@weaveio/weave-adapter-opencode" is a substring of
+      // "@weaveio/weave-adapter-opencode2", so it must run second or it
+      // would corrupt the V2 replacement (leaving a stray "2").
       const sanitized = contents
+        .replaceAll(
+          "@weaveio/weave-adapter-opencode2",
+          "the OpenCode V2 adapter",
+        )
         .replaceAll("@weaveio/weave-adapter-opencode", "the OpenCode adapter")
         .replaceAll("@weaveio/weave-adapter-claude-code", "the Claude adapter")
         .replaceAll("@weaveio/weave-config", "the configuration package")

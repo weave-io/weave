@@ -10,9 +10,7 @@ tableOfContents:
 
 This guide takes you from a checked-out Weave workspace to a validated project configuration that OpenCode can load through the implemented adapter. You will create `.weave/config.weave`, add one custom agent, validate the effective config, inspect a composed prompt, and install the OpenCode plugin entry.
 
-Weave is not a harness runtime. The CLI prepares and inspects configuration.
-Actual OpenCode 2 plan work starts inside the harness through
-`/weave:start <plan-name>`.
+Weave is not a harness runtime. The CLI prepares and inspects configuration. Actual work starts inside the harness through explicit adapter-native commands such as OpenCode's `/weave:start` or `/start-work`.
 
 ## Prerequisites
 
@@ -133,19 +131,21 @@ This is the normal authoring loop: edit `.weave/config.weave`, validate, inspect
 OpenCode is the implemented adapter today. Configure it during init:
 
 ```bash
-bun packages/cli/src/main.ts init --scope local --harness opencode2 --yes
+bun packages/cli/src/main.ts init --scope local --harness opencode --yes
 ```
 
 If you configure OpenCode manually, the plugin entry is:
 
-```jsonc
+```json
 {
-  "plugins": ["@weaveio/weave-adapter-opencode@<exact-version>"]
+  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>/plugin"]
 }
 ```
 
-The OpenCode 2 plugin registers only `/weave:start <plan-name>` for explicit
-foreground plan work. The supported host is exactly `0.0.0-beta-19086`.
+The plugin registers two prompt commands in OpenCode:
+
+- `/weave:start`, the preferred command for plan-first explicit execution.
+- `/start-work`, the legacy compatibility alias.
 
 Do not assume `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, or `/weave:health` are registered slash commands. Those labels exist as projection/helper surfaces unless an installed adapter wires them into the harness.
 
@@ -167,8 +167,8 @@ Use this checklist before handing the setup to another user:
 | --- | --- | --- |
 | `validate --project` says a file is missing | `.weave/config.weave` was not created in the current project | Run `init --scope local --yes` from the project root or pass `--path`. |
 | Prompt inspection cannot find an agent | The agent is disabled, misspelled, or only generated from a category with another name | Run `prompt list` and inspect the exact generated name. |
-| OpenCode does not show Weave commands | The plugin entry is missing or uses the V1 field | Use the bare pinned package in plural `plugins`, then restart the exact supported host. |
-| A workflow does not start from the CLI | This is expected | Start one existing plan inside OpenCode with `/weave:start <plan-name>`. |
+| OpenCode does not show Weave commands | The plugin entry is missing or points at the wrong package path | Use the pinned `@weaveio/weave-adapter-opencode@<version>/plugin` entry and re-check with `opencode debug config`. |
+| A workflow does not start from the CLI | This is expected | Start work inside OpenCode with `/weave:start` or `/start-work`. |
 
 ## Next Steps
 

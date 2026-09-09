@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { OpenCode } from "@opencode-ai/client";
 import type { Service as ServiceType } from "@opencode-ai/client/service";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
-import type { WeaveRpc as WeaveRpcType } from "../../packages/adapters/opencode/src/rpc.js";
+import type { WeaveRpc as WeaveRpcType } from "../../packages/adapters/opencode2/src/rpc.js";
 import {
   type ProofProviderError,
   ProofProviderFixture,
@@ -194,7 +194,7 @@ class OpenCode2RuntimeProof {
     const activePlugin = plugins.value.data.some(
       (plugin) =>
         plugin.state.status === "active" &&
-        serialized(plugin.source).includes("weave-adapter-opencode"),
+        serialized(plugin.source).includes("weave-adapter-opencode2"),
     );
     const plugin = this.record(
       "plugin_activation",

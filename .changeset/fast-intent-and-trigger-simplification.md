@@ -1,6 +1,7 @@
 ---
 "@weaveio/weave-cli": minor
 "@weaveio/weave-adapter-opencode": minor
+"@weaveio/weave-adapter-opencode2": minor
 "@weaveio/weave-adapter-claude-code": minor
 "@weaveio/weave-adapter-pi": minor
 ---

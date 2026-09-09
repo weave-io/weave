@@ -924,7 +924,8 @@ export type OutcomeKind =
   | "agent_routing"
   | "delegation_chain"
   | "task_completion"
-  | "tool_call";
+  | "tool_call"
+  | "harness_trajectory";
 
 /**
  * Map an `OutcomeKind` to its short, human-readable label used in
@@ -937,6 +938,7 @@ function outcomeKindLabel(kind: OutcomeKind): string {
   if (kind === "agent_routing") return "routing";
   if (kind === "delegation_chain") return "delegation";
   if (kind === "task_completion") return "execution";
+  if (kind === "harness_trajectory") return "harness-trajectory";
   // "tool_call" — map to a safe fixed label, never reflect the identifier directly
   return "tool-call";
 }

@@ -128,6 +128,18 @@ export function assembleCaseEntry(
     dryRun: row.dryRun,
     scoredAt: row.scoredAt,
     ...(explanation !== undefined ? { explanation } : {}),
+    ...(row.trajectorySummary !== undefined
+      ? {
+          trajectorySummary: {
+            harnessDelegatedCorrectly:
+              row.trajectorySummary.harnessDelegatedCorrectly,
+            observedSpawns: [...row.trajectorySummary.observedSpawns],
+            observedToolCalls: row.trajectorySummary.observedToolCalls,
+            harnessCompletedWithoutError:
+              row.trajectorySummary.harnessCompletedWithoutError,
+          },
+        }
+      : {}),
   };
 
   return entry;
@@ -160,6 +172,9 @@ export function assembleSuiteSummary(
   const suiteGreen = cases
     .filter((c) => c.required && !c.dryRun)
     .every((c) => c.passed);
+  const hasRuntimeVerifiedCases = cases.some(
+    (c) => c.trajectorySummary !== undefined,
+  );
 
   // Build the suite-level bounded explanation from structured aggregate signals only.
   // The text is derived from integer counts, booleans, and the dryRun flag —
@@ -187,6 +202,7 @@ export function assembleSuiteSummary(
     passedCases,
     failedCases,
     suiteGreen,
+    hasRuntimeVerifiedCases,
     ...(suiteExplanation !== undefined
       ? { explanation: suiteExplanation }
       : {}),

@@ -21,6 +21,11 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
+- `packages/adapters/opencode/src/plugin.ts`
+  - function createWeavePlugin: (options) => Plugin
+  - interface WeavePluginOptions
+  - const WeavePlugin: Plugin
+  - const server
 - `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
@@ -60,24 +65,85 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
+- `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
+- `packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts`
+  - function resolveSandboxProfileImage: (sandboxProfile) => string | undefined
+  - class DefaultLogParser
+  - class EphemeralWorkspaceFactory
+  - class OpenCodeTrajectoryRunner
+  - interface LogParser
+  - interface PromptProvider
+  - _...2 more_
+- `packages/adapters/opencode/src/trajectory/podman-client.ts`
+  - class BunPodmanClient
+  - interface PodmanRunResult
+  - interface PodmanClient
+  - type PodmanClientError
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
-- `packages/adapters/opencode/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
-- `packages/adapters/opencode/src/v2/catalog.ts`
+- `packages/adapters/opencode2/src/adapter.ts`
+  - class OpenCode2Adapter
+  - interface OpenCode2AdapterOptions
+  - type OpenCode2AdapterHarnessError
+- `packages/adapters/opencode2/src/errors.ts`
+  - function pluginContextInitError: (stage, cause?) => PluginContextInitError
+  - function agentReconciliationError: (agentId, stage, cause?) => AgentReconciliationError
+  - function foreignAgentCollision: (agentId, foreignAgent?) => ForeignAgentCollision
+  - function missingCatalogEntry: (agentId, modelId) => MissingCatalogEntry
+  - function catalogUnavailable: (stage, cause?) => CatalogUnavailable
+  - function skillListError: (cause?) => SkillListError
+  - _...17 more_
+- `packages/adapters/opencode2/src/model-resolution.ts`
+  - function resolveModelContext: (facade, descriptor) => ResultAsync<ResolvedModelContext, OpenCode2AdapterError>
+  - interface ResolvedModelContext
+  - interface ModelResolutionDescriptor
+- `packages/adapters/opencode2/src/plugin-context.ts`
+  - function fromLiveContext: (ctx) => PluginContextFacade
+  - interface PluginContextAgentFacade
+  - interface PluginContextCatalogFacade
+  - interface PluginContextSkillFacade
+  - interface PluginContextCommandFacade
+  - interface PluginContextSessionFacade
+  - _...3 more_
+- `packages/adapters/opencode2/src/plugin.ts` — function setupWeavePlugin: (facade, options) => Promise<V2Cleanup>, interface SetupWeavePluginOptions
+- `packages/adapters/opencode2/src/projection-helpers.ts`
+  - function renderPrompt: (template, context, string>>) => string
+  - function slugify: (input) => string
+  - function composeDelegatedPrompt: (effect) => string
+- `packages/adapters/opencode2/src/reconcile-agent.ts` — function reconcileAgent: (facade, agentInfo) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/run-workflow.ts`
+  - function buildProjectEffect: (facade, sessionID, signal) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>
+  - function runWorkflow: (facade, input, abortSignal?) => ResultAsync<WorkflowRunnerOutput, OpenCode2AdapterError>
+  - interface RunWorkflowInput
+- `packages/adapters/opencode2/src/runtime-command-projection.ts`
+  - function buildExecuteCallback: (facade, template, deliveryMode) => (input: V2CommandInvocation) => Promise<void>
+  - function registerCommands: (facade, templates, deliveryMode) => ResultAsync<readonly V2Registration[], OpenCode2AdapterError>
+  - type CommandDeliveryMode
+  - const DEFAULT_COMMAND_DELIVERY: CommandDeliveryMode
+- `packages/adapters/opencode2/src/skill-discovery.ts` — function loadAvailableSkillsV2: (facade) => Promise<SkillInfo[]>, function registerWeaveManagedSkills: (facade, skills) => ResultAsync<V2Registration, OpenCode2AdapterError>
+- `packages/adapters/opencode2/src/start-plan-execution.ts` — function startPlanExecution: (facade, input) => ResultAsync<V2SessionPromptOutput, OpenCode2AdapterError>, interface StartPlanExecutionInput
+- `packages/adapters/opencode2/src/tool-policy-mapping.ts` — function toPermissionRules: (policy) => V2Rule[], type ToolPolicyEffective
+- `packages/adapters/opencode2/src/translate-agent.ts`
+  - function translateAgent: (descriptor, resolvedModel) => V2AgentInfo
+  - interface TranslatableAgentDescriptor
+  - interface ResolvedAgentModel
+  - const WEAVE_OWNERSHIP_MARKER
+- `packages/adapters/opencode2/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
+- `packages/adapters/opencode2/src/v2/catalog.ts`
   - function buildOpenCode2Catalog: (input) => ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error>
   - interface OpenCode2CatalogAgent
   - interface OpenCode2CatalogCandidate
   - interface BuildOpenCode2CatalogInput
   - type OpenCode2CatalogIssue
-- `packages/adapters/opencode/src/v2/commands.ts`
+- `packages/adapters/opencode2/src/v2/commands.ts`
   - class OpenCode2Commands
   - interface OpenCode2CommandDependencies
   - const WEAVE_START_COMMAND
-- `packages/adapters/opencode/src/v2/config-refresh.ts`
+- `packages/adapters/opencode2/src/v2/config-refresh.ts`
   - class OpenCode2CatalogController
   - interface OpenCode2RefreshStatus
   - interface OpenCode2RefreshDependencies
   - type OpenCode2RefreshState
-- `packages/adapters/opencode/src/v2/config-source.ts`
+- `packages/adapters/opencode2/src/v2/config-source.ts`
   - function probeCatalogSources: (sources, io) => void
   - class BunCatalogSourceIo
   - class CatalogSourceCache
@@ -85,27 +151,27 @@
   - interface CatalogSourceIo
   - type CatalogSourceIoError
   - _...2 more_
-- `packages/adapters/opencode/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
-- `packages/adapters/opencode/src/v2/errors.ts`
+- `packages/adapters/opencode2/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
+- `packages/adapters/opencode2/src/v2/errors.ts`
   - function fromOpenCode2Promise: (operation) => void
   - interface OpenCode2Error
   - type OpenCode2ErrorCode
-- `packages/adapters/opencode/src/v2/health.ts`
+- `packages/adapters/opencode2/src/v2/health.ts`
   - function buildOpenCode2Health: (catalog, refresh, ownedAgents) => void
   - interface OpenCode2HealthIssue
   - interface OpenCode2HealthReport
   - interface OpenCode2RegistrationReadiness
-- `packages/adapters/opencode/src/v2/model-resolution.ts`
+- `packages/adapters/opencode2/src/v2/model-resolution.ts`
   - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
   - interface OpenCode2ModelResolution
   - type OpenCode2ModelResolutionError
-- `packages/adapters/opencode/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
-- `packages/adapters/opencode/src/v2/plan-session-state.ts`
+- `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode2/src/v2/plan-session-state.ts`
   - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
   - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection
   - class OpenCode2PlanSessionState
   - interface StoredPlanSelection
-- `packages/adapters/opencode/src/v2/plan-ui-state.ts`
+- `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
   - function taskDialogOptions: (plan) => Array<
   - class PlanUiController
   - interface PlanUiScope
@@ -113,22 +179,22 @@
   - interface PlanUiDisplay
   - interface PlanUiRpcResponse
   - _...2 more_
-- `packages/adapters/opencode/src/v2/plugin.ts`
+- `packages/adapters/opencode2/src/v2/plugin.ts`
   - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
   - interface OpenCode2PluginDependencies
   - const WeavePlugin
   - const server
-- `packages/adapters/opencode/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
-- `packages/adapters/opencode/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
-- `packages/adapters/opencode/src/v2/session-scope.ts`
+- `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
+- `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
+- `packages/adapters/opencode2/src/v2/session-scope.ts`
   - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
   - interface OpenCode2SessionScope
   - type SessionScopeError
-- `packages/adapters/opencode/src/v2/tool-policy-mapping.ts`
+- `packages/adapters/opencode2/src/v2/tool-policy-mapping.ts`
   - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
   - interface NativePermissionRule
   - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
-- `packages/adapters/opencode/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
+- `packages/adapters/opencode2/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -257,6 +323,10 @@
   - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
   - const MATRIX_PATH
   - const MIN_DEFAULT_MODELS
+- `packages/cli/src/evals/opencode-trajectory-runner-adapter.ts`
+  - function createProductionTrajectoryRunner: (cases, env, string | undefined>) => void
+  - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
+  - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
   - class OpenRouterClient
   - class StubModelClient
@@ -375,6 +445,11 @@
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/trajectory-scoring.ts`
+  - function scoreTrajectoryResult: (input) => NormalizedScoreRecord
+  - interface ScoreTrajectoryInput
+  - type HarnessTrajectoryOutcome
+  - const TRAJECTORY_PASS_THRESHOLD
 - `packages/cli/src/evals/types.ts`
   - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
   - function isKnownEvalSuiteId: (suiteId) => boolean
@@ -382,7 +457,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...51 more_
+  - _...52 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
@@ -652,6 +727,7 @@
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/secret-redaction.ts` — function redactSecrets: (raw, maxChars?) => string, const REDACTED_PLACEHOLDER
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>

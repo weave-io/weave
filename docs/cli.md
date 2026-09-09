@@ -184,6 +184,8 @@ Global scope uses `$XDG_CONFIG_HOME/opencode`, or `~/.config/opencode` when XDG
 is unset. The installer writes the plural `plugins` field, preserves comments
 and existing options, and refuses malformed, duplicate-key, or ambiguous
 config files. Repeating the command leaves the bytes unchanged.
+The selected V2 package is `@weaveio/weave-adapter-opencode2`; the V1 package
+remains independent. See the [V2 core guide](adapters/opencode2-core.md).
 
 ## `weave init migrate`
 

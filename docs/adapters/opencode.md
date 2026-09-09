@@ -1,277 +1,78 @@
-# OpenCode 2 Adapter
+# OpenCode Adapter
 
-`@weaveio/weave-adapter-opencode` provides native server, RPC, and CLI plugins
-for OpenCode 2. The supported host for this release is exactly
-`0.0.0-beta-19086`.
+`@weaveio/weave-adapter-opencode` is Weave's runtime OpenCode plugin. It loads normalized `.weave` configuration and translates it into OpenCode agents, commands, tools, and lifecycle behavior.
 
-**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness
-Status](../adapter-readiness-status.md) · [Model Resolution](../model-resolution.md)
-· [Verification](../testing/opencode2-verification.md) · [Package
-README](../../packages/adapters/opencode/README.md)
+**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Package README](../../packages/adapters/opencode/README.md)
 
-## Install
+---
 
-Use the Weave CLI to add one native `plugins` entry. OpenCode 1 and OpenCode 2
-use different plugin ABIs, so selection is explicit.
+## Ownership
 
-```bash
-weave init --harness opencode2 --scope local --yes
-```
+The adapter owns OpenCode plugin hooks, config shape, tool and command names, harness model and skill discovery, and all mapping between OpenCode events and engine lifecycle inputs.
 
-Local installation edits one of these files under the current project:
+The engine owns normalized descriptors, prompt composition, model and skill intent, policy decisions, workflow state, and lifecycle transitions.
 
-- `opencode.jsonc`
-- `opencode.json`
-- `.opencode/opencode.jsonc`
-- `.opencode/opencode.json`
+## Installation
 
-Global installation uses
-`$XDG_CONFIG_HOME/opencode/opencode.json(c)`, or
-`~/.config/opencode/opencode.json(c)` when `XDG_CONFIG_HOME` is unset.
-Installation stops if more than one candidate exists. It preserves comments,
-options, and unrelated keys. A second run does not change the file bytes.
+Add the package name to the `plugin` array in `opencode.json` or
+`opencode.jsonc`:
 
-Manual configuration uses the plural `plugins` field:
-
-```jsonc
+```json
 {
-  "plugins": [
-    "@weaveio/weave-adapter-opencode@<exact-version>",
-  ],
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<exact-version>"
+  ]
 }
 ```
 
-Plugin options use OpenCode's package descriptor form:
+The package name is the canonical OpenCode plugin spec. OpenCode resolves the
+package's `server` export to `dist/plugin.js`; do not point the plugin at the
+library bundle (`dist/index.js`) or at a source file. Use an exact version for
+reproducible installs. The package also supports the `latest`, `next`, and
+`nightly` npm channel tags when you explicitly want a mutable channel.
 
-```jsonc
-{
-  "plugins": [
-    {
-      "package": "@weaveio/weave-adapter-opencode@<exact-version>",
-      "options": {
-        "projectConfig": true,
-        "defaultAgent": "loom",
-        "refreshIntervalMs": 1000,
-      },
-    },
-  ],
-}
-```
+OpenCode fetches the package at startup. There is no separate `npm install`
+step. Restart OpenCode after changing the plugin version. For local
+development, build the adapter and use an absolute file URL to
+`packages/adapters/opencode/dist/plugin.js`. See the [package
+README](../../packages/adapters/opencode/README.md) for an isolated validation
+environment.
 
-`projectConfig: false` prevents this plugin instance from loading
-`<Location>/.weave/config.weave`. Global Weave config remains available. The
-refresh interval accepts 250 through 60,000 milliseconds. Unknown or invalid
-options disable setup with a bounded warning.
+## Release channels and host support
 
-## Package entries and compatibility
+The adapter is published on `latest` (stable), `next`, and `nightly`. Its
+package declares `@opencode-ai/plugin` and `@opencode-ai/sdk` `~1.15.9`; no
+separate OpenCode version floor is encoded. Use an OpenCode release compatible
+with those APIs.
 
-The package ships these entries:
+## Materialization
 
-| Entry | Purpose |
-| --- | --- |
-| package root | Legacy library helpers plus the V2 server definition |
-| `./server` and `./plugin` | V2 server plugin definition |
-| `./rpc` | Portable read-only RPC definition |
-| `./tui` | Solid/OpenTUI CLI plugin |
+The config hook:
 
-The package also ships physical root `server.js`, `rpc.js`, and `tui.js`
-wrappers. The pinned host requires those files when `plugins` names a local
-package directory; published package-name loading continues to use subpath
-exports.
+1. loads builtin, global, and trusted project `.weave` layers;
+2. asks OpenCode for harness-owned model and skill context;
+3. materializes descriptors in plan order;
+4. maps each valid descriptor to an OpenCode agent;
+5. reports descriptor failures without inventing fallback intent.
 
-The live plugin ABI is an intentional compatibility break. OpenCode 1 plugin
-loading is not supported by these entries. Existing V1 SDK-based library
-helpers remain exported for source compatibility, but they are not the V2
-runtime.
+Category shuttles remain ordinary normalized descriptors, routed by their description and ordered trigger strings. Categories have no file patterns, so the adapter performs no deterministic file routing. The adapter never reparses DSL intent or builds prompts itself.
 
-## Location-scoped materialization
+## Provider acceleration is unsupported
 
-Each server plugin instance owns one OpenCode Location. It:
+A descriptor's `fast true` is neutral intent. OpenCode's plugin surface can mutate a request through `chat.params` and `chat.headers`, but its public plugin event and assistant-message contracts expose no correlated official response-body proof — no OpenAI `service_tier` and no Anthropic `usage.speed` — for a successful call. A successful status, error data, or ordinary token usage is not evidence.
 
-1. loads builtin, global, and allowed project `.weave` layers;
-2. gets model and skill inventories from OpenCode;
-3. materializes normalized descriptors once;
-4. resolves models, variants, and skills against those inventories;
-5. registers absent agents through the native agent transform.
+The adapter therefore sends no acceleration control and mutates no request option or header. `provider-fast-activation` declares `unsupported` with runtime status `unsupported` and the bounded reason `response-proof-unavailable`. Materialized agent configuration is never presented as evidence of acceleration.
 
-The adapter does not overwrite a same-ID foreign agent. Later hooks and
-commands act only on agent IDs inserted by the current replay. Health reports
-collisions as bounded counts. Generated category and review agents use the same
-path as ordinary agents. Trigger metadata stays in its current object form, and
-category `patterns` remain part of the DSL.
+This is an optional-capability gap: it warns and never blocks descriptor materialization, agent mapping, commands, or lifecycle. Raising OpenCode above `unsupported` requires a plugin contract that exposes correlated official response-body evidence for the same attempt, plus real-harness proof under [Adapter Readiness Status](../adapter-readiness-status.md). Mocked unit coverage is not that proof.
 
-## Models and request intent
+## Commands and execution
 
-An explicit model entry uses `provider/model` and can add a native variant as
-`provider/model#variant`. A bare model ID is accepted only when exactly one live
-catalog entry matches. The first viable declared entry wins. An agent is
-omitted when it declares models but none are valid or available.
+OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. Ordinary chat and passive hooks do not start work.
 
-If an agent declares no model, OpenCode keeps native model selection. The
-adapter does not reset a user's model on each turn. A descriptor-level
-`variant` applies only when the selected model entry has no `#variant`.
-Declared temperature is applied through the native context hook after agent
-ownership and session Location checks.
+## Logging
 
-## Tool policy
+Plugin logs go to `.weave/weave.log` by default so structured JSON does not appear in the OpenCode UI. `WEAVE_LOG_FILE` overrides the path. Outside the plugin, the engine logger uses its normal sink.
 
-Weave maps only its abstract capabilities. It leaves unrelated native
-safeguards in place.
+## Verification
 
-| Weave capability | OpenCode 2 actions |
-| --- | --- |
-| `read` | `read`, `glob`, `grep` |
-| `write` | `edit` |
-| `execute` | `shell` |
-| `delegate` | `subagent` for eligible materialized targets |
-| `network` | `webfetch`, `websearch` |
-
-`allow`, `deny`, and `ask` remain distinct. Delegation starts with a wildcard
-deny rule, then adds rules only for eligible target agent IDs. The adapter does
-not emit obsolete `task`, `bash`, `doom_loop`, or boolean tool fields. Arbitrary
-MCP and custom tool mappings are not claimed.
-
-## Skills
-
-The adapter matches configured skill names against OpenCode's live skill
-inventory. Missing skills produce nonfatal health issues. Existing prompt
-skill mentions are retained and duplicate skill IDs are removed.
-
-**Accepted host limit:** OpenCode `0.0.0-beta-19086` does not expose the native
-skill permission assertion through prompt admission. This release attaches
-configured, available skill IDs without that permission check. Do not treat a
-Weave skill declaration as proof that OpenCode asked for approval. Disable the
-skill in `.weave` when this behavior is not acceptable.
-
-## Refresh behavior
-
-The server checks for changes before admitted work, with a bounded minimum
-interval. One in-flight refresh is shared. It reads each source once per
-attempt, hashes those exact bytes, and publishes only a complete valid catalog.
-Broken edits keep the last valid catalog. The CLI plan contribution shows this
-as a bounded refresh warning while it continues to display the last valid plan
-state. A changed catalog reloads native agent
-and command registries for later operations; it does not rewrite an in-flight
-request or silently switch a live session model. Registry reload is not
-cross-registry atomic, so a failed partial reload is rolled back and replayed
-from the previous candidate.
-If initial config loading fails, the registered transforms remain idle. The
-first later valid refresh publishes the catalog and reloads both registries, so
-fixing the file does not require an OpenCode restart. An existence-check I/O
-failure is not treated as a deleted source.
-
-The adapter does not redirect the shared process logger to a Location-specific
-file. Operators control the shared pino destination and level.
-
-## Foreground plan command
-
-The V2 plugin reserves one command:
-
-```text
-/weave:start <plan-name>
-```
-
-`/start-work` is not registered. The reserved-name decision means another
-plugin's `weave:start` command can be replaced during replay because the pinned
-`CommandEditor` has no atomic presence check.
-
-The command validates and reads only
-`<Location>/.weave/plans/<plan-name>.md`, switches the current session to the
-owned Tapestry agent and its resolved model, and submits one visible foreground
-prompt with the invocation's files, agent mentions, skill mentions, and
-delivery mode. No plan name means
-no switch and no work. Missing or invalid plans also start no work.
-
-Selected-plan storage contains only session/Location identity, the plan name,
-content revision, and bounded display counts/titles. It is not workflow state,
-automatic-resume authority, or an exactly-once record. The command and the
-read-only RPC do not create `.weave/runtime/weave.db`.
-
-## CLI plan display
-
-The `./tui` plugin appends a compact composer contribution with plan name,
-completed/total count, current task, and next task. The palette action **Weave:
-Plan tasks** opens a read-only task list. It has no default global key binding.
-
-The UI does not gate plan loading on an exact OpenCode version. It attempts
-the plan RPC on newer hosts as well; this does not extend the verified host
-compatibility claim above.
-
-The UI shows explicit no-plan, loading, completed, unavailable,
-and disconnected states. It re-reads server state after
-reconnect, relevant session events, and a five-second transport check. It
-rejects stale session responses and
-does not read project files locally. Headless OpenCode clients can call the
-same read-only RPC but do not load the CLI contribution.
-The periodic transport check refreshes the panel without closing an open task
-dialog. Session invalidation and component disposal can close that dialog.
-
-## Sampling defaults
-
-Built-in agents and this repository's category config leave temperature unset.
-This lets the provider use its model defaults instead of sending sampling
-overrides that some models reject. Global and project temperature settings
-still override these defaults; remove those settings as well when diagnosing
-a provider rejection. Model choices and reasoning variants are unchanged.
-
-A live diagnostic on OpenCode `0.0.0-beta-19271` reproduced HTTP 400 with
-Loom on `openai/gpt-5.6-sol#high`, while Build on the same model succeeded.
-After removing the built-in and global temperature overrides and rebuilding,
-Loom returned `OK` in the same diagnostic session. The provider's detailed
-rejection body was not available, so this verifies the workaround rather than
-the exact rejected parameter. Weave does not configure `top_p`/`topP`.
-
-## Native delegation
-
-Weave uses OpenCode's native `subagent` action. It does not create a parallel
-session scheduler or use private `parentID` inputs. Foreground and background
-execution, result delivery, navigation, steering, and interruption remain
-native OpenCode behavior. Child requests use the child's registered model,
-policy, prompt, temperature, and configured skills.
-
-## Readiness and limits
-
-The adapter RPC reports native-agent, request-intent, foreground-plan,
-plan-display, and native-delegation readiness from live registrations. It also
-reports that durable workflows are unavailable. Therefore this release does
-not satisfy Weave's existing Core Readiness Profile, which requires durable
-workflow capabilities.
-
-Not delivered: durable workflow run/resume/advance, usage rollups, a child
-dashboard, automatic model fallback, provider acceleration, or `/weave:goal`.
-The DSL accepts `fast` and `settings.delegation.max_concurrency` as execution
-intent. Parsing these fields alone does not establish native enforcement; see
-[Execution Controls](../specs/33-spec-execution-controls/33-spec-execution-controls.md).
-
-### Execution control boundary on beta-19086
-
-Neither setting is currently applied by this adapter. `fast` survives agent
-composition, including category overrides. `delegation.max_concurrency`
-survives config loading and merging. These are configuration support, not
-runtime support.
-
-The pinned host has no native agent `fast` field. Its context hook can set
-`providerOptions.serviceTier` for OpenAI Responses, but that is not a portable
-fast-mode control. No mapping has been verified for `openai-codex` or
-Anthropic. This adapter does not add a provider-specific override or claim
-that fast service was requested or applied.
-
-The concurrency contract requires a separate limit for each parent session,
-covering live foreground and background children. Wrapping the native
-`subagent` executor cannot meet it: foreground calls wait for completion,
-while background calls return after launch. The public plugin API has no
-atomic child admission/completion control or reliable reconstruction of live
-children after restart. Limiting launches or rejecting background work is not
-an accepted substitute. Runtime enforcement is blocked pending a host API that
-can satisfy this contract; the adapter does not install a partial limiter.
-
-Sources: the pinned `@opencode-ai/plugin` public `promise/session.d.ts` and
-`promise/tool.d.ts` types, and the [V2 plugin
-guide](https://opencode.ai/v2/docs/build/plugins).
-
-## Verify
-
-Use the isolated procedure in [OpenCode 2
-verification](../testing/opencode2-verification.md). Unit tests use mocked host
-boundaries. Packaged runtime and interactive UI checks use a separate exact
-host under an isolated HOME and XDG root.
+Use `opencode debug config` to confirm the generated agent map and `opencode debug info` to confirm plugin execution. Unit and integration tests must mock OpenCode boundaries rather than launch a real harness.

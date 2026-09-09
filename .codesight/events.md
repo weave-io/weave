@@ -1,3 +1,3 @@
 # Events & Queues
 
-- `plan.changed` [event] — `packages/adapters/opencode/src/v2/plugin.ts`
+- `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`

@@ -17,7 +17,7 @@ import type {
   InstallResult,
 } from "./index.js";
 
-export const OPENCODE2_PLUGIN_PACKAGE = "@weaveio/weave-adapter-opencode";
+export const OPENCODE2_PLUGIN_PACKAGE = "@weaveio/weave-adapter-opencode2";
 
 function configCandidates(fs: FileSystem, scope: "global" | "local"): string[] {
   if (scope === "global") {

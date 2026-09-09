@@ -34,7 +34,7 @@ export interface OpenCode2ProofVerdict {
 
 export interface OpenCode2ProofReport {
   readonly schemaVersion: 1;
-  readonly hostVersion: "0.0.0-beta-19086";
+  readonly hostVersion: "0.0.0-beta-19151";
   readonly adapterVersion: string;
   readonly tarballSha256: string;
   readonly pluginSha256: string;
@@ -97,7 +97,7 @@ export class OpenCode2ProofCases {
     }
     return ok({
       schemaVersion: 1,
-      hostVersion: "0.0.0-beta-19086",
+      hostVersion: "0.0.0-beta-19151",
       ...input,
       verdicts,
     });

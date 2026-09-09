@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 
-export const OPENCODE2_PROOF_HOST_VERSION = "0.0.0-beta-19086" as const;
+export const OPENCODE2_PROOF_HOST_VERSION = "0.0.0-beta-19151" as const;
 export const OPENCODE2_PROOF_ROOT =
   "/private/var/folders/00/kg4g6rwj56df8m493xpgm7s00000gn/T/opencode";
 
@@ -175,7 +175,7 @@ export class OpenCode2ProofEnvironment {
     this.binary = resolve(this.runtime, "node_modules/.bin/opencode2");
     this.installedAdapter = resolve(
       this.runtime,
-      "node_modules/@weaveio/weave-adapter-opencode",
+      "node_modules/@weaveio/weave-adapter-opencode2",
     );
   }
 
@@ -353,7 +353,7 @@ PROOF_SKILL_CONTENT
         "--destination",
         artifacts,
       ],
-      resolve(repository, "packages/adapters/opencode"),
+      resolve(repository, "packages/adapters/opencode2"),
     );
     if (packed.isErr()) return abort(packed.error);
     const found = await runCommand(
@@ -373,7 +373,7 @@ PROOF_SKILL_CONTENT
     const sourcePackage = await ResultAsync.fromThrowable(
       () =>
         Bun.file(
-          resolve(repository, "packages/adapters/opencode/package.json"),
+          resolve(repository, "packages/adapters/opencode2/package.json"),
         ).json() as Promise<{ version?: string }>,
       (): ProofEnvironmentError => ({
         type: "FileFailed",
@@ -398,7 +398,7 @@ PROOF_SKILL_CONTENT
       dependencies: {
         "@opencode-ai/cli": OPENCODE2_PROOF_HOST_VERSION,
         "@opencode-ai/client": OPENCODE2_PROOF_HOST_VERSION,
-        "@weaveio/weave-adapter-opencode": `file:${tarball}`,
+        "@weaveio/weave-adapter-opencode2": `file:${tarball}`,
       },
     };
     const wrote = await writeText(
@@ -428,7 +428,7 @@ PROOF_SKILL_CONTENT
     const pluginHash = await digest(
       resolve(
         runtime,
-        "node_modules/@weaveio/weave-adapter-opencode/dist/plugin.js",
+        "node_modules/@weaveio/weave-adapter-opencode2/dist/server.js",
       ),
     );
     if (pluginHash.isErr()) return abort(pluginHash.error);

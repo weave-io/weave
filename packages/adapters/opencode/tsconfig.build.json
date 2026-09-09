@@ -7,8 +7,6 @@
     "outDir": "./dist-types",
     "emitDeclarationOnly": true,
     "declarationMap": false,
-    "jsx": "preserve",
-    "jsxImportSource": "@opentui/solid",
     "types": ["bun-types"]
   },
   "include": ["src/**/*"],

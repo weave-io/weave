@@ -39,7 +39,22 @@ What they do **not** do:
 - verify actual tool calls or hidden tool telemetry
 - inspect filesystem mutations, shell history, browser events, or network traces
 
-Runtime-backed trajectory evals are an explicit non-goal of the current public eval contract.
+Runtime-backed trajectory evals are no longer an explicit non-goal of the overall eval contract; see "Harness Trajectory Evals" below for the parallel track that does observe real harness sessions. Text-only cases specifically still must not assert on runtime behavior, and that boundary stays enforced by the fail-closed suite registry described here.
+
+## Harness Trajectory Evals
+
+Alongside the text-only track, Weave ships a second, parallel eval track that observes a real harness session end to end: **harness trajectory evals**. This is documented in [ADR 0008](https://github.com/weave-io/weave-vnext/blob/main/docs/adr/0008-harness-trajectory-evals.md) (Accepted, 2026-09-03) and formalized in Spec 33.
+
+Trajectory cases run a real harness session (currently OpenCode) in a Podman sandbox with a per-case ephemeral workspace, a wall-clock timeout, auto-approved permissions, and no network egress beyond the model provider. The adapter emits a normalized event stream that the runner scores against expectations such as which subagents were spawned and which tools were called.
+
+Only a small, bounded set of fields from that observation is published, never raw session transcripts or tool arguments:
+
+- `harnessDelegatedCorrectly`
+- `observedSpawns`
+- `observedToolCalls`
+- `harnessCompletedWithoutError`
+
+As of this writing, this track is at Phase 1: one case, one model (`openai/gpt-4o-mini`), one sandbox configuration. It proves the mechanism works end to end on a real harness; it is not yet as broad as the eight text-only suites, and it should be read that way. Text-only evals remain the primary, broadest-coverage surface for prompt and structural quality.
 
 ## Deferred Scope
 

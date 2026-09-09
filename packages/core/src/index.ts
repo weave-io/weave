@@ -123,4 +123,38 @@ export {
 // ---------------------------------------------------------------------------
 export type { Token } from "./tokens.js";
 export { TokenType } from "./tokens.js";
+// ---------------------------------------------------------------------------
+// Trajectory events (Spec 33: harness trajectory evals)
+// ---------------------------------------------------------------------------
+export type {
+  MessageEmittedEvent,
+  RawArtifactRef,
+  SessionCompletedEvent,
+  SessionCreatedEvent,
+  SessionErroredEvent,
+  SubagentSpawnedEvent,
+  ToolCallAfterEvent,
+  ToolCallBeforeEvent,
+  TrajectoryCase,
+  TrajectoryEvent,
+  TrajectoryEventParseError,
+  TrajectoryResult,
+  TrajectoryRunner,
+  TrajectoryRunnerError,
+  TrajectorySummary,
+  TrajectoryWorkspace,
+} from "./trajectory-events.js";
+export {
+  MessageEmittedEventSchema,
+  RawArtifactRefSchema,
+  SessionCompletedEventSchema,
+  SessionCreatedEventSchema,
+  SessionErroredEventSchema,
+  SubagentSpawnedEventSchema,
+  ToolCallAfterEventSchema,
+  ToolCallBeforeEventSchema,
+  TrajectoryEventSchema,
+  TrajectoryResultSchema,
+  TrajectorySummarySchema,
+} from "./trajectory-events.js";
 export { validate } from "./validate.js";

@@ -350,7 +350,8 @@ packages/
 │   ├── runner.ts         transitional orchestration entry point
 │   └── index.ts          barrel
 └── adapters/
-    ├── opencode/src/
+    ├── opencode/src/     V1 OpenCode adapter (`@weaveio/weave-adapter-opencode`)
+    ├── opencode2/src/    V2 OpenCode adapter (`@weaveio/weave-adapter-opencode2`) — independent package, no shared code with V1; see docs/opencode2-adapter.md
     ├── claude-code/src/
     └── pi/src/
 ```

@@ -1,6 +1,6 @@
 # OpenCode 2 Core Contract Audit
 
-> Non-normative verification record. See [the OpenCode adapter guide](../adapters/opencode.md) for the supported product contract.
+> Historical, non-normative verification record for beta-19086. See [the V2 core guide](../adapters/opencode2-core.md) for the current product contract and the [merge proof](opencode2-package-merge-proof.md) for the separate-package verification.
 
 Audit date: 2026-09-08
 

@@ -6,6 +6,7 @@
  * evidence-backed security finding structure are extracted from assistant text.
  */
 
+import { redactSecrets as engineRedactSecrets } from "@weaveio/weave-engine";
 import { err, ok, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
@@ -50,14 +51,6 @@ const CAP_LINE_RE = /^\s*BLOCKERS:\s*(\d+)\s*\/\s*(\d+)\s*$/im;
 const MAX_CAP = 3;
 
 const LOCAL_DIAGNOSTIC_MAX_CHARS = 500;
-const SECRET_REDACTION_PATTERNS: Array<[RegExp, string]> = [
-  [/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [REDACTED]"],
-  [/\bsk-(?:or-|proj-)?[A-Za-z0-9_-]{8,}/g, "[REDACTED-KEY]"],
-  [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, "[REDACTED-KEY]"],
-  [/\b[0-9a-f]{32,}\b/gi, "[REDACTED-HEX]"],
-  [/Authorization:\s*[^\s,;\n]{8,}/gi, "Authorization: [REDACTED]"],
-  [/[?&](?:api_key|apikey|key|token)=[^&\s]{4,}/gi, "?[key]=[REDACTED]"],
-];
 
 type SecurityVerdict = "approve" | "block" | "invalid" | "missing";
 
@@ -250,15 +243,14 @@ function classifyErrorType(errorType: string): string {
   }
 }
 
+/**
+ * Redact secret-shaped substrings from local diagnostic text before logging.
+ * Delegates to the shared, engine-owned `redactSecrets` helper (which also
+ * covers GitHub token prefixes) so all packages apply one canonical pattern
+ * set; this wrapper only adds the local diagnostic truncation cap.
+ */
 export function redactSecrets(raw: string): string {
-  let redacted = raw;
-  for (const [pattern, replacement] of SECRET_REDACTION_PATTERNS) {
-    redacted = redacted.replace(pattern, replacement);
-  }
-  if (redacted.length > LOCAL_DIAGNOSTIC_MAX_CHARS) {
-    return `${redacted.slice(0, LOCAL_DIAGNOSTIC_MAX_CHARS)}… [truncated]`;
-  }
-  return redacted;
+  return engineRedactSecrets(raw, LOCAL_DIAGNOSTIC_MAX_CHARS);
 }
 
 function buildErrorResult(
