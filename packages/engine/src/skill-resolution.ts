@@ -19,7 +19,10 @@
 
 import type { WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
-import { generateCategoryShuttles } from "./descriptors.js";
+import {
+  type CategoryShuttleConflictError,
+  generateCategoryShuttles,
+} from "./descriptors.js";
 
 // ---------------------------------------------------------------------------
 // SkillInfo — adapter-supplied descriptor
@@ -150,6 +153,22 @@ export interface SkillResolutionInput {
 export function resolveSkillsForAgent(
   input: SkillResolutionInput,
 ): Result<ResolvedSkill[], SkillResolutionError[]> {
+  return resolveAvailableSkillsForAgent(input).andThen(
+    ({ resolved, warnings }) =>
+      warnings.length > 0 ? err(warnings) : ok(resolved),
+  );
+}
+
+/** Available matches and nonfatal warnings, in declaration order. */
+export interface AvailableSkillResolution {
+  resolved: ResolvedSkill[];
+  warnings: SkillResolutionError[];
+}
+
+/** Match available skills without discarding matches when another skill is missing. */
+export function resolveAvailableSkillsForAgent(
+  input: SkillResolutionInput,
+): Result<AvailableSkillResolution, never> {
   const {
     agentName,
     agentSkills,
@@ -158,7 +177,7 @@ export function resolveSkillsForAgent(
   } = input;
 
   if (agentSkills === undefined || agentSkills.length === 0) {
-    return ok([]);
+    return ok({ resolved: [], warnings: [] });
   }
 
   const availableByName = new Map<string, SkillInfo>(
@@ -180,8 +199,7 @@ export function resolveSkillsForAgent(
     errors.push({ type: "MissingSkill", agentName, skillName });
   }
 
-  if (errors.length > 0) return err(errors);
-  return ok(resolved);
+  return ok({ resolved, warnings: errors });
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +240,12 @@ export interface SkillResolutionConfigInput {
  */
 export type ConfigSkillResolutionResult = Record<string, ResolvedSkill[]>;
 
+/** Config-wide available matches, with missing-skill warnings kept separate. */
+export interface AvailableConfigSkillResolution {
+  resolved: ConfigSkillResolutionResult;
+  warnings: SkillResolutionError[];
+}
+
 // ---------------------------------------------------------------------------
 // resolveSkillsForConfig — config-wide batch resolution
 // ---------------------------------------------------------------------------
@@ -253,6 +277,23 @@ export type ConfigSkillResolutionResult = Record<string, ResolvedSkill[]>;
 export function resolveSkillsForConfig(
   input: SkillResolutionConfigInput,
 ): Result<ConfigSkillResolutionResult, SkillResolutionError[]> {
+  return resolveAvailableSkillsForConfig(input)
+    .mapErr((conflict): SkillResolutionError[] => [
+      {
+        type: "MissingSkill",
+        agentName: conflict.shuttleName,
+        skillName: "__category_shuttle_conflict__",
+      },
+    ])
+    .andThen(({ resolved, warnings }) =>
+      warnings.length > 0 ? err(warnings) : ok(resolved),
+    );
+}
+
+/** Resolve a config without making missing skills fatal; category conflicts stay errors. */
+export function resolveAvailableSkillsForConfig(
+  input: SkillResolutionConfigInput,
+): Result<AvailableConfigSkillResolution, CategoryShuttleConflictError> {
   const { config, availableSkills } = input;
   const disabledSkills = config.disabled.skills;
   const disabledAgents = config.disabled.agents;
@@ -267,15 +308,7 @@ export function resolveSkillsForConfig(
   // Generate category shuttle descriptors — reuse existing semantics
   const shuttlesResult = generateCategoryShuttles(config);
   if (shuttlesResult.isErr()) {
-    // Propagate conflict as a typed error
-    const conflict = shuttlesResult.error;
-    return err([
-      {
-        type: "MissingSkill",
-        agentName: conflict.shuttleName,
-        skillName: "__category_shuttle_conflict__",
-      },
-    ]);
+    return err(shuttlesResult.error);
   }
 
   // Add generated shuttles (generateCategoryShuttles already skips disabled ones)
@@ -288,21 +321,22 @@ export function resolveSkillsForConfig(
   const allErrors: SkillResolutionError[] = [];
 
   for (const [agentName, agentSkills] of agentEntries) {
-    const agentResult = resolveSkillsForAgent({
+    const agentResult = resolveAvailableSkillsForAgent({
       agentName,
       agentSkills,
       availableSkills,
       disabledSkills,
     });
+    if (agentResult.isErr()) return err(agentResult.error);
 
-    if (agentResult.isErr()) {
-      allErrors.push(...agentResult.error);
-      continue;
-    }
-
-    result[agentName] = agentResult.value;
+    allErrors.push(...agentResult.value.warnings);
+    Object.defineProperty(result, agentName, {
+      value: agentResult.value.resolved,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
 
-  if (allErrors.length > 0) return err(allErrors);
-  return ok(result);
+  return ok({ resolved: result, warnings: allErrors });
 }

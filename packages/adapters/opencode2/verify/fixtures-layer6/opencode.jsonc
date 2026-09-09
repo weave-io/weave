@@ -19,5 +19,20 @@
   // `opencode.jsonc` (which references a different plugin-wrapper) into the
   // layer-6 run. Ancestor-config merging would otherwise cause BOTH
   // wrappers to load and double-invoke the real adapter's setup(ctx).
-  "plugins": ["./plugin-wrapper"]
+  "plugins": ["./plugin-wrapper"],
+  "model": "proof/proof-model",
+  "providers": {
+    "proof": {
+      "name": "Local proof provider",
+      "package": "@opencode-ai/ai/providers/openai-compatible",
+      "settings": { "baseURL": "{env:WEAVE_VERIFY_BASE_URL}", "apiKey": "fixture-only" },
+      "models": {
+        "proof-model": {
+          "name": "Proof Model",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 32768, "output": 4096 }
+        }
+      }
+    }
+  }
 }

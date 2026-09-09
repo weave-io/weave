@@ -1,6 +1,6 @@
 # ADR 0003: OpenCode Adapter Materialization Shape
 
-**Status**: Accepted  
+**Status**: Accepted
 **Date**: 2026-05-26  
 **Related**: [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
 

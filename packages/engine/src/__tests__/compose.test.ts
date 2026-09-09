@@ -9,6 +9,7 @@ import type {
   WorkflowStep,
 } from "@weaveio/weave-core";
 import { parseConfig } from "@weaveio/weave-core";
+import { errAsync, okAsync } from "neverthrow";
 
 import {
   type AppendCollision,
@@ -62,6 +63,81 @@ beforeAll(async () => {
 });
 
 describe("composeAgentDescriptor", () => {
+  it.each([
+    true,
+    false,
+  ])("retains explicit fast=%s in the normalized descriptor", async (fast) => {
+    const worker: AgentConfig = { prompt: "Worker", fast };
+    const descriptor = await descriptorFor("worker", worker, cfg(), { worker });
+    expect(descriptor.fast).toBe(fast);
+  });
+  it("preserves literal tags in descriptions and trigger objects", async () => {
+    const config = cfg(`
+      agent router {
+        prompt "{{{agent.description}}} {{#delegation.targets}}{{{description}}} {{#triggers}}{{{domain}}}: {{{trigger}}} {{{routing_hint}}}{{/triggers}}{{/delegation.targets}}"
+        description "{{example}}"
+        tool_policy { delegate allow }
+      }
+      agent helper {
+        prompt "Helper"
+        description "{{{example}}}"
+        triggers [{ domain "{{domain}}" trigger "{{trigger}}" routing_hint "{{hint}}" }]
+      }
+    `);
+    const descriptor = await descriptorFor(
+      "router",
+      config.agents.router,
+      config,
+      config.agents,
+    );
+    expect(descriptor.composedPrompt).toBe(
+      "{{example}} {{{example}}} {{domain}}: {{trigger}} {{hint}}",
+    );
+  });
+
+  it("uses the trailing reader for primary and append files", async () => {
+    const config = cfg(
+      'agent helper { prompt_file "base.md" prompt_append_file "append.md" }',
+    );
+    const reads: string[] = [];
+    const reader = {
+      read: (path: string) => {
+        reads.push(path);
+        return okAsync(`${path}: {{agent.name}}`);
+      },
+    };
+    const result = await composeAgentDescriptor(
+      "helper",
+      config.agents.helper,
+      config,
+      config.agents,
+      undefined,
+      undefined,
+      {},
+      reader,
+    );
+    expect(result._unsafeUnwrap().composedPrompt).toBe(
+      "base.md: helper\n\nappend.md: helper",
+    );
+    expect(reads).toEqual(["base.md", "append.md"]);
+    const failed = await composeAgentDescriptor(
+      "helper",
+      config.agents.helper,
+      config,
+      config.agents,
+      undefined,
+      undefined,
+      {},
+      { read: () => errAsync({ message: "reader failed" }) },
+    );
+    expect(failed._unsafeUnwrapErr()).toMatchObject({
+      type: "PromptFileReadError",
+      agentName: "helper",
+      promptFilePath: "base.md",
+      fileErrorMessage: "reader failed",
+    });
+  });
+
   describe("identity fields", () => {
     it("Builtin_descriptor_keeps_stable_name_and_optional_displayName", async () => {
       const config = cfg(`
@@ -364,7 +440,7 @@ describe("composeAgentDescriptor", () => {
   });
 
   describe("delegation targets", () => {
-    it("Agent_with_no_delegate_allow_has_empty_delegation_targets", async () => {
+    it("Agent_with_delegate_ask_retains_eligible_delegation_targets", async () => {
       const config = cfg(`
         agent loom {
           prompt "Base prompt."
@@ -384,7 +460,9 @@ describe("composeAgentDescriptor", () => {
         config.agents,
       );
 
-      expect(descriptor.delegationTargets).toEqual([]);
+      expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
+        ["helper"],
+      );
       expect(descriptor.composedPrompt).toBe("Base prompt.");
     });
 
@@ -963,7 +1041,7 @@ describe("composeAgentDescriptor", () => {
       });
     });
 
-    it("RawToolPolicy_is_preserved_as_is_from_config", async () => {
+    it("RawToolPolicy_preserves_values_without_aliasing_config", async () => {
       const config = cfg(`
         agent loom {
           prompt "Base prompt."
@@ -982,7 +1060,8 @@ describe("composeAgentDescriptor", () => {
         config.agents,
       );
 
-      expect(descriptor.rawToolPolicy).toBe(agentConfig.tool_policy);
+      expect(descriptor.rawToolPolicy).toEqual(agentConfig.tool_policy);
+      expect(descriptor.rawToolPolicy).not.toBe(agentConfig.tool_policy);
       expect(descriptor.rawToolPolicy).toEqual({
         read: "allow",
         network: "deny",

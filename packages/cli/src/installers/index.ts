@@ -2,6 +2,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { SupportedHarnessId } from "../detect/index.js";
 import type { FileSystem } from "../fs/file-system.js";
 import { OpenCodeInstaller } from "./opencode.js";
+import { OpenCode2Installer } from "./opencode2.js";
 
 export type AdapterModule = {
   id: string;
@@ -14,6 +15,7 @@ export type InstallRequest = {
   configPath: string;
   selectedModules: string[];
   force: boolean;
+  scope?: "global" | "local";
 };
 
 export type InstallResult = {
@@ -62,6 +64,7 @@ export function installerRegistry(
 ): Record<SupportedHarnessId, HarnessInstaller> {
   return {
     opencode: new OpenCodeInstaller(fs),
+    opencode2: new OpenCode2Installer(fs),
     "claude-code": unsupportedInstaller("claude-code"),
     pi: unsupportedInstaller("pi"),
   };

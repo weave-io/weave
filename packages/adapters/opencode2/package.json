@@ -12,6 +12,9 @@
   "module": "./dist/index.js",
   "files": [
     "dist",
+    "server.js",
+    "rpc.js",
+    "tui.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -24,6 +27,14 @@
     "./server": {
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "import": "./dist/rpc.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {
@@ -45,6 +56,16 @@
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
     "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.10",
+    "@opentui/solid": ">=0.5.10",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": { "optional": true },
+    "@opentui/solid": { "optional": true },
+    "solid-js": { "optional": true }
   },
 
   "repository": {

@@ -52,6 +52,11 @@ Background information the executor needs to understand the task. Include releva
   - **What**: What to implement, in plain terms.
   - **Files**: Exact file paths to create or modify. Omit this field for verification-only tasks.
   - **Depends on**: Prior task, prerequisite, or `None`.
+  - **Implementation outline**:
+    1. Concrete implementation step.
+    2. Concrete implementation step.
+  - **Pitfalls / non-goals**:
+    - Edge case, preserved behavior, or explicit non-goal.
   - **Acceptance**:
     - Criterion 1
     - Criterion 2
@@ -60,6 +65,10 @@ Background information the executor needs to understand the task. Include releva
   - **What**: ...
   - **Files**: ...
   - **Depends on**: ...
+  - **Implementation outline**:
+    1. Concrete implementation step.
+  - **Pitfalls / non-goals**:
+    - Edge case, preserved behavior, or explicit non-goal.
   - **Acceptance**:
     - ...
 
@@ -68,7 +77,10 @@ How to confirm the plan is complete. Include the commands to run and what passin
 ```
 
 Rules:
-- Use `- [ ]` for **all** actionable items — the executor tracks progress by checking these off.
+- Use `- [ ]` only for **executable top-level plan tasks**.
+- Keep tasks flat. Use plain numbered steps for implementation outlines and plain bullets for pitfalls, never nested checkboxes.
+- Each implementation task must include an `**Implementation outline**` and a `**Pitfalls / non-goals**` list.
+- Split tasks only when their parts have separate file ownership or can be verified independently.
 - Omit the `Files` field only for verification-only tasks (e.g., "run tests and confirm passing").
 - Do not write `N/A` in the `Files` field — omit it entirely.
 - Use exact section headings as shown above.

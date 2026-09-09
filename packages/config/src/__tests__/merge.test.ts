@@ -21,6 +21,113 @@ const emptyConfig = cfg("");
 // ---------------------------------------------------------------------------
 
 describe("mergeConfigs", () => {
+  it("preserves inherited execution controls and explicit project overrides", () => {
+    const global = cfg(
+      "agent worker { fast true } settings { delegation { max_concurrency 5 } }",
+    );
+    const inherited = mergeConfigs(
+      global,
+      cfg('agent worker { description "project" }'),
+    );
+    expect(inherited.agents.worker?.fast).toBe(true);
+    expect(inherited.settings.delegation?.max_concurrency).toBe(5);
+    const project = mergeConfigs(
+      global,
+      cfg(
+        "agent worker { fast false } settings { delegation { max_concurrency 2 } }",
+      ),
+    );
+    expect(project.agents.worker?.fast).toBe(false);
+    expect(project.settings.delegation?.max_concurrency).toBe(2);
+    expect(global.agents.worker?.fast).toBe(true);
+  });
+  it("validates zero, single, and combined layers without mutating defaults or input", () => {
+    expect(mergeConfigsResult().isOk()).toBe(true);
+    expect(mergeConfigsResult(emptyConfig).isOk()).toBe(true);
+    const bad = { ...emptyConfig, agents: { helper: { temperature: -1 } } };
+    expect(mergeConfigsResult(bad)._unsafeUnwrapErr()[0]?.type).toBe(
+      "ConfigValidationError",
+    );
+    const combined = mergeConfigsResult(
+      cfg('agent helper { prompt "inline" }'),
+      cfg('agent helper { prompt_file "file.md" }'),
+    );
+    expect(combined._unsafeUnwrap().agents.helper?.prompt).toBeUndefined();
+    expect(combined._unsafeUnwrap().agents.helper?.prompt_file).toBe("file.md");
+    const copied = mergeConfigsResult(
+      cfg('agent helper { models ["one"] }'),
+    )._unsafeUnwrap();
+    copied.agents.helper?.models?.push("two");
+    expect(emptyConfig.extend_before_plan.steps).toEqual([]);
+  });
+
+  it("rejects accessor, cyclic, and prototype-key layers before reading or merging", () => {
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "agents", {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return {};
+      },
+    });
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
+    for (const input of [
+      accessor,
+      cycle,
+      JSON.parse('{"__proto__":{"polluted":true}}'),
+    ]) {
+      expect(mergeConfigsResult(input as WeaveConfig).isErr()).toBe(true);
+    }
+    expect(reads).toBe(0);
+    expect(Object.prototype).not.toHaveProperty("polluted");
+  });
+
+  it("rejects mutually exclusive sources when a prompt file is already absolute", () => {
+    const invalidPrimary = {
+      ...emptyConfig,
+      agents: {
+        helper: {
+          prompt: "inline",
+          prompt_file: "/project/.weave/prompts/helper.md",
+        },
+      },
+    } as WeaveConfig;
+    const invalidAppend = {
+      ...emptyConfig,
+      categories: {
+        frontend: {
+          patterns: ["src/**"],
+          prompt_append: "inline",
+          prompt_append_file: "/project/.weave/prompts/frontend.md",
+        },
+      },
+    } as WeaveConfig;
+    expect(
+      mergeConfigsResult(invalidPrimary)._unsafeUnwrapErr()[0],
+    ).toMatchObject({
+      type: "ConfigValidationError",
+      errors: [
+        {
+          path: "agents.helper",
+          message: "prompt and prompt_file are mutually exclusive",
+        },
+      ],
+    });
+    expect(
+      mergeConfigsResult(invalidAppend)._unsafeUnwrapErr()[0],
+    ).toMatchObject({
+      type: "ConfigValidationError",
+      errors: [
+        {
+          path: "categories.frontend",
+          message:
+            "prompt_append and prompt_append_file are mutually exclusive",
+        },
+      ],
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Scalars
   // -------------------------------------------------------------------------

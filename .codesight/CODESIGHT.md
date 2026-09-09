@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 155 lib files | 19 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~53,400 tokens. **Saves ~38,700 tokens per conversation.**
-> **Last scanned:** 2026-09-07 12:21 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 185 lib files | 22 env vars | 6 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~16,800 tokens. Without it, AI exploration would cost ~61,800 tokens. **Saves ~45,000 tokens per conversation.**
+> **Last scanned:** 2026-09-09 15:56 — re-run after significant changes
 
 ---
 
@@ -138,6 +138,74 @@
   - interface TranslatableAgentDescriptor
   - interface ResolvedAgentModel
   - const WEAVE_OWNERSHIP_MARKER
+- `packages/adapters/opencode2/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
+- `packages/adapters/opencode2/src/v2/catalog.ts`
+  - function buildOpenCode2Catalog: (input) => ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error>
+  - interface OpenCode2CatalogAgent
+  - interface OpenCode2CatalogCandidate
+  - interface BuildOpenCode2CatalogInput
+  - type OpenCode2CatalogIssue
+- `packages/adapters/opencode2/src/v2/commands.ts`
+  - class OpenCode2Commands
+  - interface OpenCode2CommandDependencies
+  - const WEAVE_START_COMMAND
+- `packages/adapters/opencode2/src/v2/config-refresh.ts`
+  - class OpenCode2CatalogController
+  - interface OpenCode2RefreshStatus
+  - interface OpenCode2RefreshDependencies
+  - type OpenCode2RefreshState
+- `packages/adapters/opencode2/src/v2/config-source.ts`
+  - function probeCatalogSources: (sources, io) => void
+  - class BunCatalogSourceIo
+  - class CatalogSourceCache
+  - interface CatalogSourceEntry
+  - interface CatalogSourceIo
+  - type CatalogSourceIoError
+  - _...2 more_
+- `packages/adapters/opencode2/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
+- `packages/adapters/opencode2/src/v2/errors.ts`
+  - function fromOpenCode2Promise: (operation) => void
+  - interface OpenCode2Error
+  - type OpenCode2ErrorCode
+- `packages/adapters/opencode2/src/v2/health.ts`
+  - function buildOpenCode2Health: (catalog, refresh, ownedAgents) => void
+  - interface OpenCode2HealthIssue
+  - interface OpenCode2HealthReport
+  - interface OpenCode2RegistrationReadiness
+- `packages/adapters/opencode2/src/v2/model-resolution.ts`
+  - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
+  - interface OpenCode2ModelResolution
+  - type OpenCode2ModelResolutionError
+- `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode2/src/v2/plan-session-state.ts`
+  - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
+  - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection
+  - class OpenCode2PlanSessionState
+  - interface StoredPlanSelection
+- `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
+  - function taskDialogOptions: (plan) => Array<
+  - class PlanUiController
+  - interface PlanUiScope
+  - interface PlanUiTask
+  - interface PlanUiDisplay
+  - interface PlanUiRpcResponse
+  - _...2 more_
+- `packages/adapters/opencode2/src/v2/plugin.ts`
+  - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
+  - interface OpenCode2PluginDependencies
+  - const WeavePlugin
+  - const server
+- `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
+- `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
+- `packages/adapters/opencode2/src/v2/session-scope.ts`
+  - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
+  - interface OpenCode2SessionScope
+  - type SessionScopeError
+- `packages/adapters/opencode2/src/v2/tool-policy-mapping.ts`
+  - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
+  - interface NativePermissionRule
+  - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
+- `packages/adapters/opencode2/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -433,12 +501,32 @@
   - type InstallResult
   - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/installers/opencode2.ts` — class OpenCode2Installer, const OPENCODE2_PLUGIN_PACKAGE
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
+  - function boundConversionWarning: (warning) => ConversionWarning
+  - function createConversionWarnings: () => ConversionWarning[]
+  - class ConversionWarnings
+  - const MAX_CONVERSION_WARNINGS
+  - const MAX_WARNING_FIELD_LENGTH
+  - const MAX_WARNING_REASON_LENGTH
+  - _...3 more_
+- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
+  - function isDslIdentifierSyntax: (value) => boolean
+  - function isDangerousDslName: (value) => boolean
+  - function isSafeDslName: (value) => boolean
+- `packages/cli/src/migration/legacy-jsonc-converter.ts`
+  - function stripJsoncComments: (source) => string
+  - function convertLegacyValue: (value) => ConversionResult
+  - function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-inspect.ts`
+  - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
+  - type LegacyJsoncInspectError
+  - const MAX_LEGACY_JSONC_SOURCE_LENGTH
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -491,7 +579,28 @@
   - type MergeError
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
+- `packages/config/src/plan-task-parser.ts`
+  - function parsePlanTasks: (input) => Result<PlanTaskSnapshot, PlanTaskSnapshotError>
+  - interface ParsePlanTasksInput
+  - const MAX_PLAN_BYTES
+  - const MAX_PLAN_TASKS
+  - const MAX_PLAN_TITLE_LENGTH
+  - const MAX_PLAN_NAME_LENGTH
+- `packages/config/src/plan-task-reader.ts`
+  - class BunPlanTaskFileReader
+  - class ConfigPlanTaskReader
+  - interface PlanTaskPathInfo
+  - interface PlanTaskFileReader
+  - type PlanTaskFileIoError
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/config-error-policy.ts`
+  - function boundConfigErrors: (errors, marker) => void
+  - const MAX_CONFIG_ERROR_ISSUES
+  - const MAX_CONFIG_ERROR_PATH_LENGTH
+  - const MAX_CONFIG_ERROR_FIELD_LENGTH
+  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
+  - const CONFIG_ERROR_COLLECTION_LIMIT
+  - _...2 more_
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
@@ -505,6 +614,12 @@
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
+- `packages/core/src/safe-graph-copy.ts`
+  - function copySafeGraph: (value, budget) => Result<SafeGraphValue, SafeGraphCopyError>
+  - interface SafeGraphCopyBudget
+  - type SafeGraphValue
+  - type SafeGraphCopyError
+  - const DEFAULT_SAFE_GRAPH_COPY_BUDGET: SafeGraphCopyBudget
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`
@@ -517,12 +632,12 @@
   - _...18 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
-  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - _...7 more_
+  - _...10 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -586,6 +701,11 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
+- `packages/engine/src/plan-active-task.ts`
+  - function selectActivePlanTask: (snapshot) => Result<ActivePlanTask, PlanActiveTaskError>
+  - function selectNextPlanTask: (snapshot) => ActivePlanTask | undefined
+  - interface ActivePlanTask
+  - type PlanActiveTaskError
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -650,12 +770,12 @@
   - type WorkflowRunnerError
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - function resolveAvailableSkillsForAgent: (input) => Result<AvailableSkillResolution, never>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - function resolveAvailableSkillsForConfig: (input) => Result<AvailableConfigSkillResolution, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
-  - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
+  - _...6 more_
 - `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry
@@ -712,6 +832,22 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
+- `scripts/opencode2/fixtures/provider.ts`
+  - class ProofProviderFixture
+  - interface ProofProviderRequest
+  - type ProofProviderError
+- `scripts/opencode2/proof-cases.ts`
+  - class OpenCode2ProofCases
+  - interface OpenCode2ProofVerdict
+  - interface OpenCode2ProofReport
+  - type OpenCode2ProofCaseID
+  - type OpenCode2ProofFailure
+  - const REQUIRED_OPENCODE2_PROOF_CASES
+- `scripts/opencode2/proof-environment.ts`
+  - class OpenCode2ProofEnvironment
+  - type ProofEnvironmentError
+  - const OPENCODE2_PROOF_HOST_VERSION
+  - const OPENCODE2_PROOF_ROOT
 - `scripts/validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<
@@ -739,9 +875,12 @@
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_BASE_URL` **required** — packages/adapters/opencode2/verify/container-smoke.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
+- `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 
 ## Config Files
 
@@ -770,45 +909,51 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **45** files
-- `packages/cli/src/theme/colors.ts` — imported by **20** files
+- `packages/cli/src/theme/colors.ts` — imported by **21** files
+- `packages/cli/src/io/terminal.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
-- `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **18** files
+- `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
-- `packages/cli/src/args.ts` — imported by **14** files
+- `packages/cli/src/args.ts` — imported by **15** files
+- `packages/cli/src/fs/file-system.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
-- `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
-- `packages/adapters/opencode2/src/sdk-types.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/adapters/opencode2/src/v2/catalog.ts` — imported by **10** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `packages/adapters/opencode2/src/__tests__/mock-plugin-context.ts` — imported by **8** files
+- `packages/adapters/opencode2/src/__tests__/v2-fixtures.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +40 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +16 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +14 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +14 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
+- `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
+
+---
+
+# Events & Queues
+
+- `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 150 test files found
+> 179 test files found
 
 ---
 

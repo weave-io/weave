@@ -33,10 +33,13 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
     "@microsoft/api-extractor": "^7.55.1",
+    "@opencode-ai/client": "0.0.0-beta-19151",
+    "@opentui/solid": "0.5.10",
     "bun-types": "latest",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",
     "neverthrow": "^8.2.0",
+    "solid-js": "1.9.12",
     "typescript": "^5.4.5",
     "zod": "^4.4.3"
   },

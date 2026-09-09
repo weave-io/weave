@@ -5,10 +5,15 @@ import {
   type ProbeError,
 } from "./probes.js";
 
-export type SupportedHarnessId = "opencode" | "claude-code" | "pi";
+export type SupportedHarnessId =
+  | "opencode"
+  | "opencode2"
+  | "claude-code"
+  | "pi";
 
 export const HARNESS_IDS: SupportedHarnessId[] = [
   "opencode",
+  "opencode2",
   "claude-code",
   "pi",
 ];
@@ -31,22 +36,33 @@ export type DetectionError =
 
 type HarnessProbe = {
   id: SupportedHarnessId;
-  configPath: string;
+  configPaths: (probes: DetectionProbes) => string[];
   binary: string;
 };
 
 const HARNESS_PROBES: HarnessProbe[] = [
   {
     id: "opencode",
-    configPath: "~/.config/opencode/config.json",
+    configPaths: () => ["~/.config/opencode/config.json"],
     binary: "opencode",
   },
   {
+    id: "opencode2",
+    configPaths: (probes) => {
+      const root = probes.xdgConfigHome() ?? `${probes.home()}/.config`;
+      return [
+        `${root}/opencode/opencode.jsonc`,
+        `${root}/opencode/opencode.json`,
+      ];
+    },
+    binary: "opencode2",
+  },
+  {
     id: "claude-code",
-    configPath: "~/.claude/settings.json",
+    configPaths: () => ["~/.claude/settings.json"],
     binary: "claude",
   },
-  { id: "pi", configPath: "~/.pi/config.json", binary: "pi" },
+  { id: "pi", configPaths: () => ["~/.pi/config.json"], binary: "pi" },
 ];
 
 export function detectHarnesses(
@@ -76,13 +92,23 @@ async function detectAll(probes: DetectionProbes): Promise<DetectedHarness[]> {
   const detected: DetectedHarness[] = [];
 
   for (const harness of HARNESS_PROBES) {
-    const configPath = probes.resolvePath(harness.configPath);
-    const exists = await probes.exists(configPath);
+    const configPaths = harness
+      .configPaths(probes)
+      .map((path) => probes.resolvePath(path));
+    let configPath = configPaths[0] ?? probes.resolvePath("~");
+    let configExists = false;
+    for (const candidate of configPaths) {
+      const exists = await probes.exists(candidate);
+      if (exists.isErr()) throw probeFailed(harness.id, exists.error);
+      if (!exists.value) continue;
+      configPath = candidate;
+      configExists = true;
+      break;
+    }
     const binaryPath = await probes.binaryOnPath(harness.binary);
 
-    if (exists.isErr()) throw probeFailed(harness.id, exists.error);
     if (binaryPath.isErr()) throw probeFailed(harness.id, binaryPath.error);
-    if (!exists.value && binaryPath.value === undefined) continue;
+    if (!configExists && binaryPath.value === undefined) continue;
 
     const readable = await probes.readable(configPath);
     const version = await probes.readVersion(harness.binary);

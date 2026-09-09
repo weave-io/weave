@@ -155,7 +155,13 @@ export async function runCompose(
         if (error.type === "BuiltinParseError")
           return error.errors.map((e) => `builtins:${formatError(e)}`);
         if (error.type === "MergeError")
-          return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
+          return error.errors.flatMap((e) =>
+            e.type === "ConfigValidationError"
+              ? e.errors.map(
+                  (issue) => `merge:${e.layer}:${formatError(issue)}`,
+                )
+              : [`merge:${e.type}:${e.error.type}`],
+          );
         return error.errors.map((e) => `${error.path}:${formatError(e)}`);
       }),
     }),

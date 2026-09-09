@@ -17,6 +17,7 @@ export interface DetectionProbes {
   readVersion(binary: string): ResultAsync<string | undefined, ProbeError>;
   resolvePath(path: string): string;
   home(): string;
+  xdgConfigHome(): string | undefined;
 }
 
 function probeError(
@@ -29,6 +30,10 @@ function probeError(
 export class BunDetectionProbes implements DetectionProbes {
   home(): string {
     return Bun.env.HOME ?? Bun.env.USERPROFILE ?? homedir();
+  }
+
+  xdgConfigHome(): string | undefined {
+    return Bun.env.XDG_CONFIG_HOME;
   }
 
   resolvePath(path: string): string {
@@ -88,11 +93,16 @@ export class MemoryDetectionProbes implements DetectionProbes {
       files?: Record<string, { readable?: boolean }>;
       binaries?: Record<string, string>;
       versions?: Record<string, string>;
+      xdgConfigHome?: string;
     } = {},
   ) {}
 
   home(): string {
     return this.options.home ?? "/home/user";
+  }
+
+  xdgConfigHome(): string | undefined {
+    return this.options.xdgConfigHome;
   }
 
   resolvePath(path: string): string {

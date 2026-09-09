@@ -53,6 +53,21 @@ Adapters own concrete model resolution because they own the harness integration.
 
 This priority order mirrors the useful policy from legacy OpenCode-Weave, but it is applied at the adapter boundary with explicit harness context. Core Weave must not call `getSelectedModel()`, `getAvailableModels()`, or equivalent UI/runtime APIs.
 
+### OpenCode 2 live-catalog rules
+
+The native OpenCode 2 adapter resolves each declared entry against the model
+catalog supplied by its Location-scoped host. It accepts `provider/model`,
+`provider/model#variant`, and a bare `model` only when exactly one live provider
+entry matches.
+
+The adapter checks entries in declaration order and uses the first viable one.
+An entry-level `#variant` takes priority over the descriptor-level `variant`.
+Every variant must exist in the selected live model entry. If a descriptor
+declares no models, the adapter leaves native model selection unchanged. If it
+declares models but none are viable, that agent is omitted and health reports a
+bounded `model_unavailable` issue. This release does not add automatic runtime
+fallback after registration.
+
 ---
 
 ## Category Shuttles

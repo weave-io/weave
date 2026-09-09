@@ -20,6 +20,34 @@ function parseSource(src: string) {
   return parse(lexResult.value);
 }
 
+describe("Parser — execution controls", () => {
+  it.each([
+    true,
+    false,
+  ])("retains boolean fast=%s in agent and category ASTs", (fast) => {
+    const nodes = parseSource(
+      `agent worker { fast ${fast} } category web { patterns ["src/**"] fast ${fast} }`,
+    )._unsafeUnwrap();
+    for (const node of nodes as Array<AgentBlock | CategoryBlock>) {
+      expect(
+        node.properties.find((property) => property.key === "fast")?.value,
+      ).toMatchObject({ kind: "boolean", value: fast });
+    }
+  });
+  it("retains the nested concurrency number for validation", () => {
+    const node = parseSource(
+      "settings { delegation { max_concurrency 5 } }",
+    )._unsafeUnwrap()[0] as SettingAssignment;
+    expect(node.key).toBe("settings");
+    const settings = node.value as BlockValue;
+    const delegation = settings.properties[0]?.value as BlockValue;
+    expect(delegation.properties[0]).toMatchObject({
+      key: "max_concurrency",
+      value: { kind: "number", value: 5 },
+    });
+  });
+});
+
 describe("Parser — agent block", () => {
   it("parses a minimal agent block", () => {
     const result = parseSource("agent loom {\n  temperature 0.1\n}");
@@ -616,4 +644,24 @@ describe("Parser — agent review_models field", () => {
     const prop = agent.properties.find((p) => p.key === "review_models");
     expect(prop).toBeUndefined();
   });
+});
+it("rejects excessive nesting and always advances during array recovery", () => {
+  for (const source of [
+    "agent a { models [ }",
+    "agent a { models " + "[".repeat(70),
+    "agent a { models " + "[ } ".repeat(100),
+  ]) {
+    expect(parse(tokenize(source)._unsafeUnwrap()).isErr()).toBe(true);
+  }
+  expect(parse([{ type: "invalid" } as never]).isErr()).toBe(true);
+  let read = false;
+  const tokens = Object.defineProperty([], "0", {
+    enumerable: true,
+    get: () => {
+      read = true;
+      return {};
+    },
+  });
+  expect(parse(tokens).isErr()).toBe(true);
+  expect(read).toBe(false);
 });

@@ -1,0 +1,24 @@
+---
+title: OpenCode V2 adapter
+description: Install the independent V2 adapter while keeping V1 available.
+---
+
+OpenCode V2 uses `@weaveio/weave-adapter-opencode2`. The V1 package,
+`@weaveio/weave-adapter-opencode`, remains separate and supported.
+
+```bash
+weave init --harness opencode2 --scope local --yes
+```
+
+The V2 core integration provides native agents, foreground/background
+delegation, config refresh, and read-only plan RPC. Its optional TUI contribution
+displays plans. It targets OpenCode `0.0.0-beta-19151`.
+
+`fast` and `settings.delegation.max_concurrency` are configuration intent only.
+The V2 adapter does not enforce either setting. Durable workflows are not
+provided by the native core integration.
+
+See the [core integration guide](https://github.com/weave-io/weave/blob/main/docs/adapters/opencode2-core.md)
+for package pinning, plugin options, commands, and limits. The
+[verification guide](https://github.com/weave-io/weave/blob/main/docs/testing/opencode2-verification.md)
+describes isolated runtime checks.

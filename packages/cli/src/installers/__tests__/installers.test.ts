@@ -101,4 +101,80 @@ describe("harness installers", () => {
       .join("\n");
     expect(messages).toContain("Skipped pi");
   });
+
+  it("installs OpenCode 2 with JSONC comments intact and is byte-idempotent", async () => {
+    const path = "/project/opencode.jsonc";
+    const fs = new MemoryFileSystem({
+      [path]: '{\n  // keep\n  "model": "provider/model",\n}\n',
+    });
+    const installer = installerRegistry(fs).opencode2;
+    const request = {
+      harness: "opencode2" as const,
+      configPath: path,
+      selectedModules: [],
+      force: false,
+      scope: "local" as const,
+    };
+    expect((await installer.install(request))._unsafeUnwrap().changed).toBe(
+      true,
+    );
+    const once = fs.snapshot()[path];
+    expect(once).toContain("// keep");
+    expect(once).toContain("@weaveio/weave-adapter-opencode2");
+    expect((await installer.install(request))._unsafeUnwrap().changed).toBe(
+      false,
+    );
+    expect(fs.snapshot()[path]).toBe(once);
+  });
+
+  it("appends to the OpenCode 2 plugin array without replacing its comments or options", async () => {
+    const path = "/project/opencode.jsonc";
+    const source = `{
+  "plugins": [
+    // keep plugin comment
+    {
+      "package": "existing-plugin",
+      "options": {
+        // keep option comment
+        "enabled": true,
+      },
+    },
+  ],
+}\n`;
+    const fs = new MemoryFileSystem({ [path]: source });
+    const result = await installerRegistry(fs).opencode2.install({
+      harness: "opencode2",
+      configPath: path,
+      selectedModules: [],
+      force: false,
+      scope: "local",
+    });
+    expect(result._unsafeUnwrap().changed).toBe(true);
+    const installed = fs.snapshot()[path];
+    expect(installed).toContain("// keep plugin comment");
+    expect(installed).toContain("// keep option comment");
+    expect(installed).toContain('"enabled": true');
+    expect(installed).toContain("@weaveio/weave-adapter-opencode2");
+  });
+
+  it("uses XDG global config and rejects ambiguous native config files", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/xdg/opencode/opencode.json": "{}",
+        "/xdg/opencode/opencode.jsonc": "{}",
+      },
+      "/project",
+      "/home/user",
+      "/xdg",
+    );
+    const result = await installerRegistry(fs).opencode2.install({
+      harness: "opencode2",
+      configPath: "/unused",
+      selectedModules: [],
+      force: true,
+      scope: "global",
+    });
+    expect(result.isErr()).toBe(true);
+    expect(fs.snapshot()["/xdg/opencode/opencode.json"]).toBe("{}");
+  });
 });

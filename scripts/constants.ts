@@ -103,11 +103,14 @@ export const PUBLIC_RUNTIME_EXTERNALS = [
   "@opencode-ai/client",
   "@opencode-ai/plugin",
   "@opencode-ai/sdk",
+  "@opentui/core",
+  "@opentui/solid",
   "agentevals",
   "figlet",
   "mustache",
   "neverthrow",
   "openevals",
+  "solid-js",
   "typebox",
   "zod",
 ] as const;
@@ -118,6 +121,8 @@ export interface PublicBuildEntry {
   executable?: boolean;
   /** Type-strip without bundling so Bun does not inject unused runtime helpers. */
   transpileOnly?: boolean;
+  /** Compile this entry with the OpenTUI Solid transform. */
+  solid?: boolean;
 }
 
 export interface PublicPackageBuild {
@@ -168,6 +173,15 @@ export const PUBLIC_PACKAGE_BUILDS = {
         source: "packages/adapters/opencode2/src/server.ts",
         output: "packages/adapters/opencode2/dist/server.js",
       },
+      {
+        source: "packages/adapters/opencode2/src/rpc.ts",
+        output: "packages/adapters/opencode2/dist/rpc.js",
+      },
+      {
+        source: "packages/adapters/opencode2/src/tui.tsx",
+        output: "packages/adapters/opencode2/dist/tui.js",
+        solid: true,
+      },
     ],
     declarations: [
       {
@@ -177,6 +191,14 @@ export const PUBLIC_PACKAGE_BUILDS = {
       {
         config: "packages/adapters/opencode2/api-extractor.server.json",
         output: "packages/adapters/opencode2/dist/server.d.ts",
+      },
+      {
+        config: "packages/adapters/opencode2/api-extractor.rpc.json",
+        output: "packages/adapters/opencode2/dist/rpc.d.ts",
+      },
+      {
+        config: "packages/adapters/opencode2/api-extractor.tui.json",
+        output: "packages/adapters/opencode2/dist/tui.d.ts",
       },
     ],
   },

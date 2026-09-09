@@ -3,6 +3,17 @@ import { parseConfig } from "@weaveio/weave-core";
 import { BUILTIN_WEAVE_SOURCE, getBuiltinConfig } from "../builtins.js";
 
 describe("getBuiltinConfig", () => {
+  it("describes each builtin's role, capabilities, and selection criteria", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const agent of Object.values(config.agents)) {
+      expect(agent.description).toContain(":");
+      expect(agent.description).toContain("; select");
+    }
+    expect(config.agents.thread?.description).toContain("read-only");
+    expect(config.agents.pattern?.description).toContain("plan files only");
+    expect(config.agents.shuttle?.triggers?.[0]).toHaveProperty("domain");
+  });
+
   it("(a) returns ok — not err", () => {
     const result = getBuiltinConfig();
     expect(result.isOk()).toBe(true);
@@ -28,19 +39,19 @@ describe("getBuiltinConfig", () => {
     expect(names).toHaveLength(8);
   });
 
-  it("(c) loom has temperature 0.1 and prompt_file loom.md", () => {
+  it("(c) loom leaves temperature unset and has prompt_file loom.md", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     const loom = config.agents.loom;
     expect(loom).toBeDefined();
-    expect(loom?.temperature).toBe(0.1);
+    expect(loom?.temperature).toBeUndefined();
     expect(loom?.prompt_file).toBe("loom.md");
   });
 
-  it("(d) shuttle has temperature 0.2 and prompt_file shuttle.md", () => {
+  it("(d) shuttle leaves temperature unset and has prompt_file shuttle.md", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     const shuttle = config.agents.shuttle;
     expect(shuttle).toBeDefined();
-    expect(shuttle?.temperature).toBe(0.2);
+    expect(shuttle?.temperature).toBeUndefined();
     expect(shuttle?.prompt_file).toBe("shuttle.md");
   });
 
@@ -51,18 +62,25 @@ describe("getBuiltinConfig", () => {
     expect(shuttle?.mode).toBe("subagent");
   });
 
-  it("(e) thread has temperature 0.0", () => {
+  it("(e) thread leaves temperature unset", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     const thread = config.agents.thread;
     expect(thread).toBeDefined();
-    expect(thread?.temperature).toBe(0);
+    expect(thread?.temperature).toBeUndefined();
   });
 
-  it("(f) pattern has temperature 0.3", () => {
+  it("(f) pattern leaves temperature unset", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     const pattern = config.agents.pattern;
     expect(pattern).toBeDefined();
-    expect(pattern?.temperature).toBe(0.3);
+    expect(pattern?.temperature).toBeUndefined();
+  });
+
+  it("all builtin agents leave temperature to the provider", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const agent of Object.values(config.agents)) {
+      expect(agent.temperature).toBeUndefined();
+    }
   });
 
   it("(g) builtin config has no categories or disabled entries", () => {

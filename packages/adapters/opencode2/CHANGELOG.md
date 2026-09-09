@@ -1,5 +1,16 @@
 # @weaveio/weave-adapter-opencode2
 
+## Unreleased
+
+- Route the native `./server` entry through the catalog-backed core integration.
+  Preserve the root `OpenCode2Adapter` facade and the V1 package independently.
+- Add config refresh, native foreground/background delegation, and read-only
+  plan RPC with an optional Solid TUI contribution.
+- Retain the exact `0.0.0-beta-19151` host pin. Root server/RPC/TUI wrappers
+  support directory-based plugin loading.
+- Accept fast and delegation concurrency configuration intent without claiming
+  runtime enforcement. See the [core guide](../../../docs/adapters/opencode2-core.md).
+
 ## 0.1.2
 
 Real-CLI Loom check — closes the seam left open by 0.1.1.

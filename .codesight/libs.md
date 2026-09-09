@@ -127,6 +127,74 @@
   - interface TranslatableAgentDescriptor
   - interface ResolvedAgentModel
   - const WEAVE_OWNERSHIP_MARKER
+- `packages/adapters/opencode2/src/v2/agent-registration.ts` — function registerOpenCode2Agents: (editor, catalog, inserted, defaultAgent?) => void, interface OpenCode2AgentCatalog
+- `packages/adapters/opencode2/src/v2/catalog.ts`
+  - function buildOpenCode2Catalog: (input) => ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error>
+  - interface OpenCode2CatalogAgent
+  - interface OpenCode2CatalogCandidate
+  - interface BuildOpenCode2CatalogInput
+  - type OpenCode2CatalogIssue
+- `packages/adapters/opencode2/src/v2/commands.ts`
+  - class OpenCode2Commands
+  - interface OpenCode2CommandDependencies
+  - const WEAVE_START_COMMAND
+- `packages/adapters/opencode2/src/v2/config-refresh.ts`
+  - class OpenCode2CatalogController
+  - interface OpenCode2RefreshStatus
+  - interface OpenCode2RefreshDependencies
+  - type OpenCode2RefreshState
+- `packages/adapters/opencode2/src/v2/config-source.ts`
+  - function probeCatalogSources: (sources, io) => void
+  - class BunCatalogSourceIo
+  - class CatalogSourceCache
+  - interface CatalogSourceEntry
+  - interface CatalogSourceIo
+  - type CatalogSourceIoError
+  - _...2 more_
+- `packages/adapters/opencode2/src/v2/delegation.ts` — function isOpenCode2DelegationTarget: (target, eligibleTargets) => boolean, const OPENCODE2_DELEGATION_ACTION
+- `packages/adapters/opencode2/src/v2/errors.ts`
+  - function fromOpenCode2Promise: (operation) => void
+  - interface OpenCode2Error
+  - type OpenCode2ErrorCode
+- `packages/adapters/opencode2/src/v2/health.ts`
+  - function buildOpenCode2Health: (catalog, refresh, ownedAgents) => void
+  - interface OpenCode2HealthIssue
+  - interface OpenCode2HealthReport
+  - interface OpenCode2RegistrationReadiness
+- `packages/adapters/opencode2/src/v2/model-resolution.ts`
+  - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
+  - interface OpenCode2ModelResolution
+  - type OpenCode2ModelResolutionError
+- `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode2/src/v2/plan-session-state.ts`
+  - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
+  - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection
+  - class OpenCode2PlanSessionState
+  - interface StoredPlanSelection
+- `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
+  - function taskDialogOptions: (plan) => Array<
+  - class PlanUiController
+  - interface PlanUiScope
+  - interface PlanUiTask
+  - interface PlanUiDisplay
+  - interface PlanUiRpcResponse
+  - _...2 more_
+- `packages/adapters/opencode2/src/v2/plugin.ts`
+  - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
+  - interface OpenCode2PluginDependencies
+  - const WeavePlugin
+  - const server
+- `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
+- `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
+- `packages/adapters/opencode2/src/v2/session-scope.ts`
+  - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
+  - interface OpenCode2SessionScope
+  - type SessionScopeError
+- `packages/adapters/opencode2/src/v2/tool-policy-mapping.ts`
+  - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
+  - interface NativePermissionRule
+  - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
+- `packages/adapters/opencode2/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -422,12 +490,32 @@
   - type InstallResult
   - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/installers/opencode2.ts` — class OpenCode2Installer, const OPENCODE2_PLUGIN_PACKAGE
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
+  - function boundConversionWarning: (warning) => ConversionWarning
+  - function createConversionWarnings: () => ConversionWarning[]
+  - class ConversionWarnings
+  - const MAX_CONVERSION_WARNINGS
+  - const MAX_WARNING_FIELD_LENGTH
+  - const MAX_WARNING_REASON_LENGTH
+  - _...3 more_
+- `packages/cli/src/migration/legacy-dsl-identifiers.ts`
+  - function isDslIdentifierSyntax: (value) => boolean
+  - function isDangerousDslName: (value) => boolean
+  - function isSafeDslName: (value) => boolean
+- `packages/cli/src/migration/legacy-jsonc-converter.ts`
+  - function stripJsoncComments: (source) => string
+  - function convertLegacyValue: (value) => ConversionResult
+  - function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-inspect.ts`
+  - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
+  - type LegacyJsoncInspectError
+  - const MAX_LEGACY_JSONC_SOURCE_LENGTH
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -480,7 +568,28 @@
   - type MergeError
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
+- `packages/config/src/plan-task-parser.ts`
+  - function parsePlanTasks: (input) => Result<PlanTaskSnapshot, PlanTaskSnapshotError>
+  - interface ParsePlanTasksInput
+  - const MAX_PLAN_BYTES
+  - const MAX_PLAN_TASKS
+  - const MAX_PLAN_TITLE_LENGTH
+  - const MAX_PLAN_NAME_LENGTH
+- `packages/config/src/plan-task-reader.ts`
+  - class BunPlanTaskFileReader
+  - class ConfigPlanTaskReader
+  - interface PlanTaskPathInfo
+  - interface PlanTaskFileReader
+  - type PlanTaskFileIoError
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
+- `packages/core/src/config-error-policy.ts`
+  - function boundConfigErrors: (errors, marker) => void
+  - const MAX_CONFIG_ERROR_ISSUES
+  - const MAX_CONFIG_ERROR_PATH_LENGTH
+  - const MAX_CONFIG_ERROR_FIELD_LENGTH
+  - const MAX_CONFIG_ERROR_DIAGNOSTIC_SIZE
+  - const CONFIG_ERROR_COLLECTION_LIMIT
+  - _...2 more_
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError
@@ -494,6 +603,12 @@
   - function refinePromptAppendExclusive: () => [
   - function refinePromptExclusive: () => [
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
+- `packages/core/src/safe-graph-copy.ts`
+  - function copySafeGraph: (value, budget) => Result<SafeGraphValue, SafeGraphCopyError>
+  - interface SafeGraphCopyBudget
+  - type SafeGraphValue
+  - type SafeGraphCopyError
+  - const DEFAULT_SAFE_GRAPH_COPY_BUDGET: SafeGraphCopyBudget
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`
@@ -506,12 +621,12 @@
   - _...18 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
-  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - _...7 more_
+  - _...10 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -575,6 +690,11 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
+- `packages/engine/src/plan-active-task.ts`
+  - function selectActivePlanTask: (snapshot) => Result<ActivePlanTask, PlanActiveTaskError>
+  - function selectNextPlanTask: (snapshot) => ActivePlanTask | undefined
+  - interface ActivePlanTask
+  - type PlanActiveTaskError
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -639,12 +759,12 @@
   - type WorkflowRunnerError
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - function resolveAvailableSkillsForAgent: (input) => Result<AvailableSkillResolution, never>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - function resolveAvailableSkillsForConfig: (input) => Result<AvailableConfigSkillResolution, CategoryShuttleConflictError>
   - interface SkillInfo
   - interface ResolvedSkill
-  - interface SkillResolutionInput
-  - interface SkillResolutionConfigInput
-  - _...2 more_
+  - _...6 more_
 - `packages/engine/src/template-context.ts`
   - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
   - interface AgentContextEntry
@@ -701,6 +821,22 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
+- `scripts/opencode2/fixtures/provider.ts`
+  - class ProofProviderFixture
+  - interface ProofProviderRequest
+  - type ProofProviderError
+- `scripts/opencode2/proof-cases.ts`
+  - class OpenCode2ProofCases
+  - interface OpenCode2ProofVerdict
+  - interface OpenCode2ProofReport
+  - type OpenCode2ProofCaseID
+  - type OpenCode2ProofFailure
+  - const REQUIRED_OPENCODE2_PROOF_CASES
+- `scripts/opencode2/proof-environment.ts`
+  - class OpenCode2ProofEnvironment
+  - type ProofEnvironmentError
+  - const OPENCODE2_PROOF_HOST_VERSION
+  - const OPENCODE2_PROOF_ROOT
 - `scripts/validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<
