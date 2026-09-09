@@ -190,7 +190,33 @@ async function runAgentMaterialization(): Promise<number> {
     await host.plugin.awaitActivation();
 
     // A4 finding: `agent.list()` returns `{ location, data }`. Unwrap `.data`.
-    const envelope = await host.agent.list();
+    // Config-provider transforms activate after plugin setup. Wait for the
+    // adapter's inventory refresh instead of sampling the initial snapshot.
+    const deadline = Date.now() + 10_000;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error("Timed out waiting for owned Loom")),
+        10_000,
+      );
+    });
+    let envelope: Awaited<ReturnType<typeof host.agent.list>>;
+    try {
+      envelope = await Promise.race([host.agent.list(), expired]);
+      while (
+        !envelope.data.some(
+          (agent) =>
+            agent.name === "loom" &&
+            agent.description?.startsWith(WEAVE_OWNERSHIP_MARKER),
+        ) &&
+        Date.now() < deadline
+      ) {
+        await Bun.sleep(50);
+        envelope = await Promise.race([host.agent.list(), expired]);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
     const data =
       (
         envelope as unknown as {
