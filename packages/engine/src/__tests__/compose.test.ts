@@ -63,6 +63,14 @@ beforeAll(async () => {
 });
 
 describe("composeAgentDescriptor", () => {
+  it.each([
+    true,
+    false,
+  ])("retains explicit fast=%s in the normalized descriptor", async (fast) => {
+    const worker: AgentConfig = { prompt: "Worker", fast };
+    const descriptor = await descriptorFor("worker", worker, cfg(), { worker });
+    expect(descriptor.fast).toBe(fast);
+  });
   it("preserves literal tags in descriptions and trigger objects", async () => {
     const config = cfg(`
       agent router {

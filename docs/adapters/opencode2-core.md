@@ -73,8 +73,8 @@ The package ships these entries:
 
 | Entry | Purpose |
 | --- | --- |
-| package root | Legacy library helpers plus the V2 server definition |
-| `./server` and `./plugin` | V2 server plugin definition |
+| package root | Compatibility `OpenCode2Adapter` facade and its types |
+| `./server` | V2 server plugin definition |
 | `./rpc` | Portable read-only RPC definition |
 | `./tui` | Solid/OpenTUI CLI plugin |
 
@@ -226,6 +226,12 @@ rejection body was not available, so this verifies the workaround rather than
 the exact rejected parameter. Weave does not configure `top_p`/`topP`.
 
 ## Native delegation
+
+Agent transforms are lazy. Setup awaits the agent-list RPC before registering
+commands, and refresh awaits it between agent and command reloads. Command
+readiness also requires an owned Tapestry agent. Catalog-event reordering is
+retained only to preserve the reserved command's precedence over host config;
+initial command registration does not depend on an event arriving later.
 
 Weave uses OpenCode's native `subagent` action. It does not create a parallel
 session scheduler or use private `parentID` inputs. Foreground and background

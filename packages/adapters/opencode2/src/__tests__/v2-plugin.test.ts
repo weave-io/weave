@@ -15,11 +15,15 @@ describe("OpenCode adapter entrypoint", () => {
     expect(WeavePlugin.id).toBe("weave");
   });
 
-  it("registers each owned boundary once and disposes every registration", async () => {
+  it.each([
+    false,
+    true,
+  ])("registers owned boundaries after agent replay (lazy=%s)", async (lazy) => {
     const disposed: string[] = [];
     const hooks: string[] = [];
     const commands: string[] = [];
     const agents = new Map<string, Record<string, unknown>>();
+    let replay: (() => void) | undefined;
     const registration = (name: string) => ({
       dispose: async () => {
         disposed.push(name);
@@ -37,21 +41,34 @@ describe("OpenCode adapter entrypoint", () => {
       },
       agent: {
         transform: async (transform: (editor: unknown) => void) => {
-          transform({
-            get: (id: string) => agents.get(id),
-            list: () => [...agents.values()],
-            default: () => undefined,
-            remove: () => undefined,
-            update: (
-              id: string,
-              update: (agent: Record<string, unknown>) => void,
-            ) => {
-              const agent = { id, name: id, mode: "primary", permissions: [] };
-              update(agent);
-              agents.set(id, agent);
-            },
-          });
+          const apply = () =>
+            transform({
+              get: (id: string) => agents.get(id),
+              list: () => [...agents.values()],
+              default: () => undefined,
+              remove: () => undefined,
+              update: (
+                id: string,
+                update: (agent: Record<string, unknown>) => void,
+              ) => {
+                const agent = {
+                  id,
+                  name: id,
+                  mode: "primary",
+                  permissions: [],
+                };
+                update(agent);
+                agents.set(id, agent);
+              },
+            });
+          if (lazy) replay = apply;
+          else apply();
           return registration("agent");
+        },
+        list: async () => {
+          replay?.();
+          replay = undefined;
+          return { data: [...agents.values()] };
         },
         reload: async () => undefined,
       },

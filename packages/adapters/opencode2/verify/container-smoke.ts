@@ -27,10 +27,7 @@
  *                sent to `opencode2 run --standalone` only because the real
  *                loader was empirically found to skip project-plugin
  *                loading entirely when no message is given; `--standalone`
- *                resolves to the free, credential-free
- *                `muse-spark-1.3-contributor-free` default model (see
- *                Task E1 / Phase A precedent) — this is the harness's one
- *                sanctioned real-loader exception, and none of the
+ *                uses the local deterministic proof provider. None of the
  *                assertions below depend on the model's response text.
  */
 
@@ -71,13 +68,8 @@ async function runRealLoader(): Promise<number> {
   // A minimal chat message is required: the real CLI's plugin loader only
   // runs project plugins while dispatching `opencode2 run` with a message
   // (confirmed empirically — omitting the message causes an early "must
-  // provide a message" error before any plugin loads). Per Task E1's
-  // explicit guidance and the Phase A feasibility harness's precedent
-  // (`.weave/feasibility/opencode2/scripts/proof-loader.sh`), `--standalone`
-  // resolves against the built-in free `muse-spark-1.3-contributor-free`
-  // model, which requires no credentials or paid provider — this is the
-  // one sanctioned exception to "no real LLM calls", scoped to proving the
-  // real loader path only. The assertions below never depend on the
+  // provide a message" error before any plugin loads). The fixture selects
+  // the local deterministic proof provider. Assertions never depend on the
   // model's response text — only on the marker files plugin-wrapper writes
   // from inside `setup()`/cleanup.
   const proc = Bun.spawn({
@@ -306,8 +298,8 @@ async function runRealCliMaterialization(): Promise<number> {
   }
 
   // Same trigger + shell-cd rationale as layer 4 — see the comments in
-  // runRealLoader() above. `--standalone` resolves to the free
-  // `muse-spark-1.3-contributor-free` model; no credentials required.
+  // runRealLoader() above. `--standalone` resolves to the configured
+  // local deterministic proof model; no remote credentials are used.
   const proc = Bun.spawn({
     cmd: [
       "bash",
@@ -539,5 +531,33 @@ async function main(): Promise<number> {
   return 1;
 }
 
-const code = await main();
-process.exit(code);
+// Verification boundary: serve a deterministic local response instead of
+// relying on a remote free model or credentials to trigger CLI activation.
+const provider = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch() {
+    const chunk = {
+      id: "fixture-response",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "proof-model",
+      choices: [
+        {
+          index: 0,
+          delta: { role: "assistant", content: "OK" },
+          finish_reason: "stop",
+        },
+      ],
+    };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+      headers: { "content-type": "text/event-stream" },
+    });
+  },
+});
+process.env.WEAVE_VERIFY_BASE_URL = `http://127.0.0.1:${provider.port}/v1`;
+try {
+  process.exitCode = await main();
+} finally {
+  provider.stop(true);
+}

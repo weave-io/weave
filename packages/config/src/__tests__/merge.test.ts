@@ -21,6 +21,26 @@ const emptyConfig = cfg("");
 // ---------------------------------------------------------------------------
 
 describe("mergeConfigs", () => {
+  it("preserves inherited execution controls and explicit project overrides", () => {
+    const global = cfg(
+      "agent worker { fast true } settings { delegation { max_concurrency 5 } }",
+    );
+    const inherited = mergeConfigs(
+      global,
+      cfg('agent worker { description "project" }'),
+    );
+    expect(inherited.agents.worker?.fast).toBe(true);
+    expect(inherited.settings.delegation?.max_concurrency).toBe(5);
+    const project = mergeConfigs(
+      global,
+      cfg(
+        "agent worker { fast false } settings { delegation { max_concurrency 2 } }",
+      ),
+    );
+    expect(project.agents.worker?.fast).toBe(false);
+    expect(project.settings.delegation?.max_concurrency).toBe(2);
+    expect(global.agents.worker?.fast).toBe(true);
+  });
   it("validates zero, single, and combined layers without mutating defaults or input", () => {
     expect(mergeConfigsResult().isOk()).toBe(true);
     expect(mergeConfigsResult(emptyConfig).isOk()).toBe(true);

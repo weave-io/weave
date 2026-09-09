@@ -21,6 +21,7 @@
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_VERIFY_BASE_URL` **required** — packages/adapters/opencode2/verify/container-smoke.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 
