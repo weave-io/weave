@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 160 lib files | 20 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~54,900 tokens. **Saves ~40,100 tokens per conversation.**
-> **Last scanned:** 2026-09-11 14:48 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 160 lib files | 20 env vars | 7 middleware | 0% test coverage
+> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,400 tokens per conversation.**
+> **Last scanned:** 2026-09-11 16:33 — re-run after significant changes
 
 ---
 
@@ -760,13 +760,14 @@
 
 # Middleware
 
+## custom
+- generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
+- migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
+
 ## validation
 - migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
-
-## custom
-- migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
-- migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`

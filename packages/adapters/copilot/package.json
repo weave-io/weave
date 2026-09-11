@@ -35,6 +35,7 @@
   "devDependencies": {
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
+    "@weaveio/weave-config": "workspace:*",
     "typescript": "^5.4.5"
   },
   "repository": {
