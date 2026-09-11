@@ -1,0 +1,46 @@
+{
+  "name": "@weaveio/weave-adapter-copilot",
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "description": "GitHub Copilot adapter for the Weave orchestration framework",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun ../../../scripts/build-public-packages.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "neverthrow": "^8.2.0",
+    "mustache": "^4.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@weaveio/weave-core": "workspace:*",
+    "@weaveio/weave-engine": "workspace:*",
+    "@weaveio/weave-config": "workspace:*",
+    "ajv": "^8.18.0",
+    "typescript": "^5.4.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weave-io/weave"
+  }
+}

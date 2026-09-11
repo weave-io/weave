@@ -4,7 +4,7 @@ This document summarises the current adapter-readiness state of the Weave engine
 API — what user capabilities are available, which specs deliver them, and what
 every adapter must implement to be considered ready.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Copilot Adapter](copilot-adapter.md) · [Copilot Adapter Guide](adapters/copilot.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)
 
 ---
 
@@ -265,6 +265,39 @@ and [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-exe
 The Claude Code adapter achieves parity with the OpenCode adapter's explicit execution-entry model by emitting command files that register native plugin slash commands. When the user invokes `/weave:start` or `/weave:start-work`, the command file activates Tapestry through the engine's `startExecution` lifecycle surface. The commands are materialized during the adapter's `flush()` call, which writes all composed plugin artifacts (agents, commands, settings) to the Claude Code plugin directory.
 
 See [Claude Code Adapter](claude-code-adapter.md) for the full execution trigger documentation and command-file materialization details.
+
+---
+
+## Copilot Adapter
+
+`@weaveio/weave-adapter-copilot` is scaffolded and under active development. It
+materializes Weave agent descriptors as a GitHub Copilot Agent Plugin bundle
+(`.weave/plugins/copilot/`) — see [Copilot Adapter](copilot-adapter.md) for
+the full status writeup and [`docs/artifacts/copilot-adapter-research.md`](artifacts/copilot-adapter-research.md)
+for the CLI-verified evidence backing every claim below.
+
+| Capability | Readiness | Notes |
+| --- | --- | --- |
+| Config/agent materialization | `native` | `CopilotAdapter.spawnSubagent()` + `flush()` writes `plugin.json` and one `.agent.md` per agent under `.weave/plugins/copilot/` |
+| Primary/default agent selection | `native` | `--agent <name>` is a proven, doc-confirmed non-interactive selector (`copilot-adapter-research.md` §4) |
+| Delegated specialist execution/subagents | `native` | Each materialized agent is independently selectable via `--agent`; multi-agent delegation follows the same `.agent.md` discovery model |
+| Prompt composition/injection | `native` | Composed prompt body is written verbatim below `.agent.md` frontmatter |
+| Tool policy mapping/enforcement | `degraded` | `tools:` frontmatter is accepted but **not validated or enforced** by the CLI — invalid tool names are silently ignored, not rejected (`copilot-adapter-research.md` §6). Weave's effective tool policy is advisory prompt guidance only, not a sandboxed enforcement boundary |
+| Command entrypoints | `emulated` | No native Copilot CLI command surface for Weave; activation is via `--agent`/`--add-dir` invocation, an explicit user-triggered path, not a literal registered command |
+| Workflow persistence | `unsupported` | No CLI concept of a durable, resumable workflow instance was found; each `copilot -p` call is a single non-interactive turn (`copilot-adapter-research.md` §§1–2) |
+| Workflow step dispatch | `unsupported` | No plugin-hook or event-bus system exists to dispatch steps within a running execution (`copilot-adapter-research.md` §2) |
+| Event logging/debug traces | `unsupported` | `copilot plugin --help` documents install/list/uninstall/update only — no event subscription API (`copilot-adapter-research.md` §2) |
+| Idle continuation | `unsupported` | No session-idle hook exists in the CLI surface documented or exercised in the research spike (`copilot-adapter-research.md` §§1–8) |
+| Compaction recovery | `unsupported` | No CLI-exposed context-compaction or crash-recovery mechanism was found (`copilot-adapter-research.md` §§1–8) |
+| Context-window monitor | `unsupported` | No CLI command surfaces token/context-window usage for a running session (`copilot-adapter-research.md` §§1–8) |
+| Analytics dashboard | `unsupported` | No CLI or plugin API exposes usage telemetry to a consumer (`copilot-adapter-research.md` §§1–8) |
+| Static artifact generation | `native` | `plugin.json` conforms to the vendored `plugin-1.0.0.schema.json`; `.agent.md` files are valid, discoverable static artifacts |
+
+**Install path**: the CLI's `--add-dir` trusted-directory mechanism is the
+proven, recommended install path (reproduced live end-to-end); direct
+`copilot plugin install` is unproven for Weave-generated bundles and is
+treated as deprecated for Weave's purposes. See
+[Copilot Adapter Guide](adapters/copilot.md).
 
 ---
 

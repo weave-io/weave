@@ -15,6 +15,7 @@
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `WEAVE_ADAPTER_OPENCODE_VERSION` (has default) — sandboxes/opencode/entrypoint.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_COPILOT_LIVE` **required** — packages/adapters/copilot/src/__tests__/live-cli.test.ts
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts

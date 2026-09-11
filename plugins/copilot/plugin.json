@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "weave",
+  "version": "0.1.0",
+  "description": "Harness-agnostic prompt and agent-configuration API for GitHub Copilot",
+  "author": {
+    "name": "Weave"
+  },
+  "license": "MIT",
+  "keywords": [
+    "weave",
+    "agents",
+    "copilot"
+  ]
+}
