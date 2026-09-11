@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
 > 0 routes | 0 models | 0 components | 160 lib files | 20 env vars | 7 middleware | 0% test coverage
-> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,400 tokens per conversation.**
-> **Last scanned:** 2026-09-11 16:33 — re-run after significant changes
+> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,300 tokens per conversation.**
+> **Last scanned:** 2026-09-11 17:19 — re-run after significant changes
 
 ---
 
@@ -20,7 +20,10 @@
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_IDS: readonly string[]
-- `packages/adapters/copilot/src/adapter.ts` — class CopilotAdapter, interface CopilotAdapterOptions
+- `packages/adapters/copilot/src/adapter.ts`
+  - function getPluginAgentIdQualifier: () => string
+  - class CopilotAdapter
+  - interface CopilotAdapterOptions
 - `packages/adapters/copilot/src/agent-translation.ts` — function translateAgentToCopilotMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/copilot/src/model-resolution.ts` — function buildCopilotModelInput: (descriptor) => ModelResolutionInput, const COPILOT_AVAILABLE_MODELS: Set<string>
 - `packages/adapters/copilot/src/skill-discovery.ts` — function discoverCopilotSkills: (projectRoot, homeDir, readDir) => void

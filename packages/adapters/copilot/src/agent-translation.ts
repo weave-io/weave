@@ -16,6 +16,13 @@ export interface AgentTranslationInput {
   allowedTools: string[];
   /** Concrete MCP server names configured for this agent. */
   mcpServers: string[];
+  /**
+   * Plugin agent id qualifier (see `getPluginAgentIdQualifier` in
+   * `adapter.ts`). When present, the frontmatter `name:` field is written as
+   * `<pluginAgentIdQualifier>:<descriptor.name>` instead of the bare
+   * `descriptor.name` — see the module doc comment for why.
+   */
+  pluginAgentIdQualifier?: string;
 }
 
 /**
@@ -52,15 +59,27 @@ function escapeYamlScalar(value: string): string {
  *   research in `docs/artifacts/copilot-adapter-research.md`).
  * - `mcp-servers:` is omitted entirely (not emitted as `{}`) when
  *   `mcpServers` is empty, since an empty mapping silently drops the agent.
+ * - `name:` is qualified as `<pluginAgentIdQualifier>:<agent-name>` when
+ *   `pluginAgentIdQualifier` is supplied — see
+ *   [`github/app#3685`](https://github.com/github/app/issues/3685) and
+ *   `docs/copilot-adapter.md` ("Plugin agent id qualification") for why.
+ *   The filename (`<agent-name>.agent.md`) is never qualified: the CLI
+ *   derives an agent's stable id from the file's stem, not from the
+ *   frontmatter `name:` field, so this only affects display/selection
+ *   through the affected app surfaces.
  */
 export function translateAgentToCopilotMarkdown(
   input: AgentTranslationInput,
 ): string {
-  const { descriptor, allowedTools, mcpServers } = input;
+  const { descriptor, allowedTools, mcpServers, pluginAgentIdQualifier } =
+    input;
 
   const frontmatterLines: string[] = ["---"];
 
-  frontmatterLines.push(`name: ${descriptor.name}`);
+  const qualifiedName = pluginAgentIdQualifier
+    ? `${pluginAgentIdQualifier}:${descriptor.name}`
+    : descriptor.name;
+  frontmatterLines.push(`name: ${qualifiedName}`);
 
   if (descriptor.description) {
     frontmatterLines.push(

@@ -26,7 +26,7 @@ registration, and no mutation of `~/.copilot/installed-plugins`. This is the
 adapter's recommended path today because it is the only mechanism that has
 been empirically exercised end-to-end.
 
-### Direct install (deprecated)
+### Direct install (deprecated, with a targeted compatibility fix)
 
 `copilot plugin install <source>` (or the newer unified `copilot plugins
 install|add`) can install a plugin bundle from a marketplace, GitHub repo, or
@@ -41,6 +41,29 @@ principle be installed this way, but:
 
 Treat direct install as **deprecated for Weave's purposes** until a follow-up
 task reproduces it end-to-end. Prefer `--add-dir` today.
+
+If you do install the generated bundle directly —
+`copilot plugin install "$(pwd)/.weave/plugins/copilot"` — be aware of
+[`github/app#3685`](https://github.com/github/app/issues/3685): the GitHub
+Copilot **app**'s picker can fail to create a session for a
+plugin-contributed agent with `Custom agent '<name>' not found`, because the
+app selects by the bare agent name while `session.create` requires a
+CLI-assigned qualified id. Live-verified against Copilot CLI 1.0.83
+(2026-09-11): for Weave's generated bundle that qualified id is
+`weave:<agent-name>` (e.g. `weave:loom`) — the plugin's own `plugin.json`
+`name` field, **not** the install path's directory basename. This was an
+app-side regression fixed upstream in app v1.1.18. `CopilotAdapter`
+pre-qualifies every generated agent's frontmatter `name:` field to work
+around this defensively (on by default; disable with
+`qualifyPluginAgentNames: false`) — see
+[Copilot Adapter § Plugin agent id qualification](../copilot-adapter.md#plugin-agent-id-qualification-githubapp3685)
+for the full root-cause, live-verification transcript, and safety analysis.
+This targeted fix does not change the direct-install deprecation above: the
+CLI plugin-install pathway as a whole remains unproven for Weave's other
+components (skills, MCP, commands); only the agent-selection id mismatch is
+specifically addressed. The fix itself is not specific to direct installs —
+`getPluginAgentIdQualifier()` returns the plugin manifest `name`, which
+applies to any install mechanism (direct, marketplace, or otherwise).
 
 ## Generated layout
 
@@ -63,7 +86,11 @@ subset the adapter has verified against the live CLI
 (`docs/artifacts/copilot-adapter-research.md`, §5) — `mcp-servers` is
 currently emitted defensively (never as an empty object) because an empty
 `mcp-servers: {}` silently drops the entire agent profile with no CLI-side
-error.
+error. The `.agent.md` **filename** always matches the bare agent name
+(`loom.agent.md`); the frontmatter `name:` value inside may be qualified as
+`weave:<agent-name>` (the plugin manifest name, not the install path) — see
+[Direct install](#direct-install-deprecated-with-a-targeted-compatibility-fix)
+below.
 
 ## `weave compose --adapter copilot`
 
@@ -80,6 +107,11 @@ that CLI wiring lands.
 - **Direct plugin install** (`copilot plugin install`) is deprecated for
   Weave's purposes in favor of `--add-dir` trusted-directory activation (see
   above). This may change once direct install is independently verified.
+  A narrow compatibility fix for the agent-selection id mismatch
+  ([`github/app#3685`](https://github.com/github/app/issues/3685)) is
+  applied regardless (see above) since it is free/harmless for the
+  `--add-dir` path and only activates its qualified naming meaningfully when
+  a direct install is actually used.
 
 ## Related
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
-import { CopilotAdapter } from "../adapter.js";
+import { CopilotAdapter, getPluginAgentIdQualifier } from "../adapter.js";
 
 function makeDescriptor(
   overrides: Partial<AgentDescriptor> = {},
@@ -33,12 +33,14 @@ function makeAdapter(
     readFile: (path: string) => Promise<string>;
     removeFile: (path: string) => Promise<void>;
     outDir: string;
+    qualifyPluginAgentNames: boolean;
   }> = {},
 ) {
   return new CopilotAdapter({
     projectRoot: "/project",
     homeDir: "/home/user",
     outDir: overrides.outDir,
+    qualifyPluginAgentNames: overrides.qualifyPluginAgentNames,
     exists: overrides.exists ?? (async () => true),
     readDir: overrides.readDir ?? (async () => []),
     readFile: overrides.readFile ?? (async () => ""),
@@ -149,7 +151,13 @@ describe("CopilotAdapter", () => {
           k.endsWith("loom.agent.md"),
       );
       expect(agentPath).toBeDefined();
-      expect(written[agentPath!]).toContain("name: loom");
+      // Plugin agent id qualification (qualifyPluginAgentNames) qualifies
+      // the frontmatter name with the plugin manifest name ("weave") so
+      // plugin-contributed agent selection works around github/app#3685
+      // (see adapter.ts `getPluginAgentIdQualifier`; qualifier
+      // live-verified against Copilot CLI 1.0.83, not derived from
+      // outDir/install path).
+      expect(written[agentPath!]).toContain("name: weave:loom");
       expect(written[agentPath!]).toContain("You are a test agent.");
     });
 
@@ -344,5 +352,97 @@ describe("CopilotAdapter", () => {
       expect(loomFiles).toHaveLength(1);
       expect(afterSecondFlush).toBeGreaterThanOrEqual(beforeSecondFlush);
     });
+  });
+
+  describe("plugin agent id qualification (github/app#3685)", () => {
+    it("qualifies frontmatter name with the plugin manifest name by default", async () => {
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, [], {
+        outDir: "/somewhere/.weave/plugins/copilot",
+      });
+
+      await adapter.spawnSubagent(makeDescriptor({ name: "loom" }));
+      await adapter.flush();
+
+      const agentPath = Object.keys(written).find((k) =>
+        k.endsWith("loom.agent.md"),
+      );
+      // Live-verified against Copilot CLI 1.0.83: the qualifier the CLI
+      // actually accepts for `--agent` selection is the plugin manifest's
+      // `name` field ("weave"), not the outDir/install-path basename
+      // ("copilot" here would NOT resolve — see getPluginAgentIdQualifier).
+      expect(written[agentPath!]).toContain("name: weave:loom");
+    });
+
+    it("uses the same qualifier regardless of outDir (not derived from the install path)", async () => {
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, [], {
+        outDir: "/custom/my-weave-bundle",
+      });
+
+      await adapter.spawnSubagent(makeDescriptor({ name: "shuttle" }));
+      await adapter.flush();
+
+      const agentPath = Object.keys(written).find((k) =>
+        k.endsWith("shuttle.agent.md"),
+      );
+      expect(written[agentPath!]).toContain("name: weave:shuttle");
+    });
+
+    it("matches the plugin.json name field written in the same flush", async () => {
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, []);
+
+      await adapter.spawnSubagent(makeDescriptor({ name: "loom" }));
+      await adapter.flush();
+
+      const pluginJsonPath = Object.keys(written).find((k) =>
+        k.endsWith("plugin.json"),
+      );
+      const manifestName = JSON.parse(written[pluginJsonPath!]!).name;
+      const agentPath = Object.keys(written).find((k) =>
+        k.endsWith("loom.agent.md"),
+      );
+      expect(written[agentPath!]).toContain(`name: ${manifestName}:loom`);
+    });
+
+    it("emits bare names when qualifyPluginAgentNames is disabled", async () => {
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, [], {
+        qualifyPluginAgentNames: false,
+      });
+
+      await adapter.spawnSubagent(makeDescriptor({ name: "loom" }));
+      await adapter.flush();
+
+      const agentPath = Object.keys(written).find((k) =>
+        k.endsWith("loom.agent.md"),
+      );
+      expect(written[agentPath!]).toContain("---\nname: loom");
+      expect(written[agentPath!]).not.toContain(":loom");
+    });
+
+    it("never qualifies the .agent.md filename itself (only frontmatter name:)", async () => {
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, []);
+
+      await adapter.spawnSubagent(makeDescriptor({ name: "loom" }));
+      await adapter.flush();
+
+      const agentPaths = Object.keys(written).filter((k) =>
+        k.endsWith(".agent.md"),
+      );
+      expect(agentPaths.some((p) => p.endsWith("/loom.agent.md"))).toBe(true);
+      expect(agentPaths.some((p) => p.includes("weave:loom"))).toBe(false);
+    });
+  });
+});
+
+describe("getPluginAgentIdQualifier", () => {
+  it("returns the plugin manifest name, live-verified as the CLI's actual agent-id qualifier", () => {
+    // See adapter.ts module doc: `copilot --agent __nope__` against the
+    // real generated+installed bundle listed `weave:loom`, `weave:shuttle`,
+    // etc. — never a value derived from the install path/outDir basename.
+    expect(getPluginAgentIdQualifier()).toBe("weave");
   });
 });

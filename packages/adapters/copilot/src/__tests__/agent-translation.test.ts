@@ -117,6 +117,48 @@ describe("translateAgentToCopilotMarkdown", () => {
     expect(result).toContain("name: shuttle-backend");
   });
 
+  describe("plugin agent id qualification (github/app#3685)", () => {
+    it("qualifies name as `<sourceId>:<agent-name>` when pluginAgentIdQualifier is provided", () => {
+      const result = translateAgentToCopilotMarkdown({
+        descriptor: makeDescriptor({ name: "loom" }),
+        resolvedModel: "claude-sonnet-5",
+        allowedTools: [],
+        mcpServers: [],
+        pluginAgentIdQualifier: "weave",
+      });
+
+      expect(result).toContain("---\nname: weave:loom");
+    });
+
+    it("leaves name bare when pluginAgentIdQualifier is omitted", () => {
+      const result = translateAgentToCopilotMarkdown({
+        descriptor: makeDescriptor({ name: "loom" }),
+        resolvedModel: "claude-sonnet-5",
+        allowedTools: [],
+        mcpServers: [],
+      });
+
+      expect(result).toContain("---\nname: loom");
+      expect(result).not.toContain(":loom");
+    });
+
+    it("never qualifies the description or any other frontmatter field", () => {
+      const result = translateAgentToCopilotMarkdown({
+        descriptor: makeDescriptor({
+          name: "loom",
+          description: "Orchestrator",
+        }),
+        resolvedModel: "claude-sonnet-5",
+        allowedTools: ["read"],
+        mcpServers: [],
+        pluginAgentIdQualifier: "weave",
+      });
+
+      expect(result).toContain("description: Orchestrator");
+      expect(result).not.toContain("description: weave:Orchestrator");
+    });
+  });
+
   describe("YAML escaping", () => {
     it("quotes description containing a colon", () => {
       const result = translateAgentToCopilotMarkdown({

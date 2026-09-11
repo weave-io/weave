@@ -9,7 +9,10 @@
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_IDS: readonly string[]
-- `packages/adapters/copilot/src/adapter.ts` — class CopilotAdapter, interface CopilotAdapterOptions
+- `packages/adapters/copilot/src/adapter.ts`
+  - function getPluginAgentIdQualifier: () => string
+  - class CopilotAdapter
+  - interface CopilotAdapterOptions
 - `packages/adapters/copilot/src/agent-translation.ts` — function translateAgentToCopilotMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/copilot/src/model-resolution.ts` — function buildCopilotModelInput: (descriptor) => ModelResolutionInput, const COPILOT_AVAILABLE_MODELS: Set<string>
 - `packages/adapters/copilot/src/skill-discovery.ts` — function discoverCopilotSkills: (projectRoot, homeDir, readDir) => void

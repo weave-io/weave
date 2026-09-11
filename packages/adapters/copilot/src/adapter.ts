@@ -32,6 +32,54 @@ const log = logger.child({ module: "adapter-copilot" });
 const PLUGIN_SCHEMA_URL =
   "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
+/**
+ * The `name` field written to the generated `plugin.json` manifest. This is
+ * also the qualifier the GitHub Copilot CLI uses for this plugin's agent
+ * ids — see `getPluginAgentIdQualifier` below.
+ */
+const PLUGIN_MANIFEST_NAME = "weave";
+
+/**
+ * Returns the id-qualifier the GitHub Copilot CLI assigns to agents
+ * contributed by this plugin — for direct (`copilot plugin install
+ * <local-path>`) installs, marketplace installs, or any other install
+ * mechanism, since the qualifier comes from the plugin's own manifest, not
+ * from how or where it was installed — so generated agent frontmatter can
+ * be pre-qualified to work around
+ * [`github/app#3685`](https://github.com/github/app/issues/3685).
+ *
+ * **Live-verified 2026-09-11** against Copilot CLI 1.0.83 with the current
+ * generated bundle at `.weave/plugins/copilot/`
+ * (`plugin.json` → `{ "name": "weave", ... }`):
+ *
+ * ```
+ * $ copilot plugin install "$(pwd)/.weave/plugins/copilot"
+ * Plugin "weave" installed successfully.
+ * $ copilot --agent __nope__ -p x
+ * No such agent: __nope__, available: weave:loom, weave:shuttle, ...
+ * ```
+ *
+ * This disproves an earlier assumption in this module: the qualifier is
+ * **not** derived from the installed directory's basename (`_direct/copilot`
+ * on disk, per `outDir`'s basename) — that path segment is merely the CLI's
+ * on-disk cache key for direct installs, keyed by *source location* to avoid
+ * collisions across repeated installs of unrelated plugins from different
+ * paths, and has no equivalent at all for marketplace installs. The
+ * qualifier the CLI actually uses for `--agent <id>` selection and for
+ * `AgentInfo.id` is the plugin's own declared identity — its `plugin.json`
+ * `name` field (`"weave"`) — regardless of install mechanism or source
+ * path. `weave:copilot` and other outDir-derived guesses do **not** resolve
+ * (`No such agent: copilot:loom`), only `weave:loom` does.
+ *
+ * Returning the manifest name (rather than something derived from `outDir`
+ * or the install mechanism) is therefore the correct, least-brittle source
+ * of truth: it is the exact value Weave already writes to `plugin.json`, so
+ * the two can never drift.
+ */
+export function getPluginAgentIdQualifier(): string {
+  return PLUGIN_MANIFEST_NAME;
+}
+
 /** A translated agent ready to be flushed to disk. */
 interface PendingAgent {
   name: string;
@@ -61,6 +109,24 @@ export interface CopilotAdapterOptions {
   exists?: (path: string) => Promise<boolean>;
   /** Injectable directory creator. */
   mkdir?: (path: string) => Promise<void>;
+  /**
+   * When `true` (default), qualifies each generated agent's frontmatter
+   * `name:` as `<pluginAgentIdQualifier>:<agent-name>` (see
+   * `getPluginAgentIdQualifier`) to work around
+   * [`github/app#3685`](https://github.com/github/app/issues/3685) — the
+   * GitHub Copilot app selects agents by `AgentInfo.name` when it must use
+   * `AgentInfo.id`, and for plugin-contributed agents (installed via
+   * `copilot plugin install <local-path>`, a marketplace, or any other
+   * mechanism) those two values differ, so session creation fails with
+   * `Custom agent '<name>' not found`. The workaround is verified upstream
+   * as harmless: the CLI derives an agent's id from its filename and
+   * ignores `name:`, so pre-qualifying `name:` does not disturb CLI
+   * resolution (`--add-dir`, `--agent <name>`) and becomes a no-op once the
+   * app is upgraded past the fix (app v1.1.18).
+   * Set to `false` to emit bare names (matches pre-workaround behavior).
+   * See `docs/copilot-adapter.md` ("Plugin agent id qualification").
+   */
+  qualifyPluginAgentNames?: boolean;
 }
 
 export class CopilotAdapter implements HarnessAdapter {
@@ -73,6 +139,8 @@ export class CopilotAdapter implements HarnessAdapter {
   private readonly removeFile: (path: string) => Promise<void>;
   private readonly exists: (path: string) => Promise<boolean>;
   private readonly mkdir: (path: string) => Promise<void>;
+  private readonly qualifyPluginAgentNames: boolean;
+  private readonly pluginAgentIdQualifier: string;
 
   private readonly pendingAgents: PendingAgent[] = [];
 
@@ -88,6 +156,8 @@ export class CopilotAdapter implements HarnessAdapter {
     this.removeFile = options.removeFile ?? defaultRemoveFile;
     this.exists = options.exists ?? defaultExists;
     this.mkdir = options.mkdir ?? defaultMkdir;
+    this.qualifyPluginAgentNames = options.qualifyPluginAgentNames ?? true;
+    this.pluginAgentIdQualifier = getPluginAgentIdQualifier();
   }
 
   async init(): Promise<void> {
@@ -194,6 +264,9 @@ export class CopilotAdapter implements HarnessAdapter {
       resolvedModel,
       allowedTools,
       mcpServers,
+      pluginAgentIdQualifier: this.qualifyPluginAgentNames
+        ? this.pluginAgentIdQualifier
+        : undefined,
     });
 
     return { markdown, mcpServers };
@@ -207,7 +280,7 @@ export class CopilotAdapter implements HarnessAdapter {
       JSON.stringify(
         {
           $schema: PLUGIN_SCHEMA_URL,
-          name: "weave",
+          name: PLUGIN_MANIFEST_NAME,
           version,
           description:
             "Harness-agnostic prompt and agent-configuration API for GitHub Copilot",

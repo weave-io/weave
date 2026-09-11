@@ -111,5 +111,123 @@ consumer npm dependencies.
   support from model behavior alone (see the research doc's §3 caution about
   slash commands being answered from documentation rather than executed).
 
+### Plugin agent id qualification (`github/app#3685`)
+
+**Upstream bug.** The GitHub Copilot **app** (`github.exe`, the desktop
+picker/session UI — distinct from the `copilot` CLI) selects a custom agent
+by `AgentInfo.name` and sends that value to `session.create`, but
+`session.create` resolves agents by `AgentInfo.id`. For a project-sourced
+agent (`.github/agents/*.agent.md`, and the `--add-dir` trusted-directory
+path Weave recommends above) `id === name`, so this is invisible. For a
+**plugin-contributed** agent — installed with
+`copilot plugin install <local-path>`, from a marketplace, or via any other
+plugin-install mechanism — the CLI derives a distinct, namespaced `id` of
+the shape `<plugin-manifest-name>:<agent-filename-stem>` while `name`
+remains the bare filename stem. The app sends the bare `name`, which does
+not exist in the CLI's selection vocabulary, so session creation fails
+with:
+
+```
+session construction failed: Custom agent 'loom' not found
+```
+
+This is a regression in app v1.1.16–v1.1.17 introduced by an unrelated fix
+(`github/app#3550`, filename fallback for blank-displaying plugin agents)
+and was fixed upstream in **app v1.1.18**
+([`github/app#3685`](https://github.com/github/app/issues/3685)). Because
+users may run an app version predating the fix, or may have a stale
+persisted selection from before it, Weave applies the verified upstream
+workaround defensively at generation time rather than only documenting it.
+
+**What Weave does.** `CopilotAdapter` pre-qualifies each generated agent's
+frontmatter `name:` field as `<qualifier>:<agent-name>` — currently
+`weave:loom` rather than `loom` — where `<qualifier>` is
+`getPluginAgentIdQualifier()` in
+[`adapter.ts`](../packages/adapters/copilot/src/adapter.ts). **This value is
+the plugin manifest's own `plugin.json` `name` field (`"weave"`), not
+anything derived from the install path, `outDir`, or the install
+mechanism.**
+
+An earlier version of this fix assumed the qualifier was the basename of the
+installed directory (`~/.copilot/installed-plugins/_direct/SOURCE-ID/`,
+which for a local-path install of `.weave/plugins/copilot` is literally
+`_direct/copilot`), and named the option/function accordingly
+(`directInstallCompat`, `getDirectInstallSourceId`). That assumption was
+disproven by live verification against Copilot CLI 1.0.83 on 2026-09-11:
+after `copilot plugin install "$(pwd)/.weave/plugins/copilot"`, the CLI
+reported `Plugin "weave" installed successfully` (the manifest name, not
+the path basename), and probing the CLI's accepted agent vocabulary
+(`copilot --agent __nope__ -p x`) listed `weave:loom`, `weave:shuttle`, etc.
+— `copilot:loom` was **not** in that list and does not resolve. The
+`_direct/<path-basename>` segment is only the CLI's on-disk cache key for
+direct installs (to avoid path collisions), has no equivalent for
+marketplace installs, and has no bearing on the agent id the CLI actually
+accepts. The plugin manifest `name` is therefore the correct, least-brittle
+source of truth — it is the exact string Weave already writes to
+`plugin.json`, so the two values structurally cannot drift apart — and the
+public API was renamed to `getPluginAgentIdQualifier()` /
+`qualifyPluginAgentNames` / `pluginAgentIdQualifier` to describe this
+accurately and to stop implying the fix is specific to direct installs.
+
+**Why this is safe.** Per the upstream bug report's own verified workaround,
+"The CLI derives identity from the filename and ignores `name`, so this does
+not disturb CLI resolution." The `.agent.md` **filename** stays bare
+(`loom.agent.md`, never `weave:loom.agent.md`) — only the frontmatter
+`name:` value inside it changes. This means:
+
+- `--add-dir` / `--agent <name>` CLI invocation is unaffected (CLI resolves
+  by filename, not by frontmatter `name:`).
+- Once the app is upgraded past v1.1.18 and correctly selects by `id`,
+  `name == id` still resolves — the qualifier becomes a no-op, not a new
+  failure mode.
+- The only observable side effect is cosmetic: the app's agent picker may
+  display `weave:loom` instead of `loom` as the agent's label.
+
+**Opting out.** Pass `qualifyPluginAgentNames: false` to `CopilotAdapter`'s
+constructor to emit bare `name:` values (pre-workaround behavior) — for
+example, once every consumer of a generated bundle is confirmed to be on
+app v1.1.18+ and the qualified display name is undesirable.
+
+**Live CLI verification (2026-09-11, Copilot CLI 1.0.83, this fix's
+generated bundle):**
+
+```
+$ bun run packages/adapters/copilot/scripts/generate-bundle.ts
+Bundle written. Install: copilot plugin install <projectRoot>/.weave/plugins/copilot
+
+$ head -3 .weave/plugins/copilot/com.github.copilot/agents/loom.agent.md
+---
+name: weave:loom
+description: Loom (Main Orchestrator)
+
+$ copilot plugin install "$(pwd)/.weave/plugins/copilot"
+Plugin "weave" installed successfully.
+Warning: Direct plugin installs (repos, URLs, local paths) are deprecated. ...
+
+$ ls ~/.copilot/installed-plugins/_direct/
+copilot     # on-disk cache key = install path basename — NOT the agent qualifier
+
+$ copilot --no-auto-update -s --no-ask-user --agent __nope__ -p "x"
+No such agent: __nope__, available: weave:loom, weave:shuttle, weave:shuttle-core, ...
+
+$ copilot --no-auto-update -s --no-ask-user --agent weave:loom \
+    -p "Reply with only the word OK, no tool calls." --allow-all-tools
+OK
+
+$ copilot plugin uninstall weave   # cleanup after verification
+Plugin "weave" uninstalled successfully.
+```
+
+`weave:loom` is in the CLI's accepted vocabulary and resolves a real prompt;
+`copilot:loom` (the disproven directory-basename guess) is absent from that
+vocabulary and does not resolve. This confirms the plugin manifest `name`
+field is the correct qualifier and validates the fix end-to-end against a
+live CLI, independent of the app itself (which was not available to test
+directly in this environment).
+
+See [`packages/adapters/copilot/src/__tests__/agent-translation.test.ts`](../packages/adapters/copilot/src/__tests__/agent-translation.test.ts)
+and [`packages/adapters/copilot/src/__tests__/adapter.test.ts`](../packages/adapters/copilot/src/__tests__/adapter.test.ts)
+for the regression coverage.
+
 See [the practical Copilot guide](adapters/copilot.md), [Adapter Boundary](adapter-boundary.md),
 and [`docs/artifacts/copilot-adapter-research.md`](artifacts/copilot-adapter-research.md).

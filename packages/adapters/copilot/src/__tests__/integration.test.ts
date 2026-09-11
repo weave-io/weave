@@ -300,8 +300,16 @@ describe("CopilotAdapter — integration (full pipeline)", () => {
           expect(ALLOWED_FRONTMATTER_KEYS.has(seenKey)).toBe(true);
         }
 
-        // name === filename without .agent.md
-        expect(keys.name).toBe(name);
+        // name === "<plugin-manifest-name>:<filename without .agent.md>"
+        // — the frontmatter name is pre-qualified with the plugin.json
+        // `name` field ("weave") to work around github/app#3685
+        // (AgentInfo.name/id mismatch for plugin-contributed agents,
+        // applies beyond direct installs). Live-verified against Copilot
+        // CLI 1.0.83: the CLI's actual agent-id qualifier is the plugin
+        // manifest name, not the outDir/install-path basename. See
+        // `getPluginAgentIdQualifier` in adapter.ts and
+        // `docs/copilot-adapter.md`.
+        expect(keys.name).toBe(`weave:${name}`);
 
         // No model / trust / approved keys
         expect(keys.model).toBeUndefined();
