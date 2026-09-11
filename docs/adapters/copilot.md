@@ -65,13 +65,99 @@ specifically addressed. The fix itself is not specific to direct installs —
 `getPluginAgentIdQualifier()` returns the plugin manifest `name`, which
 applies to any install mechanism (direct, marketplace, or otherwise).
 
+## Self-hosted marketplace install
+
+This repository publishes itself as a self-hosted GitHub Copilot plugin
+marketplace via [`.github/plugin/marketplace.json`](../../.github/plugin/marketplace.json)
+— the path and format the `copilot` CLI documents for marketplace repos
+(`copilot plugin marketplace --help`: "Marketplaces are GitHub repositories
+containing a `marketplace.json` file that indexes available plugins"), and
+the exact path used by GitHub's own default marketplace,
+[`github/copilot-plugins`](https://github.com/github/copilot-plugins/blob/main/.github/plugin/marketplace.json).
+The manifest's top-level `name` is `weaveio` and it lists one plugin entry,
+`weave`, whose `source` is the same-repo relative path `./plugins/copilot`
+— a **committed distribution snapshot** of the generated Agent Plugins
+bundle, deliberately kept separate from the adapter's gitignored default
+local-generation target (`.weave/plugins/copilot/`, described below under
+[Generated layout](#generated-layout)) so cloning this repo does not require
+running the generator first. It is regenerated intentionally with
+`bun run generate:copilot-plugin-dist` and reviewed/committed by hand — see
+[`docs/copilot-adapter.md` § Self-hosted plugin marketplace](../copilot-adapter.md#self-hosted-plugin-marketplace)
+for the full rationale and drift-detection test.
+
+**Status: documented CLI semantics, not independently reproduced for the
+remote `add`/`install` path.** Everything below about `marketplace add
+<owner>/<repo>` and `plugin install <name>@<marketplace>` is derived from
+the `copilot plugin --help` / `copilot plugin marketplace --help` output
+captured in
+[`docs/artifacts/copilot-adapter-research.md`](../artifacts/copilot-adapter-research.md)
+and from GitHub's own `copilot-plugins` marketplace repo layout (fetched
+live to confirm the manifest path and schema shape). No task in this
+project has actually run `copilot plugin marketplace add weave-io/weave`
+or `copilot plugin install weave@weaveio` against a real Copilot CLI and
+observed the result — unlike the direct local-path install, which **was**
+live-verified (see [Direct install](#direct-install-deprecated-with-a-targeted-compatibility-fix)
+above, 2026-09-11 transcript). Treat the commands below as the
+correctly-shaped, spec-following commands for this repository's manifest,
+not as a proven end-to-end remote-resolution result.
+
+**One-time marketplace registration** (per machine/user, not per session):
+
+```bash
+copilot plugin marketplace add weave-io/weave
+```
+
+Per the CLI's documented `owner/repo` install-source shorthand
+(`copilot plugin install --help`) and the convention its two built-in
+marketplaces follow (`copilot-plugins` ← `github/copilot-plugins`,
+`awesome-copilot` ← `github/awesome-copilot`), this should resolve
+`.github/plugin/marketplace.json` at `weave-io/weave`'s default branch and
+register it under the name declared in that manifest (`weaveio`).
+`weave-io/weave` is this repository's actual `owner/repo`, from `git remote
+get-url origin` — not invented.
+
+Once registered, install the plugin:
+
+```bash
+copilot plugin install weave@weaveio
+```
+
+This is the `plugin@marketplace` install-source form documented in
+`copilot plugin install --help`. It should resolve to `weave`'s `source`
+entry in the marketplace manifest (`./plugins/copilot`) and install it the
+same way the live-verified direct local-path install did. The same caveats
+from [Direct install](#direct-install-deprecated-with-a-targeted-compatibility-fix)
+apply (unproven end-to-end beyond agent materialization; the
+`github/app#3685` agent-id qualification workaround; `--add-dir` remains
+the recommended path today). To remove the marketplace registration:
+`copilot plugin marketplace remove weaveio`.
+
+**Why no ref/sha pinning.** The marketplace manifest lives in the same
+branch/repo as the plugin bundle it points at and is expected to evolve
+together with it on every commit. Upstream same-repo relative `source`
+entries (e.g. `github/copilot-plugins`' own `"spark"` entry:
+`"source": "./plugins/spark"`) carry no ref/sha field, and there is no
+placeholder value to invent here — the CLI resolves the relative path
+against whatever ref the marketplace was added at (the default branch,
+unless a future `owner/repo#ref` install source is used). Pinning a ref in
+an in-repo manifest that is expected to change on every commit would go
+stale immediately and was deliberately avoided.
+
 ## Generated layout
 
 `CopilotAdapter.flush()` writes the full bundle under
-`<projectRoot>/.weave/plugins/copilot/` (configurable via `outDir`):
+`<projectRoot>/.weave/plugins/copilot/` by default (configurable via
+`outDir`) — this is the adapter's ordinary, gitignored, freely-regenerated
+local output for any consuming project. This repository additionally
+commits a **separate, intentionally-regenerated snapshot** at
+`plugins/copilot/` (repo root, outside `.weave/`) for marketplace
+distribution — see [Self-hosted marketplace install](#self-hosted-marketplace-install)
+above. The two directories have the identical internal layout described
+below; only the repo-root location and gitignore/commit status differ.
 
 ```
-.weave/plugins/copilot/
+.weave/plugins/copilot/                  # local/default (gitignored)
+plugins/copilot/                         # committed distribution snapshot
 ├── plugin.json                          # conforms to plugin-1.0.0.schema.json
 └── com.github.copilot/
     └── agents/
@@ -117,5 +203,6 @@ that CLI wiring lands.
 
 - [Copilot Adapter](../copilot-adapter.md) — status, context, decision, consequences
 - [`docs/artifacts/copilot-adapter-research.md`](../artifacts/copilot-adapter-research.md) — CLI evidence this guide is based on
+- [`.github/plugin/marketplace.json`](../../.github/plugin/marketplace.json) — this repo's self-hosted marketplace manifest
 - [Adapter Boundary](../adapter-boundary.md)
 - [Adapter Readiness Status](../adapter-readiness-status.md)

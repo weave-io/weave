@@ -231,3 +231,49 @@ for the regression coverage.
 
 See [the practical Copilot guide](adapters/copilot.md), [Adapter Boundary](adapter-boundary.md),
 and [`docs/artifacts/copilot-adapter-research.md`](artifacts/copilot-adapter-research.md).
+
+### Self-hosted plugin marketplace
+
+**Decision.** This repository is its own GitHub Copilot plugin marketplace:
+[`.github/plugin/marketplace.json`](../.github/plugin/marketplace.json)
+(marketplace name `weaveio`) lists one plugin entry (`weave`) whose `source`
+is the same-repo relative path `./plugins/copilot`, yielding
+`copilot plugin marketplace add weave-io/weave` (one-time) followed by
+`copilot plugin install weave@weaveio`. Full command reference and rationale,
+including the accurate live-verification status of these two commands (they
+are documented CLI semantics, not independently reproduced end-to-end in
+this project — unlike the direct local-path install, which was):
+[the practical Copilot guide § Self-hosted marketplace install](adapters/copilot.md#self-hosted-marketplace-install).
+
+**Why this location.** `.github/plugin/marketplace.json` is not an
+agent-plugins.org-specified path (that spec only defines the plugin manifest,
+`plugin.json`, and its directory layout) — it is the Copilot CLI's own
+documented and empirically-confirmed marketplace-repo convention. Verified by
+fetching `github/copilot-plugins`' actual repository layout: its
+`marketplace.json` lives at exactly `.github/plugin/marketplace.json`, and
+its `name` field (`"copilot-plugins"`) matches the marketplace name the CLI's
+`copilot plugin --help` output lists it under.
+
+**Why the plugin bundle lives at `plugins/copilot/`, not
+`.weave/plugins/copilot/`.** `.weave/` is the adapter's ordinary, gitignored,
+freely-regenerated local-generation target (see
+[Generated layout](adapters/copilot.md#generated-layout)) — appropriate for
+any consuming project's day-to-day iteration, but not for a marketplace
+`source` that must resolve for anyone who clones this repo without first
+running the generator. Rather than force-add a path under an otherwise
+fully-gitignored directory (a fragile pattern that is easy to lose track of
+and easy to accidentally exclude again), the committed distribution artifact
+lives at the ordinary, non-ignored repo-root path `plugins/copilot/` and is
+regenerated **intentionally** via `bun run generate:copilot-plugin-dist`
+(wraps `packages/adapters/copilot/scripts/generate-bundle.ts --out-dir
+plugins/copilot`) — never as a side effect of any other command. Maintainers
+must re-run that script and review/commit the diff whenever the underlying
+`.weave/config.weave` agent definitions change;
+[`marketplace.test.ts`](../packages/adapters/copilot/src/__tests__/marketplace.test.ts)
+regenerates the bundle to a temp directory in CI/test runs and diffs it
+against the committed `plugins/copilot/` to catch forgotten regenerations.
+
+**Why no ref/sha pinning.** See [the practical Copilot guide's rationale](adapters/copilot.md#self-hosted-marketplace-install)
+— the manifest and the plugin it points at live in, and evolve with, the same
+branch; there is no upstream precedent for pinning a same-repo relative
+`source`, and doing so would go stale on every commit.

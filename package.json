@@ -17,6 +17,7 @@
     "docs:build": "bun run --filter '@weaveio/weave-docs' build",
     "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",
     "docs:check-links": "bun scripts/docs/check-links.ts",
+    "generate:copilot-plugin-dist": "bun packages/adapters/copilot/scripts/generate-bundle.ts --out-dir plugins/copilot",
     "validate-config": "bun packages/cli/src/main.ts validate --project",
     "eval:trajectory": "bun packages/cli/src/main.ts eval run --agent loom-routing --case loom-route-shuttle-implement-utility-trajectory --model openai/gpt-4o-mini",
     "build": "bun scripts/build-public-packages.ts && bun run --filter '@weaveio/weave-docs' build",

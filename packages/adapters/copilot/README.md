@@ -4,7 +4,14 @@ The Weave adapter that materializes normalized `.weave` configuration as a
 GitHub Copilot Agent Plugin bundle (Agent Plugins 1.0). It translates each
 Weave `AgentDescriptor` into a `.agent.md` file (frontmatter + composed
 prompt) and writes a schema-conformant `plugin.json` under
-`<projectRoot>/.weave/plugins/copilot/`.
+`<projectRoot>/.weave/plugins/copilot/` by default (`outDir` is configurable).
+This repository additionally commits a **distribution snapshot** of that
+bundle at `plugins/copilot/` (repo root, outside `.weave/`) so it can be
+distributed as this repo's own self-hosted GitHub Copilot plugin
+marketplace entry — see
+[`bun run generate:copilot-plugin-dist`](../../../package.json) and
+[`docs/copilot-adapter.md` § Self-hosted plugin marketplace](../../../docs/copilot-adapter.md#self-hosted-plugin-marketplace)
+for the distinction and regeneration workflow.
 
 See [`docs/copilot-adapter.md`](../../../docs/copilot-adapter.md) for the
 full status/context/decision/consequences writeup — including what is

@@ -6,12 +6,29 @@
  * all agent descriptors via `@weaveio/weave-engine`, and runs the
  * `CopilotAdapter` against them with real filesystem I/O.
  *
- * Default output: <projectRoot>/.weave/plugins/copilot/
- * Override with: --out-dir <path>
+ * Two distinct outputs, selected by `--out-dir`:
+ *
+ * - **Local/default** (`.weave/plugins/copilot/`, used when `--out-dir` is
+ *   omitted): the adapter's normal per-project generation target — gitignored,
+ *   ad-hoc, regenerated freely, not distributed. This is what
+ *   `CopilotAdapter.flush()` writes for any consumer project (Weave's own
+ *   repo included) that runs `weave compose`-style generation locally.
+ * - **Committed distribution artifact** (`plugins/copilot/`, repo root —
+ *   *not* under `.weave/`): the bundle this repository's self-hosted GitHub
+ *   Copilot plugin marketplace (`.github/plugin/marketplace.json`) points
+ *   at via the same-repo relative `source` `./plugins/copilot`. It must be
+ *   regenerated **intentionally** with
+ *   `bun run generate:copilot-plugin-dist` (see root `package.json`) and its
+ *   diff reviewed/committed by hand — it is not written as a side effect of
+ *   any other command. `packages/adapters/copilot/src/__tests__/marketplace.test.ts`
+ *   regenerates this bundle to a temp directory in CI/test runs and diffs it
+ *   byte-for-byte against the committed `plugins/copilot/` to catch drift
+ *   between `.weave/config.weave` and the committed artifact.
  *
  * Usage:
  *   bun run packages/adapters/copilot/scripts/generate-bundle.ts
  *   bun run packages/adapters/copilot/scripts/generate-bundle.ts --out-dir /tmp/my-bundle
+ *   bun run packages/adapters/copilot/scripts/generate-bundle.ts --out-dir plugins/copilot
  */
 
 import { homedir } from "node:os";

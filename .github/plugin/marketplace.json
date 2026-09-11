@@ -1,0 +1,31 @@
+{
+  "name": "weaveio",
+  "metadata": {
+    "description": "Weave — self-hosted GitHub Copilot plugin marketplace for the Weave harness-agnostic prompt and agent-configuration API",
+    "version": "1.0.0"
+  },
+  "owner": {
+    "name": "Weave",
+    "url": "https://github.com/weave-io"
+  },
+  "plugins": [
+    {
+      "name": "weave",
+      "description": "Harness-agnostic prompt and agent-configuration API for GitHub Copilot",
+      "version": "0.1.0",
+      "author": {
+        "name": "Weave",
+        "url": "https://github.com/weave-io"
+      },
+      "homepage": "https://github.com/weave-io/weave",
+      "repository": "https://github.com/weave-io/weave",
+      "keywords": [
+        "weave",
+        "agents",
+        "copilot"
+      ],
+      "license": "MIT",
+      "source": "./plugins/copilot"
+    }
+  ]
+}
