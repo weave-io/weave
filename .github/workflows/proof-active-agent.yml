@@ -1,0 +1,123 @@
+name: Proof — Active agent is Loom
+
+# Provable end-to-end integration proofs that the locally-built adapters
+# make `loom` the active agent when installed into a real harness
+# environment. See docs/opencode-proofs.md.
+#
+# V1 proof runs on a plain Ubuntu runner (no container). V2 proof requires
+# Podman (matches the existing verify-opencode2.yml pattern). Claude Code
+# proof runs on a plain Ubuntu runner and drives the real production
+# `weave compose --adapter claude-code` pipeline end-to-end.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/adapters/opencode/**'
+      - 'packages/adapters/opencode2/**'
+      - 'packages/adapters/claude-code/**'
+      - 'packages/cli/**'
+      - 'packages/config/**'
+      - 'packages/core/**'
+      - 'packages/engine/**'
+      - 'scripts/proof/**'
+      - '.github/workflows/proof-active-agent.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/adapters/opencode/**'
+      - 'packages/adapters/opencode2/**'
+      - 'packages/adapters/claude-code/**'
+      - 'packages/cli/**'
+      - 'packages/config/**'
+      - 'packages/core/**'
+      - 'packages/engine/**'
+      - 'scripts/proof/**'
+      - '.github/workflows/proof-active-agent.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof-v1:
+    name: V1 — opencode default_agent == loom
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install opencode CLI (v1)
+        # opencode-ai ships an `opencode` binary. Pin to the same major
+        # version the V1 adapter targets (@opencode-ai/plugin ~1.15.9). The
+        # proof is version-agnostic within v1.x — any 1.x that supports
+        # `debug config` and the plugin loader works.
+        run: |
+          bun add -g opencode-ai@^1.15
+          echo "$HOME/.bun/install/global/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Verify opencode is on PATH
+        run: |
+          which opencode
+          opencode --version
+
+      - name: Run V1 proof
+        run: ./scripts/proof/opencode-v1-active-agent.sh
+
+  proof-v2:
+    name: V2 — opencode2 loom is Weave-owned (Podman)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Verify Podman is available
+        run: podman --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run V2 proof
+        run: ./scripts/proof/opencode-v2-active-agent.sh
+
+  proof-claude-code:
+    name: Claude Code — settings.json .agent == loom
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run Claude Code proof
+        run: ./scripts/proof/claude-code-active-agent.sh

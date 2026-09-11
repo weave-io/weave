@@ -31,7 +31,13 @@ function markerDir(): string {
   return process.env.WEAVE_VERIFY_MARKER_DIR ?? process.cwd();
 }
 
-type AgentEntry = { name?: string; description?: string };
+type AgentEntry = {
+  name?: string;
+  description?: string;
+  mode?: unknown;
+  permission?: unknown;
+  prompt?: unknown;
+};
 
 const wrapped = {
   ...weavePlugin,
@@ -88,10 +94,27 @@ const wrapped = {
         {
           error: listError,
           count: agents.length,
-          agents: agents.map((a) => ({
-            name: a?.name ?? null,
-            description: a?.description ?? null,
-          })),
+          agents: agents.map((a) => {
+            const promptStr = typeof a?.prompt === "string" ? a.prompt : null;
+            return {
+              name: a?.name ?? null,
+              description: a?.description ?? null,
+              // Additive fields consumed by the extended active-agent proof.
+              // Existing verify:opencode2 layer-6 assertions ignore these.
+              mode: typeof a?.mode === "string" ? a.mode : null,
+              permissionKeys:
+                a?.permission && typeof a.permission === "object"
+                  ? Object.keys(a.permission as Record<string, unknown>)
+                  : null,
+              promptLength: promptStr === null ? null : promptStr.length,
+              promptContainsLoomHeader:
+                promptStr === null
+                  ? null
+                  : promptStr.includes("loom — Main Orchestrator"),
+              promptContainsDelegation:
+                promptStr === null ? null : promptStr.includes("Delegation"),
+            };
+          }),
         },
         null,
         2,
