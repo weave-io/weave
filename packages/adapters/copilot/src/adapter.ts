@@ -284,7 +284,7 @@ export class CopilotAdapter implements HarnessAdapter {
           version,
           description:
             "Harness-agnostic prompt and agent-configuration API for GitHub Copilot",
-          author: "Weave",
+          author: { name: "Weave" },
           license: "MIT",
           keywords: ["weave", "agents", "copilot"],
         },

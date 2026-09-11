@@ -41,7 +41,7 @@ const PluginManifestSchema = z
       .regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/),
     version: z.string().optional(),
     description: z.string().optional(),
-    author: z.union([PluginAuthorSchema, z.string()]).optional(),
+    author: PluginAuthorSchema.optional(),
     homepage: z.string().optional(),
     repository: z.string().optional(),
     license: z.string().optional(),
