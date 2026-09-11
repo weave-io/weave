@@ -22,6 +22,8 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [DSL Reference](dsl-reference.md) | Canonical `.weave` DSL syntax reference (agents, categories, workflows, settings) |
 | [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
+| [Copilot Adapter](copilot-adapter.md) | GitHub Copilot adapter status, context, decision, and consequences |
+| [Copilot Adapter Guide](adapters/copilot.md) | Practical install path (`--add-dir`), generated layout, `weave compose --adapter copilot` status, known deprecations |
 | [OpenCode V2 Adapter](opencode2-adapter.md) | `@weaveio/weave-adapter-opencode2` — independent V2 adapter package (no shared code with V1); see [Spec 34](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) and [ADR 0010](adr/0010-opencode2-independent-adapter.md) |
 | [Claude Code Adapter Guide](adapters/claude-code.md) | Two-plugin model, installation, tool policy mapping, model aliases, edge cases |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |

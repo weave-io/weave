@@ -29,6 +29,20 @@
         "typescript": "^5.4.5",
       },
     },
+    "packages/adapters/copilot": {
+      "name": "@weaveio/weave-adapter-copilot",
+      "version": "0.1.0",
+      "dependencies": {
+        "mustache": "^4.2.0",
+        "neverthrow": "^8.2.0",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@weaveio/weave-core": "workspace:*",
+        "@weaveio/weave-engine": "workspace:*",
+        "typescript": "^5.4.5",
+      },
+    },
     "packages/adapters/opencode": {
       "name": "@weaveio/weave-adapter-opencode",
       "version": "0.1.2",
@@ -955,6 +969,8 @@
     "@vscode/l10n": ["@vscode/l10n@0.0.18", "", {}, "sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ=="],
 
     "@weaveio/weave-adapter-claude-code": ["@weaveio/weave-adapter-claude-code@workspace:packages/adapters/claude-code"],
+
+    "@weaveio/weave-adapter-copilot": ["@weaveio/weave-adapter-copilot@workspace:packages/adapters/copilot"],
 
     "@weaveio/weave-adapter-opencode": ["@weaveio/weave-adapter-opencode@workspace:packages/adapters/opencode"],
 

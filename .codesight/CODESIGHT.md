@@ -1,11 +1,11 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 155 lib files | 19 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,500 tokens. Without it, AI exploration would cost ~53,400 tokens. **Saves ~39,000 tokens per conversation.**
-> **Last scanned:** 2026-09-05 19:05 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 160 lib files | 20 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~54,900 tokens. **Saves ~40,100 tokens per conversation.**
+> **Last scanned:** 2026-09-11 14:48 — re-run after significant changes
 
 ---
 
@@ -20,6 +20,14 @@
   - function getClaudeCodeToolClassifications: () => readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
   - const CLAUDE_CODE_TOOL_IDS: readonly string[]
+- `packages/adapters/copilot/src/adapter.ts` — class CopilotAdapter, interface CopilotAdapterOptions
+- `packages/adapters/copilot/src/agent-translation.ts` — function translateAgentToCopilotMarkdown: (input) => string, interface AgentTranslationInput
+- `packages/adapters/copilot/src/model-resolution.ts` — function buildCopilotModelInput: (descriptor) => ModelResolutionInput, const COPILOT_AVAILABLE_MODELS: Set<string>
+- `packages/adapters/copilot/src/skill-discovery.ts` — function discoverCopilotSkills: (projectRoot, homeDir, readDir) => void
+- `packages/adapters/copilot/src/tool-classification.ts`
+  - function getCopilotToolClassifications: () => readonly ConcreteToolClassification[]
+  - const COPILOT_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassification[]
+  - const COPILOT_TOOL_IDS: readonly string[]
 - `packages/adapters/opencode/src/adapter.ts`
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
@@ -736,6 +744,7 @@
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `WEAVE_ADAPTER_OPENCODE_VERSION` (has default) — sandboxes/opencode/entrypoint.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
+- `WEAVE_COPILOT_LIVE` **required** — packages/adapters/copilot/src/__tests__/live-cli.test.ts
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
@@ -808,7 +817,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 150 test files found
+> 157 test files found
 
 ---
 
