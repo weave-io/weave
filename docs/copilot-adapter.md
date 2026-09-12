@@ -232,6 +232,82 @@ for the regression coverage.
 See [the practical Copilot guide](adapters/copilot.md), [Adapter Boundary](adapter-boundary.md),
 and [`docs/artifacts/copilot-adapter-research.md`](artifacts/copilot-adapter-research.md).
 
+### Delegation targets and Copilot built-in agents
+
+**Problem.** Copilot's `task` tool, which runs subagents, only accepts the
+ids Copilot assigned to each agent. For plugin-contributed agents these are
+qualified (`weave:thread`, `weave:shuttle`, ...), but the shared Loom and
+Tapestry prompt templates name delegation targets by their bare Weave name
+(`thread`, `shuttle`). Copilot also ships built-in subagents (`explore`,
+`task`, `general-purpose`, `code-review`, `research`, `security-review`)
+that its own system prompt describes by name. Live runs against Copilot CLI
+1.0.83 (2026-09-12, Sonnet 5, a prompt asking for three parallel codebase
+investigations) showed Loom as the active agent sending **0/9** of these
+delegations to `weave:thread` and **9/9** to the built-in `explore`.
+
+**Decision.** The Copilot adapter adapts Loom's and Tapestry's prompts at
+translation time, in
+[`delegation-prompt.ts`](../packages/adapters/copilot/src/delegation-prompt.ts):
+
+- `**name**` and `` `name` `` references to the agent's own delegation
+  targets are rewritten to the qualified id (`**weave:thread**`). Plain
+  prose, the agent's own name, and names that are not targets (such as the
+  "do not invent `shuttle-backend`" examples) are left alone. This follows
+  `qualifyPluginAgentNames`, so bare-name output stays bare.
+- A "Delegation targets (GitHub Copilot)" section is appended. It states
+  that `agent_type` must be a `weave:<name>` id and maps each built-in to
+  the Weave agent that replaces it (`explore` → `weave:thread`, `research`
+  → `weave:spindle`, `task`/`general-purpose` → `weave:shuttle` or a
+  category shuttle, `code-review` → `weave:weft`, `security-review` →
+  `weave:warp`). A built-in is only named when its replacement is one of the
+  agent's delegation targets.
+
+With the adapted bundle, the same live runs sent **9/9** delegations to
+`weave:thread`.
+
+**Scope rule: act only while Loom or Tapestry is active.** Weave must not
+change Copilot's behavior in sessions where no Weave orchestrator is the
+active agent. The change is therefore limited to Loom's and Tapestry's
+prompts, which only take effect while one of them is selected. Every other
+agent's file, including a user-defined agent that can delegate, is
+emitted unchanged. The shared templates and the engine are untouched: this
+is Copilot-specific, and other harnesses have different built-ins.
+
+**Alternatives considered (live-verified, not adopted):**
+
+- **A `preToolUse` hook** shipped in the plugin at
+  `com.github.copilot/hooks/hooks.json` (for plugins declaring the Agent
+  Plugins v1 `$schema`, a root `hooks.json` is ignored). It receives
+  `{toolName: "task", toolArgs: {agent_type, ...}}` and can deny built-in
+  agent types with `{"permissionDecision": "deny", ...}`. The CLI then
+  retries with the Weave agent named in the deny reason. It works, but a
+  plugin hook runs in every Copilot session and its input doesn't say which
+  agent is active, so it breaks the scope rule above. (This also means the
+  "no plugin-hook system" statement in [Context](#context) no longer holds
+  for 1.0.83.)
+- **The `subagents.disabledSubagents` user setting** (in
+  `~/.copilot/settings.json`) removes built-ins, `general-purpose`
+  included, from the `task` tool entirely. It is user-scope only, cannot be
+  set per repository or by a plugin, and affects every session.
+- **A custom agent with a built-in's name** (for example
+  `.github/agents/explore.agent.md`) does not override the built-in inside
+  the `task` tool. Once the built-in is disabled, the name is blocked for
+  the custom agent too.
+
+**Consequences.**
+
+- This is guidance, not enforcement. On a bad run, nothing prevents Loom
+  from choosing a built-in.
+- Evidence so far covers one model (Sonnet 5), one task shape (parallel
+  exploration), Loom only, and the CLI only. Tapestry and the GitHub
+  Copilot app have not been exercised live.
+- Sessions using Copilot's default agent are unaffected by design.
+
+Coverage:
+[`delegation-prompt.test.ts`](../packages/adapters/copilot/src/__tests__/delegation-prompt.test.ts),
+plus the [`marketplace.test.ts`](../packages/adapters/copilot/src/__tests__/marketplace.test.ts)
+drift check on the committed `plugins/copilot/` bundle.
+
 ### Self-hosted plugin marketplace
 
 **Decision.** This repository is its own GitHub Copilot plugin marketplace:

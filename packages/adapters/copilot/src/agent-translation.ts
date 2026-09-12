@@ -6,6 +6,7 @@
  */
 
 import type { AgentDescriptor } from "@weaveio/weave-engine";
+import { adaptCopilotDelegationPrompt } from "./delegation-prompt.js";
 
 export interface AgentTranslationInput {
   /** The full agent descriptor from the engine composition layer. */
@@ -67,6 +68,9 @@ function escapeYamlScalar(value: string): string {
  *   derives an agent's stable id from the file's stem, not from the
  *   frontmatter `name:` field, so this only affects display/selection
  *   through the affected app surfaces.
+ * - For Loom and Tapestry, the prompt body is adapted for Copilot's `task`
+ *   tool (qualified agent references plus a built-in replacement section) —
+ *   see `delegation-prompt.ts`.
  */
 export function translateAgentToCopilotMarkdown(
   input: AgentTranslationInput,
@@ -103,5 +107,12 @@ export function translateAgentToCopilotMarkdown(
 
   frontmatterLines.push("---");
 
-  return `${frontmatterLines.join("\n")}\n\n${descriptor.composedPrompt}\n`;
+  const body = adaptCopilotDelegationPrompt({
+    agentName: descriptor.name,
+    prompt: descriptor.composedPrompt,
+    delegationTargets: descriptor.delegationTargets,
+    pluginAgentIdQualifier,
+  });
+
+  return `${frontmatterLines.join("\n")}\n\n${body}\n`;
 }

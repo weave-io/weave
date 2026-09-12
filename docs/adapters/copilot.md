@@ -178,6 +178,12 @@ error. The `.agent.md` **filename** always matches the bare agent name
 [Direct install](#direct-install-deprecated-with-a-targeted-compatibility-fix)
 below.
 
+`loom.agent.md` and `tapestry.agent.md` are the only files whose prompt body
+differs from the shared templates. Their delegation references are qualified
+(`weave:thread`) and they end with a "Delegation targets (GitHub Copilot)"
+section that steers delegation away from Copilot's built-in agents. See
+[Copilot Adapter § Delegation targets and Copilot built-in agents](../copilot-adapter.md#delegation-targets-and-copilot-built-in-agents).
+
 ## `weave compose --adapter copilot`
 
 This CLI invocation is **aspirational** — the `weave compose` command does not
