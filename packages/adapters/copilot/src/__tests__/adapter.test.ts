@@ -422,6 +422,35 @@ describe("CopilotAdapter", () => {
       expect(written[agentPath!]).not.toContain(":loom");
     });
 
+    it("still qualifies Loom's delegation references when qualifyPluginAgentNames is disabled", async () => {
+      // Copilot's task-tool ids are `<plugin-name>:<agent>` whatever the
+      // frontmatter `name:` says (live-verified, Copilot CLI 1.0.83), so the
+      // display-name opt-out must not bring back bare delegation targets.
+      const written: Record<string, string> = {};
+      const adapter = makeAdapter(written, [], {
+        qualifyPluginAgentNames: false,
+      });
+
+      await adapter.spawnSubagent(
+        makeDescriptor({
+          name: "loom",
+          composedPrompt: "- **thread** — Thread (Codebase Explorer)",
+          delegationTargets: [
+            { name: "thread", triggers: [], isCategory: false },
+          ],
+        }),
+      );
+      await adapter.flush();
+
+      const content =
+        Object.entries(written).find(([path]) =>
+          path.endsWith("loom.agent.md"),
+        )?.[1] ?? "";
+      expect(content).toContain("---\nname: loom\n");
+      expect(content).toContain("- **weave:thread** — Thread");
+      expect(content).toContain("→ `weave:thread` (instead of `explore`)");
+    });
+
     it("never qualifies the .agent.md filename itself (only frontmatter name:)", async () => {
       const written: Record<string, string> = {};
       const adapter = makeAdapter(written, []);

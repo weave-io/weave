@@ -267,6 +267,9 @@ export class CopilotAdapter implements HarnessAdapter {
       pluginAgentIdQualifier: this.qualifyPluginAgentNames
         ? this.pluginAgentIdQualifier
         : undefined,
+      // Always qualified: Copilot's task-tool ids are `<plugin-name>:<agent>`
+      // regardless of the frontmatter `name:` opt-out above.
+      taskAgentIdQualifier: this.pluginAgentIdQualifier,
     });
 
     return { markdown, mcpServers };

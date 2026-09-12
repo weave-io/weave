@@ -81,7 +81,7 @@ Delegate aggressively to keep your context lean. Thread and Spindle are cheap (r
 
 ## Category Shuttles
 
-Category shuttles are domain-scoped specialists generated from your project's category definitions. They appear in the list above with names like `shuttle-{category}`. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within a category's domain.**
+Category shuttles are domain-scoped specialists generated from your project's category definitions. They appear in the list above with names like `weave:shuttle-{category}`. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within a category's domain.**
 
 Only delegate to category shuttles that are listed above. If no listed category shuttle clearly matches, use the generic `weave:shuttle`. Do not invent legacy category names such as `shuttle-backend` or `shuttle-frontend` unless they are explicitly listed.
 
@@ -184,7 +184,7 @@ Never use Copilot's built-in agent types `explore`, `research`, `task`, `general
 
 - codebase exploration / "how does X work" / parallel research threads → `weave:thread` (instead of `explore`)
 - external docs research → `weave:spindle` (instead of `research`)
-- running builds/tests or implementation → `weave:shuttle` or the matching category shuttle (`weave:shuttle-<category>`) (instead of `task` / `general-purpose`)
+- running builds/tests or implementation → `weave:shuttle` or the matching category shuttle (`weave:shuttle-{category}`) (instead of `task` / `general-purpose`)
 - review → `weave:weft` (instead of `code-review`)
 - security review → `weave:warp` (instead of `security-review`)
 

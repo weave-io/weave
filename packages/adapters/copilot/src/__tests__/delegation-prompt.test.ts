@@ -25,7 +25,7 @@ describe("adaptCopilotDelegationPrompt", () => {
         agentName: "loom",
         prompt,
         delegationTargets: [],
-        pluginAgentIdQualifier: "weave",
+        taskAgentIdQualifier: "weave",
       }),
     ).toBe(prompt);
   });
@@ -37,7 +37,7 @@ describe("adaptCopilotDelegationPrompt", () => {
           agentName,
           prompt: LOOM_PROMPT,
           delegationTargets: targets("shuttle", "thread"),
-          pluginAgentIdQualifier: "weave",
+          taskAgentIdQualifier: "weave",
         }),
       ).toBe(LOOM_PROMPT);
     }
@@ -48,7 +48,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "tapestry",
       prompt: "Available specialists:\n- **shuttle** — Shuttle",
       delegationTargets: targets("shuttle"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("- **weave:shuttle** — Shuttle");
@@ -60,7 +60,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "loom",
       prompt: LOOM_PROMPT,
       delegationTargets: targets("shuttle", "thread", "shuttle-core"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("- **weave:shuttle** — Shuttle");
@@ -74,7 +74,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "loom",
       prompt: LOOM_PROMPT,
       delegationTargets: targets("shuttle", "thread", "shuttle-core"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("You are **loom**");
@@ -95,7 +95,7 @@ describe("adaptCopilotDelegationPrompt", () => {
         "weft",
         "warp",
       ),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("## Delegation targets (GitHub Copilot)");
@@ -121,12 +121,33 @@ describe("adaptCopilotDelegationPrompt", () => {
         ...targets("shuttle"),
         { name: "shuttle-core", triggers: [], isCategory: true },
       ],
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain(
-      "→ `weave:shuttle` or the matching category shuttle (`weave:shuttle-<category>`) (instead of `task` / `general-purpose`)",
+      "→ `weave:shuttle` or the matching category shuttle (`weave:shuttle-{category}`) (instead of `task` / `general-purpose`)",
     );
+  });
+
+  it("qualifies the `shuttle-{category}` placeholder only when category shuttles exist", () => {
+    const withCategories = adaptCopilotDelegationPrompt({
+      agentName: "loom",
+      prompt: LOOM_PROMPT,
+      delegationTargets: [
+        ...targets("shuttle"),
+        { name: "shuttle-core", triggers: [], isCategory: true },
+      ],
+      taskAgentIdQualifier: "weave",
+    });
+    const withoutCategories = adaptCopilotDelegationPrompt({
+      agentName: "loom",
+      prompt: LOOM_PROMPT,
+      delegationTargets: targets("shuttle"),
+      taskAgentIdQualifier: "weave",
+    });
+
+    expect(withCategories).toContain("names like `weave:shuttle-{category}`");
+    expect(withoutCategories).toContain("names like `shuttle-{category}`");
   });
 
   it("only forbids built-ins whose Weave replacement is a delegation target", () => {
@@ -134,7 +155,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "loom",
       prompt: "Delegate to **shuttle**.",
       delegationTargets: targets("shuttle"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain(
@@ -149,7 +170,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "loom",
       prompt: "Delegate to **custom-agent**.",
       delegationTargets: targets("custom-agent"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("Delegate to **weave:custom-agent**.");
@@ -175,7 +196,7 @@ describe("adaptCopilotDelegationPrompt", () => {
       agentName: "loom",
       prompt: "Use **a.b** but not **axb**.",
       delegationTargets: targets("a.b"),
-      pluginAgentIdQualifier: "weave",
+      taskAgentIdQualifier: "weave",
     });
 
     expect(result).toContain("Use **weave:a.b** but not **axb**.");

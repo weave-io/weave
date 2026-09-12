@@ -64,21 +64,27 @@ export interface CopilotDelegationPromptInput {
   /** The agent's delegation targets (empty for agents that cannot delegate). */
   delegationTargets: DelegationTarget[];
   /**
-   * Plugin agent id qualifier (see `getPluginAgentIdQualifier` in
-   * `adapter.ts`). When omitted, references stay bare, matching the bare
-   * frontmatter `name:` emitted in that mode.
+   * Qualifier Copilot's `task` tool uses for this plugin's agents (the plugin
+   * manifest name, see `getPluginAgentIdQualifier` in `adapter.ts`). It does
+   * not depend on the frontmatter `name:` qualification option: Copilot
+   * assigns `<plugin-name>:<agent-name>` ids either way. When omitted,
+   * references stay bare.
    */
-  pluginAgentIdQualifier?: string;
+  taskAgentIdQualifier?: string;
 }
+
+/** The category-shuttle placeholder used by the shared prompt templates. */
+const CATEGORY_SHUTTLE_PLACEHOLDER = "shuttle-{category}";
 
 /**
  * Adapts Loom's and Tapestry's composed prompts so they address Weave agents
  * by their Copilot id and prefer them over Copilot's built-in subagents.
  *
  * - Only `**name**` and `` `name` `` references whose name is one of the
- *   agent's own delegation targets are qualified. Plain prose, the agent's
- *   own name, and names that are not targets (such as the "do not invent
- *   `shuttle-backend`" examples) are left alone.
+ *   agent's own delegation targets are qualified, plus the
+ *   `` `shuttle-{category}` `` placeholder when category shuttles exist.
+ *   Plain prose, the agent's own name, and names that are not targets (such
+ *   as the "do not invent `shuttle-backend`" examples) are left alone.
  * - A "Delegation targets (GitHub Copilot)" section is appended.
  * - Any other agent, and Loom/Tapestry without delegation targets, are
  *   returned unchanged.
@@ -86,30 +92,36 @@ export interface CopilotDelegationPromptInput {
 export function adaptCopilotDelegationPrompt(
   input: CopilotDelegationPromptInput,
 ): string {
-  const { agentName, prompt, delegationTargets, pluginAgentIdQualifier } =
-    input;
+  const { agentName, prompt, delegationTargets, taskAgentIdQualifier } = input;
   if (!ADAPTED_AGENTS.has(agentName) || delegationTargets.length === 0) {
     return prompt;
   }
 
   const toId = (name: string): string =>
-    pluginAgentIdQualifier ? `${pluginAgentIdQualifier}:${name}` : name;
+    taskAgentIdQualifier ? `${taskAgentIdQualifier}:${name}` : name;
+  const hasCategoryShuttles = delegationTargets.some((t) => t.isCategory);
 
   let adapted = prompt;
-  if (pluginAgentIdQualifier) {
+  if (taskAgentIdQualifier) {
     for (const { name } of delegationTargets) {
       const escaped = escapeRegExp(name);
       adapted = adapted
         .replace(new RegExp(`\\*\\*${escaped}\\*\\*`, "g"), `**${toId(name)}**`)
         .replace(new RegExp(`\`${escaped}\``, "g"), `\`${toId(name)}\``);
     }
+    if (hasCategoryShuttles) {
+      adapted = adapted.replaceAll(
+        `\`${CATEGORY_SHUTTLE_PLACEHOLDER}\``,
+        `\`${toId(CATEGORY_SHUTTLE_PLACEHOLDER)}\``,
+      );
+    }
   }
 
   const section = buildDelegationSection(
     new Set(delegationTargets.map((t) => t.name)),
-    delegationTargets.some((t) => t.isCategory),
+    hasCategoryShuttles,
     toId,
-    pluginAgentIdQualifier,
+    taskAgentIdQualifier,
   );
   return `${adapted.trimEnd()}\n\n${section}`;
 }
@@ -118,14 +130,14 @@ function buildDelegationSection(
   targetNames: Set<string>,
   hasCategoryShuttles: boolean,
   toId: (name: string) => string,
-  pluginAgentIdQualifier: string | undefined,
+  taskAgentIdQualifier: string | undefined,
 ): string {
   const lines = ["## Delegation targets (GitHub Copilot)", ""];
 
-  if (pluginAgentIdQualifier) {
+  if (taskAgentIdQualifier) {
     const example = toId([...targetNames][0] ?? "shuttle");
     lines.push(
-      `When you call the \`task\` tool, \`agent_type\` MUST be the \`${pluginAgentIdQualifier}:<name>\` id of a Weave agent listed in this prompt (for example \`${example}\`). Bare Weave names are not valid agent types.`,
+      `When you call the \`task\` tool, \`agent_type\` MUST be the \`${taskAgentIdQualifier}:<name>\` id of a Weave agent listed in this prompt (for example \`${example}\`). Bare Weave names are not valid agent types.`,
       "",
     );
   }
@@ -146,7 +158,7 @@ function buildDelegationSection(
       const instead = r.builtins.map((b) => `\`${b}\``).join(" / ");
       const alternatives =
         r.weaveAgent === "shuttle" && hasCategoryShuttles
-          ? ` or the matching category shuttle (\`${toId("shuttle-<category>")}\`)`
+          ? ` or the matching category shuttle (\`${toId(CATEGORY_SHUTTLE_PLACEHOLDER)}\`)`
           : "";
       lines.push(
         `- ${r.purpose} → \`${toId(r.weaveAgent)}\`${alternatives} (instead of ${instead})`,

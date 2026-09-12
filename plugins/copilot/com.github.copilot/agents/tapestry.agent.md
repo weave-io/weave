@@ -122,7 +122,7 @@ Available specialists:
 - **weave:shuttle-docs** — Specs, ADRs, proof artifacts, and guides
 - **weave:shuttle-scripts** — Build scripts, validation tooling, and dev utilities
 
-Route implementation tasks to `shuttle-{category}` agents when the task matches the category's description and triggers. Fall back to `weave:shuttle` when no category matches.
+Route implementation tasks to `weave:shuttle-{category}` agents when the task matches the category's description and triggers. Fall back to `weave:shuttle` when no category matches.
 
 </Delegation>
 
@@ -130,10 +130,10 @@ Route implementation tasks to `shuttle-{category}` agents when the task matches 
 For each task, route using this decision tree:
 
 1. **Check category descriptions and triggers first**:
-   - The task clearly matches one category → `shuttle-{category}`
+   - The task clearly matches one category → `weave:shuttle-{category}`
    - The task spans several categories or matches none → `weave:shuttle`
 
-2. **Check explicit category hints**: if the plan task names a category, route to `shuttle-{category}` when available.
+2. **Check explicit category hints**: if the plan task names a category, route to `weave:shuttle-{category}` when available.
 
 3. **Default fallback**: `weave:shuttle`
 
@@ -231,7 +231,7 @@ Never use Copilot's built-in agent types `explore`, `research`, `task`, `general
 
 - codebase exploration / "how does X work" / parallel research threads → `weave:thread` (instead of `explore`)
 - external docs research → `weave:spindle` (instead of `research`)
-- running builds/tests or implementation → `weave:shuttle` or the matching category shuttle (`weave:shuttle-<category>`) (instead of `task` / `general-purpose`)
+- running builds/tests or implementation → `weave:shuttle` or the matching category shuttle (`weave:shuttle-{category}`) (instead of `task` / `general-purpose`)
 - review → `weave:weft` (instead of `code-review`)
 - security review → `weave:warp` (instead of `security-review`)
 
