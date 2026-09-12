@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 160 lib files | 20 env vars | 7 middleware | 0% test coverage
-> **Token savings:** this file is ~15,000 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,100 tokens per conversation.**
-> **Last scanned:** 2026-09-11 20:21 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 161 lib files | 20 env vars | 7 middleware | 0% test coverage
+> **Token savings:** this file is ~15,000 tokens. Without it, AI exploration would cost ~55,400 tokens. **Saves ~40,300 tokens per conversation.**
+> **Last scanned:** 2026-09-12 21:37 — re-run after significant changes
 
 ---
 
@@ -25,6 +25,7 @@
   - class CopilotAdapter
   - interface CopilotAdapterOptions
 - `packages/adapters/copilot/src/agent-translation.ts` — function translateAgentToCopilotMarkdown: (input) => string, interface AgentTranslationInput
+- `packages/adapters/copilot/src/delegation-prompt.ts` — function adaptCopilotDelegationPrompt: (input) => string, interface CopilotDelegationPromptInput
 - `packages/adapters/copilot/src/model-resolution.ts` — function buildCopilotModelInput: (descriptor) => ModelResolutionInput, const COPILOT_AVAILABLE_MODELS: Set<string>
 - `packages/adapters/copilot/src/skill-discovery.ts` — function discoverCopilotSkills: (projectRoot, homeDir, readDir) => void
 - `packages/adapters/copilot/src/tool-classification.ts`
@@ -821,7 +822,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 158 test files found
+> 159 test files found
 
 ---
 
