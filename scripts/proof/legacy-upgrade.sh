@@ -45,6 +45,12 @@
 #
 # Environment:
 #   WEAVE_PROOF_LEGACY_PLUGIN  legacy plugin spec (default @opencode_weave/weave@0.8.1)
+#   WEAVE_PROOF_CLI            published CLI spec, e.g. @weaveio/weave-cli@0.2.0;
+#                              installed with `bun add --global` into the sandbox
+#                              (default: run the CLI from this checkout)
+#   WEAVE_PROOF_ADAPTER        published adapter spec for opencode.json, e.g.
+#                              @weaveio/weave-adapter-opencode@0.2.0
+#                              (default: build the adapter from this checkout)
 #   WEAVE_PROOF_KEEP=1         keep the sandbox and print its path
 #
 # Success: exit 0. Failure: exit non-zero identifying which claim broke.
@@ -57,6 +63,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${REPO_ROOT}/scripts/proof/lib.sh"
 
 LEGACY_PLUGIN="${WEAVE_PROOF_LEGACY_PLUGIN:-@opencode_weave/weave@0.8.1}"
+CLI_SPEC="${WEAVE_PROOF_CLI:-}"
+ADAPTER_SPEC="${WEAVE_PROOF_ADAPTER:-}"
 FIXTURES="${REPO_ROOT}/scripts/proof/fixtures/legacy-upgrade"
 KITCHEN_SINK="${REPO_ROOT}/packages/cli/src/__fixtures__/legacy/kitchen-sink/.opencode"
 PKG_DIR="${REPO_ROOT}/packages/adapters/opencode"
@@ -69,16 +77,23 @@ MIGRATED=(p1-categories p2-speckit p3-kitchen-sink p6-kitchen-sink-strict)
 proof_require_bins opencode jq bun
 proof_log "opencode version: $(opencode --version 2>&1 | head -1)"
 proof_log "legacy plugin: ${LEGACY_PLUGIN}"
+proof_log "cli: ${CLI_SPEC:-local checkout}"
+proof_log "adapter: ${ADAPTER_SPEC:-local build}"
 
-# --- Build the V1 adapter locally -------------------------------------------
-proof_build_adapter \
-  "${PKG_DIR}" \
-  "${PKG_DIR}/dist" \
-  ./src/index.ts ./src/plugin.ts \
-  -- \
-  "@opencode-ai/plugin" "@opencode-ai/sdk" mustache neverthrow zod
-[ -f "${PLUGIN_ENTRY}" ] || proof_fail "expected build output missing: ${PLUGIN_ENTRY}"
-proof_ok "adapter built: ${PLUGIN_ENTRY}"
+# --- Build the V1 adapter locally (unless testing a published one) ----------
+if [ -n "${ADAPTER_SPEC}" ]; then
+  UPGRADE_PLUGIN="${ADAPTER_SPEC}"
+else
+  proof_build_adapter \
+    "${PKG_DIR}" \
+    "${PKG_DIR}/dist" \
+    ./src/index.ts ./src/plugin.ts \
+    -- \
+    "@opencode-ai/plugin" "@opencode-ai/sdk" mustache neverthrow zod
+  [ -f "${PLUGIN_ENTRY}" ] || proof_fail "expected build output missing: ${PLUGIN_ENTRY}"
+  proof_ok "adapter built: ${PLUGIN_ENTRY}"
+  UPGRADE_PLUGIN="file://${PLUGIN_ENTRY}"
+fi
 
 # --- Sandbox ----------------------------------------------------------------
 SANDBOX="$(mktemp -d -t weave-legacy-upgrade-XXXXXX)"
@@ -103,6 +118,17 @@ unset ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY \
   GOOGLE_GENERATIVE_AI_API_KEY GITHUB_TOKEN GH_TOKEN 2>/dev/null || true
 
 cp "${FIXTURES}/user-config/weave-opencode.jsonc" "${XDG_CONFIG_HOME}/opencode/weave-opencode.jsonc"
+
+# A published CLI is installed the way the upgrade guide says, with
+# `bun add --global`, into a sandboxed BUN_INSTALL.
+if [ -n "${CLI_SPEC}" ]; then
+  export BUN_INSTALL="${HOME}/.bun"
+  bun add --global "${CLI_SPEC}" >"${RESULTS}/cli-install.log" 2>&1 \
+    || { cat "${RESULTS}/cli-install.log" >&2; proof_fail "bun add --global ${CLI_SPEC} failed"; }
+  WEAVE=("${BUN_INSTALL}/bin/weave")
+  [ -x "${WEAVE[0]}" ] || proof_fail "weave binary missing after install: ${WEAVE[0]}"
+  proof_ok "installed ${CLI_SPEC}"
+fi
 
 stage_project() {
   local name="$1" dir="${SANDBOX}/${1}"
@@ -182,7 +208,7 @@ for project in "${PROJECTS[@]}"; do
     >"${RESULTS}/upgrade/${project}.validate.log" 2>&1
   echo $? >"${RESULTS}/upgrade/${project}.validate.exit"
   set -e
-  write_opencode_json "${dir}" "file://${PLUGIN_ENTRY}"
+  write_opencode_json "${dir}" "${UPGRADE_PLUGIN}"
   debug_config "${dir}" "${RESULTS}/upgrade/${project}.json"
 done
 proof_ok "ran weave init migrate + weave validate and captured upgraded debug config"

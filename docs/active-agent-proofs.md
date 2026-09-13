@@ -161,6 +161,18 @@ configs) for inspection.
 ./scripts/proof/legacy-upgrade.sh
 ```
 
+By default the proof runs the CLI and adapter from the checkout. To check a
+release before or after pointing users at it, test the published packages
+instead. `WEAVE_PROOF_CLI` installs the CLI with `bun add --global` (into the
+sandbox), exactly as the upgrade guide does, and `WEAVE_PROOF_ADAPTER` goes
+into `opencode.json` in place of the local build:
+
+```bash
+WEAVE_PROOF_CLI=@weaveio/weave-cli@0.2.0 \
+WEAVE_PROOF_ADAPTER=@weaveio/weave-adapter-opencode@0.2.0 \
+  ./scripts/proof/legacy-upgrade.sh
+```
+
 ## The pattern
 
 Every proof follows the same five-step shape, encoded in
