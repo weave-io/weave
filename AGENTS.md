@@ -657,6 +657,7 @@ docs/
 - **Specs** (`docs/specs/`) — detailed, numbered specs for subsystems. Each spec lives in its own directory. The primary spec file is `<N>-spec-<name>.md` (not `index.md`). Use a sequential number prefix (`29-`, `30-`, …) so specs have a stable reading order. See [`docs/specs/README.md`](docs/specs/README.md) for the full index.
 - **Guides** (`docs/*.md`) — conceptual overviews, architecture decision records (ADRs), how-to references. Name files with kebab-case (`harness-adapter.md`, `config-merge.md`). Entry point: [`docs/README.md`](docs/README.md).
 - **Artifacts** (`docs/artifacts/`) — non-normative proof artifacts, terminal captures, and audit evidence. See [`docs/documentation-policy.md`](docs/documentation-policy.md) for classification rules.
+- **Public user docs** live at [tryweave.io/docs](https://tryweave.io/docs/), maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website). A change to user-visible behavior (CLI output, DSL syntax, install steps, adapter behavior) is not done until the website is updated too. `packages/docs` is an unpublished contributor reference.
 
 ### How to write docs
 

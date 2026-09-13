@@ -96,16 +96,18 @@ Check links on:
 - Docs home hero.
 - Search command-palette results.
 
-## GitHub Pages Deployment
+## Building the Docs
 
-Before deploying docs, run:
+This site is not deployed. The public docs at [tryweave.io/docs](https://tryweave.io/docs/) are maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website).
+
+Before handing off docs changes, run:
 
 ```bash
 bun run docs:build
 bun run --filter '@weaveio/weave-docs' typecheck
 ```
 
-If the site is deployed under a repository subpath, set the build base environment consistently with the hosting target. After deployment, navigate the landing page, docs home, a guide page, a reference page, and a compatibility route.
+To build for a subpath host, set `SITE_URL` and `BASE_PATH` consistently with the hosting target, then check the landing page, docs home, a guide page, a reference page, and a compatibility route.
 
 ## Public Docs Maintenance Rules
 

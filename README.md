@@ -142,9 +142,13 @@ bun run docs:check-links
 bun run docs:dev
 ```
 
-See [`packages/docs/README.md`](./packages/docs/README.md) for the public docs
-site and [`docs/documentation-policy.md`](./docs/documentation-policy.md)
-for documentation conventions.
+The public docs at [tryweave.io/docs](https://tryweave.io/docs/) are
+maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website);
+update them when a change affects user-visible behavior. `packages/docs` is an
+unpublished contributor reference (see its
+[README](./packages/docs/README.md)), and
+[`docs/documentation-policy.md`](./docs/documentation-policy.md) covers
+documentation conventions.
 
 ## License
 

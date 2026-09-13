@@ -11,7 +11,6 @@ export const RELEASE_MAINTAINERS = "@weave-io/release-maintainers";
 export const REQUIRED_RELEASE_OWNER_PATHS = [
   ".github/workflows/agent-evals.yml",
   ".github/workflows/ci.yml",
-  ".github/workflows/deploy-docs.yml",
   ".github/workflows/publish-tag.yml",
   ".github/workflows/verify-opencode2.yml",
   ".github/CODEOWNERS",

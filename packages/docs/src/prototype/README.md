@@ -235,8 +235,8 @@ work is unfinished:
 
 ## Base-path safety (GitHub Pages)
 
-The site deploys to GitHub Pages from `packages/docs/dist`
-(`.github/workflows/deploy-docs.yml`). Prototype HTML uses root-relative
+The site is built to `packages/docs/dist` and was designed to be hostable under
+a subpath such as GitHub Pages (it is not deployed today). Prototype HTML uses root-relative
 `.html` links and asset paths; the replica must instead:
 
 - route every `href`/`src` through `import.meta.env.BASE_URL` or bundled asset
