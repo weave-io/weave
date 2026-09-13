@@ -18,11 +18,11 @@ import {
 
 export const ToolPermissionSchema = z.enum(["allow", "deny", "ask"]);
 
-export const DelegationTriggerSchema = z.object({
-  domain: z.string(),
-  trigger: z.string(),
-  routing_hint: z.string().optional(),
-});
+export const DelegationTriggerSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, {
+    message: "trigger must be a non-empty string",
+  });
 
 export const ToolPolicySchema = z
   .object({
@@ -65,14 +65,15 @@ export const AgentConfigSchema = z
     models: z.array(z.string()).optional(),
     review_models: z.array(z.string()).min(1).optional(),
     temperature: z.number().min(0).max(2).optional(),
-    fast: z.boolean().optional(),
+    fast: z.literal(true).optional(),
     variant: z.string().optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
     routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
-    triggers: z.array(DelegationTriggerSchema).optional(),
+    triggers: z.array(DelegationTriggerSchema).min(1).optional(),
   })
+  .strict()
   .refine(...refinePromptExclusive())
   .refine(...refinePromptFileSafe("prompt_file"))
   .refine(...refinePromptAppendExclusive())
@@ -85,18 +86,19 @@ export const AgentConfigSchema = z
 export const CategoryConfigSchema = z
   .object({
     name: z.string().optional(),
-    description: z.string().optional(),
-    patterns: z
-      .array(z.string())
-      .min(1, "patterns must have at least one entry"),
+    description: z.string().refine((value) => value.trim().length > 0, {
+      message: "category description must be a non-empty string",
+    }),
+    triggers: z.array(DelegationTriggerSchema).min(1).optional(),
     models: z.array(z.string()).optional(),
     temperature: z.number().min(0).max(2).optional(),
-    fast: z.boolean().optional(),
+    fast: z.literal(true).optional(),
     variant: z.string().optional(),
     tool_policy: ToolPolicySchema.optional(),
     prompt_append: z.string().optional(),
     prompt_append_file: z.string().optional(),
   })
+  .strict()
   .refine(...refinePromptAppendExclusive())
   .refine(...refinePromptFileSafe("prompt_append_file"));
 

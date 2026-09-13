@@ -698,20 +698,15 @@ describe("renderTemplate — strict full-path validation", () => {
     expect(output).toBe("shuttlewarp");
   });
 
-  it("allows nested valid paths: {{#delegation.targets}}{{#triggers}}{{domain}}{{/triggers}}{{/delegation.targets}}", () => {
-    // Inside {{#delegation.targets}}{{#triggers}}, child "domain" resolves to
-    // "delegation.targets.triggers.domain" which IS in ALLOWED_TEMPLATE_PATHS.
+  it("renders exact string triggers through the current-item path", () => {
     const output = render(
-      "{{#delegation.targets}}{{#triggers}}{{domain}}:{{trigger}} {{/triggers}}{{/delegation.targets}}",
+      "{{#delegation.targets}}{{#triggers}}{{.}} {{/triggers}}{{/delegation.targets}}",
       {
         delegation: {
           targets: [
             {
               name: "shuttle",
-              triggers: [
-                { domain: "Backend", trigger: "API work" },
-                { domain: "Frontend", trigger: "UI work" },
-              ],
+              triggers: ["API work", "UI work"],
             },
           ],
         },
@@ -721,13 +716,11 @@ describe("renderTemplate — strict full-path validation", () => {
         "delegation.targets",
         "delegation.targets.name",
         "delegation.targets.description",
-        "delegation.targets.domains",
         "delegation.targets.triggers",
-        "delegation.targets.triggers.domain",
-        "delegation.targets.triggers.trigger",
+        ".",
       ),
     );
-    expect(output).toBe("Backend:API work Frontend:UI work ");
+    expect(output).toBe("API work UI work ");
   });
 });
 

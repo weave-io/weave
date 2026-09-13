@@ -504,6 +504,7 @@ class Parser {
           pos,
         } satisfies BooleanValue,
         pos,
+        bare: true,
       };
     }
 

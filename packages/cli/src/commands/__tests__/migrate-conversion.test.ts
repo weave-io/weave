@@ -1100,7 +1100,7 @@ describe("convertLegacyJsonc — model + fallback_models → ordered models [...
       JSON.stringify({
         categories: {
           backend: {
-            patterns: ["src/api/**"],
+            description: "Category work",
             model: "gpt-4o",
             fallback_models: ["claude-sonnet-4-5"],
           },
@@ -1120,7 +1120,6 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         categories: {
           backend: {
             description: "Backend APIs",
-            patterns: ["src/api/**", "src/server/**"],
           },
         },
       }),
@@ -1128,14 +1127,14 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain("category backend {");
     expect(result.dsl).toContain('description "Backend APIs"');
-    expect(result.dsl).toContain('patterns ["src/api/**", "src/server/**"]');
+    expect(result.dsl).toContain("");
   });
 
   it("does NOT generate a standalone shuttle-backend agent", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
+          backend: { description: "Category work" },
         },
       }),
     );
@@ -1148,8 +1147,8 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { patterns: ["src/api/**"] },
-          frontend: { patterns: ["src/components/**"] },
+          backend: { description: "Category work" },
+          frontend: { description: "Category work" },
         },
       }),
     );
@@ -1163,7 +1162,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       JSON.stringify({
         categories: {
           backend: {
-            patterns: ["src/api/**"],
+            description: "Category work",
             temperature: 0.2,
             prompt_append: "Focus on API contracts.",
           },
@@ -1175,7 +1174,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
     expect(result.dsl).toContain('prompt_append "Focus on API contracts."');
   });
 
-  it("warns when patterns is not an array", () => {
+  it("skips categories without a description even when legacy patterns are present", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
@@ -1184,8 +1183,10 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
       }),
     );
     expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("categories.backend.patterns");
-    expect(result.warnings[0]!.reason).toContain("expected an array");
+    expect(result.warnings[0]!.field).toBe("categories.backend.description");
+    expect(result.warnings[0]!.reason).toContain(
+      "non-empty category description",
+    );
   });
 
   it("warns when categories value is not an object", () => {
@@ -1203,7 +1204,7 @@ describe("convertLegacyJsonc — categories → category blocks", () => {
         categories: {
           backend: {
             description: "Backend APIs",
-            patterns: ["src/api/**"],
+
             temperature: 0.2,
           },
         },
@@ -1342,7 +1343,7 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
       JSON.stringify({
         categories: {
           backend: {
-            patterns: ["src/api/**"],
+            description: "Category work",
             tools: { write: true, read: true },
           },
         },
@@ -1480,7 +1481,7 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
       categories: {
         backend: {
           description: "Backend APIs",
-          patterns: ["src/api/**"],
+
           model: "claude-sonnet-4-5",
         },
       },
@@ -1508,7 +1509,6 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
       categories: {
         backend: {
           description: "Backend APIs",
-          patterns: ["src/api/**"],
         },
       },
     });
@@ -1525,7 +1525,7 @@ describe("convertLegacyJsonc — full agent/category fixture", () => {
         "my-helper": { prompt: "I help." }, // non-collision
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
     });
     const result = convertLegacyJsonc(source);
@@ -1594,7 +1594,6 @@ describe("runInit migration — agent/category conversion written to destination
           categories: {
             backend: {
               description: "Backend APIs",
-              patterns: ["src/api/**"],
             },
           },
         }),
@@ -1610,7 +1609,7 @@ describe("runInit migration — agent/category conversion written to destination
     const content = fs.snapshot()["/project/.weave/config.weave"] ?? "";
     expect(content).toContain("category backend {");
     expect(content).toContain('description "Backend APIs"');
-    expect(content).toContain('patterns ["src/api/**"]');
+    expect(content).toContain("");
   });
 
   it("builtin collision warning appears in output and file is still written", async () => {
@@ -1651,7 +1650,7 @@ describe("runInit migration — agent/category conversion written to destination
             "my-helper": { prompt: "I help.", mode: "subagent" },
           },
           categories: {
-            backend: { patterns: ["src/api/**"] },
+            backend: { description: "Category work" },
           },
         }),
       },
@@ -1959,7 +1958,7 @@ describe("convertLegacyJsonc — control character escaping in string fields", (
     const result = convertLegacyJsonc(
       JSON.stringify({
         categories: {
-          backend: { description, patterns: ["src/api/**"] },
+          backend: { description },
         },
       }),
     );

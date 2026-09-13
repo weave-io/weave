@@ -153,7 +153,7 @@ Categories route domain work by metadata and generate shuttle agents. A category
 ```weave
 category frontend {
   description "Frontend UI, styling, accessibility, and responsive behavior"
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  triggers ["Use for frontend components, pages, styling, and accessibility"]
   models ["claude-sonnet-4-5"]
   temperature 0.2
   prompt_append "Preserve accessibility and design-system consistency."

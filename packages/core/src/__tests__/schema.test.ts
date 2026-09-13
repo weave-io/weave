@@ -26,19 +26,17 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("execution control schemas", () => {
-  it.each([
-    true,
-    false,
-  ])("accepts fast=%s for agents and categories", (fast) => {
+  it.each([true])("accepts fast=%s for agents and categories", (fast) => {
     expect(AgentConfigSchema.parse({ fast }).fast).toBe(fast);
     expect(
-      CategoryConfigSchema.parse({ patterns: ["src/**"], fast }).fast,
+      CategoryConfigSchema.parse({ description: "Category work", fast }).fast,
     ).toBe(fast);
   });
-  it.each(["true", 1, null])("rejects non-boolean fast=%j", (fast) => {
+  it.each([false, "true", 1, null])("rejects invalid fast=%j", (fast) => {
     expect(AgentConfigSchema.safeParse({ fast }).success).toBe(false);
     expect(
-      CategoryConfigSchema.safeParse({ patterns: ["src/**"], fast }).success,
+      CategoryConfigSchema.safeParse({ description: "Category work", fast })
+        .success,
     ).toBe(false);
   });
   it.each([
@@ -945,7 +943,7 @@ describe("AgentConfigSchema — prompt_append_file", () => {
 
 describe("CategoryConfigSchema — prompt_append_file", () => {
   const baseCategory = {
-    patterns: ["src/**/*.ts"],
+    description: "Category work",
   };
 
   it("accepts prompt_append_file with a valid relative path", () => {
@@ -1780,7 +1778,7 @@ describe("CategoryConfigSchema — variant", () => {
   it("accepts category with variant as a valid string", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Backend category",
-      patterns: ["src/api/**"],
+
       variant: "backend-v3",
     });
     expect(r.success).toBe(true);
@@ -1792,7 +1790,6 @@ describe("CategoryConfigSchema — variant", () => {
   it("accepts category without variant (optional)", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Backend category",
-      patterns: ["src/api/**"],
     });
     expect(r.success).toBe(true);
     if (r.success) {
@@ -1803,7 +1800,7 @@ describe("CategoryConfigSchema — variant", () => {
   it("accepts variant as empty string (valid string; runtime semantics are harness-owned)", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Backend category",
-      patterns: ["src/api/**"],
+
       variant: "",
     });
     expect(r.success).toBe(true);
@@ -1815,7 +1812,7 @@ describe("CategoryConfigSchema — variant", () => {
   it("rejects variant as non-string (array)", () => {
     const r = CategoryConfigSchema.safeParse({
       description: "Backend category",
-      patterns: ["src/api/**"],
+
       variant: ["v1", "v2"],
     });
     expect(r.success).toBe(false);

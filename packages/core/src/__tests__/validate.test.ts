@@ -17,15 +17,18 @@ function validateSource(src: string) {
 describe("validate — execution controls", () => {
   it("transforms explicit booleans and nested concurrency", () => {
     const config = validateSource(
-      'agent worker { fast true } category web { patterns ["src/**"] fast false } settings { delegation { max_concurrency 5 } }',
+      'agent worker { fast true } category web { description "Category work" fast true } settings { delegation { max_concurrency 5 } }',
     )._unsafeUnwrap();
     expect(config.agents.worker?.fast).toBe(true);
-    expect(config.categories.web?.fast).toBe(false);
+    expect(config.categories.web?.fast).toBe(true);
     expect(config.settings.delegation?.max_concurrency).toBe(5);
   });
   it.each([
     ['agent worker { fast "yes" }', "agents.worker.fast"],
-    ['category web { patterns ["src/**"] fast 1 }', "categories.web.fast"],
+    [
+      'category web { description "Category work" fast 1 }',
+      "categories.web.fast",
+    ],
     [
       "settings { delegation { max_concurrency 0 } }",
       "settings.delegation.max_concurrency",
@@ -56,7 +59,7 @@ describe("validate — valid agent", () => {
     network ask
   }
   triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
+    "Complex tasks"
   ]
 }`;
     const result = validateSource(src);
@@ -87,7 +90,7 @@ describe("validate — valid category", () => {
   it("category with patterns and tool_policy", () => {
     const src = `category backend {
   description "Backend APIs"
-  patterns ["src/api/**", "src/db/**"]
+
   temperature 0.2
   tool_policy {
     read allow
@@ -99,10 +102,7 @@ describe("validate — valid category", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.categories.backend).toBeDefined();
-    expect(config.categories.backend?.patterns).toEqual([
-      "src/api/**",
-      "src/db/**",
-    ]);
+    expect(config.categories.backend).not.toHaveProperty("patterns");
     expect(config.categories.backend?.temperature).toBe(0.2);
   });
 });
@@ -174,14 +174,19 @@ describe("validate — schema constraint errors", () => {
     expect(result.isErr()).toBe(true);
   });
 
-  it("empty patterns array on category → err", () => {
+  it("removed patterns on category → err", () => {
     const src = `category empty {
+  description "Category work"
   patterns []
 }`;
     const result = validateSource(src);
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
-    expect(errors.some((e) => e.path.includes("patterns"))).toBe(true);
+    expect(
+      errors.some(
+        (e) => e.path === "categories.empty" && e.message.includes("patterns"),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -515,7 +520,7 @@ describe("validate — prompt_append_file (agent)", () => {
 describe("validate — prompt_append_file (category)", () => {
   it("category with prompt_append_file → ok and field preserved", () => {
     const src = `category frontend {
-  patterns ["src/components/**"]
+  description "Category work"
   prompt_append_file "cat-extra.md"
 }`;
     const result = validateSource(src);
@@ -527,7 +532,7 @@ describe("validate — prompt_append_file (category)", () => {
 
   it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
     const src = `category frontend {
-  patterns ["src/components/**"]
+  description "Category work"
   prompt_append "inline extra"
   prompt_append_file "cat-extra.md"
 }`;
@@ -1445,7 +1450,7 @@ describe("validate — variant field", () => {
 
   it("category with variant 'low' round-trips correctly", () => {
     const src = `category mycat {
-  patterns ["src/**"]
+  description "Category work"
   variant "low"
 }`;
     const result = validateSource(src);

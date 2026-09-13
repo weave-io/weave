@@ -9,10 +9,10 @@ subagents. See the [adapter boundary](../../adapter-boundary.md) and
 
 ## Fast service
 
-Agents and categories accept `fast true` and `fast false`. Other value types
-are invalid. Omission preserves the inherited or harness default. Project
-values override global values. Category values override the base shuttle value,
-including `false`. Normalized agent descriptors retain this optional boolean.
+Agents and categories accept only `fast true`. `false` and other value types
+are invalid. Omission preserves inherited intent; it is not an opt-out.
+Normalized agent descriptors carry `fast?: true`. Category shuttles inherit
+the base Shuttle intent and can declare positive intent themselves.
 
 Fast service is independent of model selection, reasoning effort, temperature,
 and foreground/background delegation. A request for fast service is not proof
@@ -41,8 +41,8 @@ this contract. The pinned OpenCode adapter does not yet enforce this setting.
 
 ## Acceptance
 
-- Valid booleans and positive integer limits survive parsing and merging.
+- Positive fast intent and positive integer limits survive parsing and merging.
 - Invalid types, zero, negative limits, and fractions are rejected.
-- Generated category agents preserve inheritance and explicit `false`.
+- Generated category agents preserve inherited or explicit `fast true`.
 - OpenCode behavior and remaining host limits are described in the
   [adapter guide](../../adapters/opencode2-core.md).

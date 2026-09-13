@@ -62,7 +62,6 @@ agent loom {
     delegation_exclude ["reviewer-only"]
   }
 
-  triggers []
 }
 
 agent tapestry {
@@ -87,7 +86,7 @@ agent shuttle {
   }
 
   triggers [
-    { domain "General" trigger "General implementation work" }
+    "General implementation work"
   ]
 }
 
@@ -102,7 +101,7 @@ agent warp {
   }
 
   triggers [
-    { domain "Security" trigger "Security-sensitive changes" }
+    "Security-sensitive changes"
   ]
 }
 
@@ -117,7 +116,7 @@ agent reviewer-only {
   }
 
   triggers [
-    { domain "Review" trigger "Post-change review" }
+    "Post-change review"
   ]
 }
 `;
@@ -210,7 +209,7 @@ agent shuttle-frontend {
   }
 
   triggers [
-    { domain "Frontend" trigger "UI and styling work" }
+    "UI and styling work"
   ]
 }
 `;
@@ -251,7 +250,7 @@ agent shuttle {
   models ["anthropic/claude-sonnet-4-5"]
   mode subagent
   tool_policy { delegate deny }
-  triggers [{ domain "General" trigger "General work" }]
+  triggers ["General work"]
 }
 `),
       composer: composeAgentDescriptor,
@@ -461,7 +460,7 @@ agent shuttle-frontend {
   models ["anthropic/claude-sonnet-4-5"]
   mode subagent
   tool_policy { delegate deny }
-  triggers [{ domain "Frontend" trigger "UI and styling work" }]
+  triggers ["UI and styling work"]
 }
 `;
 
@@ -561,7 +560,7 @@ agent shuttle {
   models ["anthropic/claude-sonnet-4-5"]
   mode subagent
   tool_policy { delegate deny }
-  triggers [{ domain "General" trigger "General work" }]
+  triggers ["General work"]
 }
 `),
       composer: composeAgentDescriptor,

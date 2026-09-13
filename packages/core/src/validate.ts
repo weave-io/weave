@@ -67,6 +67,7 @@ function isProperties(value: unknown): value is Property[] {
       !isRecord(property) ||
       !isName(property.key) ||
       names.has(property.key) ||
+      (property.bare !== undefined && property.bare !== true) ||
       !isPosition(property.pos) ||
       !isAstValue(property.value)
     )
@@ -391,6 +392,35 @@ export function validate(
 function validateCopiedAst(
   ast: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
+  for (const node of ast) {
+    if (node.type !== "agent" && node.type !== "category") continue;
+    const prefix = `${node.type === "agent" ? "agents" : "categories"}.${node.name}`;
+    for (const property of node.properties) {
+      if (property.key === "fast" && property.bare === true) {
+        return err([
+          {
+            type: "ValidationError",
+            path: `${prefix}.fast`,
+            message: "fast requires the explicit literal: fast true",
+          },
+        ]);
+      }
+      if (property.key !== "triggers" || property.value.kind !== "array")
+        continue;
+      const index = property.value.elements.findIndex(
+        (element) => element.kind !== "string",
+      );
+      if (index >= 0) {
+        return err([
+          {
+            type: "ValidationError",
+            path: `${prefix}.triggers.${index}`,
+            message: "triggers must contain quoted strings",
+          },
+        ]);
+      }
+    }
+  }
   const { plain, topLevelLogLevel, invalidSettingsShape } =
     astToPlainObject(ast);
 

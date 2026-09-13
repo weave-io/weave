@@ -17,7 +17,7 @@ agent loom {
 }
 
 category frontend {
-  patterns ["src/components/**", "**/*.tsx"]
+  triggers ["Use for frontend components"]
   models ["gpt-5", "claude-sonnet-4-5"]
 }
 ```

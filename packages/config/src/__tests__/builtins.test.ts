@@ -11,7 +11,7 @@ describe("getBuiltinConfig", () => {
     }
     expect(config.agents.thread?.description).toContain("read-only");
     expect(config.agents.pattern?.description).toContain("plan files only");
-    expect(config.agents.shuttle?.triggers?.[0]).toHaveProperty("domain");
+    expect(typeof config.agents.shuttle?.triggers?.[0]).toBe("string");
   });
 
   it("(a) returns ok — not err", () => {
@@ -248,7 +248,7 @@ describe("getBuiltinConfig", () => {
     }
   });
 
-  it("(k) each specialist trigger has non-empty domain and trigger strings", () => {
+  it("(k) each specialist trigger is a non-empty string", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     for (const name of SPECIALIST_AGENTS) {
       const agent = config.agents[name];
@@ -256,8 +256,7 @@ describe("getBuiltinConfig", () => {
       const triggers = agent?.triggers ?? [];
       expect(triggers.length).toBeGreaterThan(0);
       for (const t of triggers) {
-        expect(t.domain.trim().length).toBeGreaterThan(0);
-        expect(t.trigger.trim().length).toBeGreaterThan(0);
+        expect(t.trim().length).toBeGreaterThan(0);
       }
     }
   });

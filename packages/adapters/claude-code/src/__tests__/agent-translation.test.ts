@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { translateAgentToMarkdown } from "../agent-translation.js";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 
-function makeDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
+function makeDescriptor(
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
   return {
     name: "test-agent",
     composedPrompt: "You are a test agent.",
@@ -71,7 +73,7 @@ describe("translateAgentToMarkdown", () => {
       descriptor: makeDescriptor({
         name: "shuttle-backend",
         description: "Backend specialist",
-        category: { name: "backend", description: "Backend APIs", patterns: ["src/api/**"] },
+        category: { name: "backend", description: "Backend APIs" },
       }),
       resolvedModel: "claude-opus-4",
       allowedTools: ["Read", "Write", "Edit", "Bash"],

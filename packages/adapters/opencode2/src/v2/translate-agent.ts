@@ -13,7 +13,7 @@ export interface OpenCode2AgentProjection {
   readonly mode: "primary" | "subagent" | "all";
   readonly model?: Model.Ref;
   readonly temperature?: number;
-  readonly fast?: boolean;
+  readonly fast?: true;
   readonly permissions: readonly NativePermissionRule[];
   readonly skillNames: readonly string[];
 }

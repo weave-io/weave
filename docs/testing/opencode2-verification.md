@@ -17,6 +17,9 @@ The [start-command diagnostic record](../artifacts/opencode2-start-command-proof
 records the recovered picker implementation's runtime checks and the remaining
 interactive verification limit.
 
+The [shared-contract recovery record](../artifacts/opencode2-shared-contract-recovery.md)
+records the string-trigger backport and live OpenCode 2.0.2 agent registration.
+
 ## Requirements
 
 The retained Podman verifier uses an explicit `proof/proof-model` catalog

@@ -289,7 +289,7 @@ describe("materialization orchestration", () => {
     it("spawns a generated shuttle-{name} agent when a category is configured", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Category work" models ["gpt-5"] }
       `);
 
       await orchestrate(config, adapter);
@@ -304,8 +304,8 @@ describe("materialization orchestration", () => {
     it("spawns multiple generated shuttles for multiple categories", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Category work" models ["gpt-5"] }
+        category backend { description "Category work" models ["gpt-4o"] }
       `);
 
       await orchestrate(config, adapter);
@@ -320,7 +320,7 @@ describe("materialization orchestration", () => {
     it("does not spawn a category shuttle when the base shuttle is disabled", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Category work" models ["gpt-5"] }
         disable agents ["shuttle"]
       `);
 
@@ -336,8 +336,8 @@ describe("materialization orchestration", () => {
     it("does not spawn a specific category shuttle when its name is in disabled.agents", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
-        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        category frontend { description "Category work" models ["gpt-5"] }
+        category backend { description "Category work" models ["gpt-4o"] }
         disable agents ["shuttle-frontend"]
       `);
 
@@ -353,7 +353,7 @@ describe("materialization orchestration", () => {
     it("category shuttle descriptor carries category models", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Category work" models ["gpt-5"] }
       `);
 
       await orchestrate(config, adapter);
@@ -371,12 +371,12 @@ describe("materialization orchestration", () => {
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
+
           models ["model-frontend"]
         }
         category backend {
           description "Backend APIs"
-          patterns ["src/api/**"]
+
           models ["model-backend"]
         }
         disable agents ["warp", "shuttle-backend"]
@@ -406,7 +406,6 @@ describe("materialization orchestration", () => {
       expect(frontend?.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
-        patterns: ["src/components/**", "src/pages/**/*.tsx"],
       });
     });
 
@@ -414,7 +413,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
         agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
-        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category frontend { description "Category work" models ["gpt-5"] }
       `);
 
       const plan = await orchestrate(config, adapter);
@@ -564,7 +563,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category lambda {
-          patterns ["src/lambda/**"]
+          description "Category work"
           models ["model-lambda"]
           tool_policy {
             read  allow
@@ -591,7 +590,7 @@ describe("materialization orchestration", () => {
     it("category shuttle with no tool_policy: effectiveToolPolicy defaults all to ask", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category mu { patterns ["src/mu/**"] models ["model-mu"] }
+        category mu { description "Category work" models ["model-mu"] }
       `);
 
       await orchestrate(config, adapter);
@@ -610,7 +609,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category nu {
-          patterns ["src/nu/**"]
+          description "Category work"
           models ["model-nu"]
           tool_policy {
             read  allow
@@ -637,7 +636,7 @@ describe("materialization orchestration", () => {
     it("category shuttle with no tool_policy: rawToolPolicy is undefined", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category xi { patterns ["src/xi/**"] models ["model-xi"] }
+        category xi { description "Category work" models ["model-xi"] }
       `);
 
       await orchestrate(config, adapter);
@@ -652,7 +651,7 @@ describe("materialization orchestration", () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category omicron {
-          patterns ["src/omicron/**"]
+          description "Category work"
           models ["model-omicron"]
           tool_policy {
             read  allow
@@ -682,7 +681,7 @@ describe("materialization orchestration", () => {
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
         category frontend {
           description "Frontend UI, styling, accessibility"
-          patterns ["src/components/**", "**/*.tsx"]
+
           models ["model-frontend"]
         }
       `);
@@ -699,7 +698,6 @@ describe("materialization orchestration", () => {
       expect(shuttleDescriptor?.category).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
       });
       expect(workerDescriptor?.category).toBeUndefined();
     });
@@ -918,7 +916,7 @@ describe("materialization orchestration", () => {
           models ["model-shuttle"]
           skills ["tdd"]
         }
-        category alpha-cat { patterns ["src/alpha/**"] models ["model-alpha"] }
+        category alpha-cat { description "Category work" models ["model-alpha"] }
       `);
 
       const availableSkills =
@@ -943,8 +941,8 @@ describe("materialization orchestration", () => {
           models ["model-shuttle"]
           skills ["tdd", "code-review"]
         }
-        category beta-cat { patterns ["src/beta/**"] models ["model-beta"] }
-        category gamma-cat { patterns ["src/gamma/**"] models ["model-gamma"] }
+        category beta-cat { description "Category work" models ["model-beta"] }
+        category gamma-cat { description "Category work" models ["model-gamma"] }
       `);
 
       const availableSkills =

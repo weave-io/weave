@@ -380,12 +380,45 @@ function convertLegacyPromptFile(
  * Fields without current-DSL equivalents (`display_name`, `skills`, etc.)
  * are warned and skipped.
  */
+function convertLegacyIntent(
+  entry: Record<string, unknown>,
+  path: string,
+  warnings: ConversionWarning[],
+): string[] {
+  const lines: string[] = [];
+  if (entry["fast"] === true) lines.push("  fast true");
+  else if (entry["fast"] !== undefined) {
+    warnings.push({
+      field: `${path}.fast`,
+      reason: "only fast true is supported; skipped",
+    });
+  }
+  const triggers = entry["triggers"];
+  if (triggers === undefined) return lines;
+  if (
+    !Array.isArray(triggers) ||
+    triggers.length === 0 ||
+    !triggers.every(
+      (trigger) => typeof trigger === "string" && trigger.trim().length > 0,
+    )
+  ) {
+    warnings.push({
+      field: `${path}.triggers`,
+      reason: "expected a non-empty array of non-blank strings; skipped",
+    });
+    return lines;
+  }
+  lines.push(`  triggers [${triggers.map(quoteForDsl).join(", ")}]`);
+  return lines;
+}
+
 function convertLegacyAgentEntry(
   name: string,
   entry: Record<string, unknown>,
   warnings: ConversionWarning[],
 ): string[] {
   const lines: string[] = [`agent ${name} {`];
+  lines.push(...convertLegacyIntent(entry, `agents.${name}`, warnings));
 
   const modelsResult = convertLegacyModels(entry, `agents.${name}`);
   warnings.push(...modelsResult.warnings);
@@ -422,7 +455,7 @@ function convertLegacyAgentEntry(
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
-  const unsupportedAgentFields = ["display_name", "skills", "mode", "triggers"];
+  const unsupportedAgentFields = ["display_name", "skills", "mode"];
   for (const field of unsupportedAgentFields) {
     if (entry[field] !== undefined) {
       warnings.push({
@@ -456,6 +489,7 @@ function convertLegacyCustomAgent(
   warnings: ConversionWarning[],
 ): string[] {
   const lines: string[] = [`agent ${name} {`];
+  lines.push(...convertLegacyIntent(entry, `custom_agents.${name}`, warnings));
 
   if (typeof entry["prompt"] === "string") {
     const escaped = escapeForDsl(entry["prompt"]);
@@ -519,7 +553,7 @@ function convertLegacyCustomAgent(
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
 
-  const unsupportedCustomAgentFields = ["skills", "triggers", "display_name"];
+  const unsupportedCustomAgentFields = ["skills", "display_name"];
   for (const field of unsupportedCustomAgentFields) {
     if (entry[field] !== undefined) {
       warnings.push({
@@ -538,7 +572,7 @@ function convertLegacyCustomAgent(
  *
  * Supported fields:
  * - `description` → `description "..."`
- * - `patterns` → `patterns [...]`
+ * - `patterns` is removed; migration warns instead of inventing routing intent
  * - `model` + `fallback_models` → `models [...]`
  * - `temperature` → `temperature <value>`
  * - `prompt_append` → `prompt_append "..."`
@@ -555,37 +589,24 @@ function convertLegacyCategory(
 ): string[] {
   const lines: string[] = [`category ${name} {`];
 
-  if (typeof entry["description"] === "string") {
-    const escaped = escapeForDsl(entry["description"]);
-    lines.push(`  description "${escaped}"`);
+  if (
+    typeof entry["description"] !== "string" ||
+    entry["description"].trim().length === 0
+  ) {
+    warnings.push({
+      field: `categories.${name}.description`,
+      reason: "a non-empty category description is required; category skipped",
+    });
+    return [];
   }
-
-  if (Array.isArray(entry["patterns"])) {
-    const patterns = entry["patterns"].filter(
-      (p): p is string => typeof p === "string",
-    );
-    if (patterns.length === 0) {
-      warnings.push({
-        field: `categories.${name}.patterns`,
-        reason:
-          "at least one string glob pattern is required; category skipped",
-      });
-      return [];
-    }
-    const items = patterns.map(quoteForDsl).join(", ");
-    lines.push(`  patterns [${items}]`);
-  } else if (entry["patterns"] !== undefined) {
+  lines.push(`  description ${quoteForDsl(entry["description"])}`);
+  lines.push(...convertLegacyIntent(entry, `categories.${name}`, warnings));
+  if (entry["patterns"] !== undefined) {
     warnings.push({
       field: `categories.${name}.patterns`,
-      reason: "expected an array of glob patterns; skipped",
+      reason:
+        "patterns are removed; describe routing with category description and string triggers",
     });
-    return [];
-  } else {
-    warnings.push({
-      field: `categories.${name}.patterns`,
-      reason: "at least one glob pattern is required; category skipped",
-    });
-    return [];
   }
 
   const modelsResult = convertLegacyModels(entry, `categories.${name}`);

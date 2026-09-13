@@ -122,16 +122,16 @@ Available specialists:
 - **shuttle-docs** — Specs, ADRs, proof artifacts, and guides
 - **shuttle-scripts** — Build scripts, validation tooling, and dev utilities
 
-Route implementation tasks to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
+Route implementation tasks to `shuttle-{category}` agents when the task matches the category's description and triggers. Fall back to `shuttle` when no category matches.
 
 </Delegation>
 
 <Routing>
 For each task, route using this decision tree:
 
-1. **Check file patterns first** (if task specifies files):
-   - Match a configured category pattern → `shuttle-{category}`
-   - Files span multiple categories or no match → `shuttle`
+1. **Check category descriptions and triggers first**:
+   - The task clearly matches one category → `shuttle-{category}`
+   - The task spans several categories or matches none → `shuttle`
 
 2. **Check explicit category hints**: if the plan task names a category, route to `shuttle-{category}` when available.
 

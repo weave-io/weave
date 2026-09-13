@@ -26,7 +26,7 @@ describe("Parser — execution controls", () => {
     false,
   ])("retains boolean fast=%s in agent and category ASTs", (fast) => {
     const nodes = parseSource(
-      `agent worker { fast ${fast} } category web { patterns ["src/**"] fast ${fast} }`,
+      `agent worker { fast ${fast} } category web { description "Category work" fast ${fast} }`,
     )._unsafeUnwrap();
     for (const node of nodes as Array<AgentBlock | CategoryBlock>) {
       expect(
@@ -90,10 +90,10 @@ describe("Parser — agent block", () => {
     });
   });
 
-  it("parses agent with triggers array of block objects", () => {
+  it("parses agent with string triggers", () => {
     const src = `agent loom {
   triggers [
-    { domain "Orchestration" trigger "Complex tasks" }
+    "Complex tasks"
   ]
 }`;
     const result = parseSource(src);
@@ -103,27 +103,28 @@ describe("Parser — agent block", () => {
     expect(triggers?.value.kind).toBe("array");
     const arr = triggers?.value as ArrayValue;
     expect(arr.elements).toHaveLength(1);
-    expect(arr.elements[0]?.kind).toBe("block");
+    expect(arr.elements[0]?.kind).toBe("string");
   });
 });
 
 describe("Parser — category block", () => {
-  it("parses a category with patterns array", () => {
+  it("parses a category with description and triggers", () => {
     const src = `category backend {
-  patterns ["src/api/**", "src/db/**"]
+  description "Category work"
+  triggers ["API work", "Database work"]
 }`;
     const result = parseSource(src);
     expect(result.isOk()).toBe(true);
     const cat = result._unsafeUnwrap()[0] as CategoryBlock;
     expect(cat.type).toBe("category");
     expect(cat.name).toBe("backend");
-    const patterns = cat.properties.find((p) => p.key === "patterns");
+    const patterns = cat.properties.find((p) => p.key === "triggers");
     expect(patterns?.value.kind).toBe("array");
     const arr = patterns?.value as ArrayValue;
     expect(arr.elements).toHaveLength(2);
     expect(arr.elements[0]).toMatchObject({
       kind: "string",
-      value: "src/api/**",
+      value: "API work",
     });
   });
 });
@@ -314,7 +315,7 @@ describe("Parser — multiple top-level blocks", () => {
 }
 
 category backend {
-  patterns ["src/api/**"]
+  description "Category work"
 }
 
 log_level INFO`;

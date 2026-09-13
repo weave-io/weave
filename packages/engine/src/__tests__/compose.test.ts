@@ -65,23 +65,22 @@ beforeAll(async () => {
 describe("composeAgentDescriptor", () => {
   it.each([
     true,
-    false,
   ])("retains explicit fast=%s in the normalized descriptor", async (fast) => {
     const worker: AgentConfig = { prompt: "Worker", fast };
     const descriptor = await descriptorFor("worker", worker, cfg(), { worker });
     expect(descriptor.fast).toBe(fast);
   });
-  it("preserves literal tags in descriptions and trigger objects", async () => {
+  it("preserves literal tags in descriptions and string triggers", async () => {
     const config = cfg(`
       agent router {
-        prompt "{{{agent.description}}} {{#delegation.targets}}{{{description}}} {{#triggers}}{{{domain}}}: {{{trigger}}} {{{routing_hint}}}{{/triggers}}{{/delegation.targets}}"
+        prompt "{{{agent.description}}} {{#delegation.targets}}{{{description}}} {{#triggers}}{{{.}}}{{/triggers}}{{/delegation.targets}}"
         description "{{example}}"
         tool_policy { delegate allow }
       }
       agent helper {
         prompt "Helper"
         description "{{{example}}}"
-        triggers [{ domain "{{domain}}" trigger "{{trigger}}" routing_hint "{{hint}}" }]
+        triggers ["{{hint}}"]
       }
     `);
     const descriptor = await descriptorFor(
@@ -91,7 +90,7 @@ describe("composeAgentDescriptor", () => {
       config.agents,
     );
     expect(descriptor.composedPrompt).toBe(
-      "{{example}} {{{example}}} {{domain}}: {{trigger}} {{hint}}",
+      "{{example}} {{{example}}} {{hint}}",
     );
   });
 
@@ -760,7 +759,7 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI, styling, accessibility",
-          patterns: ["src/components/**", "**/*.tsx"],
+
           isCategory: true,
         },
       );
@@ -768,7 +767,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
       });
     });
 
@@ -804,7 +802,7 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: "Frontend UI",
-          patterns: ["src/components/**"],
+
           isCategory: true,
         },
       );
@@ -1142,14 +1140,14 @@ describe("composeAgentDescriptor", () => {
             network deny
           }
           triggers [
-            { domain "Implementation" trigger "Build feature" }
+            "Build feature"
           ]
         }
         agent helper {
           description "Implementation helper"
           prompt "Help."
           triggers [
-            { domain "Code" trigger "Small implementation" }
+            "Small implementation"
           ]
         }
       `);
@@ -1189,7 +1187,7 @@ describe("composeAgentDescriptor", () => {
         {
           name: "helper",
           description: "Implementation helper",
-          triggers: [{ domain: "Code", trigger: "Small implementation" }],
+          triggers: ["Small implementation"],
           isCategory: false,
         },
       ]);
@@ -1255,7 +1253,7 @@ describe("composeAgentDescriptor", () => {
         }
         category frontend {
           description "Frontend UI"
-          patterns ["src/components/**", "src/pages/**/*.tsx"]
+
           models ["model-frontend"]
         }
       `);
@@ -1277,7 +1275,6 @@ describe("composeAgentDescriptor", () => {
         {
           name: "frontend",
           description: config.categories.frontend?.description,
-          patterns: config.categories.frontend?.patterns,
           isCategory: true,
         },
       );
@@ -1286,7 +1283,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
-        patterns: ["src/components/**", "src/pages/**/*.tsx"],
       });
     });
 

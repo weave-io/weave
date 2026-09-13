@@ -99,7 +99,7 @@ const ALLOWED_MUSTACHE_PLACEHOLDERS = [
   "{{#triggers}}",
   "{{/triggers}}",
   "{{trigger}}",
-  "{{routing_hint}}",
+  "{{.}}",
   "{{#isCategory}}",
   "{{/isCategory}}",
   "{{#agent.skills}}",

@@ -30,13 +30,13 @@ import { loadConfig } from "../loader.js";
 const PROJECT_CONFIG_WITH_CATEGORIES = `
   category frontend {
     description "Frontend UI layer"
-    patterns ["src/frontend/**", "**/*.tsx"]
+
     models ["gpt-4o"]
   }
 
   category backend {
     description "Backend API layer"
-    patterns ["src/backend/**", "**/*.go"]
+
     models ["claude-sonnet-4-5"]
   }
 `;

@@ -84,14 +84,13 @@ interface AgentDescriptor {
 
 interface AgentDescriptorCategory {
   name: string;
-  description?: string;
-  patterns: string[];
+  description: string;
 }
 
 interface DelegationTarget {
   name: string;
   description?: string;
-  triggers: DelegationTrigger[];
+  triggers: string[];
 }
 ```
 
@@ -102,7 +101,7 @@ interface DelegationTarget {
 | `name` | Stable harness-neutral internal id for the logical agent being composed. |
 | `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
 | `description` | Optional agent description passed through from config. |
-| `category` | Optional metadata for generated category shuttles: category name, optional description, and declared patterns only. Omitted for regular agents. |
+| `category` | Optional metadata for generated category shuttles: category name and required description. Omitted for regular agents. |
 | `composedPrompt` | Final prompt text after prompt loading, delegation section formatting, and `prompt_append` composition. |
 | `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
@@ -249,8 +248,7 @@ interface AgentPromptTemplateContext {
     targets: Array<{
       name: string;
       description?: string;
-      domains: string[];
-      triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
+      triggers: string[];
     }>;
   };
 }

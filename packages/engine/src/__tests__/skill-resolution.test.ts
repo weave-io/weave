@@ -55,7 +55,7 @@ describe("available skill resolution", () => {
     const config = parseConfig(`
       agent shuttle { prompt "Worker" skills ["present", "missing"] }
       agent disabled { prompt "Disabled" skills ["other"] }
-      category backend { patterns ["src/**"] }
+      category backend { description "Category work" }
       disable agents ["disabled"]
     `)._unsafeUnwrap();
     const input = { config, availableSkills: [{ name: "present" }] };
@@ -803,7 +803,7 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
         shuttle: { skills: ["tdd"] },
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
     });
 
@@ -827,7 +827,7 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
         shuttle: { skills: ["tdd"] },
       },
       categories: {
-        frontend: { patterns: ["src/components/**"] },
+        frontend: { description: "Category work" },
       },
     });
 
@@ -848,9 +848,9 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
         shuttle: {},
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
-        frontend: { patterns: ["src/components/**"] },
-        infra: { patterns: ["infra/**"] },
+        backend: { description: "Category work" },
+        frontend: { description: "Category work" },
+        infra: { description: "Category work" },
       },
     });
 
@@ -889,7 +889,7 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
     const config = makeConfig({
       agents: { loom: {} },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
     });
 
@@ -983,7 +983,7 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
         shuttle: { skills: ["tdd"] },
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
       disabled: { agents: ["shuttle-backend"], hooks: [], skills: [] },
     });
@@ -1007,7 +1007,7 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
         shuttle: { skills: ["tdd"] },
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
       disabled: { agents: ["shuttle"], hooks: [], skills: [] },
     });
@@ -1086,7 +1086,7 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
         shuttle: { skills: ["missing-shuttle"] },
       },
       categories: {
-        backend: { patterns: ["src/api/**"] },
+        backend: { description: "Category work" },
       },
     });
 

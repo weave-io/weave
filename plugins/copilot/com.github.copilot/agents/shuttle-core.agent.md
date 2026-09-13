@@ -1,6 +1,6 @@
 ---
 name: weave:shuttle-core
-description: "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
+description: DSL lexer, parser, AST, Zod schemas — @weave/core
 tools:
   - read
   - Read

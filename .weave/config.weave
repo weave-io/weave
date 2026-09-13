@@ -27,7 +27,7 @@ agent weft {
 category core {
   description "DSL lexer, parser, AST, Zod schemas — @weave/core"
   models ["claude-sonnet-4-5"]
-  patterns ["packages/core/**"]
+  triggers ["Use for DSL lexer, parser, AST, and schema changes"]
   prompt_append "This is the parsing and type layer. Preserve neverthrow Result return types, keep all exported types Zod-inferred, and maintain the lexer/parser/validate separation."
 
   tool_policy {
@@ -42,7 +42,7 @@ category core {
 category engine {
   description "WeaveRunner, HarnessAdapter, config loader — @weave/engine"
   models ["claude-sonnet-4-5"]
-  patterns ["packages/engine/**"]
+  triggers ["Use for shared engine and orchestration changes"]
   prompt_append "This is the orchestration layer. The runner must stay adapter-agnostic. All fallible paths return Result types. Pino logger is the only logging mechanism."
 
   tool_policy {
@@ -57,7 +57,7 @@ category engine {
 category adapters {
   description "Harness adapter implementations — @weave/adapter-*"
   models ["claude-sonnet-4-5"]
-  patterns ["packages/adapters/**"]
+  triggers ["Use for harness adapter implementation changes"]
   prompt_append "Each adapter implements HarnessAdapter exactly. No adapter should import from another adapter. Keep harness-specific logic fully contained."
 
   tool_policy {
@@ -72,7 +72,7 @@ category adapters {
 category docs {
   description "Specs, ADRs, proof artifacts, and guides"
   models ["claude-sonnet-4-5"]
-  patterns ["docs/**", "*.md"]
+  triggers ["Use for documentation changes"]
   prompt_append "Documentation is a first-class deliverable. Every non-trivial change must be reflected in docs/. Specs live in docs/specs/, ADRs in docs/. Cross-link liberally."
 
   tool_policy {
@@ -87,7 +87,7 @@ category docs {
 category scripts {
   description "Build scripts, validation tooling, and dev utilities"
   models ["claude-sonnet-4-5"]
-  patterns ["scripts/**"]
+  triggers ["Use for build scripts and developer tooling"]
   prompt_append "Scripts run with Bun. Use Bun.file() for I/O, never Node.js fs. CLI entry points convert Result to process.exit at the boundary."
 
   tool_policy {

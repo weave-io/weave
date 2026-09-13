@@ -310,14 +310,15 @@ workflow capabilities.
 
 Not delivered: durable workflow run/resume/advance, usage rollups, a child
 dashboard, automatic model fallback, provider acceleration, or `/weave:goal`.
-The DSL accepts `fast` and `settings.delegation.max_concurrency` as execution
+The DSL accepts `fast true` and `settings.delegation.max_concurrency` as execution
 intent. Parsing these fields alone does not establish native enforcement; see
 [Execution Controls](../specs/36-spec-execution-controls/36-spec-execution-controls.md).
 
 ### Execution control boundary on beta-19151
 
 Neither setting is currently applied by this adapter. `fast` survives agent
-composition, including category overrides. `delegation.max_concurrency`
+composition as optional positive intent; `fast false` is invalid. Category
+agents inherit positive intent when they omit it. `delegation.max_concurrency`
 survives config loading and merging. These are configuration support, not
 runtime support.
 

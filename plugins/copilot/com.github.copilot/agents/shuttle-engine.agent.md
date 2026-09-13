@@ -1,6 +1,6 @@
 ---
 name: weave:shuttle-engine
-description: "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
+description: WeaveRunner, HarnessAdapter, config loader — @weave/engine
 tools:
   - read
   - Read

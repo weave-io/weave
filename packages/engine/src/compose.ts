@@ -39,7 +39,7 @@ const log = logger.child({ module: "compose" });
 type AgentMode = NonNullable<AgentConfig["mode"]>;
 
 export interface CategoryMetadata extends CategoryInput {
-  patterns: string[];
+  description: string;
   isCategory: true;
 }
 
@@ -52,7 +52,7 @@ export interface AgentDescriptor {
   models: string[];
   mode: AgentMode;
   temperature?: number;
-  fast?: boolean;
+  fast?: true;
   variant?: string;
   effectiveToolPolicy: EffectiveToolPolicy;
   rawToolPolicy: ToolPolicy | undefined;
@@ -62,8 +62,7 @@ export interface AgentDescriptor {
 
 export interface AgentDescriptorCategory {
   name: string;
-  description?: string;
-  patterns: string[];
+  description: string;
 }
 
 export interface DelegationTarget {
@@ -219,9 +218,7 @@ function buildDelegationTargets(
     targets.push({
       name: targetName,
       description,
-      triggers: (targetConfig.triggers ?? []).map((trigger) => ({
-        ...trigger,
-      })),
+      triggers: [...(targetConfig.triggers ?? [])],
       isCategory: categoryShuttleNames.has(targetName),
     });
   }
@@ -869,7 +866,6 @@ export function composeAgentDescriptor(
                 : {
                     name: category.name,
                     description: category.description,
-                    patterns: [...(category.patterns ?? [])],
                   },
             composedPrompt,
             models: [...(agentConfig.models ?? [])],

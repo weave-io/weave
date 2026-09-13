@@ -21,6 +21,25 @@ const emptyConfig = cfg("");
 // ---------------------------------------------------------------------------
 
 describe("mergeConfigs", () => {
+  it("unions string triggers in override-first order without changing text", () => {
+    const base = cfg(
+      'agent worker { triggers ["First" "Shared" "  Exact  "] fast true }',
+    );
+    const override = cfg('agent worker { triggers ["Shared" "Last"] }');
+    const merged = mergeConfigs(base, override);
+    expect(merged.agents.worker?.triggers).toEqual([
+      "Shared",
+      "Last",
+      "First",
+      "  Exact  ",
+    ]);
+    expect(merged.agents.worker?.fast).toBe(true);
+    expect(base.agents.worker?.triggers).toEqual([
+      "First",
+      "Shared",
+      "  Exact  ",
+    ]);
+  });
   it("preserves inherited execution controls and explicit project overrides", () => {
     const global = cfg(
       "agent worker { fast true } settings { delegation { max_concurrency 5 } }",
@@ -34,10 +53,10 @@ describe("mergeConfigs", () => {
     const project = mergeConfigs(
       global,
       cfg(
-        "agent worker { fast false } settings { delegation { max_concurrency 2 } }",
+        "agent worker { fast true } settings { delegation { max_concurrency 2 } }",
       ),
     );
-    expect(project.agents.worker?.fast).toBe(false);
+    expect(project.agents.worker?.fast).toBe(true);
     expect(project.settings.delegation?.max_concurrency).toBe(2);
     expect(global.agents.worker?.fast).toBe(true);
   });
@@ -97,7 +116,7 @@ describe("mergeConfigs", () => {
       ...emptyConfig,
       categories: {
         frontend: {
-          patterns: ["src/**"],
+          description: "Category work",
           prompt_append: "inline",
           prompt_append_file: "/project/.weave/prompts/frontend.md",
         },

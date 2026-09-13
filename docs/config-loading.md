@@ -11,7 +11,9 @@ display both this error and the existing workflow-extension errors.
 Validation does not insert defaults into override layers. The normalized empty
 `extend_before_plan.steps` default remains valid when a parsed config is checked
 again. Scalar priority, override-first array unions, workflow step insertion,
-category patterns, and variants are unchanged. The legacy `mergeConfigs` wrapper
+and OpenCode variants are unchanged. String triggers use exact, override-first
+union order. `fast true` survives an omitted higher-priority value. Categories
+use descriptions and string triggers instead of patterns. The legacy `mergeConfigs` wrapper
 still throws its first error for callers that require that contract.
 
 `@weaveio/weave-config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.

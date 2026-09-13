@@ -47,6 +47,8 @@ export type Property = {
   key: string;
   value: AstValue;
   pos: SourcePos;
+  /** True when the parser synthesized a value for a bare flag. */
+  bare?: true;
 };
 
 // ---------------------------------------------------------------------------

@@ -101,8 +101,8 @@ agent loom {
   }
 
   triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" routing_hint "Use for work spanning multiple files or components" }
-    { domain "Architecture" trigger "System design and planning" routing_hint "Use when design decisions need to be made before implementation" }
+    "Use for work spanning multiple files or components"
+    "Use when design decisions need to be made before implementation"
   ]
 
   skills ["tdd", "code-review"]
@@ -129,10 +129,10 @@ agent my-helper {
 | `models` | string[] | Ordered model preference list. Adapters translate to concrete harness model fields. |
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
-| `fast` | boolean | Optional fast-service intent. `false` explicitly disables it; omission leaves harness defaults unchanged. Provider support and billing are harness-owned. |
+| `fast` | `true` | Optional positive fast-service intent. `false` is invalid; omission preserves inherited intent. Parsing does not prove provider acceleration. |
 | `variant` | string | Free-form string for model variant selection (e.g. `"preview"`, `"latest"`). Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
-| `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
+| `triggers` | string[] | Optional non-empty list of non-blank routing instructions. Strings preserve exact text and order. Object triggers are invalid. |
 | `skills` | string[] | Skill names to load for this agent. |
 | `review_models` | string[] | Optional. One or more model identifiers materialized as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
 
@@ -191,13 +191,13 @@ See [Spec 32: Review Models](specs/32-spec-review-models/32-spec-review-models.m
 
 ## Categories
 
-Categories define domain routing — glob patterns that direct work to specialised shuttle agents. Each category automatically generates a `shuttle-{name}` agent descriptor that inherits from the base `shuttle` agent with category-specific overrides.
+Categories describe when to select specialized shuttle agents. Each category requires a non-blank description and can declare string triggers. It generates a `shuttle-{name}` descriptor that inherits the base Shuttle model, tools, and fast intent. It uses the category's description and triggers, not the generic Shuttle triggers. Routing is model-guided, not glob matching.
 
 ```weave
 category backend {
   description "Backend APIs, services, persistence"
   models ["anthropic/claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
+  triggers ["Use for backend APIs, services, and persistence"]
   prompt_append "Focus on API contracts, data integrity, and backwards compatibility."
   temperature 0.2
 
@@ -211,7 +211,7 @@ category backend {
 category frontend {
   description "Frontend UI, styling, accessibility"
   models ["openai/gpt-5"]
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  triggers ["Use for frontend UI, styling, and accessibility"]
   prompt_append "Preserve accessibility, responsive behavior, and design-system consistency."
 }
 ```
@@ -220,17 +220,30 @@ category frontend {
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `description` | string | Human-readable label |
+| `description` | string | Required non-blank routing description |
 | `models` | string[] | Model preference list for this category's shuttle agent |
-| `patterns` | string[] | Glob patterns that route files to this category |
+| `triggers` | string[] | Optional non-empty list of non-blank routing instructions |
 | `prompt_append` | string | Text appended to the base shuttle prompt for this category |
 | `prompt_append_file` | string | File path appended to the base shuttle prompt |
 | `temperature` | number | Temperature hint for this category's shuttle agent |
-| `fast` | boolean | Overrides the base shuttle's fast-service intent, including an explicit `false`. |
+| `fast` | `true` | Positive intent; omission inherits the base Shuttle intent. |
 | `variant` | string | Free-form string for model variant selection. Runtime validation of supported variants is harness-owned. Requires a configured `model` to be meaningful. |
 | `tool_policy` | block | Tool policy overrides for this category's shuttle agent |
 
 Generated shuttle agent names follow the pattern `shuttle-{category-name}` (e.g. `shuttle-backend`, `shuttle-frontend`). Adapters decide how those descriptors are materialised in a concrete harness.
+
+### Migration from structured triggers
+
+Replace each trigger object with its routing instruction. Remove category
+`patterns` and describe the category's work in `description` and optional
+`triggers`. Omit triggers when there are none; `triggers []` is invalid.
+Remove `fast false`; to remove inherited positive intent, edit the layer that
+declares it. Template loops use `{{#triggers}}{{.}}{{/triggers}}`, not `domain`,
+`trigger`, or `routing_hint` fields.
+
+The OpenCode release retains its native `variant` extension and existing
+`model#variant` resolution. This backport does not replace that adapter-owned
+behavior with Pi model resolution or import Pi runtime code.
 
 ---
 
@@ -467,7 +480,7 @@ You are {{agent.name}}.
 | `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
 | `{{name}}` | string | Target agent name (inside `delegation.targets`) |
 | `{{description}}` | string? | Target description (inside `delegation.targets`) |
-| `{{domains}}` | string[] | Deduplicated trigger domains (inside `delegation.targets`) |
+| `{{.}}` | string | Current trigger inside a `triggers` loop |
 | `{{#triggers}}` | array | Iterate over triggers (inside `delegation.targets`) |
 
 ### Unsupported Features

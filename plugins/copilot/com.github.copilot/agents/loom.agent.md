@@ -66,30 +66,15 @@ When to delegate to each specialist:
   - Use as security gate before shipping security-sensitive changes
   - Use when security implications of a design need analysis
 - **shuttle-core** — DSL lexer, parser, AST, Zod schemas — @weave&#x2F;core
-  - Use for single-file changes, bug fixes, or clearly scoped implementation tasks
-  - Use when tests need to be written, updated, or debugged
-  - Use when a bug needs investigation and fixing in a known area
-  - Use for code cleanup, renaming, or restructuring without functional changes
+  - Use for DSL lexer, parser, AST, and schema changes
 - **shuttle-engine** — WeaveRunner, HarnessAdapter, config loader — @weave&#x2F;engine
-  - Use for single-file changes, bug fixes, or clearly scoped implementation tasks
-  - Use when tests need to be written, updated, or debugged
-  - Use when a bug needs investigation and fixing in a known area
-  - Use for code cleanup, renaming, or restructuring without functional changes
+  - Use for shared engine and orchestration changes
 - **shuttle-adapters** — Harness adapter implementations — @weave&#x2F;adapter-*
-  - Use for single-file changes, bug fixes, or clearly scoped implementation tasks
-  - Use when tests need to be written, updated, or debugged
-  - Use when a bug needs investigation and fixing in a known area
-  - Use for code cleanup, renaming, or restructuring without functional changes
+  - Use for harness adapter implementation changes
 - **shuttle-docs** — Specs, ADRs, proof artifacts, and guides
-  - Use for single-file changes, bug fixes, or clearly scoped implementation tasks
-  - Use when tests need to be written, updated, or debugged
-  - Use when a bug needs investigation and fixing in a known area
-  - Use for code cleanup, renaming, or restructuring without functional changes
+  - Use for documentation changes
 - **shuttle-scripts** — Build scripts, validation tooling, and dev utilities
-  - Use for single-file changes, bug fixes, or clearly scoped implementation tasks
-  - Use when tests need to be written, updated, or debugged
-  - Use when a bug needs investigation and fixing in a known area
-  - Use for code cleanup, renaming, or restructuring without functional changes
+  - Use for build scripts and developer tooling
 
 Delegate aggressively to keep your context lean. Thread and Spindle are cheap (read-only); use them liberally for evidence gathering before routing to implementation agents.
 

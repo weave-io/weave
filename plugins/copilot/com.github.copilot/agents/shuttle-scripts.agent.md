@@ -1,6 +1,6 @@
 ---
 name: weave:shuttle-scripts
-description: "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
+description: Build scripts, validation tooling, and dev utilities
 tools:
   - read
   - Read

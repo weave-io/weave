@@ -57,7 +57,8 @@ Supported top-level forms include:
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. |
 | `temperature` | number | Optional generation preference. |
 | `skills` | string[] | Skill names resolved using adapter-provided context. |
-| `triggers` | object[] | Delegation metadata with `domain` and `trigger`. |
+| `triggers` | string[] | Optional non-empty list of non-blank routing instructions. |
+| `fast` | `true` | Positive acceleration intent. Omission inherits intent; `false` is invalid. |
 | `routing.delegation_exclude` | string[] | Exclude named targets from delegation guidance. |
 | `tool_policy` | block | Abstract capability permissions. |
 
@@ -65,14 +66,19 @@ Supported top-level forms include:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `description` | string | Human-readable domain summary. |
-| `patterns` | string[] | Glob-like routing metadata. |
+| `description` | string | Required non-blank routing description. |
+| `triggers` | string[] | Optional category-specific routing instructions; generic Shuttle triggers are not inherited. |
 | `models` | string[] | Category-specific model preference override. |
 | `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
 | `temperature` | number | Optional generation preference. |
 | `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
 
 Categories generate agents named `shuttle-{category}`.
+
+Category `patterns` and object triggers are no longer accepted. Replace them
+with a description and string triggers. Render a trigger template loop with
+`{{#triggers}}{{.}}{{/triggers}}`. Accepting `fast true` does not prove that the
+adapter or provider applied acceleration.
 
 ## Tool Policy
 

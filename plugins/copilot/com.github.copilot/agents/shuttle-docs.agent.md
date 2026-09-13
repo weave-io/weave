@@ -1,6 +1,6 @@
 ---
 name: weave:shuttle-docs
-description: "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
+description: Specs, ADRs, proof artifacts, and guides
 tools:
   - read
   - Read

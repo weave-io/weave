@@ -55,6 +55,9 @@ export function generateCategoryShuttles(
     if (config.disabled.agents.includes(shuttleName)) continue;
 
     const overrides: Partial<AgentConfig> = {};
+    overrides.description = category.description;
+    overrides.triggers =
+      category.triggers === undefined ? undefined : [...category.triggers];
     if (category.models !== undefined) overrides.models = [...category.models];
     if (category.temperature !== undefined) {
       overrides.temperature = category.temperature;
@@ -83,7 +86,6 @@ export function generateCategoryShuttles(
         ...base,
         models: base.models === undefined ? undefined : [...base.models],
         skills: base.skills === undefined ? undefined : [...base.skills],
-        triggers: base.triggers?.map((trigger) => ({ ...trigger })),
         review_models:
           base.review_models === undefined
             ? undefined
@@ -107,7 +109,6 @@ export function generateCategoryShuttles(
       categoryMeta: {
         name: categoryName,
         description: category.description,
-        patterns: [...(category.patterns ?? [])],
         isCategory: true,
       },
     };
