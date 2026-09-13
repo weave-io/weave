@@ -2,7 +2,7 @@
 
 This is the top-level entry point for Weave's documentation corpus. Start here to navigate guides, architecture decision records (ADRs), and formal specs.
 
-The published docs site is built from the Astro + Starlight package at [`packages/docs/`](../packages/docs/README.md). That package is for **public documentation** and the marketing landing page. This `docs/` directory remains the **internal documentation corpus** for architecture, ADRs, specs, and implementation guidance.
+The public user documentation at [tryweave.io/docs](https://tryweave.io/docs/) is maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website). The Astro + Starlight package at [`packages/docs/`](../packages/docs/README.md) is an unpublished contributor reference. This `docs/` directory remains the **internal documentation corpus** for architecture, ADRs, specs, and implementation guidance.
 
 ---
 

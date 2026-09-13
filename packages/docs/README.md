@@ -17,9 +17,9 @@ bun run docs:dev
 bun run docs:build
 ```
 
-## Public documentation structure
+## Documentation structure
 
-Public docs live under `src/content/docs/docs/` and follow Diataxis:
+Pages live under `src/content/docs/docs/` and follow Diataxis:
 
 | Group | Route prefix | Purpose |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ and `/docs/guides/*/`; they point readers to the current comprehensive docs.
 ## Content sources
 
 - landing page: `src/pages/index.astro`
-- public docs pages: `src/content/docs/docs/`
+- docs pages: `src/content/docs/docs/`
 - design-system QA route: `src/pages/design-system.astro`
 
 There is no deployment workflow. `bun run docs:build` honors `SITE_URL` and

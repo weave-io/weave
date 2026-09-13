@@ -184,9 +184,13 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 The repo-root `docs/` corpus that defines current authoritative Weave behavior and guidance.
 _Avoid_: Public docs site, marketing docs, package docs mirror
 
-**Public Documentation Package**:
-The `packages/docs/` site that publishes public-facing Weave documentation derived from the canonical docs.
-_Avoid_: Source of truth, internal spec set, canonical architecture docs
+**Public Documentation Site**:
+The user-facing docs at tryweave.io, maintained by hand in the weave-website repository. Update it when user-visible behavior changes.
+_Avoid_: Source of truth for architecture, internal spec set
+
+**Contributor Reference Package**:
+The `packages/docs/` Astro site. It is not published; it holds deeper reference and design material derived from the canonical docs.
+_Avoid_: Public docs site, source of truth
 
 ## Relationships
 

@@ -20,10 +20,10 @@ files to read, what rules to follow, and how to verify your changes.
 - [ ] If your change touches prompt text, `prompt_file`, `prompt_append`, or
       `prompt_append_file`: also read `docs/prompt-composition.md`
 
-> **`packages/docs/` is a public mirror, not the canonical source.**
-> The Astro/Starlight site under `packages/docs/` publishes a subset of the
-> docs for the public website. The authoritative docs live in `docs/` at the
-> repo root. When the two diverge, `docs/` wins.
+> **`packages/docs/` is an unpublished contributor reference, not the canonical source.**
+> The authoritative docs live in `docs/` at the repo root. When the two
+> diverge, `docs/` wins. The public user docs at tryweave.io are maintained
+> separately in the weave-website repository.
 
 ---
 

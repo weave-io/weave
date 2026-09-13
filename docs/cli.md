@@ -119,7 +119,7 @@ The printed guide includes:
 - The canonical config file path and prompts directory path for the scope
 - A pre-flight checklist naming `docs/dsl-reference.md` and `docs/config-loading.md` as required reading
 - A note that `docs/prompt-composition.md` must be read before any prompt-related change
-- A clear statement that **`packages/docs/` is a public mirror, not the canonical source** — the authoritative docs live in `docs/` at the repo root
+- A clear statement that **`packages/docs/` is an unpublished contributor reference, not the canonical source** — the authoritative docs live in `docs/` at the repo root
 - Target-aware rules (global vs. local scope differences)
 - A step-by-step workflow: identify → read DSL section → edit config → place prompt files → validate → inspect
 - Common DSL patterns (override builtin, add agent, add category, disable agent)
@@ -128,7 +128,7 @@ The printed guide includes:
 
 ### Canonical doc authority
 
-The guide explicitly names root `docs/` as the canonical source and `packages/docs/` as a public mirror. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
+The guide explicitly names root `docs/` as the canonical source and `packages/docs/` as an unpublished contributor reference. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
 
 ### Base docs first
 

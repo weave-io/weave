@@ -108,10 +108,11 @@ describe("renderSelfModifyPrompt — base doc references", () => {
 });
 
 describe("renderSelfModifyPrompt — packages/docs mirror note", () => {
-  it("notes that packages/docs/ is a public mirror, not the canonical source", () => {
+  it("notes that packages/docs/ is an unpublished reference, not the canonical source", () => {
     const out = renderSelfModifyPrompt(localCtx());
     expect(out).toContain("packages/docs/");
-    expect(out).toContain("public mirror");
+    expect(out).toContain("unpublished contributor reference");
+    expect(out).not.toContain("public mirror");
     // Canonical source is docs/ at repo root
     expect(out).toContain("docs/` at the");
   });
