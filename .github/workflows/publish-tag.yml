@@ -37,8 +37,8 @@ jobs:
       - name: Validate tag format
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          if ! echo "$TAG" | grep -qE '^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Tag must match pattern: ^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+$"
+          if ! echo "$TAG" | grep -qE '^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$'; then
+            echo "::error::Tag must match pattern: ^(cli|opencode|opencode2|claude-code)@[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]+)?$"
             echo "::error::Got: $TAG"
             exit 1
           fi
@@ -71,6 +71,12 @@ jobs:
 
           echo "short_name=$SHORT_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Pre-releases (X.Y.Z-preview.N) go to the `preview` dist-tag so they never become `latest`
+          case "$VERSION" in
+            *-preview.*) echo "dist_tag=preview" >> $GITHUB_OUTPUT ;;
+            *)           echo "dist_tag=latest" >> $GITHUB_OUTPUT ;;
+          esac
 
           # Map short name to directory and npm package name
           case "$SHORT_NAME" in
@@ -130,9 +136,10 @@ jobs:
         working-directory: ${{ steps.parse.outputs.package_dir }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.WEAVEIO_NPM_TOKEN }}
+          DIST_TAG: ${{ steps.parse.outputs.dist_tag }}
         run: |
           set +e
-          OUTPUT=$(npm publish --ignore-scripts --access public --provenance 2>&1)
+          OUTPUT=$(npm publish --ignore-scripts --access public --provenance --tag "$DIST_TAG" 2>&1)
           EXIT_CODE=$?
           set -e
 
@@ -160,11 +167,18 @@ jobs:
           PACKAGE_NAME: ${{ steps.parse.outputs.package_name }}
           VERSION: ${{ steps.parse.outputs.version }}
           TAG: ${{ github.ref_name }}
+          DIST_TAG: ${{ steps.parse.outputs.dist_tag }}
         run: |
+          PRERELEASE_FLAG=""
+          if [ "$DIST_TAG" = "preview" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
           gh release create "$TAG" \
             --title "${PACKAGE_NAME} v${VERSION}" \
             --generate-notes \
-            --latest=false
+            --latest=false \
+            $PRERELEASE_FLAG
 
       - name: Summary
         env:

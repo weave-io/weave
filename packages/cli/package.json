@@ -1,6 +1,6 @@
 {
   "name": "@weaveio/weave-cli",
-  "version": "0.1.2",
+  "version": "0.2.0-preview.0",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
