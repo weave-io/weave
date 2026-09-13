@@ -28,7 +28,8 @@
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
-  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - function resolveModelForAgent: (descriptor, context) => Result<string | undefined, ModelResolutionError>
+  - function isProviderQualifiedModel: (model) => boolean
   - interface OpenCodeModelContext
   - type ModelResolutionError
 - `packages/adapters/opencode/src/opencode-client.ts`
@@ -255,7 +256,10 @@
   - type InitPlan
 - `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
+- `packages/cli/src/commands/validate.ts`
+  - function checkAgentsMaterialize: (path, config) => ResultAsync<WeaveConfig, ValidateError>
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
@@ -556,12 +560,16 @@
   - function isSafeDslName: (value) => boolean
 - `packages/cli/src/migration/legacy-jsonc-converter.ts`
   - function stripJsoncComments: (source) => string
-  - function convertLegacyValue: (value) => ConversionResult
-  - function convertLegacyJsonc: (source) => ConversionResult
+  - function isLegacyPromptFileReferenceSafe: (promptFile) => boolean
+  - function convertLegacyValue: (value, options) => ConversionResult
+  - function convertLegacyJsonc: (source, options) => ConversionResult
+  - function listLegacyPromptFileReferences: (source) => string[]
+  - type LegacyConversionOptions
 - `packages/cli/src/migration/legacy-jsonc-inspect.ts`
   - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
   - type LegacyJsoncInspectError
   - const MAX_LEGACY_JSONC_SOURCE_LENGTH
+- `packages/cli/src/migration/legacy-prompt-files.ts` — function readLegacyPromptFiles: (fs, legacySourcePath, sourceContent) => Promise<LegacyPromptFileContents>, function convertLegacySource: (fs, legacySourcePath, sourceContent) => Promise<ConversionResult>
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -569,7 +577,8 @@
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
 - `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
-  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function describeFailedConversion: (conversion) => string
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter

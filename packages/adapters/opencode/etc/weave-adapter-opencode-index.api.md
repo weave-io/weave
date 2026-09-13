@@ -336,7 +336,7 @@ export type ReconcileAgentError = {
 export type ReconcileDecision = "create" | "update" | "collision";
 
 // @public
-export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<string, ModelResolutionError>;
+export function resolveModelForAgent(descriptor: AgentDescriptor, context: OpenCodeModelContext): Result<string | undefined, ModelResolutionError>;
 
 // @public
 export function resolveSandboxProfileImage(sandboxProfile: string): string | undefined;

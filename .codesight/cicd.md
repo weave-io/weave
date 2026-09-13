@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
-| Proof — Active agent is Loom | push, pull_request | 3 | — | — |
+| Proof — Active agent is Loom | push, pull_request | 4 | — | — |
 | Publish Package | push | 1 | — | — |
 | Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
 
@@ -37,6 +37,9 @@
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 - **proof-claude-code** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **proof-legacy-upgrade** on `ubuntu-latest` — 6 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 

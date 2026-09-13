@@ -801,6 +801,64 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
     }
   });
 
+  it("zero-config builtins never carry an unqualified model (ProviderModelNotFoundError regression)", async () => {
+    // Builtins declare the harness-neutral default `claude-sonnet-4-5`.
+    // OpenCode reads a bare name as provider `claude-sonnet-4-5` with an empty
+    // model ID, so `opencode run --agent loom` failed for every user who had
+    // not set a model. The model must be omitted so OpenCode uses its default.
+    const root = join(
+      tmpdir(),
+      `weave-builtin-model-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+
+    const cfg: { agent?: Record<string, { model?: string }> } = {};
+    await hooks.config?.(cfg as never);
+
+    expect(Object.keys(cfg.agent ?? {})).toContain("loom");
+    for (const [name, agentConfig] of Object.entries(cfg.agent ?? {})) {
+      expect(
+        agentConfig.model,
+        `builtin agent "${name}" model`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("keeps a provider-qualified model the user declared", async () => {
+    const root = join(
+      tmpdir(),
+      `weave-qualified-model-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      ["agent loom {", '  models ["openrouter/openai/gpt-5"]', "}", ""].join(
+        "\n",
+      ),
+    );
+
+    const client = new MockOpenCodeClient();
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const hooks = await plugin(makeMockPluginInput(root, client));
+
+    const cfg: { agent?: Record<string, { model?: string }> } = {};
+    await hooks.config?.(cfg as never);
+
+    expect(cfg.agent?.["loom"]?.model).toBe("openrouter/openai/gpt-5");
+  });
+
   // SDK createAgent test removed — reconciliation is disabled.
   // The config hook test above already proves all 8 builtins are materialized.
 });

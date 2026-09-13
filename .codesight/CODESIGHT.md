@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 198 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~17,700 tokens. Without it, AI exploration would cost ~65,700 tokens. **Saves ~48,000 tokens per conversation.**
-> **Last scanned:** 2026-09-13 07:29 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 199 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~18,000 tokens. Without it, AI exploration would cost ~66,000 tokens. **Saves ~48,000 tokens per conversation.**
+> **Last scanned:** 2026-09-13 10:35 — re-run after significant changes
 
 ---
 
@@ -39,7 +39,8 @@
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
-  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - function resolveModelForAgent: (descriptor, context) => Result<string | undefined, ModelResolutionError>
+  - function isProviderQualifiedModel: (model) => boolean
   - interface OpenCodeModelContext
   - type ModelResolutionError
 - `packages/adapters/opencode/src/opencode-client.ts`
@@ -266,7 +267,10 @@
   - type InitPlan
 - `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
+- `packages/cli/src/commands/validate.ts`
+  - function checkAgentsMaterialize: (path, config) => ResultAsync<WeaveConfig, ValidateError>
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
@@ -567,12 +571,16 @@
   - function isSafeDslName: (value) => boolean
 - `packages/cli/src/migration/legacy-jsonc-converter.ts`
   - function stripJsoncComments: (source) => string
-  - function convertLegacyValue: (value) => ConversionResult
-  - function convertLegacyJsonc: (source) => ConversionResult
+  - function isLegacyPromptFileReferenceSafe: (promptFile) => boolean
+  - function convertLegacyValue: (value, options) => ConversionResult
+  - function convertLegacyJsonc: (source, options) => ConversionResult
+  - function listLegacyPromptFileReferences: (source) => string[]
+  - type LegacyConversionOptions
 - `packages/cli/src/migration/legacy-jsonc-inspect.ts`
   - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
   - type LegacyJsoncInspectError
   - const MAX_LEGACY_JSONC_SOURCE_LENGTH
+- `packages/cli/src/migration/legacy-prompt-files.ts` — function readLegacyPromptFiles: (fs, legacySourcePath, sourceContent) => Promise<LegacyPromptFileContents>, function convertLegacySource: (fs, legacySourcePath, sourceContent) => Promise<ConversionResult>
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -580,7 +588,8 @@
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
 - `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
-  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function describeFailedConversion: (conversion) => string
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
@@ -958,14 +967,14 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **48** files
-- `packages/cli/src/theme/colors.ts` — imported by **21** files
+- `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/cli/src/io/terminal.ts` — imported by **20** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **20** files
-- `packages/cli/src/io/terminal.ts` — imported by **19** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **18** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **15** files
-- `packages/cli/src/fs/file-system.ts` — imported by **13** files
+- `packages/cli/src/fs/file-system.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
@@ -981,14 +990,14 @@
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +43 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +16 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +15 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +15 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +14 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +8 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +10 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 
 ---
@@ -1002,7 +1011,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 197 test files found
+> 198 test files found
 
 ---
 
@@ -1014,7 +1023,7 @@
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
-| Proof — Active agent is Loom | push, pull_request | 3 | — | — |
+| Proof — Active agent is Loom | push, pull_request | 4 | — | — |
 | Publish Package | push | 1 | — | — |
 | Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
 
@@ -1045,6 +1054,9 @@
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 - **proof-claude-code** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **proof-legacy-upgrade** on `ubuntu-latest` — 6 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 

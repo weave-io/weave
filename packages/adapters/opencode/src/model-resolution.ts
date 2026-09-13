@@ -18,20 +18,33 @@
  *
  * ## Fail-fast rule for explicit subagent models
  *
- * When an agent's `mode` is `"subagent"` and `agentModels` is non-empty, the
- * first declared model must be available. If it is not, `resolveModelForAgent`
+ * When an agent's `mode` is `"subagent"` and it declares provider-qualified
+ * models, the first of them must be available. If it is not, `resolveModelForAgent`
  * returns `err(ModelNotAvailableError)` rather than falling back silently.
  *
  * This rule is intentionally strict: subagents are typically invoked
  * programmatically with a specific model in mind, and silent fallback would
  * produce unexpected behavior that is hard to debug.
  *
+ * ## Provider-qualified models only
+ *
+ * OpenCode parses `model` as `<provider>/<model>`. A bare name such as the
+ * builtin default `claude-sonnet-4-5` becomes provider `claude-sonnet-4-5`
+ * with an empty model ID, and every run fails with `ProviderModelNotFoundError`
+ * whatever credentials the user has. Resolution therefore only considers
+ * provider-qualified candidates, and returns `undefined` when none applies (or
+ * when only the engine's constant fallback remains) so the `model` field is
+ * omitted and OpenCode uses the user's selected or default model.
+ *
  * Boundary rule: this module imports engine types only through `@weaveio/weave-engine`
  * and SDK types only through `./sdk-types`. It must not import directly from
  * `@opencode-ai/sdk`.
  */
 
-import type { AgentDescriptor, ModelResolutionInput } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  ModelResolutionInput,
+} from "@weaveio/weave-engine";
 import { resolveAdapterModelIntent } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
@@ -126,29 +139,33 @@ export interface OpenCodeModelContext {
  *
  * @param descriptor - The normalized agent descriptor from the engine.
  * @param context - Adapter-provided OpenCode model context.
- * @returns `ok(resolvedModel)` on success, or `err(ModelResolutionError)` when
- *   explicit subagent model intent cannot be satisfied.
+ * @returns `ok(resolvedModel)` on success — `ok(undefined)` when no
+ *   provider-qualified model applies and OpenCode should use its own default —
+ *   or `err(ModelResolutionError)` when explicit subagent model intent cannot
+ *   be satisfied.
  */
 export function resolveModelForAgent(
   descriptor: AgentDescriptor,
   context: OpenCodeModelContext,
-): Result<string, ModelResolutionError> {
+): Result<string | undefined, ModelResolutionError> {
+  const qualifiedModels = descriptor.models.filter(isProviderQualifiedModel);
   const input: ModelResolutionInput = {
     agentName: descriptor.name,
     agentMode: descriptor.mode,
-    agentModels: descriptor.models.length > 0 ? descriptor.models : undefined,
-    uiSelectedModel: context.uiSelectedModel,
-    systemDefault: context.systemDefault,
+    agentModels: qualifiedModels.length > 0 ? qualifiedModels : undefined,
+    uiSelectedModel: qualifiedOrUndefined(context.uiSelectedModel),
+    systemDefault: qualifiedOrUndefined(context.systemDefault),
     availableModels: context.availableModels,
   };
 
   // Apply fail-fast rule: explicit subagent model intent must be satisfiable.
+  // Unqualified names are not OpenCode model intent, so they never trigger it.
   if (
     descriptor.mode === "subagent" &&
-    descriptor.models.length > 0 &&
+    qualifiedModels.length > 0 &&
     context.availableModels !== undefined
   ) {
-    const firstDeclared = descriptor.models[0];
+    const firstDeclared = qualifiedModels[0];
     if (
       firstDeclared !== undefined &&
       !context.availableModels.has(firstDeclared)
@@ -156,7 +173,7 @@ export function resolveModelForAgent(
       return err({
         type: "ModelNotAvailableError",
         agentName: descriptor.name,
-        requestedModels: descriptor.models,
+        requestedModels: qualifiedModels,
         availableModels: [...context.availableModels],
         message:
           `Agent "${descriptor.name}" declares model "${firstDeclared}" but it is not ` +
@@ -168,5 +185,21 @@ export function resolveModelForAgent(
   }
 
   const resolved = resolveAdapterModelIntent(input);
-  return ok(resolved.model);
+  if (resolved.source === "constant-fallback") return ok(undefined);
+  return ok(qualifiedOrUndefined(resolved.model));
+}
+
+/**
+ * Whether `model` names both an OpenCode provider and a model ID
+ * (`<provider>/<model>`). The model part may itself contain slashes, as in
+ * `openrouter/anthropic/claude-sonnet-4.5`.
+ */
+export function isProviderQualifiedModel(model: string): boolean {
+  return /^[^/\s]+\/\S+$/.test(model);
+}
+
+function qualifiedOrUndefined(model: string | undefined): string | undefined {
+  return model !== undefined && isProviderQualifiedModel(model)
+    ? model
+    : undefined;
 }

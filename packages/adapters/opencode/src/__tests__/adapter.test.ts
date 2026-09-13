@@ -741,17 +741,20 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
       projectRoot: "/tmp/test-project",
       client: mockClient,
       modelContext: {
-        availableModels: new Set(["claude-sonnet-4-5"]),
+        availableModels: new Set(["anthropic/claude-sonnet-4-5"]),
       },
     });
     await adapter.init();
 
     await adapter.spawnSubagent(
-      makeDescriptor({ models: ["claude-sonnet-4-5"], mode: "subagent" }),
+      makeDescriptor({
+        models: ["anthropic/claude-sonnet-4-5"],
+        mode: "subagent",
+      }),
     );
 
     const call = mockClient.createAgentCalls[0];
-    expect(call?.config.model).toBe("claude-sonnet-4-5");
+    expect(call?.config.model).toBe("anthropic/claude-sonnet-4-5");
   });
 
   it("returns err(ModelNotAvailableError) when subagent declares unsupported model", async () => {
@@ -761,13 +764,16 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
       projectRoot: "/tmp/test-project",
       client: mockClient,
       modelContext: {
-        availableModels: new Set(["claude-sonnet-4-5"]),
+        availableModels: new Set(["anthropic/claude-sonnet-4-5"]),
       },
     });
     await adapter.init();
 
     const result = await adapter.spawnSubagent(
-      makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+      makeDescriptor({
+        models: ["provider/unsupported-model"],
+        mode: "subagent",
+      }),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -782,13 +788,16 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
       projectRoot: "/tmp/test-project",
       client: mockClient,
       modelContext: {
-        availableModels: new Set(["claude-sonnet-4-5"]),
+        availableModels: new Set(["anthropic/claude-sonnet-4-5"]),
       },
     });
     await adapter.init();
 
     const result = await adapter.spawnSubagent(
-      makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+      makeDescriptor({
+        models: ["provider/unsupported-model"],
+        mode: "subagent",
+      }),
     );
     expect(result.isErr()).toBe(true);
 
@@ -796,11 +805,11 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     expect(mockClient.updateAgentCalls).toHaveLength(0);
   });
 
-  it("succeeds when no modelContext is provided (falls back to constant fallback)", async () => {
+  it("succeeds when no modelContext is provided and omits the model", async () => {
     const mockClient = new MockOpenCodeClient();
     mockClient.setListAgentsResult(okAsync([]));
 
-    // No modelContext — falls back to DEFAULT_FALLBACK_MODEL
+    // No modelContext and no qualified preference — OpenCode picks its default
     const adapter = new OpenCodeAdapter({
       projectRoot: "/tmp/test-project",
       client: mockClient,
@@ -811,6 +820,7 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     expect(result.isOk()).toBe(true);
 
     expect(mockClient.createAgentCalls).toHaveLength(1);
+    expect(mockClient.createAgentCalls[0]?.config.model).toBeUndefined();
   });
 
   it("succeeds for primary mode agent with unavailable model (no fail-fast)", async () => {

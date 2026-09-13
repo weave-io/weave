@@ -272,6 +272,13 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         continue;
       }
 
+      if (modelResult.value === undefined && descriptor.models.length > 0) {
+        log.debug(
+          { agent: agentName, models: descriptor.models },
+          "No provider-qualified model preference — omitting model so OpenCode uses its default",
+        );
+      }
+
       const translateResult = translateAgent(descriptor, modelResult.value);
 
       if (translateResult.isErr()) {

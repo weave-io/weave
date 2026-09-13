@@ -97,8 +97,8 @@ export interface OpenCodeAdapterOptions {
    * When provided, `spawnSubagent()` calls `resolveModelForAgent()` with this
    * context to validate model intent before materializing each agent.
    *
-   * When omitted, model resolution falls back to the engine's constant
-   * fallback model (`DEFAULT_FALLBACK_MODEL`).
+   * When omitted, only the agent's provider-qualified model preferences are
+   * used; without one, `model` is omitted and OpenCode uses its own default.
    */
   readonly modelContext?: OpenCodeModelContext;
 
@@ -187,7 +187,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
    * OpenCode model context for model resolution.
    *
    * Provided by the caller at construction time. When `undefined`, model
-   * resolution falls back to the engine's constant fallback model.
+   * resolution uses only the agent's provider-qualified model preferences.
    */
   private readonly modelContext: OpenCodeModelContext;
 
