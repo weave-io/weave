@@ -52,48 +52,10 @@ opencode debug info
 
 ## Local development
 
-To try a change in OpenCode, run the dev launcher from the project you want to
-test in:
-
-```bash
-~/source/weave/scripts/dev/opencode              # build, then start the TUI
-~/source/weave/scripts/dev/opencode debug config # check which plugin and agents load
-~/source/weave/scripts/dev/weave validate        # the CLI, run from source
-```
-
-`scripts/dev/opencode` builds `dist/plugin.js` from the checkout it lives in,
-then starts OpenCode with that build in place of any Weave plugin in your
-global OpenCode config: the published adapter, the legacy
-`@opencode_weave/weave`, or an older `file://` build. It does this through a
-per-checkout config overlay under `~/.local/state/weave-dev/`, so your real
-`~/.config/opencode` is never edited, and auth, sessions, `~/.weave`, and
-tools such as `gh` keep working. Pass `--no-build` to reuse the last build;
-any other arguments go to `opencode`. Run the script from a worktree to test
-that worktree's code.
-
-The launcher can't override a Weave plugin listed in the project's own
-`opencode.json`, so it warns about one; remove it while testing. Adapter logs
-go to the project's `.weave/weave.log`.
-
-Aliases make this shorter:
-
-```bash
-alias opencode-dev=~/source/weave/scripts/dev/opencode
-alias weave-dev=~/source/weave/scripts/dev/weave
-```
-
-To wire a build into a config by hand instead, use an absolute file URL:
-
-```json
-{
-  "plugin": [
-    "file:///absolute/path/to/packages/adapters/opencode/dist/plugin.js"
-  ]
-}
-```
-
-OpenCode appends `plugin` lists from every config layer, so remove any other
-Weave plugin first, or both will load.
+To run a local build of this adapter in OpenCode, point the `plugin` entry at
+`dist/plugin.js` with an absolute `file://` URL, in place of the published
+package. See [Dogfooding a local build](../../../README.md#dogfooding-a-local-build)
+for the build commands and the other harnesses.
 
 ## Supported host versions
 

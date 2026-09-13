@@ -33,10 +33,9 @@ reproducible installs. The package also supports the `latest`, `next`, and
 
 OpenCode fetches the package at startup. There is no separate `npm install`
 step. Restart OpenCode after changing the plugin version. For local
-development, run `scripts/dev/opencode` from the project you want to test in:
-it builds `packages/adapters/opencode/dist/plugin.js` and starts OpenCode with
-that build in place of any Weave plugin in your global config, without editing
-it. See the [package README](../../packages/adapters/opencode/README.md#local-development).
+development, build the adapter and use an absolute file URL to
+`packages/adapters/opencode/dist/plugin.js` in place of the published package;
+see [Dogfooding a local build](../../README.md#dogfooding-a-local-build).
 
 ## Release channels and host support
 

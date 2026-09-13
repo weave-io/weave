@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 200 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~18,100 tokens. Without it, AI exploration would cost ~66,200 tokens. **Saves ~48,200 tokens per conversation.**
-> **Last scanned:** 2026-09-13 15:26 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 199 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~18,000 tokens. Without it, AI exploration would cost ~66,000 tokens. **Saves ~48,000 tokens per conversation.**
+> **Last scanned:** 2026-09-13 16:40 — re-run after significant changes
 
 ---
 
@@ -874,13 +874,6 @@
   - function loadCodeowners: (root) => Promise<string>
   - type CodeownersRule
   - _...3 more_
-- `scripts/dev/opencode-config.ts`
-  - function isWeavePluginSpec: (spec) => boolean
-  - function mergeConfigs: (layers) => JsonObject
-  - function useDevPlugin: (config, devSpec) => void
-  - function readGlobalConfig: (dir) => JsonObject
-  - function findProjectWeavePlugins: (start) => void
-  - const GLOBAL_CONFIG_FILES
 - `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>
@@ -1018,7 +1011,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 199 test files found
+> 198 test files found
 
 ---
 

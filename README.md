@@ -132,7 +132,7 @@ weave eval run
 Run `weave --help` for the installed command list. The full reference is
 [`docs/reference/cli.md`](./docs/reference/cli.md).
 
-## Repository development
+## Development
 
 ```bash
 bun install
@@ -142,9 +142,140 @@ bun run docs:check-links
 bun run docs:dev
 ```
 
-To try the checkout in OpenCode, run `scripts/dev/opencode` from any project,
-and use `scripts/dev/weave` for the CLI. See the
-[OpenCode adapter README](./packages/adapters/opencode/README.md#local-development).
+### Dogfooding a local build
+
+To run your checkout (or a worktree) in a real harness, build the public
+packages the same way a release does. Each package's `dist/` is written in
+place:
+
+```bash
+bun scripts/build-public-packages.ts
+```
+
+Run the CLI straight from source, so CLI changes need no rebuild. It prints
+version `0.0.1` because the version is only stamped in at build time:
+
+```bash
+alias weave-dev="bun $HOME/source/weave/packages/cli/src/main.ts"
+weave-dev validate
+```
+
+Use `weave-dev` rather than an installed `weave` while dogfooding, so config
+checks and migrations use your code too.
+
+#### OpenCode
+
+Point OpenCode at the built plugin file. In `~/.config/opencode/opencode.json`,
+**replace** any existing Weave entry (`@weaveio/weave-adapter-opencode@…` or
+the legacy `@opencode_weave/weave`):
+
+```json
+{
+  "plugin": [
+    "file:///absolute/path/to/weave/packages/adapters/opencode/dist/plugin.js"
+  ]
+}
+```
+
+OpenCode appends the `plugin` lists from the global config, the project config,
+and `OPENCODE_CONFIG_CONTENT`. If a published Weave entry remains in any of them,
+both adapters load. Check that a project's own `opencode.json` doesn't list one.
+
+Restart OpenCode after each rebuild, then confirm what loaded:
+
+```bash
+opencode debug config | jq '.plugin, (.agent | keys)'
+```
+
+The adapter logs to `.weave/weave.log` in the project. To iterate on the
+adapter alone, this targeted build takes about a second instead of rebuilding
+every package:
+
+```bash
+cd packages/adapters/opencode
+bun build ./src/index.ts ./src/plugin.ts --outdir ./dist --target bun \
+  --external @opencode-ai/plugin --external @opencode-ai/sdk \
+  --external mustache --external neverthrow --external zod
+```
+
+While this entry is in your global config, every OpenCode session uses your
+build. Put the published entry back to return to a release.
+
+#### OpenCode 2
+
+The adapter targets exactly one OpenCode 2 host. Install that version:
+
+```bash
+bun add --global --trust @opencode-ai/cli@0.0.0-beta-19151
+opencode2 --version
+```
+
+OpenCode 2 reads the plural `plugins` field, which OpenCode 1 ignores, so it
+can live in the same `opencode.json`. Point it at the package directory; the
+root `server.js`, `rpc.js`, and `tui.js` wrappers load the built `dist/`.
+Replace any `@weaveio/weave-adapter-opencode2@…` entry:
+
+```json
+{
+  "plugins": ["/absolute/path/to/weave/packages/adapters/opencode2"]
+}
+```
+
+OpenCode 2 runs a background service, so restart it after each rebuild, then
+list the agents:
+
+```bash
+opencode2 service restart
+opencode2 debug agents
+```
+
+Weave agents show `[weave-managed]` in their description. OpenCode 2 omits an
+agent whose declared models aren't in its catalog. The builtins declare the
+bare `claude-sonnet-4-5`, so if Loom is missing, pin it to a model that
+`opencode2 models` lists:
+
+```weave
+agent loom {
+  models ["provider/model"]
+}
+```
+
+#### Claude Code
+
+The CLI bundles the Claude Code adapter, so running the CLI from source is
+the dev build. From your project:
+
+```bash
+weave-dev compose --adapter claude-code
+claude --plugin-dir .weave/plugins/claude-code
+```
+
+After you change Weave code or config, run `compose` again, then
+`/reload-plugins` in Claude Code.
+
+Leave out `--init` and the bootstrap plugin it creates. Its session-start hook
+runs `bun run weave compose`, which uses whichever `weave` is installed. That
+would regenerate the plugin with the published CLI and overwrite your build.
+
+#### Pi
+
+The Pi adapter's source isn't in this repository; it's developed and released
+separately (see [`RELEASING.md`](./RELEASING.md)). To dogfood a local Pi
+adapter, build it in that repository, then load it for one session:
+
+```bash
+WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE=1 \
+  pi --no-extensions -e /absolute/path/to/weave-adapter-pi/dist/extension.js
+```
+
+`--no-extensions` stops Pi from also loading an installed
+`@weaveio/weave-adapter-pi` (and any other installed extension). The variable
+lets a local, top-level extension register `/weave:*` commands without npm
+package provenance ([details](./docs/adapters/pi.md)). Use `pi install
+/absolute/path/to/weave-adapter-pi` instead to keep it installed across
+sessions.
+
+### Documentation
 
 The public docs at [tryweave.io/docs](https://tryweave.io/docs/) are
 maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website);
