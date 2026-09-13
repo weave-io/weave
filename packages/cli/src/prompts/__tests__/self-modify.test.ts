@@ -107,7 +107,7 @@ describe("renderSelfModifyPrompt — base doc references", () => {
   });
 });
 
-describe("renderSelfModifyPrompt — packages/docs mirror note", () => {
+describe("renderSelfModifyPrompt — packages/docs contributor-reference note", () => {
   it("notes that packages/docs/ is an unpublished reference, not the canonical source", () => {
     const out = renderSelfModifyPrompt(localCtx());
     expect(out).toContain("packages/docs/");
