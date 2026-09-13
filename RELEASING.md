@@ -42,20 +42,20 @@ Each package has a unique tag prefix:
 | OpenCode adapter | `opencode@` | `opencode@0.3.1` | `@weaveio/weave-adapter-opencode` |
 | Claude Code adapter | `claude-code@` | `claude-code@0.2.0` | `@weaveio/weave-adapter-claude-code` |
 
-**Format**: `<prefix>@<semver>` where `<semver>` is `major.minor.patch` (e.g. `1.2.3`), or `major.minor.patch-preview.N` for a pre-release (e.g. `1.3.0-preview.0`).
+**Format**: `<prefix>@<semver>` where `<semver>` is `major.minor.patch` (e.g. `1.2.3`), or `major.minor.patch-next.N` for a pre-release (e.g. `1.3.0-next.0`).
+
+**Note**: The Pi adapter (`@weaveio/weave-adapter-pi`) is developed and released separately from a private repository. It is not part of this public release workflow.
 
 ## Pre-releases
 
-A version with a `-preview.N` suffix is published to the `preview` npm dist-tag instead of `latest`, and its GitHub Release is marked as a pre-release. Users who install `@latest` or an unpinned version keep the current stable release; testers opt in with `@preview` or the exact version:
+A version with a `-next.N` suffix is published to the `next` npm dist-tag instead of `latest`, and its GitHub Release is marked as a pre-release. Users who install `@latest` or an unpinned version keep the current stable release; testers opt in with `@next` or the exact version:
 
 ```bash
-bun add --global @weaveio/weave-cli@preview
-bun add --global @weaveio/weave-cli@1.3.0-preview.0
+bun add --global @weaveio/weave-cli@next
+bun add --global @weaveio/weave-cli@1.3.0-next.0
 ```
 
-The steps are the same as a stable release: bump `package.json` to `1.3.0-preview.0`, merge to `main`, then push the `cli@1.3.0-preview.0` tag. Increment `N` for each follow-up pre-release. To promote, release `1.3.0` as usual; `latest` moves to it and `preview` stays on the last pre-release until the next one.
-
-**Note**: The Pi adapter (`@weaveio/weave-adapter-pi`) is developed and released separately from a private repository. It is not part of this public release workflow.
+The steps are the same as a stable release: bump `package.json` to `1.3.0-next.0`, merge to `main`, then push the `cli@1.3.0-next.0` tag. Increment `N` for each follow-up pre-release. To promote, release `1.3.0` as usual; `latest` moves to it and `next` stays on the last pre-release until the next one.
 
 ## Duplicate versions (idempotent skip)
 
@@ -70,8 +70,8 @@ If you push a tag for a version that already exists on npm, the workflow will sk
 
 2. **Check npm**:
    ```bash
-   npm view @weaveio/weave-cli version
-   # Should show the version you just published
+   npm view @weaveio/weave-cli dist-tags
+   # `latest` (stable) or `next` (pre-release) should show the version you just published
    ```
 
 3. **Install and test**:
