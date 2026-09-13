@@ -97,13 +97,12 @@ The engine preserves source category context on generated category shuttle descr
 `CategoryMetadata` contains:
 
 - `name` — the source category name from `.weave` config.
-- `description?` — the category description when declared.
-- `patterns` — the category's declared glob strings exactly as authored; these are **not** expanded file lists.
+- `description` — the category description. Every category must declare one.
 - `isCategory: true` — an explicit marker that the descriptor was generated from a category.
 
-Adapters MAY use `category.patterns` when generating harness-specific routing rules, plugin config, or delegation metadata. Concrete routing decisions remain adapter-owned because only adapters know the target harness' routing model and resource conventions.
+Categories carry no file patterns. Category `patterns` was removed in 0.2.0, so routing to a category shuttle is driven by the category's `description` and `triggers`, which reach adapters through the descriptor and the delegation context. Concrete routing decisions remain adapter-owned because only adapters know the target harness' routing model and resource conventions.
 
-The engine MUST NOT expand category globs, scan project files to match patterns, inspect harness-owned resources, or infer concrete harness routes. It only carries declared strings forward on the descriptor.
+The engine MUST NOT scan project files, inspect harness-owned resources, or infer concrete harness routes.
 
 ### Runtime Store
 

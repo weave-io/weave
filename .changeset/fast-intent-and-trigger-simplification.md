@@ -13,9 +13,20 @@ Breaking for 0.1.x configs:
 - `triggers` on agents and categories is a list of strings. The object form `{ domain, trigger, routing_hint }` is rejected (`triggers must contain quoted strings`).
 - Category `patterns` is removed with no replacement and is rejected as an unrecognized key. In 0.1.x every category required `patterns`, so every existing category block needs editing.
 - Every category needs a non-blank `description`. Categories route by `description` and `triggers`; Weave performs no file-path routing.
-- Prompt templates render triggers with `{{#triggers}}{{.}}{{/triggers}}`. Delegation targets no longer expose `domains` or trigger objects.
+- Delegation targets in prompt templates no longer expose `domains` or trigger objects. Each target's `triggers` is a list of strings, rendered inside the target loop:
 
-To upgrade a 0.1.x config: remove `patterns`, add a `description` to each category, and rewrite each trigger as a string. `weave validate` reports every place that needs a change. `weave init migrate` converts legacy JSONC this way and warns for every discarded field.
+  ```md
+  {{#delegation.targets}}
+  - {{name}}
+    {{#triggers}}
+    - {{.}}
+    {{/triggers}}
+  {{/delegation.targets}}
+  ```
+
+To upgrade a 0.1.x config: remove `patterns`, add a `description` to each category, and rewrite each trigger as a string. Run `weave validate` from the project root and fix what it reports. Some errors (such as an object trigger) stop validation before later ones are checked, so run it again until it passes.
+
+`weave init migrate` converts legacy `@opencode_weave/weave` JSONC on a best-effort basis. It drops object triggers and `patterns` with a warning and doesn't invent replacements, and it skips a category that has no `description`. Review the warnings, then edit the generated config.
 
 Also:
 
