@@ -561,15 +561,15 @@
 - `packages/cli/src/migration/legacy-jsonc-converter.ts`
   - function stripJsoncComments: (source) => string
   - function isLegacyPromptFileReferenceSafe: (promptFile) => boolean
-  - function convertLegacyValue: (value, options) => ConversionResult
-  - function convertLegacyJsonc: (source, options) => ConversionResult
+  - function convertLegacyValue: (value, options) => Result<ConversionResult, LegacyConversionError>
+  - function convertLegacyJsonc: (source, options) => Result<ConversionResult, LegacyConversionError>
   - function listLegacyPromptFileReferences: (source) => string[]
   - type LegacyConversionOptions
 - `packages/cli/src/migration/legacy-jsonc-inspect.ts`
   - function inspectLegacyJsonc: (source) => NeverthrowResult<void, LegacyJsoncInspectError>
   - type LegacyJsoncInspectError
   - const MAX_LEGACY_JSONC_SOURCE_LENGTH
-- `packages/cli/src/migration/legacy-prompt-files.ts` — function readLegacyPromptFiles: (fs, legacySourcePath, sourceContent) => Promise<LegacyPromptFileContents>, function convertLegacySource: (fs, legacySourcePath, sourceContent) => Promise<ConversionResult>
+- `packages/cli/src/migration/legacy-prompt-files.ts` — function readLegacyPromptFiles: (fs, legacySourcePath, sourceContent) => Promise<LegacyPromptFileContents>, function convertLegacySource: (fs, legacySourcePath, sourceContent) => ResultAsync<ConversionResult, LegacyConversionError>
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -577,7 +577,7 @@
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
 - `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
-  - function describeFailedConversion: (conversion) => string
+  - function describeFailedConversion: (error) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`

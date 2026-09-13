@@ -17,7 +17,7 @@ it("migrates positive fast intent and exact string triggers across entry kinds",
       custom_agents: { helper: { prompt: "Help", ...intent } },
       categories: { backend: { description: "Backend work", ...intent } },
     }),
-  );
+  )._unsafeUnwrap();
   expect(result.warnings).toEqual([]);
   const config = parseConfig(result.dsl)._unsafeUnwrap();
   for (const entry of [
@@ -42,7 +42,7 @@ it("warns about removed patterns and invalid intent without inventing routing", 
         },
       },
     }),
-  );
+  )._unsafeUnwrap();
   expect(result.warnings.map((warning) => warning.field).sort()).toEqual([
     "categories.backend.fast",
     "categories.backend.patterns",

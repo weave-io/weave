@@ -12,7 +12,7 @@ type FileSystemErrorCause =
 
 export type FileSystemError = {
   type: "FileSystemError";
-  operation: "exists" | "read" | "write" | "mkdir" | "copy";
+  operation: "exists" | "read" | "write" | "mkdir" | "copy" | "realpath";
   path: string;
   cause: FileSystemErrorCause;
 };
@@ -20,6 +20,8 @@ export type FileSystemError = {
 export interface FileSystem {
   exists(path: string): ResultAsync<boolean, FileSystemError>;
   readText(path: string): ResultAsync<string, FileSystemError>;
+  /** Canonical path with symlinks resolved; errors when the path is missing. */
+  realPath(path: string): ResultAsync<string, FileSystemError>;
   writeText(path: string, content: string): ResultAsync<void, FileSystemError>;
   mkdir(path: string): ResultAsync<void, FileSystemError>;
   copyFile(from: string, to: string): ResultAsync<void, FileSystemError>;
@@ -120,6 +122,33 @@ export class BunFileSystem implements FileSystem {
     );
   }
 
+  realPath(path: string): ResultAsync<string, FileSystemError> {
+    const resolved = this.resolvePath(path);
+    return ResultAsync.fromPromise(
+      (async () => {
+        const process = Bun.spawn(["realpath", resolved], {
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        const [exitCode, stdout] = await Promise.all([
+          process.exited,
+          new Response(process.stdout).text(),
+        ]);
+        return { exitCode, stdout };
+      })(),
+      toError("realpath", resolved),
+    ).andThen(({ exitCode, stdout }) =>
+      exitCode === 0
+        ? okAsync(stdout.trim())
+        : errAsync<string, FileSystemError>({
+            type: "FileSystemError",
+            operation: "realpath",
+            path: resolved,
+            cause: { kind: "MissingFile" },
+          }),
+    );
+  }
+
   writeText(path: string, content: string): ResultAsync<void, FileSystemError> {
     const resolved = this.resolvePath(path);
     return this.mkdir(dirname(resolved)).andThen(() =>
@@ -203,6 +232,20 @@ export class MemoryFileSystem implements FileSystem {
       });
     }
     return okAsync(content);
+  }
+
+  /** The in-memory filesystem has no symlinks, so existing paths are canonical. */
+  realPath(path: string): ResultAsync<string, FileSystemError> {
+    const resolved = this.resolvePath(path);
+    if (this.files.has(resolved) || this.dirs.has(resolved)) {
+      return okAsync(resolved);
+    }
+    return errAsync({
+      type: "FileSystemError",
+      operation: "realpath",
+      path: resolved,
+      cause: { kind: "MissingFile" },
+    });
   }
 
   writeText(path: string, content: string): ResultAsync<void, FileSystemError> {

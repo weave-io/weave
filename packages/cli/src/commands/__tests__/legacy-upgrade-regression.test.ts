@@ -9,14 +9,21 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "@weaveio/weave-config";
 import { parseConfig } from "@weaveio/weave-core";
 import { materializeAgents } from "@weaveio/weave-engine";
 import { parse as parseJsonc } from "jsonc-parser";
 import { errAsync, okAsync } from "neverthrow";
-import { MemoryFileSystem } from "../../fs/file-system.js";
+import { BunFileSystem, MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
-import { convertLegacyJsonc } from "../../migration/legacy-jsonc-converter.js";
+import {
+  convertLegacyJsonc as convertLegacyJsoncResult,
+  isLegacyPromptFileReferenceSafe,
+  type LegacyConversionOptions,
+} from "../../migration/legacy-jsonc-converter.js";
+import { readLegacyPromptFiles } from "../../migration/legacy-prompt-files.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import { runInit } from "../init.js";
@@ -99,6 +106,11 @@ async function migrate(
   };
 }
 
+/** Convert a source that must convert successfully. */
+function convertLegacyJsonc(source: string, options?: LegacyConversionOptions) {
+  return convertLegacyJsoncResult(source, options)._unsafeUnwrap();
+}
+
 function dslLines(content: string): string {
   return content
     .split("\n")
@@ -166,7 +178,6 @@ describe("legacy upgrade — failed or empty migrations", () => {
     );
     expect(result.warnings).toEqual([]);
     expect(result.dsl).toBe("");
-    expect(result.failed).toBeUndefined();
   });
 
   it("the delegation-categories example converts with only genuine warnings", () => {
@@ -196,7 +207,6 @@ describe("legacy upgrade — trailing commas", () => {
   it("converts a realistic config with comments and trailing commas", () => {
     expect(kitchenSink).toMatch(/,\s*[}\]]/);
     const result = convertLegacyJsonc(kitchenSink);
-    expect(result.failed).toBeUndefined();
     expect(result.warnings.map((w) => w.field)).not.toContain("<source>");
     expect(result.dsl).toContain("agent loom {");
     expect(result.dsl).toContain("category frontend {");
@@ -234,6 +244,93 @@ describe("legacy upgrade — custom agents keep description and prompt", () => {
     // An override whose every field was skipped emits no empty block.
     expect(result.dsl).not.toContain("agent loom");
   });
+
+  it("still reports field-level warnings for a skipped custom agent or category", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { researcher: { skills: ["research"], top_p: 0.5 } },
+        categories: { backend: { variant: "high" } },
+      }),
+    );
+    expect(result.warnings.map((w) => w.field)).toEqual([
+      "custom_agents.researcher",
+      "custom_agents.researcher.skills",
+      "custom_agents.researcher.top_p",
+      "categories.backend.description",
+      "categories.backend.variant",
+    ]);
+  });
+
+  it("rejects Windows drive-relative and rooted prompt_file references", () => {
+    expect(isLegacyPromptFileReferenceSafe("C:prompts/secret.md")).toBe(false);
+    expect(isLegacyPromptFileReferenceSafe("\\prompts\\secret.md")).toBe(false);
+    expect(isLegacyPromptFileReferenceSafe("prompts/reviewer.md")).toBe(true);
+  });
+
+  it("does not read a prompt_file whose canonical path escapes the config directory", async () => {
+    // A symlink inside .opencode/ that points at a file elsewhere.
+    class SymlinkFileSystem extends MemoryFileSystem {
+      override realPath(path: string) {
+        return super
+          .realPath(path)
+          .map((resolved) =>
+            resolved === "/project/.opencode/prompts/evil.md"
+              ? "/home/user/.ssh/id_rsa"
+              : resolved,
+          );
+      }
+    }
+    const fs = new SymlinkFileSystem({
+      "/project/.opencode/prompts/evil.md": "linked",
+      "/project/.opencode/prompts/ok.md": "Review carefully.",
+      "/home/user/.ssh/id_rsa": "PRIVATE KEY",
+    });
+    const contents = await readLegacyPromptFiles(
+      fs,
+      "/project/.opencode/weave-opencode.jsonc",
+      JSON.stringify({
+        custom_agents: {
+          evil: { prompt_file: "prompts/evil.md" },
+          ok: { prompt_file: "prompts/ok.md" },
+        },
+      }),
+    );
+    expect([...contents.entries()]).toEqual([
+      ["prompts/ok.md", "Review carefully."],
+    ]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "follows real symlinks when checking prompt_file containment",
+    async () => {
+      const root = join(
+        tmpdir(),
+        `weave-legacy-symlink-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      await Bun.write(join(root, "secret.txt"), "PRIVATE KEY");
+      await Bun.write(join(root, ".opencode", "prompts", "ok.md"), "Review.");
+      const link = Bun.spawnSync([
+        "ln",
+        "-s",
+        join(root, "secret.txt"),
+        join(root, ".opencode", "prompts", "evil.md"),
+      ]);
+      expect(link.exitCode).toBe(0);
+
+      const contents = await readLegacyPromptFiles(
+        new BunFileSystem(),
+        join(root, ".opencode", "weave-opencode.jsonc"),
+        JSON.stringify({
+          custom_agents: {
+            evil: { prompt_file: "prompts/evil.md" },
+            ok: { prompt_file: "prompts/ok.md" },
+          },
+        }),
+      );
+      expect([...contents.entries()]).toEqual([["prompts/ok.md", "Review."]]);
+      Bun.spawnSync(["rm", "-rf", root]);
+    },
+  );
 
   it("explains that legacy structured triggers are not migrated", () => {
     const result = convertLegacyJsonc(

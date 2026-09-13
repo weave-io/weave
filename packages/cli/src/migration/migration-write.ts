@@ -14,6 +14,7 @@ import { convertLegacySource } from "./legacy-prompt-files.js";
 import type {
   ConversionResult,
   ConversionWarning,
+  LegacyConversionError,
   MigratedPromptFile,
   MigrationPlan,
 } from "./types.js";
@@ -59,8 +60,8 @@ export function buildMigratedContent(
 }
 
 /** Explain why a failed conversion wrote nothing. */
-export function describeFailedConversion(conversion: ConversionResult): string {
-  const reasons = conversion.warnings.map(
+export function describeFailedConversion(error: LegacyConversionError): string {
+  const reasons = error.warnings.map(
     (warning) => `  • ${warning.field}: ${warning.reason}`,
   );
   return [
@@ -177,7 +178,8 @@ export function writeMigratedDsl(
 // ---------------------------------------------------------------------------
 
 /**
- * Convert legacy JSONC source content and write the result to the migration
+ * Convert legacy JSONC source content (unless an already-successful
+ * `preConversion` is supplied) and write the result to the migration
  * destination. Validation runs before any file mutation, and a conversion
  * that failed outright writes nothing.
  *
@@ -200,14 +202,11 @@ export function performMigrationWrite(
 > {
   const conversion =
     preConversion !== undefined
-      ? okAsync(preConversion)
-      : ResultAsync.fromSafePromise(
-          convertLegacySource(fs, plan.sourcePath, sourceContent),
+      ? okAsync<ConversionResult, { message: string }>(preConversion)
+      : convertLegacySource(fs, plan.sourcePath, sourceContent).mapErr(
+          (error) => ({ message: describeFailedConversion(error) }),
         );
   return conversion.andThen((converted) => {
-    if (converted.failed === true) {
-      return errAsync({ message: describeFailedConversion(converted) });
-    }
     const promptFiles = converted.promptFiles ?? [];
     return writeMigratedDsl(
       fs,

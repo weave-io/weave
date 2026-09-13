@@ -39,8 +39,9 @@
 #   7. Every custom agent keeps its description and prompt.
 #   8. No upgraded agent carries an unqualified model ID.
 #   9. `opencode run --agent loom` in p5 no longer fails with
-#      ProviderModelNotFoundError. (It may still fail on missing credentials:
-#      provider API keys are removed from the sandbox.)
+#      ProviderModelNotFoundError. (It runs with an explicit environment
+#      allowlist and no credentials, so it uses OpenCode's free default
+#      model or fails on credentials.)
 #
 # Environment:
 #   WEAVE_PROOF_LEGACY_PLUGIN  legacy plugin spec (default @opencode_weave/weave@0.8.1)
@@ -187,8 +188,15 @@ done
 proof_ok "ran weave init migrate + weave validate and captured upgraded debug config"
 
 # --- p5: run Loom (claim 9) --------------------------------------------------
+# This is the only step that can reach a model provider, so it runs with an
+# explicit environment allowlist: no inherited credentials of any kind (AWS,
+# Azure, Vertex, provider API keys) can reach it.
 set +e
-(cd "${SANDBOX}/p5-zero-config" && timeout 180 opencode run --agent loom "Reply with the single word: ready") \
+(cd "${SANDBOX}/p5-zero-config" && env -i \
+  PATH="${PATH}" HOME="${HOME}" TMPDIR="${TMPDIR:-/tmp}" TERM="${TERM:-dumb}" \
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" XDG_DATA_HOME="${XDG_DATA_HOME}" \
+  XDG_STATE_HOME="${XDG_STATE_HOME}" XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+  timeout 180 opencode run --agent loom "Reply with the single word: ready") \
   >"${RESULTS}/upgrade/p5-zero-config.run.log" 2>&1
 echo $? >"${RESULTS}/upgrade/p5-zero-config.run.exit"
 set -e

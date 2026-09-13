@@ -13,13 +13,14 @@ import {
   type SafeGraphValue,
 } from "@weaveio/weave-core";
 import { type ParseError, parse as parseJsonc } from "jsonc-parser";
-import { Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import { createConversionWarnings } from "./legacy-conversion-diagnostics.js";
 import { isSafeDslName } from "./legacy-dsl-identifiers.js";
 import { inspectLegacyJsonc } from "./legacy-jsonc-inspect.js";
 import type {
   ConversionResult,
   ConversionWarning,
+  LegacyConversionError,
   LegacyPromptFileContents,
   MigratedPromptFile,
 } from "./types.js";
@@ -290,6 +291,10 @@ export function stripJsoncComments(source: string): string {
 export function isLegacyPromptFileReferenceSafe(promptFile: string): boolean {
   if (promptFile.trim().length === 0) return false;
   if (posix.isAbsolute(promptFile) || win32.isAbsolute(promptFile))
+    return false;
+  // Drive-relative (`C:prompt.md`) and rooted (`\prompt.md`) Windows paths
+  // resolve against another directory, so they are never inside the config dir.
+  if (/^[A-Za-z]:/.test(promptFile) || promptFile.startsWith("\\"))
     return false;
   return !promptFile.split(/[\\/]+/).some((segment) => segment === "..");
 }
@@ -664,6 +669,7 @@ function convertLegacyCustomAgent(
       reason:
         "custom agent has no usable prompt or prompt_file; agent skipped because harness adapters cannot register an agent without a prompt",
     });
+    warnUnsupportedCustomAgentFields(entry, name, warnings);
     return { lines: [], promptFile: undefined };
   }
 
@@ -705,9 +711,18 @@ function convertLegacyCustomAgent(
     warnings.push(...toolResult.warnings);
     if (toolResult.lines.length > 0) lines.push(...toolResult.lines);
   }
+  warnUnsupportedCustomAgentFields(entry, name, warnings);
 
-  const unsupportedCustomAgentFields = ["skills", "display_name"];
-  for (const field of unsupportedCustomAgentFields) {
+  lines.push("}");
+  return { lines, promptFile };
+}
+
+function warnUnsupportedCustomAgentFields(
+  entry: Record<string, unknown>,
+  name: string,
+  warnings: ConversionWarning[],
+): void {
+  for (const field of ["skills", "display_name"]) {
     if (entry[field] !== undefined) {
       warnings.push({
         field: `custom_agents.${name}.${field}`,
@@ -718,13 +733,10 @@ function convertLegacyCustomAgent(
   warnUnhandledFields(
     entry,
     HANDLED_CUSTOM_AGENT_FIELDS,
-    path,
+    `custom_agents.${name}`,
     "custom agent",
     warnings,
   );
-
-  lines.push("}");
-  return { lines, promptFile };
 }
 
 /**
@@ -757,6 +769,13 @@ function convertLegacyCategory(
       field: `categories.${name}.description`,
       reason: "a non-empty category description is required; category skipped",
     });
+    warnUnhandledFields(
+      entry,
+      HANDLED_CATEGORY_FIELDS,
+      `categories.${name}`,
+      "category",
+      warnings,
+    );
     return [];
   }
   lines.push(`  description ${quoteForDsl(entry["description"])}`);
@@ -864,7 +883,7 @@ function appendValidBlock(
 function convertCopiedRoot(
   parsed: { [key: string]: SafeGraphValue },
   promptFileContents: LegacyPromptFileContents,
-): ConversionResult {
+): Result<ConversionResult, LegacyConversionError> {
   const warnings = createConversionWarnings();
   const dslLines: string[] = [];
   const promptFiles: MigratedPromptFile[] = [];
@@ -1099,14 +1118,20 @@ function convertCopiedRoot(
 
   const dsl = dslLines.join("\n");
   if (dsl.length === 0 || parseConfig(dsl).isOk()) {
-    return { dsl, warnings, promptFiles };
+    return ok({ dsl, warnings, promptFiles });
   }
   warnings.push({
     field: "<dsl>",
     reason:
       "converted DSL did not validate against the current schema; output omitted",
   });
-  return { dsl: "", warnings, failed: true };
+  return err({ type: "ConvertedDslInvalid", warnings });
+}
+
+function sourceUnreadable(reason: string): LegacyConversionError {
+  const warnings = createConversionWarnings();
+  warnings.push({ field: "<source>", reason });
+  return { type: "SourceUnreadable", warnings };
 }
 
 const parseJsoncSource = Result.fromThrowable(
@@ -1133,17 +1158,21 @@ export type LegacyConversionOptions = {
 export function convertLegacyValue(
   value: unknown,
   options: LegacyConversionOptions = {},
-): ConversionResult {
+): Result<ConversionResult, LegacyConversionError> {
   const copied = copySafeGraph(value);
-  if (copied.isErr() || !isSafeRecord(copied.value)) {
-    const warnings = createConversionWarnings();
-    warnings.push({
-      field: "<source>",
-      reason: copied.isErr()
-        ? "legacy value contains unsafe or excessive structure; no fields could be converted"
-        : "legacy JSONC root must be an object; no fields could be converted",
-    });
-    return { dsl: "", warnings, failed: true };
+  if (copied.isErr()) {
+    return err(
+      sourceUnreadable(
+        "legacy value contains unsafe or excessive structure; no fields could be converted",
+      ),
+    );
+  }
+  if (!isSafeRecord(copied.value)) {
+    return err(
+      sourceUnreadable(
+        "legacy JSONC root must be an object; no fields could be converted",
+      ),
+    );
   }
   return convertCopiedRoot(
     copied.value,
@@ -1151,24 +1180,30 @@ export function convertLegacyValue(
   );
 }
 
+/**
+ * Convert a legacy weave-opencode.jsonc source. Individual fields that cannot
+ * be converted become warnings on a successful result; the result is an error
+ * only when nothing can be converted, in which case callers must write nothing.
+ */
 export function convertLegacyJsonc(
   source: string,
   options: LegacyConversionOptions = {},
-): ConversionResult {
+): Result<ConversionResult, LegacyConversionError> {
   const inspected = inspectLegacyJsonc(source);
   if (inspected.isErr()) {
-    return { dsl: "", warnings: inspected.error.warnings, failed: true };
+    return err({
+      type: "SourceUnreadable",
+      warnings: inspected.error.warnings,
+    });
   }
 
   const parsed = parseJsoncSource(source);
   if (parsed.isErr() || parsed.value === undefined) {
-    const warnings = createConversionWarnings();
-    warnings.push({
-      field: "<source>",
-      reason:
+    return err(
+      sourceUnreadable(
         "failed to parse legacy JSONC source; no fields could be converted",
-    });
-    return { dsl: "", warnings, failed: true };
+      ),
+    );
   }
   return convertLegacyValue(parsed.value, options);
 }

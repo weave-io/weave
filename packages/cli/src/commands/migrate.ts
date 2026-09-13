@@ -280,16 +280,16 @@ export async function runMigrateMode(
     preliminaryPlan.sourcePath,
     sourceContent.value,
   );
-  if (preConversion.failed === true) {
+  if (preConversion.isErr()) {
     ctx.terminal.stderr(
-      `Migration failed: ${describeFailedConversion(preConversion)}`,
+      `Migration failed: ${describeFailedConversion(preConversion.error)}`,
     );
     return ok(1);
   }
   const migrationPlan = buildMigrationPlan(
     scope,
     fs,
-    preConversion.warnings.length,
+    preConversion.value.warnings.length,
   );
 
   // Step 5: Check destination exists
@@ -337,7 +337,7 @@ export async function runMigrateMode(
     migrationPlan,
     sourceContent.value,
     destExists.value,
-    preConversion,
+    preConversion.value,
   );
   if (writeResult.isErr()) {
     ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);

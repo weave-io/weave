@@ -41,15 +41,24 @@ export type MigratedPromptFile = {
  * Result of best-effort JSONC-to-DSL conversion.
  * `dsl` contains the converted DSL lines (without provenance comment).
  * `warnings` lists every skipped field with an explicit reason.
- * `failed` is set when the source itself could not be converted (parse
- * failure, unsafe structure, non-object root); callers must write nothing.
  * `promptFiles` lists legacy prompt files the DSL now references.
  */
 export type ConversionResult = {
   dsl: string;
   warnings: ConversionWarning[];
-  failed?: true;
   promptFiles?: MigratedPromptFile[];
+};
+
+/**
+ * The legacy source could not be converted at all, so callers must write
+ * nothing. `warnings` explains why.
+ * - `SourceUnreadable`: parse failure, oversized input, unsafe structure, or
+ *   a non-object root.
+ * - `ConvertedDslInvalid`: the combined converted DSL failed validation.
+ */
+export type LegacyConversionError = {
+  type: "SourceUnreadable" | "ConvertedDslInvalid";
+  warnings: ConversionWarning[];
 };
 
 /**

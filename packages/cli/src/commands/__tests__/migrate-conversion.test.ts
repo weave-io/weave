@@ -26,17 +26,29 @@ import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weaveio/weave-core";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
+import type { LegacyConversionOptions } from "../../migration/legacy-jsonc-converter.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
 import {
   type ConversionResult,
-  convertLegacyJsonc,
+  convertLegacyJsonc as convertLegacyJsoncResult,
   type MigrationPlan,
   runInit,
   writeMigratedDsl,
 } from "../init.js";
 
 const themeManager = new ThemeManager({ isTty: () => false });
+
+/** Conversion view for field-level assertions: a failure becomes empty DSL plus its warnings. */
+function convertLegacyJsonc(
+  source: string,
+  options?: LegacyConversionOptions,
+): ConversionResult {
+  return convertLegacyJsoncResult(source, options).match(
+    (result) => result,
+    (error) => ({ dsl: "", warnings: error.warnings }),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -308,12 +320,13 @@ describe("convertLegacyJsonc — best-effort partial success", () => {
     expect(fields).toContain("continuation");
   });
 
-  it("returns empty dsl and one warning when source is unparseable", () => {
-    const result = convertLegacyJsonc("{ invalid json !!!");
-    expect(result.dsl).toBe("");
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("<source>");
-    expect(result.warnings[0]!.reason).toContain("failed to parse");
+  it("returns a SourceUnreadable error with one warning when source is unparseable", () => {
+    const error =
+      convertLegacyJsoncResult("{ invalid json !!!")._unsafeUnwrapErr();
+    expect(error.type).toBe("SourceUnreadable");
+    expect(error.warnings).toHaveLength(1);
+    expect(error.warnings[0]!.field).toBe("<source>");
+    expect(error.warnings[0]!.reason).toContain("failed to parse");
   });
 
   it("warns on invalid log_level value but still converts other fields", () => {
