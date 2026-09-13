@@ -117,13 +117,16 @@ export type {
   SubagentSpawnedEvent,
   ToolCallAfterEvent,
   ToolCallBeforeEvent,
+  ToolCallDetail,
   TrajectoryCase,
+  TrajectoryCaseVerifier,
   TrajectoryEvent,
   TrajectoryEventParseError,
   TrajectoryResult,
   TrajectoryRunner,
   TrajectoryRunnerError,
   TrajectorySummary,
+  TrajectoryVerifierResult,
   TrajectoryWorkspace,
 } from "./trajectory-events.js";
 export {
@@ -135,8 +138,10 @@ export {
   SubagentSpawnedEventSchema,
   ToolCallAfterEventSchema,
   ToolCallBeforeEventSchema,
+  ToolCallDetailSchema,
   TrajectoryEventSchema,
   TrajectoryResultSchema,
   TrajectorySummarySchema,
+  TrajectoryVerifierResultSchema,
 } from "./trajectory-events.js";
 export { validate } from "./validate.js";

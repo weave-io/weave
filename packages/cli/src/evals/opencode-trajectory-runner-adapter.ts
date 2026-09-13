@@ -29,8 +29,63 @@
  * caller decides whether a missing image should be surfaced as a warning.
  */
 
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { ResultAsync } from "neverthrow";
+import { EVALS_ROOT } from "./case-loader.js";
 import type { EvalCase } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Working-tree plugin bundle (Spec 35, `opencode-local`)
+// ---------------------------------------------------------------------------
+
+/** Sandbox profiles that run the working tree's plugin instead of npm. */
+const LOCAL_PLUGIN_PROFILES: ReadonlySet<string> = new Set(["opencode-local"]);
+
+const PLUGIN_ENTRYPOINT = join(
+  dirname(EVALS_ROOT),
+  "packages",
+  "adapters",
+  "opencode",
+  "src",
+  "plugin.ts",
+);
+
+function needsLocalPluginBundle(cases: readonly EvalCase[]): boolean {
+  return cases.some(
+    (evalCase) =>
+      evalCase.expected_outcome.kind === "harness_trajectory" &&
+      LOCAL_PLUGIN_PROFILES.has(evalCase.expected_outcome.sandbox_profile),
+  );
+}
+
+/**
+ * Bundles the working tree's OpenCode plugin into one file (builtin prompts
+ * are embedded at bundle time), so `opencode-local` sessions run the prompts
+ * in this checkout rather than the published package. Throws with the
+ * bundler's log messages on failure; the caller turns that into a typed
+ * runner-construction error.
+ */
+async function buildLocalPluginBundle(): Promise<string> {
+  const outdir = join(
+    tmpdir(),
+    "weave-trajectory",
+    `plugin-${crypto.randomUUID()}`,
+  );
+  const result = await Bun.build({
+    entrypoints: [PLUGIN_ENTRYPOINT],
+    outdir,
+    target: "bun",
+    format: "esm",
+    naming: "weave-plugin.js",
+  });
+  if (!result.success) {
+    throw new Error(
+      `Failed to bundle ${PLUGIN_ENTRYPOINT}: ${result.logs.map(String).join("\n")}`,
+    );
+  }
+  return join(outdir, "weave-plugin.js");
+}
 
 // ---------------------------------------------------------------------------
 // Production TrajectoryRunner construction
@@ -45,6 +100,8 @@ import type { EvalCase } from "./types.js";
  *   - `EphemeralWorkspaceFactory` — real temp-directory workspace creation.
  *   - A `PromptProvider` that resolves each case's prompt text from the
  *     supplied `cases` list by `testCaseId` (== `EvalCase.id`).
+ *   - A working-tree plugin bundle, built only when a case uses the
+ *     `opencode-local` sandbox profile (Spec 35).
  *
  * @param cases - The loaded eval cases for the current suite run, used to
  *   resolve prompt text by case ID.
@@ -64,8 +121,12 @@ export async function createProductionTrajectoryRunner(
   const descriptionByCaseId = new Map(
     cases.map((c) => [c.id, c.description] as const),
   );
+  const localPluginBundlePath = needsLocalPluginBundle(cases)
+    ? await buildLocalPluginBundle()
+    : undefined;
 
   return new OpenCodeTrajectoryRunner({
+    ...(localPluginBundlePath !== undefined ? { localPluginBundlePath } : {}),
     podmanClient: new BunPodmanClient(),
     logParser: new DefaultLogParser(),
     workspaceFactory: new EphemeralWorkspaceFactory(),

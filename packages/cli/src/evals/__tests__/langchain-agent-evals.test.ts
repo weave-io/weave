@@ -32,7 +32,9 @@
 import { describe, expect, it } from "bun:test";
 import {
   type AgentEvalsScorer,
+  buildJudgmentExecutionDimension,
   buildRationaleProjection,
+  escapeTemplateBraces,
   type JudgeInput,
   LangChainAgentEvalsScorer,
   type LangChainJudge,
@@ -188,6 +190,94 @@ function makePerfectJudge(): StubLangChainJudge {
   judge.setDefaultOutput({ score: 1.0, rationale: "Perfect score." });
   return judge;
 }
+
+// ---------------------------------------------------------------------------
+// Judgment cases: deterministic executionCompleteness
+// ---------------------------------------------------------------------------
+
+describe("LangChainAgentEvalsScorer — judgment cases", () => {
+  const judgmentCase = makeTaskCompletionCase({
+    id: "judgment-case",
+    tags: ["judgment"],
+    expected_outcome: {
+      kind: "task_completion",
+      description: "Reject with a traced blocker.",
+      required_artifacts: ["review_verdict_reject", "review_blocker_traced"],
+    },
+  });
+  const rubrics = [makeRubric("judgment-case", "tapestry-execution")];
+
+  it("scores execution from the detected signals without asking the judge", async () => {
+    const judge = makePerfectJudge();
+    const scorer = new LangChainAgentEvalsScorer(judge);
+
+    const record = await scorer.score(
+      makeRun({
+        caseId: "judgment-case",
+        producedArtifacts: ["review_verdict_reject", "review_blocker_traced"],
+      }),
+      judgmentCase,
+      rubrics,
+      SCORED_AT,
+    );
+
+    expect(record._unsafeUnwrap().dimensions.executionCompleteness.score).toBe(
+      1,
+    );
+    expect(record._unsafeUnwrap().passed).toBe(true);
+    expect(judge.calls.map((call) => call.dimension)).toEqual([
+      "rationaleQuality",
+    ]);
+  });
+
+  it("does not accept a near-synonym for a missing signal", async () => {
+    const scorer = new LangChainAgentEvalsScorer(makePerfectJudge());
+
+    const record = (
+      await scorer.score(
+        makeRun({
+          caseId: "judgment-case",
+          producedArtifacts: ["review_verdict_reject", "review_blockers_cited"],
+        }),
+        judgmentCase,
+        rubrics,
+        SCORED_AT,
+      )
+    )._unsafeUnwrap();
+
+    expect(record.dimensions.executionCompleteness.score).toBe(0.5);
+    expect(record.dimensions.executionCompleteness.rationale).toContain(
+      "review_blocker_traced",
+    );
+    expect(record.passed).toBe(false);
+  });
+
+  it("leaves non-judgment task_completion cases on the LLM judge", async () => {
+    const judge = makePerfectJudge();
+    const scorer = new LangChainAgentEvalsScorer(judge);
+
+    await scorer.score(
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
+      SCORED_AT,
+    );
+
+    expect(judge.calls.map((call) => call.dimension)).toContain(
+      "executionCompleteness",
+    );
+  });
+});
+
+describe("buildJudgmentExecutionDimension", () => {
+  it("is not applicable outside task_completion", () => {
+    const dimension = buildJudgmentExecutionDimension(
+      makeRun(),
+      makeAgentRoutingCase({ tags: ["judgment"] }),
+    );
+    expect(dimension.applicable).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // LangChainAgentEvalsScorer — rubric lookup errors
@@ -1618,6 +1708,41 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       evaluatorCalls,
     };
   }
+
+  it("escapes braces and keeps $ sequences literal when a rubric contains code", async () => {
+    const mockModel = new MockBaseChatModel();
+    const { moduleLoader, factoryCallPrompts } = makeFakeModuleLoader();
+    const judge = new RealLangChainJudge(
+      mockModel as unknown as ConstructorParameters<
+        typeof RealLangChainJudge
+      >[0],
+      moduleLoader,
+    );
+
+    const rubric =
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal `${…}` from case code is the input under test.
+      'Case: `if (x) { return err({ type: "NoSamples" }); }` and `${target}` or $\' here.';
+    await judge.evaluate({
+      dimension: "rationaleQuality",
+      rubricDescription: rubric,
+      response: "r",
+      reference: "ref",
+    });
+
+    const prompt = factoryCallPrompts[0] ?? "";
+    expect(prompt).toContain(escapeTemplateBraces(rubric));
+    expect(prompt).toContain("{outputs}");
+    expect(prompt).toContain("{reference_outputs}");
+
+    // The escaped prompt must parse and render as a LangChain f-string template.
+    const { PromptTemplate } = await import("@langchain/core/prompts");
+    const rendered = await PromptTemplate.fromTemplate(prompt).format({
+      outputs: "OUT",
+      reference_outputs: "REF",
+    });
+    expect(rendered).toContain(rubric);
+    expect(rendered).toContain("OUT");
+  });
 
   it("two evaluate() calls with different rubrics each call createLLMAsJudge once (not reused)", async () => {
     const mockModel = new MockBaseChatModel();

@@ -43,6 +43,16 @@ Rules:
 - Apply **Learnings** and **Context** to inform your implementation.
 </TaskIntake>
 
+<FeedbackLoop>
+Know how you will check the change before you make it, then use that check.
+
+1. **Find the check.** Use the task's `verify by` lines first. Otherwise find the project's own commands (package scripts, Makefile, CI config) and the tests nearest the files you touch. Do not invent commands the project does not have.
+2. **Reproduce bugs first.** For a bug fix, write or run a test that fails because of the bug, and confirm it fails before you change the code.
+3. **Change, then check.** Run the narrowest check that proves each acceptance criterion. If it fails, fix and re-run. Then run the broader tests for the package you touched.
+4. **Report what you observed.** Quote each command and its result. Never write that a check passed unless you ran it in this session and saw it pass.
+5. **Say when you could not check.** If you cannot run commands (execute permission: deny) or no check exists, write `Not verified:` with the reason and the command someone else should run. An unverified change reported honestly is better than a claimed pass.
+</FeedbackLoop>
+
 <ResponseStructure>
 When reporting completed work, mirror the task envelope and keep the evidence bounded to what is actually observable in the current session.
 
@@ -58,7 +68,7 @@ Use this structure:
 5. `Issues encountered or assumptions made`
 6. `Acceptance confirmation`
 
-In `Acceptance confirmation`, confirm each acceptance criterion explicitly.
+In `Acceptance confirmation`, confirm each acceptance criterion explicitly, citing the check that proves it or marking it `Not verified:`.
 
 Honesty rules:
 - Report only files you actually changed.
@@ -81,7 +91,7 @@ When done, report back with:
 - Start immediately. No acknowledgments.
 - Execute the assigned task completely and precisely.
 - Use all available tools as needed.
-- Verify your work before reporting completion.
+- Run the feedback loop above before reporting completion.
 - Be thorough: partial work is worse than a clear failure report.
 </Execution>
 

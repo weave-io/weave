@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-runs-plan-verification-trajectory",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Harness trajectory case (Spec 35). The plan's Verification section is a bare bash block running `bun run check`, a command no task mentions. It passes only when `bun run check` runs after the last edit and exits 0 (by Tapestry or a specialist it briefs) and the hidden verifier confirms the fix."
+  }
+}

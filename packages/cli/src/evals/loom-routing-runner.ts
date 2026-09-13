@@ -63,11 +63,7 @@
  * `→ <agent>`, `delegate to <agent>`, or `route to <agent>`).
  */
 
-import type {
-  TrajectoryCase,
-  TrajectoryRunner,
-  TrajectoryWorkspace,
-} from "@weaveio/weave-core";
+import type { TrajectoryRunner } from "@weaveio/weave-core";
 import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
@@ -79,7 +75,7 @@ import {
   buildPublicExplanation,
 } from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
-import { scoreTrajectoryResult } from "./trajectory-scoring.js";
+import { TrajectoryCaseExecutor } from "./trajectory-case-executor.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -1485,20 +1481,29 @@ export class LoomRoutingRunner {
   private readonly scorer: AgentEvalsScorer;
   private readonly promptProvider: PromptProvider;
   private readonly evalsRoot: string | undefined;
-  private readonly injectedTrajectoryRunner: TrajectoryRunner | undefined;
   private readonly sandboxImageChecker: (
     sandboxProfile: string,
   ) => Promise<boolean>;
   private readonly env: Record<string, string | undefined>;
+  private readonly trajectoryExecutor: TrajectoryCaseExecutor;
 
   constructor(options: LoomRoutingRunnerOptions) {
     this.modelClient = options.modelClient;
     this.scorer = options.scorer;
     this.evalsRoot = options.evalsRoot;
-    this.injectedTrajectoryRunner = options.trajectoryRunner;
     this.sandboxImageChecker =
       options.sandboxImageChecker ?? defaultSandboxImageChecker;
     this.env = options.env ?? Bun.env;
+    this.trajectoryExecutor = new TrajectoryCaseExecutor({
+      ...(options.trajectoryRunner !== undefined
+        ? { trajectoryRunner: options.trajectoryRunner }
+        : {}),
+      env: this.env,
+      ...(options.evalsRoot !== undefined
+        ? { evalsRoot: options.evalsRoot }
+        : {}),
+      runnerLabel: "loom-trajectory-runner",
+    });
 
     // Priority: explicit promptProvider > inline loomSystemPrompt > default composed provider
     if (options.promptProvider !== undefined) {
@@ -1632,7 +1637,7 @@ export class LoomRoutingRunner {
         TrajectoryRunner | undefined,
         RunnerError
       > = hasTrajectoryCase
-        ? this.resolveTrajectoryRunner(cases)
+        ? this.trajectoryExecutor.resolveRunner(cases)
         : okAsync(undefined);
 
       return this.promptProvider
@@ -1727,41 +1732,6 @@ export class LoomRoutingRunner {
   }
 
   /**
-   * Resolve the `TrajectoryRunner` used for `harness_trajectory` cases.
-   *
-   * Returns the injected runner when supplied at construction (tests always
-   * inject a stub here). Otherwise lazily imports and constructs the
-   * production `OpenCodeTrajectoryRunner` via
-   * `opencode-trajectory-runner-adapter.ts` — real Podman/file-system
-   * dependencies are only pulled in on this path, never for text-only suites
-   * or dry runs.
-   */
-  private resolveTrajectoryRunner(
-    cases: EvalCase[],
-  ): ResultAsync<TrajectoryRunner, RunnerError> {
-    if (this.injectedTrajectoryRunner !== undefined) {
-      return okAsync(this.injectedTrajectoryRunner);
-    }
-    return ResultAsync.fromPromise(
-      this.buildDefaultTrajectoryRunner(cases),
-      (cause): RunnerError => ({
-        type: "PromptProviderFailed",
-        agentName: "loom-trajectory-runner",
-        message: `Trajectory runner construction failed: ${String(cause)}`,
-      }),
-    );
-  }
-
-  private async buildDefaultTrajectoryRunner(
-    cases: EvalCase[],
-  ): Promise<TrajectoryRunner> {
-    const { createProductionTrajectoryRunner } = await import(
-      "./opencode-trajectory-runner-adapter.js"
-    );
-    return createProductionTrajectoryRunner(cases, this.env);
-  }
-
-  /**
    * Execute a single case for one model.
    *
    * Never returns `err` — errors are converted to zero-score `CaseResult`
@@ -1776,7 +1746,7 @@ export class LoomRoutingRunner {
     trajectoryRunner: TrajectoryRunner | undefined,
   ): ResultAsync<CaseResult, never> {
     if (evalCase.expected_outcome.kind === "harness_trajectory") {
-      return this.executeTrajectoryCase(
+      return this.trajectoryExecutor.execute(
         evalCase,
         modelId,
         rubrics,
@@ -1890,153 +1860,6 @@ export class LoomRoutingRunner {
       );
 
     // Wrap in ResultAsync so reduce chain .map() works correctly
-    return new ResultAsync(
-      matchPromise.then((result) => ok<CaseResult, never>(result)),
-    );
-  }
-
-  /**
-   * Execute a single `harness_trajectory` case: run the real sandboxed
-   * harness via the injected/lazily-constructed `TrajectoryRunner` and score
-   * the observed event stream with `scoreTrajectoryResult`. Never routes
-   * through `modelClient`/`scorer` — those are for text-only cases only.
-   *
-   * Never returns `err` — the same zero-score `CaseResult` convention as
-   * `executeSingleCase` applies here.
-   */
-  private executeTrajectoryCase(
-    evalCase: EvalCase,
-    modelId: string,
-    rubrics: EvalRubric[],
-    rawArtifacts: boolean,
-    trajectoryRunner: TrajectoryRunner | undefined,
-  ): ResultAsync<CaseResult, never> {
-    if (evalCase.expected_outcome.kind !== "harness_trajectory") {
-      // Unreachable in practice — callers only route here for this kind.
-      return new ResultAsync(
-        Promise.resolve(
-          ok(
-            buildErrorResult(
-              evalCase,
-              modelId,
-              "UnknownEvalSuite",
-              rawArtifacts,
-            ),
-          ),
-        ),
-      );
-    }
-    const outcome = evalCase.expected_outcome;
-
-    if (trajectoryRunner === undefined) {
-      return new ResultAsync(
-        Promise.resolve(
-          ok(
-            buildErrorResult(
-              evalCase,
-              modelId,
-              "TrajectoryRunnerUnavailable",
-              rawArtifacts,
-              undefined,
-              "No TrajectoryRunner was resolved for this suite run.",
-            ),
-          ),
-        ),
-      );
-    }
-
-    const rubric = rubrics.find((r) => r.case_id === evalCase.id);
-    if (rubric === undefined) {
-      return new ResultAsync(
-        Promise.resolve(
-          ok(
-            buildErrorResult(
-              evalCase,
-              modelId,
-              "RubricNotFound",
-              rawArtifacts,
-              undefined,
-              `No rubric found for case "${evalCase.id}".`,
-            ),
-          ),
-        ),
-      );
-    }
-
-    const trajectoryCase: TrajectoryCase = {
-      testCaseId: evalCase.id,
-      expectedSpawns: outcome.expected_spawns,
-      expectedTools: outcome.expected_tools,
-      maxDurationSeconds: outcome.max_duration_seconds,
-      sandboxProfile: outcome.sandbox_profile,
-    };
-
-    // The workspace passed here is a placeholder: `OpenCodeTrajectoryRunner`
-    // constructs its own real ephemeral workspace internally via the
-    // injected `TrajectoryWorkspaceFactory` before invoking the sandbox.
-    const placeholderWorkspace: TrajectoryWorkspace = {
-      root: "",
-      artifactsDir: "",
-    };
-
-    const matchPromise = trajectoryRunner
-      .run(trajectoryCase, modelId, placeholderWorkspace)
-      .match<CaseResult>(
-        (result) => {
-          const scoreRecord = scoreTrajectoryResult({
-            caseId: evalCase.id,
-            modelId,
-            suite: evalCase.suite,
-            events: result.events,
-            expectedOutcome: outcome,
-            scoring: rubric.scoring,
-          });
-
-          const dimensionScores = buildDimensionScoreSummary(
-            scoreRecord.dimensions,
-          );
-          const publicExplanation = buildPublicExplanation(
-            scoreRecord,
-            evalCase,
-            false,
-          );
-
-          const summary: CaseResultSummary = {
-            caseId: evalCase.id,
-            modelId,
-            suite: evalCase.suite,
-            passed: scoreRecord.passed,
-            required: scoreRecord.required,
-            weightedTotal: scoreRecord.weightedTotal,
-            dimensionScores,
-            scoredAt: scoreRecord.scoredAt,
-            dryRun: false,
-            publicExplanation,
-            trajectorySummary: result.summary,
-          };
-
-          // `result.events` (the full trajectory) and `result.rawArtifactRef`
-          // are LOCAL-ONLY per docs/specs/33-spec-harness-trajectory-evals —
-          // only stored in the raw artifact, never in `summary`.
-          const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
-            ? {
-                caseId: evalCase.id,
-                modelId,
-                composedPrompt: "",
-                transcript: [],
-                rawContent: JSON.stringify(result.events),
-                dimensionRationales: buildDimensionRationales(
-                  scoreRecord.dimensions,
-                ),
-              }
-            : undefined;
-
-          return { summary, rawArtifact };
-        },
-        (error) =>
-          buildErrorResult(evalCase, modelId, error.type, rawArtifacts),
-      );
-
     return new ResultAsync(
       matchPromise.then((result) => ok<CaseResult, never>(result)),
     );

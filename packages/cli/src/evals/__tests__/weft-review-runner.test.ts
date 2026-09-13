@@ -537,9 +537,73 @@ describe("extractReviewSignals", () => {
     expect(signals.approvalDisciplined).toBe(false);
     expect(signals.rejectionDisciplined).toBe(false);
   });
+
+  it("marks a review traced when at least one blocker cites two distinct locations", () => {
+    const traced = extractReviewSignals(
+      [
+        "[REJECT] The reset path drops a failed write.",
+        "BLOCKER: `src/commands/settings.ts:32` discards the ResultAsync returned by `src/settings/store.ts:10`; await it and handle the error.",
+      ].join("\n"),
+    );
+    expect(traced.tracedBlockerCount).toBe(1);
+    expect(traced.producedArtifacts).toContain("review_blocker_traced");
+
+    const mixed = extractReviewSignals(
+      [
+        "[REJECT] The reset path drops a failed write.",
+        "BLOCKER: `src/commands/settings.ts:32` discards the ResultAsync returned by `src/settings/store.ts:10`; await it and handle the error.",
+        "BLOCKER: Add a failure test in `src/commands/__tests__/settings.test.ts:5`.",
+      ].join("\n"),
+    );
+    expect(mixed.tracedBlockerCount).toBe(1);
+    expect(mixed.producedArtifacts).toContain("review_blocker_traced");
+
+    const untraced = extractReviewSignals(
+      [
+        "[REJECT] The reset path drops a failed write.",
+        "BLOCKER: Fix `src/commands/settings.ts:32` so the command awaits the write.",
+      ].join("\n"),
+    );
+    expect(untraced.tracedBlockerCount).toBe(0);
+    expect(untraced.producedArtifacts).not.toContain("review_blocker_traced");
+  });
+
+  it("counts a bare path and the same path with a line as one location", () => {
+    const signals = extractReviewSignals(
+      "[REJECT]\nBLOCKER: Fix `src/commands/settings.ts` at `src/commands/settings.ts:32`.",
+    );
+    expect(signals.tracedBlockerCount).toBe(0);
+  });
+
+  it("keeps an approval disciplined when it carries non-blocking SUSPECTED notes", () => {
+    const signals = extractReviewSignals(
+      [
+        "[APPROVE] mean() is only reachable with a non-empty array.",
+        "Reviewed files: `src/stats/mean.ts`, `src/stats/report.ts`",
+        "SUSPECTED: `src/stats/mean.ts:5` divides by length; guarded by `src/stats/report.ts:13`, so non-blocking.",
+      ].join("\n"),
+    );
+    expect(signals.verdict).toBe("approve");
+    expect(signals.blockerCount).toBe(0);
+    expect(signals.approvalDisciplined).toBe(true);
+    expect(signals.producedArtifacts).not.toContain("review_blocker_traced");
+  });
 });
 
 describe("buildUserMessage", () => {
+  it("withholds required signal names for judgment cases", () => {
+    const message = buildUserMessage(
+      makeRejectCase({ tags: ["review", "judgment"] }),
+    );
+    expect(message).toContain("not disclosed for this case");
+    expect(message).not.toContain("review_verdict_reject");
+  });
+
+  it("lists required signal names for structural cases", () => {
+    const message = buildUserMessage(makeApprovalCase());
+    expect(message).toContain("review_verdict_approve");
+  });
+
   it("states that the review uses only synthetic text input", () => {
     const message = buildUserMessage(makeApprovalCase());
     expect(message).toContain("synthetic change summary");

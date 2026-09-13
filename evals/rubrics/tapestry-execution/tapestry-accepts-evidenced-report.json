@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-accepts-evidenced-report",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case and counterpart to tapestry-rejects-contradicted-report. The report's claims match its output. Score a response that marks the task complete and does not re-delegate; excessive distrust is a failure here."
+  }
+}

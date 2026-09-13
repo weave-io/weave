@@ -6,7 +6,7 @@ Today that fixture surface covers exactly **eight text-only suite families**: `l
 
 For the full eval guide — architecture, CI model, sanitization rules, raw-artifact policy, and prompt-hash provenance — see [`docs/agent-evals.md`](../docs/agent-evals.md).
 
-> **What can and cannot land here**: fixture files (`model-matrix.json`, case JSONs, rubric JSONs) are the only files that belong in this directory. Raw artifacts, composed prompt text, transcripts, API keys, and `eval-bundles/` output must never be committed here or to any external results repository without passing the sanitizer defined in `packages/cli/src/evals/sanitizer.ts`.
+> **What can and cannot land here**: fixture files (`model-matrix.json`, case JSONs, rubric JSONs, and synthetic projects under `fixtures/`) are the only files that belong in this directory. Raw artifacts, composed prompt text, transcripts, API keys, and `eval-bundles/` output must never be committed here or to any external results repository without passing the sanitizer defined in `packages/cli/src/evals/sanitizer.ts`.
 
 ## Directory Layout
 
@@ -21,7 +21,10 @@ evals/
 │   │   └── loom-route-ambiguous-direct-shuttle.json
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
-│   │   └── tapestry-delegate-to-shuttle.json
+│   │   ├── tapestry-delegate-to-shuttle.json
+│   │   ├── tapestry-rejects-contradicted-report.json   # judgment
+│   │   ├── tapestry-accepts-evidenced-report.json      # judgment
+│   │   └── tapestry-runs-plan-verification-trajectory.json   # harness_trajectory
 │       ├── tapestry-category-routing/      # Tapestry category-routing eval cases
 │   │   ├── tcr-01-exact-match.json
 │   │   ├── tcr-02-multiple-files.json
@@ -35,19 +38,27 @@ evals/
 │   │   └── tcr-10-disabled-category.json
 │   ├── shuttle-execution/              # Shuttle delegated-task execution reporting eval cases
 │   │   ├── shuttle-execution-report-structured-evidence.json
-│   │   └── shuttle-execution-report-tests-and-assumptions.json
+│   │   ├── shuttle-execution-report-tests-and-assumptions.json
+│   │   ├── shuttle-execution-reports-unverified.json   # judgment
+│   │   └── shuttle-verify-tests-after-edit-trajectory.json   # harness_trajectory
 │   ├── spindle-tools/                  # Spindle research-structure eval cases
 │   │   ├── spindle-tools-citations-facts-confidence.json
 │   │   └── spindle-tools-source-boundary-network-claims.json
 │   ├── pattern-planning/               # Pattern planning structure eval cases
 │   │   ├── pattern-plan-settings-refactor.json
-│   │   └── pattern-plan-release-checklist.json
+│   │   ├── pattern-plan-release-checklist.json
+│   │   ├── pattern-plan-verify-by-per-criterion.json   # judgment
+│   │   └── pattern-plan-no-invented-commands.json      # judgment
 │   ├── weft-review/                    # Weft review-structure eval cases
 │   │   ├── weft-review-clean-approval.json
-│   │   └── weft-review-reject-blocker-citation.json
+│   │   ├── weft-review-reject-blocker-citation.json
+│   │   ├── weft-review-traced-true-positive.json       # judgment
+│   │   └── weft-review-guarded-false-positive.json     # judgment
 │   └── warp-security/                  # Warp security-review structure eval cases
 │       ├── warp-security-fast-exit-approve.json
-│       └── warp-security-block-evidence-findings.json
+│       ├── warp-security-block-evidence-findings.json
+│       ├── warp-security-traced-injection.json         # judgment
+│       └── warp-security-guarded-false-positive.json   # judgment
 └── rubrics/
     ├── loom-routing/                   # Scoring rubrics for loom-routing cases
     │   ├── loom-route-backend-api.json
@@ -55,7 +66,10 @@ evals/
     │   └── loom-route-ambiguous-direct-shuttle.json
     ├── tapestry-execution/             # Scoring rubrics for tapestry-execution cases
     │   ├── tapestry-execute-plan-step.json
-    │   └── tapestry-delegate-to-shuttle.json
+    │   ├── tapestry-delegate-to-shuttle.json
+    │   ├── tapestry-rejects-contradicted-report.json
+    │   ├── tapestry-accepts-evidenced-report.json
+    │   └── tapestry-runs-plan-verification-trajectory.json
     ├── tapestry-category-routing/      # Scoring rubrics for tapestry-category-routing cases
     │   ├── tcr-01-exact-match.json
     │   ├── tcr-02-multiple-files.json
@@ -69,19 +83,36 @@ evals/
     │   └── tcr-10-disabled-category.json
     ├── shuttle-execution/              # Scoring rubrics for shuttle-execution cases
     │   ├── shuttle-execution-report-structured-evidence.json
-    │   └── shuttle-execution-report-tests-and-assumptions.json
+    │   ├── shuttle-execution-report-tests-and-assumptions.json
+    │   ├── shuttle-execution-reports-unverified.json
+    │   └── shuttle-verify-tests-after-edit-trajectory.json
     ├── spindle-tools/                  # Scoring rubrics for spindle-tools cases
     │   ├── spindle-tools-citations-facts-confidence.json
     │   └── spindle-tools-source-boundary-network-claims.json
     ├── pattern-planning/               # Scoring rubrics for pattern-planning cases
     │   ├── pattern-plan-settings-refactor.json
-    │   └── pattern-plan-release-checklist.json
+    │   ├── pattern-plan-release-checklist.json
+    │   ├── pattern-plan-verify-by-per-criterion.json
+    │   └── pattern-plan-no-invented-commands.json
     ├── weft-review/                    # Scoring rubrics for weft-review cases
     │   ├── weft-review-clean-approval.json
-    │   └── weft-review-reject-blocker-citation.json
+    │   ├── weft-review-reject-blocker-citation.json
+    │   ├── weft-review-traced-true-positive.json
+    │   └── weft-review-guarded-false-positive.json
     └── warp-security/                  # Scoring rubrics for warp-security cases
         ├── warp-security-fast-exit-approve.json
-        └── warp-security-block-evidence-findings.json
+        ├── warp-security-block-evidence-findings.json
+        ├── warp-security-traced-injection.json
+        └── warp-security-guarded-false-positive.json
+```
+
+Trajectory fixtures (Spec 35) live next to the cases and rubrics:
+
+```
+evals/fixtures/
+├── buggy-slugify/              # Bun project with a slug bug its tests miss
+├── plan-bash-verification/     # same project plus a plan whose Verification is a bash block
+└── slugify-edges.verifier/     # hidden verifier, mounted only in the second container
 ```
 
 ## Model Matrix (`model-matrix.json`)
@@ -232,6 +263,30 @@ structure the text runner can observe, such as:
 Avoid assertions about actual exploitability, scanner output, runtime behavior,
 or whether a secret is truly live. The suite validates review-output shape, not
 runtime security behavior.
+
+### Judgment cases (`judgment` tag)
+
+Most cases above test output *structure*: the description states the expected
+verdict and the runner lists the required signal names in the user message. A
+case tagged `judgment` instead tests whether the agent reaches the right
+conclusion from evidence supplied in the description, so:
+
+- the description carries the evidence (inline code with line numbers, a
+  specialist report with its command output, the project's declared
+  commands) and never states the expected verdict;
+- runners withhold the required signal names
+  (`buildRequiredSignalsLine` in `packages/cli/src/evals/judgment-cases.ts`),
+  and the Tapestry and Shuttle runners drop their completion and
+  section-script cues;
+- judgment cases come in pairs, a case where the agent should act (block,
+  re-delegate, verify) and its counterpart where it should not, so a prompt
+  change cannot pass by shifting bias.
+
+The signals stay deterministic. A traced review (`review_blocker_traced`,
+`security_finding_traced`) has at least one blocker or finding that cites two
+distinct code locations, meaning where the data comes from and where it is
+used. Other findings, such as a missing test, may sit at one location. Tapestry and Shuttle decision
+signals ignore negated phrasing such as "I will not mark it complete".
 
 ### Text-only assertion boundary
 

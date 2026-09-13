@@ -1,6 +1,6 @@
 {
   "id": "shuttle-execution-report-structured-evidence",
-  "description": "Shuttle should reflect delegated task intake, acknowledge the listed files, confirm acceptance coverage, and report concrete commands/tests as textual completion evidence without claiming real tool telemetry.",
+  "description": "Shuttle should reflect delegated task intake, acknowledge the listed files, address acceptance coverage, and report the evidence behind its result.",
   "suite": "shuttle-execution",
   "allowed_agents": ["shuttle"],
   "allowed_models": [
@@ -15,12 +15,14 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "Emit Shuttle-style evidence reporting that mirrors the delegated task contract from assistant text only.",
+    "description": "Emit Shuttle-style evidence reporting that mirrors the delegated task contract. Nothing runs in this exercise, so the report says what was not verified and claims no pass.",
     "required_artifacts": [
       "shuttle_task_intake_structured",
       "shuttle_files_acknowledged",
       "shuttle_acceptance_confirmed",
-      "shuttle_evidence_reported"
+      "shuttle_evidence_reported",
+      "shuttle_unverified_disclosed",
+      "shuttle_no_unobserved_pass_claim"
     ]
   },
   "accepted_alternates": [],
@@ -29,16 +31,6 @@
       "check": "content_contains",
       "role": "assistant",
       "contains": "Files changed"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "Commands run"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "ALL acceptance criteria are met"
     },
     {
       "check": "agent_mentioned",

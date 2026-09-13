@@ -1,0 +1,32 @@
+{
+  "id": "tapestry-runs-plan-verification-trajectory",
+  "description": "Execute the plan at `.weave/plans/fix-slug-edges.md`.",
+  "suite": "tapestry-execution",
+  "allowed_agents": ["tapestry", "shuttle"],
+  "allowed_models": [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.5",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "harness_trajectory",
+    "expected_spawns": ["shuttle"],
+    "expected_tools": ["edit"],
+    "max_duration_seconds": 540,
+    "sandbox_profile": "opencode-local",
+    "fixture": "plan-bash-verification",
+    "start_agent": "tapestry",
+    "expected_commands": [
+      { "contains": "bun run check", "after_last_edit": true, "expect_success": true }
+    ],
+    "verifier": {
+      "fixture": "slugify-edges.verifier",
+      "command": "bun /verifier/verify.ts",
+      "expect": "pass"
+    }
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": ["trajectory", "verification", "plan-verification"]
+}

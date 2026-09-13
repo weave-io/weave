@@ -64,17 +64,20 @@
  *     "produced: <name>" matched against `expected_outcome.required_artifacts`
  */
 
+import type { TrajectoryRunner } from "@weaveio/weave-core";
 import { err, ok, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { hasAffirmedMatch, isJudgmentCase } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
 } from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
+import { TrajectoryCaseExecutor } from "./trajectory-case-executor.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -340,6 +343,52 @@ export function extractProducedArtifacts(
 }
 
 // ---------------------------------------------------------------------------
+// Judgment cases: deciding a task's fate from a specialist report
+// ---------------------------------------------------------------------------
+
+const MARKED_COMPLETE_RE =
+  /\[x\]|\bmark(?:s|ed|ing)?\b[^.\n]{0,40}?\b(?:complete|completed|done)\b|\btask (?:is )?(?:complete|completed|done)\b|\bdone\s+1\/1\b|\b1\/1 done\b/gi;
+// Verb forms only: models discuss the noun ("no re-delegation needed") when
+// they decide against it, so "re-delegation" alone is not an action. A new
+// delegation envelope uses the bracketed `Task [1/1]:` form; a plain
+// "Task 1/1: mark complete" heading is not one.
+const REDELEGATED_RE =
+  /\bre-?delegat(?:e|es|ed|ing)\b|\bdelegat(?:e|es|ed|ing)\b[^.\n]{0,30}?\b(?:back|again)\b|\bsend(?:s|ing)?\b[^.\n]{0,20}?\bback\b|^\s*Task \[1\/1\]:/gim;
+const FAILURE_CITED_RE =
+  /\b[1-9]\d*\s+fail(?:s|ed|ing|ures?)?\b|\bfail(?:ed|ing|ures?)\b/i;
+
+export interface PlanDecisionSignals {
+  markedComplete: boolean;
+  redelegated: boolean;
+  failureCited: boolean;
+  producedArtifacts: string[];
+}
+
+/**
+ * Detects Tapestry's decision about a task after reading a specialist
+ * report: mark it complete, re-delegate it, or both (contradictory).
+ *
+ * Exported for unit testing.
+ */
+export function extractPlanDecisionSignals(
+  content: string,
+): PlanDecisionSignals {
+  const markedComplete = hasAffirmedMatch(content, MARKED_COMPLETE_RE);
+  const redelegated = hasAffirmedMatch(content, REDELEGATED_RE);
+  const failureCited = FAILURE_CITED_RE.test(content);
+
+  const producedArtifacts = [
+    markedComplete ? "tapestry_task_completed" : "tapestry_task_not_completed",
+    redelegated ? "tapestry_task_redelegated" : "tapestry_task_not_redelegated",
+  ];
+  if (failureCited) {
+    producedArtifacts.push("tapestry_failure_cited");
+  }
+
+  return { markedComplete, redelegated, failureCited, producedArtifacts };
+}
+
+// ---------------------------------------------------------------------------
 // Model run output construction
 // ---------------------------------------------------------------------------
 
@@ -356,17 +405,26 @@ function buildModelRunOutput(
     evalCase,
     extractDelegationChain(content),
   );
-  const completionSignalled = detectCompletionSignal(content);
 
   const expectedArtifacts =
     evalCase.expected_outcome.kind === "task_completion"
       ? evalCase.expected_outcome.required_artifacts
       : [];
 
-  const producedArtifacts = extractProducedArtifacts(
-    content,
-    expectedArtifacts,
-  );
+  // Judgment cases score the decision itself. The judge reads
+  // `completionSignalled` as "marked the task complete", so it must mean
+  // exactly that; a correct re-delegation must not look like completion.
+  const decision = isJudgmentCase(evalCase)
+    ? extractPlanDecisionSignals(content)
+    : undefined;
+  const completionSignalled =
+    decision !== undefined
+      ? decision.markedComplete
+      : detectCompletionSignal(content);
+  const producedArtifacts =
+    decision !== undefined
+      ? decision.producedArtifacts
+      : extractProducedArtifacts(content, expectedArtifacts);
 
   const transcript: TranscriptMessage[] = [
     { role: "user", content: userMessage },
@@ -567,6 +625,20 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
  */
 export function buildUserMessage(evalCase: EvalCase): string {
   const outcome = evalCase.expected_outcome;
+
+  if (isJudgmentCase(evalCase)) {
+    return [
+      "Synthetic eval plan context:",
+      "Plan file: .weave/plans/eval-tapestry-plan.md",
+      "Current todo state: task 1/1 in progress, delegated to shuttle.",
+      "Treat this as a text-only eval: no real harness tools are available, so decide from the evidence below.",
+      "",
+      evalCase.description,
+      "",
+      "Decide what happens to this task next and state the decision explicitly: either mark it `[x]` complete, or re-delegate it to the specialist with the specific gap.",
+    ].join("\n");
+  }
+
   const planContext = [
     "Synthetic eval plan context:",
     "Plan file: .weave/plans/eval-tapestry-plan.md",
@@ -645,6 +717,14 @@ export interface TapestryExecutionRunnerOptions {
    * When omitted, the default `EVALS_ROOT` from `case-loader.ts` is used.
    */
   evalsRoot?: string;
+  /**
+   * `TrajectoryRunner` for `harness_trajectory` cases (Spec 35). When
+   * omitted, the production OpenCode runner is built lazily the first time
+   * a run contains a trajectory case. Tests inject a stub.
+   */
+  trajectoryRunner?: TrajectoryRunner;
+  /** Environment for the production trajectory runner. Defaults to `Bun.env`. */
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -719,11 +799,22 @@ export class TapestryExecutionRunner {
   private readonly scorer: AgentEvalsScorer;
   private readonly promptProvider: PromptProvider;
   private readonly evalsRoot: string | undefined;
+  private readonly trajectoryExecutor: TrajectoryCaseExecutor;
 
   constructor(options: TapestryExecutionRunnerOptions) {
     this.modelClient = options.modelClient;
     this.scorer = options.scorer;
     this.evalsRoot = options.evalsRoot;
+    this.trajectoryExecutor = new TrajectoryCaseExecutor({
+      ...(options.trajectoryRunner !== undefined
+        ? { trajectoryRunner: options.trajectoryRunner }
+        : {}),
+      env: options.env ?? Bun.env,
+      ...(options.evalsRoot !== undefined
+        ? { evalsRoot: options.evalsRoot }
+        : {}),
+      runnerLabel: "tapestry-trajectory-runner",
+    });
 
     // Priority: explicit promptProvider > inline tapestrySystemPrompt > default composed provider
     if (options.promptProvider !== undefined) {
@@ -851,18 +942,24 @@ export class TapestryExecutionRunner {
           }),
         )
         .andThen((systemPrompt) =>
-          this.executeWorkItems(
-            workItems,
-            rubrics,
-            rawArtifacts,
-            systemPrompt,
-          ).andThen((caseResults) =>
-            ResultAsync.fromSafePromise(
-              Promise.resolve(
-                this.assembleResult(TAPESTRY_EXECUTION_SUITE, caseResults),
+          this.trajectoryExecutor
+            .resolveRunnerIfNeeded(workItems, cases)
+            .andThen((trajectoryRunner) =>
+              this.executeWorkItems(
+                workItems,
+                rubrics,
+                rawArtifacts,
+                systemPrompt,
+                trajectoryRunner,
+              ),
+            )
+            .andThen((caseResults) =>
+              ResultAsync.fromSafePromise(
+                Promise.resolve(
+                  this.assembleResult(TAPESTRY_EXECUTION_SUITE, caseResults),
+                ),
               ),
             ),
-          ),
         );
     });
   }
@@ -901,6 +998,7 @@ export class TapestryExecutionRunner {
     rubrics: EvalRubric[],
     rawArtifacts: boolean,
     systemPrompt: string,
+    trajectoryRunner: TrajectoryRunner | undefined,
   ): ResultAsync<CaseResult[], never> {
     const executeAll = workItems.reduce(
       (acc, item) =>
@@ -911,6 +1009,7 @@ export class TapestryExecutionRunner {
             rubrics,
             rawArtifacts,
             systemPrompt,
+            trajectoryRunner,
           ).map((result) => [...results, result]),
         ),
       ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
@@ -931,7 +1030,18 @@ export class TapestryExecutionRunner {
     rubrics: EvalRubric[],
     rawArtifacts: boolean,
     systemPrompt: string,
+    trajectoryRunner: TrajectoryRunner | undefined,
   ): ResultAsync<CaseResult, never> {
+    if (evalCase.expected_outcome.kind === "harness_trajectory") {
+      return this.trajectoryExecutor.execute(
+        evalCase,
+        modelId,
+        rubrics,
+        rawArtifacts,
+        trajectoryRunner,
+      );
+    }
+
     const userMessage = buildUserMessage(evalCase);
 
     const modelResultAsync = this.modelClient.complete({

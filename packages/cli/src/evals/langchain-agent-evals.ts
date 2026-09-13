@@ -60,6 +60,7 @@
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { err, ok, ResultAsync } from "neverthrow";
+import { isJudgmentCase } from "./judgment-cases.js";
 import {
   computeScoreBucket,
   EXPLANATION_MAX_CHARS,
@@ -219,6 +220,17 @@ Grade the following response against the reference. Score 1.0 for fully correct,
 <response>
 {outputs}
 </response>`;
+
+/**
+ * Doubles `{` and `}` so text renders literally inside a LangChain f-string
+ * template (`ChatPromptTemplate.fromTemplate`), where single braces delimit
+ * template variables.
+ *
+ * Exported for unit testing.
+ */
+export function escapeTemplateBraces(text: string): string {
+  return text.replaceAll("{", "{{").replaceAll("}", "}}");
+}
 
 /**
  * Narrow type for the result returned by the wrapped evaluator from
@@ -433,10 +445,12 @@ export class RealLangChainJudge implements LangChainJudge {
         // Interpolate the rubric into the prompt template.
         // createLLMAsJudge binds this at evaluator-creation time, so each
         // distinct rubric produces a separate evaluator with the correct
-        // rubric text baked in.
-        const prompt = JUDGE_PROMPT_TEMPLATE.replace(
-          "{rubric}",
-          rubricDescription,
+        // rubric text baked in. The result is parsed as a LangChain f-string
+        // template, so literal braces in the rubric (for example code in a
+        // case description) must be doubled; the replacer function keeps `$`
+        // sequences in the rubric from being read as replacement patterns.
+        const prompt = JUDGE_PROMPT_TEMPLATE.replace("{rubric}", () =>
+          escapeTemplateBraces(rubricDescription),
         );
 
         const evaluator = createLLMAsJudge({
@@ -1210,6 +1224,45 @@ export interface AgentEvalsScorer {
   ): ResultAsync<NormalizedScoreRecord, ScoringError>;
 }
 
+/**
+ * Deterministic `executionCompleteness` for judgment cases: the fraction of
+ * the case's required signals the runner actually detected.
+ *
+ * Judgment cases (tag `judgment`) are built around deterministic runner
+ * signals. Asking the LLM judge to compare two lists of signal names adds
+ * noise without adding judgment: in the baseline it accepted a near-synonym
+ * (`review_blockers_cited` for a missing `review_blocker_traced`) in one run
+ * and rejected the same situation in the next.
+ *
+ * Exported for unit testing.
+ */
+export function buildJudgmentExecutionDimension(
+  run: ModelRunOutput,
+  evalCase: EvalCase,
+): DimensionScore {
+  if (evalCase.expected_outcome.kind !== "task_completion") {
+    return notApplicableDimension(
+      `outcome kind is "${evalCase.expected_outcome.kind}", not "task_completion"`,
+    );
+  }
+  const required = evalCase.expected_outcome.required_artifacts;
+  const missing = required.filter(
+    (artifact) => !run.producedArtifacts.includes(artifact),
+  );
+  if (missing.length === 0) {
+    return {
+      score: 1,
+      rationale: `All ${required.length} required signals detected: ${required.join(", ")}.`,
+      applicable: true,
+    };
+  }
+  return {
+    score: (required.length - missing.length) / required.length,
+    rationale: `Missing required signal(s): ${missing.join(", ")}. Detected: ${run.producedArtifacts.join(", ") || "(none)"}.`,
+    applicable: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // LangChainAgentEvalsScorer — production implementation
 // ---------------------------------------------------------------------------
@@ -1235,6 +1288,50 @@ export interface AgentEvalsScorer {
  */
 export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
   constructor(private readonly judge: LangChainJudge) {}
+
+  /**
+   * `executionCompleteness`: deterministic for judgment cases (see
+   * `buildJudgmentExecutionDimension`), judged by the LLM for other
+   * `task_completion` cases, and not applicable otherwise.
+   */
+  private scoreExecution(
+    run: ModelRunOutput,
+    evalCase: EvalCase,
+    applicable: boolean,
+  ): ResultAsync<DimensionScore, ScoringError> {
+    if (!applicable) {
+      return new ResultAsync(
+        Promise.resolve(
+          ok<DimensionScore, ScoringError>(
+            notApplicableDimension(
+              `outcome kind is "${evalCase.expected_outcome.kind}", not "task_completion"`,
+            ),
+          ),
+        ),
+      );
+    }
+    if (isJudgmentCase(evalCase)) {
+      return new ResultAsync(
+        Promise.resolve(
+          ok<DimensionScore, ScoringError>(
+            buildJudgmentExecutionDimension(run, evalCase),
+          ),
+        ),
+      );
+    }
+    return this.judge
+      .evaluate({
+        dimension: "executionCompleteness",
+        rubricDescription: buildExecutionRubric(evalCase),
+        response: serialiseExecutionSignal(run),
+        reference: serialiseExecutionReference(evalCase),
+      })
+      .map((output) => ({
+        score: clampScore(output.score),
+        rationale: output.rationale || "(no rationale provided)",
+        applicable: true,
+      }));
+  }
 
   score(
     run: ModelRunOutput,
@@ -1326,29 +1423,11 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
             ),
           );
 
-    const judgeExecutionAsync: ResultAsync<DimensionScore, ScoringError> =
-      executionApplicable
-        ? this.judge
-            .evaluate({
-              dimension: "executionCompleteness",
-              rubricDescription: buildExecutionRubric(evalCase),
-              response: serialiseExecutionSignal(run),
-              reference: serialiseExecutionReference(evalCase),
-            })
-            .map((output) => ({
-              score: clampScore(output.score),
-              rationale: output.rationale || "(no rationale provided)",
-              applicable: true,
-            }))
-        : new ResultAsync(
-            Promise.resolve(
-              ok<DimensionScore, ScoringError>(
-                notApplicableDimension(
-                  `outcome kind is "${outcomeKind}", not "task_completion"`,
-                ),
-              ),
-            ),
-          );
+    const judgeExecutionAsync = this.scoreExecution(
+      run,
+      evalCase,
+      executionApplicable,
+    );
 
     const judgeRationaleAsync: ResultAsync<DimensionScore, ScoringError> =
       this.judge

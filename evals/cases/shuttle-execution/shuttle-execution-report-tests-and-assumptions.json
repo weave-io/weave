@@ -1,6 +1,6 @@
 {
   "id": "shuttle-execution-report-tests-and-assumptions",
-  "description": "Shuttle should finish a bounded delegated task by listing files changed, commands/tests run, assumptions made, and explicit acceptance confirmation in the final text report.",
+  "description": "Shuttle should finish a bounded delegated task by listing files changed, the checks that verify it, test results, assumptions made, and per-criterion acceptance status in the final text report.",
   "suite": "shuttle-execution",
   "allowed_agents": ["shuttle"],
   "allowed_models": [
@@ -15,13 +15,14 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "Emit a final Shuttle evidence report with assumptions and test results from assistant text only.",
+    "description": "Emit a final Shuttle evidence report with assumptions and test results. Nothing runs in this exercise, so the report says the tests were not run and claims no pass.",
     "required_artifacts": [
       "shuttle_task_intake_structured",
       "shuttle_files_acknowledged",
       "shuttle_acceptance_confirmed",
       "shuttle_evidence_reported",
-      "shuttle_test_results_reported"
+      "shuttle_unverified_disclosed",
+      "shuttle_no_unobserved_pass_claim"
     ]
   },
   "accepted_alternates": [],
@@ -35,11 +36,6 @@
       "check": "content_contains",
       "role": "assistant",
       "contains": "Issues/assumptions"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "ALL acceptance criteria are met"
     }
   ],
   "tags": ["execution", "reporting", "assumptions"]

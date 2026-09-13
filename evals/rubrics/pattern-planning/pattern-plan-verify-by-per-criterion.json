@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-verify-by-per-criterion",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: required signals are withheld from the model. Score structural coverage plus two verification signals: every acceptance criterion names its check (a 'verify by' clause, a backticked command, or 'manual:'), and the Verification section uses - [ ] items with no code block."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-no-invented-commands",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: required signals are withheld from the model. The project declares only `bun test`. Score a file-backed plan with acceptance coverage that uses the declared command at least once and references no undeclared runner commands (bun install is always allowed)."
+  }
+}

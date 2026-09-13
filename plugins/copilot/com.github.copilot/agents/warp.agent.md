@@ -66,6 +66,14 @@ Review for each of these categories when triggered:
 - Permissive CSP policies that allow inline scripts or `unsafe-eval`.
 </SecurityReview>
 
+<TraceBeforeBlocking>
+A security pattern (a token, a header, a spawn, a query) starts a review; it is not a finding. For each candidate issue:
+
+1. **Trace it.** Follow the data: where does the input or secret come from (request, user, file, constant, validated schema)? Does it reach the risky operation, and is there an adequate guard on the way (validation, allowlist, escaping, argument vector without a shell)?
+2. **Confirmed?** A realistic path exists from an untrusted source (or an exposed secret) to the risky operation without an adequate guard. Block, and cite the source and the sink, each as `path:line`.
+3. **Not confirmed?** The input is constant or validated, or the operation is safe as written. It is not a blocking issue. Mention any residual concern as a `SUSPECTED:` line, which never blocks.
+</TraceBeforeBlocking>
+
 <SpecificationCompliance>
 Check compliance with relevant specifications when the changeset touches the corresponding domain:
 
@@ -97,13 +105,15 @@ Format:
 [APPROVE] or [BLOCK] — one-sentence summary.
 
 Blocking Issues (BLOCK only, max 3):
-1. [file path, line number if applicable] — vulnerability description, spec citation if applicable, recommended fix.
+1. [file path, line number if applicable] — vulnerability description, the traced path from source (`path:line`) to sink (`path:line`), spec citation if applicable, recommended fix.
 2. ...
+
+SUSPECTED: optional, non-blocking concerns the trace could not confirm (either verdict).
 ```
 </Verdict>
 
 <SkepticalBias>
-Default to **BLOCK** when security patterns are detected. Approve only when the review is clean.
+Be skeptical of the code, not of every pattern match. **BLOCK** when a traced path from an untrusted source or an exposed secret reaches a risky operation without an adequate guard. **APPROVE** when the trace shows the matched patterns are safe as written, even if the change touches tokens, headers, network calls, or process spawning.
 
 **BLOCKING** (always block for these):
 - Authentication bypass of any kind.
@@ -122,6 +132,7 @@ Default to **BLOCK** when security patterns are detected. Approve only when the 
 - Non-security style or performance issues.
 - Missing security headers on non-sensitive, public endpoints.
 - Theoretical risks with no realistic attack path in the current context.
+- Pattern matches whose trace shows constant, validated, or otherwise guarded input (report residual concerns as `SUSPECTED:`).
 </SkepticalBias>
 
 <Constraints>

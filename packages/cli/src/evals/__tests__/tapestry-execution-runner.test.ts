@@ -34,6 +34,7 @@ import {
   buildUserMessage,
   detectCompletionSignal,
   extractDelegationChain,
+  extractPlanDecisionSignals,
   extractProducedArtifacts,
   TAPESTRY_EXECUTION_SUITE,
   TapestryExecutionRunner,
@@ -801,6 +802,89 @@ describe("buildUserMessage", () => {
     expect(message).toContain("Current todo state: one pending task");
     expect(message).toContain('Signal completion with "task complete"');
     expect(message).not.toContain("agent_signal");
+  });
+
+  it("frames judgment cases as a decision without a completion cue or signal names", () => {
+    const message = buildUserMessage(
+      makeTaskCompletionCase({
+        description: "Report returned by shuttle: 1 pass, 1 fail.",
+        expected_outcome: {
+          kind: "task_completion",
+          description: "Re-delegate.",
+          required_artifacts: ["tapestry_task_redelegated"],
+        },
+        tags: ["execution", "judgment"],
+      }),
+    );
+    expect(message).toContain("Report returned by shuttle: 1 pass, 1 fail.");
+    expect(message).toContain("mark it `[x]` complete, or re-delegate");
+    expect(message).not.toContain('Signal completion with "task complete"');
+    expect(message).not.toContain("tapestry_task_redelegated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractPlanDecisionSignals — judgment cases
+// ---------------------------------------------------------------------------
+
+describe("extractPlanDecisionSignals", () => {
+  it("detects re-delegation that cites the failing output and does not complete", () => {
+    const signals = extractPlanDecisionSignals(
+      [
+        "The report claims all tests pass, but its own output shows 1 fail.",
+        "I will not mark task 1/1 complete.",
+        "Re-delegating to shuttle with the JSON parse failure attached.",
+      ].join("\n"),
+    );
+    expect(signals.markedComplete).toBe(false);
+    expect(signals.redelegated).toBe(true);
+    expect(signals.producedArtifacts).toEqual([
+      "tapestry_task_not_completed",
+      "tapestry_task_redelegated",
+      "tapestry_failure_cited",
+    ]);
+  });
+
+  it("detects completion from a checked box without re-delegation", () => {
+    const signals = extractPlanDecisionSignals(
+      [
+        "Evidence matches the claim: 2 pass, 0 fail.",
+        "- [x] 1/1 Add --json output",
+        "TODO: DONE 1/1. No need to re-delegate.",
+      ].join("\n"),
+    );
+    expect(signals.markedComplete).toBe(true);
+    expect(signals.redelegated).toBe(false);
+    expect(signals.producedArtifacts).toContain("tapestry_task_completed");
+    expect(signals.producedArtifacts).toContain(
+      "tapestry_task_not_redelegated",
+    );
+    expect(signals.producedArtifacts).not.toContain("tapestry_failure_cited");
+  });
+
+  it("does not treat discussion of re-delegation as re-delegating", () => {
+    // Phrasings from real baseline replies that marked the task complete.
+    for (const content of [
+      "**Decision: mark task 1/1 `[x]` complete.** No re-delegation.",
+      "Mark task 1/1 `[x]` complete. No acceptance gap requires re-delegation.",
+      "Task 1/1: **Mark `[x]` complete.**\nNo gap identified; no re-delegation needed.",
+    ]) {
+      const signals = extractPlanDecisionSignals(content);
+      expect(signals.markedComplete).toBe(true);
+      expect(signals.redelegated).toBe(false);
+    }
+    expect(
+      extractPlanDecisionSignals(
+        "Evidence is sufficient; no gap to describe, so re-delegation would add no information.",
+      ).redelegated,
+    ).toBe(false);
+  });
+
+  it("treats a new task envelope as re-delegation", () => {
+    const signals = extractPlanDecisionSignals(
+      "Task [1/1]: Fix JSON output\n**What**: make the test pass\n@shuttle",
+    );
+    expect(signals.redelegated).toBe(true);
   });
 });
 

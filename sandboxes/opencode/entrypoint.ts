@@ -12,9 +12,14 @@
 //     into /workspace/.weave by the runner so config discovery finds Loom,
 //     Shuttle, categories, etc.
 //   - Runs `opencode run --print-logs --log-level DEBUG --model <model>
-//     "<prompt>"` with cwd set to /workspace. The model comes from the
-//     WEAVE_TRAJECTORY_MODEL env var (falls back to a sensible default for
-//     manual container invocation without the runner).
+//     [--agent <name>] "<prompt>"` with cwd set to /workspace. The model
+//     comes from the WEAVE_TRAJECTORY_MODEL env var (falls back to a sensible
+//     default for manual container invocation without the runner); the
+//     optional agent comes from WEAVE_TRAJECTORY_START_AGENT.
+//   - Leaves an existing /workspace/opencode.jsonc alone. For the
+//     `opencode-local` profile the runner writes one without an npm plugin
+//     entry and places the working-tree plugin bundle in
+//     /workspace/.opencode/plugin/ instead.
 //   - Inherits stderr from the entrypoint process so `podman run` on the
 //     host captures opencode's DEBUG log stream directly. The trajectory
 //     runner parses that stderr in real time. The bind-mounted
@@ -76,6 +81,18 @@ function resolveModel(): string {
     return raw;
   }
   return `openrouter/${raw}`;
+}
+
+// Optional starting agent for the session (Spec 35), passed by the runner as
+// WEAVE_TRAJECTORY_START_AGENT and forwarded as `opencode run --agent`. Only
+// primary agents work: OpenCode falls back to its default agent for a
+// sub-agent name.
+function resolveStartAgentArgs(): string[] {
+  const agent = Bun.env.WEAVE_TRAJECTORY_START_AGENT;
+  if (agent === undefined || agent.trim().length === 0) {
+    return [];
+  }
+  return ["--agent", agent.trim()];
 }
 
 function ensureOpencodeConfig(): ResultAsync<void, EntrypointError> {
@@ -168,6 +185,7 @@ function runOpencode(prompt: string, model: string): ResultAsync<RunResult, Entr
           "DEBUG",
           "--model",
           model,
+          ...resolveStartAgentArgs(),
           prompt,
         ],
         {

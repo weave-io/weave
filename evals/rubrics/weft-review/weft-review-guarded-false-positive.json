@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-guarded-false-positive",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The code looks like it can divide by zero but cannot, because of the NonEmptyArray parameter type and the isNonEmpty guard in the only caller. Score [APPROVE] with zero BLOCKER lines; a non-blocking SUSPECTED: note is acceptable."
+  }
+}

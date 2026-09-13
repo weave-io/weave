@@ -13,6 +13,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { buildRequiredSignalsLine, isTracedFinding } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -63,6 +64,7 @@ export interface ReviewSignals {
   blockerCount: number;
   fileReferenceCount: number;
   actionableBlockerCount: number;
+  tracedBlockerCount: number;
   approvalDisciplined: boolean;
   rejectionDisciplined: boolean;
   producedArtifacts: string[];
@@ -111,6 +113,7 @@ export function extractReviewSignals(content: string): ReviewSignals {
 
     return extractFileReferences(line).length > 0;
   }).length;
+  const tracedBlockerCount = blockerLines.filter(isTracedFinding).length;
 
   const approvalDisciplined = verdict === "approve" && blockerCount === 0;
   const rejectionDisciplined =
@@ -147,12 +150,19 @@ export function extractReviewSignals(content: string): ReviewSignals {
     producedArtifacts.add("review_rejection_disciplined");
     producedArtifacts.add("review_blockers_cited");
   }
+  // Traced: at least one blocker names where the problem originates and
+  // where it surfaces. Other blockers (for example a missing test) may
+  // legitimately sit at a single location.
+  if (tracedBlockerCount > 0) {
+    producedArtifacts.add("review_blocker_traced");
+  }
 
   return {
     verdict,
     blockerCount,
     fileReferenceCount: fileReferences.length,
     actionableBlockerCount,
+    tracedBlockerCount,
     approvalDisciplined,
     rejectionDisciplined,
     producedArtifacts: [...producedArtifacts],
@@ -316,9 +326,7 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "Start with exactly one verdict tag: [APPROVE] or [REJECT].",
     "If rejecting, emit one BLOCKER: line per blocking issue with a backticked file reference and an action verb.",
     "If approving, emit no BLOCKER: lines and add a 'Reviewed files:' line with the inspected file references.",
-    requiredArtifacts.length > 0
-      ? `Required structural signals: ${requiredArtifacts.join(", ")}`
-      : "Required structural signals: none",
+    buildRequiredSignalsLine(evalCase, requiredArtifacts),
   ].join("\n");
 }
 

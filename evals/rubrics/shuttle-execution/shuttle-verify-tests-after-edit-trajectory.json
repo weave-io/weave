@@ -1,0 +1,10 @@
+{
+  "case_id": "shuttle-verify-tests-after-edit-trajectory",
+  "suite": "shuttle-execution",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Harness trajectory case (Spec 35). The task never mentions tests. It passes only when the observed session runs `bun test` after its last edit with exit code 0 and the hidden verifier confirms the slug fix. Routing alone cannot pass it."
+  }
+}

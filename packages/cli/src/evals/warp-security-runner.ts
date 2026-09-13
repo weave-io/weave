@@ -13,6 +13,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { buildRequiredSignalsLine, isTracedFinding } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -38,13 +39,23 @@ import type {
 
 export const WARP_SECURITY_SUITE = "warp-security";
 
-const VERDICT_APPROVE_RE = /^\s*APPROVE\b/im;
-const VERDICT_BLOCK_RE = /^\s*BLOCK\b/im;
-const FINDING_RE = /^\s*FINDING:\s+.+$/gim;
-const EVIDENCE_RE = /^\s*EVIDENCE:\s+.+$/gim;
-const IMPACT_RE = /^\s*IMPACT:\s+.+$/gim;
-const FIX_RE = /^\s*FIX:\s+.+$/gim;
-const SEVERITY_RE = /^\s*SEVERITY:\s+(LOW|MEDIUM|HIGH|CRITICAL)\b/im;
+// A verdict line may be bare, bracketed as the Warp prompt specifies
+// (`[BLOCK]`), or bold (`**BLOCK**`). The trailing guard keeps
+// `BLOCKERS: 0/3` from reading as a verdict.
+const VERDICT_APPROVE_RE = /^\s*(?:\*\*|\[)*APPROVE(?:\]|\*\*)*(?![A-Za-z])/im;
+const VERDICT_BLOCK_RE = /^\s*(?:\*\*|\[)*BLOCK(?:\]|\*\*)*(?![A-Za-z])/im;
+// Field lines may carry a list marker (`1. SEVERITY: High`, `- FINDING: …`)
+// when a model numbers its blocking issues.
+const FINDING_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?FINDING:\s+.+$/gim;
+const EVIDENCE_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?EVIDENCE:\s+.+$/gim;
+const IMPACT_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?IMPACT:\s+.+$/gim;
+const FIX_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?FIX:\s+.+$/gim;
+const SEVERITY_RE =
+  /^\s*(?:(?:[-*]|\d+[.)])\s+)?SEVERITY:\s+(LOW|MEDIUM|HIGH|CRITICAL)\b/im;
+const EVIDENCE_LABEL_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?EVIDENCE:/i;
+// Ends an EVIDENCE block: the next upper-case field label (IMPACT:, FIX:,
+// SUSPECTED:, …) or a markdown heading / bold finding title.
+const BLOCK_END_RE = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:[A-Z][A-Z _-]*:|#|\*\*)/;
 const FILE_REFERENCE_RE =
   /`([^`]+)`|\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|weave|yml|yaml|css|scss|html|go|rs|py)\b/g;
 const CAP_LINE_RE = /^\s*BLOCKERS:\s*(\d+)\s*\/\s*(\d+)\s*$/im;
@@ -61,6 +72,7 @@ export interface SecuritySignals {
   cappedBlockers: boolean;
   findingCount: number;
   evidenceBackedFindingCount: number;
+  tracedEvidenceCount: number;
   fileReferenceCount: number;
   approveDisciplined: boolean;
   blockDisciplined: boolean;
@@ -81,6 +93,38 @@ function extractFileReferences(content: string): string[] {
   }
 
   return [...references];
+}
+
+// An EVIDENCE field may be one line or a label followed by bullet lines
+// (`EVIDENCE:` / `- Source: …` / `- Sink: …`); the trace is read from the
+// whole block.
+function extractEvidenceBlocks(content: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] | undefined;
+
+  for (const line of content.split("\n")) {
+    if (EVIDENCE_LABEL_RE.test(line)) {
+      if (current !== undefined) {
+        blocks.push(current.join("\n"));
+      }
+      current = [line];
+      continue;
+    }
+    if (current === undefined) {
+      continue;
+    }
+    if (BLOCK_END_RE.test(line)) {
+      blocks.push(current.join("\n"));
+      current = undefined;
+      continue;
+    }
+    current.push(line);
+  }
+
+  if (current !== undefined) {
+    blocks.push(current.join("\n"));
+  }
+  return blocks;
 }
 
 function parseCap(content: string): {
@@ -131,6 +175,9 @@ export function extractSecuritySignals(content: string): SecuritySignals {
     fixes.length,
   );
 
+  const tracedEvidenceCount =
+    extractEvidenceBlocks(content).filter(isTracedFinding).length;
+
   const cappedBlockers =
     blockerCap !== undefined &&
     blockerCap <= MAX_CAP &&
@@ -178,6 +225,12 @@ export function extractSecuritySignals(content: string): SecuritySignals {
   if (blockDisciplined) {
     producedArtifacts.add("security_blocking_format_disciplined");
   }
+  // Traced: at least one finding's EVIDENCE names the source and the sink.
+  // Other findings (for example a missing auth check) may legitimately sit
+  // at a single location.
+  if (findings.length > 0 && tracedEvidenceCount > 0) {
+    producedArtifacts.add("security_finding_traced");
+  }
 
   return {
     verdict,
@@ -186,6 +239,7 @@ export function extractSecuritySignals(content: string): SecuritySignals {
     cappedBlockers,
     findingCount: findings.length,
     evidenceBackedFindingCount,
+    tracedEvidenceCount,
     fileReferenceCount: fileReferences.length,
     approveDisciplined,
     blockDisciplined,
@@ -349,9 +403,7 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "If approving, fast-exit with 'BLOCKERS: 0/3' and emit no FINDING: lines.",
     "If blocking, emit 'BLOCKERS: N/3' with N between 1 and 3, then for each finding include SEVERITY:, FINDING:, EVIDENCE:, IMPACT:, and FIX: lines.",
     "All blocking findings must cite backticked file references in the evidence or fix text.",
-    requiredArtifacts.length > 0
-      ? `Required structural signals: ${requiredArtifacts.join(", ")}`
-      : "Required structural signals: none",
+    buildRequiredSignalsLine(evalCase, requiredArtifacts),
   ].join("\n");
 }
 

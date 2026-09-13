@@ -1,0 +1,36 @@
+{
+  "id": "weft-review-traced-true-positive",
+  "description": "Change under review: add a `--reset` flag to the settings command. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file, including its imports of `saveSettings`, `DEFAULT_SETTINGS`, `printSettings`, and `log`, is unchanged and compiles.\n\n`src/settings/store.ts` (unchanged, shown for context):\n```ts\n10 export function saveSettings(path: string, settings: Settings): ResultAsync<void, SettingsError> {\n11   return ResultAsync.fromPromise(Bun.write(path, JSON.stringify(settings)), (cause) => ({ type: \"WriteFailed\", cause }));\n12 }\n```\n\n`src/commands/settings.ts` (changed, lines 30-37):\n```ts\n30 export async function runSettings(args: SettingsArgs): Promise<number> {\n31   if (args.reset) {\n32     saveSettings(args.path, DEFAULT_SETTINGS);\n33     log.info(\"settings reset\");\n34     return 0;\n35   }\n36   return printSettings(args.path);\n37 }\n```\n\n`src/commands/__tests__/settings.test.ts` (added):\n```ts\n1 import { expect, spyOn, test } from \"bun:test\";\n2 import * as store from \"../../settings/store.js\";\n3 import { runSettings } from \"../settings.js\";\n4\n5 test(\"reset writes defaults\", async () => {\n6   const spy = spyOn(store, \"saveSettings\");\n7   expect(await runSettings({ reset: true, path: \"settings.json\" })).toBe(0);\n8   expect(spy).toHaveBeenCalled();\n9 });\n```",
+  "suite": "weft-review",
+  "allowed_agents": ["weft"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731",
+    "openai/gpt-6-astra"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change: the reset path discards the ResultAsync from saveSettings, so a failed write still returns 0, and the test only checks the call happened. At least one blocker must be traced by citing both the discarding call site and the fallible function it calls.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_reject",
+      "review_blockers_present",
+      "review_rejection_disciplined",
+      "review_blocker_traced"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": ["review", "judgment", "traced", "rejection"]
+}

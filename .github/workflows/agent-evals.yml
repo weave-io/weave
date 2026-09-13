@@ -43,6 +43,9 @@ on:
             loom-route-warp-boundary-downstream-audit
             tapestry-execute-plan-step
             tapestry-delegate-to-shuttle
+            tapestry-rejects-contradicted-report
+            tapestry-accepts-evidenced-report
+            tapestry-runs-plan-verification-trajectory
             tcr-01-exact-match
             tcr-02-multiple-files
             tcr-03-windows-paths
@@ -55,14 +58,22 @@ on:
             tcr-10-disabled-category
             shuttle-execution-report-structured-evidence
             shuttle-execution-report-tests-and-assumptions
+            shuttle-execution-reports-unverified
+            shuttle-verify-tests-after-edit-trajectory
             spindle-tools-citations-facts-confidence
             spindle-tools-source-boundary-network-claims
             pattern-plan-settings-refactor
             pattern-plan-release-checklist
+            pattern-plan-verify-by-per-criterion
+            pattern-plan-no-invented-commands
             weft-review-clean-approval
             weft-review-reject-blocker-citation
+            weft-review-traced-true-positive
+            weft-review-guarded-false-positive
             warp-security-fast-exit-approve
             warp-security-block-evidence-findings
+            warp-security-traced-injection
+            warp-security-guarded-false-positive
           A regex-only guard is applied as a second defence for forward-compatibility.
           The workflow dry-run step validates this same allowlist before any live model call.
         required: false
@@ -141,7 +152,7 @@ jobs:
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI
           # validation and fixture set; workflow-sync.test.ts enforces parity.
-          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle loom-route-shuttle-implement-utility loom-route-shuttle-implement-utility-trajectory loom-route-shuttle-boundary-plan-first loom-route-pattern-plan-migration loom-route-pattern-boundary-small-fix loom-route-thread-explore-auth-flow loom-route-thread-boundary-prehop-then-implement loom-route-spindle-research-oauth-pkce loom-route-spindle-boundary-internal-exploration loom-route-weft-review-checkout-pr loom-route-weft-boundary-downstream-review loom-route-warp-security-audit-auth-flow loom-route-warp-boundary-downstream-audit tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings tcr-01-exact-match tcr-02-multiple-files tcr-03-windows-paths tcr-04-no-match tcr-05-cross-category tcr-06-overlap tcr-07-explicit-hint tcr-08-misleading-prose tcr-09-similar-names tcr-10-disabled-category"
+          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle loom-route-shuttle-implement-utility loom-route-shuttle-implement-utility-trajectory loom-route-shuttle-boundary-plan-first loom-route-pattern-plan-migration loom-route-pattern-boundary-small-fix loom-route-thread-explore-auth-flow loom-route-thread-boundary-prehop-then-implement loom-route-spindle-research-oauth-pkce loom-route-spindle-boundary-internal-exploration loom-route-weft-review-checkout-pr loom-route-weft-boundary-downstream-review loom-route-warp-security-audit-auth-flow loom-route-warp-boundary-downstream-audit tapestry-execute-plan-step tapestry-delegate-to-shuttle tapestry-rejects-contradicted-report tapestry-accepts-evidenced-report tapestry-runs-plan-verification-trajectory shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions shuttle-execution-reports-unverified shuttle-verify-tests-after-edit-trajectory spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist pattern-plan-verify-by-per-criterion pattern-plan-no-invented-commands weft-review-clean-approval weft-review-reject-blocker-citation weft-review-traced-true-positive weft-review-guarded-false-positive warp-security-fast-exit-approve warp-security-block-evidence-findings warp-security-traced-injection warp-security-guarded-false-positive tcr-01-exact-match tcr-02-multiple-files tcr-03-windows-paths tcr-04-no-match tcr-05-cross-category tcr-06-overlap tcr-07-explicit-hint tcr-08-misleading-prose tcr-09-similar-names tcr-10-disabled-category"
 
           # Identifier regex: mirrors VALID_IDENTIFIER_RE from input-validation.ts.
           # Anchored; only alphanumerics, underscore, dot, slash, colon, at, hyphen.
@@ -522,15 +533,15 @@ jobs:
 
           # Case allowlist: exact case IDs with expected_outcome.kind ==
           # "harness_trajectory" from evals/cases/**
-          ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory"
+          ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory shuttle-verify-tests-after-edit-trajectory tapestry-runs-plan-verification-trajectory"
 
           # Model allowlist: exact model IDs used by trajectory cases'
           # allowed_models field.
-          ALLOWED_TRAJECTORY_MODELS="openai/gpt-4o-mini"
+          ALLOWED_TRAJECTORY_MODELS="openai/gpt-4o-mini anthropic/claude-sonnet-4.5 anthropic/claude-opus-5 openai/gpt-5.5 deepseek/deepseek-v4-flash-0731"
 
           # Sandbox profile allowlist: exact expected_outcome.sandbox_profile
           # values referenced by trajectory cases.
-          ALLOWED_SANDBOX_PROFILES="opencode-default"
+          ALLOWED_SANDBOX_PROFILES="opencode-default opencode-local"
 
           TRAJECTORY_CASE="loom-route-shuttle-implement-utility-trajectory"
           TRAJECTORY_MODEL="openai/gpt-4o-mini"

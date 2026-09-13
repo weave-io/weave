@@ -1,0 +1,29 @@
+{
+  "id": "pattern-plan-no-invented-commands",
+  "description": "Plan adding input validation to the `slugify` helper so it returns a typed error for empty or whitespace-only input instead of an empty slug. Relevant files: `src/slugify.ts` (the helper), `src/slugify.test.ts` (its tests), and `README.md` (usage docs). Available commands (from package.json scripts): `bun test`.",
+  "suite": "pattern-planning",
+  "allowed_agents": ["pattern"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731",
+    "openai/gpt-6-astra"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Produce a structured plan that verifies the work with the project's declared command (bun test) and does not reference commands the project does not have, such as lint, typecheck, or build scripts. Checks with no command should be marked manual.",
+    "required_artifacts": [
+      "plan_file_tasks",
+      "plan_acceptance_coverage",
+      "plan_uses_declared_commands",
+      "plan_no_unlisted_commands"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": ["planning", "judgment", "verification", "commands"]
+}

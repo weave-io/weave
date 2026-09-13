@@ -12,6 +12,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { buildRequiredSignalsLine } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -35,6 +36,14 @@ import type {
 } from "./types.js";
 
 export const PATTERN_PLANNING_SUITE = "pattern-planning";
+
+/**
+ * Output budget for a plan. Full plans run to several thousand characters,
+ * and reasoning models spend part of the budget before answering; at the
+ * client default (2048) plans were cut off mid-task, which failed them on
+ * structure they would otherwise have had.
+ */
+export const PATTERN_PLAN_MAX_TOKENS = 8192;
 
 const STRUCTURAL_TAG_RE = /(?:^|\s)#(?<tag>[a-z_][a-z0-9_-]*)\b/gim;
 const TASK_CHECKBOX_LINE_RE = /^\s*[-*]\s*\[[ xX]?\]\s+.+$/gm;
@@ -75,6 +84,226 @@ const STRUCTURAL_ARTIFACTS = [
 ] as const;
 
 type StructuralArtifact = (typeof STRUCTURAL_ARTIFACTS)[number];
+
+// Verification signals: does each acceptance criterion say how it is checked,
+// is the plan-level Verification section a checklist, and does the plan stick
+// to the commands the case declares?
+const ACCEPTANCE_FIELD_LINE_RE =
+  /^(\s*)[-*]?\s*(?:\*\*)?acceptance(?:\s+criteria)?(?:\*\*)?\s*:(.*)$/i;
+const FIELD_LINE_RE = /^\s*[-*]?\s*\*\*[^*]+(?::\*\*|\*\*\s*:)/;
+const HEADING_LINE_RE = /^\s*#{1,6}\s/;
+const CHECKBOX_LINE_RE = /^\s*[-*]\s*\[[ xX]?\]\s+/;
+const LIST_ITEM_LINE_RE = /^\s*(?:[-*]|\d+\.)\s+(.+)$/;
+const VERIFICATION_HEADING_RE = /^\s*#{1,6}\s*verification\b/i;
+const CODE_FENCE_RE = /^\s*```/;
+const VERIFY_METHOD_RE =
+  /\bverif(?:y|ied)\s+(?:by|with|via)\b|\bmanual(?:ly)?\s*:|\bcheck(?:ed)?\s+(?:by|with|via)\b/i;
+const INLINE_CODE_RE = /(?<!`)`([^`\n]+)`(?!`)/g;
+const COMMAND_RUNNERS = new Set([
+  "bun",
+  "bunx",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "node",
+  "deno",
+  "make",
+  "cargo",
+  "go",
+  "pytest",
+  "python",
+  "python3",
+  "tsc",
+  "biome",
+  "eslint",
+  "vitest",
+  "jest",
+]);
+/** Commands that exist in any project using the runner, declared or not. */
+const ALWAYS_AVAILABLE_COMMANDS = ["bun install", "npm install"];
+
+function leadingSpaces(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+function normalizeCommand(raw: string): string {
+  return raw
+    .replace(/^\s*\$\s+/, "")
+    .replace(/\s+#.*$/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function isCommandLike(text: string): boolean {
+  const first = normalizeCommand(text).split(" ")[0];
+  return first !== undefined && COMMAND_RUNNERS.has(first);
+}
+
+function commandMatches(command: string, declared: string): boolean {
+  return command === declared || command.startsWith(`${declared} `);
+}
+
+/** Command-like inline code spans in `text` (single backticks only). */
+function extractInlineCommands(text: string): string[] {
+  return [...text.matchAll(INLINE_CODE_RE)]
+    .map((match) => match[1] ?? "")
+    .filter(isCommandLike)
+    .map(normalizeCommand);
+}
+
+/** Command-like inline code spans plus command-like lines inside fences. */
+function extractPlanCommands(content: string): string[] {
+  const commands = extractInlineCommands(content);
+  let inFence = false;
+  for (const line of content.split("\n")) {
+    if (CODE_FENCE_RE.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence && isCommandLike(line)) {
+      commands.push(normalizeCommand(line));
+    }
+  }
+  return commands;
+}
+
+/**
+ * Acceptance criteria: list items under an `Acceptance:` field, plus inline
+ * text after the colon. A heading, another `**Field**:` line, or a checkbox
+ * at or left of the field's indent (the next task) ends the list.
+ */
+export function extractAcceptanceCriteria(content: string): string[] {
+  const criteria: string[] = [];
+  let fieldIndent: number | undefined;
+
+  for (const line of content.split("\n")) {
+    const fieldMatch = line.match(ACCEPTANCE_FIELD_LINE_RE);
+    if (fieldMatch !== null) {
+      fieldIndent = (fieldMatch[1] ?? "").length;
+      const inline = (fieldMatch[2] ?? "").replace(/^\*\*/, "").trim();
+      if (inline !== "") {
+        criteria.push(inline);
+      }
+      continue;
+    }
+    if (fieldIndent === undefined || line.trim() === "") {
+      continue;
+    }
+
+    const endsList =
+      HEADING_LINE_RE.test(line) ||
+      FIELD_LINE_RE.test(line) ||
+      (CHECKBOX_LINE_RE.test(line) && leadingSpaces(line) <= fieldIndent);
+    if (endsList) {
+      fieldIndent = undefined;
+      continue;
+    }
+
+    const item = line.match(LIST_ITEM_LINE_RE);
+    if (item !== null) {
+      criteria.push(item[1] ?? "");
+      continue;
+    }
+    const last = criteria.pop();
+    criteria.push(last === undefined ? line.trim() : `${last} ${line.trim()}`);
+  }
+
+  return criteria;
+}
+
+function hasVerificationMethod(criterion: string): boolean {
+  return (
+    VERIFY_METHOD_RE.test(criterion) ||
+    extractInlineCommands(criterion).length > 0
+  );
+}
+
+function extractVerificationSection(content: string): string[] | undefined {
+  const lines = content.split("\n");
+  const start = lines.findIndex((line) => VERIFICATION_HEADING_RE.test(line));
+  if (start === -1) {
+    return undefined;
+  }
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => HEADING_LINE_RE.test(line));
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+export interface VerificationSignals {
+  criteriaCount: number;
+  criteriaWithVerificationCount: number;
+  verificationSectionPresent: boolean;
+  verificationCheckboxCount: number;
+  verificationSectionHasCodeBlock: boolean;
+  declaredCommands: string[];
+  unlistedCommands: string[];
+  producedArtifacts: string[];
+}
+
+/**
+ * Verification signals for a plan. `description` is the case description;
+ * command-like inline code spans in it are the project's declared commands.
+ */
+export function extractVerificationSignals(
+  content: string,
+  description: string,
+): VerificationSignals {
+  const criteria = extractAcceptanceCriteria(content);
+  const criteriaWithVerificationCount = criteria.filter(
+    hasVerificationMethod,
+  ).length;
+
+  const section = extractVerificationSection(content);
+  const verificationCheckboxCount =
+    section?.filter((line) => CHECKBOX_LINE_RE.test(line)).length ?? 0;
+  const verificationSectionHasCodeBlock =
+    section?.some((line) => CODE_FENCE_RE.test(line)) ?? false;
+
+  const declaredCommands = [...new Set(extractInlineCommands(description))];
+  const planCommands = extractPlanCommands(content);
+  const usesDeclaredCommand = planCommands.some((command) =>
+    declaredCommands.some((declared) => commandMatches(command, declared)),
+  );
+  const unlistedCommands = [
+    ...new Set(
+      planCommands.filter(
+        (command) =>
+          ![...declaredCommands, ...ALWAYS_AVAILABLE_COMMANDS].some(
+            (declared) => commandMatches(command, declared),
+          ),
+      ),
+    ),
+  ];
+
+  const producedArtifacts: string[] = [];
+  if (
+    criteria.length > 0 &&
+    criteriaWithVerificationCount === criteria.length
+  ) {
+    producedArtifacts.push("plan_criteria_have_verify_by");
+  }
+  if (verificationCheckboxCount > 0 && !verificationSectionHasCodeBlock) {
+    producedArtifacts.push("plan_verification_checkboxes");
+  }
+  if (declaredCommands.length > 0 && usesDeclaredCommand) {
+    producedArtifacts.push("plan_uses_declared_commands");
+  }
+  if (declaredCommands.length > 0 && unlistedCommands.length === 0) {
+    producedArtifacts.push("plan_no_unlisted_commands");
+  }
+
+  return {
+    criteriaCount: criteria.length,
+    criteriaWithVerificationCount,
+    verificationSectionPresent: section !== undefined,
+    verificationCheckboxCount,
+    verificationSectionHasCodeBlock,
+    declaredCommands,
+    unlistedCommands,
+    producedArtifacts,
+  };
+}
 
 function countMatches(content: string, pattern: RegExp): number {
   return [...content.matchAll(pattern)].length;
@@ -146,7 +375,14 @@ function detectStructuralArtifacts(
   return produced;
 }
 
-export function extractPlanningSignals(content: string): {
+/**
+ * Structural planning signals. When the case `description` is supplied, the
+ * verification artifacts from `extractVerificationSignals` are merged in.
+ */
+export function extractPlanningSignals(
+  content: string,
+  description?: string,
+): {
   scopeExplicit: boolean;
   fileBackedTasks: boolean;
   sequencingExplicit: boolean;
@@ -185,7 +421,7 @@ export function extractPlanningSignals(content: string): {
         hasNumberedTaskStructure ? numberedLineCount : 0,
       )
     : 0;
-  const producedArtifacts = detectStructuralArtifacts(content, {
+  const producedArtifacts: string[] = detectStructuralArtifacts(content, {
     hasTaskStructure,
     fileCount: fileMatches.length,
     fileFieldCount,
@@ -194,6 +430,11 @@ export function extractPlanningSignals(content: string): {
     successCriteriaFieldCount,
     numberedLineCount,
   });
+  if (description !== undefined) {
+    producedArtifacts.push(
+      ...extractVerificationSignals(content, description).producedArtifacts,
+    );
+  }
 
   return {
     scopeExplicit: producedArtifacts.includes("plan_scope_explicit"),
@@ -275,7 +516,7 @@ export function buildModelRunOutput(
   userMessage: string,
   content: string,
 ): ModelRunOutput {
-  const signals = extractPlanningSignals(content);
+  const signals = extractPlanningSignals(content, evalCase.description);
   const transcript: TranscriptMessage[] = [
     { role: "user", content: userMessage },
     { role: "assistant", content },
@@ -434,9 +675,7 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "Respond as a text-only plan, not code.",
     "Include explicit scope, file-backed tasks, sequencing with dependency language, and acceptance coverage.",
     "Use clear section headings and task fields such as `## Scope`, `## Dependencies and Order`, `**Files**`, and `**Acceptance**`.",
-    requiredArtifacts.length > 0
-      ? `Required structural signals: ${requiredArtifacts.join(", ")}`
-      : "Required structural signals: none",
+    buildRequiredSignalsLine(evalCase, requiredArtifacts),
   ].join("\n");
 }
 
@@ -679,6 +918,7 @@ export class PatternPlanningRunner {
         { role: "user", content: userMessage },
       ],
       temperature: 0.1,
+      maxTokens: PATTERN_PLAN_MAX_TOKENS,
     });
 
     const matchPromise = modelResultAsync
@@ -729,7 +969,10 @@ export class PatternPlanningRunner {
                 ),
                 runnerDiagnostics: buildPlanningRunnerDiagnostics(
                   evalCase,
-                  extractPlanningSignals(runOutput.rawContent),
+                  extractPlanningSignals(
+                    runOutput.rawContent,
+                    evalCase.description,
+                  ),
                 ),
               }
             : undefined;

@@ -229,3 +229,183 @@ describe("scoreTrajectoryResult", () => {
     expect(first.passed).toEqual(second.passed);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Spec 35: expected commands and verifier
+// ---------------------------------------------------------------------------
+
+describe("scoreTrajectoryResult — verification checks (Spec 35)", () => {
+  function at(second: number): string {
+    return `2026-01-01T00:00:${String(second).padStart(2, "0")}.000Z`;
+  }
+
+  function edit(second: number): TrajectoryEvent {
+    return event({
+      sessionId: "session-2",
+      timestamp: at(second),
+      kind: "tool-call-before",
+      toolName: "edit",
+      agentName: "shuttle",
+    });
+  }
+
+  function shell(
+    second: number,
+    command: string,
+    exitCode: number,
+  ): TrajectoryEvent {
+    return event({
+      sessionId: "session-2",
+      timestamp: at(second),
+      kind: "tool-call-after",
+      toolName: "bash",
+      agentName: "shuttle",
+      succeeded: exitCode === 0,
+      detail: { command, exitCode },
+    });
+  }
+
+  const RUN_TESTS_AFTER_EDIT = makeExpectedOutcome({
+    expected_tools: [],
+    expected_commands: [
+      { contains: "bun test", after_last_edit: true, expect_success: true },
+    ],
+  });
+
+  it("is satisfied by a passing run of the command after the last edit", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({
+        events: [...happyPathEvents(), edit(10), shell(20, "bun test", 0)],
+        expectedOutcome: RUN_TESTS_AFTER_EDIT,
+      }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBe(1);
+    expect(record.passed).toBe(true);
+  });
+
+  it("fails when the only matching run came before the last edit", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({
+        events: [...happyPathEvents(), shell(5, "bun test", 0), edit(10)],
+        expectedOutcome: RUN_TESTS_AFTER_EDIT,
+      }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBe(0);
+    expect(record.dimensions.executionCompleteness.rationale).toContain(
+      "after the last edit",
+    );
+    // Routing alone matched, but verification checks gate the pass.
+    expect(record.dimensions.routingCorrectness.score).toBe(1);
+    expect(record.passed).toBe(false);
+  });
+
+  it("fails when the run after the last edit exited non-zero", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({
+        events: [...happyPathEvents(), edit(10), shell(20, "bun test", 1)],
+        expectedOutcome: RUN_TESTS_AFTER_EDIT,
+      }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBe(0);
+    expect(record.passed).toBe(false);
+  });
+
+  it("ignores bookkeeping edits under .weave/ when measuring the last edit", () => {
+    const planTick: TrajectoryEvent = event({
+      sessionId: "session-2",
+      timestamp: at(30),
+      kind: "tool-call-after",
+      toolName: "edit",
+      agentName: "tapestry",
+      succeeded: true,
+      detail: { path: "/workspace/.weave/plans/fix-slug-edges.md" },
+    });
+    const codeEdit: TrajectoryEvent = event({
+      sessionId: "session-2",
+      timestamp: at(10),
+      kind: "tool-call-after",
+      toolName: "apply_patch",
+      agentName: "shuttle",
+      succeeded: true,
+      detail: { path: "src/slugify.ts" },
+    });
+    const record = scoreTrajectoryResult(
+      buildInput({
+        events: [
+          ...happyPathEvents(),
+          codeEdit,
+          shell(20, "bun test", 0),
+          planTick,
+        ],
+        expectedOutcome: RUN_TESTS_AFTER_EDIT,
+      }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBe(1);
+
+    const codeAfterCheck = scoreTrajectoryResult(
+      buildInput({
+        events: [
+          ...happyPathEvents(),
+          shell(20, "bun test", 0),
+          { ...codeEdit, timestamp: at(40) },
+        ],
+        expectedOutcome: RUN_TESTS_AFTER_EDIT,
+      }),
+    );
+    expect(codeAfterCheck.dimensions.executionCompleteness.score).toBe(0);
+  });
+
+  it("treats after_last_edit as satisfied when nothing was edited", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({
+        events: [...happyPathEvents(), shell(20, "bun run check", 0)],
+        expectedOutcome: makeExpectedOutcome({
+          expected_tools: [],
+          expected_commands: [
+            {
+              contains: "bun run check",
+              after_last_edit: true,
+              expect_success: false,
+            },
+          ],
+        }),
+      }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBe(1);
+  });
+
+  it("requires the verifier result to match the expected outcome", () => {
+    const expectedOutcome = makeExpectedOutcome({
+      verifier: {
+        fixture: "slugify-edges.verifier",
+        command: "bun /verifier/verify.ts",
+        expect: "pass",
+      },
+    });
+
+    const passed = scoreTrajectoryResult(
+      buildInput({ expectedOutcome, verifier: { passed: true } }),
+    );
+    expect(passed.dimensions.executionCompleteness.score).toBe(1);
+    expect(passed.passed).toBe(true);
+
+    const failed = scoreTrajectoryResult(
+      buildInput({ expectedOutcome, verifier: { passed: false } }),
+    );
+    expect(failed.dimensions.executionCompleteness.score).toBe(0.5);
+    expect(failed.passed).toBe(false);
+
+    const missing = scoreTrajectoryResult(buildInput({ expectedOutcome }));
+    expect(missing.passed).toBe(false);
+  });
+
+  it("scores a case with none of the new fields exactly as before", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({ events: happyPathEvents().slice(0, 2) }),
+    );
+    // No read call observed; routing still matches, so the Spec 33 rule
+    // (any passing primary dimension) keeps passing it.
+    expect(record.dimensions.executionCompleteness.score).toBe(0);
+    expect(record.passed).toBe(true);
+  });
+});

@@ -220,6 +220,58 @@ function validateTextEvalContract(
   };
 }
 
+/**
+ * Agents a trajectory case may start on (Spec 35). OpenCode silently falls
+ * back to its default agent when `--agent` names a sub-agent, so allowing
+ * one would make a case measure the wrong agent.
+ */
+export const TRAJECTORY_START_AGENTS: ReadonlySet<string> = new Set([
+  "loom",
+  "tapestry",
+]);
+
+/**
+ * Cross-field rules for the Spec 35 `harness_trajectory` fields that the
+ * discriminated-union schema cannot express: `start_agent` must be a
+ * primary agent, and a verifier needs a fixture to verify.
+ */
+function validateTrajectoryVerificationFields(
+  caseFixture: EvalCase,
+  filePath: string,
+): FixtureSchemaError | undefined {
+  const outcome = caseFixture.expected_outcome;
+  if (outcome.kind !== "harness_trajectory") {
+    return undefined;
+  }
+
+  const issues: Array<{ path: string; message: string }> = [];
+  if (
+    outcome.start_agent !== undefined &&
+    !TRAJECTORY_START_AGENTS.has(outcome.start_agent)
+  ) {
+    issues.push({
+      path: "expected_outcome.start_agent",
+      message: `"${outcome.start_agent}" is not a primary agent. Allowed: ${[...TRAJECTORY_START_AGENTS].join(", ")}`,
+    });
+  }
+  if (outcome.verifier !== undefined && outcome.fixture === undefined) {
+    issues.push({
+      path: "expected_outcome.verifier",
+      message: "a verifier requires a fixture to verify",
+    });
+  }
+
+  if (issues.length === 0) {
+    return undefined;
+  }
+  return {
+    type: "FixtureValidationFailed",
+    file: filePath,
+    message: `Invalid harness_trajectory verification fields in case "${caseFixture.id}".`,
+    issues,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Single-file loaders
 // ---------------------------------------------------------------------------
@@ -257,6 +309,14 @@ export function loadCaseFile(
     const contractError = validateTextEvalContract(parsed.data, filePath);
     if (contractError !== undefined) {
       return err(contractError);
+    }
+
+    const trajectoryError = validateTrajectoryVerificationFields(
+      parsed.data,
+      filePath,
+    );
+    if (trajectoryError !== undefined) {
+      return err(trajectoryError);
     }
 
     return ok(parsed.data);

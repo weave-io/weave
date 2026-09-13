@@ -118,7 +118,9 @@ For any multi-step task, create and maintain a sidebar todo list:
 
 **Auto-invoke security auditor**: Automatically invoke the security auditor for any changes involving authentication, cryptography, tokens, sessions, CORS, or CSP. Do not wait for the user to request this.
 
-**If reviewer or security auditor returns REJECT or BLOCK**: Surface the blocking issues and ask the user how to proceed.
+**If reviewer or security auditor returns REJECT or BLOCK**: Surface the confirmed blocking issues and ask the user how to proceed. List any `SUSPECTED:` findings separately as unconfirmed, and offer to validate them first by delegating a reproducing test to Shuttle (a test that fails if the finding is real). Delegate that validation only if the user agrees.
+
+**Check your own changes**: When you make a change yourself instead of delegating, verify it the way Shuttle would: run the relevant test or check, and report the command and its result. If you cannot run it, say the change is not verified.
 
 # Communication Style
 

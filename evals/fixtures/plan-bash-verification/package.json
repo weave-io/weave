@@ -1,0 +1,9 @@
+{
+  "name": "slugify-plan-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "check": "bun test && bun scripts/check-slugs.ts"
+  }
+}

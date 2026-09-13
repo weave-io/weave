@@ -1,5 +1,7 @@
 # Libraries
 
+- `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
@@ -77,14 +79,22 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
+- `packages/adapters/opencode/src/trajectory/observer.ts`
+  - function parseObserverRecords: (jsonl) => ParsedObserverRecords
+  - function joinObserverRecords: (events, records) => TrajectoryEvent[]
+  - function WeaveTrajectoryObserver
+  - interface ParsedObserverRecords
+  - type ObserverRecord
+  - const OBSERVER_PLUGIN_PATH
+  - _...6 more_
 - `packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts`
+  - function buildSubagentModelOverlay: (model) => string
   - function resolveSandboxProfileImage: (sandboxProfile) => string | undefined
   - class DefaultLogParser
   - class EphemeralWorkspaceFactory
+  - class BunTrajectoryFileSystem
   - class OpenCodeTrajectoryRunner
-  - interface LogParser
-  - interface PromptProvider
-  - _...2 more_
+  - _...5 more_
 - `packages/adapters/opencode/src/trajectory/podman-client.ts`
   - class BunPodmanClient
   - interface PodmanRunResult
@@ -203,7 +213,7 @@
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - const EVALS_ROOT
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
@@ -234,15 +244,23 @@
   - type EvalInputValidationError
   - const KNOWN_EVAL_AGENTS
   - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
+- `packages/cli/src/evals/judgment-cases.ts`
+  - function isJudgmentCase: (evalCase) => boolean
+  - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
+  - function extractCodeLocations: (text) => string[]
+  - function isTracedFinding: (text) => boolean
+  - function hasAffirmedMatch: (content, pattern, ignoreBefore?) => boolean
+  - const JUDGMENT_CASE_TAG
+  - _...1 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
+  - function escapeTemplateBraces: (text) => string
   - function buildRationaleProjection: (run) => string
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
-  - class RealLangChainJudge
-  - _...10 more_
+  - _...12 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
@@ -279,13 +297,13 @@
   - interface ModelClient
   - _...1 more_
 - `packages/cli/src/evals/pattern-planning-runner.ts`
-  - function extractPlanningSignals: (content) => void
+  - function extractAcceptanceCriteria: (content) => string[]
+  - function extractVerificationSignals: (content, description) => VerificationSignals
+  - function extractPlanningSignals: (content, description?) => void
   - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
   - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
   - function redactSecrets: (raw) => string
-  - function buildUserMessage: (evalCase) => string
-  - class PatternPlanningRunner
-  - _...3 more_
+  - _...7 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -357,13 +375,13 @@
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
   - _...11 more_
 - `packages/cli/src/evals/shuttle-execution-runner.ts`
+  - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - interface ShuttleExecutionSignals
-  - interface ShuttleExecutionRunnerOptions
-  - _...2 more_
+  - interface ShuttleHonestySignals
+  - _...4 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
@@ -384,10 +402,15 @@
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
   - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
+  - function extractPlanDecisionSignals: (content) => PlanDecisionSignals
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
-  - interface TapestryExecutionRunnerOptions
-  - _...2 more_
+  - _...4 more_
+- `packages/cli/src/evals/trajectory-case-executor.ts`
+  - function hasTrajectoryCases: (items) => boolean
+  - class TrajectoryCaseExecutor
+  - interface TrajectoryCaseExecutorOptions
+  - const FIXTURES_DIRECTORY
 - `packages/cli/src/evals/trajectory-scoring.ts`
   - function scoreTrajectoryResult: (input) => NormalizedScoreRecord
   - interface ScoreTrajectoryInput
@@ -400,7 +423,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...52 more_
+  - _...57 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

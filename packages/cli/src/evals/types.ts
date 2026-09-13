@@ -128,14 +128,18 @@ export const EVAL_SUITE_REGISTRY: readonly EvalSuiteMetadata[] = [
   {
     suiteId: "tapestry-execution",
     shortAgentFilter: "tapestry",
-    allowedExpectedOutcomeKinds: ["task_completion", "delegation_chain"],
+    allowedExpectedOutcomeKinds: [
+      "task_completion",
+      "delegation_chain",
+      "harness_trajectory",
+    ],
     allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
     allowedContentRoles: ["user", "assistant"],
   },
   {
     suiteId: "shuttle-execution",
     shortAgentFilter: "shuttle",
-    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedExpectedOutcomeKinds: ["task_completion", "harness_trajectory"],
     allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
     allowedContentRoles: ["user", "assistant"],
   },
@@ -195,6 +199,54 @@ export function getEvalSuiteMetadata(
 export function isKnownEvalSuiteId(suiteId: string): boolean {
   return getEvalSuiteMetadata(suiteId) !== undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Verification-aware trajectory fields (Spec 35)
+// ---------------------------------------------------------------------------
+
+/**
+ * A directory name under `evals/fixtures/`: one path segment, no `..`.
+ */
+export const FixtureNameSchema = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/,
+    "fixture must be a single directory name under evals/fixtures/",
+  )
+  .refine((name) => !name.includes(".."), {
+    message: "fixture must not contain '..'",
+  });
+
+/**
+ * A shell command the agent must run. Satisfied by one observed shell tool
+ * call whose command contains `contains` and meets the optional conditions.
+ */
+export const ExpectedCommandSchema = z
+  .object({
+    contains: z.string().min(1).max(200),
+    /** The call must come after the session's last edit/write tool call. */
+    after_last_edit: z.boolean().default(false),
+    /** The call's exit code must be 0. */
+    expect_success: z.boolean().default(false),
+  })
+  .strict();
+
+export type ExpectedCommand = z.infer<typeof ExpectedCommandSchema>;
+
+/**
+ * A case's verifier: a fixture mounted read-only at `/verifier` and a
+ * command run with `sh -c` in `/workspace` after the session. Exit 0 means
+ * pass; the case states which outcome it expects.
+ */
+export const TrajectoryVerifierSchema = z
+  .object({
+    fixture: FixtureNameSchema,
+    command: z.string().min(1).max(500),
+    expect: z.enum(["pass", "fail"]),
+  })
+  .strict();
+
+export type TrajectoryVerifier = z.infer<typeof TrajectoryVerifierSchema>;
 
 // ---------------------------------------------------------------------------
 // Expected outcome — discriminated union
@@ -271,6 +323,20 @@ export const ExpectedOutcomeSchema = z.discriminatedUnion("kind", [
      * `"opencode-default"`), not a literal Containerfile path.
      */
     sandbox_profile: IdentifierSchema,
+    /**
+     * Directory under `evals/fixtures/` copied into the workspace before the
+     * session (Spec 35). The fixture's own `.weave/` is the project config.
+     */
+    fixture: FixtureNameSchema.optional(),
+    /**
+     * Primary agent the session starts on (Spec 35). OpenCode falls back to
+     * its default agent for a sub-agent name, so only primary agents work.
+     */
+    start_agent: IdentifierSchema.optional(),
+    /** Shell commands the agent must run (Spec 35). */
+    expected_commands: z.array(ExpectedCommandSchema).optional(),
+    /** Independent check run after the session in a second container. */
+    verifier: TrajectoryVerifierSchema.optional(),
   }),
 ]);
 

@@ -54,6 +54,7 @@ ADRs record decisions with meaningful trade-offs. They are durable — once acce
 | [ADR 0008 — Harness Trajectory Evals via Two-Channel Observation](adr/0008-harness-trajectory-evals.md) | **Accepted (2026-09-03)** — Adds a runtime-backed trajectory eval track alongside the text-only surface; adapters observe via runtime log parsing (Channel A) or plugin hooks (Channel B). Phase 1 shipped Channel A only. See [Spec 33](specs/33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) for the formal contract. |
 | [ADR 0010 — OpenCode V2 Adapter as a Separate Independent Package](adr/0010-opencode2-independent-adapter.md) | Separate independent V2 adapter package, no auto-selection, V1 remains fully supported, `ctx.agent.transform` + `Registration.dispose()` reconciliation |
 | [ADR 0011 — Model Recommendation Manifest](adr/0011-model-recommendation-manifest.md) | Model recommendation manifest format and resolution semantics for the opencode2 adapter |
+| [ADR 0012 — Verification-Aware Trajectory Evals](adr/0012-verification-aware-trajectory-evals.md) | **Proposed (2026-09-12)** — Trajectory cases can check that an agent verified its work: tool-call command and exit status via an adapter-owned observer plugin, seeded fixture workspaces with their own config, a hidden verifier run in a second container, a per-case starting agent, and an `opencode-local` profile that runs working-tree prompts. Publishable surface unchanged. See [Spec 35](specs/35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md). |
 
 ---
 

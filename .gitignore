@@ -4,6 +4,8 @@ node_modules/
 .bun/
 
 .weave/
+# Trajectory eval fixtures ship their own project config (Spec 35).
+!evals/fixtures/*/.weave/
 
 # Build output
 dist/

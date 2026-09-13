@@ -41,10 +41,26 @@ export const SubagentSpawnedEventSchema = CommonEnvelopeSchema.extend({
   childAgentName: z.string(),
 }).strict();
 
+/**
+ * Optional, local-only detail for a tool call (Spec 35). Carries the shell
+ * command (secret-redacted and bounded by the adapter) and its exit code so
+ * scoring can check that an agent ran a named check and that it passed. Never
+ * part of `TrajectorySummary` or any publishable schema.
+ */
+export const ToolCallDetailSchema = z
+  .object({
+    command: z.string().max(500).optional(),
+    exitCode: z.number().int().optional(),
+    /** Workspace path a file tool changed, so bookkeeping edits can be told apart. */
+    path: z.string().max(500).optional(),
+  })
+  .strict();
+
 export const ToolCallBeforeEventSchema = CommonEnvelopeSchema.extend({
   kind: z.literal("tool-call-before"),
   toolName: z.string(),
   agentName: z.string(),
+  detail: ToolCallDetailSchema.optional(),
 }).strict();
 
 export const ToolCallAfterEventSchema = CommonEnvelopeSchema.extend({
@@ -52,6 +68,7 @@ export const ToolCallAfterEventSchema = CommonEnvelopeSchema.extend({
   toolName: z.string(),
   agentName: z.string(),
   succeeded: z.boolean(),
+  detail: ToolCallDetailSchema.optional(),
 }).strict();
 
 export const MessageEmittedEventSchema = CommonEnvelopeSchema.extend({
@@ -84,6 +101,7 @@ export const TrajectoryEventSchema = z.discriminatedUnion("kind", [
 
 export type SessionCreatedEvent = z.infer<typeof SessionCreatedEventSchema>;
 export type SubagentSpawnedEvent = z.infer<typeof SubagentSpawnedEventSchema>;
+export type ToolCallDetail = z.infer<typeof ToolCallDetailSchema>;
 export type ToolCallBeforeEvent = z.infer<typeof ToolCallBeforeEventSchema>;
 export type ToolCallAfterEvent = z.infer<typeof ToolCallAfterEventSchema>;
 export type MessageEmittedEvent = z.infer<typeof MessageEmittedEventSchema>;
@@ -121,6 +139,20 @@ export const RawArtifactRefSchema = z
 export type RawArtifactRef = z.infer<typeof RawArtifactRefSchema>;
 
 // ---------------------------------------------------------------------------
+// TrajectoryVerifierResult — local-only outcome of a case's verifier (Spec 35)
+// ---------------------------------------------------------------------------
+
+export const TrajectoryVerifierResultSchema = z
+  .object({
+    passed: z.boolean(),
+  })
+  .strict();
+
+export type TrajectoryVerifierResult = z.infer<
+  typeof TrajectoryVerifierResultSchema
+>;
+
+// ---------------------------------------------------------------------------
 // TrajectoryResult — event stream + publishable summary + local-only ref
 // ---------------------------------------------------------------------------
 
@@ -129,6 +161,8 @@ export const TrajectoryResultSchema = z
     events: z.array(TrajectoryEventSchema),
     summary: TrajectorySummarySchema,
     rawArtifactRef: RawArtifactRefSchema,
+    /** Local-only verifier outcome, present when the case has a verifier. */
+    verifier: TrajectoryVerifierResultSchema.optional(),
   })
   .strict();
 
@@ -206,6 +240,20 @@ export interface TrajectoryCase {
   maxDurationSeconds: number;
   /** Symbolic name of the adapter-owned sandbox profile to run under. */
   sandboxProfile: string;
+  /** Absolute path of a fixture directory copied into the workspace (Spec 35). */
+  fixturePath?: string;
+  /** Primary agent the session starts on (Spec 35). */
+  startAgent?: string;
+  /** Check run in a second container after the session (Spec 35). */
+  verifier?: TrajectoryCaseVerifier;
+}
+
+/** Adapter-facing projection of a case's verifier (Spec 35). */
+export interface TrajectoryCaseVerifier {
+  /** Absolute path of the verifier fixture, mounted read-only at /verifier. */
+  fixturePath: string;
+  /** Shell command run with `sh -c` in /workspace; exit 0 means passed. */
+  command: string;
 }
 
 /**

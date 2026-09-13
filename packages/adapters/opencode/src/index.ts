@@ -158,6 +158,7 @@ export {
 
 export { parseTrajectoryEvents } from "./trajectory/log-parser.js";
 export {
+  BunTrajectoryFileSystem,
   DefaultLogParser,
   EphemeralWorkspaceFactory,
   type LogParser,
@@ -165,6 +166,7 @@ export {
   type OpenCodeTrajectoryRunnerOptions,
   type PromptProvider as TrajectoryPromptProvider,
   resolveSandboxProfileImage,
+  type TrajectoryFileSystem,
   type TrajectoryWorkspaceFactory,
 } from "./trajectory/opencode-trajectory-runner.js";
 export {

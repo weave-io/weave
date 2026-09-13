@@ -15,14 +15,17 @@ does not know about that format.
 | Concern | Value |
 | --- | --- |
 | Prompt input | `/workspace/prompt.txt` (plain UTF-8 text, trimmed before use) |
-| Command run inside the container | `opencode run --print-logs --log-level DEBUG --model <model> "<prompt>"` |
+| Command run inside the container | `opencode run --print-logs --log-level DEBUG --model <model> [--agent <name>] "<prompt>"` |
 | stderr capture | Inherited to the parent `podman run` process on the host. The runner reads the container's stderr directly, in real time, from `podman run`'s stderr stream. The entrypoint does NOT write `/artifacts/stderr.log`: Windows Podman + WSL2 bind mounts do not flush writes to the host until the container exits, which loses the trajectory whenever the runner enforces a timeout. |
 | Exit code capture | `/artifacts/exit-code` (bare integer, no trailing newline guarantee) |
 | Secrets | `OPENROUTER_API_KEY` passed to the container as an environment variable only; never mounted as a file, never written to disk by the entrypoint. The runner (`BunPodmanClient`) forwards it to `podman run` via Podman's *name-only* `-e OPENROUTER_API_KEY` pass-through — the value itself is set only in the `podman` process's own environment (via `Bun.spawn`'s `env` option), never interpolated into `podman` argv. This means the key never appears in `ps`/`/proc/<pid>/cmdline` output or in any log line that includes the spawned `args`. |
 | Model selection | `WEAVE_TRAJECTORY_MODEL` env var (falls back to `openai/gpt-4o-mini` if unset, for manual container invocation without the runner) |
+| Starting agent | Optional `WEAVE_TRAJECTORY_START_AGENT` env var, forwarded as `--agent <name>`. Must name a primary agent (for example `tapestry`); OpenCode falls back to its default agent for a sub-agent name. |
+| Tool-call observer | The runner writes `/workspace/.opencode/plugin/weave-trajectory-observer.ts`, which OpenCode auto-loads. It appends one JSON line per completed tool call (session, call id, tool, shell command, exit code) to `/artifacts/tool-calls.jsonl`, for every session including sub-agents. See [Spec 35](../../docs/specs/35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md). |
+| Sub-agent models | The runner mounts a generated global config at `/root/.weave/config.weave` (read-only) pinning every builtin sub-agent to `openrouter/<model under test>`. Without it, sub-agents keep the builtin `claude-sonnet-4-5` id, which OpenCode cannot resolve under OpenRouter, and every delegation fails. |
 | Workspace mount | `/workspace` (read-write; OpenCode's project directory and where `prompt.txt` lives) |
-| Weave plugin | Declared in `/workspace/opencode.jsonc` as `@weaveio/weave-adapter-opencode@<version>`. OpenCode installs and resolves the plugin itself on first run, exactly as a real user config does. The pinned version is baked into the sandbox image via `WEAVE_ADAPTER_OPENCODE_VERSION` in `Containerfile`. |
-| Weave config mount | Two narrow, read-only mounts — `/workspace/.weave/config.weave` and (when present) `/workspace/.weave/prompts` — so OpenCode's config discovery finds Loom, Shuttle, categories, etc. The repo's whole `.weave/` directory is deliberately **not** mounted: config discovery (`packages/config/src/discovery.ts`, `packages/config/src/resolve.ts`) only ever reads `config.weave` and `prompt_file` entries under `prompts/`. The rest of `.weave/` — `runtime/` (session snapshots, the journal DB), `weave.log`, `plans/`, `learnings/` — can carry prior session content and must not be exposed inside an untrusted-model-controlled sandbox. |
+| Weave plugin | `opencode-default`: declared in `/workspace/opencode.jsonc` as `@weaveio/weave-adapter-opencode@<version>`. OpenCode installs and resolves the plugin itself on first run, exactly as a real user config does. The pinned version is baked into the sandbox image via `WEAVE_ADAPTER_OPENCODE_VERSION` in `Containerfile`. `opencode-local` (same image): the runner writes a `bun build` bundle of the working tree's `packages/adapters/opencode/src/plugin.ts` to `/workspace/.opencode/plugin/weave.js` and an `opencode.jsonc` with no `plugin` entry, so the session runs the working tree's prompts. |
+| Weave config mount | Cases with a `fixture` mount nothing from the repository: the fixture's own `.weave/` is copied into the workspace. Cases without one use two narrow, read-only mounts — `/workspace/.weave/config.weave` and (when present) `/workspace/.weave/prompts` — so OpenCode's config discovery finds Loom, Shuttle, categories, etc. The repo's whole `.weave/` directory is deliberately **not** mounted: config discovery (`packages/config/src/discovery.ts`, `packages/config/src/resolve.ts`) only ever reads `config.weave` and `prompt_file` entries under `prompts/`. The rest of `.weave/` — `runtime/` (session snapshots, the journal DB), `weave.log`, `plans/`, `learnings/` — can carry prior session content and must not be exposed inside an untrusted-model-controlled sandbox. |
 | Weave plugin log file | `/tmp/weave.log` inside the container (`WEAVE_LOG_FILE`, set by the entrypoint unless already present in the environment). The Weave plugin's default log destination is `<projectDirectory>/.weave/weave.log`, which would land under the read-only `.weave` mount above and fail with `EROFS`, silently disabling the plugin (see `entrypoint.ts` for the full explanation). Do not remove this override without also making the `.weave` mount writable. |
 | Artifacts mount | `/artifacts` (read-write; where `exit-code` lands) |
 | Auto-update | Disabled (`OPENCODE_DISABLE_AUTOUPDATE=true`) |
@@ -33,6 +36,14 @@ untrusted, possibly-multiline prompt text through container argv risks
 shell-quoting and length-limit surprises across `podman`/`docker` versions.
 A file mount is simpler to reason about and matches how the workspace itself
 is already mounted.
+
+## Verifier container
+
+A case with a `verifier` (Spec 35) gets a second, short `podman run` after the
+session: the finished workspace at `/workspace`, the verifier fixture
+read-only at `/verifier`, no model API key, and `sh -c "<command>"` with
+`cwd=/workspace`. Exit 0 means the verifier passed. The agent's container
+never mounts `/verifier`, so the agent cannot read or change the check.
 
 ## Building
 

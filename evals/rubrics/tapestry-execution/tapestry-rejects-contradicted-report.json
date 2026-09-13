@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-rejects-contradicted-report",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: no completion cue or signal names are given. The specialist's report contradicts its own test output. Score a response that does not mark the task complete, re-delegates it, and cites the failure."
+  }
+}

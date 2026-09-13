@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-guarded-false-positive",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The change trips Warp's triage patterns but has no realistic attack path. Score an APPROVE verdict with BLOCKERS: 0/3. Non-blocking SUSPECTED notes are acceptable."
+  }
+}

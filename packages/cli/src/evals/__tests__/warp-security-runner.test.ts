@@ -573,6 +573,121 @@ describe("extractSecuritySignals", () => {
       "security_blocking_format_disciplined",
     );
   });
+
+  it("marks a review traced when at least one finding's evidence cites the source and the sink", () => {
+    const traced = extractSecuritySignals(
+      [
+        "BLOCK",
+        "BLOCKERS: 1/3",
+        "SEVERITY: CRITICAL",
+        "FINDING: Command injection through the export name.",
+        "EVIDENCE: `src/routes/export.ts:15` reads `name` from the query string and `src/lib/archive.ts:3` interpolates it into `sh -c`.",
+        "IMPACT: Remote command execution.",
+        "FIX: Validate `name` against an allowlist and pass argv to `Bun.spawn` in `src/lib/archive.ts` without a shell.",
+      ].join("\n"),
+    );
+    expect(traced.tracedEvidenceCount).toBe(1);
+    expect(traced.producedArtifacts).toContain("security_finding_traced");
+
+    const untraced = extractSecuritySignals(
+      [
+        "BLOCK",
+        "BLOCKERS: 1/3",
+        "SEVERITY: CRITICAL",
+        "FINDING: Shell interpolation.",
+        "EVIDENCE: `src/lib/archive.ts:3` interpolates a variable into `sh -c`.",
+        "IMPACT: Possible command execution.",
+        "FIX: Avoid the shell in `src/lib/archive.ts`.",
+      ].join("\n"),
+    );
+    expect(untraced.tracedEvidenceCount).toBe(0);
+    expect(untraced.producedArtifacts).not.toContain("security_finding_traced");
+  });
+
+  it("reads numbered field lines as disciplined blocking format", () => {
+    const signals = extractSecuritySignals(
+      [
+        "[BLOCK] — command injection",
+        "BLOCKERS: 1/3",
+        "Blocking Issues:",
+        "1. SEVERITY: Critical",
+        "   FINDING: Shell command injection through the export name.",
+        "   EVIDENCE: `name` at `src/routes/export.ts:15` reaches `sh -c` at `src/lib/archive.ts:3`.",
+        "   IMPACT: Remote command execution.",
+        "   FIX: Invoke `tar` directly in `src/lib/archive.ts` without a shell.",
+      ].join("\n"),
+    );
+    expect(signals.producedArtifacts).toContain("security_severity_present");
+    expect(signals.producedArtifacts).toContain(
+      "security_blocking_format_disciplined",
+    );
+    expect(signals.producedArtifacts).toContain("security_finding_traced");
+  });
+
+  it("reads a trace from bullet lines under an EVIDENCE label", () => {
+    const signals = extractSecuritySignals(
+      [
+        "[BLOCK] — command injection",
+        "BLOCKERS: 1/3",
+        "SEVERITY: Critical",
+        "FINDING: `name` reaches a shell command unescaped.",
+        "EVIDENCE: ",
+        "- Source: `src/routes/export.ts:15` — `name` from the query string",
+        "- Sink: `src/lib/archive.ts:3` — interpolated into `sh -c`",
+        "",
+        "IMPACT: Remote command execution.",
+        "FIX: Invoke `tar` directly in `src/lib/archive.ts` without a shell.",
+        "",
+        "SUSPECTED: auth on `src/routes/index.ts:4` is not shown.",
+      ].join("\n"),
+    );
+    expect(signals.tracedEvidenceCount).toBe(1);
+    expect(signals.producedArtifacts).toContain("security_finding_traced");
+
+    const sourceOnly = extractSecuritySignals(
+      [
+        "[BLOCK] — command injection",
+        "BLOCKERS: 1/3",
+        "SEVERITY: Critical",
+        "FINDING: `name` reaches a shell command unescaped.",
+        "EVIDENCE:",
+        "- Sink: `src/lib/archive.ts:3` — interpolated into `sh -c`",
+        "IMPACT: Remote command execution.",
+        "FIX: Avoid the shell.",
+        "SUSPECTED: the source at `src/routes/export.ts:15` may be validated upstream.",
+      ].join("\n"),
+    );
+    expect(sourceOnly.tracedEvidenceCount).toBe(0);
+  });
+
+  it("reads bracketed and bold verdicts, but not BLOCKERS lines, as verdicts", () => {
+    expect(
+      extractSecuritySignals("[APPROVE] — no issues\nBLOCKERS: 0/3").verdict,
+    ).toBe("approve");
+    expect(
+      extractSecuritySignals("[BLOCK] — injection\nBLOCKERS: 1/3").verdict,
+    ).toBe("block");
+    expect(extractSecuritySignals("**BLOCK** — injection").verdict).toBe(
+      "block",
+    );
+    expect(extractSecuritySignals("BLOCKERS: 0/3").verdict).toBe("missing");
+  });
+
+  it("keeps an approve disciplined when it carries SUSPECTED notes", () => {
+    const signals = extractSecuritySignals(
+      [
+        "APPROVE",
+        "BLOCKERS: 0/3",
+        "SUSPECTED: `src/sync/client.ts:10` sends a bearer token, but only to a constant HTTPS URL; non-blocking.",
+      ].join("\n"),
+    );
+    expect(signals.verdict).toBe("approve");
+    expect(signals.approveDisciplined).toBe(true);
+    expect(signals.producedArtifacts).toContain("security_verdict_approve");
+    expect(signals.producedArtifacts).toContain(
+      "security_blocker_count_capped",
+    );
+  });
 });
 
 describe("buildUserMessage", () => {
@@ -581,6 +696,14 @@ describe("buildUserMessage", () => {
     expect(message).toContain("APPROVE or BLOCK");
     expect(message).toContain("BLOCKERS: N/3");
     expect(message).toContain("exploit execution");
+  });
+
+  it("withholds required signal names for judgment cases", () => {
+    const message = buildUserMessage(
+      makeApproveCase({ tags: ["security", "judgment"] }),
+    );
+    expect(message).toContain("not disclosed for this case");
+    expect(message).not.toContain("security_verdict_approve");
   });
 });
 

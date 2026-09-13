@@ -21,6 +21,7 @@
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
+- `WEAVE_TRAJECTORY_START_AGENT` **required** — sandboxes/opencode/entrypoint.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 
 ## Config Files

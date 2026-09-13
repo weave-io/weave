@@ -2,10 +2,14 @@ import { describe, expect, it } from "bun:test";
 import type { TrajectoryCase, TrajectoryWorkspace } from "@weaveio/weave-core";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { parseTrajectoryEvents } from "../log-parser.js";
+import { OBSERVER_PLUGIN_PATH, OBSERVER_RECORDS_FILE } from "../observer.js";
 import {
+  buildSubagentModelOverlay,
   type LogParser,
   OpenCodeTrajectoryRunner,
+  type OpenCodeTrajectoryRunnerOptions,
   type PromptProvider,
+  type TrajectoryFileSystem,
   type TrajectoryWorkspaceFactory,
 } from "../opencode-trajectory-runner.js";
 import type {
@@ -106,7 +110,61 @@ class MockPodmanClient implements PodmanClient {
   }
 }
 
-function buildRunner(podmanClient: PodmanClient): OpenCodeTrajectoryRunner {
+/** In-memory `TrajectoryFileSystem`: records writes, serves seeded reads. */
+class InMemoryFileSystem implements TrajectoryFileSystem {
+  readonly files = new Map<string, string>();
+  readonly copiedDirectories: Array<{ from: string; to: string }> = [];
+  readonly copiedFiles: Array<{ from: string; to: string }> = [];
+
+  copyDirectory(from: string, to: string): Promise<void> {
+    this.copiedDirectories.push({ from, to });
+    return Promise.resolve();
+  }
+
+  copyFile(from: string, to: string): Promise<void> {
+    this.copiedFiles.push({ from, to });
+    return Promise.resolve();
+  }
+
+  writeFile(path: string, content: string): Promise<void> {
+    this.files.set(path, content);
+    return Promise.resolve();
+  }
+
+  readText(path: string): Promise<string | undefined> {
+    return Promise.resolve(this.files.get(path));
+  }
+}
+
+/** Podman mock that returns one scripted result per `run` call, in order. */
+class SequencePodmanClient implements PodmanClient {
+  runCalls: string[][] = [];
+  runEnvCalls: Array<Record<string, string> | undefined> = [];
+
+  constructor(private readonly results: PodmanRunResult[]) {}
+
+  run(
+    args: string[],
+    env?: Record<string, string>,
+  ): ResultAsync<PodmanRunResult, PodmanClientError> {
+    this.runCalls.push(args);
+    this.runEnvCalls.push(env);
+    const result = this.results[this.runCalls.length - 1];
+    if (result === undefined) {
+      return errAsync({ type: "PodmanSpawnFailed", message: "no result" });
+    }
+    return okAsync(result);
+  }
+
+  kill(_containerName: string): ResultAsync<void, PodmanClientError> {
+    return okAsync(undefined);
+  }
+}
+
+function buildRunner(
+  podmanClient: PodmanClient,
+  overrides: Partial<OpenCodeTrajectoryRunnerOptions> = {},
+): OpenCodeTrajectoryRunner {
   return new OpenCodeTrajectoryRunner({
     podmanClient,
     logParser: new StubLogParser(),
@@ -118,6 +176,8 @@ function buildRunner(podmanClient: PodmanClient): OpenCodeTrajectoryRunner {
     // well within Bun's default 5s per-test ceiling even when the mocked
     // `podman run` promise hangs forever.
     timeoutDrainGraceMs: 50,
+    fileSystem: new InMemoryFileSystem(),
+    ...overrides,
   });
 }
 
@@ -223,6 +283,7 @@ describe("OpenCodeTrajectoryRunner", () => {
       openRouterApiKey: "test-key",
       repoRoot: realRepoRoot,
       timeoutDrainGraceMs: 50,
+      fileSystem: new InMemoryFileSystem(),
     });
 
     const result = await runner.run(
@@ -454,5 +515,240 @@ timestamp=2026-09-03T17:21:40.000Z level=DEBUG run=abc message="outbound request
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("HarnessCrashed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 35: fixtures, observer, starting agent, local plugin, verifier
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeTrajectoryRunner — verification-aware runs (Spec 35)", () => {
+  const OK_RUN: PodmanRunResult = { exitCode: 0, stderr: CANNED_STDERR };
+  const FIXTURE = "/repo/evals/fixtures/buggy-slugify";
+  const VERIFIER = "/repo/evals/fixtures/slugify-edges.verifier";
+
+  it("writes the observer plugin into every workspace", async () => {
+    const fileSystem = new InMemoryFileSystem();
+    const runner = buildRunner(new SequencePodmanClient([OK_RUN]), {
+      fileSystem,
+    });
+
+    const result = await runner.run(buildTestCase(), "m", WORKSPACE);
+
+    expect(result.isOk()).toBe(true);
+    expect(
+      fileSystem.files.get(`${WORKSPACE.root}/${OBSERVER_PLUGIN_PATH}`),
+    ).toContain('"tool.execute.after"');
+  });
+
+  it("keeps today's repo .weave mounts and adds no overlay when there is no fixture", async () => {
+    const podman = new SequencePodmanClient([OK_RUN]);
+    const fileSystem = new InMemoryFileSystem();
+    await buildRunner(podman, { fileSystem }).run(
+      buildTestCase(),
+      "m",
+      WORKSPACE,
+    );
+
+    const args = podman.runCalls[0] ?? [];
+    expect(args).toContain(
+      "/fake/repo/.weave/config.weave:/workspace/.weave/config.weave:ro",
+    );
+    expect(args.join(" ")).not.toContain("/root/.weave/config.weave");
+    expect(fileSystem.copiedDirectories).toEqual([]);
+  });
+
+  it("copies the fixture, mounts no repo .weave path, and mounts the model overlay as global config", async () => {
+    const podman = new SequencePodmanClient([OK_RUN]);
+    const fileSystem = new InMemoryFileSystem();
+    await buildRunner(podman, { fileSystem }).run(
+      buildTestCase({ fixturePath: FIXTURE }),
+      "anthropic/claude-sonnet-4.5",
+      WORKSPACE,
+    );
+
+    expect(fileSystem.copiedDirectories).toEqual([
+      { from: FIXTURE, to: WORKSPACE.root },
+    ]);
+    const args = podman.runCalls[0] ?? [];
+    expect(args.some((arg) => arg.includes("/fake/repo/.weave"))).toBe(false);
+    expect(args).toContain(
+      "/tmp/weave-global/config.weave:/root/.weave/config.weave:ro",
+    );
+    expect(fileSystem.files.get("/tmp/weave-global/config.weave")).toContain(
+      'models ["openrouter/anthropic/claude-sonnet-4.5"]',
+    );
+  });
+
+  it("forwards the starting agent to the entrypoint", async () => {
+    const podman = new SequencePodmanClient([OK_RUN]);
+    await buildRunner(podman).run(
+      buildTestCase({ startAgent: "tapestry" }),
+      "m",
+      WORKSPACE,
+    );
+
+    expect(podman.runCalls[0]).toContain(
+      "WEAVE_TRAJECTORY_START_AGENT=tapestry",
+    );
+  });
+
+  it("fails closed for opencode-local without a bundle, and installs the bundle when given one", async () => {
+    const missing = await buildRunner(new SequencePodmanClient([OK_RUN])).run(
+      buildTestCase({ sandboxProfile: "opencode-local" }),
+      "m",
+      WORKSPACE,
+    );
+    expect(missing.isErr() && missing.error.type).toBe("SandboxStartFailed");
+
+    const fileSystem = new InMemoryFileSystem();
+    const podman = new SequencePodmanClient([OK_RUN]);
+    const result = await buildRunner(podman, {
+      fileSystem,
+      localPluginBundlePath: "/build/weave-plugin.js",
+    }).run(buildTestCase({ sandboxProfile: "opencode-local" }), "m", WORKSPACE);
+
+    expect(result.isOk()).toBe(true);
+    expect(fileSystem.copiedFiles).toEqual([
+      {
+        from: "/build/weave-plugin.js",
+        to: `${WORKSPACE.root}/.opencode/plugin/weave.js`,
+      },
+    ]);
+    const config = fileSystem.files.get(`${WORKSPACE.root}/opencode.jsonc`);
+    expect(config).toContain('"permission": "allow"');
+    expect(config).not.toContain("plugin");
+    expect(podman.runCalls[0]).toContain("weave-sandbox-opencode-default");
+  });
+
+  it("joins observer records into the event stream as tool-call-after events with detail", async () => {
+    const fileSystem = new InMemoryFileSystem();
+    fileSystem.files.set(
+      `${WORKSPACE.artifactsDir}/${OBSERVER_RECORDS_FILE}`,
+      `${JSON.stringify({
+        sessionID: "ses_child",
+        callID: "toolu_1",
+        tool: "bash",
+        timestamp: "2026-09-03T17:21:39.000Z",
+        command: "bun test",
+        exitCode: 0,
+      })}\n{truncated`,
+    );
+
+    const result = await buildRunner(new SequencePodmanClient([OK_RUN]), {
+      fileSystem,
+    }).run(buildTestCase(), "m", WORKSPACE);
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.summary.observedToolCalls).toBe(1);
+    const after = result.value.events.find(
+      (event) => event.kind === "tool-call-after",
+    );
+    expect(after).toMatchObject({
+      agentName: "shuttle",
+      toolName: "bash",
+      succeeded: true,
+      detail: { command: "bun test", exitCode: 0 },
+    });
+    expect(Object.keys(result.value.summary)).not.toContain("detail");
+  });
+
+  it("runs the verifier in a second container the agent never saw, and reports its result", async () => {
+    const podman = new SequencePodmanClient([
+      OK_RUN,
+      { exitCode: 1, stderr: "verifier: 3 of 5 expectations failed" },
+    ]);
+    const result = await buildRunner(podman).run(
+      buildTestCase({
+        fixturePath: FIXTURE,
+        maxDurationSeconds: 300,
+        verifier: { fixturePath: VERIFIER, command: "bun /verifier/verify.ts" },
+      }),
+      "m",
+      WORKSPACE,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.verifier).toEqual({ passed: false });
+
+    const [agentArgs, verifierArgs] = podman.runCalls;
+    expect(agentArgs?.join(" ")).not.toContain("/verifier");
+    expect(verifierArgs).toContain(`${VERIFIER}:/verifier:ro`);
+    expect(verifierArgs?.slice(-2)).toEqual(["-c", "bun /verifier/verify.ts"]);
+    expect(verifierArgs).not.toContain("OPENROUTER_API_KEY");
+    expect(podman.runEnvCalls[1]).toBeUndefined();
+  });
+
+  it("reports a passing verifier and omits the verifier field when the case has none", async () => {
+    const passing = await buildRunner(
+      new SequencePodmanClient([OK_RUN, { exitCode: 0, stderr: "" }]),
+    ).run(
+      buildTestCase({
+        fixturePath: FIXTURE,
+        verifier: { fixturePath: VERIFIER, command: "true" },
+      }),
+      "m",
+      WORKSPACE,
+    );
+    expect(passing.isOk() && passing.value.verifier).toEqual({ passed: true });
+
+    const none = await buildRunner(new SequencePodmanClient([OK_RUN])).run(
+      buildTestCase(),
+      "m",
+      WORKSPACE,
+    );
+    expect(none.isOk() && "verifier" in none.value).toBe(false);
+  });
+});
+
+describe("OpenCodeTrajectoryRunner — timers", () => {
+  it("clears the run timeout once the sandbox finishes", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    const realClearTimeout = globalThis.clearTimeout;
+    const pending = new Set<unknown>();
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      const handle = realSetTimeout(fn, ms);
+      pending.add(handle);
+      return handle;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((handle: Parameters<typeof clearTimeout>[0]) => {
+      pending.delete(handle);
+      realClearTimeout(handle);
+    }) as typeof clearTimeout;
+    try {
+      const result = await buildRunner(
+        new SequencePodmanClient([{ exitCode: 0, stderr: CANNED_STDERR }]),
+      ).run(buildTestCase({ maxDurationSeconds: 300 }), "m", WORKSPACE);
+      expect(result.isOk()).toBe(true);
+      expect(pending.size).toBe(0);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    }
+  });
+});
+
+describe("buildSubagentModelOverlay", () => {
+  it("pins each builtin sub-agent, and only sub-agents, to the OpenRouter model id", () => {
+    const overlay = buildSubagentModelOverlay("openai/gpt-4o-mini");
+    for (const agent of [
+      "shuttle",
+      "pattern",
+      "thread",
+      "spindle",
+      "weft",
+      "warp",
+    ]) {
+      expect(overlay).toContain(
+        `agent ${agent} {\n  models ["openrouter/openai/gpt-4o-mini"]\n}`,
+      );
+    }
+    expect(overlay).not.toContain("agent loom");
+    expect(overlay).not.toContain("agent tapestry");
+    expect(buildSubagentModelOverlay("openrouter/x/y")).toContain(
+      'models ["openrouter/x/y"]',
+    );
   });
 });

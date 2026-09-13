@@ -567,7 +567,31 @@ Trajectory sessions run in a Podman sandbox: an ephemeral per-case workspace, a 
 
 As of this writing, Phase 1 has shipped: Channel A only, one case (`loom-route-shuttle-implement-utility-trajectory`), one model (`openai/gpt-4o-mini`), one sandbox (`opencode-default`). The published bundle schema is at version 2, and `SuiteSummaryEntry.hasRuntimeVerifiedCases` plus a per-case `trajectorySummary` are present in the published bundle for suites that carry trajectory cases. This is a measured first step, not a broad claim: one case on one model proves the mechanism works end to end, not that trajectory suites are as mature or as broadly covered as the eight text-only suites. Read a green trajectory case as "the harness really did what the event stream shows," not as a substitute for the text-only suites' breadth. The actual dashboard renderer that visualizes this data lives in a downstream consumer repo, out of scope for this repository.
 
-Semantic correctness of trajectory-produced code, sandbox hardening beyond Podman defaults, and cross-harness trajectory comparison remain explicit non-goals of the current trajectory work; see ADR 0008's "Deferred" section for the full list.
+Sandbox hardening beyond Podman defaults and cross-harness trajectory comparison remain explicit non-goals of the current trajectory work; see ADR 0008's "Deferred" section for the full list. Checking the produced code was one of those non-goals until [ADR 0012](adr/0012-verification-aware-trajectory-evals.md) lifted it for cases that ship a verifier (below).
+
+#### Verification-aware trajectory cases (Spec 35)
+
+[Spec 35](specs/35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md) and [ADR 0012](adr/0012-verification-aware-trajectory-evals.md) let a trajectory case check that an agent verified its work, not only that it called a tool. All fields are optional on `expected_outcome.kind: "harness_trajectory"`:
+
+- **`fixture`**: a directory under `evals/fixtures/` copied into the workspace before the session. The fixture carries its own `.weave/config.weave`, and the repository's `.weave/` is not mounted, so the case measures builtin behaviour rather than this repository's overrides. The runner also mounts a generated global config that pins builtin sub-agents to the model under test (otherwise OpenCode cannot resolve the builtin model id and delegation fails).
+- **`start_agent`**: a primary agent (`loom` or `tapestry`) passed as `opencode run --agent`. Sub-agents are rejected at load time because OpenCode silently falls back to its default agent for them.
+- **`expected_commands`**: shell commands the agent must run, each `{ contains, after_last_edit, expect_success }`. Command text and exit codes come from an observer plugin the runner writes into the workspace (`tool.execute.after` hooks, all sessions). They stay local-only.
+- **`verifier`**: `{ fixture, command, expect }`. After the session a second container runs `command` with the verifier fixture read-only at `/verifier`. The agent's container never sees it.
+- **`sandbox_profile: "opencode-local"`**: the same image as `opencode-default`, but the CLI bundles the working tree's OpenCode plugin (builtin prompts included) and the runner loads it from the workspace, so prompt changes are measured before release.
+
+A case that declares `expected_commands` or a `verifier` passes only when `executionCompleteness` reaches 0.95, so correct routing alone cannot carry it. Cases without these fields keep the Spec 33 rule (any near-perfect primary dimension passes). Run a local trajectory case with `TMPDIR` pointing at a roomy disk, since each run creates a workspace there:
+
+```sh
+TMPDIR=~/.cache/weave-trajectory-tmp \
+  bun packages/cli/src/main.ts eval run --agent shuttle-execution \
+  --case shuttle-verify-tests-after-edit-trajectory --raw-artifacts
+```
+
+The sandbox image must include the Spec 35 entrypoint (`--agent` support). Rebuild it after pulling: `podman build -t weave-sandbox-opencode-default -f sandboxes/opencode/Containerfile sandboxes/opencode`.
+
+#### Text-only judgment cases
+
+Text-only cases tagged `judgment` test the conclusion an agent reaches from evidence in the case (inline code, a specialist's report, the project's commands), not only its output format. Runners withhold the required signal names for these cases, and each comes paired with a counter-case so a prompt change cannot pass by shifting bias. See the "Judgment cases" section of [`evals/README.md`](../evals/README.md).
 
 ### Text-only contract, no longer an explicit non-goal for the whole eval surface
 
@@ -615,7 +639,7 @@ If the dry run fails, treat that as a contract problem, not as a harmless previe
 
 Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, remaining `- [ ]` task, and todo state) so the prompt, runner input, and fixture expectations all describe plan execution rather than a free-floating chat request.
 
-Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation.
+Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation. Nothing executes in these text-only cases, so every Shuttle case also requires an honest report: it must say what was not verified (`shuttle_unverified_disclosed`) and must not claim a pass (`shuttle_no_unobserved_pass_claim`). Quoted runner output does not rescue a pass claim here; it can only be invented. Real command evidence is scored by the trajectory case (`shuttle-verify-tests-after-edit-trajectory`).
 
 The default Shuttle prompt is aligned to that contract too. It now tells Shuttle to restate the task in a compact `Task intake` section, then report `Files changed`, `Commands run and their output`, `Test results`, `Issues encountered or assumptions made`, and `Acceptance confirmation`. The honesty boundary is explicit: Shuttle must not claim hidden file-mutation proof, tool telemetry, browser activity, network activity, or other runtime evidence it did not directly observe.
 

@@ -7,6 +7,7 @@ import {
   SubagentSpawnedEventSchema,
   ToolCallAfterEventSchema,
   ToolCallBeforeEventSchema,
+  ToolCallDetailSchema,
   TrajectoryEventSchema,
   TrajectoryResultSchema,
   TrajectorySummarySchema,
@@ -195,5 +196,83 @@ describe("TrajectoryResult", () => {
       rawArtifactRef: { path: "loom-routing/trajectory.jsonl" },
     };
     expect(TrajectoryResultSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("accepts an optional local-only verifier outcome and rejects unknown keys in it", () => {
+    const base = {
+      events: [],
+      summary: {
+        harnessDelegatedCorrectly: true,
+        observedSpawns: [],
+        observedToolCalls: 0,
+        harnessCompletedWithoutError: true,
+      },
+      rawArtifactRef: { path: "shuttle-execution/stderr.log" },
+    };
+    expect(
+      TrajectoryResultSchema.safeParse({ ...base, verifier: { passed: true } })
+        .success,
+    ).toBe(true);
+    expect(
+      TrajectoryResultSchema.safeParse({
+        ...base,
+        verifier: { passed: false, output: "raw verifier text" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("Tool-call detail (Spec 35)", () => {
+  const after = {
+    sessionId: "s2",
+    timestamp: TS,
+    kind: "tool-call-after",
+    toolName: "bash",
+    agentName: "shuttle",
+    succeeded: false,
+  };
+
+  it("accepts command and exit code on tool-call-after and command on tool-call-before", () => {
+    expect(
+      ToolCallAfterEventSchema.safeParse({
+        ...after,
+        detail: { command: "bun test", exitCode: 1 },
+      }).success,
+    ).toBe(true);
+    expect(
+      ToolCallBeforeEventSchema.safeParse({
+        sessionId: "s2",
+        timestamp: TS,
+        kind: "tool-call-before",
+        toolName: "bash",
+        agentName: "shuttle",
+        detail: { command: "bun test" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown detail keys, over-long commands, and non-integer exit codes", () => {
+    expect(
+      ToolCallDetailSchema.safeParse({ command: "bun test", output: "x" })
+        .success,
+    ).toBe(false);
+    expect(
+      ToolCallDetailSchema.safeParse({ command: "x".repeat(501) }).success,
+    ).toBe(false);
+    expect(ToolCallDetailSchema.safeParse({ exitCode: 1.5 }).success).toBe(
+      false,
+    );
+  });
+
+  it("keeps detail out of the publishable summary", () => {
+    expect(
+      TrajectorySummarySchema.safeParse({
+        harnessDelegatedCorrectly: true,
+        observedSpawns: [],
+        observedToolCalls: 1,
+        harnessCompletedWithoutError: true,
+        detail: { command: "bun test", exitCode: 0 },
+      }).success,
+    ).toBe(false);
   });
 });

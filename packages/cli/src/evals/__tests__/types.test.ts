@@ -147,15 +147,16 @@ describe("ExpectedOutcomeSchema — harness_trajectory variant", () => {
 });
 
 describe("EVAL_SUITE_REGISTRY — harness_trajectory gating", () => {
-  it("only loom-routing opts into harness_trajectory", () => {
+  it("only loom-routing, shuttle-execution, and tapestry-execution opt into harness_trajectory", () => {
+    const trajectorySuites = new Set([
+      "loom-routing",
+      "shuttle-execution",
+      "tapestry-execution",
+    ]);
     for (const suite of EVAL_SUITE_REGISTRY) {
       const opted =
         suite.allowedExpectedOutcomeKinds.includes("harness_trajectory");
-      if (suite.suiteId === "loom-routing") {
-        expect(opted).toBe(true);
-      } else {
-        expect(opted).toBe(false);
-      }
+      expect(opted).toBe(trajectorySuites.has(suite.suiteId));
     }
   });
 

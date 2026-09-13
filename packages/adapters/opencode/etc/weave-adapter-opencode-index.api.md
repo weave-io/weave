@@ -59,6 +59,18 @@ export class BunPodmanClient implements PodmanClient {
 }
 
 // @public
+export class BunTrajectoryFileSystem implements TrajectoryFileSystem {
+    // (undocumented)
+    copyDirectory(from: string, to: string): Promise<void>;
+    // (undocumented)
+    copyFile(from: string, to: string): Promise<void>;
+    // (undocumented)
+    readText(path: string): Promise<string | undefined>;
+    // (undocumented)
+    writeFile(path: string, content: string): Promise<void>;
+}
+
+// @public
 export function classifyExistingAgent(agentName: string, existingAgents: Agent[]): ReconcileDecision;
 
 // Warning: (ae-forgotten-export) The symbol "InMemoryRuntimeStoreOptions" needs to be exported by the entry point index.d.ts
@@ -210,6 +222,8 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
 
 // @public (undocumented)
 export interface OpenCodeTrajectoryRunnerOptions {
+    fileSystem?: TrajectoryFileSystem;
+    localPluginBundlePath?: string;
     // (undocumented)
     logParser: LogParser;
     openRouterApiKey: string;
@@ -461,6 +475,16 @@ export interface StartPlanProjectionInput {
 
 // @public
 export function tagWithOwnership(config: AgentConfig): AgentConfig;
+
+// @public
+export interface TrajectoryFileSystem {
+    copyDirectory(from: string, to: string): Promise<void>;
+    // (undocumented)
+    copyFile(from: string, to: string): Promise<void>;
+    readText(path: string): Promise<string | undefined>;
+    // (undocumented)
+    writeFile(path: string, content: string): Promise<void>;
+}
 
 // @public
 export interface TrajectoryPromptProvider {

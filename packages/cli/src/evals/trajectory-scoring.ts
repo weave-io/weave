@@ -34,10 +34,14 @@
  * function over its inputs.
  */
 
-import type { TrajectoryEvent } from "@weaveio/weave-core";
+import type {
+  TrajectoryEvent,
+  TrajectoryVerifierResult,
+} from "@weaveio/weave-core";
 import type {
   DimensionScore,
   EvalRubric,
+  ExpectedCommand,
   ExpectedOutcome,
   NormalizedScoreRecord,
   ScoringDimension,
@@ -78,6 +82,8 @@ export interface ScoreTrajectoryInput {
   expectedOutcome: HarnessTrajectoryOutcome;
   /** The rubric's scoring metadata (weights + required flag). */
   scoring: EvalRubric["scoring"];
+  /** Local-only verifier outcome from the run, when the case has a verifier. */
+  verifier?: TrajectoryVerifierResult;
 }
 
 /**
@@ -182,31 +188,156 @@ function buildDelegationCorrectnessDimension(
   };
 }
 
+/** Tools that change files; "after the last edit" is measured against them. */
+const EDIT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "patch",
+  "multiedit",
+  "apply_patch",
+]);
+
 /**
- * Score `executionCompleteness`: every `expected_tools` entry must have
- * been observed at least once.
+ * Edits under `.weave/` are bookkeeping (Tapestry ticking a plan's
+ * checkboxes, learnings notes), not code changes, so they do not move "the
+ * last edit" a verification command has to follow.
+ */
+function isBookkeepingPath(path: string | undefined): boolean {
+  return (
+    path !== undefined &&
+    (path.startsWith(".weave/") || path.includes("/.weave/"))
+  );
+}
+
+/**
+ * Timestamp (ms) of the last code edit, if any. Completed edits
+ * (`tool-call-after`) carry the changed path, so bookkeeping edits can be
+ * excluded; when a run has none (older Channel-A-only streams), the
+ * permission-check `tool-call-before` events are used instead.
+ */
+function lastEditTime(events: TrajectoryEvent[]): number | undefined {
+  const isEditOf =
+    (kind: TrajectoryEvent["kind"]) => (event: TrajectoryEvent) =>
+      event.kind === kind &&
+      (event.kind === "tool-call-before" || event.kind === "tool-call-after") &&
+      EDIT_TOOL_NAMES.has(event.toolName);
+
+  const completed = events.filter(isEditOf("tool-call-after"));
+  const edits =
+    completed.length > 0
+      ? completed
+      : events.filter(isEditOf("tool-call-before"));
+
+  let last: number | undefined;
+  for (const event of edits) {
+    const path =
+      event.kind === "tool-call-before" || event.kind === "tool-call-after"
+        ? event.detail?.path
+        : undefined;
+    if (isBookkeepingPath(path)) {
+      continue;
+    }
+    const time = Date.parse(event.timestamp);
+    last = last === undefined ? time : Math.max(last, time);
+  }
+  return last;
+}
+
+/**
+ * True when one observed shell call satisfies every condition of `command`
+ * (Spec 35): its command contains `contains`, it came after the last edit
+ * when required (vacuously true with no edits), and it exited 0 when required.
+ */
+function isCommandSatisfied(
+  events: TrajectoryEvent[],
+  command: ExpectedCommand,
+  lastEdit: number | undefined,
+): boolean {
+  return events.some((event) => {
+    if (event.kind !== "tool-call-after") return false;
+    if (!event.detail?.command?.includes(command.contains)) return false;
+    const afterEdit =
+      !command.after_last_edit ||
+      lastEdit === undefined ||
+      Date.parse(event.timestamp) > lastEdit;
+    const succeeded = !command.expect_success || event.detail.exitCode === 0;
+    return afterEdit && succeeded;
+  });
+}
+
+function describeCommand(command: ExpectedCommand): string {
+  const conditions = [
+    command.after_last_edit ? "after the last edit" : undefined,
+    command.expect_success ? "exit 0" : undefined,
+  ].filter((condition) => condition !== undefined);
+  return conditions.length > 0
+    ? `command containing "${command.contains}" (${conditions.join(", ")})`
+    : `command containing "${command.contains}"`;
+}
+
+/** True when the case declares Spec 35 verification checks. */
+function hasVerificationChecks(expected: HarnessTrajectoryOutcome): boolean {
+  return (
+    (expected.expected_commands?.length ?? 0) > 0 ||
+    expected.verifier !== undefined
+  );
+}
+
+/**
+ * Score `executionCompleteness` as the fraction of satisfied checks: each
+ * `expected_tools` entry must have been observed at least once, each
+ * `expected_commands` entry must be satisfied by one shell call, and a
+ * verifier's result must match its expected outcome (Spec 35).
  */
 function buildExecutionCompletenessDimension(
   events: TrajectoryEvent[],
   expected: HarnessTrajectoryOutcome,
+  verifier: TrajectoryVerifierResult | undefined,
 ): DimensionScore {
   const observed = observedToolNames(events);
-  const missing = expected.expected_tools.filter((tool) => !observed.has(tool));
+  const lastEdit = lastEditTime(events);
 
-  if (missing.length === 0) {
+  const checks: Array<{ label: string; satisfied: boolean }> = [
+    ...expected.expected_tools.map((tool) => ({
+      label: `tool "${tool}"`,
+      satisfied: observed.has(tool),
+    })),
+    ...(expected.expected_commands ?? []).map((command) => ({
+      label: describeCommand(command),
+      satisfied: isCommandSatisfied(events, command, lastEdit),
+    })),
+    ...(expected.verifier !== undefined
+      ? [
+          {
+            label: `verifier expected to ${expected.verifier.expect}`,
+            satisfied:
+              verifier !== undefined &&
+              verifier.passed === (expected.verifier.expect === "pass"),
+          },
+        ]
+      : []),
+  ];
+
+  if (checks.length === 0) {
     return {
       score: 1,
-      rationale:
-        expected.expected_tools.length > 0
-          ? `All expected tools observed at least once: [${expected.expected_tools.join(", ")}].`
-          : "No tools were required for this case.",
+      rationale: "No tools were required for this case.",
+      applicable: true,
+    };
+  }
+
+  const unsatisfied = checks.filter((check) => !check.satisfied);
+  if (unsatisfied.length === 0) {
+    return {
+      score: 1,
+      rationale: `All ${checks.length} execution checks satisfied: ${checks.map((check) => check.label).join("; ")}.`,
       applicable: true,
     };
   }
 
   return {
-    score: 0,
-    rationale: `Missing expected tool call(s): [${missing.join(", ")}]. Observed tools: [${[...observed].join(", ") || "(none)"}].`,
+    score: (checks.length - unsatisfied.length) / checks.length,
+    rationale: `Unsatisfied execution check(s): ${unsatisfied.map((check) => check.label).join("; ")}. Observed tools: [${[...observed].join(", ") || "(none)"}].`,
     applicable: true,
   };
 }
@@ -343,6 +474,7 @@ export function scoreTrajectoryResult(
     executionCompleteness: buildExecutionCompletenessDimension(
       input.events,
       input.expectedOutcome,
+      input.verifier,
     ),
     rationaleQuality: buildRationaleQualityDimension(),
   };
@@ -353,11 +485,14 @@ export function scoreTrajectoryResult(
     input.scoring.per_expectation_weight,
   );
 
-  const passed = determinePassed(
-    dimensions,
-    weightedTotal,
-    input.scoring.required,
-  );
+  // A case that declares verification checks (Spec 35) passes only when
+  // those checks do: correct routing alone must not carry it.
+  const verificationGatePassed =
+    !hasVerificationChecks(input.expectedOutcome) ||
+    dimensions.executionCompleteness.score >= PRIMARY_STRUCTURAL_PASS_THRESHOLD;
+  const passed =
+    verificationGatePassed &&
+    determinePassed(dimensions, weightedTotal, input.scoring.required);
 
   return {
     caseId: input.caseId,

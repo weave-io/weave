@@ -8,24 +8,29 @@
  *   1. Resolve the prompt text via the injected `PromptProvider`.
  *   2. Prepare an ephemeral workspace via the injected
  *      `TrajectoryWorkspaceFactory` (writes `prompt.txt`, creates the
- *      artifacts directory).
- *   3. Invoke `podman run` against the `opencode-default` sandbox (see
+ *      artifacts directory), then set it up for the case (Spec 35): copy
+ *      the fixture, write the tool-call observer plugin, and for the
+ *      `opencode-local` profile write the working-tree plugin bundle.
+ *   3. Invoke `podman run` against the sandbox image (see
  *      `sandboxes/opencode/README.md` for the mount/env contract) via the
  *      injected `PodmanClient`.
  *   4. Race the podman invocation against `max_duration_seconds`. On
  *      timeout, issue `podman kill` and return `TimeoutExceeded`.
  *   5. Parse the captured stderr into normalized `TrajectoryEvent` records
- *      via the injected `LogParser`.
- *   6. Score the events against `expectedSpawns`/`expectedTools` to produce
+ *      via the injected `LogParser`, and join the observer's tool-call
+ *      records into that stream as `tool-call-after` events.
+ *   6. If the case has a verifier, run it in a second container against
+ *      the finished workspace.
+ *   7. Score the events against `expectedSpawns`/`expectedTools` to produce
  *      the four-field publishable `TrajectorySummary`.
- *   7. Return a `TrajectoryResult` (event stream + summary + local-only raw
- *      artifact reference).
+ *   8. Return a `TrajectoryResult` (event stream + summary + local-only raw
+ *      artifact reference + local-only verifier outcome).
  *
  * # Design
  *
  * All external dependencies (`PodmanClient`, `LogParser`, `PromptProvider`,
- * `TrajectoryWorkspaceFactory`) are injected via the constructor so tests
- * can substitute in-memory stubs. No real Podman invocation, no real file
+ * `TrajectoryWorkspaceFactory`, `TrajectoryFileSystem`) are injected via the
+ * constructor so tests can substitute in-memory stubs. No real Podman invocation, no real file
  * I/O, and no real harness process is used in unit tests — see
  * `__tests__/opencode-trajectory-runner.test.ts`.
  *
@@ -38,6 +43,8 @@
  */
 
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { getBuiltinConfig } from "@weaveio/weave-config";
 import type {
   TrajectoryCase,
   TrajectoryEvent,
@@ -45,6 +52,7 @@ import type {
   TrajectoryRunner,
   TrajectoryRunnerError,
   TrajectorySummary,
+  TrajectoryVerifierResult,
   TrajectoryWorkspace,
 } from "@weaveio/weave-core";
 import { logger, redactSecrets } from "@weaveio/weave-engine";
@@ -60,6 +68,13 @@ import {
   parseTrajectoryEvents,
   type TrajectoryParseError,
 } from "./log-parser.js";
+import {
+  joinObserverRecords,
+  OBSERVER_PLUGIN_PATH,
+  OBSERVER_PLUGIN_SOURCE,
+  OBSERVER_RECORDS_FILE,
+  parseObserverRecords,
+} from "./observer.js";
 import type { PodmanClient, PodmanRunResult } from "./podman-client.js";
 
 const log = logger.child({ module: "opencode-trajectory-runner" });
@@ -176,6 +191,51 @@ export class EphemeralWorkspaceFactory implements TrajectoryWorkspaceFactory {
   }
 }
 
+/**
+ * File operations the runner performs on the host side of the workspace
+ * (Spec 35): copying a fixture in, writing the observer plugin, the local
+ * plugin bundle, and the generated global config, and reading the
+ * observer's records back. Injected so unit tests do no real file I/O.
+ */
+export interface TrajectoryFileSystem {
+  /** Copies every file under `from` into `to`, keeping relative paths. */
+  copyDirectory(from: string, to: string): Promise<void>;
+  copyFile(from: string, to: string): Promise<void>;
+  writeFile(path: string, content: string): Promise<void>;
+  /** Returns the file's text, or `undefined` when it does not exist. */
+  readText(path: string): Promise<string | undefined>;
+}
+
+/** Default `TrajectoryFileSystem` backed by Bun file APIs. */
+export class BunTrajectoryFileSystem implements TrajectoryFileSystem {
+  async copyDirectory(from: string, to: string): Promise<void> {
+    const glob = new Bun.Glob("**/*");
+    for await (const relative of glob.scan({
+      cwd: from,
+      dot: true,
+      onlyFiles: true,
+    })) {
+      await Bun.write(join(to, relative), Bun.file(join(from, relative)));
+    }
+  }
+
+  async copyFile(from: string, to: string): Promise<void> {
+    await Bun.write(to, Bun.file(from));
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    await Bun.write(path, content);
+  }
+
+  async readText(path: string): Promise<string | undefined> {
+    const file = Bun.file(path);
+    if (!(await file.exists())) {
+      return undefined;
+    }
+    return file.text();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sandbox profile resolution
 // ---------------------------------------------------------------------------
@@ -187,7 +247,64 @@ export class EphemeralWorkspaceFactory implements TrajectoryWorkspaceFactory {
  */
 const SANDBOX_PROFILE_IMAGES: Record<string, string> = {
   "opencode-default": "weave-sandbox-opencode-default",
+  // Same image; the runner supplies the working-tree plugin bundle instead of
+  // the npm pin (Spec 35).
+  "opencode-local": "weave-sandbox-opencode-default",
 };
+
+/** Profiles that load the working-tree plugin bundle from the workspace. */
+const LOCAL_PLUGIN_PROFILES: ReadonlySet<string> = new Set(["opencode-local"]);
+
+/** Where the working-tree bundle goes; OpenCode auto-loads this directory. */
+const LOCAL_PLUGIN_WORKSPACE_PATH = ".opencode/plugin/weave.js";
+
+/** `opencode.jsonc` for local-plugin runs: no npm plugin entry. */
+const LOCAL_PLUGIN_OPENCODE_CONFIG = `${JSON.stringify(
+  { $schema: "https://opencode.ai/config.json", permission: "allow" },
+  null,
+  2,
+)}\n`;
+
+/** Container path of Weave's global config (`~/.weave` for root). */
+const GLOBAL_CONFIG_CONTAINER_PATH = "/root/.weave/config.weave";
+
+/** Floor for the verifier's time budget, even when the session ran long. */
+const VERIFIER_MIN_SECONDS = 30;
+
+/**
+ * Builds the global Weave config mounted into fixture runs (Spec 35). It
+ * pins every builtin sub-agent to the model under test in OpenCode's
+ * `openrouter/<provider>/<model>` form. Without it, sub-agents keep the
+ * builtin model id, which OpenCode cannot resolve under OpenRouter, so every
+ * delegation fails. Config merge puts these entries ahead of the builtin
+ * ones; a fixture's own project config can still override them.
+ */
+export function buildSubagentModelOverlay(model: string): string {
+  const openCodeModel =
+    model.startsWith("openrouter/") || model.startsWith("opencode/")
+      ? model
+      : `openrouter/${model}`;
+  const builtins = getBuiltinConfig();
+  const agents = builtins.isOk() ? Object.entries(builtins.value.agents) : [];
+  const blocks = agents
+    .filter(([, agent]) => agent.mode === "subagent")
+    .map(
+      ([name]) =>
+        `agent ${name} {\n  models [${JSON.stringify(openCodeModel)}]\n}`,
+    );
+  return [
+    "# Generated by the Weave trajectory runner (Spec 35). Pins builtin",
+    "# sub-agents to the model under test so OpenCode can resolve them.",
+    ...blocks,
+    "",
+  ].join("\n");
+}
+
+/** Host-side paths produced by workspace setup, consumed by the sandbox run. */
+interface WorkspaceSetup {
+  /** Generated global config to mount, for fixture runs only. */
+  globalConfigPath: string | undefined;
+}
 
 /**
  * Resolve a symbolic `sandbox_profile` name to its concrete container image
@@ -234,6 +351,17 @@ export interface OpenCodeTrajectoryRunnerOptions {
    * Defaults to 2000ms; tests may pass a smaller value.
    */
   timeoutDrainGraceMs?: number;
+  /**
+   * Host file operations for workspace setup and reading observer records.
+   * Defaults to `BunTrajectoryFileSystem`; tests inject an in-memory fake.
+   */
+  fileSystem?: TrajectoryFileSystem;
+  /**
+   * Absolute path of a `bun build` bundle of the working tree's
+   * `packages/adapters/opencode/src/plugin.ts`. Required by the
+   * `opencode-local` profile, ignored otherwise.
+   */
+  localPluginBundlePath?: string;
 }
 
 export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
@@ -244,6 +372,8 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
   private readonly openRouterApiKey: string;
   private readonly repoRoot: string;
   private readonly timeoutDrainGraceMs: number;
+  private readonly fileSystem: TrajectoryFileSystem;
+  private readonly localPluginBundlePath: string | undefined;
 
   constructor(options: OpenCodeTrajectoryRunnerOptions) {
     this.podmanClient = options.podmanClient;
@@ -253,6 +383,8 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     this.openRouterApiKey = options.openRouterApiKey;
     this.repoRoot = options.repoRoot;
     this.timeoutDrainGraceMs = options.timeoutDrainGraceMs ?? 2_000;
+    this.fileSystem = options.fileSystem ?? new BunTrajectoryFileSystem();
+    this.localPluginBundlePath = options.localPluginBundlePath;
   }
 
   run(
@@ -284,6 +416,7 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
                 .map(() => workspace),
             );
 
+    const startedAt = Date.now();
     return workspaceStep
       .andThen((resolvedWorkspace) =>
         this.resolveImage(testCase, model).map((image) => ({
@@ -292,13 +425,109 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
         })),
       )
       .andThen(({ workspace: resolvedWorkspace, image }) =>
-        this.invokeSandbox(testCase, model, resolvedWorkspace, image).map(
-          (sandboxOutput) => ({ workspace: resolvedWorkspace, sandboxOutput }),
+        this.prepareWorkspace(testCase, model, resolvedWorkspace).map(
+          (setup) => ({ workspace: resolvedWorkspace, image, setup }),
         ),
       )
-      .andThen(({ workspace: resolvedWorkspace, sandboxOutput }) =>
-        this.buildResult(testCase, model, resolvedWorkspace, sandboxOutput),
+      .andThen(({ workspace: resolvedWorkspace, image, setup }) =>
+        this.invokeSandbox(
+          testCase,
+          model,
+          resolvedWorkspace,
+          image,
+          setup,
+        ).map((sandboxOutput) => ({
+          workspace: resolvedWorkspace,
+          image,
+          sandboxOutput,
+        })),
+      )
+      .andThen(({ workspace: resolvedWorkspace, image, sandboxOutput }) =>
+        this.buildResult(
+          testCase,
+          model,
+          resolvedWorkspace,
+          sandboxOutput,
+          image,
+          startedAt,
+        ),
       );
+  }
+
+  /**
+   * Sets the workspace up for the case (Spec 35): copies the fixture,
+   * writes the tool-call observer plugin, writes the working-tree plugin
+   * bundle and a plugin-less `opencode.jsonc` for `opencode-local`, and
+   * writes the sub-agent model overlay for fixture runs.
+   */
+  private prepareWorkspace(
+    testCase: TrajectoryCase,
+    model: string,
+    workspace: TrajectoryWorkspace,
+  ): ResultAsync<WorkspaceSetup, TrajectoryRunnerError> {
+    const usesLocalPlugin = LOCAL_PLUGIN_PROFILES.has(testCase.sandboxProfile);
+    const bundlePath = this.localPluginBundlePath;
+    if (usesLocalPlugin && bundlePath === undefined) {
+      log.error(
+        {
+          testCaseId: testCase.testCaseId,
+          sandboxProfile: testCase.sandboxProfile,
+        },
+        "local-plugin sandbox profile requires localPluginBundlePath",
+      );
+      return errAsync({
+        type: "SandboxStartFailed",
+        testCaseId: testCase.testCaseId,
+        model,
+      });
+    }
+
+    const globalConfigPath =
+      testCase.fixturePath !== undefined
+        ? join(dirname(workspace.root), "weave-global", "config.weave")
+        : undefined;
+
+    const setup = async (): Promise<WorkspaceSetup> => {
+      if (testCase.fixturePath !== undefined) {
+        await this.fileSystem.copyDirectory(
+          testCase.fixturePath,
+          workspace.root,
+        );
+      }
+      await this.fileSystem.writeFile(
+        join(workspace.root, OBSERVER_PLUGIN_PATH),
+        OBSERVER_PLUGIN_SOURCE,
+      );
+      if (usesLocalPlugin && bundlePath !== undefined) {
+        await this.fileSystem.copyFile(
+          bundlePath,
+          join(workspace.root, LOCAL_PLUGIN_WORKSPACE_PATH),
+        );
+        await this.fileSystem.writeFile(
+          join(workspace.root, "opencode.jsonc"),
+          LOCAL_PLUGIN_OPENCODE_CONFIG,
+        );
+      }
+      if (globalConfigPath !== undefined) {
+        await this.fileSystem.writeFile(
+          globalConfigPath,
+          buildSubagentModelOverlay(model),
+        );
+      }
+      return { globalConfigPath };
+    };
+
+    return ResultAsync.fromPromise(setup(), (cause): TrajectoryRunnerError => {
+      log.error(
+        { testCaseId: testCase.testCaseId, error: cause },
+        "failed to set up trajectory workspace",
+      );
+      return {
+        type: "WorkspaceUnavailable",
+        testCaseId: testCase.testCaseId,
+        model,
+      };
+    });
   }
 
   private resolveImage(
@@ -328,6 +557,7 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     model: string,
     workspace: TrajectoryWorkspace,
     image: string,
+    setup: WorkspaceSetup,
   ): ResultAsync<PodmanRunResult, TrajectoryRunnerError> {
     // Volume mount option. `:Z` requests an SELinux private relabel; it is
     // valid only on Linux hosts with SELinux enforcing (typical for RHEL/Fedora)
@@ -371,10 +601,15 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       // as a directory (not individually enumerated file mounts) because
       // Podman `-v` requires the mount source to exist; if a project has no
       // `prompts/` directory yet, skip that mount rather than failing.
-      "-v",
-      `${this.repoRoot}/.weave/config.weave:/workspace/.weave/config.weave:ro`,
-      ...(existsSync(`${this.repoRoot}/.weave/prompts`)
-        ? ["-v", `${this.repoRoot}/.weave/prompts:/workspace/.weave/prompts:ro`]
+      //
+      // A fixture run (Spec 35) mounts neither: the fixture's own `.weave/`
+      // was copied into the workspace and is the project config, so the
+      // eval measures builtin behaviour rather than this repository's local
+      // overrides. It mounts the generated sub-agent model overlay as the
+      // container's global config instead.
+      ...this.weaveConfigMounts(testCase, setup),
+      ...(testCase.startAgent !== undefined
+        ? ["-e", `WEAVE_TRAJECTORY_START_AGENT=${testCase.startAgent}`]
         : []),
       image,
     ];
@@ -429,6 +664,24 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       }
       return ok(raced.result.value);
     });
+  }
+
+  private weaveConfigMounts(
+    testCase: TrajectoryCase,
+    setup: WorkspaceSetup,
+  ): string[] {
+    if (testCase.fixturePath !== undefined) {
+      return setup.globalConfigPath !== undefined
+        ? ["-v", `${setup.globalConfigPath}:${GLOBAL_CONFIG_CONTAINER_PATH}:ro`]
+        : [];
+    }
+    return [
+      "-v",
+      `${this.repoRoot}/.weave/config.weave:/workspace/.weave/config.weave:ro`,
+      ...(existsSync(`${this.repoRoot}/.weave/prompts`)
+        ? ["-v", `${this.repoRoot}/.weave/prompts:/workspace/.weave/prompts:ro`]
+        : []),
+    ];
   }
 
   private handleTimeout(
@@ -519,16 +772,22 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       kind: "completed";
       result: Result<PodmanRunResult, unknown>;
     }> = pending.then((result) => ({ kind: "completed" as const, result }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<{
       kind: "timeout";
       pending: Promise<Result<PodmanRunResult, unknown>>;
     }>((resolve) => {
-      setTimeout(
+      timer = setTimeout(
         () => resolve({ kind: "timeout" as const, pending }),
         maxDurationSeconds * 1000,
       );
     });
-    return Promise.race([completed, timeout]);
+    // Clear the timer once the race settles: an uncleared timer keeps the
+    // process alive for the full `max_duration_seconds` after a run that
+    // finished early.
+    return Promise.race([completed, timeout]).finally(() =>
+      clearTimeout(timer),
+    );
   }
 
   private buildResult(
@@ -536,6 +795,8 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     model: string,
     workspace: TrajectoryWorkspace,
     sandboxOutput: PodmanRunResult,
+    image: string,
+    startedAt: number,
   ): ResultAsync<TrajectoryResult, TrajectoryRunnerError> {
     // Diagnostic hook: when WEAVE_TRAJECTORY_DUMP_STDERR is set to an absolute
     // directory path, write the raw sandbox stderr for this case there so we
@@ -589,17 +850,137 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
       });
     }
 
-    const events = parsed.value;
-    const summary = this.scoreEvents(testCase, events);
-    const result: TrajectoryResult = {
-      events,
-      summary,
-      rawArtifactRef: {
-        path: `${testCase.testCaseId}/stderr.log`,
-      },
-    };
-    void workspace;
-    return okAsync(result);
+    const channelAEvents = parsed.value;
+    return ResultAsync.fromSafePromise(
+      this.joinObserverEvents(testCase, workspace, channelAEvents),
+    )
+      .andThen((events) =>
+        this.runVerifier(testCase, workspace, image, startedAt).map(
+          (verifier) => ({ events, verifier }),
+        ),
+      )
+      .map(
+        ({ events, verifier }): TrajectoryResult => ({
+          events,
+          summary: this.scoreEvents(testCase, events),
+          rawArtifactRef: {
+            path: `${testCase.testCaseId}/stderr.log`,
+          },
+          ...(verifier !== undefined ? { verifier } : {}),
+        }),
+      );
+  }
+
+  /**
+   * Joins the observer plugin's tool-call records into the Channel-A event
+   * stream. A missing or unreadable observer file is not fatal: the run is
+   * scored on the Channel-A events alone, with a warning.
+   */
+  private async joinObserverEvents(
+    testCase: TrajectoryCase,
+    workspace: TrajectoryWorkspace,
+    events: TrajectoryEvent[],
+  ): Promise<TrajectoryEvent[]> {
+    const path = join(workspace.artifactsDir, OBSERVER_RECORDS_FILE);
+    const text = await this.fileSystem.readText(path).catch((cause) => {
+      log.warn(
+        { testCaseId: testCase.testCaseId, error: cause },
+        "failed to read tool-call observer records",
+      );
+      return undefined;
+    });
+    if (text === undefined) {
+      log.warn(
+        { testCaseId: testCase.testCaseId },
+        "no tool-call observer records; scoring Channel-A events only",
+      );
+      return events;
+    }
+    const { records, malformedLines } = parseObserverRecords(text);
+    if (malformedLines > 0) {
+      log.warn(
+        { testCaseId: testCase.testCaseId, malformedLines },
+        "skipped malformed tool-call observer records",
+      );
+    }
+    return joinObserverRecords(events, records);
+  }
+
+  /**
+   * Runs the case's verifier (Spec 35) in a second container: the finished
+   * workspace at /workspace, the verifier fixture read-only at /verifier, no
+   * model API key. The agent's container never mounted /verifier. Exit 0
+   * means passed; a failure to start, a timeout, or a non-zero exit means
+   * not passed.
+   */
+  private runVerifier(
+    testCase: TrajectoryCase,
+    workspace: TrajectoryWorkspace,
+    image: string,
+    startedAt: number,
+  ): ResultAsync<TrajectoryVerifierResult | undefined, never> {
+    const verifier = testCase.verifier;
+    if (verifier === undefined) {
+      return okAsync(undefined);
+    }
+
+    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+    const budgetSeconds = Math.max(
+      VERIFIER_MIN_SECONDS,
+      Math.floor(testCase.maxDurationSeconds - elapsedSeconds),
+    );
+    const volumeOpt = process.platform === "linux" ? ":Z" : "";
+    const containerName = `weave-verify-${testCase.testCaseId}-${crypto.randomUUID()}`;
+    const args = [
+      "--rm",
+      "--name",
+      containerName,
+      "--timeout",
+      String(budgetSeconds),
+      "-v",
+      `${workspace.root}:/workspace${volumeOpt}`,
+      "-v",
+      `${verifier.fixturePath}:/verifier:ro`,
+      "-w",
+      "/workspace",
+      "--entrypoint",
+      "sh",
+      image,
+      "-c",
+      verifier.command,
+    ];
+
+    return ResultAsync.fromSafePromise(
+      this.raceWithTimeout(this.podmanClient.run(args), budgetSeconds),
+    ).andThen((raced): ResultAsync<TrajectoryVerifierResult, never> => {
+      if (raced.kind === "timeout") {
+        log.warn(
+          { testCaseId: testCase.testCaseId, containerName },
+          "verifier exceeded its time budget, killing container",
+        );
+        return this.podmanClient
+          .kill(containerName)
+          .orElse(() => okAsync(undefined))
+          .map((): TrajectoryVerifierResult => ({ passed: false }));
+      }
+      if (raced.result.isErr()) {
+        log.error(
+          { testCaseId: testCase.testCaseId, error: raced.result.error },
+          "verifier container failed to run",
+        );
+        return okAsync({ passed: false });
+      }
+      const passed = raced.result.value.exitCode === 0;
+      log.info(
+        {
+          testCaseId: testCase.testCaseId,
+          exitCode: raced.result.value.exitCode,
+          stderrTail: redactSecrets(raced.result.value.stderr).slice(-400),
+        },
+        passed ? "verifier passed" : "verifier failed",
+      );
+      return okAsync({ passed });
+    });
   }
 
   private scoreEvents(

@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-traced-injection",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. Score a disciplined BLOCK whose findings are evidence-backed and traced: at least one EVIDENCE line cites two distinct code locations, the untrusted input in src/routes/export.ts and the shell sink in src/lib/archive.ts."
+  }
+}

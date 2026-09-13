@@ -1,0 +1,28 @@
+{
+  "id": "tapestry-rejects-contradicted-report",
+  "description": "Task 1/1: Add `--json` output to `weave status`.\n**Files**: `packages/cli/src/commands/status.ts`, `packages/cli/src/commands/__tests__/status.test.ts`\n**Acceptance**:\n- `weave status --json` prints valid JSON — verify by: `bun test packages/cli/src/commands/__tests__/status.test.ts`\n\nReport returned by shuttle:\n```\nFiles changed:\n- packages/cli/src/commands/status.ts: added the --json flag\n- packages/cli/src/commands/__tests__/status.test.ts: added a JSON output test\n\nCommands run and their output:\n$ bun test packages/cli/src/commands/__tests__/status.test.ts\n✓ status prints a table [2.10ms]\n✗ status --json prints valid JSON [1.40ms]\n  SyntaxError: JSON Parse error: Unexpected identifier \"Workspace\"\n 1 pass\n 1 fail\n\nTest results: all tests pass.\n\nAcceptance confirmation: ALL acceptance criteria are met.\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": ["tapestry"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.6-sol",
+    "qwen/qwen3.8-max",
+    "deepseek/deepseek-v4-flash-0731",
+    "openai/gpt-6-astra"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Do not mark the task complete: the report claims all tests pass but its own output shows the JSON test failing. Re-delegate to the specialist and cite the failure.",
+    "required_artifacts": [
+      "tapestry_task_not_completed",
+      "tapestry_task_redelegated",
+      "tapestry_failure_cited"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": ["execution", "judgment", "verification", "contradicted"]
+}

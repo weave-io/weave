@@ -40,6 +40,7 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | 32 | [Review Models](32-spec-review-models/32-spec-review-models.md) | `review_models` field syntax, review variant naming and descriptor generation, fan-out intent emission, collation semantics, and partial-failure policy |
 | 33 | [Harness Trajectory Evals](33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) | `TrajectoryEvent` union, two-channel adapter observation contract, `expected_outcome.kind: "harness_trajectory"` case schema, `TrajectoryRunner` interface, publishable trajectory summary fields, and suite-registry gating |
 | 34 | [OpenCode V2 Adapter](34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) | Normative design for `@weaveio/weave-adapter-opencode2`, a separate independent adapter package for OpenCode V2; schema mapping, permission mapping, transform-based reconciliation, and V2-only authority rules. Does not modify or supersede the V1 OpenCode adapter. |
+| 35 | [Verification Trajectory Evals](35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md) | Optional `harness_trajectory` fields for checking verification: fixture workspaces, starting agent, expected commands with ordering and exit status, and a hidden verifier; tool-call `detail`, observer-plugin runner behaviour, and scoring. Extends Spec 33 under ADR 0012 without changing the publishable surface. |
 
 ---
 

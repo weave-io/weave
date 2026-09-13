@@ -9,7 +9,9 @@ import {
   buildModelRunOutput,
   buildPlanningRunnerDiagnostics,
   buildUserMessage,
+  extractAcceptanceCriteria,
   extractPlanningSignals,
+  extractVerificationSignals,
   PATTERN_PLANNING_SUITE,
   PatternPlanningRunner,
   type PatternPlanningRunnerOptions,
@@ -668,6 +670,139 @@ describe("extractPlanningSignals", () => {
     expect(signals.fileBackedTasks).toBe(false);
     expect(signals.acceptanceCoverage).toBe(false);
   });
+
+  it("merges verification artifacts only when a case description is supplied", () => {
+    const plan = [
+      "## Tasks",
+      "- [ ] 1. Add flag",
+      "  - **Files**: `src/status.ts`",
+      "  - **Acceptance**:",
+      "    - Flag prints JSON — verify by: `bun test src/status.test.ts`",
+    ].join("\n");
+
+    expect(extractPlanningSignals(plan).producedArtifacts).not.toContain(
+      "plan_criteria_have_verify_by",
+    );
+    expect(
+      extractPlanningSignals(plan, "Commands: `bun test`.").producedArtifacts,
+    ).toContain("plan_criteria_have_verify_by");
+  });
+});
+
+describe("extractAcceptanceCriteria", () => {
+  it("collects nested criteria per task and stops at the next task or field", () => {
+    const criteria = extractAcceptanceCriteria(
+      [
+        "- [ ] 1. First",
+        "  - **Acceptance**:",
+        "    - A passes",
+        "      and wraps",
+        "    - B passes",
+        "  - **Depends on**: None",
+        "- [ ] 2. Second",
+        "  - **Acceptance**: C passes",
+        "## Verification",
+        "- [ ] `bun test`",
+      ].join("\n"),
+    );
+    expect(criteria).toEqual(["A passes and wraps", "B passes", "C passes"]);
+  });
+
+  it("handles a flat layout and bold labels with the colon inside", () => {
+    const criteria = extractAcceptanceCriteria(
+      [
+        "**Acceptance:**",
+        "- A passes",
+        "- **Files:** `src/a.ts`",
+        "- not a criterion",
+      ].join("\n"),
+    );
+    expect(criteria).toEqual(["A passes"]);
+  });
+});
+
+describe("extractVerificationSignals", () => {
+  const description =
+    "Add a --json flag. Available commands (from package.json scripts): `bun test`, `bun run typecheck`.";
+
+  it("requires every acceptance criterion to name how it is checked", () => {
+    const covered = extractVerificationSignals(
+      [
+        "- **Acceptance**:",
+        "  - Output parses as JSON — verify by: `bun test src/status.test.ts`",
+        "  - Types still check: `bun run typecheck`",
+        "  - Help text mentions the flag — manual: run the CLI with --help",
+      ].join("\n"),
+      description,
+    );
+    expect(covered.criteriaCount).toBe(3);
+    expect(covered.producedArtifacts).toContain("plan_criteria_have_verify_by");
+
+    const partial = extractVerificationSignals(
+      [
+        "- **Acceptance**:",
+        "  - Output parses as JSON — verify by: `bun test`",
+        "  - Output is pretty",
+      ].join("\n"),
+      description,
+    );
+    expect(partial.criteriaWithVerificationCount).toBe(1);
+    expect(partial.producedArtifacts).not.toContain(
+      "plan_criteria_have_verify_by",
+    );
+  });
+
+  it("accepts a checkbox Verification section and rejects a bare code block", () => {
+    const checklist = extractVerificationSignals(
+      ["## Verification", "- [ ] `bun test` passes", "## Pitfalls"].join("\n"),
+      description,
+    );
+    expect(checklist.verificationCheckboxCount).toBe(1);
+    expect(checklist.producedArtifacts).toContain(
+      "plan_verification_checkboxes",
+    );
+
+    const codeBlock = extractVerificationSignals(
+      ["## Verification", "```bash", "bun test", "```"].join("\n"),
+      description,
+    );
+    expect(codeBlock.verificationSectionHasCodeBlock).toBe(true);
+    expect(codeBlock.producedArtifacts).not.toContain(
+      "plan_verification_checkboxes",
+    );
+  });
+
+  it("flags commands the case does not declare, including inside code fences", () => {
+    const signals = extractVerificationSignals(
+      [
+        "- [ ] `bun test src/status.test.ts` passes",
+        "- [ ] `bun install` then `bun run lint`",
+        "```bash",
+        "$ bun run build   # compile",
+        "```",
+      ].join("\n"),
+      description,
+    );
+    expect(signals.declaredCommands).toEqual(["bun test", "bun run typecheck"]);
+    expect(signals.unlistedCommands).toEqual(["bun run lint", "bun run build"]);
+    expect(signals.producedArtifacts).toContain("plan_uses_declared_commands");
+    expect(signals.producedArtifacts).not.toContain(
+      "plan_no_unlisted_commands",
+    );
+  });
+
+  it("produces no command artifacts when the case declares no commands", () => {
+    const signals = extractVerificationSignals(
+      "- [ ] `bun test` passes",
+      "Plan the change.",
+    );
+    expect(signals.producedArtifacts).not.toContain(
+      "plan_no_unlisted_commands",
+    );
+    expect(signals.producedArtifacts).not.toContain(
+      "plan_uses_declared_commands",
+    );
+  });
 });
 
 describe("buildUserMessage", () => {
@@ -678,6 +813,14 @@ describe("buildUserMessage", () => {
     expect(message).toContain("**Files**");
     expect(message).toContain("dependency language");
     expect(message).toContain("plan_scope_explicit");
+  });
+
+  it("withholds required signal names for judgment cases", () => {
+    const message = buildUserMessage(
+      makePlanningCase({ tags: ["planning", "judgment"] }),
+    );
+    expect(message).toContain("not disclosed for this case");
+    expect(message).not.toContain("plan_scope_explicit");
   });
 });
 
