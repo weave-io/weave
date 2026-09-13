@@ -1,0 +1,35 @@
+{
+  // ─────────────────────────────────────────────────────────────────────────
+  // Weave configuration for the GitHub Spec Kit SDD package
+  //
+  // HOW TO USE:
+  //   Merge these settings into your project's .opencode/weave-opencode.jsonc
+  //   Adjust skill_directories to match where you placed this package.
+  //
+  // OPTION A — Using from the Weave repo examples directory (development):
+  //   skill_directories: ["examples/config/github-speckit/skills"]
+  //
+  // OPTION B — After copying the package to your project root:
+  //   skill_directories: ["github-speckit/skills"]
+  //
+  // NOTE: skill_directories are relative to project root.
+  //       Absolute paths and ".." traversal are rejected.
+  //
+  // JSON Schema support:
+  //   Use a release-tagged raw GitHub URL while referencing Weave directly.
+  //   If you vendor `schema/weave-config.schema.json` into your own repo,
+  //   replace this with a local relative path such as:
+  //   "$schema": "./schema/weave-config.schema.json"
+  //
+  // That's it. No agent overrides needed. Agents load SDD skills on demand
+  // via the skill tool when the task calls for it. The sdd-orchestration
+  // skill tells the orchestrator which skills to load for each phase and
+  // which skills to tell delegates to load.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  "$schema": "https://raw.githubusercontent.com/pgermishuys/opencode-weave/v0.7.6/schema/weave-config.schema.json",
+
+  // Skills directory — 6 SDD skills become available to all agents via the skill tool.
+  // Agents see them in their skill index and load them when needed.
+  "skill_directories": ["examples/config/github-speckit/skills"]
+}

@@ -1,0 +1,14 @@
+{
+  // User-level legacy config (~/.config/opencode/weave-opencode.jsonc).
+  "log_level": "INFO",
+  "agents": {
+    "thread": { "temperature": 0.05 },
+  },
+  "custom_agents": {
+    "release-notes": {
+      "description": "Drafts release notes from merged changes",
+      "prompt": "You draft concise, user-facing release notes from merged changes.",
+      "mode": "subagent",
+    },
+  },
+}

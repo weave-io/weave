@@ -122,6 +122,45 @@ Runtime ~3s.
 ./scripts/proof/claude-code-active-agent.sh
 ```
 
+### Legacy `@opencode_weave/weave` → Weave upgrade
+
+[`scripts/proof/legacy-upgrade.sh`](../scripts/proof/legacy-upgrade.sh)
+proves that a user of the legacy plugin can follow the legacy README's
+upgrade steps (`weave init migrate`, `weave validate`, swap the plugin in
+`opencode.json`) and keep every agent they had. It stages six projects plus a
+user-level legacy config under a throwaway `HOME`: the legacy
+`delegation-categories` and `github-speckit` examples, a heavily customised
+config with comments and trailing commas (and the same config as strict
+JSON), a `.json` config, and a zero-config project.
+
+It captures `opencode debug config` once with the published legacy plugin and
+once after the upgrade, then asserts:
+
+1. Migration exits 0 where there is a legacy config and 1 with "No legacy
+   config found" where there is none.
+2. No migrated config contains starter-template content.
+3. Migration reports only genuine warnings (no `$schema` or unknown-field noise).
+4. The trailing-comma and strict-JSON configs migrate identically.
+5. `weave validate` passes in every project.
+6. Every agent the legacy plugin registered is still registered.
+7. Every custom agent keeps its description and prompt, including a
+   `prompt_file` agent.
+8. No upgraded agent carries an unqualified model ID.
+9. `opencode run --agent loom` in the zero-config project does not fail with
+   `ProviderModelNotFoundError`. Provider keys are removed from the sandbox,
+   so it runs on OpenCode's free default model or fails on credentials.
+
+Unlike the active-agent proofs, this one needs network: the baseline installs
+the legacy plugin from npm, and claim 9 starts a real session.
+
+**Requirements**: `bun`, `opencode` (v1.15+), `jq` on `PATH`. Set
+`WEAVE_PROOF_KEEP=1` to keep the sandbox (configs, logs, and captured debug
+configs) for inspection.
+
+```bash
+./scripts/proof/legacy-upgrade.sh
+```
+
 ## The pattern
 
 Every proof follows the same five-step shape, encoded in
@@ -178,9 +217,10 @@ introduced these proofs for the design conversation.
 
 ## CI
 
-All three proofs run on every PR that touches an adapter, the engine,
+All four proofs run on every PR that touches an adapter, the engine,
 config, core, the CLI, or the proof scripts — see
 [`.github/workflows/proof-active-agent.yml`](../.github/workflows/proof-active-agent.yml).
-Three jobs, three colour: `proof-v1` (plain Ubuntu, installs `opencode-ai`
+Four jobs: `proof-v1` (plain Ubuntu, installs `opencode-ai`
 from npm), `proof-v2` (Podman, mirrors `verify-opencode2.yml`),
-`proof-claude-code` (plain Ubuntu, drives real `weave compose`).
+`proof-claude-code` (plain Ubuntu, drives real `weave compose`), and
+`proof-legacy-upgrade` (plain Ubuntu, installs `opencode-ai` from npm).
