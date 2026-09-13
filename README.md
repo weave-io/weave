@@ -142,6 +142,10 @@ bun run docs:check-links
 bun run docs:dev
 ```
 
+To try the checkout in OpenCode, run `scripts/dev/opencode` from any project,
+and use `scripts/dev/weave` for the CLI. See the
+[OpenCode adapter README](./packages/adapters/opencode/README.md#local-development).
+
 The public docs at [tryweave.io/docs](https://tryweave.io/docs/) are
 maintained in [pgermishuys/weave-website](https://github.com/pgermishuys/weave-website);
 update them when a change affects user-visible behavior. `packages/docs` is an

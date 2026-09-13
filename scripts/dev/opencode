@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# scripts/dev/opencode
+#
+# Run OpenCode with this checkout's Weave adapter instead of the published one.
+#
+# Usage, from the project you want to test in:
+#
+#   ~/source/weave/scripts/dev/opencode [--no-build] [opencode args...]
+#
+# Examples:
+#   scripts/dev/opencode                     # build, then start the TUI
+#   scripts/dev/opencode debug config        # check which plugin and agents load
+#   scripts/dev/opencode --no-build run "hi" # reuse the last build
+#
+# It builds packages/adapters/opencode/dist/plugin.js (the same targeted build
+# the proofs use), then starts OpenCode with a per-checkout config overlay:
+# XDG_CONFIG_HOME points at a directory under ~/.local/state/weave-dev/ that
+# symlinks everything in your real ~/.config, except that
+# opencode/opencode.json is your global OpenCode config with any Weave plugin
+# (@weaveio/weave-adapter-opencode, legacy @opencode_weave/weave, or an older
+# file:// build) swapped for this build. Your real config files are never
+# modified. Auth, sessions, ~/.weave, and tools such as gh and git keep working
+# because only the OpenCode config file is replaced.
+#
+# Weave plugins listed in the project's own opencode.json can't be overridden;
+# the script warns about them.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PKG_DIR="${REPO_ROOT}/packages/adapters/opencode"
+PLUGIN="${PKG_DIR}/dist/plugin.js"
+
+log() { printf '[weave-dev] %s\n' "$*" >&2; }
+
+build=1
+if [ "${1:-}" = "--no-build" ]; then
+  build=0
+  shift
+fi
+
+command -v bun >/dev/null || { log "bun is not on PATH"; exit 1; }
+command -v opencode >/dev/null || { log "opencode is not on PATH"; exit 1; }
+
+if [ "${build}" = "1" ]; then
+  log "building ${PLUGIN#"${REPO_ROOT}/"}"
+  # Mirrors proof_build_adapter in scripts/proof/lib.sh: workspace packages are
+  # inlined, runtime dependencies resolve from this checkout's node_modules.
+  (
+    cd "${PKG_DIR}"
+    bun build ./src/index.ts ./src/plugin.ts \
+      --outdir ./dist \
+      --target bun \
+      --external @opencode-ai/plugin \
+      --external @opencode-ai/sdk \
+      --external mustache \
+      --external neverthrow \
+      --external zod >/dev/null
+  )
+fi
+[ -f "${PLUGIN}" ] || { log "missing ${PLUGIN}; run without --no-build"; exit 1; }
+
+REAL_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
+CHECKOUT_KEY="$(printf '%s' "${REPO_ROOT}" | cksum | cut -d' ' -f1)"
+OVERLAY="${XDG_STATE_HOME:-${HOME}/.local/state}/weave-dev/opencode-${CHECKOUT_KEY}/config"
+
+# Rebuild the overlay from scratch each run so it tracks the real config.
+rm -rf "${OVERLAY}"
+mkdir -p "${OVERLAY}/opencode"
+shopt -s dotglob nullglob
+for entry in "${REAL_CONFIG_HOME}"/*; do
+  [ "$(basename "${entry}")" = "opencode" ] && continue
+  ln -s "${entry}" "${OVERLAY}/$(basename "${entry}")"
+done
+for entry in "${REAL_CONFIG_HOME}/opencode"/*; do
+  case "$(basename "${entry}")" in
+    config.json | opencode.json | opencode.jsonc) continue ;;
+  esac
+  ln -s "${entry}" "${OVERLAY}/opencode/$(basename "${entry}")"
+done
+shopt -u dotglob nullglob
+
+bun "${REPO_ROOT}/scripts/dev/opencode-config.ts" \
+  "${REAL_CONFIG_HOME}/opencode" "file://${PLUGIN}" "${PWD}" \
+  >"${OVERLAY}/opencode/opencode.json"
+
+log "plugin: file://${PLUGIN}"
+export XDG_CONFIG_HOME="${OVERLAY}"
+exec opencode "$@"
