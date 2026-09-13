@@ -26,6 +26,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import patternPrompt from "../../../../config/prompts/pattern.md" with {
+  type: "text",
+};
 import {
   composeAgentSnapshots,
   composeSnapshot,
@@ -486,13 +489,15 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
   });
 
   it("pattern snapshot raw prompt preserves the planning-structure contract", async () => {
-    const result = await composeAgentSnapshots({
-      agentNames: ["pattern"],
-      rawArtifacts: true,
+    const result = await composeSnapshot({
+      config: makeMinimalConfig({
+        pattern: makeInlineAgentConfig(patternPrompt),
+      }),
+      agentName: "pattern",
     });
     expect(result.isOk()).toBe(true);
 
-    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    const artifact = result._unsafeUnwrap().rawArtifact;
     expect(artifact?.agentName).toBe("pattern");
     expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_SCOPE_CONTRACT);
     expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_ORDER_CONTRACT);
