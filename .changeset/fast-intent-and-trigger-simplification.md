@@ -6,11 +6,21 @@
 "@weaveio/weave-adapter-pi": minor
 ---
 
-Declare optional fast-service intent with `fast true` or `fast false`.
+Declare delegation triggers as plain strings, route categories by description, and declare fast-service intent with `fast true`.
 
-- Agents and categories accept an optional boolean `fast`. Explicit `false` overrides an inherited `true`; omission preserves inherited or harness defaults.
-- Normalized agent descriptors retain this intent. The pinned OpenCode V2 adapter does not apply a provider-specific fast-service override or claim that fast service was requested or supplied.
-- Structured agent triggers (`{ domain, trigger, routing_hint }`), category `patterns`, and the optional `variant` field remain supported. This release does not migrate them to a different syntax.
+Breaking for 0.1.x configs:
+
+- `triggers` on agents and categories is a list of strings. The object form `{ domain, trigger, routing_hint }` is rejected (`triggers must contain quoted strings`).
+- Category `patterns` is removed with no replacement and is rejected as an unrecognized key. In 0.1.x every category required `patterns`, so every existing category block needs editing.
+- Every category needs a non-blank `description`. Categories route by `description` and `triggers`; Weave performs no file-path routing.
+- Prompt templates render triggers with `{{#triggers}}{{.}}{{/triggers}}`. Delegation targets no longer expose `domains` or trigger objects.
+
+To upgrade a 0.1.x config: remove `patterns`, add a `description` to each category, and rewrite each trigger as a string. `weave validate` reports every place that needs a change. `weave init migrate` converts legacy JSONC this way and warns for every discarded field.
+
+Also:
+
+- Agents and categories accept the optional literal `fast true` as provider-neutral fast-service intent. `fast false` is rejected; omission preserves inherited or harness defaults. Normalized agent descriptors retain the intent. The OpenCode adapters don't apply a provider-specific fast-service override or claim that fast service was requested or supplied.
+- The optional `variant` field remains supported.
 
 Bundled-source: @weaveio/weave-core
 Bundled-source: @weaveio/weave-config
