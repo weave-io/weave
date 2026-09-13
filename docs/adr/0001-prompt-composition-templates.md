@@ -36,7 +36,7 @@ The Template Context first slice exposes:
 - `agent.name`, `agent.description`, `agent.mode`, `agent.skills`, `agent.isCategory`
 - `category.name`, `category.description` (only for category shuttle agents)
 - `toolPolicy.effective.read/write/execute/delegate/network`
-- `delegation.targets[]` with `name`, `description`, `domains[]`, `triggers[]`
+- `delegation.targets[]` with `name`, `description`, `triggers[]`, `isCategory` (amended in 0.2.0: `triggers` is a list of strings, and the original `domains[]` and structured trigger objects were removed)
 
 ---
 

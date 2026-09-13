@@ -97,9 +97,9 @@ const result = resolveSkillsForConfig({ config, availableSkills });
 
 Generated category shuttles expose source category context on the adapter-facing `AgentDescriptor.category?: CategoryMetadata` field.
 
-`CategoryMetadata` contains the source category `name`, optional `description`, declared `patterns: string[]`, and `isCategory: true`. The `patterns` array is the list of glob strings authored in `.weave` config; the engine does not expand those globs into files.
+`CategoryMetadata` contains the source category `name`, its required `description`, and `isCategory: true`. Categories carry no file patterns: category `patterns` was removed in 0.2.0, and routing to a category shuttle is driven by the category's `description` and `triggers`.
 
-Adapters may consume `descriptor.category.patterns` to generate harness-specific routing rules, plugin configuration, or delegation metadata. The adapter owns the concrete interpretation for its harness. The engine must not expand globs, scan files, inspect harness-owned resources, or make concrete routing decisions.
+Adapters own the concrete routing interpretation for their harness. The engine must not scan files, inspect harness-owned resources, or make concrete routing decisions.
 
 ## Execution Lifecycle Surface
 

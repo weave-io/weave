@@ -11,7 +11,7 @@ Declare delegation triggers as plain strings, route categories by description, a
 Breaking for 0.1.x configs:
 
 - `triggers` on agents and categories is a list of strings. The object form `{ domain, trigger, routing_hint }` is rejected (`triggers must contain quoted strings`).
-- Category `patterns` is removed with no replacement and is rejected as an unrecognized key. In 0.1.x every category required `patterns`, so every existing category block needs editing.
+- Category `patterns` is removed with no direct replacement and is rejected as an unrecognized key. In 0.1.x every category required `patterns`, so every existing category block needs editing.
 - Every category needs a non-blank `description`. Categories route by `description` and `triggers`; Weave performs no file-path routing.
 - Delegation targets in prompt templates no longer expose `domains` or trigger objects. Each target's `triggers` is a list of strings, rendered inside the target loop:
 

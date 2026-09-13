@@ -1,5 +1,7 @@
 # 16-spec-stable-adapter-descriptor-contract.md
 
+> **Amended in 0.2.0:** category `patterns` was removed from the DSL, and category `description` became required. `AgentDescriptor.category` now carries only `name` and `description`. Requirements below that mention category patterns are historical. See [Adapter Boundary](../../adapter-boundary.md#stable-descriptor-field-table) for the current contract.
+
 ## Introduction/Overview
 
 Define the stable adapter-facing descriptor contract for Weave agent materialization, addressing issue [#72](https://github.com/weave-io/weave/issues/72). The feature makes it explicit what fields adapters can rely on when translating engine output into concrete harness resources, while preserving the boundary that the engine owns normalized descriptor construction and adapters own harness-specific materialization.

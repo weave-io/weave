@@ -261,7 +261,7 @@ Key rules:
 - `descriptor.composedPrompt` is the final prompt; raw `prompt`, `prompt_file`, and `prompt_append` are not adapter inputs.
 - `descriptor.models` is ordered model intent, not proof of model availability, not selected-model state, and not a harness-formatted model field.
 - `descriptor.rawToolPolicy` and `descriptor.effectiveToolPolicy` are abstract policy fields; adapters map them to concrete harness permissions.
-- `descriptor.category` is present only for generated category shuttles and carries category name, optional description, and patterns.
+- `descriptor.category` is present only for generated category shuttles and carries the category name and its required description. Categories have no patterns.
 - Disabled agents and suppressed category shuttles are omitted from materialization rather than emitted as disabled descriptors.
 - Workflow and command materialization are outside the `AgentDescriptor` contract.
 
@@ -280,7 +280,7 @@ Key rules:
 | `effectiveToolPolicy` | Engine | Abstract policy with every capability resolved. | Enforce through concrete harness permissions. |
 | `delegationTargets` | Engine | Harness-neutral eligible delegation targets and triggers. | Generate routing affordances, subagent references, commands, or unsupported notices. |
 | `skills` | Engine | Requested skill names only. | Resolve/load skill payloads through adapter-owned discovery; never expect paths/contents here. |
-| `category` | Engine | Optional generated-shuttle metadata: category name, optional description, declared patterns. | Apply harness routing/materialization conventions without expanding globs in the engine. |
+| `category` | Engine | Optional generated-shuttle metadata: category name and required description. | Apply harness routing/materialization conventions; route by description and triggers. |
 
 See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) for the normative field table, examples, disabled-entry rules, and proof artifacts.
 
