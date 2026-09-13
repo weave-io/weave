@@ -13,6 +13,10 @@ The [separate-package merge proof](../artifacts/opencode2-package-merge-proof.md
 records the beta-19151 packaged runtime and V1 fallback checks. The older
 records above describe the pre-merge layout and are not current package hashes.
 
+The [start-command diagnostic record](../artifacts/opencode2-start-command-proof.md)
+records the recovered picker implementation's runtime checks and the remaining
+interactive verification limit.
+
 ## Requirements
 
 The retained Podman verifier uses an explicit `proof/proof-model` catalog
@@ -92,8 +96,10 @@ Location.
 Check these states in the real CLI:
 
 1. Create a session. Confirm `Weave plan: No plan selected`.
-2. Run `/weave:start <active-plan>`. Confirm the plan name, completed/total
-   count, current task, and next task.
+2. Run `/weave:start` with no argument. Confirm the native plan picker lists
+   fixture plans, cancel it, and confirm that no work started. Run
+   `/weave:start <active-plan>`, confirm the start prompt, and then confirm
+   the plan name, completed/total count, current task, and next task.
 3. Open **Weave: Plan tasks** from the command palette. Move the selection with
    the keyboard, then close it with Escape. Confirm that the plan did not
    change and no work started.
@@ -114,7 +120,16 @@ Check these states in the real CLI:
 10. Load a harmless second CLI plugin beside Weave. Confirm both plugins remain
     active and the Weave panel still works.
 11. Inspect the server session Location through the public client. Confirm it is
-    the fixture project, not the CLI process's original working directory.
+     the fixture project, not the CLI process's original working directory.
+12. Open the start picker, then move the session to another Location or close
+    the session view. Confirm the picker closes, late responses do not reopen
+    it, and no plan starts. Repeat while the plan catalog request is pending.
+13. Call `plans` against a fixture whose `.weave` or `plans` entry is a symbolic
+    link, including a dangling link. Confirm an unreadable-catalog error, not
+    an empty list or names from the link target. Confirm a genuinely missing
+    plans directory returns an empty list.
+14. Submit `start` with a directory that differs from the session Location.
+    Confirm a `wrong_location` error and no agent switch or prompt admission.
 
 Record only bounded outcomes, host/package versions, artifact digests, and
 terminal dimensions in `docs/artifacts/`. Do not record credentials, temporary

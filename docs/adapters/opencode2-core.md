@@ -172,6 +172,7 @@ file. Operators control the shared pino destination and level.
 The V2 plugin reserves one command:
 
 ```text
+/weave:start
 /weave:start <plan-name>
 ```
 
@@ -179,12 +180,69 @@ The V2 plugin reserves one command:
 plugin's `weave:start` command can be replaced during replay because the pinned
 `CommandEditor` has no atomic presence check.
 
-The command validates and reads only
-`<Location>/.weave/plans/<plan-name>.md`, switches the current session to the
-owned Tapestry agent and its resolved model, and submits one visible foreground
-prompt with the invocation's files, agent mentions, skill mentions, and
-delivery mode. No plan name means
-no switch and no work. Missing or invalid plans also start no work.
+CLI `/weave:start` is one keymap slash with `arguments: true`. The OpenCode 2
+host (`0.0.0-beta-19151`, checked against its distributed binary) parses `/name args` and, when a reachable keymap
+command has `slash.arguments` and a matching `slash.name`, calls
+`command.run(args)` and returns. It does not also call `session.command` for
+that submit. Only if no such keymap slash matches does the host look up
+`location.command.list()` and POST `/api/session/:id/command` with
+`{ command: name, text: arguments }`.
+
+That is the supported split:
+
+- TUI slash `/weave:start` owns the interactive submit (picker when args are
+  missing, reject invalid args, confirm, then call the server).
+- Server `command.transform` `weave:start` owns validation and execution.
+  Headless `session.command({ command: "weave:start", text })` hits it
+   directly. The TUI slash calls the scope-bound `start` RPC after a selection;
+   that RPC invokes the same command executor. Thus the
+  two registrations are not two slash handlers firing on one keystroke.
+
+Bare `/weave:start` therefore opens `dialog.select` over names from the
+read-only `plans` RPC. A nonempty invalid argument does not open the picker.
+The palette action **Weave: Start plan** uses the same `run` callback.
+
+The command accepts a safe basename of 1 to 128 letters, numbers, underscores,
+or hyphens, an optional `.md` suffix, or `.weave/plans/<name>.md`. It validates
+and reads only `<Location>/.weave/plans/<plan-name>.md`, switches the current
+session to the owned Tapestry agent and its resolved model, and submits one
+visible foreground prompt. Direct command invocations retain files, agent
+mentions, skill mentions, and delivery mode. The picker submits the chosen plan
+name with queued delivery. A missing plans directory is an empty catalog. A
+catalog I/O failure is reported as unreadable and is not treated as empty.
+
+The catalog rejects symbolic links at the Location, `.weave`, and `plans`
+components and checks canonical containment before scanning. Only an `ENOENT`
+file-status result means missing; access failures and dangling links are errors.
+The client imports only the pure plan-name parser, not the server catalog or
+the config package's I/O-initializing barrel.
+
+The picker cancels pending requests and discards late dialog results when its
+session moves or its component closes. Its `start` RPC includes the captured
+directory and workspace. The server checks both against the session and plugin
+Location. This binding is necessary because the pinned native `session.command`
+API has no Location request option. The executor checks scope again before agent
+selection, model selection, and prompt submission. The host does not provide an
+atomic move-and-command lock; cancelling a client request cannot undo work that
+the server has already admitted.
+
+Command failure summaries show the reason instead of a generic `Weave Plan`
+title. This makes a missing plan or scope error visible without expanding a
+synthetic message.
+
+The executor returns a typed admission result. The native command renders
+failures only while the session still belongs to its Location; the `start` RPC
+returns those failures to its caller without writing a synthetic message.
+Display storage or notification failures after admission are logged, not returned
+as start failures, because retrying could submit the plan twice.
+
+**Platform limit:** foreground plan operations require the Unix `test` and
+`realpath` executables on `PATH`. The shared plan reader already has this
+dependency. macOS and Linux are the supported environments for this flow;
+stock Windows is not supported. A Windows host binary alone does not establish
+Weave plan compatibility. Replacing the shared reader and catalog probes with
+portable equivalents is separate work; the command fix does not claim that
+portability or restrict installation of unrelated adapter features.
 
 Selected-plan storage contains only session/Location identity, the plan name,
 content revision, and bounded display counts/titles. It is not workflow state,
@@ -194,8 +252,11 @@ read-only RPC do not create `.weave/runtime/weave.db`.
 ## CLI plan display
 
 The `./tui` plugin appends a compact composer contribution with plan name,
-completed/total count, current task, and next task. The palette action **Weave:
-Plan tasks** opens a read-only task list. It has no default global key binding.
+completed/total count, current task, and next task. `/weave:start` and the
+palette action **Weave: Start plan** open the start picker. **Weave: Plan
+tasks** opens the read-only task list. They have no default global key
+binding. The start picker reads plan names only through the server `plans`
+RPC.
 
 The UI does not gate plan loading on an exact OpenCode version. It attempts
 the plan RPC on newer hosts as well; this does not extend the verified host

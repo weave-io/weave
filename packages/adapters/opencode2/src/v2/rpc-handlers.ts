@@ -1,4 +1,5 @@
 import { ConfigPlanTaskReader } from "@weaveio/weave-config";
+import { err, ok, type ResultAsync } from "neverthrow";
 import {
   type PlanTaskNode,
   type PlanTaskSnapshotReader,
@@ -8,17 +9,22 @@ import {
 import type { WeaveRpc } from "../rpc.js";
 import type { V2RpcHandlers as RpcHandlers } from "../sdk-types.js";
 import type { OpenCode2CatalogController } from "./config-refresh.js";
+import type { StartPlanError } from "./commands.js";
 import { fromOpenCode2Promise } from "./errors.js";
 import {
   buildOpenCode2Health,
   type OpenCode2RegistrationReadiness,
 } from "./health.js";
 import type { OpenCode2Context } from "./host-types.js";
+import { listPlanNames } from "./plan-catalog.js";
 import {
   flattenPlanTasks,
   type OpenCode2PlanSessionState,
 } from "./plan-session-state.js";
-import { validateSessionScope } from "./session-scope.js";
+import {
+  validateSessionScope,
+  type OpenCode2SessionScope,
+} from "./session-scope.js";
 
 export interface OpenCode2RpcDependencies {
   readonly location: string;
@@ -29,6 +35,53 @@ export interface OpenCode2RpcDependencies {
   readonly ownsAgent: (agent: string) => boolean;
   readonly reader?: PlanTaskSnapshotReader;
   readonly registration: () => OpenCode2RegistrationReadiness;
+  readonly start?: (
+    sessionID: string,
+    planName: string,
+  ) => ResultAsync<void, StartPlanError>;
+}
+
+type RpcScopeError = {
+  readonly code: "session_unavailable" | "wrong_location";
+  readonly message: string;
+};
+
+function resolveScope(
+  dependencies: OpenCode2RpcDependencies,
+  input: { sessionID: string; directory: string; workspaceID?: string },
+): ResultAsync<OpenCode2SessionScope, RpcScopeError> {
+  return fromOpenCode2Promise(
+    () => dependencies.session.get({ sessionID: input.sessionID }),
+    "session_unavailable",
+    "Session unavailable",
+  )
+    .mapErr(
+      (): RpcScopeError => ({
+        code: "session_unavailable",
+        message: "Session unavailable",
+      }),
+    )
+    .andThen((session) => {
+      const owned = validateSessionScope(
+        input.sessionID,
+        session,
+        dependencies.location,
+        dependencies.workspaceID,
+      );
+      const requested = validateSessionScope(
+        input.sessionID,
+        session,
+        input.directory,
+        input.workspaceID,
+      );
+      if (owned.isErr() || requested.isErr()) {
+        return err({
+          code: "wrong_location",
+          message: "Session does not belong to this Location",
+        } as const);
+      }
+      return ok(owned.value);
+    });
 }
 
 function taskOutput(
@@ -45,34 +98,11 @@ export function createOpenCode2RpcHandlers(
     dependencies.reader ?? new ConfigPlanTaskReader(dependencies.location);
   return {
     status: async (input, context) => {
-      const session = await fromOpenCode2Promise(
-        () => dependencies.session.get({ sessionID: input.sessionID }),
-        "session_unavailable",
-        "session could not be read",
-      );
-      if (session.isErr())
-        return context.error("session_unavailable", "Session unavailable", {
-          code: session.error.code,
+      const scope = await resolveScope(dependencies, input);
+      if (scope.isErr())
+        return context.error(scope.error.code, scope.error.message, {
+          code: scope.error.code,
         });
-      const scope = validateSessionScope(
-        input.sessionID,
-        session.value,
-        dependencies.location,
-        dependencies.workspaceID,
-      );
-      const requestedScope = validateSessionScope(
-        input.sessionID,
-        session.value,
-        input.directory,
-        input.workspaceID,
-      );
-      if (scope.isErr() || requestedScope.isErr()) {
-        return context.error(
-          "wrong_location",
-          "Session does not belong to this Location",
-          { code: "wrong_location" },
-        );
-      }
       const health = buildOpenCode2Health(
         dependencies.catalog.catalog(),
         dependencies.catalog.status(),
@@ -95,34 +125,11 @@ export function createOpenCode2RpcHandlers(
       };
     },
     plan: async (input, context) => {
-      const session = await fromOpenCode2Promise(
-        () => dependencies.session.get({ sessionID: input.sessionID }),
-        "session_unavailable",
-        "session could not be read",
-      );
-      if (session.isErr())
-        return context.error("session_unavailable", "Session unavailable", {
-          code: session.error.code,
+      const scope = await resolveScope(dependencies, input);
+      if (scope.isErr())
+        return context.error(scope.error.code, scope.error.message, {
+          code: scope.error.code,
         });
-      const scope = validateSessionScope(
-        input.sessionID,
-        session.value,
-        dependencies.location,
-        dependencies.workspaceID,
-      );
-      const requestedScope = validateSessionScope(
-        input.sessionID,
-        session.value,
-        input.directory,
-        input.workspaceID,
-      );
-      if (scope.isErr() || requestedScope.isErr()) {
-        return context.error(
-          "wrong_location",
-          "Session does not belong to this Location",
-          { code: "wrong_location" },
-        );
-      }
 
       const selected = await dependencies.plans.get(input.sessionID);
       if (selected.isErr())
@@ -196,6 +203,53 @@ export function createOpenCode2RpcHandlers(
               }),
           tasks,
         },
+      };
+    },
+    start: async (input, context) => {
+      const scope = await resolveScope(dependencies, input);
+      if (scope.isErr())
+        return context.error(scope.error.code, scope.error.message, {
+          code: scope.error.code,
+        });
+      const start = dependencies.start;
+      if (start === undefined || !dependencies.registration().foregroundPlans)
+        return context.error(
+          "start_unavailable",
+          "Weave start is unavailable",
+          { code: "start_unavailable" },
+        );
+      const started = await start(input.sessionID, input.planName);
+      if (started.isErr())
+        return context.error(
+          started.error.type === "WrongLocation"
+            ? "wrong_location"
+            : "start_unavailable",
+          started.error.message,
+          {
+            code: started.error.type,
+          },
+        );
+      return {
+        scope: { sessionID: input.sessionID, scopeToken: input.scopeToken },
+      };
+    },
+    plans: async (input, context) => {
+      const scope = await resolveScope(dependencies, input);
+      if (scope.isErr())
+        return context.error(scope.error.code, scope.error.message, {
+          code: scope.error.code,
+        });
+      const listed = await listPlanNames(scope.value.directory);
+      if (listed.isErr() && listed.error.type === "Unreadable") {
+        return context.error(
+          "plan_catalog_unreadable",
+          "Weave could not list plans",
+          { code: "unreadable" },
+        );
+      }
+      return {
+        scope: { sessionID: input.sessionID, scopeToken: input.scopeToken },
+        names: listed.isOk() ? [...listed.value] : [],
       };
     },
   };

@@ -234,6 +234,12 @@ export async function setupOpenCode2(
           catalog: controller,
           plans,
           ownsAgent: (agent) => inserted.has(agent),
+          start: (sessionID, planName) =>
+            commands.execute({
+              sessionID,
+              prompt: { text: planName },
+              delivery: "queue",
+            }),
           registration: () => ({
             requestIntent: readiness.prompt && readiness.context,
             foregroundPlans: readiness.command && inserted.has("tapestry"),
@@ -258,7 +264,7 @@ export async function setupOpenCode2(
   registrations.push(rpcRegistration.value);
   readiness.rpc = true;
 
-  const commands = new OpenCode2Commands({
+  const commands: OpenCode2Commands = new OpenCode2Commands({
     location: context.location.directory,
     workspaceID: context.location.workspaceID,
     context,

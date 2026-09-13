@@ -158,6 +158,7 @@
 - `packages/adapters/opencode2/src/v2/commands.ts`
   - class OpenCode2Commands
   - interface OpenCode2CommandDependencies
+  - type StartPlanError
   - const WEAVE_START_COMMAND
 - `packages/adapters/opencode2/src/v2/config-refresh.ts`
   - class OpenCode2CatalogController
@@ -187,6 +188,16 @@
   - interface OpenCode2ModelResolution
   - type OpenCode2ModelResolutionError
 - `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
+- `packages/adapters/opencode2/src/v2/plan-catalog.ts`
+  - function listPlanNames: (location) => ResultAsync<readonly string[], PlanCatalogError>
+  - function choosePlanMessage: (names) => string
+  - type PlanCatalogError
+- `packages/adapters/opencode2/src/v2/plan-name.ts`
+  - function parsePlanName: (text) => PlanNameParse
+  - type PlanNameParse
+  - const SAFE_PLAN_NAME
+  - const INVALID_PLAN_NAME_MESSAGE
+  - const PLAN_CATALOG_UNREADABLE_MESSAGE
 - `packages/adapters/opencode2/src/v2/plan-session-state.ts`
   - function flattenPlanTasks: (snapshot) => Array<PlanTaskNode &
   - function selectionFromSnapshot: (sessionID, directory, workspaceID, snapshot) => StoredPlanSelection

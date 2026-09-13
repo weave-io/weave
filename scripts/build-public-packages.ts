@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import solidTransformPlugin from "@opentui/solid/bun-plugin";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
@@ -503,7 +503,13 @@ export class PublicPackageBuilder {
     error: Extract<PublicPackageBuildError, { type: "TypeDeclarations" }>,
   ): ResultAsync<void, PublicPackageBuildError> {
     const process = Result.fromThrowable(
-      () => Bun.spawn({ cmd: command, stdout: "pipe", stderr: "pipe" }),
+      () =>
+        Bun.spawn({
+          cmd: command,
+          cwd: resolve(import.meta.dir, ".."),
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       () => error,
     )();
     if (process.isErr()) return errAsync(process.error);
@@ -545,6 +551,7 @@ export class PublicPackageBuilder {
 }
 
 if (import.meta.main) {
+  process.chdir(resolve(import.meta.dir, ".."));
   const builder = new PublicPackageBuilder(new BunPublicPackageFileSystem());
   const result = await builder.buildAll();
   if (result.isErr()) {

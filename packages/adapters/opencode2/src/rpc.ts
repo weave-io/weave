@@ -53,7 +53,7 @@ const Plan = z
 
 const RpcErrorData = z.object({ code: z.string().min(1).max(64) }).strict();
 
-/** Portable, read-only Weave contract. Importing it performs no setup. */
+/** Portable Weave contract. Importing it performs no setup. */
 export const WeaveRpc = Rpc.define({
   id: "weave",
   methods: {
@@ -102,6 +102,31 @@ export const WeaveRpc = Rpc.define({
         wrong_location: RpcErrorData,
         session_unavailable: RpcErrorData,
         plan_unavailable: RpcErrorData,
+      },
+    },
+    start: {
+      input: ScopeInput.extend({
+        planName: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+      }),
+      output: z.object({ scope: ScopeOutput }).strict(),
+      errors: {
+        wrong_location: RpcErrorData,
+        session_unavailable: RpcErrorData,
+        start_unavailable: RpcErrorData,
+      },
+    },
+    plans: {
+      input: ScopeInput,
+      output: z
+        .object({
+          scope: ScopeOutput,
+          names: z.array(z.string().min(1).max(128)).max(256),
+        })
+        .strict(),
+      errors: {
+        wrong_location: RpcErrorData,
+        session_unavailable: RpcErrorData,
+        plan_catalog_unreadable: RpcErrorData,
       },
     },
   },

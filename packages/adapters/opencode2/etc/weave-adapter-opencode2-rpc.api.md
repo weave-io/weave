@@ -125,6 +125,58 @@ export const WeaveRpc: {
                 }, z.core.$strict>;
             };
         };
+        readonly start: {
+            readonly input: z.ZodObject<{
+                sessionID: z.ZodString;
+                directory: z.ZodString;
+                workspaceID: z.ZodOptional<z.ZodString>;
+                scopeToken: z.ZodString;
+                planName: z.ZodString;
+            }, z.core.$strict>;
+            readonly output: z.ZodObject<{
+                scope: z.ZodObject<{
+                    sessionID: z.ZodString;
+                    scopeToken: z.ZodString;
+                }, z.core.$strict>;
+            }, z.core.$strict>;
+            readonly errors: {
+                readonly wrong_location: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+                readonly session_unavailable: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+                readonly start_unavailable: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+            };
+        };
+        readonly plans: {
+            readonly input: z.ZodObject<{
+                sessionID: z.ZodString;
+                directory: z.ZodString;
+                workspaceID: z.ZodOptional<z.ZodString>;
+                scopeToken: z.ZodString;
+            }, z.core.$strict>;
+            readonly output: z.ZodObject<{
+                scope: z.ZodObject<{
+                    sessionID: z.ZodString;
+                    scopeToken: z.ZodString;
+                }, z.core.$strict>;
+                names: z.ZodArray<z.ZodString>;
+            }, z.core.$strict>;
+            readonly errors: {
+                readonly wrong_location: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+                readonly session_unavailable: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+                readonly plan_catalog_unreadable: z.ZodObject<{
+                    code: z.ZodString;
+                }, z.core.$strict>;
+            };
+        };
     };
     readonly events: {
         readonly "plan.changed": {

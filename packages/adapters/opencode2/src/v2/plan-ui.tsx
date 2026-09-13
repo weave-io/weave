@@ -1,12 +1,23 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
+import { ResultAsync } from "neverthrow";
 import { WeaveRpc } from "../rpc.js";
 import type { V2TuiContext as Context } from "../sdk-types.js";
+import {
+  INVALID_PLAN_NAME_MESSAGE,
+  parsePlanName,
+  PLAN_CATALOG_UNREADABLE_MESSAGE,
+} from "./plan-name.js";
 import {
   PlanUiController,
   type PlanUiScope,
   type PlanUiState,
   taskDialogOptions,
 } from "./plan-ui-state.js";
+
+type StartCommandError = { readonly type: "CommandFailed" };
+type PlanListFetch =
+  | { readonly type: "listed"; readonly names: readonly string[] }
+  | { readonly type: "unreadable" };
 
 const PLAN_REFRESH_INTERVAL_MS = 5_000;
 
@@ -78,6 +89,8 @@ export function PlanPanel(props: PlanPanelProps) {
   const [width, setWidth] = createSignal(0);
   let root: { width: number } | undefined;
   let ownsDialog = false;
+  let startRequest: AbortController | undefined;
+  let disposed = false;
   const rpc = props.context.client.rpc(WeaveRpc);
   const controller = new PlanUiController({
     supported: true,
@@ -102,6 +115,141 @@ export function PlanPanel(props: PlanPanelProps) {
     },
     publish: setState,
   });
+
+  const fetchPlanNames = async (
+    scope: PlanUiScope,
+    signal: AbortSignal,
+  ): Promise<PlanListFetch> => {
+    const listed = await ResultAsync.fromThrowable(
+      () =>
+        rpc.plans(
+          {
+            sessionID: scope.sessionID,
+            directory: scope.directory,
+            workspaceID: scope.workspaceID,
+            scopeToken: "start",
+          },
+          {
+            signal,
+            location: {
+              directory: scope.directory,
+              workspace: scope.workspaceID,
+            },
+          },
+        ),
+      (): StartCommandError => ({ type: "CommandFailed" }),
+    )();
+    if (listed.isErr()) return { type: "unreadable" };
+    const value = listed.value;
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      "names" in value &&
+      Array.isArray(value.names)
+    ) {
+      return { type: "listed", names: value.names };
+    }
+    return { type: "unreadable" };
+  };
+
+  const startPlan = async (input?: string): Promise<void> => {
+    if (disposed || ownsDialog) return;
+    const scope = sessionScope(props.context, props.sessionID);
+    if (scope === undefined) {
+      props.context.ui.toast.show({
+        message: "Weave could not read the current session.",
+        variant: "error",
+      });
+      return;
+    }
+    const parsed = parsePlanName(input ?? "");
+    if (parsed.type === "invalid") {
+      await props.context.ui.dialog.alert({
+        title: "Weave: Start plan",
+        message: INVALID_PLAN_NAME_MESSAGE,
+      });
+      return;
+    }
+    const request = new AbortController();
+    startRequest = request;
+    const current = () => {
+      if (
+        disposed ||
+        request.signal.aborted ||
+        props.sessionID !== scope.sessionID
+      )
+        return false;
+      const latest = sessionScope(props.context, scope.sessionID);
+      return (
+        latest?.directory === scope.directory &&
+        latest?.workspaceID === scope.workspaceID
+      );
+    };
+    ownsDialog = true;
+    try {
+      let planName = parsed.type === "valid" ? parsed.name : undefined;
+      if (planName === undefined) {
+        const listed = await fetchPlanNames(scope, request.signal);
+        if (!current()) return;
+        if (listed.type === "unreadable") {
+          await props.context.ui.dialog.alert({
+            title: "Weave: Start plan",
+            message: PLAN_CATALOG_UNREADABLE_MESSAGE,
+          });
+          return;
+        }
+        if (listed.names.length === 0) {
+          await props.context.ui.dialog.alert({
+            title: "Weave: Start plan",
+            message: "No plans found under .weave/plans.",
+          });
+          return;
+        }
+        planName = await props.context.ui.dialog.select({
+          title: "Start a Weave plan",
+          placeholder: "Filter plans",
+          options: listed.names.map((name) => ({ title: name, value: name })),
+        });
+        if (!current() || planName === undefined) return;
+      }
+      const confirmed = await props.context.ui.dialog.confirm({
+        title: "Start plan",
+        message: `Start plan "${planName}" with Tapestry in this session?`,
+        label: { confirm: "Start", cancel: "Cancel" },
+      });
+      if (!current() || !confirmed) return;
+      const selectedPlan = planName;
+      const submitted = await ResultAsync.fromThrowable(
+        () =>
+          rpc.start(
+            {
+              sessionID: scope.sessionID,
+              directory: scope.directory,
+              workspaceID: scope.workspaceID,
+              scopeToken: "start",
+              planName: selectedPlan,
+            },
+            {
+              signal: request.signal,
+              location: {
+                directory: scope.directory,
+                workspace: scope.workspaceID,
+              },
+            },
+          ),
+        (): StartCommandError => ({ type: "CommandFailed" }),
+      )();
+      if (current() && submitted.isErr()) {
+        props.context.ui.toast.show({
+          message: "Weave could not start the selected plan.",
+          variant: "error",
+        });
+      }
+    } finally {
+      if (startRequest === request) startRequest = undefined;
+      ownsDialog = false;
+    }
+  };
 
   const openTasks = async (): Promise<void> => {
     const current = state();
@@ -138,6 +286,16 @@ export function PlanPanel(props: PlanPanelProps) {
     mode: "global",
     commands: [
       {
+        id: "weave.start",
+        title: "Weave: Start plan",
+        description: "Start explicit foreground work from a Weave plan",
+        group: "Weave",
+        bind: false,
+        palette: true,
+        slash: { name: "weave:start", arguments: true },
+        run: startPlan,
+      },
+      {
         id: "weave.plan.tasks",
         title: "Weave: Plan tasks",
         description: "Browse the selected plan without changing it",
@@ -152,6 +310,7 @@ export function PlanPanel(props: PlanPanelProps) {
 
   const refresh = () => controller.invalidate();
   const invalidate = () => {
+    startRequest?.abort();
     if (ownsDialog) props.context.ui.dialog.clear();
     refresh();
   };
@@ -174,9 +333,12 @@ export function PlanPanel(props: PlanPanelProps) {
   const refreshTimer = setInterval(refresh, PLAN_REFRESH_INTERVAL_MS);
 
   createEffect(() => {
+    startRequest?.abort();
     void controller.load(props.sessionID);
   });
   onCleanup(() => {
+    disposed = true;
+    startRequest?.abort();
     if (ownsDialog) props.context.ui.dialog.clear();
     controller.dispose();
     clearInterval(refreshTimer);

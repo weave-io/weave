@@ -11,6 +11,10 @@
     "dist"
   ],
   "exports": {
+    "./plan-task-parser": {
+      "types": "./dist/plan-task-parser.d.ts",
+      "import": "./src/plan-task-parser.ts"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
