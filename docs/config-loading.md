@@ -248,9 +248,9 @@ append fields, is invalid even when its file path is already absolute.
 
 ### Migration and prompt-file translation
 
-When `weave init migrate` converts a legacy config, `prompt_file` values are preserved **only** when the path is a bare filename with no directory separators (e.g. `"loom.md"`). This is because `resolvePromptPaths()` resolves relative `prompt_file` values against the scope's `.weave/prompts/` directory — a bare filename maps cleanly to `<scopeRoot>/.weave/prompts/<filename>`.
+Legacy Weave resolved a custom agent's `prompt_file` relative to the legacy config directory, while `resolvePromptPaths()` resolves it against the scope's `.weave/prompts/` directory. So `weave init migrate` does not copy the reference as-is: it reads the legacy file and writes it to `<scopeRoot>/.weave/prompts/<agent>.md`, then emits `prompt_file "<agent>.md"`.
 
-Paths with directory components (e.g. `"subdir/loom.md"`, `"/abs/path.md"`, `"../prompts/loom.md"`) cannot be safely translated because the legacy system may have used arbitrary filesystem layouts that do not match the current `.weave/prompts/` convention. These are warned and skipped during migration. Users must manually place the prompt file in the correct `.weave/prompts/` directory and add the `prompt_file` reference after migration.
+Absolute paths, paths containing `..`, and unreadable files are warned and skipped. A custom agent left without any prompt source is skipped with a warning rather than emitted, because an agent without a prompt fails composition and adapters drop it. `weave validate` reports any such agent.
 
 See [CLI — Prompt file translation](./cli.md#prompt-file-translation) for the migration-specific rules.
 

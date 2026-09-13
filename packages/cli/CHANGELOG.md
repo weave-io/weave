@@ -14,6 +14,14 @@
 - Parse legacy migration input as JSONC, including comments and trailing
   commas. Reject duplicate or dangerous keys and bound diagnostics.
 
+### Fixed
+
+- `weave init migrate` exits non-zero and writes nothing when the legacy config
+  cannot be parsed, and never writes the starter template in its place.
+- Migrate custom agent descriptions, and copy custom agent `prompt_file`
+  prompts into `.weave/prompts/` instead of emitting agents without a prompt.
+- `weave validate` reports agents that harness adapters cannot register.
+
 ## 0.1.0
 
 ### Minor Changes

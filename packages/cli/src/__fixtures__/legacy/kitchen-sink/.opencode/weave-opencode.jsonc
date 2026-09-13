@@ -1,0 +1,73 @@
+{
+  // Legacy @opencode_weave/weave config for a customised project.
+  // Deliberately uses comments and trailing commas, which legacy Weave accepted.
+  "$schema": "https://raw.githubusercontent.com/pgermishuys/opencode-weave/main/schema/weave-config.schema.json",
+
+  "log_level": "DEBUG",
+  "disabled_hooks": ["context-window-monitor",],
+  "disabled_agents": ["warp",],
+  "disabled_skills": ["legacy-skill",],
+  "disabled_tools": ["webfetch",],
+  "skill_directories": ["tools/skills",],
+
+  /* Builtin agent overrides */
+  "agents": {
+    "loom": {
+      "model": "anthropic/claude-sonnet-4.5",
+      "fallback_models": ["openai/gpt-5",],
+      "temperature": 0.2,
+      "prompt_append": "Prefer small, reviewable changes.",
+    },
+    "tapestry": {
+      "temperature": 0.1,
+    },
+    "shuttle": {
+      "tools": { "bash": true, "write": true, },
+    },
+    "pattern": {
+      "skills": ["planning",],
+    },
+  },
+
+  // Custom agents: one prompt_file agent, one inline prompt agent.
+  "custom_agents": {
+    "code-reviewer": {
+      "description": "Reviews diffs for correctness, security, and style",
+      "prompt_file": "prompts/code-reviewer.md",
+      "model": "anthropic/claude-sonnet-4.5",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "tools": { "write": false, "edit": false, },
+      "triggers": [
+        { "domain": "Review", "trigger": "Reviewing a diff or pull request" },
+      ],
+    },
+    "docs-writer": {
+      "description": "Writes and updates project documentation",
+      "prompt": "You write clear, concise documentation for this repository.",
+      "mode": "subagent",
+      "skills": ["docs-style",],
+    },
+  },
+
+  "categories": {
+    "backend": {
+      "description": "Backend APIs, services, and persistence",
+      "model": "anthropic/claude-sonnet-4.5",
+      "patterns": ["src/api/**", "src/db/**",],
+      "prompt_append": "Keep API contracts backwards compatible.",
+    },
+    "frontend": {
+      "description": "Frontend UI, styling, and accessibility",
+      "model": "openai/gpt-5",
+      "temperature": 0.3,
+      "prompt_append": "Preserve accessibility and design-system consistency.",
+    },
+  },
+
+  "workflows": { "disabled_workflows": ["legacy-flow",], },
+  "continuation": { "idle": { "enabled": false, }, },
+  "background": { "defaultConcurrency": 2, },
+  "tmux": { "enabled": false, },
+  "experimental": { "context_window_warning_threshold": 0.8, },
+}

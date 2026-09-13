@@ -9,9 +9,11 @@
  * - `migration/migration-plan.ts` for path resolution
  * - `migration/migration-write.ts` for the validated write sequence
  * - `migration/conversion-warnings.ts` for warning rendering
- * - `migration/legacy-jsonc-converter.ts` for pre-conversion warning count
+ * - `migration/legacy-prompt-files.ts` for pre-conversion (prompt files and
+ *   the warning count)
  */
 
+import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import {
@@ -25,10 +27,17 @@ import type { CliError } from "../errors.js";
 import { describeFileSystemError, type FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import { renderConversionWarnings } from "../migration/conversion-warnings.js";
-import { convertLegacyJsonc } from "../migration/legacy-jsonc-converter.js";
+import { convertLegacySource } from "../migration/legacy-prompt-files.js";
 import { buildMigrationPlan } from "../migration/migration-plan.js";
-import { performMigrationWrite } from "../migration/migration-write.js";
-import type { ConversionWarning, MigrationPlan } from "../migration/types.js";
+import {
+  describeFailedConversion,
+  performMigrationWrite,
+} from "../migration/migration-write.js";
+import type {
+  ConversionWarning,
+  MigratedPromptFile,
+  MigrationPlan,
+} from "../migration/types.js";
 import type { PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
 
@@ -100,7 +109,11 @@ function renderMigratePreflight(
 export function renderMigrateSuccess(
   theme: ThemeColors,
   plan: MigrationPlan,
-  result: { backedUp: boolean; warnings?: ConversionWarning[] },
+  result: {
+    backedUp: boolean;
+    warnings?: ConversionWarning[];
+    promptFiles?: MigratedPromptFile[];
+  },
 ): string {
   const lines = [
     theme.boldCyan("Migration complete"),
@@ -108,6 +121,11 @@ export function renderMigrateSuccess(
   ];
   if (result.backedUp) {
     lines.push(`  Backup:  ${plan.destinationPath}.bak`);
+  }
+  for (const promptFile of result.promptFiles ?? []) {
+    lines.push(
+      `  Prompt:  ${join(plan.destinationDir, "prompts", promptFile.path)}`,
+    );
   }
   lines.push(`  Source preserved: ${plan.sourcePath}`);
   lines.push("");
@@ -203,7 +221,9 @@ async function continueAfterMigration(
  *   1. Build preliminary plan to get paths for existence checks.
  *   2. Check legacy source exists — abort if not.
  *   3. Read legacy source content.
- *   4. Pre-convert to compute accurate skippedWarningCount for preflight.
+ *   4. Pre-convert (loading legacy prompt files) to compute accurate
+ *      skippedWarningCount for preflight; abort without writing when the
+ *      source cannot be converted at all.
  *   5. Check destination exists.
  *   6. Show preflight summary.
  *   7. Confirm unless --yes.
@@ -255,7 +275,17 @@ export async function runMigrateMode(
   }
 
   // Step 4: Pre-convert to compute accurate skippedWarningCount
-  const preConversion = convertLegacyJsonc(sourceContent.value);
+  const preConversion = await convertLegacySource(
+    fs,
+    preliminaryPlan.sourcePath,
+    sourceContent.value,
+  );
+  if (preConversion.failed === true) {
+    ctx.terminal.stderr(
+      `Migration failed: ${describeFailedConversion(preConversion)}`,
+    );
+    return ok(1);
+  }
   const migrationPlan = buildMigrationPlan(
     scope,
     fs,

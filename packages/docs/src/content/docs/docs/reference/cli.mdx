@@ -92,7 +92,8 @@ weave init migrate --scope local --yes --force
 Migration keeps the legacy source, warns for unsupported fields, writes the
 canonical scope destination, and validates the generated file. `--force`
 allows an existing destination and creates a backup. `--install-dir` is ignored
-in migrate mode.
+in migrate mode. Custom agent prompt files are copied into `.weave/prompts/`.
+A legacy file that cannot be parsed exits with code `1` and writes nothing.
 
 ## `weave validate`
 

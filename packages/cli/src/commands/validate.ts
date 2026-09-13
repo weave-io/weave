@@ -5,7 +5,8 @@ import {
   parseConfig,
   type WeaveConfig,
 } from "@weaveio/weave-core";
-import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
+import { materializeAgents } from "@weaveio/weave-engine";
+import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
@@ -128,7 +129,31 @@ function validateEffective(
         }),
       }),
     )
+    .andThen((config) => checkAgentsMaterialize(fs.cwd(), config))
     .map((config) => ({ path: fs.cwd(), config }));
+}
+
+/**
+ * Harness adapters skip agents whose descriptors cannot be composed (for
+ * example an agent with no prompt, or a prompt_file that does not exist).
+ * Report those agents instead of letting them disappear at runtime.
+ */
+export function checkAgentsMaterialize(
+  path: string,
+  config: WeaveConfig,
+): ResultAsync<WeaveConfig, ValidateError> {
+  return materializeAgents({ config }).andThen((plan) => {
+    if (plan.errors.length === 0) return okAsync(config);
+    return errAsync<WeaveConfig, ValidateError>({
+      type: "ValidationFailure",
+      path,
+      errors: plan.errors.map((error) =>
+        error.type === "DescriptorCompositionFailure"
+          ? `agent "${error.agentName}" cannot be registered by harness adapters: ${error.cause.message}`
+          : error.conflict.message,
+      ),
+    });
+  });
 }
 
 export async function runValidate(

@@ -610,11 +610,17 @@ describe("runInit migration — unsupported sections warn but file is written", 
     });
     await runInit(ctx);
     const content = fs.snapshot()["/project/.weave/config.weave"] ?? "";
+    const dslLines = content
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .join("\n");
     // Supported field is present
-    expect(content).toContain("log_level DEBUG");
-    // Unsupported fields are not present
-    expect(content).not.toContain("workflows");
-    expect(content).not.toContain("continuation");
+    expect(dslLines).toContain("log_level DEBUG");
+    // Unsupported fields are not converted, only recorded as comments
+    expect(dslLines).not.toContain("workflows");
+    expect(dslLines).not.toContain("continuation");
+    expect(content).toContain("# Legacy fields that were not migrated:");
+    expect(content).toContain("#   - workflows:");
   });
 
   it("warning summary appears in output for skipped unsupported sections", async () => {
@@ -915,16 +921,20 @@ describe("convertLegacyJsonc — custom_agents (new agent blocks)", () => {
     expect(result.warnings[0]!.reason).toContain("not a valid mode");
   });
 
-  it("converts custom agent with prompt_file (safe path)", () => {
+  it("converts custom agent with a readable prompt_file", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         custom_agents: {
           "my-agent": { prompt_file: "my-agent.md" },
         },
       }),
+      { promptFileContents: new Map([["my-agent.md", "You review code."]]) },
     );
     expect(result.warnings).toHaveLength(0);
     expect(result.dsl).toContain('prompt_file "my-agent.md"');
+    expect(result.promptFiles).toEqual([
+      { path: "my-agent.md", content: "You review code." },
+    ]);
   });
 
   it("warns on unsupported custom agent field skills", () => {
@@ -1356,82 +1366,80 @@ describe("convertLegacyJsonc — tool_policy mapping", () => {
   });
 });
 
-// 4.7 — Safe prompt_file preservation
-describe("convertLegacyJsonc — safe prompt_file preservation", () => {
-  it("preserves a bare filename prompt_file in agent override", () => {
-    const result = convertLegacyJsonc(
-      JSON.stringify({
-        agents: { loom: { prompt_file: "loom-custom.md" } },
-      }),
-    );
-    expect(result.warnings).toHaveLength(0);
-    expect(result.dsl).toContain('prompt_file "loom-custom.md"');
-  });
-
-  it("preserves a bare filename prompt_file in custom agent", () => {
+// 4.7 — Custom agent prompt_file carried over into .weave/prompts/
+describe("convertLegacyJsonc — prompt_file carried over", () => {
+  it("copies a nested prompt_file to prompts/<agent>.md", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         custom_agents: {
-          "my-agent": { prompt_file: "my-agent.md" },
+          reviewer: { prompt_file: "prompts/reviewer.md" },
         },
       }),
+      {
+        promptFileContents: new Map([
+          ["prompts/reviewer.md", "# Reviewer\n\nReview carefully."],
+        ]),
+      },
     );
     expect(result.warnings).toHaveLength(0);
-    expect(result.dsl).toContain('prompt_file "my-agent.md"');
+    expect(result.dsl).toContain('prompt_file "reviewer.md"');
+    expect(result.promptFiles).toEqual([
+      { path: "reviewer.md", content: "# Reviewer\n\nReview carefully." },
+    ]);
+    expect(parseConfig(result.dsl).isOk()).toBe(true);
   });
 
-  it("preserves prompt_file with .md extension", () => {
+  it("prefers a readable prompt_file over an inline prompt, as legacy did", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         custom_agents: {
-          "my-agent": { prompt_file: "custom-prompt.md" },
+          reviewer: { prompt: "inline", prompt_file: "reviewer.md" },
+        },
+      }),
+      { promptFileContents: new Map([["reviewer.md", "from file"]]) },
+    );
+    expect(result.dsl).toContain('prompt_file "reviewer.md"');
+    expect(result.dsl).not.toContain('prompt "inline"');
+    expect(result.warnings.map((w) => w.field)).toEqual([
+      "custom_agents.reviewer.prompt",
+    ]);
+  });
+
+  it("falls back to the inline prompt when prompt_file cannot be read", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          reviewer: { prompt: "inline", prompt_file: "missing.md" },
         },
       }),
     );
-    expect(result.warnings).toHaveLength(0);
-    expect(result.dsl).toContain('prompt_file "custom-prompt.md"');
+    expect(result.dsl).toContain('prompt "inline"');
+    expect(result.dsl).not.toContain("prompt_file");
+    expect(result.promptFiles).toEqual([]);
+    expect(result.warnings.map((w) => w.field)).toEqual([
+      "custom_agents.reviewer.prompt_file",
+    ]);
+  });
+
+  it("does not copy a prompt for a builtin override (legacy ignored it)", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { prompt_file: "loom-custom.md", temperature: 0.3 } },
+      }),
+      { promptFileContents: new Map([["loom-custom.md", "custom loom"]]) },
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
+    expect(result.warnings[0]!.reason).toContain("builtin prompt");
+    expect(result.dsl).not.toContain("prompt_file");
+    expect(result.dsl).toContain("temperature 0.3");
+    expect(result.promptFiles).toEqual([]);
   });
 });
 
-// 4.8 — Unsafe prompt_file references warned and skipped
-describe("convertLegacyJsonc — unsafe prompt_file references warned and skipped", () => {
-  it("warns and skips prompt_file with directory separator", () => {
-    const result = convertLegacyJsonc(
-      JSON.stringify({
-        agents: { loom: { prompt_file: "subdir/loom.md" } },
-      }),
-    );
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
-    expect(result.dsl).not.toContain("prompt_file");
-  });
-
-  it("warns and skips prompt_file with absolute path", () => {
-    const result = convertLegacyJsonc(
-      JSON.stringify({
-        agents: { loom: { prompt_file: "/absolute/path/loom.md" } },
-      }),
-    );
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
-    expect(result.dsl).not.toContain("prompt_file");
-  });
-
-  it("warns and skips prompt_file with parent directory traversal", () => {
-    const result = convertLegacyJsonc(
-      JSON.stringify({
-        agents: { loom: { prompt_file: "../prompts/loom.md" } },
-      }),
-    );
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]!.field).toBe("agents.loom.prompt_file");
-    expect(result.warnings[0]!.reason).toContain("directory components");
-    expect(result.dsl).not.toContain("prompt_file");
-  });
-
-  it("warns and skips prompt_file in custom agent with directory path", () => {
+// 4.8 — Custom agents never left without a prompt
+describe("convertLegacyJsonc — custom agents without a usable prompt are skipped", () => {
+  it("skips an agent whose prompt_file cannot be read, with explicit warnings", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
         custom_agents: {
@@ -1439,24 +1447,70 @@ describe("convertLegacyJsonc — unsafe prompt_file references warned and skippe
         },
       }),
     );
+    expect(result.dsl).not.toContain("agent my-agent");
+    expect(result.warnings.map((w) => w.field)).toEqual([
+      "custom_agents.my-agent.prompt_file",
+      "custom_agents.my-agent",
+    ]);
+    expect(result.warnings[0]!.reason).toContain("could not be read");
+    expect(result.warnings[1]!.reason).toContain("agent skipped");
+  });
+
+  it("warns and skips prompt_file with an absolute path", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          "my-agent": { prompt: "inline", prompt_file: "/abs/my-agent.md" },
+        },
+      }),
+      { promptFileContents: new Map([["/abs/my-agent.md", "never read"]]) },
+    );
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]!.field).toBe(
       "custom_agents.my-agent.prompt_file",
     );
-    expect(result.warnings[0]!.reason).toContain("directory components");
+    expect(result.warnings[0]!.reason).toContain("relative path");
+    expect(result.dsl).toContain('prompt "inline"');
+  });
+
+  it("warns and skips prompt_file with parent directory traversal", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          "my-agent": { prompt: "inline", prompt_file: "../my-agent.md" },
+        },
+      }),
+      { promptFileContents: new Map([["../my-agent.md", "never read"]]) },
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.reason).toContain("relative path");
     expect(result.dsl).not.toContain("prompt_file");
+  });
+
+  it("skips a skills-only custom agent instead of emitting a promptless block", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { researcher: { skills: ["research"] } },
+      }),
+    );
+    expect(result.dsl).toBe("");
+    expect(result.warnings.map((w) => w.field)).toContain(
+      "custom_agents.researcher",
+    );
   });
 
   it("warning does not dump source file content", () => {
     const result = convertLegacyJsonc(
       JSON.stringify({
-        agents: { loom: { prompt_file: "subdir/loom.md" } },
+        custom_agents: { reviewer: { prompt_file: "subdir/reviewer.md" } },
       }),
+      {
+        promptFileContents: new Map([["other.md", "SECRET PROMPT CONTENT"]]),
+      },
     );
-    // Warning reason must not contain the full source content
     const warningText = result.warnings.map((w) => w.reason).join(" ");
-    expect(warningText).not.toContain('"agents"');
-    expect(warningText).not.toContain('"loom"');
+    expect(warningText).not.toContain('"custom_agents"');
+    expect(warningText).not.toContain("SECRET PROMPT CONTENT");
   });
 });
 

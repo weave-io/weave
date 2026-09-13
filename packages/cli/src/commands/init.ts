@@ -90,7 +90,7 @@ export async function runInit(
     return ok(0);
   }
 
-  if (planResult.type === "unavailable") {
+  if (planResult.type === "unavailable" || planResult.type === "failed") {
     ctx.terminal.stderr(planResult.message);
     return ok(1);
   }
@@ -131,6 +131,7 @@ async function createPlan(input: {
   | { type: "ready"; plan: InitPlan }
   | { type: "cancelled" }
   | { type: "unavailable"; message: string }
+  | { type: "failed"; message: string }
 > {
   const { ctx, fs, prompt, harnesses } = input;
 
@@ -216,8 +217,10 @@ async function createPlan(input: {
         destExists.value,
       );
       if (writeResult.isErr()) {
-        ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
-        return { type: "cancelled" };
+        return {
+          type: "failed",
+          message: `Migration failed: ${writeResult.error.message}`,
+        };
       }
 
       ctx.terminal.stdout(
@@ -270,8 +273,10 @@ async function createPlan(input: {
           destExists.value,
         );
         if (writeResult.isErr()) {
-          ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
-          return { type: "cancelled" };
+          return {
+            type: "failed",
+            message: `Migration failed: ${writeResult.error.message}`,
+          };
         }
 
         ctx.terminal.stdout(
