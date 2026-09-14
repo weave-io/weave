@@ -147,6 +147,31 @@ describe("mergeConfigs", () => {
     });
   });
 
+  it("keeps prompt files already resolved to Windows drive and UNC paths", () => {
+    const drivePath = "C:\\Users\\dev\\.weave\\memory.md";
+    const uncPath = "\\\\server\\share\\.weave\\helper.md";
+    const forwardSlashDrivePath = "D:/project/.weave/prompts/frontend.md";
+    const resolved = {
+      ...emptyConfig,
+      agents: {
+        loom: { prompt_append_file: drivePath },
+        helper: { prompt_file: uncPath },
+      },
+      categories: {
+        frontend: {
+          description: "Category work",
+          prompt_append_file: forwardSlashDrivePath,
+        },
+      },
+    } as WeaveConfig;
+    const merged = mergeConfigsResult(resolved)._unsafeUnwrap();
+    expect(merged.agents.loom?.prompt_append_file).toBe(drivePath);
+    expect(merged.agents.helper?.prompt_file).toBe(uncPath);
+    expect(merged.categories.frontend?.prompt_append_file).toBe(
+      forwardSlashDrivePath,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Scalars
   // -------------------------------------------------------------------------

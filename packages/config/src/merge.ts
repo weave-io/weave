@@ -1,3 +1,4 @@
+import { posix, win32 } from "node:path";
 import {
   boundConfigErrors,
   CONFIG_ERRORS_TRUNCATED,
@@ -133,6 +134,11 @@ function promptSourceErrors(value: {
   return errors;
 }
 
+/** Resolved prompt paths are absolute: POSIX on Unix, drive or UNC on Windows. */
+function isResolvedPromptPath(path: string): boolean {
+  return posix.isAbsolute(path) || win32.isAbsolute(path);
+}
+
 /** Remove already-resolved absolute prompt paths from schema-only input. */
 function withoutResolvedPromptPaths(value: { [key: string]: SafeGraphValue }): {
   [key: string]: SafeGraphValue;
@@ -149,7 +155,7 @@ function withoutResolvedPromptPaths(value: { [key: string]: SafeGraphValue }): {
       let changed = false;
       for (const pathField of ["prompt_file", "prompt_append_file"]) {
         const path = copy[pathField];
-        if (typeof path !== "string" || !path.startsWith("/")) continue;
+        if (typeof path !== "string" || !isResolvedPromptPath(path)) continue;
         delete copy[pathField];
         changed = true;
       }
@@ -174,11 +180,11 @@ function restoreResolvedPromptPaths(
       const promptAppendFile = sourceAgent.prompt_append_file;
       agents[name] = {
         ...targetAgent,
-        ...(typeof promptFile === "string" && promptFile.startsWith("/")
+        ...(typeof promptFile === "string" && isResolvedPromptPath(promptFile)
           ? { prompt_file: promptFile }
           : {}),
         ...(typeof promptAppendFile === "string" &&
-        promptAppendFile.startsWith("/")
+        isResolvedPromptPath(promptAppendFile)
           ? { prompt_append_file: promptAppendFile }
           : {}),
       };
@@ -195,7 +201,7 @@ function restoreResolvedPromptPaths(
       const promptAppendFile = sourceCategory.prompt_append_file;
       if (
         typeof promptAppendFile !== "string" ||
-        !promptAppendFile.startsWith("/")
+        !isResolvedPromptPath(promptAppendFile)
       )
         continue;
       categories[name] = {
