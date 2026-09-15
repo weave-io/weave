@@ -12,6 +12,7 @@
  * - `execute`  → `permission.bash`
  * - `network`  → `permission.webfetch`
  * - `delegate` → `permission.doom_loop`
+ * - agent `mode` → `permission.question` (see `buildQuestionPermission`)
  *
  * The `read` capability has no dedicated `permission` field in OpenCode; it is
  * enforced by toggling the boolean presence of read-class tool names in the
@@ -21,7 +22,10 @@
  * has no per-read-tool approval mechanism.
  */
 
-import type { EffectiveToolPolicy } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -35,12 +39,13 @@ import type { OpenCodeAgentConfig } from "./sdk-types.js";
 export type OpenCodePermissionValue = "allow" | "deny" | "ask";
 
 /**
- * The resolved OpenCode permission block produced by `mapToolPolicy`.
- * Matches the shape of `AgentConfig.permission`.
+ * The resolved OpenCode permission block produced by `mapToolPolicy` and
+ * `buildQuestionPermission`. Matches the shape of `AgentConfig.permission`,
+ * plus `question`: OpenCode accepts it, but the pinned SDK type predates it.
  */
 export type OpenCodeToolPermissions = NonNullable<
   OpenCodeAgentConfig["permission"]
->;
+> & { question?: OpenCodePermissionValue };
 
 // ---------------------------------------------------------------------------
 // Read-class tool names
@@ -130,4 +135,25 @@ export function mapToolPolicy(policy: EffectiveToolPolicy): {
   const tools = buildReadToolsEntry(policy.read);
 
   return { permission, tools };
+}
+
+/**
+ * Builds the `AgentConfig.permission.question` entry from the agent's mode.
+ *
+ * OpenCode's `question` tool pauses the session until the user answers. A
+ * subagent runs inside a delegation, so a question there stalls the whole
+ * run while the user is watching the parent session.
+ *
+ * The entry is always explicit. OpenCode denies `question` to custom agents
+ * by default, but a global `permission: "allow"` (or `"*": "allow"`) is
+ * applied after that default and wins. The agent's own entry is applied
+ * last, so only an explicit value here holds in both cases.
+ *
+ * - `subagent` → `deny`
+ * - `primary` / `all` → `allow` (these can be selected by the user directly)
+ */
+export function buildQuestionPermission(
+  mode: AgentDescriptor["mode"],
+): Pick<OpenCodeToolPermissions, "question"> {
+  return { question: mode === "subagent" ? "deny" : "allow" };
 }

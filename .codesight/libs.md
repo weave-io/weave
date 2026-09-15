@@ -77,9 +77,10 @@
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
   - function mapToolPolicy: (policy) => void
+  - function buildQuestionPermission: (mode) => Pick<OpenCodeToolPermissions, "question">
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
-  - const READ_TOOL_NAMES: readonly string[]
+  - _...1 more_
 - `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
 - `packages/adapters/opencode/src/trajectory/observer.ts`
   - function parseObserverRecords: (jsonl) => ParsedObserverRecords
@@ -226,6 +227,7 @@
   - type SessionScopeError
 - `packages/adapters/opencode2/src/v2/tool-policy-mapping.ts`
   - function mapOpenCode2ToolPolicy: (policy, delegationTargets) => NativePermissionRule[]
+  - function mapOpenCode2QuestionRule: (mode) => NativePermissionRule
   - interface NativePermissionRule
   - const OPENCODE2_MANAGED_PERMISSION_ACTIONS: ReadonlySet<string>
 - `packages/adapters/opencode2/src/v2/translate-agent.ts` — function translateOpenCode2Agent: (descriptor, model) => OpenCode2AgentProjection, interface OpenCode2AgentProjection

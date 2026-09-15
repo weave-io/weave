@@ -382,4 +382,34 @@ describe("builtin prompt files", () => {
       });
     }
   });
+
+  describe("subagent prompts — never ask the user", () => {
+    // Subagents run inside a delegation: a question stalls the run with
+    // nobody watching the child session.
+    const SUBAGENTS = Object.entries(getBuiltinConfig()._unsafeUnwrap().agents)
+      .filter(([, agent]) => agent.mode === "subagent")
+      .map(([name]) => name)
+      .sort();
+
+    it("covers every builtin subagent", () => {
+      expect(SUBAGENTS).toEqual([
+        "pattern",
+        "shuttle",
+        "spindle",
+        "thread",
+        "warp",
+        "weft",
+      ]);
+    });
+
+    for (const agentName of SUBAGENTS) {
+      it(`${agentName}.md forbids asking the user or waiting for confirmation`, () => {
+        const content = BUILTIN_PROMPT_CONTENTS[agentName];
+        expect(content).toContain(
+          "Never ask the user a question or wait for confirmation",
+        );
+        expect(content).not.toContain("ask one focused clarifying question");
+      });
+    }
+  });
 });

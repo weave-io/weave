@@ -18,6 +18,7 @@ import type {
   AgentDescriptor,
   EffectiveToolPolicy,
 } from "@weaveio/weave-engine";
+import type { OpenCodeToolPermissions } from "../tool-policy-mapping.js";
 import { translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,39 @@ describe("translateAgent — tool policy mapping", () => {
       // tools patch is only added when read is denied
       expect(result.value.tools).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: question permission from mode
+// ---------------------------------------------------------------------------
+
+describe("translateAgent — question permission", () => {
+  // The pinned SDK's AgentConfig type predates `question`.
+  const permissionOf = (descriptor: AgentDescriptor) =>
+    translateAgent(descriptor)._unsafeUnwrap()
+      .permission as OpenCodeToolPermissions;
+
+  it("denies question for subagents so they cannot pause the run", () => {
+    expect(permissionOf(makeDescriptor({ mode: "subagent" })).question).toBe(
+      "deny",
+    );
+  });
+
+  it("allows question for primary agents", () => {
+    expect(permissionOf(makeDescriptor({ mode: "primary" })).question).toBe(
+      "allow",
+    );
+  });
+
+  it("keeps the tool-policy permissions alongside question", () => {
+    expect(permissionOf(makeDescriptor({ mode: "subagent" }))).toEqual({
+      edit: "allow",
+      bash: "allow",
+      webfetch: "ask",
+      doom_loop: "deny",
+      question: "deny",
+    });
   });
 });
 

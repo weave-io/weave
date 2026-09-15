@@ -14,7 +14,10 @@ import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
-import { mapToolPolicy } from "./tool-policy-mapping.js";
+import {
+  buildQuestionPermission,
+  mapToolPolicy,
+} from "./tool-policy-mapping.js";
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -51,6 +54,8 @@ export type TranslateAgentError = {
  * - `mode` → `mode`
  * - `effectiveToolPolicy` → `permission` + optional `tools` patch via
  *   `mapToolPolicy`
+ * - `mode` → `permission.question` via `buildQuestionPermission` (subagents
+ *   never pause the run to ask the user)
  *
  * @param descriptor - The fully composed agent descriptor from the engine.
  * @param resolvedModel - The pre-validated model string from
@@ -69,7 +74,7 @@ export function translateAgent(
   const config: OpenCodeAgentConfig = {
     prompt: descriptor.composedPrompt,
     mode: descriptor.mode,
-    permission,
+    permission: { ...permission, ...buildQuestionPermission(descriptor.mode) },
   };
 
   // model: use the pre-validated resolved model when provided

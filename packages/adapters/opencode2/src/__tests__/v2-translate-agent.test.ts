@@ -37,4 +37,26 @@ describe("translateOpenCode2Agent", () => {
       effect: "allow",
     });
   });
+
+  it("ends subagent permissions with a question deny", () => {
+    const result = translateOpenCode2Agent(
+      descriptor({ mode: "subagent" }),
+      undefined,
+    );
+    expect(result.permissions.at(-1)).toEqual({
+      action: "question",
+      resource: "*",
+      effect: "deny",
+    });
+  });
+
+  it("allows question for primary agents", () => {
+    const result = translateOpenCode2Agent(
+      descriptor({ mode: "primary" }),
+      undefined,
+    );
+    expect(
+      result.permissions.filter((rule) => rule.action === "question"),
+    ).toEqual([{ action: "question", resource: "*", effect: "allow" }]);
+  });
 });

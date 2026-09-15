@@ -1,6 +1,7 @@
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 import type { V2Model as Model } from "../sdk-types.js";
 import {
+  mapOpenCode2QuestionRule,
   mapOpenCode2ToolPolicy,
   type NativePermissionRule,
 } from "./tool-policy-mapping.js";
@@ -36,10 +37,13 @@ export function translateOpenCode2Agent(
     model,
     temperature: descriptor.temperature,
     fast: descriptor.fast,
-    permissions: mapOpenCode2ToolPolicy(
-      descriptor.effectiveToolPolicy,
-      descriptor.delegationTargets.map((target) => target.name),
-    ),
+    permissions: [
+      ...mapOpenCode2ToolPolicy(
+        descriptor.effectiveToolPolicy,
+        descriptor.delegationTargets.map((target) => target.name),
+      ),
+      mapOpenCode2QuestionRule(descriptor.mode),
+    ],
     skillNames: [...descriptor.skills],
   };
 }

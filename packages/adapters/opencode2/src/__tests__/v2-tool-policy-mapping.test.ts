@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mapOpenCode2ToolPolicy } from "../v2/tool-policy-mapping.js";
+import {
+  mapOpenCode2QuestionRule,
+  mapOpenCode2ToolPolicy,
+  OPENCODE2_MANAGED_PERMISSION_ACTIONS,
+} from "../v2/tool-policy-mapping.js";
 
 describe("mapOpenCode2ToolPolicy", () => {
   it("preserves allow, deny, and ask on current native actions", () => {
@@ -57,5 +61,24 @@ describe("mapOpenCode2ToolPolicy", () => {
     expect(rules.filter((rule) => rule.action === "subagent")).toEqual([
       { action: "subagent", resource: "*", effect: "deny" },
     ]);
+  });
+});
+
+describe("mapOpenCode2QuestionRule", () => {
+  it("denies question for subagents", () => {
+    expect(mapOpenCode2QuestionRule("subagent")).toEqual({
+      action: "question",
+      resource: "*",
+      effect: "deny",
+    });
+  });
+
+  it("allows question for primary and all agents", () => {
+    expect(mapOpenCode2QuestionRule("primary").effect).toBe("allow");
+    expect(mapOpenCode2QuestionRule("all").effect).toBe("allow");
+  });
+
+  it("treats question as a Weave-managed action", () => {
+    expect(OPENCODE2_MANAGED_PERMISSION_ACTIONS.has("question")).toBe(true);
   });
 });

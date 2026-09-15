@@ -37,6 +37,7 @@ import {
   evaluateEffectiveToolPolicy,
 } from "@weaveio/weave-engine";
 import {
+  buildQuestionPermission,
   buildReadToolsEntry,
   mapToolPolicy,
   READ_TOOL_NAMES,
@@ -222,6 +223,24 @@ describe("mapToolPolicy — permission block from EffectiveToolPolicy", () => {
     expect(permission.webfetch).toBe("ask");
     // delegate: deny → doom_loop: deny
     expect(permission.doom_loop).toBe("deny");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// § 4b — buildQuestionPermission — question entry from agent mode
+// ---------------------------------------------------------------------------
+
+describe("buildQuestionPermission — question entry from agent mode", () => {
+  it("denies question for subagent mode", () => {
+    expect(buildQuestionPermission("subagent")).toEqual({ question: "deny" });
+  });
+
+  it("allows question for primary mode", () => {
+    expect(buildQuestionPermission("primary")).toEqual({ question: "allow" });
+  });
+
+  it("allows question for all mode, which the user can select directly", () => {
+    expect(buildQuestionPermission("all")).toEqual({ question: "allow" });
   });
 });
 

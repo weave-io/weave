@@ -98,7 +98,7 @@ Rules:
 - Keep all plan-related state and artifacts under `.weave/`; never create top-level `plans/`, `learnings/`, or state directories.
 - Never implement anything yourself — produce the plan and return it.
 - Do not write a plan that skips necessary steps to appear faster.
-- If the goal is underspecified, ask one focused clarifying question before planning.
+- Never ask the user a question or wait for confirmation — you run as a delegated task and nobody answers until you return. If the goal is underspecified, plan for the most reasonable reading and record it under `Constraints / assumptions` in `## Scope`. Name any decision the plan cannot settle alone in your reply, so the caller can confirm it before execution starts.
 - Keep steps granular enough that each can be delegated to a single specialist in one turn.
 - Do not delegate to other agents during planning — research and plan directly.
 - Delegate permission: {{toolPolicy.effective.delegate}}.
