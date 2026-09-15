@@ -383,9 +383,10 @@ describe("builtin prompt files", () => {
     }
   });
 
-  describe("subagent prompts — never ask the user", () => {
+  describe("subagent prompts — resolve ambiguity without the user", () => {
     // Subagents run inside a delegation: a question stalls the run with
-    // nobody watching the child session.
+    // nobody watching the child session. The prompts state the situation and
+    // the wanted behavior rather than naming the unwanted one.
     const SUBAGENTS = Object.entries(getBuiltinConfig()._unsafeUnwrap().agents)
       .filter(([, agent]) => agent.mode === "subagent")
       .map(([name]) => name)
@@ -403,10 +404,10 @@ describe("builtin prompt files", () => {
     });
 
     for (const agentName of SUBAGENTS) {
-      it(`${agentName}.md forbids asking the user or waiting for confirmation`, () => {
+      it(`${agentName}.md says no one can reply until it returns`, () => {
         const content = BUILTIN_PROMPT_CONTENTS[agentName];
         expect(content).toContain(
-          "Never ask the user a question or wait for confirmation",
+          "You run as a delegated task, and no one can reply until you return.",
         );
         expect(content).not.toContain("ask one focused clarifying question");
       });
