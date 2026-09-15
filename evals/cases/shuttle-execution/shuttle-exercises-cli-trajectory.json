@@ -1,0 +1,36 @@
+{
+  "id": "shuttle-exercises-cli-trajectory",
+  "description": "Delegate this to the shuttle agent: `slugctl --separator _ \"Hello World\"` prints `hello-world`, but the README says it prints `hello_world`. Fix it.",
+  "suite": "shuttle-execution",
+  "allowed_agents": ["loom", "shuttle"],
+  "allowed_models": [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.5",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "harness_trajectory",
+    "expected_spawns": ["shuttle"],
+    "expected_tools": ["edit"],
+    "max_duration_seconds": 480,
+    "sandbox_profile": "opencode-local",
+    "fixture": "slugctl-cli",
+    "start_agent": "loom",
+    "expected_commands": [
+      {
+        "matches": "\\bbun (run )?(--\\S+ )*\\S*slugctl(?!\\.test)(\\.ts)?\\b|(^|[;&|]\\s*)(\\./)?slugctl\\s",
+        "after_last_edit": true,
+        "expect_success": true
+      }
+    ],
+    "verifier": {
+      "fixture": "slugctl-cli.verifier",
+      "command": "bun /verifier/verify.ts",
+      "expect": "pass"
+    }
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": ["trajectory", "verification", "exercise"]
+}

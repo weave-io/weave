@@ -791,6 +791,62 @@ describe("extractVerificationSignals", () => {
     );
   });
 
+  describe("exercise signals", () => {
+    const serviceDescription =
+      "Add a health endpoint. Available commands (from package.json scripts): `bun test`, `bun run typecheck`, `bun run dev`.";
+
+    it("requires a How to run section that names a launch command", () => {
+      const withSection = extractVerificationSignals(
+        [
+          "## How to run it",
+          "- Start the server: `bun run dev`",
+          "## Tasks",
+        ].join("\n"),
+        serviceDescription,
+      );
+      expect(withSection.producedArtifacts).toContain("plan_how_to_run");
+
+      const prose = extractVerificationSignals(
+        ["## How to run it", "Start the server.", "## Tasks"].join("\n"),
+        serviceDescription,
+      );
+      expect(prose.producedArtifacts).not.toContain("plan_how_to_run");
+    });
+
+    it("counts a localhost request or a launch command as exercising the product", () => {
+      const curl = extractVerificationSignals(
+        [
+          "- **Acceptance**:",
+          "  - Returns 200 — verify by: `curl -i localhost:3000/health`",
+        ].join("\n"),
+        serviceDescription,
+      );
+      expect(curl.producedArtifacts).toContain("plan_exercise_check");
+
+      const launch = extractVerificationSignals(
+        [
+          "## Verification",
+          "- [ ] `bun run dev` starts and serves the route",
+        ].join("\n"),
+        serviceDescription,
+      );
+      expect(launch.producedArtifacts).toContain("plan_exercise_check");
+    });
+
+    it("does not count tests, static checks, or manual steps as exercising", () => {
+      const signals = extractVerificationSignals(
+        [
+          "- **Acceptance**:",
+          "  - Route exists — verify by: `bun test`",
+          "  - Types check — verify by: `bun run typecheck`",
+          "  - Health responds — manual: curl localhost:3000/health",
+        ].join("\n"),
+        serviceDescription,
+      );
+      expect(signals.producedArtifacts).not.toContain("plan_exercise_check");
+    });
+  });
+
   it("produces no command artifacts when the case declares no commands", () => {
     const signals = extractVerificationSignals(
       "- [ ] `bun test` passes",

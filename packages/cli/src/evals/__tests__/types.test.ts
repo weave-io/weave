@@ -118,6 +118,37 @@ describe("ExpectedOutcomeSchema — harness_trajectory variant", () => {
     expect(parsed.success).toBe(false);
   });
 
+  describe("expected_commands", () => {
+    function withCommand(command: Record<string, unknown>) {
+      return ExpectedOutcomeSchema.safeParse({
+        kind: "harness_trajectory",
+        expected_spawns: [],
+        expected_tools: [],
+        max_duration_seconds: 60,
+        sandbox_profile: "opencode-local",
+        expected_commands: [command],
+      });
+    }
+
+    it("accepts a command with contains or with matches", () => {
+      expect(withCommand({ contains: "bun test" }).success).toBe(true);
+      expect(
+        withCommand({ matches: "\\bbun (run )?src/cli\\.ts\\b" }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a command with both contains and matches, or neither", () => {
+      expect(
+        withCommand({ contains: "bun test", matches: "bun test" }).success,
+      ).toBe(false);
+      expect(withCommand({ after_last_edit: true }).success).toBe(false);
+    });
+
+    it("rejects matches that is not a valid regular expression", () => {
+      expect(withCommand({ matches: "bun (run" }).success).toBe(false);
+    });
+  });
+
   it("still validates existing outcome kinds unchanged", () => {
     const agentRouting = ExpectedOutcomeSchema.safeParse({
       kind: "agent_routing",

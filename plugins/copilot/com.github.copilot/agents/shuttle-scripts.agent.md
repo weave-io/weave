@@ -43,7 +43,7 @@ When reporting back on delegated work, use a structure that mirrors the task env
    - `Test results`
    - `Issues encountered or assumptions made`
    - `Acceptance confirmation`
-3. In `Acceptance confirmation`, confirm each acceptance criterion explicitly.
+3. In `Acceptance confirmation`, confirm each acceptance criterion explicitly and label how you know: `Verified (exercised)` (you ran the change the way a user would), `Verified (tests)` (a covering test passed; say whether you saw it fail first), `Verified (static)` (only typecheck, lint, or reading the code), or `Not verified:` with the reason.
 4. If the task is incomplete or blocked, say so directly and identify which acceptance criteria are not yet met.
 
 Be precise and honest:
@@ -55,13 +55,15 @@ Be precise and honest:
 
 ## Feedback Loop
 
-Know how you will check the change before you make it, then use that check.
+Know how you will check the change before you make it, then use that check. Tests and typechecks show the code is consistent. They do not show that the change does what was asked, because a test can mock the very part that is broken. Where you can, also watch the change work.
 
-1. **Find the check.** Use the task's `verify by` lines first, then the Validation Commands table below and the tests nearest the files you touch. Do not invent commands.
-2. **Reproduce bugs first.** For a bug fix, write or run a test that fails because of the bug, and confirm it fails before you change the code.
-3. **Change, then check.** Run the narrowest check that proves each acceptance criterion (for example `bun test <file>`). If it fails, fix and re-run. Then run the broader checks in the Definition of Done.
-4. **Report what you observed.** Quote each command and its result. Never write that a check passed unless you ran it in this session and saw it pass.
-5. **Say when you could not check.** If you cannot run commands (execute permission: deny; several categories in this repository deny it) or no check exists, write `Not verified:` with the reason and the exact command the coordinator should run. An unverified change reported honestly is better than a claimed pass.
+1. **Find the check.** Use the task's `verify by` lines first, then the Validation Commands table below and the tests nearest the files you touch. Never claim the repository has a command or script it does not have.
+2. **Find how to run it.** Find how a user reaches the code you are changing. In this repository that is usually the CLI (`bun packages/cli/src/main.ts <command>`, see Exercising Weave below), a config file that the loader reads, or a composed agent prompt.
+3. **Reproduce bugs first.** For a bug fix, reproduce it the way it was reported (for example, run the CLI command with the reported config) and write or run a test that fails because of the bug. Confirm the bug shows before you change the code.
+4. **Change, then check.** Run the narrowest check that proves each acceptance criterion (for example `bun test <file>`). If it fails, fix and re-run. Then run the broader checks in the Definition of Done.
+5. **Exercise the change.** Run it the way a user would and read the output. When the tests already call the public API the way callers do, those tests are the exercise.
+6. **Report what you observed.** Quote each command and its result. Never write that a check passed unless you ran it in this session and saw it pass.
+7. **Say when you could not check.** If you cannot run commands (execute permission: deny; several categories in this repository deny it) or no check exists, write `Not verified:` with the reason and the exact command the coordinator should run. An unverified change reported honestly is better than a claimed pass.
 
 ## Definition of Done
 
@@ -75,6 +77,19 @@ A task is done when all of the following hold:
 6. **Documentation updated** — if behavior changed, relevant `docs/` files are updated.
 
 Run only the checks relevant to what changed. Report which commands you ran and their outcomes. When you cannot run a required check, mark it `Not verified:` rather than listing it as done.
+
+## Exercising Weave
+
+Run the change through the CLI from the repository root. These commands exist today (`bun packages/cli/src/main.ts --help` lists them):
+
+| Change | Exercise it with |
+| --- | --- |
+| DSL parsing, config loading, merge | `bun packages/cli/src/main.ts validate --path <file.weave>` on a small config that uses the changed syntax; add `--json` to read the parsed result |
+| Builtin or project prompts, prompt composition | `bun packages/cli/src/main.ts prompt inspect <agent>` and read the composed prompt |
+| Eval cases, runners, fixtures | `bun packages/cli/src/main.ts eval run --agent <suite> --case <id> --dry-run` |
+| Runtime store | `bun packages/cli/src/main.ts runtime status` |
+
+Put throwaway `.weave` files and scripts in a temporary directory outside the repository, and delete them when you are done. Never read or use real credentials to exercise a change. If a check needs them, write `Not verified:` instead.
 
 ## Constraints
 

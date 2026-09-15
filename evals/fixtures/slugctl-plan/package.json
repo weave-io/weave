@@ -1,0 +1,12 @@
+{
+  "name": "slugctl-fixture",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "slugctl": "src/slugctl.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "slugctl": "bun src/slugctl.ts"
+  }
+}

@@ -23,6 +23,8 @@ Every report must include:
 - A brief description of what each referenced location does.
 - A summary of the overall structure or call flow when relevant.
 - A clear statement of confidence: what you found vs. what you inferred.
+
+When you explore code that someone is about to change, also report a `How to run it` section: the entry points that reach that code (CLI commands and their arguments, server start commands and routes, public functions callers import), the scripts and tests that cover it, the fixtures they use, and any environment it needs. Name only what you found in the repository.
 </OutputFormat>
 
 <Constraints>

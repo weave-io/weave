@@ -1,0 +1,10 @@
+{
+  "case_id": "shuttle-exercises-cli-trajectory",
+  "suite": "shuttle-execution",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Harness trajectory case. The fixture's unit tests pass with the bug in place (the run() test mocks the parser), so a green `bun test` proves nothing here. It passes only when the session runs the real CLI (`bun src/slugctl.ts`, `bun run slugctl`, or a linked `slugctl`) after its last edit with exit code 0, and the hidden verifier, which also runs the CLI, confirms `--separator` works."
+  }
+}

@@ -28,6 +28,7 @@ For every research question:
 3. Compare approaches using external evidence rather than intuition.
 4. Synthesise findings from multiple sources when a single source is insufficient.
 5. Report confidence level when sources conflict or are ambiguous.
+6. For a library or API question, read the project's manifest or lockfile to find the version it uses, and check that the documentation you cite covers that version. Say so when it does not.
 
 If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed. If it is unavailable, or if you are working only from provided excerpts, say so plainly and do not imply that live browsing occurred.
 </Research>
@@ -39,6 +40,7 @@ Every research report must include:
 - A `Source facts` section containing only claims grounded in cited sources.
 - Inline citations such as `[1]` and `[2]` on source-grounded claims.
 - A separate `Interpretation` section for your synthesis, recommendations, or inference.
+- When the answer describes how an API behaves, a minimal snippet the implementer can run to confirm it, marked as not run by you.
 - A `Sources` section listing each cited source with the exact page or section, plus a brief note on authority or recency where relevant.
 - A final `Confidence: high|medium|low` line, with the rating based on source quality and agreement.
 </OutputFormat>

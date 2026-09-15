@@ -2,6 +2,18 @@
 
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/slugctl-cli/src/args.ts` — function parseArgs: (argv) => CliOptions, interface CliOptions
+- `evals/fixtures/slugctl-cli/src/run.ts`
+  - function run: (argv, dependencies) => string
+  - interface RunDependencies
+  - const USAGE
+- `evals/fixtures/slugctl-cli/src/slugify.ts` — function slugify: (input, options) => string, interface SlugifyOptions
+- `evals/fixtures/slugctl-plan/src/args.ts` — function parseArgs: (argv) => CliOptions, interface CliOptions
+- `evals/fixtures/slugctl-plan/src/run.ts`
+  - function run: (argv, dependencies) => string
+  - interface RunDependencies
+  - const USAGE
+- `evals/fixtures/slugctl-plan/src/slugify.ts` — function slugify: (input, options) => string, interface SlugifyOptions
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES

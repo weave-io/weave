@@ -355,6 +355,38 @@ describe("scoreTrajectoryResult — verification checks (Spec 35)", () => {
     expect(codeAfterCheck.dimensions.executionCompleteness.score).toBe(0);
   });
 
+  it("matches a command against a regular expression when matches is set", () => {
+    const RUN_CLI_AFTER_EDIT = makeExpectedOutcome({
+      expected_tools: [],
+      expected_commands: [
+        {
+          // The pattern used by shuttle-exercises-cli-trajectory.
+          matches:
+            "\\bbun (run )?(--\\S+ )*\\S*slugctl(?!\\.test)(\\.ts)?\\b|(^|[;&|]\\s*)(\\./)?slugctl\\s",
+          after_last_edit: true,
+          expect_success: true,
+        },
+      ],
+    });
+    const scoreWith = (command: string) =>
+      scoreTrajectoryResult(
+        buildInput({
+          events: [...happyPathEvents(), edit(10), shell(20, command, 0)],
+          expectedOutcome: RUN_CLI_AFTER_EDIT,
+        }),
+      ).dimensions.executionCompleteness;
+
+    expect(scoreWith('bun src/slugctl.ts --separator _ "Hello"').score).toBe(1);
+    expect(scoreWith("cd /workspace && bun run slugctl -- hi").score).toBe(1);
+    expect(scoreWith("bun /workspace/src/slugctl.ts hi").score).toBe(1);
+    expect(scoreWith("bun link && slugctl --help").score).toBe(1);
+    // Reading the file or running tests named after it is not running it.
+    expect(scoreWith("cat src/slugctl.ts").score).toBe(0);
+    const missed = scoreWith("bun test test/slugctl.test.ts");
+    expect(missed.score).toBe(0);
+    expect(missed.rationale).toContain("command matching /");
+  });
+
   it("treats after_last_edit as satisfied when nothing was edited", () => {
     const record = scoreTrajectoryResult(
       buildInput({

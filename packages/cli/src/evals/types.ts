@@ -20,6 +20,7 @@
  */
 
 import type { TrajectorySummary } from "@weaveio/weave-core";
+import { Result } from "neverthrow";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -217,19 +218,43 @@ export const FixtureNameSchema = z
     message: "fixture must not contain '..'",
   });
 
+const isValidRegExp = Result.fromThrowable(
+  (pattern: string) => new RegExp(pattern),
+  () => "invalid regular expression",
+);
+
 /**
  * A shell command the agent must run. Satisfied by one observed shell tool
- * call whose command contains `contains` and meets the optional conditions.
+ * call whose command contains `contains` (or matches the `matches` regular
+ * expression) and meets the optional conditions. Exactly one of `contains`
+ * and `matches` is set.
  */
 export const ExpectedCommandSchema = z
   .object({
-    contains: z.string().min(1).max(200),
+    contains: z.string().min(1).max(200).optional(),
+    /**
+     * A regular expression the command must match, for checks a substring
+     * cannot express, such as "runs the CLI" but not "cats the CLI file".
+     */
+    matches: z
+      .string()
+      .min(1)
+      .max(200)
+      .refine((pattern) => isValidRegExp(pattern).isOk(), {
+        message: "matches must be a valid regular expression",
+      })
+      .optional(),
     /** The call must come after the session's last edit/write tool call. */
     after_last_edit: z.boolean().default(false),
     /** The call's exit code must be 0. */
     expect_success: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .refine(
+    (command) =>
+      (command.contains === undefined) !== (command.matches === undefined),
+    { message: "set exactly one of contains or matches" },
+  );
 
 export type ExpectedCommand = z.infer<typeof ExpectedCommandSchema>;
 

@@ -36,7 +36,7 @@ A finding blocks only after you have traced it through the code you were given. 
 
 1. **Trace it.** Read past the changed lines: who calls this code, where its inputs come from, and whether a type, guard, or earlier check already rules the problem out.
 2. **Confirmed?** Report it as a `BLOCKER:` that cites both where the problem originates and where it surfaces, each as `path:line` (for example, the call site that discards an error and the function that returns it). When the material has no line numbers, cite the path and the function or symbol instead; never invent line numbers.
-3. **Not confirmed?** It is not a blocker. Report it as a `SUSPECTED:` line with what you could not rule out. `SUSPECTED:` lines never block and are allowed with either verdict.
+3. **Not confirmed?** It is not a blocker. Report it as a `SUSPECTED:` line with what you could not rule out, followed by a `REPRO:` line: the exact command, input, or test that would confirm or rule it out (for example, `bun packages/cli/src/main.ts validate --path <file.weave>` with a config that uses the changed syntax), and the result that would mean it is real. `SUSPECTED:` and `REPRO:` lines never block and are allowed with either verdict.
 
 Missing edge cases outside the task, style preferences, and suboptimal-but-working code are not blockers either; use `NOTE:` lines for them.
 
@@ -44,6 +44,7 @@ Missing edge cases outside the task, style preferences, and suboptimal-but-worki
 
 - [ ] Logic is correct and handles all documented error cases
 - [ ] Tests exist and pass for the changed code
+- [ ] Behaviour a user sees (CLI output, loaded config, composed prompts) was exercised, not only unit-tested with the changed part mocked; if not, add a `SUSPECTED:` line with a `REPRO:`
 - [ ] No debug output or temporary code left in place
 - [ ] All fallible functions handle errors explicitly
 - [ ] Documentation is updated where behavior changed
@@ -103,7 +104,7 @@ Follow this exact review contract:
    - include a specific action verb such as `fix`, `add`, `update`, `remove`, `guard`, `validate`, or `handle`
    - explain why the issue blocks merge now
 5. If the verdict is **[APPROVE]**, do not emit any `BLOCKER:` lines.
-6. Optional non-blocking lines may follow the blockers: `SUSPECTED:` for concerns the trace could not confirm, and `NOTE:` for other feedback. Neither may dilute blocking findings.
+6. Optional non-blocking lines may follow the blockers: `SUSPECTED:` for concerns the trace could not confirm, each followed by a `REPRO:` line, and `NOTE:` for other feedback. None of these may dilute blocking findings.
 
 When line numbers are explicitly available in the provided diff or context, include them. When they are not available, cite the exact file path and do not invent line numbers.
 

@@ -99,6 +99,15 @@ const CODE_FENCE_RE = /^\s*```/;
 const VERIFY_METHOD_RE =
   /\bverif(?:y|ied)\s+(?:by|with|via)\b|\bmanual(?:ly)?\s*:|\bcheck(?:ed)?\s+(?:by|with|via)\b/i;
 const INLINE_CODE_RE = /(?<!`)`([^`\n]+)`(?!`)/g;
+// Exercise signals: does the plan say how to launch what it changes, and does
+// at least one agent-runnable check use the running thing rather than only
+// tests and static checks?
+const HOW_TO_RUN_HEADING_RE = /^\s*#{1,6}\s*how to run\b/i;
+const MANUAL_LABEL_RE = /\bmanual(?:ly)?\s*:/i;
+const LOCAL_REQUEST_RE = /\b(?:localhost|127\.0\.0\.1)(?::\d+)?\b/i;
+/** Declared commands that check code rather than run the product. */
+const CHECK_COMMAND_RE =
+  /\b(?:test|tests|typecheck|type-check|lint|build|check|format|fmt|tsc|biome|eslint|vitest|jest|pytest)\b/i;
 const COMMAND_RUNNERS = new Set([
   "bun",
   "bunx",
@@ -219,15 +228,44 @@ function hasVerificationMethod(criterion: string): boolean {
   );
 }
 
-function extractVerificationSection(content: string): string[] | undefined {
+/** Lines after the first heading matching `headingRe`, up to the next heading. */
+function extractSection(
+  content: string,
+  headingRe: RegExp,
+): string[] | undefined {
   const lines = content.split("\n");
-  const start = lines.findIndex((line) => VERIFICATION_HEADING_RE.test(line));
+  const start = lines.findIndex((line) => headingRe.test(line));
   if (start === -1) {
     return undefined;
   }
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => HEADING_LINE_RE.test(line));
   return end === -1 ? rest : rest.slice(0, end);
+}
+
+function extractVerificationSection(content: string): string[] | undefined {
+  return extractSection(content, VERIFICATION_HEADING_RE);
+}
+
+/**
+ * True when an acceptance criterion or Verification item exercises the
+ * product: it is not labelled `manual:`, and it either sends a request to
+ * localhost or runs a declared command that is not a test or static check
+ * (for example `bun run dev`).
+ */
+function exercisesProduct(item: string, declaredCommands: string[]): boolean {
+  if (MANUAL_LABEL_RE.test(item)) {
+    return false;
+  }
+  if (LOCAL_REQUEST_RE.test(item)) {
+    return true;
+  }
+  const launchCommands = declaredCommands.filter(
+    (declared) => !CHECK_COMMAND_RE.test(declared),
+  );
+  return extractInlineCommands(item).some((command) =>
+    launchCommands.some((declared) => commandMatches(command, declared)),
+  );
 }
 
 export interface VerificationSignals {
@@ -291,6 +329,23 @@ export function extractVerificationSignals(
   }
   if (declaredCommands.length > 0 && unlistedCommands.length === 0) {
     producedArtifacts.push("plan_no_unlisted_commands");
+  }
+
+  const howToRun = extractSection(content, HOW_TO_RUN_HEADING_RE);
+  if (
+    howToRun !== undefined &&
+    extractPlanCommands(howToRun.join("\n")).length > 0
+  ) {
+    producedArtifacts.push("plan_how_to_run");
+  }
+  const verificationItems =
+    section?.filter((line) => CHECKBOX_LINE_RE.test(line)) ?? [];
+  if (
+    [...criteria, ...verificationItems].some((item) =>
+      exercisesProduct(item, declaredCommands),
+    )
+  ) {
+    producedArtifacts.push("plan_exercise_check");
   }
 
   return {

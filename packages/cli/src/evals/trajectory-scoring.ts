@@ -38,6 +38,7 @@ import type {
   TrajectoryEvent,
   TrajectoryVerifierResult,
 } from "@weaveio/weave-core";
+import { Result } from "neverthrow";
 import type {
   DimensionScore,
   EvalRubric,
@@ -243,10 +244,35 @@ function lastEditTime(events: TrajectoryEvent[]): number | undefined {
   return last;
 }
 
+const compileRegExp = Result.fromThrowable(
+  (pattern: string) => new RegExp(pattern),
+  () => "invalid regular expression",
+);
+
+/**
+ * True when the observed command text contains `contains` or matches the
+ * `matches` regular expression. An invalid pattern matches nothing (the case
+ * loader rejects one, so this only guards hand-built outcomes).
+ */
+function commandTextMatches(
+  command: ExpectedCommand,
+  text: string | undefined,
+): boolean {
+  if (text === undefined) return false;
+  if (command.matches !== undefined) {
+    return compileRegExp(command.matches).match(
+      (pattern) => pattern.test(text),
+      () => false,
+    );
+  }
+  return command.contains !== undefined && text.includes(command.contains);
+}
+
 /**
  * True when one observed shell call satisfies every condition of `command`
- * (Spec 35): its command contains `contains`, it came after the last edit
- * when required (vacuously true with no edits), and it exited 0 when required.
+ * (Spec 35): its command contains `contains` or matches `matches`, it came
+ * after the last edit when required (vacuously true with no edits), and it
+ * exited 0 when required.
  */
 function isCommandSatisfied(
   events: TrajectoryEvent[],
@@ -255,12 +281,12 @@ function isCommandSatisfied(
 ): boolean {
   return events.some((event) => {
     if (event.kind !== "tool-call-after") return false;
-    if (!event.detail?.command?.includes(command.contains)) return false;
+    if (!commandTextMatches(command, event.detail?.command)) return false;
     const afterEdit =
       !command.after_last_edit ||
       lastEdit === undefined ||
       Date.parse(event.timestamp) > lastEdit;
-    const succeeded = !command.expect_success || event.detail.exitCode === 0;
+    const succeeded = !command.expect_success || event.detail?.exitCode === 0;
     return afterEdit && succeeded;
   });
 }
@@ -270,9 +296,13 @@ function describeCommand(command: ExpectedCommand): string {
     command.after_last_edit ? "after the last edit" : undefined,
     command.expect_success ? "exit 0" : undefined,
   ].filter((condition) => condition !== undefined);
+  const subject =
+    command.matches !== undefined
+      ? `command matching /${command.matches}/`
+      : `command containing "${command.contains}"`;
   return conditions.length > 0
-    ? `command containing "${command.contains}" (${conditions.join(", ")})`
-    : `command containing "${command.contains}"`;
+    ? `${subject} (${conditions.join(", ")})`
+    : subject;
 }
 
 /** True when the case declares Spec 35 verification checks. */

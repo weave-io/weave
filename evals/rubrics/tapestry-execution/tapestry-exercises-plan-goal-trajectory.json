@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-exercises-plan-goal-trajectory",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Harness trajectory case. The plan's goal is CLI behaviour, but its acceptance criteria and Verification section only name `bun test`, which the fixture passes with the bug in place. It passes only when the session (Tapestry or its Shuttle) runs the real CLI after the last code edit with exit code 0, and the hidden verifier, which also runs the CLI, confirms `--separator` works."
+  }
+}

@@ -575,7 +575,7 @@ Sandbox hardening beyond Podman defaults and cross-harness trajectory comparison
 
 - **`fixture`**: a directory under `evals/fixtures/` copied into the workspace before the session. The fixture carries its own `.weave/config.weave`, and the repository's `.weave/` is not mounted, so the case measures builtin behaviour rather than this repository's overrides. The runner also mounts a generated global config that pins builtin sub-agents to the model under test (otherwise OpenCode cannot resolve the builtin model id and delegation fails).
 - **`start_agent`**: a primary agent (`loom` or `tapestry`) passed as `opencode run --agent`. Sub-agents are rejected at load time because OpenCode silently falls back to its default agent for them.
-- **`expected_commands`**: shell commands the agent must run, each `{ contains, after_last_edit, expect_success }`. Command text and exit codes come from an observer plugin the runner writes into the workspace (`tool.execute.after` hooks, all sessions). They stay local-only.
+- **`expected_commands`**: shell commands the agent must run, each `{ contains | matches, after_last_edit, expect_success }`. Set exactly one of `contains` (a substring) and `matches` (a regular expression). Use `matches` when a substring cannot tell running a program from reading it: `shuttle-exercises-cli-trajectory` must match `bun src/slugctl.ts …` or `bun run slugctl …`, but not `cat src/slugctl.ts` or `bun test test/slugctl.test.ts`. Command text and exit codes come from an observer plugin the runner writes into the workspace (`tool.execute.after` hooks, all sessions). They stay local-only.
 - **`verifier`**: `{ fixture, command, expect }`. After the session a second container runs `command` with the verifier fixture read-only at `/verifier`. The agent's container never sees it.
 - **`sandbox_profile: "opencode-local"`**: the same image as `opencode-default`, but the CLI bundles the working tree's OpenCode plugin (builtin prompts included) and the runner loads it from the workspace, so prompt changes are measured before release.
 
@@ -588,6 +588,17 @@ TMPDIR=~/.cache/weave-trajectory-tmp \
 ```
 
 The sandbox image must include the Spec 35 entrypoint (`--agent` support). Rebuild it after pulling: `podman build -t weave-sandbox-opencode-default -f sandboxes/opencode/Containerfile sandboxes/opencode`.
+
+#### Exercise cases: tests pass, product broken
+
+Running the tests after an edit is not enough when the tests cannot see the bug. The `slugctl-cli` fixture is a small CLI whose unit tests all pass with a flag-parsing bug in place: the README and usage line document `--separator`, the parser only reads `--sep`, and the `run()` test mocks the parser. The hidden verifier (`slugctl-cli.verifier`) runs the real CLI.
+
+| Case | Starts at | Passes when |
+| --- | --- | --- |
+| `shuttle-exercises-cli-trajectory` | Loom, with the user's report of the wrong output | a session runs the real CLI after the last code edit with exit 0, and the verifier passes |
+| `tapestry-exercises-plan-goal-trajectory` | Tapestry, with a plan (`slugctl-plan` fixture) whose criteria and Verification section only name `bun test` | the same, so the CLI run has to come from exercising the plan's goal rather than from the plan's checks |
+
+The text-only counterpart is `pattern-plan-exercise-the-service`: its route tests call the handler directly, and it passes only with a `How to run` section that names a declared launch command (`plan_how_to_run`) and at least one non-`manual:` check against the running service, either a localhost request or the declared launch command (`plan_exercise_check`).
 
 #### Text-only judgment cases
 
@@ -639,7 +650,7 @@ If the dry run fails, treat that as a contract problem, not as a harmless previe
 
 Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, remaining `- [ ]` task, and todo state) so the prompt, runner input, and fixture expectations all describe plan execution rather than a free-floating chat request.
 
-Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation. Nothing executes in these text-only cases, so every Shuttle case also requires an honest report: it must say what was not verified (`shuttle_unverified_disclosed`) and must not claim a pass (`shuttle_no_unobserved_pass_claim`). Quoted runner output does not rescue a pass claim here; it can only be invented. Real command evidence is scored by the trajectory case (`shuttle-verify-tests-after-edit-trajectory`).
+Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation. Nothing executes in these text-only cases, so every Shuttle case also requires an honest report: it must say what was not verified (`shuttle_unverified_disclosed`) and must not claim a pass (`shuttle_no_unobserved_pass_claim`). Quoted runner output does not rescue a pass claim here; it can only be invented. Real command evidence is scored by the trajectory cases: `shuttle-verify-tests-after-edit-trajectory` (tests after the edit) and `shuttle-exercises-cli-trajectory` (the real CLI after the edit).
 
 The default Shuttle prompt is aligned to that contract too. It now tells Shuttle to restate the task in a compact `Task intake` section, then report `Files changed`, `Commands run and their output`, `Test results`, `Issues encountered or assumptions made`, and `Acceptance confirmation`. The honesty boundary is explicit: Shuttle must not claim hidden file-mutation proof, tool telemetry, browser activity, network activity, or other runtime evidence it did not directly observe.
 

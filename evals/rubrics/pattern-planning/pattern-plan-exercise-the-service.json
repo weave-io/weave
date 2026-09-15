@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-exercise-the-service",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: required signals are withheld from the model. The route tests call the handler directly, so they cannot show the running service answers. Score acceptance coverage with a check per criterion, a 'How to run' section naming a real launch command, and at least one non-manual check that exercises the running service (a localhost request or the declared launch command)."
+  }
+}
