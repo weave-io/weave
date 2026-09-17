@@ -1045,7 +1045,7 @@ describe("materialization orchestration", () => {
             name: "code-review",
             metadata: {
               apiKey: "sk-secret-api-key-12345",
-              token: "example-bearer-token",
+              token: "bearer-token-xyz",
               envFile: "/project/.env",
             },
           },
@@ -1070,7 +1070,7 @@ describe("materialization orchestration", () => {
 
       // Secrets must NOT appear in the serialized descriptor
       expect(serialized).not.toContain("sk-secret-api-key-12345");
-      expect(serialized).not.toContain("example-bearer-token");
+      expect(serialized).not.toContain("bearer-token-xyz");
       expect(serialized).not.toContain("/project/.env");
     });
 

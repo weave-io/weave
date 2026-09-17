@@ -48,7 +48,7 @@ import { err, ok, type Result } from "neverthrow";
 
 export type TrajectoryParseError = TrajectoryEventParseError;
 
-const UNDEFINED_LITERAL = "undefined";
+const UNDEFINED_TOKEN = "undefined";
 
 /**
  * Tokenizes a single `key=value` log line into a flat string record.
@@ -148,14 +148,14 @@ function buildEventForLine(
   if (message === "created" && fields["id"] !== undefined) {
     const sessionId = fields["id"];
     const agentName =
-      fields["agent"] === UNDEFINED_LITERAL || fields["agent"] === undefined
+      fields["agent"] === UNDEFINED_TOKEN || fields["agent"] === undefined
         ? "unknown"
         : fields["agent"];
     const parentID = fields["parentID"];
     state.sessionAgent.set(sessionId, agentName);
     state.sessionCreatedAt.set(sessionId, timestamp);
 
-    if (parentID !== undefined && parentID !== UNDEFINED_LITERAL) {
+    if (parentID !== undefined && parentID !== UNDEFINED_TOKEN) {
       const parentAgentName = resolveAgentName(state, parentID);
       const candidate = {
         kind: "subagent-spawned" as const,
@@ -181,7 +181,7 @@ function buildEventForLine(
       timestamp,
       agentName,
       model:
-        fields["model"] === UNDEFINED_LITERAL || fields["model"] === undefined
+        fields["model"] === UNDEFINED_TOKEN || fields["model"] === undefined
           ? "unknown"
           : fields["model"],
     };

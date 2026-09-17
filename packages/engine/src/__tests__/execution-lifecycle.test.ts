@@ -767,7 +767,7 @@ describe("observeSession (Runtime Store)", () => {
         harnessName: "claude-code",
         agentName: "shuttle",
         sessionStatus: "idle",
-        metadata: { token: "example-token-value" } as Record<
+        metadata: { token: "secret-token-value" } as Record<
           string,
           string | number | boolean
         >,
@@ -2346,7 +2346,7 @@ describe("sanitizeMetadata", () => {
   });
 
   it("sanitizeMetadata: rejects apiKey key (case-insensitive)", () => {
-    const result = sanitizeMetadata({ apiKey: "example-api-key" });
+    const result = sanitizeMetadata({ apiKey: "sk-abc123" });
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -2445,7 +2445,7 @@ describe("sanitizeMetadata", () => {
   });
 
   it("sanitizeMetadata: rejects refreshToken key", () => {
-    const result = sanitizeMetadata({ refreshToken: "example-refresh-token" });
+    const result = sanitizeMetadata({ refreshToken: "rt-abc123" });
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
@@ -2454,7 +2454,7 @@ describe("sanitizeMetadata", () => {
 
   it("sanitizeMetadata: rejects privateKey key", () => {
     const result = sanitizeMetadata({
-      privateKey: "example-private-key",
+      privateKey: "-----BEGIN RSA PRIVATE KEY-----",
     });
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2489,7 +2489,7 @@ describe("observeSession: metadata sanitization", () => {
         harnessName: "opencode",
         agentName: "loom",
         sessionStatus: "active",
-        metadata: { token: "example-token" } as SafeMetadata,
+        metadata: { token: "secret-token" } as SafeMetadata,
       },
       store,
     );

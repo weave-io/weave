@@ -88,7 +88,7 @@ const FAKE_GIT_SHA = "abc1234def5678901234567890123456789012ab";
 const DEFAULT_MODEL_COUNT = resolveDefaultModels(
   (await loadModelMatrix())._unsafeUnwrap(),
 ).length;
-const FAKE_API_KEY = "example-api-key-not-real";
+const FAKE_API_KEY = "test-api-key-not-real";
 const FIXED_TIMESTAMP = "2026-06-10T00:00:00.000Z";
 
 /**
@@ -1419,7 +1419,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
         publishMode: "publish",
         env: {
           OPENROUTER_API_KEY: FAKE_API_KEY,
-          EVAL_RESULTS_REPO_TOKEN: "example-token-for-test",
+          EVAL_RESULTS_REPO_TOKEN: "fake-token-for-test",
         },
       }),
     );
@@ -1467,7 +1467,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       assembledAt: FIXED_TIMESTAMP,
       env: {
         OPENROUTER_API_KEY: FAKE_API_KEY,
-        EVAL_RESULTS_REPO_TOKEN: "example-results-token-not-real",
+        EVAL_RESULTS_REPO_TOKEN: "fake-results-token-not-real",
       },
     });
 
@@ -1534,7 +1534,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       assembledAt: FIXED_TIMESTAMP,
       env: {
         OPENROUTER_API_KEY: FAKE_API_KEY,
-        EVAL_RESULTS_REPO_TOKEN: "example-results-token-not-real",
+        EVAL_RESULTS_REPO_TOKEN: "fake-results-token-not-real",
       },
     });
 
@@ -1554,7 +1554,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       const msg = getEvalValidationMessage(result.error);
       expect(msg).toContain("Bundle write failed");
       // Must not leak the token value
-      expect(msg).not.toContain("example-results-token-not-real");
+      expect(msg).not.toContain("fake-results-token-not-real");
     }
 
     // Publisher was still called (failure is from publisher, not pre-flight)
@@ -1597,7 +1597,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
       assembledAt: FIXED_TIMESTAMP,
       env: {
         OPENROUTER_API_KEY: FAKE_API_KEY,
-        EVAL_RESULTS_REPO_TOKEN: "example-results-token-not-real",
+        EVAL_RESULTS_REPO_TOKEN: "fake-results-token-not-real",
       },
     });
 
@@ -2516,7 +2516,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
       assembledAt: FIXED_TIMESTAMP,
       env: {
         OPENROUTER_API_KEY: FAKE_API_KEY,
-        EVAL_RESULTS_REPO_TOKEN: "example-publish-token",
+        EVAL_RESULTS_REPO_TOKEN: "fake-publish-token",
       },
     });
 

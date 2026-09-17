@@ -170,7 +170,7 @@ function buildRunner(
     logParser: new StubLogParser(),
     promptProvider: new MockPromptProvider(),
     workspaceFactory: new MockWorkspaceFactory(),
-    openRouterApiKey: "example-openrouter-key",
+    openRouterApiKey: "test-key",
     repoRoot: "/fake/repo",
     // Keep the post-kill drain grace short so the timeout test finishes
     // well within Bun's default 5s per-test ceiling even when the mocked
@@ -256,10 +256,12 @@ describe("OpenCodeTrajectoryRunner", () => {
     // interpolated into argv. The actual value must be supplied via the
     // separate `env` parameter to `PodmanClient.run`, not via `args`.
     expect(runArgs).toContain("OPENROUTER_API_KEY");
-    expect(runArgs.some((arg) => /^OPENROUTER_API_KEY=/.test(arg))).toBe(false);
-    expect(runArgs.join(" ")).not.toContain("example-openrouter-key");
+    expect(runArgs.some((arg) => arg.startsWith("OPENROUTER_API_KEY="))).toBe(
+      false,
+    );
+    expect(runArgs.join(" ")).not.toContain("test-key");
     expect(podman.runEnvCalls[0]).toEqual({
-      OPENROUTER_API_KEY: "example-openrouter-key",
+      OPENROUTER_API_KEY: "test-key",
     });
   });
 
@@ -278,7 +280,7 @@ describe("OpenCodeTrajectoryRunner", () => {
       logParser: new StubLogParser(),
       promptProvider: new MockPromptProvider(),
       workspaceFactory: new MockWorkspaceFactory(),
-      openRouterApiKey: "example-openrouter-key",
+      openRouterApiKey: "test-key",
       repoRoot: realRepoRoot,
       timeoutDrainGraceMs: 50,
       fileSystem: new InMemoryFileSystem(),
@@ -389,12 +391,8 @@ describe("OpenCodeTrajectoryRunner", () => {
 });
 
 describe("WEAVE_TRAJECTORY_DUMP_STDERR secret redaction", () => {
-  // Synthetic fixture: OpenRouter-shaped key, not a real credential.
-  const OPENROUTER_KEY = "sk-or-v1-abcdef0123456789abcdef0123456789";
-  // Synthetic fixture: GitHub PAT-shaped token, not a real credential.
-  const GITHUB_PAT = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   const REALISTIC_SECRET_STDERR = `${CANNED_STDERR}
-timestamp=2026-09-03T17:21:40.000Z level=DEBUG run=abc message="outbound request" headers.authorization="Bearer ${OPENROUTER_KEY}" openrouter_key=${OPENROUTER_KEY} github_token=${GITHUB_PAT}
+timestamp=2026-09-03T17:21:40.000Z level=DEBUG run=abc message="outbound request" headers.authorization="Bearer sk-or-v1-abcdef0123456789abcdef0123456789" openrouter_key=sk-or-v1-abcdef0123456789abcdef0123456789 github_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
 `;
 
   async function withTempDumpDir(
@@ -439,9 +437,15 @@ timestamp=2026-09-03T17:21:40.000Z level=DEBUG run=abc message="outbound request
 
         const path = `${dir}/tc-1.stderr.log`;
         const written = await Bun.file(path).text();
-        expect(written).not.toContain(OPENROUTER_KEY);
-        expect(written).not.toContain(GITHUB_PAT);
-        expect(written).not.toContain(`Bearer ${OPENROUTER_KEY}`);
+        expect(written).not.toContain(
+          "sk-or-v1-abcdef0123456789abcdef0123456789",
+        );
+        expect(written).not.toContain(
+          "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        );
+        expect(written).not.toContain(
+          "Bearer sk-or-v1-abcdef0123456789abcdef0123456789",
+        );
         expect(written).toContain("[REDACTED");
       } finally {
         if (prevDump === undefined) delete Bun.env.WEAVE_TRAJECTORY_DUMP_STDERR;

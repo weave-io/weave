@@ -2478,7 +2478,7 @@ describe("LoomRoutingRunner — localDiagnostic in rawArtifact errorSummary", ()
       dimension: "routingCorrectness",
       // Message containing a realistic-looking API key
       message:
-        "Request failed: authentication error for key sk-ant-api03-xxxx-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789",
+        "Request failed: authentication error for key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789",
     });
 
     const cases = [makeAgentRoutingCase()];
@@ -2493,7 +2493,7 @@ describe("LoomRoutingRunner — localDiagnostic in rawArtifact errorSummary", ()
 
     // The raw API key must NOT appear in the diagnostic
     expect(diagnostic).not.toContain(
-      "sk-ant-api03-xxxx-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789",
+      "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789",
     );
     // But the diagnostic should still be present and meaningful
     expect(diagnostic.length).toBeGreaterThan(0);

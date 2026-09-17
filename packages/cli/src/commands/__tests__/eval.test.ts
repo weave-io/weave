@@ -747,7 +747,7 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
     };
 
     const evalEnv = {
-      apiKey: "example-openrouter-api-key",
+      apiKey: "test-openrouter-api-key",
       baseUrl: "https://openrouter.ai/api/v1",
     };
 
@@ -760,7 +760,7 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
 
     // Critical: `apiKey` must be present — this is the field the v1
     // BaseChatOpenAI constructor reads.
-    expect(fields.apiKey).toBe("example-openrouter-api-key");
+    expect(fields.apiKey).toBe("test-openrouter-api-key");
 
     // Equally critical: `openAIApiKey` must NOT be the sole auth mechanism
     // (it is ignored by the runtime in @langchain/openai v1).
@@ -779,7 +779,7 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
     };
 
     const evalEnv = {
-      apiKey: "example-key-abc",
+      apiKey: "test-key-abc",
       baseUrl: "https://openrouter.ai/api/v1",
     };
 
@@ -787,7 +787,7 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
 
     const fields = capturedFields[0];
     // `apiKey` is set — the v1 constructor will find it
-    expect(fields.apiKey).toBe("example-key-abc");
+    expect(fields.apiKey).toBe("test-key-abc");
     // `openAIApiKey` is NOT the primary auth field — it is a dead alias in v1
     expect(fields.openAIApiKey).toBeUndefined();
   });
@@ -802,7 +802,7 @@ describe("buildLangChainScorer — ChatOpenAI receives apiKey (not openAIApiKey)
     };
 
     const evalEnv = {
-      apiKey: "example-key",
+      apiKey: "test-key",
       baseUrl: "https://openrouter.ai/api/v1",
     };
 
@@ -931,7 +931,7 @@ describe("runEval — publish mode wiring", () => {
 
   it("EVAL_RESULTS_REPO_TOKEN is never included in any error surfaced by runEval", async () => {
     // Simulate a missing API key failure while publish mode is set
-    const fakeToken = "ghp_xxxx_test_token_not_real";
+    const fakeToken = "ghp_test_token_not_real_xyz789";
     const { terminal, ctx } = context({ evalSubcommand: "run" }, {});
 
     const runnerCtx: EvalContext = {

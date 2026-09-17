@@ -1,39 +1,33 @@
 import { describe, expect, it } from "bun:test";
 import { redactSecrets } from "../runtime/secret-redaction.js";
 
-// Synthetic fixture: OpenRouter-shaped key, not a real credential.
-const OPENROUTER_KEY = "sk-or-v1-abcdef0123456789abcdef0123456789";
-// Synthetic fixture: Anthropic-shaped key, not a real credential.
-const ANTHROPIC_KEY = "sk-ant-abcdef0123456789abcdef0123456789";
-// Synthetic fixture: GitHub PAT-shaped token, not a real credential.
-const GITHUB_PAT = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
 describe("redactSecrets", () => {
   it("redacts an OpenRouter sk-or-v1- style key", () => {
-    const raw = `OPENROUTER_API_KEY=${OPENROUTER_KEY}`;
+    const raw = "OPENROUTER_API_KEY=sk-or-v1-abcdef0123456789abcdef0123456789";
     const redacted = redactSecrets(raw);
-    expect(redacted).not.toContain(OPENROUTER_KEY);
+    expect(redacted).not.toContain("sk-or-v1-abcdef0123456789abcdef0123456789");
     expect(redacted).toContain("[REDACTED-KEY]");
   });
 
   it("redacts a Bearer authorization header", () => {
-    const raw = `Authorization: Bearer ${OPENROUTER_KEY}`;
+    const raw =
+      "Authorization: Bearer sk-or-v1-abcdef0123456789abcdef0123456789";
     const redacted = redactSecrets(raw);
-    expect(redacted).not.toContain(OPENROUTER_KEY);
+    expect(redacted).not.toContain("sk-or-v1-abcdef0123456789abcdef0123456789");
     expect(redacted).toContain("[REDACTED");
   });
 
   it("redacts a GitHub personal access token (ghp_...)", () => {
-    const raw = `github_token=${GITHUB_PAT}`;
+    const raw = "github_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const redacted = redactSecrets(raw);
-    expect(redacted).not.toContain(GITHUB_PAT);
+    expect(redacted).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
     expect(redacted).toContain("[REDACTED-KEY]");
   });
 
   it("redacts an Anthropic sk-ant- style key", () => {
-    const raw = ANTHROPIC_KEY;
+    const raw = "sk-ant-abcdef0123456789abcdef0123456789";
     const redacted = redactSecrets(raw);
-    expect(redacted).not.toContain(ANTHROPIC_KEY);
+    expect(redacted).not.toContain("sk-ant-abcdef0123456789abcdef0123456789");
     expect(redacted).toContain("[REDACTED-KEY]");
   });
 
@@ -65,11 +59,11 @@ describe("redactSecrets", () => {
 
   it("redacts multiple distinct secrets in one blob (realistic DEBUG stream)", () => {
     const raw =
-      `headers.authorization="Bearer ${OPENROUTER_KEY}" ` +
-      `openrouter_key=${OPENROUTER_KEY} ` +
-      `github_token=${GITHUB_PAT}`;
+      'headers.authorization="Bearer sk-or-v1-abcdef0123456789abcdef0123456789" ' +
+      "openrouter_key=sk-or-v1-abcdef0123456789abcdef0123456789 " +
+      "github_token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const redacted = redactSecrets(raw);
-    expect(redacted).not.toContain(OPENROUTER_KEY);
-    expect(redacted).not.toContain(GITHUB_PAT);
+    expect(redacted).not.toContain("sk-or-v1-abcdef0123456789abcdef0123456789");
+    expect(redacted).not.toContain("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
   });
 });

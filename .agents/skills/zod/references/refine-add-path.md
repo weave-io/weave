@@ -23,8 +23,8 @@ const formSchema = z.object({
 )
 
 const result = formSchema.safeParse({
-  password: 'password123',
-  confirmPassword: 'testpass123',
+  password: 'secret123',
+  confirmPassword: 'different',
 })
 
 if (!result.success) {
@@ -55,8 +55,8 @@ const formSchema = z.object({
 )
 
 const result = formSchema.safeParse({
-  password: 'password123',
-  confirmPassword: 'testpass123',
+  password: 'secret123',
+  confirmPassword: 'different',
 })
 
 if (!result.success) {

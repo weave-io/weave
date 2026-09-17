@@ -1170,7 +1170,7 @@ describe("buildExplanation", () => {
 
   it("returns err with ExplanationForbiddenPattern for secret token pattern", () => {
     const result = buildExplanation(
-      "Using key: sk-xxxxxxxxxxxxxxxxxxxx",
+      "Using key: sk-abcdefghijklmnopqrstu",
       "operator_note",
       "human_review",
     );

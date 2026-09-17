@@ -34,7 +34,7 @@ const formSchema = z.object({
 // If passwords don't match, user never learns about other errors
 formSchema.safeParse({
   email: 'bad-email',
-  passwords: { password: 'password123', confirmPassword: 'testpass123' },
+  passwords: { password: '12345678', confirmPassword: 'different' },
   terms: false,
 })
 // Only shows: "Passwords do not match"
@@ -63,7 +63,7 @@ const formSchema = z.object({
 // All errors are collected
 formSchema.safeParse({
   email: 'bad-email',
-  passwords: { password: 'password123', confirmPassword: 'testpass123' },
+  passwords: { password: '12345678', confirmPassword: 'different' },
   terms: false,
 })
 // Shows all errors:

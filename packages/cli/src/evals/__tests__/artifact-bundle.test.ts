@@ -3676,7 +3676,7 @@ describe("ArtifactBundleWriter — remoteSequenceReader", () => {
     const writer = new ArtifactBundleWriter(bundleRoot);
     const stub = makeRsrStubPublisher();
     const remoteReader = makeRemoteReaderStub([]);
-    const token = "ghp_xxxx_fake_token_for_testing";
+    const token = "ghp_fake_token_for_testing";
 
     await writer.writeBundle({
       runnerResults: [makeRunnerResult()],

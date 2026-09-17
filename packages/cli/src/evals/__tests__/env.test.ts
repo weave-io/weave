@@ -36,7 +36,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const VALID_API_KEY = "sk-or-v1-xxxx-test1234567890abcdef";
+const VALID_API_KEY = "sk-or-v1-test1234567890abcdef";
 
 /** Build a minimal valid env map. */
 function validEnv(

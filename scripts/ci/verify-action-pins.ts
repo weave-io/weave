@@ -2,11 +2,7 @@ import { join } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
-export const ALLOWED_ACTION_OWNERS = new Set([
-  "actions",
-  "hashgraph-online",
-  "oven-sh",
-]);
+export const ALLOWED_ACTION_OWNERS = new Set(["actions", "oven-sh"]);
 export const REQUIRED_ARTIFACT_ACTION_PINS = {
   "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
   "actions/download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",

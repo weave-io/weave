@@ -2210,7 +2210,7 @@ describe("buildRationaleProjection — structured safe projection for judge", ()
     judge.setDefaultOutput({ score: 1.0, rationale: "ok" });
 
     const scorer = new LangChainAgentEvalsScorer(judge);
-    const sensitiveMarker = "sk-xxxx-secret-api-key-sentinel";
+    const sensitiveMarker = "sk-secret-api-key-sentinel";
     const run = makeRun({
       rawContent: `This response contains a sensitive marker: ${sensitiveMarker}.`,
       routedAgents: ["shuttle"],

@@ -66,7 +66,7 @@ import type { EvalBundle, ResultsRepoError } from "../types.js";
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const FAKE_TOKEN = "ghp_xxxx_test_token_not_real";
+const FAKE_TOKEN = "ghp_test_token_not_real_abc123";
 const FIXED_GIT_SHA = "abc123def456abc123def456abc123def456abc1";
 const FIXED_TIMESTAMP = "2026-06-11T12:00:00.000Z";
 const BUNDLE_DIR_NAME = "abc123d-2026-06-11-001";

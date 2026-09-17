@@ -3667,7 +3667,7 @@ export const PiChildProviderErrorSchema: z.ZodObject<{
         gateway_timeout: "gateway_timeout";
         insufficient_quota: "insufficient_quota";
         internal_server_error: "internal_server_error";
-        "invalid_api_key": "invalid_api_key";
+        invalid_api_key: "invalid_api_key";
         invalid_request_error: "invalid_request_error";
         malformed_response: "malformed_response";
         model_not_found: "model_not_found";

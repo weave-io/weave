@@ -146,7 +146,6 @@ describe("joinObserverRecords", () => {
   });
 
   it("redacts secrets and bounds command text", () => {
-    // Synthetic fixture key shaped like an OpenRouter key; not a real credential.
     const secret = "sk-or-v1-0123456789abcdef0123456789abcdef";
     const [redacted] = joinObserverRecords(
       [],

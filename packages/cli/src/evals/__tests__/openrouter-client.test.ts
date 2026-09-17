@@ -37,7 +37,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const FAKE_API_KEY = "sk-or-v1-xxxx-test-fake-key";
+const FAKE_API_KEY = "sk-or-v1-test-fake-key-for-tests";
 
 const VALID_ENV: EvalEnv = {
   apiKey: FAKE_API_KEY,

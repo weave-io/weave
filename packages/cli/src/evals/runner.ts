@@ -714,7 +714,7 @@ export interface EvalOrchestratorOptions {
  *   promptProvider: new MockPromptProvider("You are Loom..."),
  *   gitShaProvider: { resolveGitSha: () => ok("abc1234") },
  *   bundleRoot: "/tmp/test-bundles",
- *   env: { OPENROUTER_API_KEY: fakeApiKey },
+ *   env: { OPENROUTER_API_KEY: "test-key" },
  *   evalsRoot: "/tmp/test-fixtures",
  * });
  *

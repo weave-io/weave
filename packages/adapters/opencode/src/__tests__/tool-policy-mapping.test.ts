@@ -505,7 +505,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
       toolCapability: "read",
       toolName: "read_file",
       effectiveToolPolicy: policy,
-      metadata: { secret: "example-secret" } as Record<
+      metadata: { secret: "my-secret" } as Record<
         string,
         string | number | boolean
       >,
