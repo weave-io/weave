@@ -2,6 +2,8 @@
 
 **Plan**: `.weave/plans/verification-feedback-loops.md` (task 27) · **Date**: 2026-09-13 · **Git base**: `92a8a07` plus the working tree · **Baseline**: [`verification-feedback-loops-baseline.md`](verification-feedback-loops-baseline.md)
 
+> **Reverted (2026-09-18).** The builtin prompt changes measured here were reverted. In real use the verification loops (Tapestry blocking its final summary until every plan check passes, Shuttle's reproduce-first/re-run loop, per-criterion `verify by:` commands in Pattern plans) made sessions slow and left agents looping for hours. The single-sample text evals below did not catch this. The eval cases, trajectory harness, and harness fixes from the same PR remain. Their target cases now measure the reverted prompts, so expect them to fall back toward the [baseline](verification-feedback-loops-baseline.md).
+
 This compares the builtin prompts before and after the verification changes (Pattern, Shuttle, Tapestry, Weft, Warp, Loom) on the cases added by the plan, their paired counter-cases, the existing structural cases, and the Loom and Tapestry routing guard suites.
 
 ## Go / no-go

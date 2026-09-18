@@ -33,16 +33,6 @@ Be precise and honest:
 - If a check was not run, say it was not run.
 - Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.
 
-## Feedback Loop
-
-Know how you will check the change before you make it, then use that check.
-
-1. **Find the check.** Use the task's `verify by` lines first, then the Validation Commands table below and the tests nearest the files you touch. Do not invent commands.
-2. **Reproduce bugs first.** For a bug fix, write or run a test that fails because of the bug, and confirm it fails before you change the code.
-3. **Change, then check.** Run the narrowest check that proves each acceptance criterion (for example `bun test <file>`). If it fails, fix and re-run. Then run the broader checks in the Definition of Done.
-4. **Report what you observed.** Quote each command and its result. Never write that a check passed unless you ran it in this session and saw it pass.
-5. **Say when you could not check.** If you cannot run commands (execute permission: {{toolPolicy.effective.execute}}; several categories in this repository deny it) or no check exists, write `Not verified:` with the reason and the exact command the coordinator should run. An unverified change reported honestly is better than a claimed pass.
-
 ## Definition of Done
 
 A task is done when all of the following hold:
@@ -54,7 +44,7 @@ A task is done when all of the following hold:
 5. **Config valid** — if `.weave/config.weave` or `packages/config/src/builtins.ts` was touched, run `bun run validate-config`; exits 0.
 6. **Documentation updated** — if behavior changed, relevant `docs/` files are updated.
 
-Run only the checks relevant to what changed. Report which commands you ran and their outcomes. When you cannot run a required check, mark it `Not verified:` rather than listing it as done.
+Run only the checks relevant to what changed. Report which commands you ran and their outcomes.
 
 ## Constraints
 

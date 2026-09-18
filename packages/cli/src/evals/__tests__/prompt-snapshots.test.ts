@@ -41,7 +41,7 @@ const WEFT_PROMPT_APPROVAL_CONTRACT =
 const WEFT_PROMPT_REVIEWED_FILES_CONTRACT =
   "The second line must be `Reviewed files:` with backticked file paths.";
 const WEFT_PROMPT_BLOCKER_CONTRACT =
-  "Every `BLOCKER:` line must cite where the problem originates and where it surfaces as `path:line` locations";
+  "Every `BLOCKER:` line must cite a specific file path";
 const PATTERN_PROMPT_SCOPE_CONTRACT =
   "An explicit `## Scope` section that says what is in scope, what is out of scope, and any important constraints.";
 const PATTERN_PROMPT_ORDER_CONTRACT = "## Dependencies and Order";
