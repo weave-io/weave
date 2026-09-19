@@ -11,6 +11,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 ## Index
 
 - [`opencode2-feasibility/`](opencode2-feasibility/README.md) — go/no-go feasibility evidence for the opencode2 adapter (Spec 33), tasks A1–A6.
+- [`session-audit-2026-09.md`](session-audit-2026-09.md) — audit of 790 real OpenCode sessions (4–18 Sep 2026): baseline scorecard, decisions, and the WS0–WS4 remediation roadmap that Spec 37 starts.
 
 ---
 
