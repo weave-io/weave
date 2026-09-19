@@ -12,8 +12,10 @@
   workstation, 4–18 Sep 2026: 790 sessions (about 230 top-level), 17,661 messages, 67,616 parts.
 - Projects: harmony, madsmenu, aside/model-router, weave, weave-fleet.
 - Weave version in use: stable `0.1.2`. The 18 automated Fleet test sessions under `/tmp` were excluded.
-- An interactive version of this plan was published as a private claude.ai artifact
-  ("Weave Remediation Plan"). This file is the repository copy.
+- The plan was also written as a standalone page, saved as
+  [`session-audit-2026-09-plan.html`](session-audit-2026-09-plan.html) (open it in a browser),
+  and published as a private claude.ai artifact, "Weave Remediation Plan". This Markdown file is the canonical copy;
+  the page has the fuller per-workstream detail (evidence, root causes, test layers).
 
 ## Baseline scorecard
 

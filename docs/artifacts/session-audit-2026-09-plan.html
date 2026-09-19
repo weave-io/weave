@@ -1,0 +1,360 @@
+<title>Weave Remediation Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#f4f5f7; --surface:#ffffff; --sunken:#eceef2; --ink:#1a1e28; --muted:#586072; --faint:#8a92a3;
+  --rule:#d9dde5; --accent:#1c6a86; --accent-soft:#e1eff4;
+  --crit:#b3362c; --crit-soft:#f7e3e0; --warn:#9a5d06; --warn-soft:#f6ecd9; --ok:#2c7a4b; --ok-soft:#e0f0e6;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#11141a; --surface:#181c24; --sunken:#1f242e; --ink:#e5e8ee; --muted:#a3abbb; --faint:#747d8f;
+    --rule:#2c3340; --accent:#62b4d2; --accent-soft:#16303a;
+    --crit:#ec7b70; --crit-soft:#3a1f1d; --warn:#e0a54a; --warn-soft:#352a17; --ok:#6cc48f; --ok-soft:#18311f;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11141a; --surface:#181c24; --sunken:#1f242e; --ink:#e5e8ee; --muted:#a3abbb; --faint:#747d8f;
+  --rule:#2c3340; --accent:#62b4d2; --accent-soft:#16303a;
+  --crit:#ec7b70; --crit-soft:#3a1f1d; --warn:#e0a54a; --warn-soft:#352a17; --ok:#6cc48f; --ok-soft:#18311f;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15.5px;line-height:1.6;padding-inline:20px;padding-block:0 72px}
+.wrap{max-width:980px;margin:0 auto}
+.prose{max-width:68ch}
+h1,h2,h3,h4{font-family:var(--display);line-height:1.2;text-wrap:balance;margin:0}
+h1{font-size:clamp(2rem,4.2vw,2.8rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.65rem;font-weight:700;margin-bottom:.4rem}
+h3{font-size:1.2rem;font-weight:600}
+h4{font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:.35rem}
+p{margin:0 0 .8rem}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.86em;background:var(--sunken);padding:.08em .35em;border-radius:3px}
+.eyebrow{font-family:var(--mono);font-size:.78rem;color:var(--muted);letter-spacing:.04em}
+header.top{padding-block:48px 28px;border-bottom:1px solid var(--rule);margin-bottom:8px}
+header.top .lede{font-size:1.1rem;color:var(--muted);max-width:66ch;margin-top:12px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;font-size:.88rem;color:var(--muted)}
+.meta b{color:var(--ink);font-weight:600}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--ground);border-bottom:1px solid var(--rule);padding-block:10px;margin-bottom:28px}
+nav.toc ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 18px;font-size:.88rem}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent);text-decoration:underline}
+section{padding-block:28px;border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+.decisions{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:14px}
+.decision{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px}
+.decision .tag{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.decision p{margin:.3rem 0 0;font-size:.93rem}
+.tbl{overflow-x:auto;margin-top:14px;border:1px solid var(--rule);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:720px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--rule)}
+tr:last-child td{border-bottom:0}
+th{font-family:var(--display);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--sunken)}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td.ws{font-family:var(--mono);font-size:.8rem;color:var(--muted);white-space:nowrap}
+.bad{color:var(--crit)} .good{color:var(--ok)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.72rem;font-weight:500;padding:.1em .55em;border-radius:99px;white-space:nowrap;vertical-align:.1em}
+.p0{background:var(--crit-soft);color:var(--crit)} .p1{background:var(--warn-soft);color:var(--warn)} .p2{background:var(--accent-soft);color:var(--accent)}
+.ws-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-bottom:10px}
+.ws-id{font-family:var(--mono);font-size:.85rem;color:var(--accent);font-weight:500}
+.spec{display:grid;grid-template-columns:150px 1fr;gap:14px 22px;margin-top:18px}
+.spec > h4{margin:0;padding-top:.15rem}
+.spec > div > :last-child{margin-bottom:0}
+@media (max-width:640px){.spec{grid-template-columns:1fr;gap:4px}.spec > div{margin-bottom:12px}}
+ul.evidence,ol.steps,ul.plain{margin:0;padding-left:1.2rem}
+ul.evidence li,ol.steps li,ul.plain li{margin-bottom:.45rem}
+ol.steps li::marker{font-family:var(--mono);color:var(--accent);font-size:.85em}
+.quote{border-left:3px solid var(--rule);padding:.1rem 0 .1rem .9rem;color:var(--muted);font-style:italic;margin:.2rem 0 .9rem}
+.cause{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:.93rem}
+.cause span.k{font-family:var(--mono);color:var(--faint);font-size:.8rem;padding-top:.2rem}
+.note{background:var(--accent-soft);border-radius:6px;padding:12px 16px;font-size:.93rem;margin-top:14px}
+.note b{color:var(--accent)}
+.phases{display:grid;gap:0;margin-top:16px;border-left:2px solid var(--rule);padding-left:0}
+.phase{position:relative;padding:0 0 22px 26px}
+.phase::before{content:"";position:absolute;left:-7px;top:.45rem;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+.phase .when{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.phase p{margin:.25rem 0 .3rem;font-size:.95rem}
+.phase .exit{font-size:.88rem;color:var(--muted)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:22px;margin-top:10px}
+footer{padding-top:28px;color:var(--faint);font-size:.82rem}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+section{scroll-margin-top:56px}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">weave-io/weave · remediation plan · drafted 19 Sep 2026</div>
+  <h1>Weave Remediation Plan</h1>
+  <p class="lede">Weave's job is to let you talk to one agent and get the work of many. In real sessions it lost the most time to failed or badly chosen delegations, to serial execution of plans that could have run in parallel, and to tasks that ran silently for so long they looked stuck. This plan sets measurable goals for each of those problems, describes the fixes, and names the tests that stop them coming back.</p>
+  <div class="meta">
+    <span>Evidence <b>790 OpenCode sessions</b></span>
+    <span>Window <b>4–18 Sep 2026</b></span>
+    <span>Projects <b>harmony · madsmenu · aside · weave · fleet</b></span>
+    <span>Weave version <b>0.1.2 (stable)</b></span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <ul>
+    <li><a href="#decisions">Decisions</a></li>
+    <li><a href="#scorecard">Scorecard</a></li>
+    <li><a href="#ws0">WS0 Measure</a></li>
+    <li><a href="#ws1">WS1 Delegation</a></li>
+    <li><a href="#ws2">WS2 Parallel</a></li>
+    <li><a href="#ws3">WS3 Environment</a></li>
+    <li><a href="#ws4">WS4 Friction</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#risks">Risks</a></li>
+  </ul>
+</nav>
+
+<section id="decisions">
+  <h2>Decisions already made</h2>
+  <p class="prose">These decisions from the review of the first findings constrain everything below.</p>
+  <div class="decisions">
+    <div class="decision"><span class="tag">Kept</span><h3>/weave:start stays explicit</h3><p>Harnesses don't switch the primary agent unless the user does it, so handing a plan to Tapestry through a command stays. This plan doesn't touch that handoff.</p></div>
+    <div class="decision"><span class="tag">Kept</span><h3>No per-change verification loops</h3><p>#182 reverted #170 because Shuttle and Tapestry spent hours re-checking their work. Every verification idea here is triggered by a specific event, runs once, and is measured against Shuttle's baseline task duration.</p></div>
+    <div class="decision"><span class="tag">Decided</span><h3>0.2.0 does not ship</h3><p><code>0.2.0-next.0</code> isn't a stable release. Fixes land on <code>main</code> and ship when you decide they're ready for <b>0.2.1</b>. No backport, so <code>latest</code> (0.1.2) keeps the category-shuttle bug until then. Dogfooding and the L3 proofs run against local builds of <code>main</code>. If the prerelease is withdrawn, deprecate it and remove the <code>next</code> tag rather than unpublishing (see risks).</p></div>
+    <div class="decision"><span class="tag">Decided</span><h3>Loom never executes plans</h3><p>Loom creates plans (via Pattern) and answers questions. Executing a plan belongs to Tapestry alone. If you message Loom while a plan is active, it answers and points you to <code>/weave:start</code> to resume; it never delegates plan tasks itself.</p></div>
+    <div class="decision"><span class="tag">Priority</span><h3>Delegation accuracy first, with tests</h3><p>A failed or misrouted delegation wastes both time and tokens. WS1 fixes this first and adds tests at five layers, from unit tests through to data from real sessions.</p></div>
+    <div class="decision"><span class="tag">Priority</span><h3>Parallelism and "stuck" next</h3><p>Plans ran serially and long tasks gave no sign of progress. WS2 makes the execution schedule deterministic, so independent tasks run together.</p></div>
+    <div class="decision"><span class="tag">Deferred</span><h3>No watchdog or time budgets</h3><p>These are out of scope for now: they can only be built on some harnesses (OpenCode, likely Pi) and not on others (Claude Code, Copilot). Revisit only if "stuck" turns don't fall after WS2.</p></div>
+  </div>
+</section>
+
+<section id="scorecard">
+  <h2>Goals and outcome scorecard</h2>
+  <p class="prose">Every goal has a baseline measured from the session database and a target. The same audit script (WS0) produces all of them, so each phase ends by re-running it on a week of dogfooding.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Outcome metric</th><th>Baseline (0.1.2)</th><th>Target</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr><td>Category-shuttle delegations that succeed</td><td class="num bad">0 / 11</td><td class="num good">100%</td><td class="ws">WS1</td></tr>
+        <tr><td>Delegations failing for configuration reasons (bad model, unknown agent)</td><td class="num bad">11 of 597</td><td class="num good">0</td><td class="ws">WS1</td></tr>
+        <tr><td>Delegations to harness built-in agents (<code>explore</code>, <code>general</code>) instead of Weave agents</td><td class="num bad">14</td><td class="num good">0</td><td class="ws">WS1</td></tr>
+        <tr><td>Transient subagent failures (connection reset) that were not retried</td><td class="num bad">4 of 4</td><td class="num good">0</td><td class="ws">WS1</td></tr>
+        <tr><td>Category-shuttle share of delegations, in repos that define categories</td><td class="num bad">&lt; 2%</td><td class="num">matches eval expectations</td><td class="ws">WS1</td></tr>
+        <tr><td>Plan tasks delegated by Loom while a plan is active</td><td class="num bad">Loom took turns in 17 of 20 <code>/start-work</code> sessions (exact task count: phase 0)</td><td class="num good">0</td><td class="ws">WS1</td></tr>
+        <tr><td>Routing eval pass rate (<code>loom-routing</code>, <code>tapestry-category-routing</code>) on the default model matrix</td><td class="num">measure in phase 0</td><td class="num good">≥ 90%</td><td class="ws">WS1</td></tr>
+        <tr><td>Tapestry steps that dispatch more than one task</td><td class="num bad">20 / 190 (10.5%)</td><td class="num good">every wave with 2 or more tasks</td><td class="ws">WS2</td></tr>
+        <tr><td>Plan wall-clock time ÷ critical-path time</td><td class="num bad">≈ 1.0 (fully serial; 19-task plan ran 2.8 h before any parallel work)</td><td class="num good">≤ 1.3 × critical path</td><td class="ws">WS2</td></tr>
+        <tr><td>User turns saying "you got stuck" / "are you there?"</td><td class="num bad">8 turns · 6 sessions</td><td class="num good">0</td><td class="ws">WS2</td></tr>
+        <tr><td>User turns explaining tools the agent already had (<code>gh</code>, <code>fly</code>, <code>podman</code>, tokens in <code>~/.bashrc</code>)</td><td class="num bad">16 turns · 12 sessions</td><td class="num good">0</td><td class="ws">WS3</td></tr>
+        <tr><td>GitHub URLs read with <code>webfetch</code> instead of <code>gh</code> (404s)</td><td class="num bad">47 webfetch 404s</td><td class="num good">≤ 5</td><td class="ws">WS3</td></tr>
+        <tr><td><b>Guardrail:</b> Shuttle task duration p50 / p90</td><td class="num">2.6 / 11.4 min</td><td class="num">no more than +20%</td><td class="ws">WS3</td></tr>
+        <tr><td>Loom turns ending with an offer or a question</td><td class="num bad">165 / 576 (29%)</td><td class="num good">≤ 15%</td><td class="ws">WS4</td></tr>
+        <tr><td>Question-tool calls by Loom that fail</td><td class="num bad">40 / 93</td><td class="num good">≤ 5%</td><td class="ws">WS4</td></tr>
+        <tr><td>User turns asking what a plan does ("walk me through", "why a plan?")</td><td class="num bad">12 turns · 9 sessions</td><td class="num good">≤ 2</td><td class="ws">WS4</td></tr>
+        <tr><td>User overrides of review or safety blocks</td><td class="num bad">8 turns · 7 sessions</td><td class="num">trending down</td><td class="ws">WS4</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="ws0">
+  <div class="ws-head"><span class="ws-id">WS0</span><h2>Measure what sessions actually do</h2><span class="pill p0">P0 · prerequisite</span></div>
+  <p class="prose">This plan is only as good as its numbers. The analysis behind it was a set of one-off scripts, so WS0 turns them into a repeatable tool whose output can be compared across releases.</p>
+  <div class="spec">
+    <h4>Goal</h4>
+    <div><p>A single command that turns a harness's session store into the scorecard above.</p></div>
+    <h4>Remediation</h4>
+    <div><ol class="steps">
+      <li>Add <code>scripts/audit/opencode-sessions.ts</code> (Bun, <code>bun:sqlite</code>, opens the database read-only). It takes a date range and a project filter and outputs a scorecard in both JSON and Markdown.</li>
+      <li>Each metric uses a documented definition. For example, a "configuration failure" is a <code>task</code> error whose message matches <code>Model not found</code>, <code>Unknown agent type</code>, or a missing <code>subagent_type</code>.</li>
+      <li>Commit the baseline as a non-normative artifact under <code>docs/artifacts/session-audit/</code>.</li>
+      <li>Put it under <code>scripts/</code>, not the engine, because reading a harness database is harness-owned (<code>docs/adapter-boundary.md</code>). Readers for Claude Code and Pi can come later.</li>
+    </ol></div>
+    <h4>Done when</h4>
+    <div><p>Running the audit over 4–18 Sep reproduces the baseline column above, and it has been run at least once on a newer week of sessions.</p></div>
+  </div>
+</section>
+
+<section id="ws1">
+  <div class="ws-head"><span class="ws-id">WS1</span><h2>Delegation accuracy</h2><span class="pill p0">P0 · biggest issue</span></div>
+  <p class="prose">Whenever a delegation fails or goes to the wrong agent, the user pays in turns and waiting. The failures below happened in real sessions and none of them were caught before release.</p>
+  <div class="spec">
+    <h4>Evidence</h4>
+    <div><ul class="evidence">
+      <li>All 11 category-shuttle delegations failed instantly. Ten failed with <code>Model not found: claude-sonnet-4-5/.</code> and one tried <code>shuttle-frontend</code>, which doesn't exist.</li>
+      <li>Loom sent 14 tasks to OpenCode's built-in <code>explore</code> and <code>general</code> agents instead of Thread or Shuttle.</li>
+      <li>Four Pattern delegations died with <code>Connection reset by server</code>, and a user had to notice each one.</li>
+      <li>Generic Shuttle received 53% of all delegations, even in repos that define categories for the files being changed.</li>
+      <li>One delegation prompt told Thread to read two files that didn't exist.</li>
+    </ul></div>
+    <h4>Root causes</h4>
+    <div class="cause">
+      <span class="k">a</span><span>Builtin and category definitions use bare model names. OpenCode reads <code>claude-sonnet-4-5</code> as a provider with an empty model ID. The fix (<code>b4f8efac</code>) is only on <code>0.2.0-next.0</code>.</span>
+      <span class="k">b</span><span>Loom's delegation list is built from config, not from what the harness actually materialized, so an agent that failed to materialize is still offered to Loom.</span>
+      <span class="k">c</span><span><code>loom.md</code> mentions <code>shuttle-backend</code> and <code>shuttle-frontend</code> as names to avoid. Naming them in a prohibition is exactly what primes the model to try them.</span>
+      <span class="k">d</span><span>Harness built-in subagents stay visible alongside Weave's agents.</span>
+      <span class="k">e</span><span>Nothing retries transient failures and nothing falls back after a configuration failure.</span>
+      <span class="k">f</span><span>Generated category-shuttle descriptions don't carry the category's file patterns, so Loom can't tell which files a category covers.</span>
+    </div>
+    <h4>Remediation</h4>
+    <div><ol class="steps">
+      <li><b>Keep the model fix on <code>main</code> and ship it with 0.2.1.</b> The provider-qualified model resolution from <code>b4f8efac</code> is already on <code>main</code>. The L1 contract test locks it in so it can't regress before 0.2.1, and the 0.2.1 release notes should say that category shuttles were broken on 0.1.2. <em>(fixes a)</em></li>
+      <li><b>Only offer agents that were actually materialized.</b> The adapter reports which agents it materialized and why any failed. The engine renders <code>delegation.targets</code> from that set alone and logs each exclusion. This follows the boundary rules: the adapter supplies context and the engine returns a result. Record the decision as an ADR. <em>(b)</em></li>
+      <li><b>State the delegation rule positively</b> in <code>loom.md</code>: "Delegate only to the agents listed above." Remove the example names. <em>(c)</em></li>
+      <li><b>Hide harness built-in subagents</b> from Weave's primary agents, using a mechanism verified for each harness: OpenCode's agent disable or task permission, Copilot's <code>disabledSubagents</code>. <em>(d)</em></li>
+      <li><b>Recover within the same turn.</b> A failed delegation comes back to the calling agent as the task's error result, and only that agent can act on it. The adapter can't re-run a task. So this is a rule for Loom and Tapestry: after a transient error such as a connection reset, send the same task once more. After a configuration error, send it to generic <code>shuttle</code> and tell the user in one line which agent is broken. <em>(e)</em></li>
+      <li><b>Give category shuttles routable descriptions:</b> generate them from the category's description plus its <code>patterns</code>, e.g. "handles <code>packages/adapters/**</code>". <em>(f)</em></li>
+      <li><b>Loom never executes plans.</b> The adapter passes plan state (<code>.weave/state.json</code>: active plan, tasks remaining) to Loom as context. Loom's prompt says, positively: "While a plan is active, answer the user and point them to <code>/weave:start</code> to resume; Tapestry executes plan tasks." Loom's delegation list stays as it is, because Loom still does ad-hoc Shuttle work.</li>
+    </ol></div>
+    <h4>Tests</h4>
+    <div><p>Each layer catches a class of bug the layer below can't see. L3 would have stopped the bug that shipped in 0.1.2.</p></div>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Layer</th><th>What it asserts</th><th>Where / when</th><th>Catches</th></tr></thead>
+      <tbody>
+        <tr><td><b>L1</b> Materialization contract</td><td>For every adapter and fixture config: each materialized agent has a provider-qualified model or none; every name in <code>delegation.targets</code> exists in the materialized set; each category produces exactly one <code>shuttle-{category}</code>.</td><td><code>packages/adapters/*/src/__tests__</code> · every commit · milliseconds</td><td>a, b</td></tr>
+        <tr><td><b>L2</b> Prompt contract</td><td>Render the Loom and Tapestry prompts for fixture configs (no categories, several categories, a disable block). Every agent name in the rendered prompt must exist as a materialized agent, and no invented names may appear.</td><td>Alongside the existing <code>prompt-snapshots.test.ts</code> · every commit</td><td>c</td></tr>
+        <tr><td><b>L3</b> Live delegation proof</td><td>Real OpenCode running in Podman, with a locally built plugin and a fixture <code>.weave</code> that defines two categories. Loom is told to delegate one tiny read-only task to every target. The trajectory observer checks that every <code>subagent-spawned</code> event finished without error and that <code>explore</code> and <code>general</code> were never spawned.</td><td><code>scripts/proof/opencode-v1-delegation.sh</code> · PRs touching adapters, config or prompts, plus nightly · cheap model</td><td>a, b, d at runtime</td></tr>
+        <tr><td><b>L4</b> Routing evals</td><td>New cases taken from the audit: work on a category's files goes to that category shuttle; exploration goes to Thread, not <code>explore</code>; ambiguous work goes to generic Shuttle; a delegation prompt only cites paths that exist; with an active plan in context, Loom answers a follow-up and makes zero <code>task</code> calls for plan tasks.</td><td><code>evals/cases/loom-routing</code>, <code>tapestry-category-routing</code> · default model matrix</td><td>f, choosing the wrong agent</td></tr>
+        <tr><td><b>L5</b> Field telemetry</td><td>The WS0 audit's delegation metrics on real dogfooding sessions.</td><td>Every release</td><td>Anything the other layers missed</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="spec">
+    <h4>Done when</h4>
+    <div><p>L1–L3 are required checks in CI and L4 passes at ≥ 90%. A week of dogfooding then shows zero configuration failures, zero built-in-agent spawns, and category shuttles chosen for category work.</p></div>
+  </div>
+</section>
+
+<section id="ws2">
+  <div class="ws-head"><span class="ws-id">WS2</span><h2>Parallel execution</h2><span class="pill p0">P0</span></div>
+  <p class="prose">Plans already declare their dependencies (<code>Depends on</code>) and the files each task touches (<code>Files</code>). Tapestry still runs them one task at a time, because at runtime it has to decide from prose whether tasks are safe to run together, and its prompt says "when in doubt, run sequentially". Running independent tasks together shortens plans directly, and it shortens the stretches of silence that made sessions look stuck.</p>
+  <div class="spec">
+    <h4>Evidence</h4>
+    <div><ul class="evidence">
+      <li>The Aside foundation plan had 19 tasks. Task 17 depended only on 3b and tasks 13 and 14 were independent, yet everything ran in sequence for about 2.8 hours before the first parallel batch.</li>
+      <li>Only 30 of 352 Loom delegation steps and 20 of 190 Tapestry steps dispatched more than one task.</li>
+      <li>Shuttle runs reached a p90 of 11.4 min and a maximum of 35 min; "you got stuck" was said 8 times across 6 sessions.</li>
+    </ul>
+    <p class="quote">"You keep getting stuck and I'm not sure progress is being made."</p></div>
+    <h4>Remediation</h4>
+    <div><ol class="steps">
+      <li><b>Compute the schedule deterministically.</b> A pure function <code>computeExecutionWaves(tasks)</code> next to <code>plan-task-parser.ts</code> derives waves from <code>Depends on</code> and <code>Files</code>. Tasks at the same dependency level whose file sets overlap go into consecutive waves. The <code>/weave:start</code> context gives Tapestry the schedule, e.g. "Wave 3: tasks 5, 6, 17". The model no longer judges parallel safety.</li>
+      <li><b>Keep waves wide.</b> Pattern puts edits to shared files into small integration tasks and adds an <code>## Execution Waves</code> preview to each plan. A plan validator warns when a plan with more than 5 tasks has a critical path equal to its task count.</li>
+      <li><b>Dispatch a whole wave at once.</b> Tapestry sends every task in a wave in a single turn, up to a concurrency cap from a new <code>execution { max_parallel 3 }</code> settings block. Being a DSL change, it needs schema, validate and parse_config tests, spec and docs, and a website update.</li>
+      <li><b>Say what is running.</b> When Tapestry dispatches a wave it names the tasks in one line, and when the wave returns it reports the results in one line. Silence then means work is in progress, not that something died. This is a prompt rule and works on every harness.</li>
+      <li><b>Later, only if the audit shows disjoint-file waves are too narrow:</b> <code>execution { isolation worktree }</code> runs tasks that touch the same files in separate git worktrees and merges them after each wave.</li>
+    </ol></div>
+    <h4>Tests</h4>
+    <div><ul class="plain">
+      <li>Unit tests for <code>computeExecutionWaves</code>, with fixtures taken from the real Aside, madsmenu and harmony plans. Includes a golden test that the Aside plan produces at least 6 waves, not 19.</li>
+      <li>A trajectory eval, <code>tapestry-parallel-waves</code>: a plan with three independent tasks whose file sets don't overlap. The observer must record spawn intervals that overlap in time.</li>
+    </ul></div>
+    <h4>Deferred</h4>
+    <div><p><b>Watchdog and time budgets are out of scope for now.</b> Nothing can interrupt a model mid-turn, so a watchdog would have to observe and cancel subagents from outside. That's possible on OpenCode v1 (confirmed in the SDK), likely on OpenCode 2 and Pi, and not possible on Claude Code or Copilot. If the "stuck" metric doesn't fall once waves and wave reporting ship, revisit it.</p></div>
+    <h4>Done when</h4>
+    <div><p>Across a week of dogfooded plans, wall-clock time is at most 1.3× the critical path, every multi-task wave was dispatched concurrently, and "stuck" turns are down from the baseline.</p></div>
+  </div>
+</section>
+
+<section id="ws3">
+  <div class="ws-head"><span class="ws-id">WS3</span><h2>Environment awareness and proportionate verification</h2><span class="pill p1">P1</span></div>
+  <p class="prose">#182 showed that blanket verification costs hours. The cheaper failures are still worth fixing: the agent not knowing which tools it has, and a reported bug being called fixed without checking the symptom. Each fix here runs once, is triggered by a specific event, and is checked against Shuttle's duration guardrail.</p>
+  <div class="spec">
+    <h4>Evidence</h4>
+    <div><ul class="evidence">
+      <li>You told Loom where <code>gh</code> lives (<code>/usr/bin/gh</code>) in five sessions, and told it about the <code>fly</code>, <code>copilot</code> and <code>podman</code> CLIs and the tokens in <code>~/.bashrc</code> in others.</li>
+      <li>GitHub Actions URLs were read with <code>webfetch</code> (47 × 404), and Loom asked you to paste logs.</li>
+      <li>In madsmenu the create-family bug went through three rounds of fixes, each reported as passing typecheck and lint, while the symptom was still there.</li>
+    </ul>
+    <p class="quote">"No you run it." · "You can do the verification yourself."</p></div>
+    <h4>Remediation</h4>
+    <div><ol class="steps">
+      <li><b>Give the agent its environment as context.</b> Once per session the adapter checks which CLIs are on <code>PATH</code> (<code>gh</code>, <code>fly</code>, <code>podman</code>, <code>docker</code>, <code>dotnet</code>, <code>bun</code>, <code>copilot</code>), whether <code>gh</code> is authenticated, and the <em>names only</em> of relevant environment variables. The engine renders this as <code>{{environment.*}}</code> template context. Loom's prompt adds: "GitHub URLs are read with <code>gh</code>."</li>
+      <li><b>One check when you report a bug.</b> When you report something you observed, the fix is done after a single check that the symptom has gone (a request, a CLI run, or one reproducing test). That check replaces broader test suites, it doesn't add to them.</li>
+      <li><b>Verify a plan once.</b> Tapestry runs the plan's Verification section one time at the end and reports any failures to you. It does not re-delegate fixes on its own, which avoids the #170 loop.</li>
+    </ol></div>
+    <h4>Tests</h4>
+    <div><ul class="plain">
+      <li>Adapter unit test: the environment probe emits variable names and never their values, checked with fake secret variables.</li>
+      <li>L2 prompt contract: <code>{{environment.*}}</code> renders, and falls back cleanly when the adapter supplies nothing.</li>
+      <li>Trajectory case: in a fixture with a <code>gh</code> stub, Loom answers a GitHub Actions URL with <code>gh run view</code>, not <code>webfetch</code>.</li>
+    </ul></div>
+    <h4>Done when</h4>
+    <div><p>A week of dogfooding produces zero environment reminders from you, GitHub-URL 404s drop to 5 or fewer, and Shuttle's p50 and p90 stay within 20% of baseline.</p></div>
+  </div>
+</section>
+
+<section id="ws4">
+  <div class="ws-head"><span class="ws-id">WS4</span><h2>Conversation friction</h2><span class="pill p2">P2 · pick from these</span></div>
+  <p class="prose">These are options, not commitments. Each is small and independent, and each maps to a scorecard row, so after phase 1 we can pick the ones the audit shows still matter.</p>
+  <div class="two">
+    <div>
+      <h3>A · Proportionate review gates</h3>
+      <p>Warp runs automatically only when the changed files touch security-sensitive code; changes that only touch documentation skip it. Loom's rule "on REJECT, ask the user how to proceed" becomes: fix a within-scope rejection once and re-review, then report; ask only when the fix would change scope. Once you override a gate, that holds for the rest of the session.</p>
+      <p>Earlier sessions also ran a second, model-variant copy of each reviewer (e.g. <code>weft-github-copilot-claude-opus-5</code>). That came from a <code>review_models</code> setting only in 26 sessions on 5–6 Sep (harmony and agent-evals); no current config has it. Nothing to change unless you turn it back on.</p>
+      <p class="quote">"I don't care about those security issues, I care that the CI for the pull request passes."</p>
+    </div>
+    <div>
+      <h3>B · Finish the outcome you asked for</h3>
+      <p>When you name an outcome, Loom keeps going until it sees that outcome or hits a blocker. "Fix CI" includes pushing and watching the run until it's green. "Commit" means everything in the working tree unless you narrow it, and the reply lists what went in. This targets the 29% of Loom turns that end with an offer and the 41 replies that were just "yes".</p>
+    </div>
+    <div>
+      <h3>C · Plans that explain themselves</h3>
+      <p>When Loom hands over a plan it says, in order: what you'll get, how big it is (tasks, waves, critical path), and which decisions it needs from you. Only then does it point to <code>/weave:start</code>. Mockups, prototypes and questions never go to Pattern.</p>
+      <p class="quote">"Why do you need a plan to show me a mockup?"</p>
+    </div>
+    <div>
+      <h3>D · Question tool resilience</h3>
+      <p>If the question tool errors or is aborted (as it often was in the Fleet UI), Loom asks the same questions again as numbered plain text. Add a worked example in Loom's prompt showing the <code>question</code> key it keeps leaving out, and add an L2 test for it.</p>
+    </div>
+    <div>
+      <h3>E · Less noise in chat</h3>
+      <p>Drop the "<b>2/2 done</b>" footers from chat replies (the sidebar todo list keeps progress). Replace per-delegation narration with WS2's status lines, which only appear while a task is running long.</p>
+    </div>
+    <div>
+      <h3>F · Follow-ups during a plan <span class="pill p0">decided → WS1</span></h3>
+      <p>Loom never executes plans. The implementation and its eval case are now in WS1 (remediation step 7 and L4).</p>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap">
+  <h2>Roadmap</h2>
+  <p class="prose">The phases run in order because each one's exit check depends on the previous one: WS0 has to exist before any target can be measured.</p>
+  <div class="phases">
+    <div class="phase"><span class="when">Phase 0 · week 1</span><h3>Baseline and immediate fixes</h3><p>WS0 audit script and committed baseline. Dogfooding switched to local builds of <code>main</code> (model fix included); 0.2.1 ships whenever you call it ready. L1 and L2 contract tests. Routing eval baseline.</p><p class="exit">Exit: stable category shuttles work; CI fails on a bare model or a missing delegation target.</p></div>
+    <div class="phase"><span class="when">Phase 1 · weeks 2–3</span><h3>Delegation hardening</h3><p>Delegation list built only from materialized agents (with ADR), built-in agents hidden, retry and fallback, generated category descriptions, L3 live proof, L4 eval cases.</p><p class="exit">Exit: WS1 "done when" met on a week of dogfooding.</p></div>
+    <div class="phase"><span class="when">Phase 2 · weeks 3–5</span><h3>Parallel waves</h3><p><code>computeExecutionWaves</code>, the wave schedule in Tapestry's start context, the <code>execution</code> DSL block, one-line wave reporting, and the parallel-waves trajectory eval.</p><p class="exit">Exit: plan wall-clock ≤ 1.3× critical path; "stuck" turns down from baseline.</p></div>
+    <div class="phase"><span class="when">Phase 3 · weeks 5–6</span><h3>Environment and one-shot verification</h3><p>Environment probe and template context, the one-check rule for reported bugs, plan verification once at the end.</p><p class="exit">Exit: zero environment reminders; Shuttle duration within guardrail.</p></div>
+    <div class="phase"><span class="when">Phase 4 · ongoing</span><h3>Friction</h3><p>Re-run the audit, then pick from WS4 by the size of the gap on the scorecard.</p><p class="exit">Exit: offer-endings ≤ 15%; question-tool failures ≤ 5%.</p></div>
+  </div>
+  <div class="note"><b>Documentation per AGENTS.md:</b> a spec for execution waves and the <code>execution</code> block (<code>docs/specs/37-…</code>), an ADR for building the delegation list from materialized agents, an update to <code>docs/adapter-boundary.md</code> for environment context, and tryweave.io pages for the new settings. Each workstream gets a GitHub issue that its PRs reference.</div>
+</section>
+
+<section id="risks">
+  <h2>Risks and open questions</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+      <tbody>
+        <tr><td>Withdrawing <code>0.2.0-next.0</code> breaks things that point at it</td><td>npm only allows an unpublish within 72 hours of publishing (13 Sep), or later if the package has no dependents, under 300 weekly downloads and a single owner. An unpublished version number can also never be reused. So deprecate it (<code>npm deprecate …@0.2.0-next.0</code>) and remove the tag (<code>npm dist-tag rm … next</code>) for every affected package (cli, opencode). The legacy-upgrade proof (#173), website#4 and opencode-weave#51 reference the prerelease, so repoint or park them first.</td></tr>
+        <tr><td>Live proofs (L3) are slow, cost money, or flake</td><td>Cheap model, one-line prompts, path-filtered PR runs plus nightly; retry on infrastructure errors only, never on assertion failures.</td></tr>
+        <tr><td>Wider waves cause merge conflicts</td><td>Waves only ever contain tasks whose file sets don't overlap; worktree isolation stays deferred until the audit shows a need.</td></tr>
+        <tr><td>The environment probe leaks secrets into prompts</td><td>It emits names only, a unit test checks this with fake secrets, and it never reads from files.</td></tr>
+        <tr><td>Prompt edits make routing worse</td><td>Every prompt change must pass L2 and the L4 routing evals before merge.</td></tr>
+        <tr><td>The fixes slow execution down again (the #170 problem)</td><td>The Shuttle duration guardrail is a scorecard row; if it's breached, the change that caused it is reverted.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3 style="margin-top:22px">Open questions for you</h3>
+  <ul class="plain prose" style="margin-top:8px">
+    <li>Which WS4 friction items to take on first, once the audit has been re-run after phase 1.</li>
+  </ul>
+</section>
+
+<footer>Source: read-only analysis of <code>~/.local/share/opencode/opencode.db</code> (790 sessions, 17,661 messages, 67,616 parts); 18 automated Fleet test sessions under <code>/tmp</code> excluded. Counts are from 0.1.2-era sessions; #179 has since fixed subagent questions.</footer>
+</div>
