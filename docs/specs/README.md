@@ -42,6 +42,7 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | 34 | [OpenCode V2 Adapter](34-spec-opencode2-adapter/34-spec-opencode2-adapter.md) | Normative design for `@weaveio/weave-adapter-opencode2`, a separate independent adapter package for OpenCode V2; schema mapping, permission mapping, transform-based reconciliation, and V2-only authority rules. Does not modify or supersede the V1 OpenCode adapter. |
 | 35 | [Verification Trajectory Evals](35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md) | Optional `harness_trajectory` fields for checking verification: fixture workspaces, starting agent, expected commands with ordering and exit status, and a hidden verifier; tool-call `detail`, observer-plugin runner behaviour, and scoring. Extends Spec 33 under ADR 0012 without changing the publishable surface. |
 | 36 | [Execution Controls](36-spec-execution-controls/36-spec-execution-controls.md) | Fast-service intent and delegation concurrency limits |
+| 37 | [Repository Foundation](37-spec-repository-foundation/37-spec-repository-foundation.md) | Every test runs in CI, quiet test output, one-edit model addition for evals, a versioned eval-report contract for the website, an eval overview, a session audit script, and a fresh eval baseline. WS0 of the [September 2026 session audit](../artifacts/session-audit-2026-09.md); tasks in [37 tasks](37-spec-repository-foundation/37-tasks-repository-foundation.md). |
 
 ---
 
@@ -64,4 +65,4 @@ Specs 01–06 were produced during the alpha phase and are no longer maintained 
 
 - **10a / 10b**: Two specs share the `10-` prefix due to a historical naming collision. Both directories are preserved; `10-spec-workflow-engine` is the earlier design document and `10-spec-builtin-prompt-defaults` is the implementation spec.
 - **21a / 21b**: Two specs share the `21-` prefix. `21-spec-cli-legacy-config-migration` is the active CLI migration spec; `21-spec-workflow-first-execution` is an earlier draft superseded by Spec 22.
-- New specs should use the next available integer after 35.
+- New specs should use the next available integer after 37.
