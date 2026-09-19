@@ -17,7 +17,8 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 - [ ] 1.1 Add `"test": "bun test ./src"` to `packages/adapters/opencode2/package.json` and `packages/adapters/claude-code/package.json`. Confirm 149 and 76 tests run under `bun run test`.
 - [ ] 1.2 Change `packages/cli`'s `test` script to `bun test ./src` so new test directories can't be missed. Confirm `src/prompts/__tests__/self-modify.test.ts` (20 tests) now runs and the total rises by 20.
 - [ ] 1.3 Add a guard test (e.g. `scripts/ci/verify-test-scripts.ts`, wired like `verify:codeowners`): for every workspace package, fail if it contains `*.test.ts` files and its `test` script is missing or is a no-op. Allowlist `@weaveio/weave-adapter-pi` with a comment explaining its source lives outside this repo.
-- [ ] 1.4 Record the new totals in the PR description (before: core 451, engine 1752, config 423, copilot 119, opencode 416, cli 2643).
+- [ ] 1.4 Make local and CI runs agree: either CI runs the same `bun test --recursive` as `.husky/pre-commit`, or the hook runs `bun run test`. Pick one entry point and use it in both places.
+- [ ] 1.5 Record the new totals in the PR description (before: core 451, engine 1752, config 423, copilot 119, opencode 416, cli 2643).
 
 ## 2. Quiet, diagnosable test output (G2) — PR: _
 

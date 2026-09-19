@@ -8,7 +8,7 @@
 
 The session audit found that Weave loses the most time to failed delegations, serial plan execution, and missing environment awareness (WS1–WS3). Before changing agent behaviour, the repository needs a foundation that can prove whether a change helped:
 
-- Every test must run. Today 245 passing tests never run in CI (see Findings).
+- Every test must run in CI. Today 245 passing tests run only in the local pre-commit hook, not in CI (see Findings).
 - Adding a model to the evals must be cheap. Today it touches about 50 files.
 - The website must present eval results reliably. A `schemaVersion` bump on 5 Sep silently dropped models from tryweave.io/evals.
 - Evals and tests must be easy to understand and diagnose, for maintainers and for agents.
@@ -19,7 +19,8 @@ The session audit found that Weave loses the most time to failed delegations, se
 | Area | Finding | Evidence |
 | --- | --- | --- |
 | Tests | `@weaveio/weave-adapter-opencode2` (149 tests, 32 files) and `@weaveio/weave-adapter-claude-code` (76 tests, 7 files) have no `test` script, so `bun run test` and CI skip them. Both pass when run directly. | `packages/adapters/{opencode2,claude-code}/package.json` |
-| Tests | `packages/cli`'s `test` script lists test directories explicitly; `src/prompts/__tests__/self-modify.test.ts` (20 tests) is outside the list and never runs. | `packages/cli/package.json` |
+| Tests | `packages/cli`'s `test` script lists test directories explicitly; `src/prompts/__tests__/self-modify.test.ts` (20 tests) is outside the list, so `bun run test` and CI skip it. | `packages/cli/package.json` |
+| Tests | Local and CI test runs disagree. The pre-commit hook runs `bun test --recursive` from the root and finds all 189 files (6,099 tests), so these 245 tests do run locally on every commit. CI's `bun run test` runs per-package scripts and misses them, so a change that only breaks them passes CI. | `.husky/pre-commit`, `.github/workflows/ci.yml` |
 | Tests | `@weaveio/weave-adapter-pi`'s `test` script is a no-op (`bun -e 'process.exit(0)'`); its source is not in this repository. | `packages/adapters/pi/package.json` |
 | Tests | Tests log at `info` to stdout (pino default), so passing runs print JSON log lines and real failures are harder to spot. | `packages/engine/src/logger.ts` reads `LOG_LEVEL` |
 | Tests | The suite is fast: about 5 s for everything that currently runs. | `bun run test` |
