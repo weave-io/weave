@@ -23,9 +23,21 @@ export interface FlushingAdapter {
   flush(): ResultAsync<void, Error>;
 }
 
-/** In-memory I/O hooks plus the map they write into. */
-export function memoryIO(): {
+/**
+ * What the harness already has on disk before the adapter runs.
+ *
+ * Use it to describe a user regenerating over a bundle from a previous run:
+ * `existing` maps a directory to the filenames it already contains.
+ */
+export interface ExistingBundle {
+  existing?: Record<string, string[]>;
+}
+
+export interface MemoryIO {
+  /** Files the adapter wrote, by absolute path. */
   written: Record<string, string>;
+  /** Files the adapter deleted, in the order it deleted them. */
+  removed: string[];
   hooks: {
     exists: (path: string) => Promise<boolean>;
     readDir: (path: string) => Promise<string[]>;
@@ -34,18 +46,31 @@ export function memoryIO(): {
     removeFile: (path: string) => Promise<void>;
     mkdir: (path: string) => Promise<void>;
   };
-} {
+}
+
+/** In-memory I/O hooks plus what the adapter wrote and deleted through them. */
+export function memoryIO(options: ExistingBundle = {}): MemoryIO {
   const written: Record<string, string> = {};
+  const removed: string[] = [];
+  const existing = options.existing ?? {};
+
   return {
     written,
+    removed,
     hooks: {
       exists: async () => true,
-      readDir: async () => [],
+      readDir: async (path) => {
+        for (const [dir, names] of Object.entries(existing)) {
+          if (path.endsWith(dir)) return names;
+        }
+        return [];
+      },
       readFile: async () => "",
       writeFile: async (path, content) => {
         written[path] = content;
       },
       removeFile: async (path) => {
+        removed.push(path);
         delete written[path];
       },
       mkdir: async () => {},
@@ -62,9 +87,21 @@ export function memoryIO(): {
  */
 export async function generateBundle<A extends FlushingAdapter>(
   config: string,
-  build: (hooks: ReturnType<typeof memoryIO>["hooks"]) => A,
+  build: (hooks: MemoryIO["hooks"]) => A,
 ): Promise<Record<string, string>> {
-  const { written, hooks } = memoryIO();
+  return (await runAdapter(config, build)).written;
+}
+
+/**
+ * As `generateBundle`, but also reports what the adapter deleted and lets the
+ * caller describe files already on disk from a previous run.
+ */
+export async function runAdapter<A extends FlushingAdapter>(
+  config: string,
+  build: (hooks: MemoryIO["hooks"]) => A,
+  options: ExistingBundle = {},
+): Promise<{ written: Record<string, string>; removed: string[] }> {
+  const { written, removed, hooks } = memoryIO(options);
   const adapter = build(hooks);
 
   await adapter.init();
@@ -74,10 +111,14 @@ export async function generateBundle<A extends FlushingAdapter>(
     const spawned = await adapter.spawnSubagent(entry.descriptor);
     expect(spawned.isOk()).toBe(true);
   }
+
+  // Nothing reaches disk until flush; a caller asserting that reads `written`
+  // before this line via `runAdapter`'s own steps is not possible, so the
+  // queue-then-flush promise has its own scenario driving the adapter directly.
   const flushed = await adapter.flush();
   expect(flushed.isOk()).toBe(true);
 
-  return written;
+  return { written, removed };
 }
 
 /** Reads one generated file, failing with the full listing when it is absent. */

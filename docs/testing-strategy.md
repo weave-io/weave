@@ -244,6 +244,51 @@ beside their module are legitimate. It resolves as a side effect of steps 4
 and 9: every promise that moves to `tests/` is one fewer reason for a unit test
 to reach into an internal module.
 
+## Migrating an area
+
+The buckets are worth little while the unit tests they replace remain. Migration
+is the work, and the `claude-code` adapter is the worked example:
+
+| | Before | After |
+| --- | --- | --- |
+| Unit cases | 68 in 7 files | 16 in 3 files |
+| Scenario cases | 7 | 25 |
+| Total | 68 | 41 |
+
+**The rule is subsumption, not similarity.** A unit test goes when a scenario
+asserts the same user-visible promise — even where the unit test also covers
+internal branches. What stays is what a user cannot observe from outside:
+
+| Kept | Why |
+| --- | --- |
+| `skill-discovery.test.ts` | A filesystem scanner. Harness resource discovery is adapter-owned per [Adapter Boundary](adapter-boundary.md), and its behaviour is not reachable from `.weave` source |
+| `model-resolution.test.ts` | Pins the adapter↔engine `ModelResolutionInput` contract, which no generated file reveals. Its three cases pinning the adapter's model *constant* were deleted — those are observable |
+| `bootstrap.test.ts` | Integrity of a shipped asset. Closer to a repo guard than a unit test |
+
+**Prove the deletion rather than asserting it.** Before deleting, break the
+source and confirm the scenarios fail. For this pilot:
+
+| Mutation | Result |
+| --- | --- |
+| `Bash` reclassified from `execute` to `read` | caught |
+| Starting-agent detection broken | caught |
+| Stale-file cleanup disabled | caught |
+| Description dropped from frontmatter | caught |
+
+All four were caught by `tests/adapters` alone, with every deleted unit test
+already gone.
+
+### What migration turns up
+
+Writing against observed behaviour keeps surfacing things the white-box tests
+obscured. In this pilot, `agent-translation.test.ts` asserted *"passes through
+unknown model strings verbatim"* — true of the translator in isolation, and
+misleading about the product. End to end, an agent's `models` list is filtered
+against what the adapter knows the harness can run, so an unrecognised model is
+dropped silently and resolution falls through to `DEFAULT_FALLBACK_MODEL`. A
+typo in `models` yields a working agent on the wrong model rather than an error.
+The scenario now records that.
+
 ## What the buckets found
 
 Writing scenarios against real behaviour surfaced documentation that described
