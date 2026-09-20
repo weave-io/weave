@@ -21,7 +21,7 @@
  */
 
 import { resolve } from "node:path";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { loadModelMatrix, resolveDefaultModels } from "./model-matrix.js";
 import {
   EVAL_SUITE_IDS,
@@ -288,6 +288,25 @@ export function loadCaseFile(
   filePath: string,
   defaultModels?: readonly string[],
 ): ResultAsync<EvalCase, FixtureSchemaError> {
+  // Callers that load many cases pass the defaults in, so the matrix is read
+  // once. A single-file caller gets the same contract — `allowed_models` always
+  // populated — at the cost of reading the matrix here.
+  const defaults: ResultAsync<readonly string[], FixtureSchemaError> =
+    defaultModels !== undefined
+      ? okAsync(defaultModels)
+      : loadModelMatrix().map((matrix) =>
+          resolveDefaultModels(matrix).map((entry) => entry.id),
+        );
+
+  return defaults.andThen((resolvedDefaults) =>
+    loadCaseFileWithDefaults(filePath, resolvedDefaults),
+  );
+}
+
+function loadCaseFileWithDefaults(
+  filePath: string,
+  defaultModels: readonly string[],
+): ResultAsync<EvalCase, FixtureSchemaError> {
   return readFixtureFile(filePath).andThen((raw) => {
     const parsed = EvalCaseSchema.safeParse(raw);
     if (!parsed.success) {
@@ -346,10 +365,9 @@ export function loadCaseFile(
 function validateAllowedModels(
   parsed: EvalCaseFile,
   filePath: string,
-  defaultModels: readonly string[] | undefined,
+  defaultModels: readonly string[],
 ): FixtureSchemaError | undefined {
   if (parsed.allowed_models === undefined) return undefined;
-  if (defaultModels === undefined) return undefined;
 
   const declared = [...parsed.allowed_models].sort().join(",");
   const defaults = [...defaultModels].sort().join(",");
@@ -374,12 +392,12 @@ function validateAllowedModels(
 /** Fills `allowed_models` from the matrix defaults when the fixture omits it. */
 function withResolvedModels(
   parsed: EvalCaseFile,
-  defaultModels: readonly string[] | undefined,
+  defaultModels: readonly string[],
 ): EvalCase {
   if (parsed.allowed_models !== undefined) {
     return parsed as EvalCase;
   }
-  return { ...parsed, allowed_models: [...(defaultModels ?? [])] };
+  return { ...parsed, allowed_models: [...defaultModels] };
 }
 
 /**

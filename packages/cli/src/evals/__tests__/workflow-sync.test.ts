@@ -202,7 +202,10 @@ describe("workflow-sync — agent-evals.yml derives its model allowlist", () => 
     expect(text).toContain("evals/model-matrix.json");
 
     const allowlistAssignments = [
-      ...text.matchAll(/ALLOWED_\w*MODELS="[^"]*"/g),
+      // Match to end of line, not to the next double quote: the derived
+      // assignments embed a jq program containing quotes, so a `"[^"]*"`
+      // match would truncate and miss anything after it.
+      ...text.matchAll(/ALLOWED_\w*MODELS=.*/g),
     ]
       .map((m) => m[0])
       .join("\n");

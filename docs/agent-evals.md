@@ -1416,7 +1416,7 @@ Do not increase retention without a specific operational reason.
   "description": "...",                    // Required human-readable description
   "suite": "loom-routing",                 // Suite this case belongs to
   "allowed_agents": ["loom", "shuttle"],   // Closed set of valid agent names (min 1)
-  // allowed_models is normally OMITTED — see "Adding a model" below
+  // allowed_models is normally OMITTED — see "Adding a model" above
   "expected_outcome": { "kind": "agent_routing", ... },
   "accepted_alternates": [],               // Optional substitute agent/model IDs
   "transcript_expectations": [],           // Optional ordered transcript assertions
