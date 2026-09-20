@@ -57,6 +57,31 @@ export type DiscoveredConfig = {
 };
 
 // ---------------------------------------------------------------------------
+// Global scope root
+// ---------------------------------------------------------------------------
+
+/**
+ * Environment variable that redirects the global config scope away from the
+ * invoking user's home directory. See `discoverAndParse` for the rationale.
+ */
+export const GLOBAL_CONFIG_DIR_ENV = "WEAVE_GLOBAL_CONFIG_DIR";
+
+/**
+ * Resolves the directory that holds the global `config.weave`.
+ *
+ * `WEAVE_GLOBAL_CONFIG_DIR` wins when set to a non-empty value; otherwise the
+ * global scope lives at `~/.weave` as usual.
+ */
+export function globalConfigDir(): string {
+  const override = process.env[GLOBAL_CONFIG_DIR_ENV];
+  if (override !== undefined && override.trim() !== "") {
+    return normalizePath(override);
+  }
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
+  return normalizePath(`${home}/.weave`);
+}
+
+// ---------------------------------------------------------------------------
 // discoverAndParse
 // ---------------------------------------------------------------------------
 
@@ -66,6 +91,13 @@ export type DiscoveredConfig = {
  * Checks two locations:
  * 1. `~/.weave/config.weave`   (global scope)
  * 2. `<projectRoot>/.weave/config.weave`  (project scope)
+ *
+ * The global scope root can be redirected with the `WEAVE_GLOBAL_CONFIG_DIR`
+ * environment variable. This exists so that a process which must not inherit
+ * the invoking user's personal configuration — a CI job, a container, a
+ * sandboxed harness run, or the test suite — can point the global layer at a
+ * known directory instead. Pointing it at a directory with no `config.weave`
+ * disables the global layer entirely, leaving builtins plus project config.
  *
  * Missing files are silently skipped — they are not treated as errors.
  * The returned array preserves scope order: global first, then project.
@@ -86,11 +118,10 @@ export function discoverAndParse(
   projectRoot?: string,
   fileReader: FileReader = bunFileReader,
 ): ResultAsync<DiscoveredConfig[], ConfigLoadError[]> {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
   const root = projectRoot ?? process.cwd();
 
   const scopes: ConfigScope[] = [
-    { kind: "global", rootDir: normalizePath(`${home}/.weave`) },
+    { kind: "global", rootDir: globalConfigDir() },
     { kind: "project", rootDir: normalizePath(`${root}/.weave`) },
   ];
 

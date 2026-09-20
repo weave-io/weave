@@ -198,6 +198,36 @@ Prompt files ship in [`packages/config/prompts/`](../packages/config/prompts/) a
 
 **Error aggregation:** If both files have errors, all errors are collected and returned together as a `ConfigLoadError[]` — callers receive the complete picture.
 
+### Redirecting the global scope — `WEAVE_GLOBAL_CONFIG_DIR`
+
+`globalConfigDir()` resolves where the global layer lives. By default that is
+`~/.weave`, but setting `WEAVE_GLOBAL_CONFIG_DIR` to a non-empty path redirects
+it:
+
+| `WEAVE_GLOBAL_CONFIG_DIR` | Global scope root |
+| ------------------------- | ----------------- |
+| unset, or whitespace only | `~/.weave`        |
+| `/some/dir`               | `/some/dir`       |
+
+Because a missing file is a non-error, pointing it at a directory with no
+`config.weave` **disables the global layer**, leaving builtins plus project
+config.
+
+This exists for processes that must not inherit the invoking user's personal
+configuration:
+
+- **The test suite.** [`scripts/test-setup.ts`](../scripts/test-setup.ts) points
+  it at [`scripts/fixtures/empty-global-config/`](../scripts/fixtures/empty-global-config/),
+  so no test reads the developer's real `~/.weave/config.weave`. Before this,
+  every test that loaded the effective config depended on the machine it ran
+  on — 23 of them failed outright on a developer box whose global config was
+  merely out of date, while passing in CI, which has no global config.
+- **CI jobs, containers and sandboxed harness runs**, where the home directory
+  may be shared, surprising, or not the user's own.
+
+A test that *needs* global-scope config points the variable at its own fixture
+directory rather than writing to the developer's home.
+
 ### Error types
 
 | Type                | When                                                                      |
@@ -300,6 +330,8 @@ import {
   loadConfig, // Full pipeline
   getBuiltinConfig, // Builtins only
   discoverAndParse, // Discovery only
+  globalConfigDir, // Resolved global scope root
+  GLOBAL_CONFIG_DIR_ENV, // "WEAVE_GLOBAL_CONFIG_DIR"
   mergeConfigs, // Merge only
   resolvePromptPaths, // Path resolution only
 } from "@weaveio/weave-config";

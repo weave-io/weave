@@ -8,7 +8,11 @@
 
 export { getBuiltinConfig } from "./builtins.js";
 export type { DiscoveredConfig, FileReader } from "./discovery.js";
-export { discoverAndParse } from "./discovery.js";
+export {
+  discoverAndParse,
+  GLOBAL_CONFIG_DIR_ENV,
+  globalConfigDir,
+} from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";
 export { loadConfig } from "./loader.js";
 export type { MergeError, WorkflowExtensionError } from "./merge.js";

@@ -612,10 +612,12 @@
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
+  - function globalConfigDir: () => string
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
   - type DiscoveredConfig
   - const bunFileReader: FileReader
+  - const GLOBAL_CONFIG_DIR_ENV
 - `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>

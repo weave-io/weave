@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 199 lib files | 24 env vars | 7 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~18,000 tokens. Without it, AI exploration would cost ~66,000 tokens. **Saves ~48,000 tokens per conversation.**
-> **Last scanned:** 2026-09-18 21:02 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 199 lib files | 25 env vars | 6 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~18,000 tokens. Without it, AI exploration would cost ~65,800 tokens. **Saves ~47,800 tokens per conversation.**
+> **Last scanned:** 2026-09-20 14:48 — re-run after significant changes
 
 ---
 
@@ -623,10 +623,12 @@
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
+  - function globalConfigDir: () => string
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
   - type DiscoveredConfig
   - const bunFileReader: FileReader
+  - const GLOBAL_CONFIG_DIR_ENV
 - `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
@@ -923,7 +925,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -932,6 +934,7 @@
 - `WEAVE_COPILOT_LIVE` **required** — packages/adapters/copilot/src/__tests__/live-cli.test.ts
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
+- `WEAVE_GLOBAL_CONFIG_DIR` **required** — packages/config/src/__tests__/load_config.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
@@ -955,7 +958,6 @@
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 
 ## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1013,7 +1015,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 198 test files found
+> 194 test files found
 
 ---
 

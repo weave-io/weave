@@ -36,13 +36,24 @@ const PROJECT = "/my/project";
 const GLOBAL_PATH = `${HOME}/.weave/config.weave`;
 const PROJECT_PATH = `${PROJECT}/.weave/config.weave`;
 
+/**
+ * Runs `fn` with `HOME` pointed at the fixture home.
+ *
+ * `WEAVE_GLOBAL_CONFIG_DIR` is cleared for the duration: the test preload sets
+ * it so that no test reads the developer's real global config, and it takes
+ * precedence over `HOME`.
+ */
 function withHome<T>(fn: () => T): T {
   const orig = process.env.HOME;
+  const origGlobalDir = process.env.WEAVE_GLOBAL_CONFIG_DIR;
   process.env.HOME = HOME;
+  delete process.env.WEAVE_GLOBAL_CONFIG_DIR;
   try {
     return fn();
   } finally {
     process.env.HOME = orig;
+    if (origGlobalDir === undefined) delete process.env.WEAVE_GLOBAL_CONFIG_DIR;
+    else process.env.WEAVE_GLOBAL_CONFIG_DIR = origGlobalDir;
   }
 }
 
