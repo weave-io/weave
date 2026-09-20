@@ -11,6 +11,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 ## Index
 
 - [`opencode2-feasibility/`](opencode2-feasibility/README.md) — go/no-go feasibility evidence for the opencode2 adapter (Spec 33), tasks A1–A6.
+- [`cli-evals-migration-handoff.md`](cli-evals-migration-handoff.md) — working note for migrating `cli/evals` to scenario tests: method, the area's observable promises, and cautions.
 
 ---
 
