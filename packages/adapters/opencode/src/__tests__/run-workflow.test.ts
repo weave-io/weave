@@ -598,7 +598,7 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
 // Tests — explicit named-workflow execution boundary (Spec 22 Unit 4 / ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Unit 4)", () => {
+describe("runWorkflow — explicit named-workflow execution boundary", () => {
   /**
    * Proof: `runWorkflow` executes a specific, named workflow by delegating to
    * the engine's `runNamedWorkflow` command operation. The caller must supply
@@ -755,7 +755,7 @@ describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Un
 // Tests — PlanStateProvider at completion boundaries (Spec 22 Unit 4)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (Spec 22 Unit 4)", () => {
+describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries", () => {
   /**
    * Proof: when a named-workflow step uses `plan_created` as its completion
    * method, the engine requires a `PlanStateProvider`. The adapter (OpenCode)

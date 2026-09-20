@@ -534,7 +534,7 @@ describe("sanitized JSON fixture", () => {
  * 4. `workflow-step-dispatch` alone cannot substitute for `command-entrypoints`.
  */
 
-describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry capability", () => {
+describe("command-entrypoints is the canonical execution-entry capability", () => {
   it("command harness with native command support passes the profile", () => {
     // A harness that exposes literal /run-workflow commands declares native.
     const contract = withOverride(

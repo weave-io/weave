@@ -52,10 +52,6 @@ async function removePlan(slug: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 describe("BunFilesystemPlanStateProvider: imports", () => {
-  it("is importable from @weaveio/weave-config", () => {
-    expect(BunFilesystemPlanStateProvider).toBeDefined();
-  });
-
   it("implements PlanStateProvider interface", () => {
     const provider: PlanStateProvider = new BunFilesystemPlanStateProvider();
     expect(typeof provider.planExists).toBe("function");

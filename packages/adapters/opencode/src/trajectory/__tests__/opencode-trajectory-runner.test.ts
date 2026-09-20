@@ -522,7 +522,7 @@ timestamp=2026-09-03T17:21:40.000Z level=DEBUG run=abc message="outbound request
 // Spec 35: fixtures, observer, starting agent, local plugin, verifier
 // ---------------------------------------------------------------------------
 
-describe("OpenCodeTrajectoryRunner — verification-aware runs (Spec 35)", () => {
+describe("OpenCodeTrajectoryRunner — verification-aware runs", () => {
   const OK_RUN: PodmanRunResult = { exitCode: 0, stderr: CANNED_STDERR };
   const FIXTURE = "/repo/evals/fixtures/buggy-slugify";
   const VERIFIER = "/repo/evals/fixtures/slugify-edges.verifier";

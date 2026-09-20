@@ -4,10 +4,7 @@ import { errAsync, okAsync } from "neverthrow";
 
 import {
   composeAgentDescriptor,
-  type MaterializationError,
-  type MaterializationInput,
   type MaterializationPlan,
-  type MaterializedAgent,
   materializeAgents,
 } from "../index.js";
 
@@ -26,23 +23,6 @@ async function materializeConfig(source: string): Promise<MaterializationPlan> {
 function agentNames(plan: MaterializationPlan): string[] {
   return plan.agents.map((agent) => agent.agentName);
 }
-
-describe("materialization barrel exports", () => {
-  it("exports the public function and types", () => {
-    const publicFunction: typeof materializeAgents = materializeAgents;
-    const input = {} as MaterializationInput;
-    const agent = {} as MaterializedAgent;
-    const plan = {} as MaterializationPlan;
-    const error = {} as MaterializationError;
-
-    expect(publicFunction).toBe(materializeAgents);
-    expect(input).toBeDefined();
-    expect(agent).toBeDefined();
-    expect(plan).toBeDefined();
-    expect(error).toBeDefined();
-  });
-});
-
 describe("materializeAgents", () => {
   it("shares prompt reads across explicit, review, category and append sources only within one call", async () => {
     const config = cfg(`

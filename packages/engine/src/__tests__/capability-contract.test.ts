@@ -16,7 +16,6 @@ import {
   ALL_CAPABILITY_IDS as BARREL_ALL,
   OPTIONAL_CAPABILITIES as BARREL_OPTIONAL,
   REQUIRED_CAPABILITIES as BARREL_REQUIRED,
-  evaluateCoreReadinessProfile,
 } from "@weaveio/weave-engine";
 import type {
   AdapterCapabilityContract,
@@ -299,10 +298,6 @@ describe("engine barrel re-exports", () => {
 
   it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
     expect(BARREL_ALL).toHaveLength(19);
-  });
-
-  it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {
-    expect(typeof evaluateCoreReadinessProfile).toBe("function");
   });
 });
 

@@ -209,8 +209,4 @@ describe("category-routing smoke — fixture sanity (always runs)", () => {
     expect(descriptor.category?.name).toBe("client-frontend");
     expect(descriptor.category).not.toHaveProperty("patterns");
   });
-
-  it("translateAgent is importable and is a function", () => {
-    expect(typeof translateAgent).toBe("function");
-  });
 });

@@ -11,6 +11,12 @@ export const CONFIG_PATHS = [
   "packages/adapters/opencode2/api-extractor.rpc.json",
   "packages/adapters/opencode2/api-extractor.tui.json",
   "packages/adapters/claude-code/api-extractor.json",
+  // The Pi adapter ships its implementation outside this repository, so its
+  // published declaration contract is the only part of it verifiable here.
+  "packages/adapters/pi/api-extractor.index.json",
+  "packages/adapters/pi/api-extractor.cli.json",
+  "packages/adapters/pi/api-extractor.extension.json",
+  "packages/adapters/pi/api-extractor.extension-impl.json",
 ] as const;
 
 type ApiExtractorConfigError = {

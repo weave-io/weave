@@ -1810,7 +1810,7 @@ function makeWorkflow(overrides: Partial<WorkflowConfig> = {}): WorkflowConfig {
   };
 }
 
-describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
+describe("composeWorkflowStepPrompt", () => {
   describe("no appends", () => {
     it("Step_with_no_appends_returns_step_prompt_unchanged", async () => {
       const step = makeStep({ prompt: "Do the work." });
@@ -2005,7 +2005,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
     });
   });
 
-  describe("step-local precedence (Spec 22 Unit 4 core rule)", () => {
+  describe("step-local precedence", () => {
     it("Step_scope_append_takes_precedence_over_workflow_scope_append", async () => {
       // Both scopes have an append — step-local wins
       const step = makeStep({

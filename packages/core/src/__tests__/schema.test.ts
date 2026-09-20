@@ -96,27 +96,6 @@ describe("@weaveio/weave-core barrel exports", () => {
     });
     expect(r.success).toBe(true);
   });
-
-  it("ToolPolicy type is importable (type-level assertion via ToolPolicySchema inference)", () => {
-    // If ToolPolicy is not exported, this file would fail to compile.
-    // We verify the runtime shape matches the expected structure.
-    const r = ToolPolicySchema.safeParse({ read: "allow" });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      const policy: import("@weaveio/weave-core").ToolPolicy = r.data;
-      expect(policy.read).toBe("allow");
-    }
-  });
-
-  it("ToolPermission type is importable (type-level assertion via ToolPermissionSchema inference)", () => {
-    // If ToolPermission is not exported, this file would fail to compile.
-    const parsed = ToolPermissionSchema.safeParse("allow");
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
-      expect(perm).toBe("allow");
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------

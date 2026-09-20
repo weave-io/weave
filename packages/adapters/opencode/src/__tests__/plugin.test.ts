@@ -219,10 +219,6 @@ async function _triggerOtherEvent(
 // ---------------------------------------------------------------------------
 
 describe("WeavePlugin — module shape", () => {
-  it("WeavePlugin is a function", () => {
-    expect(typeof WeavePlugin).toBe("function");
-  });
-
   it("server export (WeavePluginServer) is the same function as WeavePlugin", () => {
     expect(WeavePluginServer).toBe(WeavePlugin);
   });
@@ -234,10 +230,6 @@ describe("WeavePlugin — module shape", () => {
   it("WeavePlugin accepts at least one argument (PluginInput)", () => {
     // Plugin = (input: PluginInput, options?: PluginOptions) => Promise<Hooks>
     expect(WeavePlugin.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("createWeavePlugin is a function", () => {
-    expect(typeof createWeavePlugin).toBe("function");
   });
 
   it("createWeavePlugin() returns a Plugin function", () => {
@@ -856,7 +848,7 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
     const cfg: { agent?: Record<string, { model?: string }> } = {};
     await hooks.config?.(cfg as never);
 
-    expect(cfg.agent?.["loom"]?.model).toBe("openrouter/openai/gpt-5");
+    expect(cfg.agent?.loom?.model).toBe("openrouter/openai/gpt-5");
   });
 
   // SDK createAgent test removed — reconciliation is disabled.

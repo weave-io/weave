@@ -1494,10 +1494,6 @@ class MockBaseChatModel {
 }
 
 describe("RealLangChainJudge — production adapter boundary", () => {
-  it("is exported from langchain-agent-evals and is a class", () => {
-    expect(typeof RealLangChainJudge).toBe("function");
-  });
-
   it("can be constructed with a mock BaseChatModel without any LangChain calls", () => {
     const mockModel = new MockBaseChatModel();
     // Construction should be side-effect free (no dynamic import yet)
@@ -2853,7 +2849,6 @@ describe("buildCaseExplanation — OutcomeKind type-safety prevents arbitrary-st
 import {
   buildModelExplanation,
   buildSuiteExplanation,
-  type OutcomeKind,
 } from "../langchain-agent-evals.js";
 
 describe("buildSuiteExplanation — bounded explanation from aggregate suite signals", () => {

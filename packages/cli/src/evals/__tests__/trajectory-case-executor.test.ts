@@ -103,7 +103,7 @@ function executor(runner?: TrajectoryRunner): TrajectoryCaseExecutor {
 }
 
 describe("TrajectoryCaseExecutor", () => {
-  it("resolves fixture and verifier paths under evals/fixtures and passes the Spec 35 fields", async () => {
+  it("resolves fixture and verifier paths under evals/fixtures and passes the verifier, sandbox and duration fields through", async () => {
     const runner = new RecordingRunner({ passed: true });
     const result = await executor(runner).execute(
       makeCase(),

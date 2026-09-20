@@ -93,8 +93,14 @@ expect(dispatchEffect.kind).toBe("dispatch-agent");
 
 `tsc --noEmit` already proves this. The rest are `expect(typeof X).toBe("function")`
 on an import, and whole `describe`s covering the shape of an `Input`/`Output`
-type. Cases that assert a *runtime constant's* contents
-(`expect(ALL_CAPABILITY_IDS).toHaveLength(19)`) are real and were kept.
+type.
+
+The pattern is consistent enough to state as a rule: within a
+constant-surface `describe`, the case asserting the *runtime constant's*
+contents (`expect(ALL_CAPABILITY_IDS).toHaveLength(19)`) is real and was kept,
+while the neighbouring `"<Type> type accepts …"` case only echoes a literal
+and was deleted. Likewise `LifecycleError discriminants` calls the real factory
+functions, so it stays.
 
 **4. `execution-lifecycle.test.ts` duplicates its own split.** The 10,301-line,
 348-case monolith and the 82-case `execution-lifecycle/` directory both cover
@@ -166,7 +172,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 
 | # | Action | Finding | Effect | Status |
 | --- | --- | --- | --- | --- |
-| 1 | Delete the type-echo cases | 3 | −48 cases, −553 lines, no coverage lost | **done** |
+| 1 | Delete the type-echo cases | 3 | −48 cases, −604 lines, no coverage lost | **done** |
 | 5 | Rename spec-numbered tests to behaviour | 5 | Readable by newcomers | **done** |
 | 7 | Cover `packages/adapters/pi` | 9 | Its four api-extractor configs now run under `validate:declarations` | **done, reduced** |
 | 2 | Retire `execution-lifecycle.test.ts` into the existing split, keeping only cases the split lacks | 4 | −9.8k lines | open |

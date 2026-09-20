@@ -222,7 +222,7 @@ describe("TrajectoryResult", () => {
   });
 });
 
-describe("Tool-call detail (Spec 35)", () => {
+describe("Tool-call detail", () => {
   const after = {
     sessionId: "s2",
     timestamp: TS,

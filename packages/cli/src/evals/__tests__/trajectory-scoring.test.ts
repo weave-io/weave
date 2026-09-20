@@ -234,7 +234,7 @@ describe("scoreTrajectoryResult", () => {
 // Spec 35: expected commands and verifier
 // ---------------------------------------------------------------------------
 
-describe("scoreTrajectoryResult — verification checks (Spec 35)", () => {
+describe("scoreTrajectoryResult — verification checks", () => {
   function at(second: number): string {
     return `2026-01-01T00:00:${String(second).padStart(2, "0")}.000Z`;
   }
