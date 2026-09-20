@@ -867,6 +867,13 @@
   - function loadCodeowners: (root) => Promise<string>
   - type CodeownersRule
   - _...3 more_
+- `scripts/ci/verify-test-coverage.ts`
+  - function describeTestCoverageError: (error) => string
+  - function bunfigPreloadsTestSetup: (bunfig) => boolean
+  - function isNoOpTestScript: (script) => boolean
+  - function checkTestCoverage: (packages) => Result<void, TestCoverageError[]>
+  - function readWorkspacePackages: () => Promise<WorkspacePackage[]>
+  - type TestCoverageError
 - `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>

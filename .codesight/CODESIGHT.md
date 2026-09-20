@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 199 lib files | 25 env vars | 6 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~18,000 tokens. Without it, AI exploration would cost ~65,800 tokens. **Saves ~47,800 tokens per conversation.**
-> **Last scanned:** 2026-09-20 14:48 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 6 middleware | 1 events | 0% test coverage
+> **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~66,100 tokens. **Saves ~48,000 tokens per conversation.**
+> **Last scanned:** 2026-09-20 15:05 — re-run after significant changes
 
 ---
 
@@ -878,6 +878,13 @@
   - function loadCodeowners: (root) => Promise<string>
   - type CodeownersRule
   - _...3 more_
+- `scripts/ci/verify-test-coverage.ts`
+  - function describeTestCoverageError: (error) => string
+  - function bunfigPreloadsTestSetup: (bunfig) => boolean
+  - function isNoOpTestScript: (script) => boolean
+  - function checkTestCoverage: (packages) => Result<void, TestCoverageError[]>
+  - function readWorkspacePackages: () => Promise<WorkspacePackage[]>
+  - type TestCoverageError
 - `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>
@@ -1015,7 +1022,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 194 test files found
+> 195 test files found
 
 ---
 

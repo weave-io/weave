@@ -679,9 +679,29 @@ Before marking any task complete, verify:
 ## Commands
 
 ```bash
-bun install          # install all workspace deps
-bun run build        # bundle + emit declarations for all packages
-bun run typecheck    # tsc --noEmit across all source (no build needed)
-bun test             # run all tests
-bun run clean        # remove all dist/ folders
+bun install                   # install all workspace deps
+bun run build                 # bundle + emit declarations for all packages
+bun run typecheck             # tsc --noEmit across all source (no build needed)
+bun run test                  # run every package's tests, plus scripts/
+bun run verify:test-coverage  # check every workspace package runs tests hermetically
+bun run clean                 # remove all dist/ folders
 ```
+
+### A new package must run its tests
+
+`bun run test` fans out with `bun run --filter '*' test`, which silently skips
+any package without a `test` script. A new package therefore needs two things,
+both enforced by `bun run verify:test-coverage`:
+
+1. A `"test"` script that actually runs tests — a no-op such as
+   `echo` or `bun -e 'process.exit(0)'` is rejected.
+2. Its own `bunfig.toml` whose `[test]` section preloads
+   `scripts/test-setup.ts`. Bun reads only the `bunfig.toml` in the current
+   working directory, so a package tested from its own directory does not
+   inherit the root one — without this its tests run with pino logging on and
+   `WEAVE_GLOBAL_CONFIG_DIR` unset, which lets them read the developer's real
+   global config.
+
+A package with genuinely nothing to test is added to `EXEMPT` in
+[`scripts/ci/verify-test-coverage.ts`](scripts/ci/verify-test-coverage.ts) with
+the reason, so the exemption is a decision on the record.

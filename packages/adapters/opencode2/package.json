@@ -40,6 +40,7 @@
   "scripts": {
     "build": "bun ../../../scripts/build-public-packages.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test ./src",
     "clean": "rm -rf dist",
     "verify:opencode2": "bash verify/run.sh"
   },

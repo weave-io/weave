@@ -1,0 +1,15 @@
+# Test configuration for this package.
+#
+# Bun reads only the bunfig.toml in the current working directory, so a package
+# whose tests run from its own directory — which is what
+# `bun run --filter '*' test` does — does not inherit the root one. Without this
+# file the shared preload never runs: pino logs leak into test output, and
+# WEAVE_GLOBAL_CONFIG_DIR is unset, letting tests read the developer's real
+# `~/.weave/config.weave`.
+#
+# `scripts/ci/verify-test-coverage.ts` keeps this in sync with the root config.
+
+[test]
+timeout = 5000
+smol = true
+preload = ["../../../scripts/test-setup.ts", "@opentui/solid/preload"]

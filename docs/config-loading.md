@@ -218,7 +218,10 @@ configuration:
 
 - **The test suite.** [`scripts/test-setup.ts`](../scripts/test-setup.ts) points
   it at [`scripts/fixtures/empty-global-config/`](../scripts/fixtures/empty-global-config/),
-  so no test reads the developer's real `~/.weave/config.weave`. Before this,
+  so no test reads the developer's real `~/.weave/config.weave`. Bun reads only
+  the `bunfig.toml` in the current working directory, so every package carries
+  its own that preloads this file — otherwise tests run from a package
+  directory silently skip it. `bun run verify:test-coverage` enforces that. Before this,
   every test that loaded the effective config depended on the machine it ran
   on — 23 of them failed outright on a developer box whose global config was
   merely out of date, while passing in CI, which has no global config.

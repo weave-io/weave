@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Verify every package runs tests
+        run: bun run verify:test-coverage
+
       - name: Test
         run: bun run test
 
