@@ -293,7 +293,7 @@
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
   - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
-  - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
+  - function loadCaseFile: (filePath, defaultModels?) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
   - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
@@ -509,7 +509,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...57 more_
+  - _...58 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

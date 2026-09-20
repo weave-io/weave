@@ -3,16 +3,6 @@
   "description": "Change under review: add a `mean` helper and use it in the report builder. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file, including the `Report` and `ReportError` types, is unchanged and compiles.\n\n`src/types.ts` (unchanged, shown for context):\n```ts\n3 export type NonEmptyArray<T> = [T, ...T[]];\n```\n\n`src/stats/mean.ts` (added):\n```ts\n1 import type { NonEmptyArray } from \"../types.js\";\n2\n3 export function mean(values: NonEmptyArray<number>): number {\n4   const total = values.reduce((sum, value) => sum + value, 0);\n5   return total / values.length;\n6 }\n```\n\n`src/stats/report.ts` (changed, lines 1-21):\n```ts\n1 import { err, ok, type Result } from \"neverthrow\";\n2 import type { NonEmptyArray } from \"../types.js\";\n3 import { mean } from \"./mean.js\";\n4 import type { Report, ReportError } from \"./report-types.js\";\n...\n12 export function buildReport(samples: number[]): Result<Report, ReportError> {\n13   if (!isNonEmpty(samples)) {\n14     return err({ type: \"NoSamples\" });\n15   }\n16   return ok({ count: samples.length, mean: mean(samples) });\n17 }\n18\n19 function isNonEmpty<T>(values: T[]): values is NonEmptyArray<T> {\n20   return values.length > 0;\n21 }\n```\n\n`src/stats/__tests__/report.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { mean } from \"../mean.js\";\n3 import { buildReport } from \"../report.js\";\n4\n5 test(\"empty samples are rejected\", () => {\n6   expect(buildReport([])._unsafeUnwrapErr()).toEqual({ type: \"NoSamples\" });\n7 });\n8 test(\"mean of samples\", () => {\n9   expect(buildReport([2, 4])._unsafeUnwrap().mean).toBe(3);\n10 });\n11 test(\"mean of a single value\", () => {\n12   expect(mean([5])).toBe(5);\n13 });\n```",
   "suite": "weft-review",
   "allowed_agents": ["weft"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Approve the change: the apparent division by zero in mean() cannot occur because its parameter type excludes empty arrays and the only caller narrows with isNonEmpty before calling it, and tests cover the empty and non-empty paths. Any residual concern may be noted as non-blocking but must not be a BLOCKER.",

@@ -123,6 +123,31 @@ And in `packages/cli/src/commands/eval.ts`:
 
 ---
 
+### Adding a model
+
+Adding a model is **one edit**: append an entry to `evals/model-matrix.json`.
+
+Everything else derives from it:
+
+| Consumer | How it follows the matrix |
+| --- | --- |
+| Case fixtures | `allowed_models` is omitted, and the loader fills it with every `default: true` entry |
+| `agent-evals.yml` dispatch allowlist | `jq -r '.models[].id' evals/model-matrix.json` at run time |
+| Trajectory model allowlist | the union of `allowed_models` across `harness_trajectory` cases, computed with `jq` |
+
+Before this, a model had to be listed in 46 case fixtures plus two workflow
+variables plus the dispatch input description — around 50 edits, each of which
+silently degraded coverage if missed.
+
+**Declaring `allowed_models` explicitly** is for deliberate exceptions only: a
+trajectory case pinned to one cheap model, for instance. A list that merely
+restates the matrix defaults is **rejected at load time**, because it would
+silently stop tracking the matrix — the case would keep running the old set
+while every other case picked the new model up.
+
+`TRAJECTORY_MODEL` in the workflow stays a literal: it chooses which cheap model
+CI runs by default, which is a policy decision rather than an allowlist.
+
 ## Eval Suites
 
 Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
@@ -1391,7 +1416,7 @@ Do not increase retention without a specific operational reason.
   "description": "...",                    // Required human-readable description
   "suite": "loom-routing",                 // Suite this case belongs to
   "allowed_agents": ["loom", "shuttle"],   // Closed set of valid agent names (min 1)
-  "allowed_models": ["anthropic/..."],     // Closed set of valid model IDs (min 1)
+  // allowed_models is normally OMITTED — see "Adding a model" below
   "expected_outcome": { "kind": "agent_routing", ... },
   "accepted_alternates": [],               // Optional substitute agent/model IDs
   "transcript_expectations": [],           // Optional ordered transcript assertions

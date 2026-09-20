@@ -451,13 +451,23 @@ export const EvalCaseSchema = z.object({
     .min(1, "allowed_agents must have at least one entry"),
   /**
    * The closed set of model identifiers valid for this case.
-   * When the eval runs with a model filter, the loader validates the
-   * filter value is in this set (or in the model matrix).
-   * At least one entry is required.
+   *
+   * **Omit this field** unless the case genuinely runs on a different set from
+   * the rest of the suite. When absent, the loader fills it with every model
+   * marked `default: true` in `evals/model-matrix.json`, so adding a model to
+   * the matrix reaches every case without touching a single fixture.
+   *
+   * Declare it only for a deliberate exception — a trajectory case pinned to
+   * one cheap model, say. An explicit list that merely restates the matrix
+   * defaults is rejected, because it would silently stop tracking the matrix.
+   *
+   * After loading, the field is always populated; `EvalCase` consumers can
+   * rely on it.
    */
   allowed_models: z
     .array(IdentifierSchema)
-    .min(1, "allowed_models must have at least one entry"),
+    .min(1, "allowed_models must have at least one entry")
+    .optional(),
   /**
    * The canonical expected outcome.
    * Validates via the discriminated union — unknown `kind` values are rejected.
@@ -481,7 +491,20 @@ export const EvalCaseSchema = z.object({
   tags: z.array(IdentifierSchema).default([]),
 });
 
-export type EvalCase = z.infer<typeof EvalCaseSchema>;
+/**
+ * A case fixture exactly as written on disk, where `allowed_models` may be
+ * absent because the case follows the matrix defaults.
+ */
+export type EvalCaseFile = z.infer<typeof EvalCaseSchema>;
+
+/**
+ * A loaded case.
+ *
+ * `allowed_models` is always populated here: the loader fills it from the
+ * model matrix when the fixture omits it, so runners never handle the absent
+ * case.
+ */
+export type EvalCase = EvalCaseFile & { allowed_models: string[] };
 
 // ---------------------------------------------------------------------------
 // Rubric fixture

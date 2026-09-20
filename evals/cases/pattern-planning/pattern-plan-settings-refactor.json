@@ -3,16 +3,6 @@
   "description": "Create a text-only implementation plan for refactoring the project settings workflow. Make the scope explicit, tie each implementation task to exact files, make ordering or dependency constraints visible, and include per-task acceptance or success criteria even if the headings use harmless formatting variations.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "The plan should surface structural planning quality signals the text runner can observe, without requiring exact marker spellings when the same task-level structure is still visible.",

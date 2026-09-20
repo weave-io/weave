@@ -3,16 +3,6 @@
   "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files for each task, makes the work order or dependency chain explicit, and ties each task to acceptance, success, or completion verification rather than a loose final note.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "The plan should provide observable planning structure for release work, and harmless heading variations should still count when the same task-level structure is present.",

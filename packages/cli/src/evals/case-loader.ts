@@ -22,9 +22,11 @@
 
 import { resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
+import { loadModelMatrix, resolveDefaultModels } from "./model-matrix.js";
 import {
   EVAL_SUITE_IDS,
   type EvalCase,
+  type EvalCaseFile,
   EvalCaseSchema,
   type EvalRubric,
   EvalRubricSchema,
@@ -119,7 +121,7 @@ function readFixtureFile(
  * Validate that all `allowed_agents` in a case are in `KNOWN_AGENTS`.
  */
 function validateAllowedAgents(
-  caseFixture: EvalCase,
+  caseFixture: EvalCaseFile,
   filePath: string,
 ): FixtureSchemaError | undefined {
   for (const agent of caseFixture.allowed_agents) {
@@ -159,7 +161,7 @@ function validateKnownSuite(
 }
 
 function validateTextEvalContract(
-  caseFixture: EvalCase,
+  caseFixture: EvalCaseFile,
   filePath: string,
 ): FixtureSchemaError | undefined {
   const suiteMetadata = getEvalSuiteMetadata(caseFixture.suite);
@@ -236,7 +238,7 @@ export const TRAJECTORY_START_AGENTS: ReadonlySet<string> = new Set([
  * primary agent, and a verifier needs a fixture to verify.
  */
 function validateTrajectoryVerificationFields(
-  caseFixture: EvalCase,
+  caseFixture: EvalCaseFile,
   filePath: string,
 ): FixtureSchemaError | undefined {
   const outcome = caseFixture.expected_outcome;
@@ -284,6 +286,7 @@ function validateTrajectoryVerificationFields(
  */
 export function loadCaseFile(
   filePath: string,
+  defaultModels?: readonly string[],
 ): ResultAsync<EvalCase, FixtureSchemaError> {
   return readFixtureFile(filePath).andThen((raw) => {
     const parsed = EvalCaseSchema.safeParse(raw);
@@ -319,8 +322,64 @@ export function loadCaseFile(
       return err(trajectoryError);
     }
 
-    return ok(parsed.data);
+    const modelsError = validateAllowedModels(
+      parsed.data,
+      filePath,
+      defaultModels,
+    );
+    if (modelsError !== undefined) {
+      return err(modelsError);
+    }
+
+    return ok(withResolvedModels(parsed.data, defaultModels));
   });
+}
+
+/**
+ * Rejects an explicit `allowed_models` that merely restates the matrix
+ * defaults.
+ *
+ * Such a list looks harmless but silently stops tracking the matrix: adding a
+ * model would reach every other case and skip this one. Omitting the field is
+ * the way to say "the usual set".
+ */
+function validateAllowedModels(
+  parsed: EvalCaseFile,
+  filePath: string,
+  defaultModels: readonly string[] | undefined,
+): FixtureSchemaError | undefined {
+  if (parsed.allowed_models === undefined) return undefined;
+  if (defaultModels === undefined) return undefined;
+
+  const declared = [...parsed.allowed_models].sort().join(",");
+  const defaults = [...defaultModels].sort().join(",");
+  if (declared !== defaults) return undefined;
+
+  return {
+    type: "FixtureValidationFailed" as const,
+    file: filePath,
+    message:
+      `Case fixture lists allowed_models identical to the model matrix defaults: ${filePath}. ` +
+      "Omit the field instead — it is filled from evals/model-matrix.json, so the case keeps " +
+      "tracking the matrix when a model is added. Declare it only for a deliberate exception.",
+    issues: [
+      {
+        path: "allowed_models",
+        message: "identical to the model matrix defaults",
+      },
+    ],
+  } satisfies FixtureSchemaError;
+}
+
+/** Fills `allowed_models` from the matrix defaults when the fixture omits it. */
+function withResolvedModels(
+  parsed: EvalCaseFile,
+  defaultModels: readonly string[] | undefined,
+): EvalCase {
+  if (parsed.allowed_models !== undefined) {
+    return parsed as EvalCase;
+  }
+  return { ...parsed, allowed_models: [...(defaultModels ?? [])] };
 }
 
 /**
@@ -384,11 +443,14 @@ export function loadSuiteCases(
     return ResultAsync.fromSafePromise(Promise.resolve([] as EvalCase[]));
   }
 
-  const loadAll = fileNames.map((name) =>
-    loadCaseFile(resolve(casesDir, name)),
-  );
+  // Load the matrix once, not per case: every fixture that omits
+  // `allowed_models` is filled from its `default: true` entries.
+  return loadModelMatrix().andThen((matrix) => {
+    const defaultModels = resolveDefaultModels(matrix).map((m) => m.id);
+    const loadAll = fileNames.map((name) =>
+      loadCaseFile(resolve(casesDir, name), defaultModels),
+    );
 
-  return ResultAsync.fromSafePromise(Promise.resolve(null)).andThen(() => {
     // Chain sequentially so the first error surfaces with its file path intact
     return loadAll.reduce(
       (acc, loader) => acc.andThen((cases) => loader.map((c) => [...cases, c])),

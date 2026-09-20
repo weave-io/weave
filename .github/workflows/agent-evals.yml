@@ -16,8 +16,8 @@ on:
       model:
         description: |
           Optional model ID filter. Leave blank to run the full default model matrix.
-          Allowed values: anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5,
-          openai/gpt-5.5, anthropic/claude-opus-5, openai/gpt-5.6-sol
+          Allowed values are every `id` in evals/model-matrix.json; an unknown
+          value is rejected before any eval runs.
         required: false
         default: ""
         type: string
@@ -125,6 +125,17 @@ jobs:
       model: ${{ steps.check.outputs.model }}
       case:  ${{ steps.check.outputs.case }}
     steps:
+      # The model allowlist is derived from evals/model-matrix.json rather than
+      # restated here, so adding a model is a single edit to that file. Reading
+      # it needs the repo, hence this checkout. No secrets are available to this
+      # job, and eval execution still happens only after validation passes.
+      - name: Checkout source repo
+        # actions/checkout v4.2.2
+        # SHA pinned to the upstream commit for this tag — immune to tag mutation.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
       - name: Validate and sanitize inputs
         id: check
         # Raw dispatch inputs are bound to env vars before any processing.
@@ -146,8 +157,14 @@ jobs:
           # EvalOrchestrator.shouldRunSuite() which matches on either.
           ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution tapestry-category-routing shuttle-execution spindle-tools pattern-planning weft-review warp-security"
 
-          # Model allowlist: exact model IDs from evals/model-matrix.json.
-          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5 anthropic/claude-opus-5 openai/gpt-5.6-sol qwen/qwen3.8-max deepseek/deepseek-v4-flash-0731 openai/gpt-6-astra openai/gpt-4o-mini"
+          # Model allowlist: read from evals/model-matrix.json, which is the
+          # single source of truth. Adding a model there reaches this workflow,
+          # the CLI and every case fixture without another edit.
+          ALLOWED_MODELS="$(jq -r '.models[].id' evals/model-matrix.json | tr '\n' ' ')"
+          if [ -z "${ALLOWED_MODELS// /}" ]; then
+            echo "::error::Could not read model IDs from evals/model-matrix.json"
+            exit 1
+          fi
 
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI
@@ -535,9 +552,14 @@ jobs:
           # "harness_trajectory" from evals/cases/**
           ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory shuttle-verify-tests-after-edit-trajectory tapestry-runs-plan-verification-trajectory"
 
-          # Model allowlist: exact model IDs used by trajectory cases'
-          # allowed_models field.
-          ALLOWED_TRAJECTORY_MODELS="openai/gpt-4o-mini anthropic/claude-sonnet-4.5 anthropic/claude-opus-5 openai/gpt-5.5 deepseek/deepseek-v4-flash-0731"
+          # Model allowlist: the union of allowed_models across the trajectory
+          # cases themselves, so it follows the fixtures rather than being
+          # restated here.
+          ALLOWED_TRAJECTORY_MODELS="$(jq -rs '[.[] | select(.expected_outcome.kind=="harness_trajectory") | .allowed_models[]?] | unique | .[]' evals/cases/*/*.json | tr '\n' ' ')"
+          if [ -z "${ALLOWED_TRAJECTORY_MODELS// /}" ]; then
+            echo "::error::Could not derive trajectory model allowlist from evals/cases"
+            exit 1
+          fi
 
           # Sandbox profile allowlist: exact expected_outcome.sandbox_profile
           # values referenced by trajectory cases.

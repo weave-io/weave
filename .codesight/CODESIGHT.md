@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 7 middleware | 1 events | 0% test coverage
 > **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~66,400 tokens. **Saves ~48,200 tokens per conversation.**
-> **Last scanned:** 2026-09-20 17:12 — re-run after significant changes
+> **Last scanned:** 2026-09-20 18:13 — re-run after significant changes
 
 ---
 
@@ -304,7 +304,7 @@
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
   - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
-  - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
+  - function loadCaseFile: (filePath, defaultModels?) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
   - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
@@ -520,7 +520,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...57 more_
+  - _...58 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
@@ -1044,7 +1044,8 @@
 
 > `.github/workflows/agent-evals.yml`
 
-- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **validate-inputs** on `ubuntu-latest` — 2 steps
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
 - **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`

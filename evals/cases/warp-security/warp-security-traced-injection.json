@@ -3,16 +3,6 @@
   "description": "Change under review: add an archive export endpoint for the internal dashboard. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file, including the `app` router setup and the import of `createArchive`, is unchanged and compiles.\n\n`src/routes/export.ts` (changed, lines 14-18):\n```ts\n14 app.get(\"/export\", async (req) => {\n15   const name = new URL(req.url).searchParams.get(\"name\") ?? \"export\";\n16   const archive = await createArchive(name);\n17   return new Response(Bun.file(archive));\n18 });\n```\n\n`src/lib/archive.ts` (added):\n```ts\n1 export async function createArchive(name: string): Promise<string> {\n2   const target = `/var/exports/${name}.tgz`;\n3   const proc = Bun.spawn([\"sh\", \"-c\", `tar -czf ${target} /srv/data`]);\n4   await proc.exited;\n5   return target;\n6 }\n```\n\nThe route is mounted on the same server as the public API.",
   "suite": "warp-security",
   "allowed_agents": ["warp"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Block the change: the name query parameter flows unvalidated from src/routes/export.ts into a shell command in src/lib/archive.ts (command injection and path traversal). At least one finding's EVIDENCE line must trace the flow by citing both the input source and the shell sink.",

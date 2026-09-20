@@ -3,16 +3,6 @@
   "description": "Change under review: push workspace snapshots to the sync service. Both files are added and shown in full.\n\n`src/sync/client.ts` (added):\n```ts\n1 import { err, ok, type Result } from \"neverthrow\";\n2 import { log } from \"../log.js\";\n3 import { keychain } from \"../os/keychain.js\";\n4 import type { SyncError } from \"./errors.js\";\n5 import { type Snapshot, SnapshotSchema } from \"./schema.js\";\n6\n7 const SYNC_URL = \"https://sync.example.com/v1/push\";\n8\n9 export async function pushSnapshot(snapshot: Snapshot): Promise<Result<void, SyncError>> {\n10   const token = await keychain.get(\"weave-sync-token\");\n11   if (token === undefined) {\n12     return err({ type: \"MissingToken\" });\n13   }\n14   const res = await fetch(SYNC_URL, {\n15     method: \"POST\",\n16     headers: { Authorization: `Bearer ${token}`, \"Content-Type\": \"application/json\" },\n17     body: JSON.stringify(SnapshotSchema.parse(snapshot)),\n18   });\n19   log.info({ status: res.status }, \"snapshot pushed\");\n20   return res.ok ? ok(undefined) : err({ type: \"PushFailed\", status: res.status });\n21 }\n```\n\n`src/sync/revision.ts` (added):\n```ts\n1 export async function currentRevision(): Promise<string> {\n2   const proc = Bun.spawn([\"git\", \"rev-parse\", \"HEAD\"], { stdout: \"pipe\" });\n3   return (await new Response(proc.stdout).text()).trim();\n4 }\n```\n\n`keychain` is the existing OS keychain wrapper, `SnapshotSchema` is an existing Zod schema, and `log` is the shared pino logger.",
   "suite": "warp-security",
   "allowed_agents": ["warp"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Approve the change: it matches security patterns (token, Authorization header, network call, process spawn) but has no realistic attack path. The URL is a constant HTTPS endpoint, the token comes from the keychain and is never logged, and the spawn uses a constant argument vector with no shell. Non-blocking notes are acceptable; FINDING lines and a BLOCK verdict are not.",

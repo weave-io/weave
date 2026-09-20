@@ -180,60 +180,69 @@ function discoverCaseFilePaths(): string[] {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("workflow-sync — agent-evals.yml ALLOWED_MODELS matches model-matrix.json", () => {
+describe("workflow-sync — agent-evals.yml derives its model allowlist", () => {
   it("loads the workflow file without error", async () => {
     const text = await Bun.file(WORKFLOW_PATH).text();
     expect(text.length).toBeGreaterThan(0);
     expect(text).toContain("ALLOWED_MODELS");
   });
 
-  it("ALLOWED_MODELS in workflow matches every model ID in model-matrix.json", async () => {
-    const [workflowText, matrixResult] = await Promise.all([
+  it("reads the allowlist from model-matrix.json rather than restating it", async () => {
+    const [text, matrixResult] = await Promise.all([
       Bun.file(WORKFLOW_PATH).text(),
       loadModelMatrix(),
     ]);
+    if (matrixResult.isErr())
+      throw new Error("model-matrix.json failed to load");
 
-    if (matrixResult.isErr()) {
-      // model-matrix.json itself is invalid — fail with a clear message
-      throw new Error(
-        `model-matrix.json failed to load: ${matrixResult.error.message}`,
-      );
-    }
+    // A literal list would drift the moment a model is added to the matrix,
+    // so no ALLOWED_*MODELS assignment may name a model directly. The separate
+    // TRAJECTORY_MODEL pin is deliberate — it chooses which cheap model CI
+    // runs by default — and is not an allowlist, so it is not covered here.
+    expect(text).toContain("evals/model-matrix.json");
 
-    const workflowModels = extractWorkflowAllowedModels(workflowText);
-    const matrixModelIds = matrixResult.value.models.map((m) => m.id);
+    const allowlistAssignments = [
+      ...text.matchAll(/ALLOWED_\w*MODELS="[^"]*"/g),
+    ]
+      .map((m) => m[0])
+      .join("\n");
+    expect(allowlistAssignments.length).toBeGreaterThan(0);
 
-    expect(workflowModels.length).toBeGreaterThan(0);
-
-    // Every model in the matrix should appear in the workflow allowlist.
-    // If a model is added to the matrix but not to the workflow, the workflow
-    // cannot dispatch runs for that model — this test catches the drift.
-    for (const matrixId of matrixModelIds) {
-      expect(workflowModels).toContain(matrixId);
-    }
+    const restated = matrixResult.value.models
+      .map((m) => m.id)
+      .filter((id) => allowlistAssignments.includes(id));
+    expect(restated).toEqual([]);
   });
 
-  it("ALLOWED_MODELS in workflow does not contain model IDs absent from model-matrix.json", async () => {
-    const [workflowText, matrixResult] = await Promise.all([
-      Bun.file(WORKFLOW_PATH).text(),
-      loadModelMatrix(),
-    ]);
+  it("checks out the repo before reading the matrix", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const validateJob = text.slice(
+      text.indexOf("validate-inputs:"),
+      text.indexOf("run-evals:"),
+    );
 
-    if (matrixResult.isErr()) {
-      throw new Error(
-        `model-matrix.json failed to load: ${matrixResult.error.message}`,
-      );
-    }
+    expect(validateJob).toContain("actions/checkout@");
+    expect(validateJob.indexOf("actions/checkout@")).toBeLessThan(
+      validateJob.indexOf("ALLOWED_MODELS="),
+    );
+  });
 
-    const workflowModels = extractWorkflowAllowedModels(workflowText);
-    const matrixModelIds = new Set(matrixResult.value.models.map((m) => m.id));
+  it("fails the run when the matrix yields no model IDs", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
 
-    // Every model in the workflow allowlist should exist in the matrix.
-    // Stale entries in the workflow (models removed from the matrix) would
-    // silently match no cases and waste CI quota.
-    for (const wfModel of workflowModels) {
-      expect(matrixModelIds.has(wfModel)).toBe(true);
-    }
+    // Without this guard a malformed matrix would silently produce an empty
+    // allowlist, rejecting every model with a confusing "Unknown model" error.
+    expect(text).toContain(
+      "Could not read model IDs from evals/model-matrix.json",
+    );
+  });
+
+  it("still loads the matrix it derives from", async () => {
+    const matrixResult = await loadModelMatrix();
+
+    expect(matrixResult.isOk()).toBe(true);
+    if (matrixResult.isErr()) return;
+    expect(matrixResult.value.models.length).toBeGreaterThan(0);
   });
 });
 
@@ -373,24 +382,25 @@ describe("workflow-sync — agent-evals.yml trajectory-track allowlists match ha
     expect(workflowCases.length).toBe(trajectoryCases.length);
   });
 
-  it("ALLOWED_TRAJECTORY_MODELS lists every model referenced by a harness_trajectory case", async () => {
+  it("ALLOWED_TRAJECTORY_MODELS is derived from the fixtures rather than restated", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
-    const workflowModels = extractWorkflowAllowedTrajectoryModels(workflowText);
     const trajectoryCases = await discoverTrajectoryCases();
 
     const fixtureModels = new Set<string>();
     for (const trajectoryCase of trajectoryCases) {
       for (const model of trajectoryCase.model) fixtureModels.add(model);
     }
-
     expect(fixtureModels.size).toBeGreaterThan(0);
 
-    for (const model of fixtureModels) {
-      expect(workflowModels).toContain(model);
-    }
-    for (const wfModel of workflowModels) {
-      expect(fixtureModels.has(wfModel)).toBe(true);
-    }
+    // The workflow computes this union with jq at run time, so a trajectory
+    // case gaining a model needs no workflow edit. A literal list here would
+    // silently reject that model instead.
+    const assignment = extractWorkflowAllowedTrajectoryModels(workflowText);
+    const restated = [...fixtureModels].filter((model) =>
+      assignment.includes(model),
+    );
+    expect(restated).toEqual([]);
+    expect(workflowText).toContain("harness_trajectory");
   });
 
   it("ALLOWED_SANDBOX_PROFILES lists every sandbox profile referenced by a harness_trajectory case", async () => {

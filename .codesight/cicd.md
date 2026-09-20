@@ -14,7 +14,8 @@
 
 > `.github/workflows/agent-evals.yml`
 
-- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **validate-inputs** on `ubuntu-latest` — 2 steps
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
 - **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`

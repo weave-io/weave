@@ -3,16 +3,6 @@
   "description": "Choose the primary route for this text-only task: draft a comprehensive multi-week implementation plan for migrating the monolith service to a set of microservices, covering phased rollout, data-migration risk, and team assignments.",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "pattern"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "agent_routing",
     "target_agent": "pattern",

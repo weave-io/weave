@@ -3,16 +3,6 @@
   "description": "Synthetic research brief: [1] Bun compatibility docs allow node:path and node:os in Bun-only projects. [2] Weave runtime policy forbids Node fs and child_process usage. Summarize the guidance with source-cited facts, clear interpretation, and explicit confidence.",
   "suite": "spindle-tools",
   "allowed_agents": ["spindle"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Emit a research answer with inline citations, separate source facts from interpretation, list sources, and report confidence.",

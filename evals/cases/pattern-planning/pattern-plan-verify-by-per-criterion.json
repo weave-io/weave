@@ -3,16 +3,6 @@
   "description": "Plan adding a `--json` output flag to the `weave status` CLI command so scripts can consume its output. Relevant files: `packages/cli/src/commands/status.ts` (the command), `packages/cli/src/commands/__tests__/status.test.ts` (its tests), and `docs/cli.md` (the command reference). Available commands (from package.json scripts): `bun test`, `bun run typecheck`, `bun run lint`.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Produce a structured plan in which every acceptance criterion states how it will be verified (a declared command, a named test, or a manual: check), and whose Verification section is a checklist of - [ ] items rather than a bare code block.",

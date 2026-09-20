@@ -3,16 +3,6 @@
   "description": "Text-only execution case: Tapestry should clearly express delegation of the domain-specific subtask to shuttle.",
   "suite": "tapestry-execution",
   "allowed_agents": ["tapestry", "shuttle"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "delegation_chain",
     "chain": ["tapestry", "shuttle"]

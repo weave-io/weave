@@ -3,16 +3,6 @@
   "description": "Shuttle should finish a bounded delegated task by listing files changed, the checks that verify it, test results, assumptions made, and per-criterion acceptance status in the final text report.",
   "suite": "shuttle-execution",
   "allowed_agents": ["shuttle"],
-  "allowed_models": [
-    "anthropic/claude-opus-4.5",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.6-sol",
-    "qwen/qwen3.8-max",
-    "deepseek/deepseek-v4-flash-0731",
-    "openai/gpt-6-astra"
-  ],
   "expected_outcome": {
     "kind": "task_completion",
     "description": "Emit a final Shuttle evidence report with assumptions and test results. Nothing runs in this exercise, so the report says the tests were not run and claims no pass.",
