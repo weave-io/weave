@@ -47,7 +47,7 @@ Largest files, by case count:
 | --- | --- | --- |
 | 188 | `report-schema.test.ts` | **migrated** — 188 → 112 (task group 14) |
 | 169 | `loom-routing-runner.test.ts` | runner behaviour; mixed |
-| 161 | `artifact-bundle.test.ts` | bundle writing; largely observable |
+| 161 | `artifact-bundle.test.ts` | **migrated** — 337 cases across four bundle-writing files became 60 (task group 14) |
 | 153 | `langchain-agent-evals.test.ts` | judge adapter; mixed |
 | 140 | `sanitizer.test.ts` | **migrated** — 140 → 91 (task group 14) |
 | 114 | `report-markdown.test.ts` | rendering; observable |
@@ -114,6 +114,54 @@ argument for doing the rest:
 - [`tests/support/evals.ts`](../../tests/support/evals.ts) is the shared harness;
   [`tests/evals/publish-safety.scenario.test.ts`](../../tests/evals/publish-safety.scenario.test.ts)
   is the worked example for a hostile-input table.
+
+## Findings from the bundle-writing migration (task group 14)
+
+`artifact-bundle`, `raw-artifacts`, `report-bundle` and `provenance` went from
+**337 unit cases to 60**, with 68 scenarios in
+[`tests/evals/bundle-writing.scenario.test.ts`](../../tests/evals/bundle-writing.scenario.test.ts).
+Eighteen mutations were run against those scenarios alone; seventeen were
+caught. Writing them against observed behaviour turned up four things:
+
+- **A hostile explanation is dropped from `public-report.json` but kept
+  verbatim in `score-<suite>.json`.** `BoundedExplanationSchema` guards the
+  public report, and [`docs/eval-xss-policy.md`](../eval-xss-policy.md) is
+  scoped to that file — but every path in `filesWritten`, score files included,
+  is handed to `ResultsRepoPublisher`, so the string still reaches the results
+  repository. `publicFiles` keeps a website loader away from it; nothing keeps
+  it out of the repo. Two `it.each` tables in the scenario file record both
+  halves, so the behaviour cannot drift unnoticed. Whether the score file
+  should carry an unvalidated explanation at all is a product decision.
+- **`artifact-bundle.test.ts` contained a test that asserted the opposite of
+  its name.** `"adversarial: publicExplanation with forbidden pattern text is
+  written to JSON (caught upstream)"` built a *clean* explanation and asserted
+  it survived — the adversarial case it claimed to cover was never exercised.
+  It is gone; the scenarios cover the real one.
+- **`computeBundleDirName()` is dead.** It is marked `@deprecated` and
+  "retained for test compatibility", and its only caller was the test that
+  tested it. Those seven cases are gone, so the export now has no caller at
+  all and can be removed.
+- **The `"unknown"` branch in `computeRunIdPrefix()` is a no-op.**
+  `"unknown".slice(0, 7) === "unknown"`, so the ternary that special-cases it
+  changes nothing. Harmless, but it reads as load-bearing.
+- **`writeBundle()` throws instead of returning `err`.** A `CaseResultSummary`
+  missing `dimensionScores` produces a raw
+  `TypeError: undefined is not an object` out of the sanitizer, escaping the
+  `ResultAsync` entirely — against the neverthrow rule in `AGENTS.md`.
+  Reproduced directly against `ArtifactBundleWriter`; reported separately by
+  the sanitizer migration.
+- **A failed public-report assembly is silent.** `writeBundle()` treats an
+  `assemblePublicReportBundle` error as non-fatal: `public-report.json`,
+  `public-report.md` and everything derived from them are skipped while the
+  call still returns `ok`. That is the vacuity trap in file form, so the
+  scenarios pin the run directory's exact file list and the exact
+  `publicFiles` array rather than asserting "contains". Forcing that branch
+  fails 29 of them.
+- **`assertBundlePublishEligible()` has no production caller.** It is the
+  policy that says a dry-run bundle must never be published externally, and
+  nothing on the `weave eval` path invokes it — the dry-run guarantee is
+  instead enforced by `effectiveMode` inside `writeBundle()`. Its three unit
+  cases were kept because no scenario can reach it.
 
 ## Still open elsewhere
 
