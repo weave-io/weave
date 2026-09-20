@@ -149,7 +149,10 @@ code, pre, .mono { font-family: var(--font-mono); }
   align-items: center;
   gap: var(--s-2);
 }
-.w-topbar .brand img { width: 28px; height: 28px; border-radius: var(--r-1); }
+/* The mark is wider than it is tall, so its height is fixed and the width
+   follows the source aspect ratio. A square `28px × 28px` squashed it to 43% of
+   its proper width. No radius: the mark is a bare silhouette, not a tile. */
+.w-topbar .brand img { height: 28px; width: auto; }
 .w-topbar .brand .word {
   font-family: var(--font-mono);
   font-size: var(--fs-base);

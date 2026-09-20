@@ -24,7 +24,7 @@ baseline** — the replica is correct only when it matches them:
 | `theme.js`            | Shared light/dark theme toggle (persists `localStorage`)         |
 | `docs.js`             | Docs behaviors: copy buttons, command palette, TOC scrollspy     |
 | `landing.js`          | Landing behaviors: generated SVGs, tabs, reveal, copy buttons    |
-| `logo.png`            | Brand logo (8 KB raster)                                         |
+| `logo.png`            | Brand mark, 245×112 (8 KB raster)                                |
 
 The following zip files are **React/source artifacts** and are NOT the fidelity
 baseline. The static HTML files above are the canonical markup; the `.jsx`
