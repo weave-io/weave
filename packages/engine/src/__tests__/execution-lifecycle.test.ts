@@ -321,27 +321,6 @@ describe("observeSession (Runtime Store)", () => {
     expect(result.error.type).toBe("validation");
   });
 
-  it("returns validation error for missing workflowInstanceId", async () => {
-    const store = createInMemoryRuntimeStore();
-    const result = await observeSession(
-      {
-        workflowInstanceId: "" as typeof wfId,
-        leaseId,
-        harnessName: "opencode",
-        agentName: "loom",
-        sessionStatus: "active",
-      },
-      store,
-    );
-
-    expect(result.isErr()).toBe(true);
-    if (!result.isErr()) return;
-    expect(result.error.type).toBe("validation");
-    if (result.error.type === "validation") {
-      expect(result.error.field).toBe("workflowInstanceId");
-    }
-  });
-
   it("returns validation error for missing leaseId", async () => {
     const store = createInMemoryRuntimeStore();
     const result = await observeSession(
@@ -419,26 +398,6 @@ describe("observeSession (Runtime Store)", () => {
     expect(fetchResult.isOk()).toBe(true);
     if (!fetchResult.isOk()) return;
     expect(fetchResult.value.metadata).toEqual({});
-  });
-
-  it("returns persistence error when store fails", async () => {
-    const store = createInMemoryRuntimeStore({
-      failOn: { snapshotRecord: queryError("injected snapshot failure") },
-    });
-    const result = await observeSession(
-      {
-        workflowInstanceId: wfId,
-        leaseId,
-        harnessName: "opencode",
-        agentName: "loom",
-        sessionStatus: "active",
-      },
-      store,
-    );
-
-    expect(result.isErr()).toBe(true);
-    if (!result.isErr()) return;
-    expect(result.error.type).toBe("persistence");
   });
 });
 
@@ -7732,38 +7691,6 @@ describe("ReconciliationAuthorizationSource type and constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateReconciliationSource", () => {
-  it("accepts 'user' for 'user-revision-request'", () => {
-    const result = validateReconciliationSource(
-      "user-revision-request",
-      "user",
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("accepts 'runtime' for 'execution-mismatch'", () => {
-    const result = validateReconciliationSource(
-      "execution-mismatch",
-      "runtime",
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("accepts 'review-gate' for 'review-rejection'", () => {
-    const result = validateReconciliationSource(
-      "review-rejection",
-      "review-gate",
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("accepts 'security-gate' for 'security-rejection'", () => {
-    const result = validateReconciliationSource(
-      "security-rejection",
-      "security-gate",
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
   it("rejects 'user' for 'execution-mismatch' (must be 'runtime')", () => {
     const result = validateReconciliationSource("execution-mismatch", "user");
     expect(result.isErr()).toBe(true);

@@ -102,12 +102,33 @@ while the neighbouring `"<Type> type accepts …"` case only echoes a literal
 and was deleted. Likewise `LifecycleError discriminants` calls the real factory
 functions, so it stays.
 
-**4. `execution-lifecycle.test.ts` duplicates its own split.** The 10,301-line,
-348-case monolith and the 82-case `execution-lifecycle/` directory both cover
-all ten lifecycle entry points — `observeSession`, `startExecution`,
-`resumeExecution`, `dispatchStep`, `completeStep`, `beforeTool`,
-`reconcileExecution`, `handleUserInterrupt`, `validateReconciliationSource`,
-`inspectExecution`. The split was started and the monolith never retired.
+**4. `execution-lifecycle.test.ts` is a 9.7k-line file, but it is not a
+duplicate — corrected.** The original finding claimed the monolith duplicated
+the `execution-lifecycle/` directory, because both name all ten lifecycle entry
+points (`observeSession`, `startExecution`, `resumeExecution`, `dispatchStep`,
+`completeStep`, `beforeTool`, `reconcileExecution`, `handleUserInterrupt`,
+`validateReconciliationSource`, `inspectExecution`) at `describe` level. That
+inference was wrong: overlap at `describe` level says nothing about the cases
+inside.
+
+Comparing case bodies rather than names:
+
+| | Cases |
+| --- | --- |
+| Monolith | 309 |
+| `execution-lifecycle/` directory | 82 |
+| Same name in both | 13 |
+| **Same name _and_ same body** | **6** |
+
+Seven cases share a name but differ in setup or assertions, so they are not
+interchangeable. **True duplication is 6 cases, not 309**, and the ~275
+monolith-only cases are real coverage. The projected "−9.8k lines" was never
+available.
+
+What remains true is that the file is the largest in the repository and hard to
+navigate. Its 36 top-level `describe` blocks group cleanly by subject and map
+onto the existing directory, so the honest remedy is a reorganization with no
+deletion — see step 2 in the plan.
 
 **5. Test names encode the implementation plan, not the behaviour.** 31 names
 across 10 files carry `Spec 22 Unit 1`, `Task 3.2`, `ADR 0004`, `Phase 1`. These
@@ -190,7 +211,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 1 | Delete the type-echo cases | 3 | −48 cases, −604 lines, no coverage lost | **done** |
 | 5 | Rename spec-numbered tests to behaviour | 5 | Readable by newcomers | **done** |
 | 7 | Cover `packages/adapters/pi` | 9 | Its four api-extractor configs now run under `validate:declarations` | **done, reduced** |
-| 2 | Retire `execution-lifecycle.test.ts` into the existing split, keeping only cases the split lacks | 4 | −9.8k lines | open |
+| 2 | Split `execution-lifecycle.test.ts` by subject into `execution-lifecycle/`, moving cases rather than deleting them | 4 | Navigable files; no line saving — see the correction in finding 4 | open |
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
