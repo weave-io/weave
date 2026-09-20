@@ -1,28 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { ClaudeCodeAdapter } from "../adapter.js";
-
-function makeDescriptor(
-  overrides: Partial<AgentDescriptor> = {},
-): AgentDescriptor {
-  return {
-    name: "test-agent",
-    composedPrompt: "You are a test agent.",
-    models: ["claude-sonnet-4-5"],
-    mode: "subagent",
-    effectiveToolPolicy: {
-      read: "allow",
-      write: "allow",
-      execute: "allow",
-      delegate: "deny",
-      network: "ask",
-    },
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-    ...overrides,
-  };
-}
+import { makeDescriptor } from "./support.js";
 
 function makeAdapter(
   writtenFiles: Record<string, string>,

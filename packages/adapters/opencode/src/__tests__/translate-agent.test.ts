@@ -14,42 +14,14 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type {
-  AgentDescriptor,
-  EffectiveToolPolicy,
-} from "@weaveio/weave-engine";
+import type { AgentDescriptor } from "@weaveio/weave-engine";
 import type { OpenCodeToolPermissions } from "../tool-policy-mapping.js";
 import { translateAgent } from "../translate-agent.js";
+import { makeDescriptor } from "./support.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
-
-const DEFAULT_TOOL_POLICY: EffectiveToolPolicy = {
-  read: "allow",
-  write: "allow",
-  execute: "allow",
-  delegate: "deny",
-  network: "ask",
-};
-
-function makeDescriptor(
-  overrides: Partial<AgentDescriptor> = {},
-): AgentDescriptor {
-  return {
-    name: "test-agent",
-    composedPrompt: "You are a test agent.",
-    models: ["claude-sonnet-4-5"],
-    mode: "subagent",
-    temperature: 0.2,
-    description: "A test agent",
-    effectiveToolPolicy: DEFAULT_TOOL_POLICY,
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-    ...overrides,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Tests: basic translation

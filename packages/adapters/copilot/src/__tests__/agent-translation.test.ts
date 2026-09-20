@@ -1,28 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { translateAgentToCopilotMarkdown } from "../agent-translation.js";
-
-function makeDescriptor(
-  overrides: Partial<AgentDescriptor> = {},
-): AgentDescriptor {
-  return {
-    name: "test-agent",
-    composedPrompt: "You are a test agent.",
-    models: ["claude-sonnet-5"],
-    mode: "subagent",
-    effectiveToolPolicy: {
-      read: "allow",
-      write: "allow",
-      execute: "allow",
-      delegate: "deny",
-      network: "ask",
-    },
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-    ...overrides,
-  };
-}
+import { makeDescriptor } from "./support.js";
 
 describe("translateAgentToCopilotMarkdown", () => {
   it("produces valid frontmatter with name only allowed keys", () => {

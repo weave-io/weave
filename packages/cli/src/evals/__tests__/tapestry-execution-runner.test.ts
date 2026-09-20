@@ -56,12 +56,11 @@ import type {
   RunnerResult,
   ScoringDimension,
 } from "../types.js";
+import { makeDryRunSummary, SCORED_AT } from "./support.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const SCORED_AT = "2026-01-01T00:00:00.000Z";
 
 function makeDelegationCase(overrides: Partial<EvalCase> = {}): EvalCase {
   return {
@@ -554,28 +553,6 @@ function buildRationales(
     }
   }
   return out;
-}
-
-function makeDryRunSummary(
-  evalCase: EvalCase,
-  modelId: string,
-): CaseResultSummary {
-  return {
-    caseId: evalCase.id,
-    modelId,
-    suite: evalCase.suite,
-    passed: false,
-    required: true,
-    weightedTotal: 0,
-    dimensionScores: {
-      routingCorrectness: { score: 0, applicable: false },
-      delegationCorrectness: { score: 0, applicable: false },
-      executionCompleteness: { score: 0, applicable: false },
-      rationaleQuality: { score: 0, applicable: false },
-    },
-    scoredAt: new Date().toISOString(),
-    dryRun: true,
-  };
 }
 
 function assembleRunnerResult(

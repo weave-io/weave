@@ -347,28 +347,11 @@ describe("CopilotAdapter — integration (full pipeline)", () => {
       expect(tools).not.toContain("delegate");
     });
 
-    /**
-     * Regression case (skipped): if `agent-translation.ts` is mutated to
-     * emit a `model:` key in the frontmatter (e.g. by uncommenting a stray
-     * `frontmatterLines.push(\`model: \${input.resolvedModel}\`);`), this
-     * test — if enabled — would fail because the allowlist check above
-     * rejects any key outside { name, description, tools, mcp-servers }.
-     * Verified manually by adding that line locally and re-running this
-     * suite: the "no model/trust/approved" assertions above fail as
-     * expected. Left as `it.skip` because it requires source mutation to
-     * demonstrate, which must not be committed as active production code.
-     */
-    it.skip("regression: fails if frontmatter emits a model key (requires manual source mutation to demonstrate)", () => {
-      // Manual verification steps:
-      // 1. In agent-translation.ts, add:
-      //      frontmatterLines.push(`model: some-model`);
-      //    right after the `name:` line.
-      // 2. Re-run this test file.
-      // 3. Observe that the "only allowlisted keys" assertions in the
-      //    describe block above now fail, because `allKeysSeen` contains
-      //    "model", which is not in ALLOWED_FRONTMATTER_KEYS.
-      expect(true).toBe(true);
-    });
+    // The allowlist assertions above are what guard this: adding a `model:`
+    // key in agent-translation.ts makes them fail, because `allKeysSeen`
+    // would then contain a key outside ALLOWED_FRONTMATTER_KEYS. Verified
+    // manually; demonstrating it in a test would mean committing the
+    // mutation, so there is no separate case for it.
   });
 
   // -------------------------------------------------------------------------
@@ -446,28 +429,4 @@ describe("CopilotAdapter — idempotency", () => {
       expect(written[key]).toBe(firstSnapshot[key]);
     }
   });
-});
-
-// ---------------------------------------------------------------------------
-// 5b. Positive MCP branch
-//
-// AgentDescriptor has no field to request MCP servers today (Task 7 MVP —
-// see adapter.ts TODO above `mcpServers: []`). The adapter's public surface
-// (CopilotAdapterOptions, spawnSubagent(descriptor)) cannot express "this
-// descriptor wants MCP servers" without modifying adapter.ts. Per the task's
-// guidance, branch (b) is taken: this positive case is skipped with a clear
-// comment referencing the MVP TODO, rather than reaching into adapter
-// internals via a subclass that would misrepresent the adapter's real
-// public contract.
-// ---------------------------------------------------------------------------
-
-describe("CopilotAdapter — mcp.json positive branch", () => {
-  it.skip(
-    "writes a valid mcp.json when at least one descriptor requests MCP servers " +
-      "(blocked: AgentDescriptor has no MCP-server field yet — see adapter.ts TODO " +
-      "at translateDescriptor(); revisit once the DSL/engine can declare per-agent MCP servers)",
-    () => {
-      // Intentionally left unimplemented — see describe-block comment above.
-    },
-  );
 });

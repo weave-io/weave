@@ -17,10 +17,6 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type {
-  AgentDescriptor,
-  EffectiveToolPolicy,
-} from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
@@ -29,6 +25,7 @@ import {
   WEAVE_OWNERSHIP_TAG,
 } from "../index.js";
 import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
+import { makeDescriptor } from "./support.js";
 
 // ---------------------------------------------------------------------------
 // MockOpenCodeClient
@@ -102,32 +99,6 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
-
-const DEFAULT_TOOL_POLICY: EffectiveToolPolicy = {
-  read: "allow",
-  write: "allow",
-  execute: "allow",
-  delegate: "deny",
-  network: "ask",
-};
-
-function makeDescriptor(
-  overrides: Partial<AgentDescriptor> = {},
-): AgentDescriptor {
-  return {
-    name: "test-agent",
-    composedPrompt: "You are a test agent.",
-    models: ["claude-sonnet-4-5"],
-    mode: "subagent",
-    temperature: 0.2,
-    description: "A test agent",
-    effectiveToolPolicy: DEFAULT_TOOL_POLICY,
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-    ...overrides,
-  };
-}
 
 /**
  * Builds a mock `OpenCodeAgent` that looks like a Weave-managed agent.

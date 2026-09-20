@@ -139,9 +139,16 @@ date instantly and mean nothing to a newcomer.
 11 files, `makeEvalRubric` in 8, `makeDryRunSummary` in 7. Only 5 shared helper
 modules exist across the whole suite.
 
-**7. Ad-hoc inline DSL instead of named fixtures.** `compose.test.ts` contains
-88 inline `agent … { }` snippets and `materialization.test.ts` 87. Almost none
-of them are named after the situation they represent.
+**7. Ad-hoc inline DSL instead of named fixtures — withdrawn.**
+`compose.test.ts` contains 88 inline `agent … { }` snippets and
+`materialization.test.ts` 87, and the original finding proposed hoisting them
+into named fixtures. Reading them shows why that would be a mistake: each is
+minimal and tailored to its own assertion — `display_name` alone for the
+identity test, a bare `prompt` for the prompt test. In a unit test the config
+*is* the input, and keeping it beside the assertion is what makes the test
+readable. Hoisting would force a reader to jump to a fixture file to learn what
+is being fed in. The scenario-naming benefit the finding was reaching for
+belongs in `tests/`, which now has it.
 
 **8. One-assertion-per-case fragmentation.** `claude-code/src/__tests__/integration.test.ts`
 splits a single pipeline run across 10 `it` blocks of one assertion each, so the
@@ -217,9 +224,9 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
 | 9 | Populate the buckets | 10 | DSL: `tool_policy`, prompt composition. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness. Still open: workflows, config merge, and the OpenCode adapters, which register with a running harness rather than writing files and need a harness of their own | **partly done** |
-| 6 | Consolidate duplicated factories into `tests/support/` and per-package `__tests__/support/` | 6 | Fixtures named after situations | open |
-| 10 | Replace ad-hoc inline DSL with named scenario fixtures | 7 | 88 anonymous snippets in `compose.test.ts` alone become readable situations | open |
-| 11 | Resolve or delete the 2 genuine `it.skip` cases | 9 | No silently-dead tests | open |
+| 6 | Consolidate duplicated factories | 6 | −164 lines. Only genuine duplicates: `makeDryRunSummary` (5 identical copies in one directory) and three same-package `makeDescriptor` pairs. `makeEvalRubric`'s 8 copies are 8 *different* rubrics, and the adapters' `makeDescriptor` variants differ per harness — neither is duplication | **done** |
+| 10 | Replace ad-hoc inline DSL with named scenario fixtures | 7 | — | **dropped** — see the withdrawal in finding 7 |
+| 11 | Resolve or delete the 2 genuine `it.skip` cases | 9 | Both deleted: neither asserted anything (`expect(true).toBe(true)` and an empty body), and both had their reasoning recorded where it belongs — beside the allowlist assertions that do the guarding, and in the `adapter.ts` MCP TODO | **done** |
 
 Step 7 was scoped as "give Pi a scenario file" and reduced once finding 9 was
 understood: there is no Pi source in this repo to drive a scenario against, so
