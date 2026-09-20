@@ -35,6 +35,7 @@ The public user documentation at [tryweave.io/docs](https://tryweave.io/docs/) i
 | [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy, `schemaVersion` and freshness rules, website data flow, `/evals/` legacy coexistence |
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
+| [Testing Strategy](testing-strategy.md) | Outside-in test taxonomy (DSL / CLI / Adapters), scenario-test contract, suite inventory and cleanup plan |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
 | [Release Runbook](../RELEASING.md) | Tag-based release procedure and npm publishing workflow |
 

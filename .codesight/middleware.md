@@ -1,6 +1,7 @@
 # Middleware
 
 ## custom
+- testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`

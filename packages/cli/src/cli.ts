@@ -9,6 +9,7 @@
 import { ok, type Result } from "neverthrow";
 import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
+import type { FileSystem } from "./fs/file-system.js";
 import { RealTerminal, type TerminalIO } from "./io/terminal.js";
 import { defaultThemeManager } from "./theme/colors.js";
 import { defaultThemeRenderer } from "./theme/render.js";
@@ -21,6 +22,13 @@ export interface CliDeps {
   argv: string[];
   terminal: TerminalIO;
   colorEnabled?: boolean;
+  /**
+   * Filesystem the command handlers read and write through. Defaults to the
+   * real filesystem inside each handler. Black-box CLI tests inject a
+   * `MemoryFileSystem` here so a whole `weave ...` invocation can be driven
+   * end to end without touching the developer's disk or `$HOME`.
+   */
+  fs?: FileSystem;
 }
 
 function defaultDeps(): CliDeps {
@@ -41,7 +49,7 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled } = {
+  const { argv, terminal, colorEnabled, fs } = {
     ...defaultDeps(),
     ...deps,
   };
@@ -102,12 +110,12 @@ export async function run(
       // Delegate to validate command — imported dynamically to keep
       // this router lean and avoid circular deps during init
       const { runValidate } = await import("./commands/validate.js");
-      return runValidate({ terminal, theme, flags });
+      return runValidate({ terminal, theme, flags, fs });
     }
 
     case "init": {
       const { runInit } = await import("./commands/init.js");
-      return runInit({ terminal, theme, flags });
+      return runInit({ terminal, theme, flags, fs });
     }
 
     case "runtime": {

@@ -171,13 +171,13 @@ See [`docs/prompt-composition.md`](docs/prompt-composition.md) for the full spec
 
 #### Categories
 
-Categories define domain routing — glob patterns that direct work to specialised shuttle agents.
+Categories define domain routing — they describe when to select a specialised shuttle agent. Routing is model-guided via `description` and optional `triggers`; there is no glob matching.
 
 ```weave
 category backend {
   description "Backend APIs, services, persistence"
   models ["anthropic/claude-sonnet-4-5"]
-  patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
+  triggers ["Use for backend APIs, services, and persistence"]
   prompt_append "Focus on API contracts, data integrity, and backwards compatibility."
   temperature 0.2
 
@@ -191,7 +191,7 @@ category backend {
 category frontend {
   description "Frontend UI, styling, accessibility"
   models ["openai/gpt-5"]
-  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  triggers ["Use for frontend UI, styling, and accessibility"]
   prompt_append "Preserve accessibility, responsive behavior, and design-system consistency."
 }
 ```
@@ -532,6 +532,9 @@ interface MyAgentConfig {
 Inject all dependencies (adapter, config, logger) through constructors. Keep side effects (file I/O, process spawning) in named private methods so tests can provide mocks without starting a real harness.
 
 ## Testing
+
+> **Canonical strategy**: [`docs/testing-strategy.md`](docs/testing-strategy.md) defines Weave's outside-in test taxonomy. User-observable behaviour is tested as a black box through one of three surfaces — the **DSL**, the **CLI**, or the **adapters** — in [`tests/`](tests/), where `describe(…)` names the situation and `it(…)` names one promise. See [`tests/README.md`](tests/README.md) for the contract. Module-level unit tests stay beside their source in `packages/*/src/__tests__/`; the rules below govern those.
+
 
 ### Schema evolution and test maintenance
 

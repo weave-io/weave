@@ -37,6 +37,7 @@
       "packages/**/*.ts",
       "packages/**/*.tsx",
       "scripts/**/*.ts",
+      "tests/**/*.ts",
       "config/**/*.json",
       "biome.json",
       "package.json",

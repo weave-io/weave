@@ -36,7 +36,8 @@
     "types/**/*",
     "packages/*/src/**/*",
     "packages/adapters/*/src/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "tests/**/*"
   ],
   "exclude": ["node_modules", "**/dist/**"]
 }
