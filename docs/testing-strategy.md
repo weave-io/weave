@@ -267,15 +267,21 @@ internal branches. What stays is what a user cannot observe from outside:
 
 The same rule applied to the evals sanitizer and report schemas:
 
+Counts need one measure to be comparable. A table-driven `it.each` is one
+case in the source and many at runtime, and the scenarios lean on tables far
+harder than the unit tests did, so the two are quoted separately rather than
+summed:
+
 | | Before | After |
 | --- | --- | --- |
-| `sanitizer.test.ts` | 140 | 91 |
-| `report-schema.test.ts` | 188 | 112 |
-| Scenario cases | 12 | 125 |
-| Total | 340 | 328 |
+| `sanitizer.test.ts` (source cases) | 140 | 91 |
+| `report-schema.test.ts` (source cases) | 188 | 112 |
+| **Unit total (source cases)** | **328** | **203** |
+| Scenarios added (source cases) | — | 26 |
+| Scenarios added (cases at runtime) | — | 113 |
 
-Here the count barely moves, and that is the honest result: 125 scenario cases
-replaced 125 unit cases, because the deleted ones were an enumeration
+125 unit cases went and 26 scenario cases arrived, running as 113. The
+reduction is real, but it is not the point: the deleted ones were an enumeration
 (`"contains composedPrompt"`, `"includes a pattern for html_script_tag"`) whose
 user-visible form is an equally long table of hostile inputs fed through the
 real bundle writer. The gain is not fewer tests but tests that fail when a
