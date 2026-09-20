@@ -135,11 +135,26 @@ documented as needing source mutation to demonstrate); the other suppressed
 cases use `skipIf` and are legitimately gated on platform or env.
 
 **10. The buckets are scaffolded, not populated.** `tests/` holds one scenario
-file per bucket. Of the CLI's seven commands only `validate` has black-box
-coverage, and only two (`validate`, `init`) even accept an injectable
-filesystem — the other five cannot be driven through `run()` hermetically. Of
-the four adapters with source in this repo, only `claude-code` has a scenario
-file.
+file per bucket, and of the four adapters with source in this repo only
+`claude-code` has one.
+
+On the CLI side the original wording — "five commands cannot be driven through
+`run()`" — was imprecise. Each command already had *a* seam; they were just
+different ones, and `run()` threaded none of them:
+
+| Command | Seam it already had |
+| --- | --- |
+| `validate`, `init` | `fs` |
+| `migrate` | `fs` (required; reached through `init`) |
+| `prompt` | `configLoader`, `cwd` |
+| `runtime` | `cwd`, `storeFactory`, `dbExists` |
+| `eval` | `env`, `runner`, validator overrides |
+| `compose` | none — used `Bun.file`, `process.cwd()` and `homedir()` directly |
+
+Threading `cwd` alone also turned out to be insufficient: `loadConfig()` falls
+back to its own Bun-backed reader, so a command handed an injected `cwd` still
+read the real disk. `toConfigFileReader()` bridges a `FileSystem` into config
+discovery, which is what actually closes the gap.
 
 ### Landed
 
@@ -177,7 +192,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 7 | Cover `packages/adapters/pi` | 9 | Its four api-extractor configs now run under `validate:declarations` | **done, reduced** |
 | 2 | Retire `execution-lifecycle.test.ts` into the existing split, keeping only cases the split lacks | 4 | −9.8k lines | open |
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
-| 8 | Thread `fs` through the remaining five CLI commands (`prompt`, `eval`, `compose`, `runtime`, `migrate`) | 10 | Prerequisite: without it those commands cannot be driven hermetically through `run()` | open |
+| 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
 | 9 | Populate the buckets: DSL (workflows, `tool_policy`, prompt templates, config merge), CLI (the six uncovered commands), Adapters (opencode, opencode2, copilot) | 10 | The taxonomy stops being a scaffold | open |
 | 6 | Consolidate duplicated factories into `tests/support/` and per-package `__tests__/support/` | 6 | Fixtures named after situations | open |

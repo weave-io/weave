@@ -5,8 +5,7 @@
  * pushes them through the selected adapter (currently only "claude-code").
  */
 
-import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import {
   BOOTSTRAP_FILES,
   ClaudeCodeAdapter,
@@ -18,6 +17,11 @@ import { logger, materializeAgents } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
+import {
+  BunFileSystem,
+  type FileSystem,
+  toConfigFileReader,
+} from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import type { ThemeColors } from "../theme/colors.js";
 
@@ -30,6 +34,12 @@ export interface ComposeContext {
   terminal: TerminalIO;
   theme: ThemeColors;
   flags: ParsedArgs["flags"];
+  /**
+   * Filesystem used for config discovery, the bootstrap copy and every file
+   * the adapter writes. Defaults to the real one. Black-box CLI tests inject a
+   * `MemoryFileSystem` so `weave compose` can be driven without touching disk.
+   */
+  fs?: FileSystem;
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
@@ -44,13 +54,13 @@ async function runBootstrapInit(
   destDir: string,
   terminal: TerminalIO,
   theme: ThemeColors,
+  fs: FileSystem,
 ): Promise<Result<boolean, CliError>> {
   const srcDir = getBootstrapDir();
 
   // Check whether destination already exists
-  const existsCheck = await Bun.file(
-    join(destDir, BOOTSTRAP_FILES[0]),
-  ).exists();
+  const existsResult = await fs.exists(join(destDir, BOOTSTRAP_FILES[0]));
+  const existsCheck = existsResult.isOk() && existsResult.value;
   if (existsCheck) {
     terminal.stdout(
       `  ${theme.boldYellow("Bootstrap already exists:")} ${theme.dim(destDir)} — skipping init.\n`,
@@ -63,21 +73,27 @@ async function runBootstrapInit(
     const src = join(srcDir, relPath);
     const dest = join(destDir, relPath);
 
-    let text: string;
-    try {
-      text = await Bun.file(src).text();
-    } catch (cause) {
+    const read = await fs.readText(src);
+    if (read.isErr()) {
       return err({
         type: "FileReadError",
         path: src,
-        cause,
+        cause: read.error,
         message: `Could not read bootstrap source file: ${src}`,
       });
     }
-    await Bun.write(dest, text);
+    const written = await fs.writeText(dest, read.value);
+    if (written.isErr()) {
+      return err({
+        type: "FileWriteError",
+        path: dest,
+        cause: written.error,
+        message: `Could not write bootstrap file: ${dest}`,
+      });
+    }
   }
 
-  const rel = `./${relative(process.cwd(), destDir)}`;
+  const rel = `./${relative(fs.cwd(), destDir)}`;
 
   terminal.stdout(
     [
@@ -100,6 +116,7 @@ export async function runCompose(
   ctx: ComposeContext,
 ): Promise<Result<number, CliError>> {
   const { terminal, theme, flags } = ctx;
+  const fs = ctx.fs ?? new BunFileSystem();
 
   // --adapter is required
   const adapterName = flags.adapter;
@@ -126,18 +143,23 @@ export async function runCompose(
   }
 
   const projectRoot = flags.projectRoot
-    ? resolve(flags.projectRoot)
-    : process.cwd();
+    ? fs.resolvePath(flags.projectRoot)
+    : fs.cwd();
 
   log.info({ projectRoot, adapter: adapterName }, "Starting compose");
 
   // --init: copy bootstrap plugin files before running compose
   if (flags.init === true) {
     const bootstrapDest = flags.bootstrapDir
-      ? resolve(flags.bootstrapDir)
-      : resolve(projectRoot, "weave-bootstrap-plugin");
+      ? fs.resolvePath(flags.bootstrapDir)
+      : fs.resolvePath(join(projectRoot, "weave-bootstrap-plugin"));
 
-    const initResult = await runBootstrapInit(bootstrapDest, terminal, theme);
+    const initResult = await runBootstrapInit(
+      bootstrapDest,
+      terminal,
+      theme,
+      fs,
+    );
     if (initResult.isErr()) {
       terminal.stderr(formatCliError(initResult.error));
       return ok(1);
@@ -145,7 +167,10 @@ export async function runCompose(
   }
 
   // 1. Load config
-  const configResult = await loadConfig(projectRoot).mapErr(
+  const configResult = await loadConfig(
+    projectRoot,
+    toConfigFileReader(fs),
+  ).mapErr(
     (errors): CliError => ({
       type: "ParseFailure",
       path: projectRoot,
@@ -205,8 +230,24 @@ export async function runCompose(
   // 3. Instantiate adapter
   const adapter = new ClaudeCodeAdapter({
     projectRoot,
-    homeDir: homedir(),
-    outDir: flags.outDir ? resolve(flags.outDir) : undefined,
+    homeDir: fs.home(),
+    outDir: flags.outDir ? fs.resolvePath(flags.outDir) : undefined,
+    exists: async (path) => {
+      const result = await fs.exists(path);
+      return result.isOk() && result.value;
+    },
+    readFile: async (path) => {
+      const result = await fs.readText(path);
+      if (result.isErr()) throw new Error(`Could not read ${path}`);
+      return result.value;
+    },
+    writeFile: async (path, content) => {
+      const result = await fs.writeText(path, content);
+      if (result.isErr()) throw new Error(`Could not write ${path}`);
+    },
+    mkdir: async (path) => {
+      await fs.mkdir(path);
+    },
   });
 
   // 4. init()

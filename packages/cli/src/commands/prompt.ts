@@ -8,6 +8,7 @@ import {
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
+import { type FileSystem, toConfigFileReader } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import { renderSelfModifyPrompt } from "../prompts/self-modify.js";
 import type { ThemeColors } from "../theme/colors.js";
@@ -29,10 +30,16 @@ export interface PromptContext {
   flags: ParsedArgs["flags"];
   /** Extra positional arguments after the subcommand (from ParsedArgs.rest). */
   rest?: string[];
-  /** Injectable for testing. Defaults to loadConfig(process.cwd()). */
+  /** Injectable for testing. Defaults to loadConfig(cwd) through `fs`. */
   configLoader?: () => ResultAsync<WeaveConfig, ConfigLoadError[]>;
-  /** Current working directory. Defaults to process.cwd(). */
+  /** Current working directory. Defaults to `fs.cwd()`, else process.cwd(). */
   cwd?: string;
+  /**
+   * Filesystem config is discovered through. Without it `loadConfig()` falls
+   * back to its own Bun-backed reader and reads the real disk even when a
+   * `cwd` was injected.
+   */
+  fs?: FileSystem;
 }
 
 type PromptError = CliError;
@@ -90,11 +97,16 @@ function mapConfigLoadErrors(
   };
 }
 
+function promptCwd(ctx: PromptContext): string {
+  return ctx.cwd ?? ctx.fs?.cwd() ?? process.cwd();
+}
+
 function loadPromptConfig(
   ctx: PromptContext,
 ): ResultAsync<WeaveConfig, PromptError> {
-  const cwd = ctx.cwd ?? process.cwd();
-  const configLoader = ctx.configLoader ?? (() => loadConfig(cwd));
+  const cwd = promptCwd(ctx);
+  const reader = ctx.fs ? toConfigFileReader(ctx.fs) : undefined;
+  const configLoader = ctx.configLoader ?? (() => loadConfig(cwd, reader));
   return configLoader().mapErr((errors) => mapConfigLoadErrors(cwd, errors));
 }
 
@@ -239,7 +251,7 @@ async function runPromptSelfModify(
   }
 
   const scope = ctx.flags.scope ?? "global";
-  const projectRoot = ctx.cwd ?? process.cwd();
+  const projectRoot = promptCwd(ctx);
 
   ctx.terminal.stdout(renderSelfModifyPrompt({ scope, projectRoot }));
   return ok(0);

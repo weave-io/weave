@@ -13,6 +13,7 @@ export type CliError =
   | InvalidArgsError
   | MissingFileError
   | FileReadError
+  | FileWriteError
   | ParseFailureError
   | ValidationFailureError
   | AgentNotFoundError
@@ -33,6 +34,13 @@ export type MissingFileError = {
 
 export type FileReadError = {
   type: "FileReadError";
+  path: string;
+  cause: unknown;
+  message: string;
+};
+
+export type FileWriteError = {
+  type: "FileWriteError";
   path: string;
   cause: unknown;
   message: string;
@@ -86,6 +94,8 @@ export function formatCliError(error: CliError): string {
       return `Error: File not found: ${error.path}\n  ${error.message}`;
     case "FileReadError":
       return `Error: Could not read ${error.path}\n  ${error.message}`;
+    case "FileWriteError":
+      return `Error: Could not write ${error.path}\n  ${error.message}`;
     case "ParseFailure":
       return error.errors.join("\n");
     case "ValidationFailure":

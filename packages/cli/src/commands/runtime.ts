@@ -25,6 +25,7 @@ import {
 } from "@weaveio/weave-engine";
 import { fromThrowable, ok, type Result } from "neverthrow";
 import type { CliError } from "../errors.js";
+import type { FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import type { ThemeColors } from "../theme/colors.js";
 
@@ -58,6 +59,11 @@ export interface RuntimeCommandContext {
    * the DB "exists" without real filesystem access.
    */
   dbExists?: (dbPath: string) => Promise<boolean>;
+  /**
+   * Filesystem the runtime DB is looked for through. Supplies `cwd` and the
+   * existence check when neither is given explicitly.
+   */
+  fs?: FileSystem;
   /**
    * Optional schema version override — used in tests to inject a known
    * schema version without reading from a real SQLite DB.
@@ -341,10 +347,18 @@ export async function runRuntime(
   ctx: RuntimeCommandContext,
 ): Promise<Result<number, CliError>> {
   const { terminal, theme } = ctx;
-  const cwd = ctx.cwd ?? process.cwd();
+  const cwd = ctx.cwd ?? ctx.fs?.cwd() ?? process.cwd();
   const dbPath = resolve(cwd, DEFAULT_RUNTIME_DB_PATH);
 
-  const checkExists = ctx.dbExists ?? defaultDbExists;
+  const fs = ctx.fs;
+  const checkExists =
+    ctx.dbExists ??
+    (fs
+      ? async (path: string) => {
+          const result = await fs.exists(path);
+          return result.isOk() && result.value;
+        }
+      : defaultDbExists);
   const exists = await checkExists(dbPath);
 
   if (!exists) {

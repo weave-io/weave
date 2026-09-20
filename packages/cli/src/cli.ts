@@ -27,8 +27,16 @@ export interface CliDeps {
    * real filesystem inside each handler. Black-box CLI tests inject a
    * `MemoryFileSystem` here so a whole `weave ...` invocation can be driven
    * end to end without touching the developer's disk or `$HOME`.
+   *
+   * Commands that take a project root rather than a filesystem receive
+   * `fs.cwd()`, so one injected filesystem settles where every command looks.
    */
   fs?: FileSystem;
+  /**
+   * Environment consulted by commands that read it — currently `weave eval`,
+   * for its filter allowlists. Defaults to `Bun.env` inside the handler.
+   */
+  env?: Record<string, string | undefined>;
 }
 
 function defaultDeps(): CliDeps {
@@ -49,10 +57,14 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled, fs } = {
+  const { argv, terminal, colorEnabled, fs, env } = {
     ...defaultDeps(),
     ...deps,
   };
+
+  // Commands that locate work by path rather than by filesystem still need to
+  // agree with an injected filesystem about where "here" is.
+  const cwd = fs?.cwd();
 
   const theme = defaultThemeManager.getTheme(colorEnabled);
 
@@ -137,6 +149,8 @@ export async function run(
         theme,
         subcommand,
         limit: flags.limit,
+        cwd,
+        fs,
       });
     }
 
@@ -158,17 +172,17 @@ export async function run(
         );
         return ok(1);
       }
-      return runPrompt({ terminal, theme, flags, rest });
+      return runPrompt({ terminal, theme, flags, rest, cwd, fs });
     }
 
     case "eval": {
       const { runEval } = await import("./commands/eval.js");
-      return runEval({ terminal, theme, flags });
+      return runEval({ terminal, theme, flags, env });
     }
 
     case "compose": {
       const { runCompose } = await import("./commands/compose.js");
-      return runCompose({ terminal, theme, flags });
+      return runCompose({ terminal, theme, flags, fs });
     }
 
     case "unknown": {

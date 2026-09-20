@@ -282,8 +282,8 @@
   - type InvalidArgsError
   - type MissingFileError
   - type FileReadError
-  - type ParseFailureError
-  - _...5 more_
+  - type FileWriteError
+  - _...6 more_
 - `packages/cli/src/evals/artifact-bundle.ts`
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
@@ -528,6 +528,7 @@
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
+  - function toConfigFileReader: (fs) => ConfigFileReader
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem

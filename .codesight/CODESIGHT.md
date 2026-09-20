@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 7 middleware | 1 events | 0% test coverage
 > **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~66,400 tokens. **Saves ~48,200 tokens per conversation.**
-> **Last scanned:** 2026-09-20 15:47 — re-run after significant changes
+> **Last scanned:** 2026-09-20 16:17 — re-run after significant changes
 
 ---
 
@@ -293,8 +293,8 @@
   - type InvalidArgsError
   - type MissingFileError
   - type FileReadError
-  - type ParseFailureError
-  - _...5 more_
+  - type FileWriteError
+  - _...6 more_
 - `packages/cli/src/evals/artifact-bundle.ts`
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
@@ -539,6 +539,7 @@
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
+  - function toConfigFileReader: (fs) => ConfigFileReader
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
@@ -979,11 +980,11 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **48** files
+- `packages/cli/src/io/terminal.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **22** files
-- `packages/cli/src/io/terminal.ts` — imported by **21** files
+- `packages/cli/src/fs/file-system.ts` — imported by **20** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **20** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **18** files
-- `packages/cli/src/fs/file-system.ts` — imported by **17** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **15** files
@@ -1002,11 +1003,11 @@
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +43 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +16 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +15 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +13 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +12 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
@@ -1023,7 +1024,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 200 test files found
+> 201 test files found
 
 ---
 

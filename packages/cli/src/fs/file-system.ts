@@ -280,3 +280,43 @@ export class MemoryFileSystem implements FileSystem {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Bridge to @weaveio/weave-config
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal reader shape `loadConfig()` accepts.
+ *
+ * Declared structurally rather than imported so this module stays free of a
+ * dependency on the config package's internals.
+ */
+interface ConfigFileReader {
+  exists(path: string): Promise<boolean>;
+  read(
+    path: string,
+  ): ResultAsync<
+    string,
+    { type: "FileReadError"; path: string; cause: unknown }
+  >;
+}
+
+/**
+ * Adapts a `FileSystem` to the reader `loadConfig()` takes.
+ *
+ * Without this, a command holding an injected `MemoryFileSystem` would still
+ * discover config from the real disk, because `loadConfig()` defaults to its
+ * own Bun-backed reader.
+ */
+export function toConfigFileReader(fs: FileSystem): ConfigFileReader {
+  return {
+    exists: async (path) => {
+      const result = await fs.exists(path);
+      return result.isOk() && result.value;
+    },
+    read: (path) =>
+      fs
+        .readText(path)
+        .mapErr((cause) => ({ type: "FileReadError" as const, path, cause })),
+  };
+}
