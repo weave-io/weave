@@ -45,11 +45,11 @@ Largest files, by case count:
 
 | Cases | File | First read |
 | --- | --- | --- |
-| 188 | `report-schema.test.ts` | mostly *"includes a pattern for X"* — enumerating a constant |
+| 188 | `report-schema.test.ts` | **migrated** — 188 → 112 (task group 14) |
 | 169 | `loom-routing-runner.test.ts` | runner behaviour; mixed |
 | 161 | `artifact-bundle.test.ts` | bundle writing; largely observable |
 | 153 | `langchain-agent-evals.test.ts` | judge adapter; mixed |
-| 140 | `sanitizer.test.ts` | *"contains X"* against a denylist |
+| 140 | `sanitizer.test.ts` | **migrated** — 140 → 91 (task group 14) |
 | 114 | `report-markdown.test.ts` | rendering; observable |
 
 The observable promises are far fewer than the case count suggests, and they
@@ -81,9 +81,9 @@ are worth stating plainly before writing anything:
   and the loader fills it from the matrix; a list restating the defaults is
   rejected. Tests written against the old shape will mislead.
 
-## Two findings this work has already produced
+## Findings this work has already produced
 
-Both came from writing scenarios against observed behaviour, and both are the
+All came from writing scenarios against observed behaviour, and they are the
 argument for doing the rest:
 
 - **`{{{delegation.section}}}` does not exist** and has not since ADR 0001, yet
@@ -92,6 +92,28 @@ argument for doing the rest:
   a working agent on `sonnet`, because the list is filtered against what the
   adapter knows the harness can run (#195). Intended, but undocumented and
   worth a product decision.
+- **An empty `caseId` makes a whole run vanish from the dashboard, silently.**
+  Public-report assembly fails validation and `writeBundle()` treats that as
+  non-fatal, so no `public-report.json`, no Markdown, no indexes — and an `ok`
+  result (task group 14).
+- **Seven exported sanitizer surfaces have no production caller** and are
+  reached only from tests (task group 14). See the strategy doc.
+
+## Notes for whoever takes the next file
+
+- **Score files are local, public artifacts are uploaded.** Only
+  `bundle-index.json`, `public-report.json` and `public-report.md` are in
+  `RUN_ARTIFACT_ALLOWLIST`. `score-<suite>.json` *does* carry explanation text
+  that the public report drops, so "no published file contains X" must say
+  which files it means.
+- **Absence assertions need a positive twin.** Dropping the whole report also
+  satisfies "the payload appears nowhere". Assert the case is still published
+  alongside it, or the scenario passes for the wrong reason.
+- **Index files are not reproducible.** They stamp `new Date()` into
+  `updatedAt`; only the run artifacts are byte-identical across runs.
+- [`tests/support/evals.ts`](../../tests/support/evals.ts) is the shared harness;
+  [`tests/evals/publish-safety.scenario.test.ts`](../../tests/evals/publish-safety.scenario.test.ts)
+  is the worked example for a hostile-input table.
 
 ## Still open elsewhere
 

@@ -1,24 +1,32 @@
 /**
- * Tests for `sanitizer.ts`.
+ * Unit tests for `sanitizer.ts` — the parts a user cannot observe.
  *
- * Verifies:
- *   - Unknown fields in `CaseResultSummary` and `NormalizedScoreRecord` are dropped.
- *   - Sensitive subfields (tool args, env values, error payloads, log tails,
- *     rationales, raw content) are always excluded from sanitized output.
- *   - `assertPublishSafe()` rejects objects with sensitive fields.
- *   - `assertPublishSafe()` rejects objects containing `rawArtifact`.
- *   - `assertJsonPublishSafe()` rejects serialized JSON containing sensitive field names.
- *   - `dropUnknownFields()` retains only allowlisted fields.
- *   - Sanitized output is deterministic (same input → same output).
- *   - `sanitizeCaseResultSummary()` produces correct field values.
- *   - `sanitizeScoreRecord()` drops rationale from all dimensions.
- *   - `sanitizeProvenanceRecord()` keeps hash/summary/sources, no raw content.
- *   - `sanitizeProvenanceManifest()` sanitizes all records and manifest metadata.
- *   - `SENSITIVE_FIELD_NAMES` contains all expected sensitive fields.
+ * The promises a reader of a published bundle can check are asserted end to
+ * end in [`tests/evals/publish-safety.scenario.test.ts`](../../../../../tests/evals/publish-safety.scenario.test.ts):
+ * every sensitive field is stripped, unknown shapes are dropped, explanations
+ * carrying injection payloads never reach a public artifact, and provenance
+ * publishes hashes rather than prompt text. The cases that asserted those
+ * through `sanitizeCaseResultSummary()`, `sanitizeProvenanceRecord()`,
+ * `sanitizeProvenanceManifest()` and the `SENSITIVE_FIELD_NAMES` membership
+ * list were removed there; all four scenarios were watched fail against a
+ * neutered sanitizer before the deletion.
  *
- * Test isolation:
- *   - No file I/O, network, git, or shell calls.
- *   - All fixtures are constructed inline.
+ * What is left here is deliberately internal:
+ *
+ *   - **`assertPublishSafe()` / `assertJsonPublishSafe()`** — the publish-mode
+ *     guards. While the allowlist projection works they never fire, so no
+ *     written file reveals their behaviour. They exist to catch a future
+ *     bypass, and these are the only tests that exercise one.
+ *   - **`sanitizeScoreRecord()`, `dropUnknownFields()`, `REDACTED`,
+ *     `truncateExplanation()`, `buildExplanation()`, `assertExplanationSafe()`
+ *     and `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS`** — exported API with no
+ *     production caller in this repository. The runners build explanations via
+ *     `buildPublicExplanation()` in `langchain-agent-evals.ts` and redact with
+ *     their own patterns, so nothing a user does reaches these, and no scenario
+ *     can cover them. Kept, and flagged: while they stay uncalled they are
+ *     candidates for removal, at which point these tests go with them.
+ *
+ * Test isolation: no file I/O, no network, no spawned process; fixtures inline.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -31,45 +39,14 @@ import {
   dropUnknownFields,
   FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS,
   REDACTED,
-  SENSITIVE_FIELD_NAMES,
-  sanitizeCaseResultSummary,
-  sanitizeProvenanceManifest,
-  sanitizeProvenanceRecord,
   sanitizeScoreRecord,
   truncateExplanation,
 } from "../sanitizer.js";
-import type {
-  CaseResultSummary,
-  NormalizedScoreRecord,
-  PromptProvenanceManifest,
-  PromptProvenanceRecord,
-} from "../types.js";
+import type { NormalizedScoreRecord } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
 // ---------------------------------------------------------------------------
-
-function makeCaseResultSummary(
-  overrides: Partial<CaseResultSummary> = {},
-): CaseResultSummary {
-  return {
-    caseId: "route-to-shuttle",
-    modelId: "anthropic/claude-sonnet-4.5",
-    suite: "loom-routing",
-    passed: true,
-    required: true,
-    weightedTotal: 0.85,
-    dimensionScores: {
-      routingCorrectness: { score: 1.0, applicable: true },
-      delegationCorrectness: { score: 1.0, applicable: false },
-      executionCompleteness: { score: 1.0, applicable: false },
-      rationaleQuality: { score: 0.8, applicable: true },
-    },
-    scoredAt: "2026-01-01T00:00:00.000Z",
-    dryRun: false,
-    ...overrides,
-  };
-}
 
 function makeNormalizedScoreRecord(
   overrides: Partial<NormalizedScoreRecord> = {},
@@ -108,97 +85,6 @@ function makeNormalizedScoreRecord(
   };
 }
 
-function makeProvenanceRecord(
-  overrides: Partial<PromptProvenanceRecord> = {},
-): PromptProvenanceRecord {
-  return {
-    agentName: "loom",
-    hash: "a".repeat(64),
-    byteLength: 4096,
-    charLength: 4000,
-    sources: [{ kind: "builtin", layer: "primary" }],
-    summary:
-      'Agent "loom": 1 source(s) [builtin primary], hash sha256:aaaaaaaaaaaa…, 4000 chars, 4096 bytes',
-    gitSha: "abc123def456abc123def456abc123def456abc1",
-    capturedAt: "2026-01-01T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function makeProvenanceManifest(
-  overrides: Partial<PromptProvenanceManifest> = {},
-): PromptProvenanceManifest {
-  return {
-    version: 1,
-    producedAt: "2026-01-01T00:00:00.000Z",
-    gitSha: "abc123def456abc123def456abc123def456abc1",
-    records: [makeProvenanceRecord()],
-    ...overrides,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// SENSITIVE_FIELD_NAMES — blocklist completeness
-// ---------------------------------------------------------------------------
-
-describe("SENSITIVE_FIELD_NAMES", () => {
-  it("contains composedPrompt", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("composedPrompt")).toBe(true);
-  });
-
-  it("contains rawContent", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("rawContent")).toBe(true);
-  });
-
-  it("contains rawPrompt", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("rawPrompt")).toBe(true);
-  });
-
-  it("contains rawArtifact", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("rawArtifact")).toBe(true);
-  });
-
-  it("contains rawArtifacts", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("rawArtifacts")).toBe(true);
-  });
-
-  it("contains transcript", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("transcript")).toBe(true);
-  });
-
-  it("contains rationale", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("rationale")).toBe(true);
-  });
-
-  it("contains dimensionRationales", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("dimensionRationales")).toBe(true);
-  });
-
-  it("contains toolArgs", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("toolArgs")).toBe(true);
-  });
-
-  it("contains env", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("env")).toBe(true);
-  });
-
-  it("contains cause", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("cause")).toBe(true);
-  });
-
-  it("contains body", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("body")).toBe(true);
-  });
-
-  it("contains logTail", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("logTail")).toBe(true);
-  });
-
-  it("contains prompt (raw text)", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("prompt")).toBe(true);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // REDACTED constant
 // ---------------------------------------------------------------------------
@@ -206,101 +92,6 @@ describe("SENSITIVE_FIELD_NAMES", () => {
 describe("REDACTED", () => {
   it("is a recognizable sentinel string", () => {
     expect(REDACTED).toBe("[REDACTED]");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sanitizeCaseResultSummary
-// ---------------------------------------------------------------------------
-
-describe("sanitizeCaseResultSummary", () => {
-  it("retains caseId", () => {
-    const summary = makeCaseResultSummary({ caseId: "my-case" });
-    expect(sanitizeCaseResultSummary(summary).caseId).toBe("my-case");
-  });
-
-  it("retains modelId", () => {
-    const summary = makeCaseResultSummary({ modelId: "openai/gpt-4o" });
-    expect(sanitizeCaseResultSummary(summary).modelId).toBe("openai/gpt-4o");
-  });
-
-  it("retains suite", () => {
-    const summary = makeCaseResultSummary({ suite: "tapestry-execution" });
-    expect(sanitizeCaseResultSummary(summary).suite).toBe("tapestry-execution");
-  });
-
-  it("retains passed", () => {
-    const summary = makeCaseResultSummary({ passed: false });
-    expect(sanitizeCaseResultSummary(summary).passed).toBe(false);
-  });
-
-  it("retains required", () => {
-    const summary = makeCaseResultSummary({ required: false });
-    expect(sanitizeCaseResultSummary(summary).required).toBe(false);
-  });
-
-  it("retains weightedTotal", () => {
-    const summary = makeCaseResultSummary({ weightedTotal: 0.42 });
-    expect(sanitizeCaseResultSummary(summary).weightedTotal).toBeCloseTo(0.42);
-  });
-
-  it("retains scoredAt", () => {
-    const ts = "2026-06-10T12:00:00.000Z";
-    const summary = makeCaseResultSummary({ scoredAt: ts });
-    expect(sanitizeCaseResultSummary(summary).scoredAt).toBe(ts);
-  });
-
-  it("retains dryRun", () => {
-    const summary = makeCaseResultSummary({ dryRun: true });
-    expect(sanitizeCaseResultSummary(summary).dryRun).toBe(true);
-  });
-
-  it("retains all four dimension scores", () => {
-    const summary = makeCaseResultSummary();
-    const sanitized = sanitizeCaseResultSummary(summary);
-    const dims = sanitized.dimensionScores;
-    expect(dims.routingCorrectness.score).toBe(1.0);
-    expect(dims.delegationCorrectness.score).toBe(1.0);
-    expect(dims.executionCompleteness.score).toBe(1.0);
-    expect(dims.rationaleQuality.score).toBe(0.8);
-  });
-
-  it("retains applicable flags in dimensionScores", () => {
-    const summary = makeCaseResultSummary();
-    const sanitized = sanitizeCaseResultSummary(summary);
-    expect(sanitized.dimensionScores.routingCorrectness.applicable).toBe(true);
-    expect(sanitized.dimensionScores.delegationCorrectness.applicable).toBe(
-      false,
-    );
-  });
-
-  it("drops unknown top-level fields", () => {
-    // Cast to any to add extra fields simulating future additions
-    const summary = makeCaseResultSummary();
-    (summary as unknown as Record<string, unknown>).unknownField =
-      "should-be-dropped";
-
-    const sanitized = sanitizeCaseResultSummary(summary);
-    expect("unknownField" in sanitized).toBe(false);
-  });
-
-  it("output does not contain raw prompt text", () => {
-    const summary = makeCaseResultSummary();
-    const sanitized = sanitizeCaseResultSummary(summary);
-    const json = JSON.stringify(sanitized);
-    expect(json).not.toContain("composedPrompt");
-    expect(json).not.toContain("rawContent");
-    expect(json).not.toContain('"transcript"');
-    // "rationaleQuality" is a dimension name and is allowed;
-    // the literal field name "rationale" (with colon) must not appear
-    expect(json).not.toContain('"rationale":');
-  });
-
-  it("is deterministic for identical inputs", () => {
-    const summary = makeCaseResultSummary();
-    const s1 = JSON.stringify(sanitizeCaseResultSummary(summary));
-    const s2 = JSON.stringify(sanitizeCaseResultSummary(summary));
-    expect(s1).toBe(s2);
   });
 });
 
@@ -367,131 +158,6 @@ describe("sanitizeScoreRecord", () => {
     const record = makeNormalizedScoreRecord();
     const s1 = JSON.stringify(sanitizeScoreRecord(record));
     const s2 = JSON.stringify(sanitizeScoreRecord(record));
-    expect(s1).toBe(s2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sanitizeProvenanceRecord
-// ---------------------------------------------------------------------------
-
-describe("sanitizeProvenanceRecord", () => {
-  it("retains agentName", () => {
-    const record = makeProvenanceRecord({ agentName: "tapestry" });
-    expect(sanitizeProvenanceRecord(record).agentName).toBe("tapestry");
-  });
-
-  it("retains hash", () => {
-    const hash = "b".repeat(64);
-    const record = makeProvenanceRecord({ hash });
-    expect(sanitizeProvenanceRecord(record).hash).toBe(hash);
-  });
-
-  it("retains byteLength and charLength", () => {
-    const record = makeProvenanceRecord({ byteLength: 8192, charLength: 8000 });
-    const sanitized = sanitizeProvenanceRecord(record);
-    expect(sanitized.byteLength).toBe(8192);
-    expect(sanitized.charLength).toBe(8000);
-  });
-
-  it("retains summary", () => {
-    const record = makeProvenanceRecord({ summary: "Agent test summary" });
-    expect(sanitizeProvenanceRecord(record).summary).toBe("Agent test summary");
-  });
-
-  it("retains gitSha", () => {
-    const sha = `deadbeef${"0".repeat(32)}`;
-    const record = makeProvenanceRecord({ gitSha: sha });
-    expect(sanitizeProvenanceRecord(record).gitSha).toBe(sha);
-  });
-
-  it("retains capturedAt", () => {
-    const ts = "2026-06-10T12:00:00.000Z";
-    const record = makeProvenanceRecord({ capturedAt: ts });
-    expect(sanitizeProvenanceRecord(record).capturedAt).toBe(ts);
-  });
-
-  it("retains sources", () => {
-    const sources = [
-      { kind: "builtin" as const, layer: "primary" as const },
-      { kind: "inline" as const, layer: "append" as const },
-    ];
-    const record = makeProvenanceRecord({ sources });
-    const sanitized = sanitizeProvenanceRecord(record);
-    expect(sanitized.sources).toHaveLength(2);
-    expect(sanitized.sources[0]?.kind).toBe("builtin");
-  });
-
-  it("does not contain raw prompt text fields", () => {
-    const record = makeProvenanceRecord();
-    const sanitized = sanitizeProvenanceRecord(record);
-    expect("composedPrompt" in sanitized).toBe(false);
-    expect("rawPrompt" in sanitized).toBe(false);
-    expect("prompt" in sanitized).toBe(false);
-  });
-
-  it("serialized output contains no raw prompt fields", () => {
-    const record = makeProvenanceRecord();
-    const json = JSON.stringify(sanitizeProvenanceRecord(record));
-    expect(json).not.toContain('"composedPrompt"');
-    expect(json).not.toContain('"rawPrompt"');
-  });
-
-  it("is deterministic", () => {
-    const record = makeProvenanceRecord();
-    const s1 = JSON.stringify(sanitizeProvenanceRecord(record));
-    const s2 = JSON.stringify(sanitizeProvenanceRecord(record));
-    expect(s1).toBe(s2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sanitizeProvenanceManifest
-// ---------------------------------------------------------------------------
-
-describe("sanitizeProvenanceManifest", () => {
-  it("retains version", () => {
-    const manifest = makeProvenanceManifest({ version: 2 });
-    expect(sanitizeProvenanceManifest(manifest).version).toBe(2);
-  });
-
-  it("retains producedAt", () => {
-    const ts = "2026-06-10T12:00:00.000Z";
-    const manifest = makeProvenanceManifest({ producedAt: ts });
-    expect(sanitizeProvenanceManifest(manifest).producedAt).toBe(ts);
-  });
-
-  it("retains gitSha", () => {
-    const sha = `cafe${"0".repeat(36)}`;
-    const manifest = makeProvenanceManifest({ gitSha: sha });
-    expect(sanitizeProvenanceManifest(manifest).gitSha).toBe(sha);
-  });
-
-  it("sanitizes all records", () => {
-    const manifest = makeProvenanceManifest({
-      records: [
-        makeProvenanceRecord({ agentName: "loom" }),
-        makeProvenanceRecord({ agentName: "tapestry", hash: "b".repeat(64) }),
-      ],
-    });
-    const sanitized = sanitizeProvenanceManifest(manifest);
-    expect(sanitized.records).toHaveLength(2);
-    expect(sanitized.records[0]?.agentName).toBe("loom");
-    expect(sanitized.records[1]?.agentName).toBe("tapestry");
-  });
-
-  it("serialized manifest contains no raw prompt content", () => {
-    const manifest = makeProvenanceManifest();
-    const json = JSON.stringify(sanitizeProvenanceManifest(manifest));
-    expect(json).not.toContain('"composedPrompt"');
-    expect(json).not.toContain('"rawPrompt"');
-    expect(json).not.toContain('"prompt":');
-  });
-
-  it("is deterministic", () => {
-    const manifest = makeProvenanceManifest();
-    const s1 = JSON.stringify(sanitizeProvenanceManifest(manifest));
-    const s2 = JSON.stringify(sanitizeProvenanceManifest(manifest));
     expect(s1).toBe(s2);
   });
 });
@@ -750,62 +416,10 @@ describe("assertJsonPublishSafe", () => {
 });
 
 // ---------------------------------------------------------------------------
-// End-to-end: sanitize then assertPublishSafe
+// localDiagnostic — blocked by the publish guards
 // ---------------------------------------------------------------------------
 
-describe("sanitize then assertPublishSafe (round-trip)", () => {
-  it("sanitized CaseResultSummary passes assertPublishSafe", () => {
-    const summary = makeCaseResultSummary();
-    const sanitized = sanitizeCaseResultSummary(summary);
-    const result = assertPublishSafe(
-      sanitized as unknown as Record<string, unknown>,
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("sanitized ScoreRecord passes assertPublishSafe", () => {
-    const record = makeNormalizedScoreRecord();
-    const sanitized = sanitizeScoreRecord(record);
-    const result = assertPublishSafe(
-      sanitized as unknown as Record<string, unknown>,
-    );
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("sanitized CaseResultSummary passes assertJsonPublishSafe", () => {
-    const summary = makeCaseResultSummary();
-    const sanitized = sanitizeCaseResultSummary(summary);
-    const json = JSON.stringify(sanitized);
-    const result = assertJsonPublishSafe(json);
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("sanitized ScoreRecord passes assertJsonPublishSafe", () => {
-    const record = makeNormalizedScoreRecord();
-    const sanitized = sanitizeScoreRecord(record);
-    const json = JSON.stringify(sanitized);
-    const result = assertJsonPublishSafe(json);
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("sanitized ProvenanceManifest passes assertJsonPublishSafe", () => {
-    const manifest = makeProvenanceManifest();
-    const sanitized = sanitizeProvenanceManifest(manifest);
-    const json = JSON.stringify(sanitized);
-    const result = assertJsonPublishSafe(json);
-    expect(result.isOk()).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// localDiagnostic — blocked from publishable output
-// ---------------------------------------------------------------------------
-
-describe("SENSITIVE_FIELD_NAMES includes localDiagnostic", () => {
-  it("SENSITIVE_FIELD_NAMES contains 'localDiagnostic'", () => {
-    expect(SENSITIVE_FIELD_NAMES.has("localDiagnostic")).toBe(true);
-  });
-
+describe("the publish guards reject a local-only scorer diagnostic", () => {
   it("assertPublishSafe rejects an object with a localDiagnostic field", () => {
     const obj = {
       caseId: "some-case",

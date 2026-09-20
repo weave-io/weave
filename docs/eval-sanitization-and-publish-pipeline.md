@@ -357,12 +357,18 @@ Immutable run artifacts under `runs/v1/<runId>/` are written **once and never ov
 | `latest.json` | `LATEST_SNAPSHOT_SCHEMA_VERSION` | `updatedAt` |
 | `last-N-runs.json` | `LAST_N_RUNS_SCHEMA_VERSION` | `updatedAt` |
 | `suite-history-<suite>.json` (`SuiteHistoryManifest`) | `SUITE_HISTORY_SCHEMA_VERSION` | `updatedAt` |
-| `model-comparison-<runId>.json` (`ModelComparisonManifest`) | `MODEL_COMPARISON_SCHEMA_VERSION` | `updatedAt` |
+| `model-comparison-<runId>.json` (`ModelComparisonManifest`) | `MODEL_COMPARISON_SCHEMA_VERSION` | `runId` (no `updatedAt`) |
 
 Mutable index artifacts MUST be re-fetched on every dashboard load (or after a TTL). Consumers MUST:
 
 1. Reject any index where `schemaVersion` does not match the expected version constant.
 2. Compare `updatedAt` against a freshness threshold and re-fetch when stale.
+   `model-comparison-<runId>.json` is the exception: it is regenerated per run
+   rather than accumulated across runs, so it carries `runId` and no
+   `updatedAt`. Judge its freshness from the run it names.
+
+[`tests/evals/publish-safety.scenario.test.ts`](../tests/evals/publish-safety.scenario.test.ts)
+pins both properties against the files the writer really produces.
 
 Use the typed validators in `dashboard-indexes.ts` for these checks:
 - `validateDashboardManifestCompatibility()` — returns `ok(parsed)` or `err(DashboardIndexError)` with `SchemaVersionMismatch` or `IndexParseError` variant

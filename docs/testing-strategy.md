@@ -265,6 +265,28 @@ internal branches. What stays is what a user cannot observe from outside:
 | `model-resolution.test.ts` | Pins the adapter↔engine `ModelResolutionInput` contract, which no generated file reveals. Its three cases pinning the adapter's model *constant* were deleted — those are observable |
 | `bootstrap.test.ts` | Integrity of a shipped asset. Closer to a repo guard than a unit test |
 
+The same rule applied to the evals sanitizer and report schemas:
+
+| | Before | After |
+| --- | --- | --- |
+| `sanitizer.test.ts` | 140 | 91 |
+| `report-schema.test.ts` | 188 | 112 |
+| Scenario cases | 12 | 125 |
+| Total | 340 | 328 |
+
+Here the count barely moves, and that is the honest result: 125 scenario cases
+replaced 125 unit cases, because the deleted ones were an enumeration
+(`"contains composedPrompt"`, `"includes a pattern for html_script_tag"`) whose
+user-visible form is an equally long table of hostile inputs fed through the
+real bundle writer. The gain is not fewer tests but tests that fail when a
+reader is put at risk, rather than when a constant is renamed. What stayed:
+
+| Kept | Why |
+| --- | --- |
+| `assertPublishSafe()` / `assertJsonPublishSafe()` | The publish-mode guards. While the allowlist projection works they never fire, so no written file reveals their behaviour |
+| The manifest schemas' rejection branches | The writer always passes the version constant, so a wrong `schemaVersion` is unreachable from outside; the branches guard a future producer |
+| `sanitizeScoreRecord`, `dropUnknownFields`, `truncateExplanation`, `buildExplanation`, `assertExplanationSafe`, `REDACTED`, `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS` | Exported API with **no production caller** — see the finding below |
+
 **Prove the deletion rather than asserting it.** Before deleting, break the
 source and confirm the scenarios fail. For this pilot:
 
@@ -277,6 +299,24 @@ source and confirm the scenarios fail. For this pilot:
 
 All four were caught by `tests/adapters` alone, with every deleted unit test
 already gone.
+
+The evals sanitizer migration repeated the exercise against `tests/evals`
+alone:
+
+| Mutation | Result |
+| --- | --- |
+| `sanitizeCaseResultSummary()` returns its input | 38 of 113 scenarios red |
+| Explanation validation removed from `assembleCaseEntry()` | 42 red |
+| `sanitizeMdValue()` returns its input verbatim | 2 red |
+| `sanitizeProvenanceRecord()` spreads its input | 1 red |
+
+The second mutation is the one worth reading twice. On the first pass it
+turned **one** scenario red, because dropping validation makes
+`PublicReportBundleSchema` reject the whole report, so `public-report.json` is
+never written and *"the payload appears in no public artifact"* stays true. An
+absence assertion was passing for the wrong reason again. Each payload case now
+also asserts the case is still published — the graceful degradation the
+pipeline actually promises — and the same mutation turns 42 red.
 
 ### A scenario can pass without testing anything
 
@@ -307,6 +347,27 @@ against what the adapter knows the harness can run, so an unrecognised model is
 dropped silently and resolution falls through to `DEFAULT_FALLBACK_MODEL`. A
 typo in `models` yields a working agent on the wrong model rather than an error.
 The scenario now records that.
+
+The evals migration turned up three more:
+
+- **A case with an empty `caseId` costs the run its dashboard presence,
+  silently.** `PublicReportBundle` assembly fails validation, and
+  `writeBundle()` treats that failure as non-fatal: `public-report.json`,
+  `public-report.md` and every dashboard index are skipped, and the result is
+  still `ok`. Nothing in the write result says the run will never appear.
+- **Seven exported sanitizer surfaces have no production caller.**
+  `sanitizeScoreRecord()`, `dropUnknownFields()`, `truncateExplanation()`,
+  `buildExplanation()`, `assertExplanationSafe()`, `REDACTED` and
+  `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS` are reached only from tests — the
+  runners build explanations through `buildPublicExplanation()` in
+  `langchain-agent-evals.ts` and redact with their own patterns. Roughly 60
+  unit cases cover code nothing calls. They were kept and flagged rather than
+  deleted, because the decision is a product one.
+- **A malformed summary throws instead of returning `err`.** A `CaseResult`
+  whose `summary` omits `dimensionScores` makes `writeBundle()` raise a
+  `TypeError` rather than a typed `BundleError`, against the `neverthrow` rule
+  in `AGENTS.md`. Reachable only by defeating the type system, so no scenario
+  asserts it.
 
 ## What the buckets found
 
