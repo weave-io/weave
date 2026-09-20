@@ -82,8 +82,8 @@ agent loom {
   }
 
   triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-    { domain "Architecture" trigger "System design and planning" }
+    "Use for complex multi-step orchestration"
+    "Use for system design and planning"
   ]
 
   skills ["tdd", "code-review"]
@@ -123,21 +123,28 @@ agent shuttle {
 - `models` — ordered model preference list for adapters to translate; concrete availability checks are adapter-owned
 - `mode` — adapter-facing context hint: `primary` (main/user-facing agent), `subagent` (delegated specialist), or `all` (usable in both contexts)
 - `tool_policy` — abstract capability map with `allow` / `deny` / `ask` permissions; adapters map to harness-specific tool names and permission models
-- `triggers` — delegation metadata for router agents (e.g. Loom's delegation table)
+- `triggers` — routing instructions for router agents (e.g. Loom's delegation table), as a non-empty list of quoted strings; object triggers are invalid
 
 #### Prompt Templates and Template Context
 
 Every `prompt`, `prompt_file`, `prompt_append`, and `prompt_append_file` value is a **Prompt Template** rendered by the engine with Mustache before adapters receive the final composed prompt. This lets prompt files reference engine-computed data without duplicating config.
 
-**Key placeholder**: `{{{delegation.section}}}` — renders the full delegation guidance block (Mermaid diagram + compact bullets) at the location you choose. Use triple braces because the value contains Markdown.
+**Delegation guidance is written explicitly.** There is no pre-rendered block and no automatic fallback: a router agent's prompt must loop over `delegation.targets` itself.
 
 ```md
 You are {{agent.name}}.
 
-{{{delegation.section}}}
+## Delegation
+
+{{#delegation.targets}}
+- **{{name}}** — {{description}}
+{{#triggers}}
+  - {{.}}
+{{/triggers}}
+{{/delegation.targets}}
 ```
 
-If the primary prompt source does not reference any `delegation.*` path, the engine appends `delegation.section` automatically as a fallback. Static prompts without Mustache tags are unaffected.
+`delegation` is omitted from the context entirely when the agent has no eligible targets, so the section collapses to nothing rather than rendering an empty heading.
 
 **Available Template Context fields**:
 
@@ -155,17 +162,12 @@ If the primary prompt source does not reference any `delegation.*` path, the eng
 | `{{toolPolicy.effective.execute}}` | `allow`\|`deny`\|`ask` | Resolved execute permission |
 | `{{toolPolicy.effective.delegate}}` | `allow`\|`deny`\|`ask` | Resolved delegate permission |
 | `{{toolPolicy.effective.network}}` | `allow`\|`deny`\|`ask` | Resolved network permission |
-| `{{{delegation.section}}}` | string? | Full `## Delegation` Markdown block with Mermaid diagram and bullets |
-| `{{{delegation.mermaid}}}` | string? | Mermaid diagram block only |
 | `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
 | `{{name}}` | string | Target agent name (inside `delegation.targets`) |
 | `{{description}}` | string? | Target description (inside `delegation.targets`) |
-| `{{domains}}` | string[] | Deduplicated trigger domains (inside `delegation.targets`) |
-| `{{#triggers}}` | array | Iterate over triggers (inside `delegation.targets`) |
+| `{{#triggers}}` | array | Iterate over trigger strings with `{{.}}` (inside `delegation.targets`) |
 
-**Fallback suppression**: placing any real `delegation.*` reference in the primary prompt source (not in `prompt_append`) suppresses the automatic fallback. Use `\{{delegation.section}}` (backslash-escaped) to render the literal text `{{delegation.section}}` without triggering suppression.
-
-**Unsupported features**: partials (`{{> footer}}`), delimiter changes, helpers, and lambdas are rejected at composition time with a typed `PromptTemplateError`.
+**Unsupported paths and features**: the context is a closed allowlist — see `ALLOWED_TEMPLATE_PATHS` in [`packages/engine/src/template-context.ts`](packages/engine/src/template-context.ts). A tag naming anything outside it, as well as partials (`{{> footer}}`), delimiter changes, helpers and lambdas, is rejected at composition time with a typed `PromptTemplateError`.
 
 See [`docs/prompt-composition.md`](docs/prompt-composition.md) for the full specification and [`docs/adr/0001-prompt-composition-templates.md`](docs/adr/0001-prompt-composition-templates.md) for the design rationale.
 

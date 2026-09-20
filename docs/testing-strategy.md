@@ -194,7 +194,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
-| 9 | Populate the buckets: DSL (workflows, `tool_policy`, prompt templates, config merge), CLI (the six uncovered commands), Adapters (opencode, opencode2, copilot) | 10 | The taxonomy stops being a scaffold | open |
+| 9 | Populate the buckets | 10 | DSL: `tool_policy`, prompt composition. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness. Still open: workflows, config merge, and the OpenCode adapters, which register with a running harness rather than writing files and need a harness of their own | **partly done** |
 | 6 | Consolidate duplicated factories into `tests/support/` and per-package `__tests__/support/` | 6 | Fixtures named after situations | open |
 | 10 | Replace ad-hoc inline DSL with named scenario fixtures | 7 | 88 anonymous snippets in `compose.test.ts` alone become readable situations | open |
 | 11 | Resolve or delete the 2 genuine `it.skip` cases | 9 | No silently-dead tests | open |
@@ -214,6 +214,30 @@ Finding 1 (white-box coupling) has no step of its own by design — unit tests
 beside their module are legitimate. It resolves as a side effect of steps 4
 and 9: every promise that moves to `tests/` is one fewer reason for a unit test
 to reach into an internal module.
+
+## What the buckets found
+
+Writing scenarios against real behaviour surfaced documentation that described
+Weave as it no longer works. Each was corrected in the same pass, with a
+scenario pinning the actual behaviour so it cannot drift again:
+
+- **`{{{delegation.section}}}` does not exist.** `AGENTS.md`, `CONTEXT.md`,
+  `docs/dsl-reference.md`, `docs/cli.md` and `docs/prompt-composition.md` all
+  documented a pre-rendered delegation block and an automatic fallback append.
+  [ADR 0001](adr/0001-prompt-composition-templates.md) removed both
+  deliberately, and `template-context.test.ts` asserts they are absent from
+  `ALLOWED_TEMPLATE_PATHS` — a prompt using the placeholder fails composition.
+  Worst of it was `packages/cli/src/prompts/self-modify.md`, shipped guidance
+  that `weave prompt self-modify` prints, telling users to do exactly that.
+- **Object triggers are invalid.** `AGENTS.md` still showed
+  `triggers [{ domain "…" trigger "…" }]`; the schema takes quoted strings,
+  and `docs/dsl-reference.md` says object triggers are invalid outright.
+- **`{{domains}}` is not in the template context.**
+
+The pattern is the same one that produced the `patterns` → `triggers` drift
+fixed earlier: `docs/dsl-reference.md` and the specs were amended when the
+engine changed, and the onboarding documents were not. A scenario that exercises
+the documented behaviour is the cheapest guard against it.
 
 ## See also
 

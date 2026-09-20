@@ -37,7 +37,7 @@ Read this doc **before** making any change that touches:
 - `prompt` or `prompt_file` values in an agent or category block
 - `prompt_append` or `prompt_append_file` values in an agent, category, or workflow block
 - Mustache template tags in any prompt source
-- Delegation section rendering (`{{{delegation.section}}}`, `{{#delegation.targets}}`)
+- Delegation guidance written with `{{#delegation.targets}}` loops
 
 The `weave prompt self-modify` guide enforces this: it lists `docs/prompt-composition.md` as a required pre-read for prompt-related changes. See [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify).
 

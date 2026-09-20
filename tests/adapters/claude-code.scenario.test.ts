@@ -13,66 +13,22 @@
 
 import { beforeAll, describe, expect, it } from "bun:test";
 import { ClaudeCodeAdapter } from "../../packages/adapters/claude-code/src/adapter.js";
-import { whenMaterialized } from "../support/scenario.js";
+import { bundleFile, frontmatter, generateBundle } from "../support/adapter.js";
 
 const PROJECT_ROOT = "/project";
 const OUT_DIR = "/project/.weave/plugins/claude-code";
 
-/**
- * Runs the pipeline a user triggers with `weave init --harness claude-code`:
- * parse the config, resolve every agent, hand them to the adapter, flush.
- * Returns the files the user would find in the generated plugin bundle.
- */
-async function generatePluginBundle(
-  config: string,
-): Promise<Record<string, string>> {
-  const written: Record<string, string> = {};
-  const adapter = new ClaudeCodeAdapter({
-    projectRoot: PROJECT_ROOT,
-    homeDir: "/home/user",
-    outDir: OUT_DIR,
-    exists: async () => true,
-    readDir: async () => [],
-    readFile: async () => "",
-    mkdir: async () => {},
-    writeFile: async (path, content) => {
-      written[path] = content;
-    },
-  });
-
-  await adapter.init();
-
-  const plan = await whenMaterialized(config);
-  for (const entry of plan.agents) {
-    const result = await adapter.spawnSubagent(entry.descriptor);
-    expect(result.isOk()).toBe(true);
-  }
-
-  const flushed = await adapter.flush();
-  expect(flushed.isOk()).toBe(true);
-
-  return written;
-}
-
-/** Reads one generated file by its path inside the bundle. */
-function bundleFile(
-  files: Record<string, string>,
-  relativePath: string,
-): string {
-  const full = `${OUT_DIR}/${relativePath}`;
-  const content = files[full];
-  if (content === undefined) {
-    expect(Object.keys(files).sort()).toContain(full);
-    throw new Error("unreachable");
-  }
-  return content;
-}
-
-/** The YAML frontmatter block at the top of a generated agent file. */
-function frontmatter(markdown: string): string {
-  const match = markdown.match(/^---\n([\s\S]*?)\n---/);
-  expect(match).not.toBeNull();
-  return match?.[1] ?? "";
+function build(config: string): Promise<Record<string, string>> {
+  return generateBundle(
+    config,
+    (hooks) =>
+      new ClaudeCodeAdapter({
+        projectRoot: PROJECT_ROOT,
+        homeDir: "/home/user",
+        outDir: OUT_DIR,
+        ...hooks,
+      }),
+  );
 }
 
 describe("a user configures an orchestrator and a specialist for Claude Code", () => {
@@ -109,12 +65,12 @@ describe("a user configures an orchestrator and a specialist for Claude Code", (
   let files: Record<string, string>;
 
   beforeAll(async () => {
-    files = await generatePluginBundle(config);
+    files = await build(config);
   });
 
   it("produces a plugin Claude Code can load", () => {
     const manifest = JSON.parse(
-      bundleFile(files, ".claude-plugin/plugin.json"),
+      bundleFile(files, `${OUT_DIR}/.claude-plugin/plugin.json`),
     );
 
     expect(manifest).toMatchObject({ name: expect.any(String) });
@@ -132,23 +88,25 @@ describe("a user configures an orchestrator and a specialist for Claude Code", (
   });
 
   it("carries the prompt the user wrote into the agent Claude Code will run", () => {
-    expect(bundleFile(files, "agents/loom.md")).toContain(
+    expect(bundleFile(files, `${OUT_DIR}/agents/loom.md`)).toContain(
       "You are Loom. You route work to specialists.",
     );
   });
 
   it("lets the orchestrator delegate, because its policy allows it", () => {
-    expect(frontmatter(bundleFile(files, "agents/loom.md"))).toContain("Task");
+    expect(
+      frontmatter(bundleFile(files, `${OUT_DIR}/agents/loom.md`)),
+    ).toContain("Task");
   });
 
   it("withholds delegation from the specialist, because its policy denies it", () => {
-    expect(frontmatter(bundleFile(files, "agents/shuttle.md"))).not.toContain(
-      "Task",
-    );
+    expect(
+      frontmatter(bundleFile(files, `${OUT_DIR}/agents/shuttle.md`)),
+    ).not.toContain("Task");
   });
 
   it("makes the orchestrator the agent Claude Code starts in", () => {
-    const settings = JSON.parse(bundleFile(files, "settings.json"));
+    const settings = JSON.parse(bundleFile(files, `${OUT_DIR}/settings.json`));
 
     expect(settings).toMatchObject({ agent: "loom" });
   });
@@ -156,7 +114,7 @@ describe("a user configures an orchestrator and a specialist for Claude Code", (
 
 describe("a user adds a category and expects a specialist for it", () => {
   it("ships a generated agent file for the category alongside the declared ones", async () => {
-    const files = await generatePluginBundle(`
+    const files = await build(`
       agent shuttle {
         description "Shuttle (Domain Specialist)"
         prompt "You are Shuttle."
@@ -171,7 +129,7 @@ describe("a user adds a category and expects a specialist for it", () => {
       }
     `);
 
-    const backend = bundleFile(files, "agents/shuttle-backend.md");
+    const backend = bundleFile(files, `${OUT_DIR}/agents/shuttle-backend.md`);
 
     expect(backend).toContain("You are Shuttle.");
     expect(backend).toContain(

@@ -263,7 +263,7 @@ _Avoid_: Public docs site, source of truth
 
 ## Prompt Composition Templates
 
-Prompt composition templates are a first-class engine feature. Every agent `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered with a bounded **Template Context** before adapters receive the final **Composed Prompt**. The Template Context exposes agent identity, effective tool policy, and generated delegation data — including `delegation.section` (a Mermaid diagram plus compact bullets) and `delegation.mermaid` (the diagram alone). Prompt authors use `{{{delegation.section}}}` to control where delegation guidance appears; prompts that omit any `delegation.*` reference receive the fallback delegation section automatically. Static prompts without Mustache tags are unaffected.
+Prompt composition templates are a first-class engine feature. Every agent `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered with a bounded **Template Context** before adapters receive the final **Composed Prompt**. The Template Context exposes agent identity, effective tool policy, and generated delegation data as `delegation.targets`, each target carrying its name, description and ordered trigger strings. Prompt authors write delegation guidance explicitly with a `{{#delegation.targets}}` loop; there is no pre-rendered `delegation.section` and no automatic fallback block. `delegation` is omitted entirely when an agent has no eligible targets, so the loop collapses. Static prompts without Mustache tags are unaffected.
 
 See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/adr/0001-prompt-composition-templates.md) for the full specification and rationale.
 
