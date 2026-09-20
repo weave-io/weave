@@ -278,6 +278,25 @@ source and confirm the scenarios fail. For this pilot:
 All four were caught by `tests/adapters` alone, with every deleted unit test
 already gone.
 
+### A scenario can pass without testing anything
+
+The evals bucket produced the sharpest lesson so far, and every migration
+should apply it.
+
+The first leak scenarios placed sensitive markers in a case result's
+`rawArtifact` field and asserted no published file contained them. Twelve
+passed. They were **vacuous**: bundle assembly only ever reads
+`caseResult.summary`, so `rawArtifact` had no path to the output — nothing
+needed stripping, and a deliberately broken sanitizer still passed all twelve.
+
+Moving the markers onto the summary — the object assembly actually reads — made
+the same scenarios fail six ways against that broken sanitizer.
+
+**A green scenario proves nothing until you have watched it go red.** Mutate the
+code under test before trusting a new scenario, especially one asserting that
+something is *absent*: an absence assertion passes both when the guard works and
+when the value never arrived.
+
 ### What migration turns up
 
 Writing against observed behaviour keeps surfacing things the white-box tests
