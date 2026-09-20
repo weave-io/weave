@@ -125,8 +125,10 @@ describe("a user generates a Claude Code plugin from their config", () => {
   });
 
   it("produces one agent file per declared agent, and no others", () => {
+    // `startsWith(AGENTS)` would also match a sibling such as `agents-old/`,
+    // letting a stray file slip past the "and no others" claim.
     const agentFiles = Object.keys(files)
-      .filter((path) => path.startsWith(AGENTS))
+      .filter((path) => path.startsWith(`${AGENTS}/`) && path.endsWith(".md"))
       .sort();
 
     expect(agentFiles).toEqual([`${AGENTS}/loom.md`, `${AGENTS}/shuttle.md`]);

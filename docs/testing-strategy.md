@@ -253,7 +253,7 @@ is the work, and the `claude-code` adapter is the worked example:
 | --- | --- | --- |
 | Unit cases | 68 in 7 files | 16 in 3 files |
 | Scenario cases | 7 | 25 |
-| Total | 68 | 41 |
+| Total | 75 | 41 |
 
 **The rule is subsumption, not similarity.** A unit test goes when a scenario
 asserts the same user-visible promise — even where the unit test also covers

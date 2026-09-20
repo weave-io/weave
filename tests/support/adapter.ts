@@ -60,8 +60,13 @@ export function memoryIO(options: ExistingBundle = {}): MemoryIO {
     hooks: {
       exists: async () => true,
       readDir: async (path) => {
+        // Match a whole trailing path segment: `endsWith` would let a key of
+        // `agents` also answer for `agents-extra`, so a cleanup scenario could
+        // pass for the wrong directory.
+        const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
+        const last = segments[segments.length - 1];
         for (const [dir, names] of Object.entries(existing)) {
-          if (path.endsWith(dir)) return names;
+          if (last === dir) return names;
         }
         return [];
       },
