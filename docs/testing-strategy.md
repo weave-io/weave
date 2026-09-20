@@ -120,15 +120,16 @@ Comparing case bodies rather than names:
 | Same name in both | 13 |
 | **Same name _and_ same body** | **6** |
 
-Seven cases share a name but differ in setup or assertions, so they are not
-interchangeable. **True duplication is 6 cases, not 309**, and the ~275
-monolith-only cases are real coverage. The projected "−9.8k lines" was never
+Seven of the 13 share a name but differ in setup or assertions, so they are not
+interchangeable. **True duplication is 6 cases, not 309.** Those 6 were
+removed; the remaining **303** monolith cases have no equivalent in the
+directory and are real coverage. The projected "−9.8k lines" was never
 available.
 
 What remains true is that the file is the largest in the repository and hard to
 navigate. Its 36 top-level `describe` blocks group cleanly by subject and map
-onto the existing directory, so the honest remedy is a reorganization with no
-deletion — see step 2 in the plan.
+onto the existing directory, so the remaining work is a reorganization that
+moves those 303 cases rather than deleting them — see step 2 in the plan.
 
 **5. Test names encode the implementation plan, not the behaviour.** 31 names
 across 10 files carry `Spec 22 Unit 1`, `Task 3.2`, `ADR 0004`, `Phase 1`. These
@@ -211,7 +212,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 1 | Delete the type-echo cases | 3 | −48 cases, −604 lines, no coverage lost | **done** |
 | 5 | Rename spec-numbered tests to behaviour | 5 | Readable by newcomers | **done** |
 | 7 | Cover `packages/adapters/pi` | 9 | Its four api-extractor configs now run under `validate:declarations` | **done, reduced** |
-| 2 | Split `execution-lifecycle.test.ts` by subject into `execution-lifecycle/`, moving cases rather than deleting them | 4 | Navigable files; no line saving — see the correction in finding 4 | open |
+| 2 | Split `execution-lifecycle.test.ts` by subject into `execution-lifecycle/`, moving its remaining 303 cases rather than deleting them | 4 | Navigable files; no line saving — the 6 duplicates finding 4 identified are already gone | open |
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
