@@ -667,6 +667,136 @@ the publisher's `raw/` filter and `computeRunIdPrefix()`'s `"unknown"` branch.
   eval-runner failure mode is absent here; `MockPluginContext` and the V2
   fixtures are data doubles, not second implementations.
 
+### Migrating the OpenCode runtime surface
+
+The OpenCode V1 **runtime** surface went the same way. Its black boxes are the
+two things a user of that adapter can see: the slash commands OpenCode ends up
+offering, read off `cfg.command` through the same config hook the agent
+scenarios use, and the agents a running OpenCode is left holding, read off
+`FakeOpenCodeInstance` — a real in-memory agent store rather than a call
+recorder, so a second startup genuinely sees what the first one wrote.
+
+| | Before | After |
+| --- | --- | --- |
+| `runtime-command-projection.test.ts` (source cases) | 58 | 28 |
+| `reconcile-agent.test.ts` (source cases) | 42 | 2 |
+| `adapter.test.ts` (source cases) | 42 | 11 |
+| `plugin.test.ts` (source cases) | 36 | 6 |
+| `run-workflow.test.ts` (source cases) | 27 | 11 |
+| `start-plan-execution.test.ts` (source cases) | 27 | 7 |
+| **Unit total (source cases)** | **232** | **65** |
+| Scenarios added (source cases) | — | 51 |
+| Scenarios added (cases at runtime) | — | 55 |
+
+What stayed, and why, is recorded in each file's docblock. The pattern across
+all six is the same: **argument-validation branches, absence guarantees and
+adapter-supplied context stay; rendered messages and registered configuration
+go.** A scenario builds its arguments from a `.weave` file, so it can never
+produce an empty `workflowInstanceId`; it drives the real
+`BunFilesystemPlanStateProvider` over a real plan file, so it cannot make the
+provider fail on demand; and `OpenCodeModelContext` — the set of models a live
+OpenCode can run — is supplied by the host, which the plugin never populates.
+
+Twenty-eight mutations were run against
+[`tests/adapters/opencode-runtime.scenario.test.ts`](../tests/adapters/opencode-runtime.scenario.test.ts)
+alone, with every deleted unit case already gone. Twenty-six were caught:
+
+| Mutation | Result |
+| --- | --- |
+| A reconciliation failure is swallowed by the adapter | 17 red |
+| Ownership tagging is dropped from the description | 13 red |
+| A dispatched step never reaches the adapter | 11 red |
+| The preferred `/weave:start` command is not registered | 7 red |
+| An existing Weave agent is created again rather than updated | 5 red |
+| Rendered command messages stop carrying the command label | 4 red |
+| A foreign same-named agent is treated as Weave's own | 4 red |
+| The ownership tag is written twice into the description | 3 red |
+| Plan commands are sent to Loom instead of Tapestry | 2 red |
+| The command envelope stops naming the command | 2 red |
+| The collision message stops naming the agent and the remedy | 2 red |
+| Plan execution stops defaulting to `tapestry-execution` | 2 red |
+| New sessions no longer start in Loom | 1 red |
+| An unknown workflow name is reported as a lifecycle failure | 1 red |
+| The step cap is ignored | 1 red |
+| A missing plan is reported as a generic workflow error | 1 red |
+| An unsafe plan name is reported as a missing provider | 1 red |
+| The status message stops reporting the step and lease | 1 red |
+| The config hook replaces the agent map rather than adding to it | 1 red |
+| The config hook replaces the command map rather than adding to it | 1 red |
+| A declared model variant is dropped on the way to OpenCode | 1 red |
+| Agent names are matched without regard to case | 1 red |
+| A health check always reports the adapter as fully ready | 1 red |
+| *(a fix)* A lifecycle failure's cause is kept on the plan-execution path | 1 red |
+| *(a fix)* The config hook leaves a same-named agent the user already had | 1 red |
+| *(a fix)* A step dispatch carries the user's real agent, not a placeholder | 1 red |
+| Both provider-qualification gates are removed at once | 1 red |
+| *(either provider-qualification gate alone)* | **0 red** — the other gate still holds |
+| The ownership tag is appended every pass, not once | **0 red** — see below |
+
+Three of those are mutations that *fix* a defect the scenarios pin as observed
+behaviour, which is the only way to prove such a scenario is live.
+
+The two survivors are not gaps:
+
+- **The provider-qualification gate is defence in depth.**
+  `resolveModelForAgent()` filters unqualified model names out of its input and
+  then filters the result again on the way out. Removing either alone changes
+  nothing; removing both turns a scenario red. Same shape as the publisher's
+  dead `raw/` filter.
+- **`tagWithOwnership`'s idempotency guard is unreachable.** Both callers — the
+  config hook and `reconcileAgent` — pass a freshly translated config whose
+  description has never been tagged, so the guard cannot fire. Its unit test is
+  kept and flagged. A mutation that writes the tag twice turns three scenarios
+  red, which is what proves the assertion watching it is not vacuous.
+
+### What the OpenCode runtime migration turned up
+
+Six things the 232 unit cases did not say, four of them because the tests were
+describing an architecture the adapter no longer has:
+
+- **Running a workflow destroys the agents it dispatches.** The engine's
+  `buildConfiguredRunAgentEffect()` emits a placeholder descriptor —
+  `composedPrompt: ""`, `models: []`, an ask-everything tool policy — and the
+  adapter's `projectEffect` feeds it straight into `spawnSubagent()`, which
+  reconciles it over the agent OpenCode already holds. A user who runs a
+  two-step workflow gets their Shuttle back with an empty prompt, no model and
+  every permission downgraded to `ask`, for the rest of the session. The unit
+  tests could not see it: they drove `MockOpenCodeAdapter`, which overrides
+  `spawnSubagent` to record the descriptor and write nothing.
+- **The collision protection is not on the live path.** `reconcile-agent.ts`
+  exists to refuse overwriting a same-named agent a user created themselves.
+  SDK reconciliation was deliberately disabled — a `config.update()` per agent
+  made OpenCode reload every plugin — so the config hook is the only
+  materialization mechanism, and it assigns `cfg.agent[name]` unconditionally.
+  A user with their own `shuttle` in `opencode.json` has it silently replaced.
+  The 42 `reconcile-agent` cases all passed against a module nothing reaches.
+- **Four exported surfaces have no production caller.** `runWorkflow()`,
+  `startPlanExecution()`, `RuntimeCommandProjection` and
+  `OpenCodeAdapter.spawnSubagent()` are reached only from tests. The plugin
+  registers two prompt-template commands, `start-work` and `weave:start`, both
+  dispatching to Tapestry; the six `/weave:*` commands the projection layer
+  labels and documents are registered with nothing. `WEAVE_START_COMMAND`,
+  `WEAVE_START_LEGACY_COMMAND` and `WeavePluginOptions.clientFacade` are unread
+  too. Kept and flagged rather than deleted, like the sanitizer surfaces above.
+- **`startPlanExecution()` discards every lifecycle error's cause.** Its
+  `mapCommandError()` reads `error.message` and `error.reason`, but a
+  `command_lifecycle` error carries its text on `error.cause.message`, so every
+  one collapses to `"Unknown command operation error"`. A user whose plan still
+  has an unticked task is told nothing. The same failure through
+  `RuntimeCommandProjection.handleStartPlan()` reads
+  *`Plan ".weave/plans/auth-work.md" has incomplete checkbox(es)`* —
+  `run-workflow.ts`'s mapper has the `command_lifecycle` branch that this one
+  lacks.
+- **`/weave:health` can never report a healthy adapter.**
+  `buildOpenCodeHealthReport()` declares none of the seven optional
+  capabilities, and each undeclared optional capability counts as a degraded
+  operation, so `handleRuntimeHealth()` always takes the degraded branch. Two of
+  its unit cases asserted `outcome === "success" || outcome === "degraded"` —
+  the whole union, and therefore always true.
+- **Turning off Tapestry leaves both commands pointing at an agent OpenCode does
+  not have.** `disable agents ["tapestry"]` removes the agent and registers
+  `start-work` and `weave:start` with `agent: "tapestry"` regardless.
+
 ### A scenario can pass without testing anything
 
 The evals bucket produced the sharpest lesson so far, and every migration

@@ -1,51 +1,26 @@
 /**
- * Integration tests for `runWorkflow` — explicit named-workflow execution.
+ * Unit tests for `runWorkflow`.
  *
- * ## What these tests prove (Spec 22 Unit 4 / ADR 0004)
+ * What a run of a named workflow does — which agent OpenCode is asked to run
+ * for each step, in what order, what a completed run reports, what an unknown
+ * workflow name says, and what a step cap does — is now asserted from outside,
+ * in `tests/adapters/opencode-runtime.scenario.test.ts`, against a real
+ * `OpenCodeAdapter` wired to a real in-memory OpenCode. Sixteen cases are gone.
  *
- * 1. **Explicit named-workflow execution via engine delegation** — `runWorkflow`
- *    is the OpenCode adapter's helper for running a specific, named workflow
- *    declared in `.weave/config.weave`. It delegates lifecycle semantics to the
- *    engine's `runNamedWorkflow` command operation and supplies
- *    `adapter.spawnSubagent` as the `projectEffect` callback. The caller must
- *    supply the workflow name; there is no implicit or default workflow
- *    selection. This is distinct from the ordinary Loom-led path
- *    (`/weave:start` → `startPlanExecution`), which is plan-first and does not
- *    require the caller to name a workflow.
+ * What stays is what no OpenCode instance can show:
  *
- *    `runWorkflow` must be called by a user-authorized trigger (command
- *    handler, script, or UI action). It is never called from idle hooks,
- *    session events, continuation hooks, or lifecycle observations.
+ * | Kept | Why |
+ * | --- | --- |
+ * | The explicit-trigger block | `runWorkflow` must never be reachable from an idle hook, a session event or a continuation hook. That is an absence across the whole adapter; no run of it can demonstrate the absence |
+ * | The `PlanStateProvider` error branches | A scenario supplies the real `BunFilesystemPlanStateProvider` over a real plan file, which cannot be made to fail on demand. The absent-provider and provider-error branches need a stub |
+ * | `PlanStateProvider` is not consulted for `agent_signal` steps | An interaction, not an outcome: the run completes either way |
+ * | `maxSteps: 0` | Below the engine's minimum, so it is rejected before any step is dispatched and nothing reaches OpenCode |
  *
- * 2. **`DispatchAgentEffect` applied through `OpenCodeAdapter.spawnSubagent`**
- *    — the engine emits `DispatchAgentEffect` values; the adapter's
- *    `projectEffect` callback calls `adapter.spawnSubagent` for each one.
- *    The engine never applies harness-specific behavior directly.
+ * ## No production caller
  *
- * 3. **`PlanStateProvider` at completion boundaries** — when a workflow step
- *    uses `plan_created` or `plan_complete` as its completion method, the
- *    engine requires a `PlanStateProvider`. Tests prove:
- *    - Absent provider → `LifecycleError` (engine fails closed)
- *    - Present provider → completion succeeds when plan state matches
- *
- * 4. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
- *    not wired to any idle hook, session event, or continuation hook in the
- *    OpenCode adapter. The plugin's `event` hook fires only on
- *    `session.created` and performs agent materialization — it never calls
- *    `runWorkflow` or any other execution-start helper. The `config` hook is
- *    pure computation and never calls `runWorkflow`.
- *
- * Uses:
- * - `InMemoryRuntimeStore` (no SQLite, no filesystem)
- * - `MockPlanStateProvider` (no real filesystem plan files)
- * - Fixture `WeaveConfig` objects with 2–3 step workflows
- *
- * Asserts:
- * - At least one `DispatchAgentEffect` was applied through `adapter.spawnSubagent`
- * - The produced `OpenCodeAgentConfig` validates against SDK types (no `any` casts)
- * - The execution loop terminates with `status: "completed"`
- * - `PlanStateProvider` is called for plan-oriented completion methods
- * - Absent `PlanStateProvider` causes a `LifecycleError` for plan-oriented steps
+ * `runWorkflow` is exported from the package barrel and called from nowhere in
+ * this repository. The shipped plugin registers two prompt-template commands
+ * and nothing that invokes this function.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -56,7 +31,6 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter } from "../index.js";
 import { runWorkflow } from "../run-workflow.js";
-import type { OpenCodeAgentConfig } from "../sdk-types.js";
 
 // ---------------------------------------------------------------------------
 // MockPlanStateProvider
@@ -175,7 +149,7 @@ const TWO_STEP_CONFIG: WeaveConfig = {
 /**
  * Fixture `WeaveConfig` with a 3-step workflow including a gate step.
  */
-const THREE_STEP_CONFIG: WeaveConfig = {
+const _THREE_STEP_CONFIG: WeaveConfig = {
   agents: {
     shuttle: {
       description: "Shuttle (Domain Specialist)",
@@ -357,222 +331,6 @@ const PLAN_COMPLETE_CONFIG: WeaveConfig = {
 // ---------------------------------------------------------------------------
 
 describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode adapter projection", () => {
-  it("returns WorkflowNotFound error for unknown workflow name", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "nonexistent-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      adapter,
-      store,
-    });
-
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.type).toBe("WorkflowNotFound");
-      if (result.error.type === "WorkflowNotFound") {
-        expect(result.error.workflowName).toBe("nonexistent-workflow");
-      }
-    }
-  });
-
-  it("applies DispatchAgentEffect through adapter.spawnSubagent for each step in a 2-step workflow", async () => {
-    // Proof: runWorkflow delegates to runNamedWorkflow (engine) and supplies
-    // adapter.spawnSubagent as the projectEffect callback. The engine emits
-    // DispatchAgentEffect values; the adapter applies them via spawnSubagent.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const planStateProvider = new MockPlanStateProvider();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Build a feature",
-      slug: "build-a-feature",
-      adapter,
-      store,
-      planStateProvider,
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isErr()) {
-      throw new Error(
-        `Expected ok but got err: ${JSON.stringify(result.error)}`,
-      );
-    }
-
-    const { appliedEffects, status, stepsDispatched } = result.value;
-
-    // Execution should complete (not pause)
-    expect(status).toBe("completed");
-
-    // Both steps should have been dispatched
-    expect(stepsDispatched).toBe(2);
-
-    // At least one DispatchAgentEffect should have been applied through spawnSubagent
-    const dispatchEffects = appliedEffects.filter(
-      (e) => e.kind === "dispatch-agent",
-    );
-    expect(dispatchEffects.length).toBeGreaterThanOrEqual(1);
-
-    // The adapter should have translated at least one agent via spawnSubagent
-    expect(adapter.translatedAgents.size).toBeGreaterThanOrEqual(1);
-  });
-
-  it("populates translatedAgents with valid OpenCodeAgentConfig", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Build a feature",
-      slug: "build-a-feature",
-      adapter,
-      store,
-    });
-
-    expect(result.isOk()).toBe(true);
-
-    // Validate the translated agent config against OpenCodeAgentConfig shape.
-    // No `any` casts — the type is imported directly from sdk-types.
-    const shuttleConfig: OpenCodeAgentConfig | undefined =
-      adapter.translatedAgents.get("shuttle");
-
-    expect(shuttleConfig).toBeDefined();
-    if (shuttleConfig === undefined) {
-      throw new Error("Expected shuttle agent config to be defined");
-    }
-
-    // Validate required fields are present and correctly typed
-    expect(typeof shuttleConfig.prompt).toBe("string");
-    expect(shuttleConfig.mode).toBe("subagent");
-    expect(shuttleConfig.permission).toBeDefined();
-
-    // Validate permission block shape
-    const { permission } = shuttleConfig;
-    expect(permission).toBeDefined();
-    if (permission !== undefined) {
-      const validValues = ["allow", "deny", "ask"];
-      // Each permission field is a string value — assert it's one of the valid values.
-      expect(validValues).toContain(String(permission.edit ?? ""));
-      expect(validValues).toContain(String(permission.bash ?? ""));
-      expect(validValues).toContain(String(permission.webfetch ?? ""));
-      expect(validValues).toContain(String(permission.doom_loop ?? ""));
-    }
-  });
-
-  it("applies DispatchAgentEffect for each step in a 2-step workflow", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Implement authentication",
-      slug: "implement-authentication",
-      adapter,
-      store,
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isErr()) {
-      throw new Error(
-        `Expected ok but got err: ${JSON.stringify(result.error)}`,
-      );
-    }
-
-    const { appliedEffects } = result.value;
-
-    // Filter to dispatch-agent effects only
-    const dispatchEffects = appliedEffects.filter(
-      (e) => e.kind === "dispatch-agent",
-    );
-
-    // Both steps should have produced a dispatch-agent effect
-    expect(dispatchEffects.length).toBe(2);
-
-    // Each dispatch effect should reference the shuttle agent
-    for (const effect of dispatchEffects) {
-      if (effect.kind === "dispatch-agent") {
-        expect(effect.runAgent.agentName).toBe("shuttle");
-        expect(effect.runAgent.kind).toBe("run-agent");
-        expect(effect.runAgent.agentDescriptor).toBeDefined();
-      }
-    }
-  });
-
-  it("runs a 3-step workflow and dispatches all steps", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: THREE_STEP_CONFIG,
-      workflowName: "plan-implement-review",
-      goal: "Add user authentication",
-      slug: "add-user-authentication",
-      adapter,
-      store,
-    });
-
-    // The 3rd step is a gate with review_verdict — completeStep with agent_signal
-    // may not match the declared method. The loop should still handle this gracefully.
-    // We accept either ok or a lifecycle validation error here.
-    if (result.isOk()) {
-      const { stepsDispatched, appliedEffects } = result.value;
-      expect(stepsDispatched).toBeGreaterThanOrEqual(1);
-      const dispatchEffects = appliedEffects.filter(
-        (e) => e.kind === "dispatch-agent",
-      );
-      expect(dispatchEffects.length).toBeGreaterThanOrEqual(1);
-    } else {
-      // A validation error on the gate step's completion method is acceptable
-      expect(result.error.type).toBe("LifecycleError");
-    }
-  });
-
-  it("uses InMemoryRuntimeStore when no store is provided", async () => {
-    const adapter = new OpenCodeAdapter();
-    // No store provided — should default to InMemoryRuntimeStore internally
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Test default store",
-      slug: "test-default-store",
-      adapter,
-      // store intentionally omitted
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(result.value.status).toBe("completed");
-    }
-  });
-
-  it("returns workflowInstanceId in the result", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Check instance ID",
-      slug: "check-instance-id",
-      adapter,
-      store,
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
-      expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
-    }
-  });
-
   it("MockPlanStateProvider is not called for agent_signal steps", async () => {
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
@@ -843,84 +601,6 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
     expect(planStateProvider.planExistsCalls[0]).toBe("my-plan");
   });
 
-  it("succeeds when plan_complete step has PlanStateProvider that reports plan is complete", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    // Provider reports plan is complete (isPlanComplete → true)
-    const planStateProvider = new MockPlanStateProvider(true, true);
-
-    const result = await runWorkflow({
-      config: PLAN_COMPLETE_CONFIG,
-      workflowName: "execute-and-verify",
-      goal: "Execute a plan",
-      slug: "execute-a-plan",
-      adapter,
-      store,
-      planStateProvider,
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(result.value.status).toBe("completed");
-    }
-
-    // The provider was called for the plan_complete step.
-    expect(planStateProvider.isPlanCompleteCalls).toHaveLength(1);
-    expect(planStateProvider.isPlanCompleteCalls[0]).toBe("my-plan");
-  });
-
-  it("fails with LifecycleError when plan_created step's plan does not exist", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    // Provider reports plan does NOT exist (planExists → false)
-    const planStateProvider = new MockPlanStateProvider(false, false);
-
-    const result = await runWorkflow({
-      config: PLAN_CREATED_CONFIG,
-      workflowName: "plan-then-execute",
-      goal: "Create a plan",
-      slug: "create-a-plan",
-      adapter,
-      store,
-      planStateProvider,
-    });
-
-    // Engine fails closed: plan_created requires the plan to exist.
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.type).toBe("LifecycleError");
-    }
-
-    // The provider was consulted — it was called for the plan_created step.
-    expect(planStateProvider.planExistsCalls).toHaveLength(1);
-  });
-
-  it("fails with LifecycleError when plan_complete step's plan is not complete", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    // Provider reports plan exists but is NOT complete (isPlanComplete → false)
-    const planStateProvider = new MockPlanStateProvider(true, false);
-
-    const result = await runWorkflow({
-      config: PLAN_COMPLETE_CONFIG,
-      workflowName: "execute-and-verify",
-      goal: "Execute a plan",
-      slug: "execute-a-plan",
-      adapter,
-      store,
-      planStateProvider,
-    });
-
-    // Engine fails closed: plan_complete requires the plan to be complete.
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.type).toBe("LifecycleError");
-    }
-
-    // The provider was consulted — it was called for the plan_complete step.
-    expect(planStateProvider.isPlanCompleteCalls).toHaveLength(1);
-  });
-
   it("propagates PlanStateProvider errors as LifecycleError", async () => {
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
@@ -942,26 +622,6 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
     if (result.isErr()) {
       expect(result.error.type).toBe("LifecycleError");
     }
-  });
-
-  it("PlanStateProvider is not called for agent_signal steps even when supplied", async () => {
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const planStateProvider = new MockPlanStateProvider();
-
-    await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Test plan provider isolation",
-      slug: "test-plan-provider-isolation",
-      adapter,
-      store,
-      planStateProvider,
-    });
-
-    // agent_signal steps do not require plan file checks — provider is not called.
-    expect(planStateProvider.planExistsCalls).toHaveLength(0);
-    expect(planStateProvider.isPlanCompleteCalls).toHaveLength(0);
   });
 
   it("PlanStateProvider is passed through to completeStep for each plan-oriented step", async () => {
@@ -1017,58 +677,6 @@ describe("runWorkflow — MaxStepsExceeded: structured error surfacing", () => {
    *   → RunWorkflowError.MaxStepsExceeded.maxSteps (N matches input cap)
    */
 
-  it("returns MaxStepsExceeded when maxSteps: 1 and workflow has 2 steps", async () => {
-    // TWO_STEP_CONFIG has 2 steps. maxSteps: 1 means the second step dispatch
-    // triggers the cap. The error must carry the structured maxSteps value.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Test maxSteps exceeded",
-      slug: "test-maxsteps-exceeded",
-      adapter,
-      store,
-      maxSteps: 1,
-    });
-
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.type).toBe("MaxStepsExceeded");
-      if (result.error.type === "MaxStepsExceeded") {
-        // Structured numeric value — must equal the cap supplied by the caller.
-        // No regex scraping of a human-readable message string.
-        expect(result.error.maxSteps).toBe(1);
-      }
-    }
-  });
-
-  it("MaxStepsExceeded.maxSteps equals the exact cap supplied in RunWorkflowInput", async () => {
-    // Prove the structured field carries the exact input cap value.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const cap = 1;
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Structured maxSteps value test",
-      slug: "structured-maxsteps-value",
-      adapter,
-      store,
-      maxSteps: cap,
-    });
-
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      expect(result.error.type).toBe("MaxStepsExceeded");
-      if (result.error.type === "MaxStepsExceeded") {
-        expect(result.error.maxSteps).toBe(cap);
-      }
-    }
-  });
-
   it("returns MaxStepsExceeded when maxSteps: 0 (below minimum)", async () => {
     // maxSteps: 0 is rejected by runWorkflowLifecycle before any store access.
     // The adapter maps this to MaxStepsExceeded with maxSteps: 0.
@@ -1091,74 +699,6 @@ describe("runWorkflow — MaxStepsExceeded: structured error surfacing", () => {
       if (result.error.type === "MaxStepsExceeded") {
         expect(result.error.maxSteps).toBe(0);
       }
-    }
-  });
-
-  it("succeeds when maxSteps equals the exact step count of the workflow", async () => {
-    // TWO_STEP_CONFIG has 2 steps. maxSteps: 2 should succeed.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Exact step count test",
-      slug: "exact-step-count",
-      adapter,
-      store,
-      maxSteps: 2,
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(result.value.status).toBe("completed");
-      expect(result.value.stepsDispatched).toBe(2);
-    }
-  });
-
-  it("succeeds with default maxSteps (100) when no cap is supplied", async () => {
-    // No maxSteps supplied — defaults to 100. A 2-step workflow should complete.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Default maxSteps test",
-      slug: "default-maxsteps",
-      adapter,
-      store,
-      // maxSteps intentionally omitted — defaults to 100
-    });
-
-    expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(result.value.status).toBe("completed");
-    }
-  });
-
-  it("MaxStepsExceeded is distinct from WorkflowNotFound and LifecycleError", async () => {
-    // Prove the discriminated union is correctly typed — MaxStepsExceeded is
-    // a separate variant, not conflated with other error types.
-    const adapter = new OpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await runWorkflow({
-      config: TWO_STEP_CONFIG,
-      workflowName: "plan-and-execute",
-      goal: "Error type distinction test",
-      slug: "error-type-distinction",
-      adapter,
-      store,
-      maxSteps: 1,
-    });
-
-    expect(result.isErr()).toBe(true);
-    if (result.isErr()) {
-      // Must be MaxStepsExceeded — not WorkflowNotFound or LifecycleError.
-      expect(result.error.type).not.toBe("WorkflowNotFound");
-      expect(result.error.type).not.toBe("LifecycleError");
-      expect(result.error.type).toBe("MaxStepsExceeded");
     }
   });
 });

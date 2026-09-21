@@ -18,11 +18,12 @@
 import { expect } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 /** The subset of OpenCode's config object these scenarios inspect. */
 export interface RegisteredConfig {
   agent?: Record<string, Record<string, unknown>>;
+  command?: Record<string, Record<string, unknown>>;
   [key: string]: unknown;
 }
 
@@ -131,6 +132,12 @@ export async function registeredConfig(
     reader: ReturnType<typeof projectOnlyReader>,
     client: unknown,
   ) => Promise<{ config?: (cfg: RegisteredConfig) => Promise<unknown> }>,
+  /**
+   * Config OpenCode already holds when the hook runs — what a user wrote in
+   * their own `opencode.json`. Omit it for a project where Weave is the only
+   * source of agents.
+   */
+  existing: RegisteredConfig = {},
 ): Promise<RegisteredConfig> {
   const client = stubClient();
   const hooks = await createPlugin(root, projectOnlyReader(root), client);
@@ -139,7 +146,7 @@ export async function registeredConfig(
   // all — it degrades to a no-op rather than registering anything. That is a
   // real outcome, not a harness failure, so the caller sees an empty config
   // and asserts on it.
-  const cfg: RegisteredConfig = {};
+  const cfg: RegisteredConfig = existing;
   if (typeof hooks.config === "function") {
     await hooks.config(cfg);
   }
@@ -159,6 +166,181 @@ export function registeredAgent(
   const agent = cfg.agent?.[name];
   if (agent === undefined) {
     expect(registeredAgentNames(cfg)).toContain(name);
+    throw new Error("unreachable");
+  }
+  return agent;
+}
+
+/** The names of every slash command the plugin registered, sorted. */
+export function registeredCommandNames(cfg: RegisteredConfig): string[] {
+  return Object.keys(cfg.command ?? {}).sort();
+}
+
+/** One registered slash command, failing readably when it is absent. */
+export function registeredCommand(
+  cfg: RegisteredConfig,
+  name: string,
+): Record<string, unknown> {
+  const command = cfg.command?.[name];
+  if (command === undefined) {
+    expect(registeredCommandNames(cfg)).toContain(name);
+    throw new Error("unreachable");
+  }
+  return command;
+}
+
+/**
+ * Writes a file into a temporary project, creating parent directories.
+ *
+ * Scenarios that need more than a config — a plan file under `.weave/plans/`,
+ * say — use this inside a `withWeaveProject` body.
+ */
+export async function writeProjectFile(
+  root: string,
+  relativePath: string,
+  contents: string,
+): Promise<void> {
+  await Bun.write(join(root, relativePath), contents);
+}
+
+// ---------------------------------------------------------------------------
+// The second black box: a running OpenCode instance
+// ---------------------------------------------------------------------------
+
+/**
+ * The shape the adapter's client facade reports failures in.
+ *
+ * Declared here rather than imported so this module stays adapter-neutral —
+ * both OpenCode adapters speak the same three operations.
+ */
+export interface FakeOpenCodeFailure {
+  readonly type: "ListAgentsError" | "CreateAgentError" | "UpdateAgentError";
+  readonly agentName?: string;
+  readonly message: string;
+}
+
+/** An agent as a running OpenCode instance reports it back. */
+export interface FakeOpenCodeAgent {
+  readonly name: string;
+  readonly description?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * A running OpenCode instance, in memory.
+ *
+ * The config hook makes OpenCode's *startup* config observable; this makes the
+ * other half observable — the agents a live OpenCode holds once Weave has
+ * talked to it over the SDK. Unlike a call recorder, this is a real store:
+ * `createAgent` adds, `updateAgent` replaces, and `listAgents` reports what is
+ * there now. That is what lets a scenario restart Weave and see an update
+ * rather than a duplicate.
+ *
+ * Callers pass it where the adapter expects its client facade. The cast is
+ * theirs to make, so this module stays free of adapter imports.
+ */
+export class FakeOpenCodeInstance {
+  /** Every agent OpenCode currently holds, keyed by name. */
+  readonly agents = new Map<string, Record<string, unknown>>();
+
+  /** Every write OpenCode was asked to make, as `create:<name>` / `update:<name>`. */
+  readonly writes: string[] = [];
+
+  private listFailure: string | undefined;
+  private createFailure: string | undefined;
+  private updateFailure: string | undefined;
+
+  /** Puts an agent into OpenCode that Weave did not create. */
+  seedForeignAgent(name: string, description: string): this {
+    this.agents.set(name, { description });
+    return this;
+  }
+
+  /** Puts an agent into OpenCode exactly as it is, tag and all. */
+  seedAgent(name: string, config: Record<string, unknown>): this {
+    this.agents.set(name, config);
+    return this;
+  }
+
+  /** Makes every subsequent read of the agent list fail. */
+  failListAgents(message: string): this {
+    this.listFailure = message;
+    return this;
+  }
+
+  /** Makes every subsequent agent creation fail. */
+  failCreateAgent(message: string): this {
+    this.createFailure = message;
+    return this;
+  }
+
+  /** Makes every subsequent agent update fail. */
+  failUpdateAgent(message: string): this {
+    this.updateFailure = message;
+    return this;
+  }
+
+  /** Forgets the writes recorded so far, leaving the agents in place. */
+  forgetWrites(): void {
+    this.writes.length = 0;
+  }
+
+  listAgents(): ResultAsync<FakeOpenCodeAgent[], FakeOpenCodeFailure> {
+    if (this.listFailure !== undefined) {
+      return errAsync({
+        type: "ListAgentsError" as const,
+        message: this.listFailure,
+      });
+    }
+    return okAsync(
+      [...this.agents.entries()].map(([name, config]) => ({
+        ...config,
+        name,
+      })),
+    );
+  }
+
+  createAgent(
+    name: string,
+    config: Record<string, unknown>,
+  ): ResultAsync<void, FakeOpenCodeFailure> {
+    if (this.createFailure !== undefined) {
+      return errAsync({
+        type: "CreateAgentError" as const,
+        agentName: name,
+        message: this.createFailure,
+      });
+    }
+    this.writes.push(`create:${name}`);
+    this.agents.set(name, config);
+    return okAsync(undefined);
+  }
+
+  updateAgent(
+    name: string,
+    config: Record<string, unknown>,
+  ): ResultAsync<void, FakeOpenCodeFailure> {
+    if (this.updateFailure !== undefined) {
+      return errAsync({
+        type: "UpdateAgentError" as const,
+        agentName: name,
+        message: this.updateFailure,
+      });
+    }
+    this.writes.push(`update:${name}`);
+    this.agents.set(name, config);
+    return okAsync(undefined);
+  }
+}
+
+/** One agent a running OpenCode holds, failing readably when it is absent. */
+export function heldAgent(
+  opencode: FakeOpenCodeInstance,
+  name: string,
+): Record<string, unknown> {
+  const agent = opencode.agents.get(name);
+  if (agent === undefined) {
+    expect([...opencode.agents.keys()].sort()).toContain(name);
     throw new Error("unreachable");
   }
   return agent;

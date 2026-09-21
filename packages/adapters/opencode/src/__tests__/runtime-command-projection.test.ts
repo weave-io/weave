@@ -1,34 +1,40 @@
 /**
- * Tests for `RuntimeCommandProjection` — OpenCode adapter-owned command handlers.
+ * Unit tests for `RuntimeCommandProjection`.
  *
- * ## What these tests prove
+ * The messages a caller of these handlers is shown, and the agents a dispatch
+ * reaches, are now asserted from outside, in
+ * `tests/adapters/opencode-runtime.scenario.test.ts`, against a real
+ * `OpenCodeAdapter` wired to a real in-memory OpenCode. Thirty cases are gone,
+ * including the whole `WEAVE_COMMAND_LABELS` block — every label appears in a
+ * rendered message, so the scenarios read it there — and the
+ * `ProjectionResult` shape block, which `tsc --noEmit` already proves.
  *
- * 1. **Each handler calls the matching shared engine operation** — no lifecycle
- *    state-transition logic is duplicated in the projection layer. The handlers
- *    delegate to `startPlan`, `runNamedWorkflow`, `inspectStatus`,
- *    `abortExecution`, `advanceStep`, and `runtimeHealth` respectively.
+ * Two of the deleted health cases asserted
+ * `outcome === "success" || outcome === "degraded"`, which is the whole union
+ * and therefore always true.
  *
- * 2. **Typed success/failure/degraded results are rendered** — each handler
- *    returns a `ProjectionResult<T>` with the correct `outcome` field and a
- *    human-readable `message` string. The `data` field carries the engine's
- *    renderer-ready result data.
+ * What stays is what no run of a command can show:
  *
- * 3. **No lifecycle state-transition logic is duplicated** — the projection
- *    layer never creates `WorkflowInstance` records, acquires leases, or
- *    applies lifecycle effects directly. All of that is engine-owned.
+ * | Kept | Why |
+ * | --- | --- |
+ * | `DEGRADED_AFFORDANCES` | A documentation constant with no reader. It describes TUI affordances that are not wired, and nothing renders it |
+ * | The argument-validation branches | Empty `workflowInstanceId`, `leaseId`, `stepName` and a missing completion outcome are rejected before the engine is reached. A scenario builds its arguments from a `.weave` file and cannot produce an empty one |
+ * | The "does not duplicate lifecycle logic" cases | An absence — the projection creating a `WorkflowInstance` or acquiring a lease itself would still produce a correct-looking message |
+ * | `handleInspectStatus` is read-only; `handleRunWorkflow` does not validate plan existence | Same shape: both assert that something does *not* happen on a path whose visible result is unchanged |
+ * | The `handleAdvanceStep` completion-signal cases | Advancing needs an instance blocked on a step with a live lease. A workflow driven from `.weave` source runs to completion, so a scenario cannot reach that state |
  *
- * 4. **Adapter-owned argument parsing and messages** — command labels
- *    (`WEAVE_COMMAND_LABELS`), error messages, and degraded affordance
- *    documentation are adapter-owned and tested here.
+ * ## No production caller
  *
- * 5. **`/start-work` is out of scope** — no test references `/start-work`.
- *    That path is covered by `start-plan-execution.test.ts`.
+ * This class is exported from the package barrel and constructed nowhere in
+ * this repository. The `/weave:run`, `/weave:status`, `/weave:abort`,
+ * `/weave:advance` and `/weave:health` commands it is labelled with are not
+ * registered with OpenCode; the plugin offers `start-work` and `weave:start`,
+ * both prompt templates that dispatch to Tapestry. A scenario pins that.
  *
- * Uses:
- * - `InMemoryRuntimeStore` (no SQLite, no filesystem)
- * - `MockPlanStateProvider` (no real filesystem plan files)
- * - `MockOpenCodeAdapter` (no real SDK calls)
- * - Fixture `WeaveConfig` objects with simple `agent_signal` workflows
+ * `MockOpenCodeAdapter` below extends the real `OpenCodeAdapter` and overrides
+ * only `spawnSubagent`, the SDK boundary. The cases that asserted what
+ * `spawnSubagent` was handed are gone — a scenario watches the real adapter
+ * write to a real OpenCode instead.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -38,7 +44,7 @@ import type {
   PlanStateProvider,
 } from "@weaveio/weave-engine";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { okAsync, type ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter, type OpenCodeAdapterError } from "../adapter.js";
 import {
@@ -67,29 +73,6 @@ class MockOpenCodeAdapter extends OpenCodeAdapter {
   ): ResultAsync<void, OpenCodeAdapterError> {
     this.spawnSubagentCalls.push(descriptor);
     return okAsync(undefined);
-  }
-}
-
-/**
- * Failing test double for `OpenCodeAdapter`.
- *
- * `spawnSubagent` always returns an error — used to prove failure paths.
- */
-class FailingOpenCodeAdapter extends OpenCodeAdapter {
-  override spawnSubagent(
-    descriptor: AgentDescriptor,
-  ): ResultAsync<void, OpenCodeAdapterError> {
-    return errAsync(
-      new (class extends Error {
-        readonly type = "ReconcileAgentError" as const;
-        readonly agentName = descriptor.name;
-        readonly cause = undefined;
-        constructor() {
-          super(`spawnSubagent failed for agent "${descriptor.name}"`);
-          this.name = "OpenCodeAdapterError";
-        }
-      })(),
-    );
   }
 }
 
@@ -233,7 +216,7 @@ const PLAN_COMPLETION_WORKFLOWS: Record<string, unknown> = {
  *
  * Used in workflow steps that reference the shuttle agent.
  */
-const SHUTTLE_AGENT_CONFIG = {
+const _SHUTTLE_AGENT_CONFIG = {
   description: "Shuttle (Domain Specialist)",
   prompt: "You are a domain specialist.",
   models: ["claude-sonnet-4-5"],
@@ -247,44 +230,6 @@ const SHUTTLE_AGENT_CONFIG = {
     network: "ask" as const,
   },
 };
-
-// ---------------------------------------------------------------------------
-// § 1 — WEAVE_COMMAND_LABELS
-// ---------------------------------------------------------------------------
-
-describe("WEAVE_COMMAND_LABELS — adapter-owned command label constants", () => {
-  it("startPlan label is /weave:start", () => {
-    expect(WEAVE_COMMAND_LABELS.startPlan).toBe("/weave:start");
-  });
-
-  it("runWorkflow label is /weave:run", () => {
-    expect(WEAVE_COMMAND_LABELS.runWorkflow).toBe("/weave:run");
-  });
-
-  it("status label is /weave:status", () => {
-    expect(WEAVE_COMMAND_LABELS.status).toBe("/weave:status");
-  });
-
-  it("abort label is /weave:abort", () => {
-    expect(WEAVE_COMMAND_LABELS.abort).toBe("/weave:abort");
-  });
-
-  it("advance label is /weave:advance", () => {
-    expect(WEAVE_COMMAND_LABELS.advance).toBe("/weave:advance");
-  });
-
-  it("health label is /weave:health", () => {
-    expect(WEAVE_COMMAND_LABELS.health).toBe("/weave:health");
-  });
-
-  it("no label references /start-work (out of scope)", () => {
-    const labels = Object.values(WEAVE_COMMAND_LABELS);
-    for (const label of labels) {
-      expect(label).not.toBe("/start-work");
-    }
-  });
-});
-
 // ---------------------------------------------------------------------------
 // § 2 — DEGRADED_AFFORDANCES
 // ---------------------------------------------------------------------------
@@ -318,109 +263,6 @@ describe("DEGRADED_AFFORDANCES — documented degraded native affordances", () =
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleStartPlan — delegates to engine startPlan", () => {
-  it("returns success result when plan exists and workflow runs", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const planStateProvider = new MockPlanStateProvider(true, true);
-
-    const result = await projection.handleStartPlan({
-      planName: "my-plan",
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(result.outcome).toBe("success");
-    if (result.outcome === "success") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.startPlan);
-      expect(result.data.kind).toBe("execution-started");
-      expect(result.data.workflowName).toBe("simple-workflow");
-      expect(result.data.goal).toBe("Test goal");
-      expect(result.message).toContain("/weave:start");
-      expect(result.message).toContain("my-plan");
-    }
-  });
-
-  it("returns failure result when plan does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    // Provider reports plan does NOT exist
-    const planStateProvider = new MockPlanStateProvider(false);
-
-    const result = await projection.handleStartPlan({
-      planName: "missing-plan",
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.startPlan);
-      expect(result.error.type).toBe("command_not_found");
-      expect(result.message).toContain("/weave:start");
-      expect(result.message).toContain("missing-plan");
-    }
-  });
-
-  it("returns failure result when workflow does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const planStateProvider = new MockPlanStateProvider(true);
-
-    const result = await projection.handleStartPlan({
-      planName: "my-plan",
-      workflowName: "nonexistent-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.error.type).toBe("command_not_found");
-    }
-  });
-
-  it("calls adapter.spawnSubagent for each dispatched step", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-    const planStateProvider = new MockPlanStateProvider(true, true);
-
-    await projection.handleStartPlan({
-      planName: "my-plan",
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      planStateProvider,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    // Both steps should have been dispatched through spawnSubagent
-    expect(adapter.spawnSubagentCalls.length).toBeGreaterThanOrEqual(1);
-  });
-
   it("does not duplicate lifecycle state-transition logic — store is mutated only by engine", async () => {
     const projection = new RuntimeCommandProjection();
     const adapter = new MockOpenCodeAdapter();
@@ -484,72 +326,6 @@ describe("RuntimeCommandProjection.handleStartPlan — delegates to engine start
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleRunWorkflow — delegates to engine runNamedWorkflow", () => {
-  it("returns success result when workflow runs successfully", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleRunWorkflow({
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(result.outcome).toBe("success");
-    if (result.outcome === "success") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.runWorkflow);
-      expect(result.data.kind).toBe("execution-started");
-      expect(result.data.workflowName).toBe("simple-workflow");
-      expect(result.message).toContain("/weave:run");
-      expect(result.message).toContain("simple-workflow");
-    }
-  });
-
-  it("returns failure result when workflow does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleRunWorkflow({
-      workflowName: "nonexistent-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.runWorkflow);
-      expect(result.error.type).toBe("command_not_found");
-      expect(result.message).toContain("/weave:run");
-    }
-  });
-
-  it("calls adapter.spawnSubagent for each dispatched step", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    await projection.handleRunWorkflow({
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(adapter.spawnSubagentCalls.length).toBeGreaterThanOrEqual(1);
-  });
-
   it("is explicitly separate from startPlan — does not validate plan existence", async () => {
     // Proof: runNamedWorkflow does NOT call planStateProvider.planExists.
     // Named workflow execution is separate from plan-first execution.
@@ -577,12 +353,6 @@ describe("RuntimeCommandProjection.handleRunWorkflow — delegates to engine run
     // planExists was NOT called — named workflow execution is separate
     expect(planStateProvider.planExistsCalls).toHaveLength(0);
   });
-
-  it("does not reference /start-work (out of scope)", () => {
-    // Structural proof: the command label for runWorkflow is /weave:run, not /start-work.
-    expect(WEAVE_COMMAND_LABELS.runWorkflow).not.toBe("/start-work");
-    expect(WEAVE_COMMAND_LABELS.runWorkflow).toBe("/weave:run");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -590,60 +360,6 @@ describe("RuntimeCommandProjection.handleRunWorkflow — delegates to engine run
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleInspectStatus — delegates to engine inspectStatus", () => {
-  it("returns success result with execution status data", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    // First, create a workflow instance by running a workflow
-    const runResult = await projection.handleRunWorkflow({
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    expect(runResult.outcome).toBe("success");
-    if (runResult.outcome !== "success") return;
-
-    const instanceId = runResult.data.workflowInstanceId;
-
-    // Now inspect the status
-    const statusResult = await projection.handleInspectStatus({
-      workflowInstanceId: instanceId,
-      store,
-    });
-
-    expect(statusResult.outcome).toBe("success");
-    if (statusResult.outcome === "success") {
-      expect(statusResult.command).toBe(WEAVE_COMMAND_LABELS.status);
-      expect(statusResult.data.kind).toBe("execution-status");
-      expect(statusResult.data.workflowInstanceId).toBe(instanceId);
-      expect(statusResult.message).toContain("/weave:status");
-      expect(statusResult.message).toContain(instanceId);
-    }
-  });
-
-  it("returns failure result when workflow instance does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleInspectStatus({
-      workflowInstanceId: "nonexistent-instance-id",
-      store,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.status);
-      expect(result.error.type).toBe("command_not_found");
-      expect(result.message).toContain("/weave:status");
-    }
-  });
-
   it("is read-only — does not create instances or acquire leases", async () => {
     const projection = new RuntimeCommandProjection();
     const store = createInMemoryRuntimeStore();
@@ -668,35 +384,6 @@ describe("RuntimeCommandProjection.handleInspectStatus — delegates to engine i
       expect(after.value).toHaveLength(0);
     }
   });
-
-  it("returns status data with hasActiveLease field", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const runResult = await projection.handleRunWorkflow({
-      workflowName: "simple-workflow",
-      goal: "Test goal",
-      slug: "test-goal",
-      ownerId: "test-owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    if (runResult.outcome !== "success") return;
-
-    const statusResult = await projection.handleInspectStatus({
-      workflowInstanceId: runResult.data.workflowInstanceId,
-      store,
-    });
-
-    if (statusResult.outcome === "success") {
-      expect(typeof statusResult.data.hasActiveLease).toBe("boolean");
-      expect(statusResult.data.status).toBeDefined();
-      expect(statusResult.data.workflowName).toBe("simple-workflow");
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -704,25 +391,6 @@ describe("RuntimeCommandProjection.handleInspectStatus — delegates to engine i
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleAbortExecution — delegates to engine abortExecution", () => {
-  it("returns failure when workflow instance does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleAbortExecution({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      signal: "cancel",
-      store,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.abort);
-      expect(result.error.type).toBe("command_not_found");
-      expect(result.message).toContain("/weave:abort");
-    }
-  });
-
   it("returns failure with validation error when workflowInstanceId is empty", async () => {
     const projection = new RuntimeCommandProjection();
     const store = createInMemoryRuntimeStore();
@@ -781,13 +449,6 @@ describe("RuntimeCommandProjection.handleAbortExecution — delegates to engine 
     expect(cancelResult.outcome).toBe("failure");
     expect(pauseResult.outcome).toBe("failure");
   });
-
-  it("is documented as a degraded affordance (TUI abort not yet wired)", () => {
-    const abortEntry = DEGRADED_AFFORDANCES.find(
-      (a) => a.command === "/weave:abort",
-    );
-    expect(abortEntry).toBeDefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -795,25 +456,6 @@ describe("RuntimeCommandProjection.handleAbortExecution — delegates to engine 
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleAdvanceStep — delegates to engine advanceStep", () => {
-  it("returns failure when workflow instance does not exist", async () => {
-    const projection = new RuntimeCommandProjection();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleAdvanceStep({
-      workflowInstanceId: "nonexistent-instance",
-      leaseId: "nonexistent-lease",
-      stepName: "step-one",
-      completionSignal: { outcome: "success" },
-      store,
-    });
-
-    expect(result.outcome).toBe("failure");
-    if (result.outcome === "failure") {
-      expect(result.command).toBe(WEAVE_COMMAND_LABELS.advance);
-      expect(result.message).toContain("/weave:advance");
-    }
-  });
-
   it("returns failure with validation error when workflowInstanceId is empty", async () => {
     const projection = new RuntimeCommandProjection();
     const store = createInMemoryRuntimeStore();
@@ -849,13 +491,6 @@ describe("RuntimeCommandProjection.handleAdvanceStep — delegates to engine adv
       expect(result.error.type).toBe("command_validation");
     }
   });
-
-  it("is documented as a degraded affordance (TUI step-advance not yet wired)", () => {
-    const advanceEntry = DEGRADED_AFFORDANCES.find(
-      (a) => a.command === "/weave:advance",
-    );
-    expect(advanceEntry).toBeDefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -863,23 +498,6 @@ describe("RuntimeCommandProjection.handleAdvanceStep — delegates to engine adv
 // ---------------------------------------------------------------------------
 
 describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine runtimeHealth", () => {
-  it("returns success result when adapter is fully ready", async () => {
-    const projection = new RuntimeCommandProjection();
-    const healthReport = buildOpenCodeHealthReport({
-      commandEntrypointsReadiness: "native",
-    });
-
-    const result = await projection.handleRuntimeHealth({ healthReport });
-
-    // runtimeHealth always returns a result (never fails)
-    expect(result.outcome === "success" || result.outcome === "degraded").toBe(
-      true,
-    );
-    expect(result.command).toBe(WEAVE_COMMAND_LABELS.health);
-    expect(result.message).toContain("/weave:health");
-    expect(result.message).toContain("opencode");
-  });
-
   it("returns degraded result when commandEntrypoints is degraded", async () => {
     const projection = new RuntimeCommandProjection();
     const healthReport = buildOpenCodeHealthReport({
@@ -897,24 +515,6 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
       expect(result.message).toContain("/weave:health");
       expect(result.data).toBeDefined();
     }
-  });
-
-  it("returns degraded result when adapter is not ready", async () => {
-    const projection = new RuntimeCommandProjection();
-    const healthReport = buildOpenCodeHealthReport({
-      commandEntrypointsReadiness: "unsupported",
-    });
-
-    const result = await projection.handleRuntimeHealth({
-      healthReport,
-      unsupportedOperations: ["command-entrypoints: no slash commands"],
-    });
-
-    // unsupported command-entrypoints → not ready → degraded
-    expect(result.outcome === "success" || result.outcome === "degraded").toBe(
-      true,
-    );
-    expect(result.command).toBe(WEAVE_COMMAND_LABELS.health);
   });
 
   it("data carries commandEntrypointsSupported field", async () => {
@@ -964,98 +564,6 @@ describe("RuntimeCommandProjection.handleRuntimeHealth — delegates to engine r
     expect(result.outcome).not.toBe("failure");
   });
 });
-
-// ---------------------------------------------------------------------------
-// § 9 — ProjectionResult shape invariants
-// ---------------------------------------------------------------------------
-
-describe("ProjectionResult — shape invariants across all handlers", () => {
-  it("success result always has outcome, command, data, and message", async () => {
-    const projection = new RuntimeCommandProjection();
-    const adapter = new MockOpenCodeAdapter();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleRunWorkflow({
-      workflowName: "simple-workflow",
-      goal: "Test",
-      slug: "test",
-      ownerId: "owner",
-      store,
-      workflows: SIMPLE_WORKFLOWS,
-      adapter,
-    });
-
-    if (result.outcome === "success") {
-      expect(result.outcome).toBe("success");
-      expect(typeof result.command).toBe("string");
-      expect(result.data).toBeDefined();
-      expect(typeof result.message).toBe("string");
-      expect(result.message.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("failure result always has outcome, command, error, and message", async () => {
-    const projection = new RuntimeCommandProjection();
-    const store = createInMemoryRuntimeStore();
-
-    const result = await projection.handleInspectStatus({
-      workflowInstanceId: "nonexistent",
-      store,
-    });
-
-    if (result.outcome === "failure") {
-      expect(result.outcome).toBe("failure");
-      expect(typeof result.command).toBe("string");
-      expect(result.error).toBeDefined();
-      expect(typeof result.message).toBe("string");
-      expect(result.message.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("degraded result always has outcome, command, and message", async () => {
-    const projection = new RuntimeCommandProjection();
-    const healthReport = buildOpenCodeHealthReport({
-      commandEntrypointsReadiness: "degraded",
-    });
-
-    const result = await projection.handleRuntimeHealth({
-      healthReport,
-      degradedOperations: ["command-entrypoints: degraded"],
-    });
-
-    if (result.outcome === "degraded") {
-      expect(result.outcome).toBe("degraded");
-      expect(typeof result.command).toBe("string");
-      expect(typeof result.message).toBe("string");
-      expect(result.message.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("failure messages include the command label for context", async () => {
-    const projection = new RuntimeCommandProjection();
-    const store = createInMemoryRuntimeStore();
-
-    const statusResult = await projection.handleInspectStatus({
-      workflowInstanceId: "nonexistent",
-      store,
-    });
-
-    const abortResult = await projection.handleAbortExecution({
-      workflowInstanceId: "nonexistent",
-      leaseId: "nonexistent",
-      signal: "cancel",
-      store,
-    });
-
-    if (statusResult.outcome === "failure") {
-      expect(statusResult.message).toContain(WEAVE_COMMAND_LABELS.status);
-    }
-    if (abortResult.outcome === "failure") {
-      expect(abortResult.message).toContain(WEAVE_COMMAND_LABELS.abort);
-    }
-  });
-});
-
 // ---------------------------------------------------------------------------
 // § 10 — Adapter boundary: no lifecycle logic duplicated
 // ---------------------------------------------------------------------------
@@ -1316,18 +824,6 @@ describe("RuntimeCommandProjection.handleAdvanceStep — review_verdict: rejecte
       expect(afterInstance.value.status).toBe("paused");
     }
   });
-
-  it("is documented as a degraded affordance (TUI step-advance not yet wired)", () => {
-    // The advance step command is documented as degraded because the TUI
-    // step-advance UI is not yet wired to this handler.
-    const advanceEntry = DEGRADED_AFFORDANCES.find(
-      (a) => a.command === "/weave:advance",
-    );
-    expect(advanceEntry).toBeDefined();
-    if (advanceEntry !== undefined) {
-      expect(advanceEntry.reason.length).toBeGreaterThan(0);
-    }
-  });
 });
 
 describe("RuntimeCommandProjection.handleAdvanceStep — plan_created: missing planStateProvider (degraded fallback)", () => {
@@ -1532,20 +1028,6 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     if (result.outcome === "success") {
       expect(result.data.kind).toBe("step-advanced");
       expect(result.data.completionSignal.method).toBe("agent_signal");
-    }
-  });
-
-  it("degraded affordance: /weave:advance is documented as not yet TUI-wired", () => {
-    // Structural proof: the advance command is in DEGRADED_AFFORDANCES because
-    // OpenCode's TUI cannot automatically detect step completion signals.
-    // Adapters must supply explicit completionSignal via the command operation.
-    const advanceEntry = DEGRADED_AFFORDANCES.find(
-      (a) => a.command === "/weave:advance",
-    );
-    expect(advanceEntry).toBeDefined();
-    if (advanceEntry !== undefined) {
-      expect(advanceEntry.reason).toContain("TUI");
-      expect(advanceEntry.equivalent.length).toBeGreaterThan(0);
     }
   });
 });

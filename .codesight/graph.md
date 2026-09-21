@@ -18,7 +18,7 @@
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `tests/support/scenario.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **9** files
 - `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
