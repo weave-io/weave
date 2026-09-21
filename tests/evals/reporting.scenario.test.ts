@@ -536,24 +536,22 @@ describe("a whole report is rendered from ordinary results", () => {
 
 describe("a suite name carries markup the report would otherwise render", () => {
   /**
-   * Recorded as observed, and **not** as endorsed.
+   * This scenario found a real hole and now guards the fix.
    *
-   * The suite heading is sanitized; the run's suite list is not —
-   * `renderPublicReportBundle()` interpolates `runSummary.suites` directly.
-   * `docs/eval-xss-policy.md` says no channel of this renderer can produce a
-   * `<script>` tag in `public-report.md`, so this is a hole in layer 2, not a
-   * documented allowance.
+   * `renderPublicReportBundle()` sanitized the `### Suite:` heading but
+   * interpolated `runSummary.suites` straight into the run header, so a suite
+   * name containing `<script>` reached `public-report.md` verbatim — against
+   * the unconditional requirement in `docs/eval-xss-policy.md`.
    *
-   * It survived because every malicious-suite case in the unit tests this
-   * scenario replaces set `suiteSummaries[].suite` and left `runSummary.suites`
-   * clean, so the unescaped line was never exercised. Suite names come from
-   * repo-owned suite families rather than model output, which bounds the
-   * exposure but does not close it. Fixing the renderer turns this red, which
-   * is the intended signal.
+   * It survived for years of unit tests because every malicious-suite case set
+   * `suiteSummaries[].suite` and left `runSummary.suites` clean, so the
+   * unescaped line was never once exercised. Exposure was bounded — suite names
+   * come from the repo-owned `EVAL_SUITE_REGISTRY`, not model output — but the
+   * renderer is a layer-2 defence and had a gap in it.
    */
   const payload = "<script>alert(1)</script>";
 
-  it("blanks the suite heading but repeats the markup verbatim in the run's suite list", async () => {
+  it("escapes markup in the run's suite list, not only in the suite heading", async () => {
     await withBundleRoot(async (root) => {
       const markdown = await markdownOf(root, {
         runnerResults: [
@@ -565,7 +563,8 @@ describe("a suite name carries markup the report would otherwise render", () => 
       });
 
       expect(markdown).toContain("### Suite:  — 🟢 green");
-      expect(markdown).toContain(`**Suites**: ${payload}`);
+      expect(markdown).not.toContain(payload);
+      expect(markdown).not.toContain("<script>");
     });
   });
 });

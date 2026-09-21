@@ -89,30 +89,22 @@ All strings placed into the Markdown document go through one of:
 
 None of these channels can produce `<script>`, `<style>`, inline event handlers, `javascript:` URIs, `data:` URIs, or `<iframe>` tags in the rendered output.
 
-#### Known gap — the run's suite list is not sanitized
+#### Closed — the run's suite list
 
-The requirement above is unconditional and stands. `renderPublicReportBundle()`
-does not yet meet it in one place: the run header line
+`renderPublicReportBundle()` sanitized the `### Suite:` heading but
+interpolated `runSummary.suites` straight into the run header line, so a
+suite name containing `<script>` reached `public-report.md` verbatim. It is
+now escaped the same way the heading is.
 
-```
-**Suites**: ${bundle.runSummary.suites.join(", ")}
-```
+Worth recording how it survived: every malicious-suite case in the unit
+tests set `suiteSummaries[].suite` and left `runSummary.suites` clean, so
+the unescaped line was never once exercised. Exposure was bounded — suite
+names come from the repo-owned `EVAL_SUITE_REGISTRY` rather than model
+output — but a layer-2 defence had a gap in it, and the tests that were
+meant to cover the renderer could not see it.
 
-interpolates `runSummary.suites` without `sanitizeMdValue()`, so a suite name
-containing `<script>` reaches `public-report.md` verbatim. Only the `### Suite:`
-*heading* for the same value is sanitized.
-
-Two things kept this invisible. The unit tests that covered the renderer set
-`suiteSummaries[].suite` and left `runSummary.suites` clean, so the unescaped
-line was never exercised; and suite names come from the repo-owned suite
-families in `EVAL_SUITE_REGISTRY` rather than from model output, so no real run
-carries a payload. That bounds the exposure — it does not close it.
-
-The behaviour is pinned as observed in
 [`tests/evals/reporting.scenario.test.ts`](../tests/evals/reporting.scenario.test.ts)
-(*"a suite name carries markup the report would otherwise render"*). Passing
-that line through `sanitizeMdValue()` is the fix, and it turns that scenario
-red, which is the intended signal to update it.
+now asserts the escaping, and reverting the renderer turns it red.
 
 ### `MARKDOWN_INJECTION_PATTERNS`
 

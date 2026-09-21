@@ -338,7 +338,9 @@ export function renderPublicReportBundle(bundle: PublicReportBundle): string {
   lines.push(
     `**Total cases**: ${bundle.runSummary.totalCases} | **Passed**: ${bundle.runSummary.passedCases} | **Failed**: ${bundle.runSummary.failedCases}`,
   );
-  lines.push(`**Suites**: ${bundle.runSummary.suites.join(", ")}`);
+  lines.push(
+    `**Suites**: ${bundle.runSummary.suites.map(escapeMdCell).join(", ")}`,
+  );
   lines.push("");
 
   for (const suiteSummary of bundle.suiteSummaries) {
