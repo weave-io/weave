@@ -20,6 +20,14 @@ generated harness configuration, so it covers the DSL, composition and
 translation in one pass. Use it for promises that span the whole product; use
 the narrower buckets when the promise belongs to one surface.
 
+[`evals/`](evals/) is a fourth directory rather than a fourth surface: the
+black box there is the **published eval bundle** — the run directory, the
+dashboard index files, the rendered `public-report.md`, and the HTTP requests a
+publish would make over an injected `fetch`. Eval results go in and the files a
+reader or tryweave.io would receive come out. Its shared harness is
+[`support/evals.ts`](support/evals.ts), and unlike the other buckets it writes
+to a real temporary directory, because the bundle writer owns its own I/O.
+
 ## How a scenario is written
 
 A scenario names a **situation**, and each `it` names **one promise Weave makes

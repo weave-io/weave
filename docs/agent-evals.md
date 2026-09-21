@@ -1488,7 +1488,7 @@ Before committing eval-related changes, verify:
 - [ ] All strings rendered via `innerHTML` in `dashboard-ui.js` are wrapped in `escapeHtml()`.
 - [ ] New `explanation.text` values derive from allowlisted structured sources only (score bucket labels, rubric templates, structured signals) — never from raw model output, rationale strings, transcript content, or LLM freeform summaries.
 - [ ] Any new explanation-rendering surface applies `MARKDOWN_INJECTION_PATTERNS` checks (Markdown renderer) or `escapeHtml()` (HTML renderer) before emitting the value.
-- [ ] Changes to `FORBIDDEN_EXPLANATION_PATTERNS` include test coverage in `report-schema.test.ts` and `report-markdown.test.ts`.
+- [ ] Changes to `FORBIDDEN_EXPLANATION_PATTERNS` include test coverage in `report-schema.test.ts` and a hostile payload in the tables in [`tests/evals/publish-safety.scenario.test.ts`](../tests/evals/publish-safety.scenario.test.ts) and [`tests/evals/reporting.scenario.test.ts`](../tests/evals/reporting.scenario.test.ts).
 - [ ] Any new public run artifact file name is added to `RUN_ARTIFACT_ALLOWLIST` in `github-contents-publisher.ts`.
 - [ ] Any new public index file name pattern is added to `isIndexArtifactAllowed()` in `github-contents-publisher.ts` (either as an exact entry in `INDEX_ARTIFACT_EXACT_ALLOWLIST` or as a new pattern constant).
 - [ ] `bundle-index.json` does not enumerate internal-only files (`run-summary.json`, `score-*.json`, `provenance-manifest.json`, `prompt-hashes.json`) — only `RUN_ARTIFACT_ALLOWLIST` members.

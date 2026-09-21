@@ -328,7 +328,12 @@ Both the `fetch` implementation and the file reader can be injected:
 const publisher = new GitHubContentsPublisher(stubFetchImpl, stubFileReader);
 ```
 
-This avoids real network and disk calls in tests. See `__tests__/github-contents-publisher.test.ts`.
+This avoids real network and disk calls in tests. See
+[`tests/evals/reporting.scenario.test.ts`](../tests/evals/reporting.scenario.test.ts),
+which drives the real publisher over an injected `fetch` and asserts the
+requests a publish makes: which paths are uploaded, in what order, that a run
+artifact is created rather than updated, and that the token appears only in the
+`Authorization` header.
 
 #### Error handling
 

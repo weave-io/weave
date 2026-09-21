@@ -293,6 +293,39 @@ reader is put at risk, rather than when a constant is renamed. What stayed:
 | The manifest schemas' rejection branches | The writer always passes the version constant, so a wrong `schemaVersion` is unreachable from outside; the branches guard a future producer |
 | `sanitizeScoreRecord`, `dropUnknownFields`, `truncateExplanation`, `buildExplanation`, `assertExplanationSafe`, `REDACTED`, `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS` | Exported API with **no production caller** — see the finding below |
 
+The reporting and publishing surface went the same way. Its black boxes are the
+rendered `public-report.md`, the dashboard index files, and — through
+`GitHubContentsPublisher`'s injected `fetch` — the HTTP requests a publish
+makes:
+
+| | Before | After |
+| --- | --- | --- |
+| `report-markdown.test.ts` (source cases) | 114 | 0 — deleted |
+| `dashboard-indexes.test.ts` (source cases) | 104 | 19 |
+| `github-contents-publisher.test.ts` (source cases) | 75 | 0 — deleted |
+| **Unit total (source cases)** | **293** | **19** |
+| Scenarios added (source cases) | — | 59 |
+| Scenarios added (cases at runtime) | — | 113 |
+
+What stayed, in
+[`dashboard-indexes.test.ts`](../packages/cli/src/evals/__tests__/dashboard-indexes.test.ts):
+
+| Kept | Why |
+| --- | --- |
+| `validateDashboardManifestCompatibility`, `validateSuiteHistoryCompatibility`, `validateLatestSnapshotCompatibility`, `validateScenarioHistoryCompatibility` | Consumer-side guards with **no production caller**. Weave writes these index files and never reads one back, so no written artifact reveals their behaviour |
+| `generateDashboardIndexes([])` | `rebuildFromRuns()` returns early on an empty run set, so this error branch is unreachable from outside |
+
+`validatePublicReportBundleCompatibility` went with the rest: it is the one
+validator with a production caller, and its whole visible effect is that an
+unreadable or wrong-version run is left out of the indexes — which the
+scenarios assert against the manifest itself.
+
+The publisher's constants went too. `TARGET_REPO`, `TARGET_RUNS_PREFIX`,
+`RUN_ARTIFACT_ALLOWLIST` and the three index-name patterns were each asserted
+as a set or a regex; every one of them is visible in the request URLs a publish
+issues, so the scenarios read them there instead. The deprecated
+`INDEX_ARTIFACT_ALLOWLIST` alias had three cases and no caller outside them.
+
 **Prove the deletion rather than asserting it.** Before deleting, break the
 source and confirm the scenarios fail. For this pilot:
 
@@ -323,6 +356,43 @@ never written and *"the payload appears in no public artifact"* stays true. An
 absence assertion was passing for the wrong reason again. Each payload case now
 also asserts the case is still published — the graceful degradation the
 pipeline actually promises — and the same mutation turns 42 red.
+
+The reporting migration ran 29 mutations against
+[`tests/evals/reporting.scenario.test.ts`](../tests/evals/reporting.scenario.test.ts)
+alone, with all 293 deleted unit cases already gone. Twenty-eight were caught;
+the twenty-ninth is a finding rather than a gap:
+
+| Mutation | Result |
+| --- | --- |
+| `sanitizeMdValue()` returns its input verbatim | 21 red |
+| `isMarkdownSafe()` always says yes | 19 red |
+| The `script_tag` pattern is dropped from the renderer's list | 3 red |
+| Pipe escaping dropped, injection checking kept | 2 red |
+| Every score band renders as `pass` | 2 red |
+| The passed column always reads `yes` | 1 red |
+| The dry-run banner is dropped | 1 red |
+| The empty-suite placeholder is dropped | 1 red |
+| The full git SHA is printed instead of the short one | 1 red |
+| The manifest lists runs oldest-first | 2 red |
+| Suite history is written newest-first | 4 red |
+| The recent-runs index stops capping at ten | 1 red |
+| Scenario history keeps the oldest ten instead of the newest | 1 red |
+| A scenario the models disagree on is reported as passing | 1 red |
+| An unreadable run report is indexed anyway | 1 red |
+| `latest.json` points at the oldest run | 1 red |
+| Model comparison stops sorting by model id | 2 red |
+| The manifest points at `runs/<runId>/` rather than `runs/v1/` | 1 red |
+| The run-artifact allowlist is dropped from the publisher | 11 red |
+| An existing run artifact is overwritten instead of refused | 2 red |
+| Index updates stop carrying the remote blob SHA | 1 red |
+| The index allowlist accepts every name | 7 red |
+| The token is appended to the request URL as well | 31 red |
+| Remote run IDs are returned whatever their prefix | 1 red |
+| A missing token no longer blocks a publish | 4 red |
+| Index files are uploaded before run artifacts | 5 red |
+| A failed index upload fails the whole publish | 1 red |
+| A dry-run bundle is allowed through to the remote | 1 red |
+| **The `raw/` filter is dropped from the publisher** | **0 red — see below** |
 
 ### A scenario can pass without testing anything
 
@@ -374,6 +444,30 @@ The evals migration turned up three more:
   `TypeError` rather than a typed `BundleError`, against the `neverthrow` rule
   in `AGENTS.md`. Reachable only by defeating the type system, so no scenario
   asserts it.
+
+The reporting migration turned up three more:
+
+- **`public-report.md` renders the run's suite list unescaped.**
+  `renderPublicReportBundle()` interpolates `bundle.runSummary.suites` without
+  `sanitizeMdValue()`, so a suite name containing `<script>` reaches the
+  document verbatim while the `### Suite:` heading for the same value is
+  blanked. [`docs/eval-xss-policy.md`](eval-xss-policy.md) allows no such
+  channel. The unit tests missed it in exactly the way the vacuity lesson above
+  describes: all eight malicious-suite cases set `suiteSummaries[].suite` and
+  left `runSummary.suites` clean, so the unescaped line was never once
+  exercised. Suite names come from the repo-owned `EVAL_SUITE_REGISTRY` rather
+  than model output, which bounds the exposure; the behaviour is pinned as
+  observed and the policy doc now carries the gap.
+- **The publisher's `raw/` filter is dead weight.** `publishFiles()` strips
+  `raw/`-prefixed names and *then* applies `RUN_ARTIFACT_ALLOWLIST`, which
+  rejects every one of them anyway. Deleting the first filter turns no
+  scenario red because it cannot change an outcome. Harmless, but it reads as
+  load-bearing — the second finding of that shape, after
+  `computeRunIdPrefix()`'s `"unknown"` branch.
+- **Nothing on the publish path reads a dashboard index back.** Four exported
+  `validate*Compatibility` functions exist for a consumer that does not exist
+  here; the website is the intended caller. Kept and flagged, like the
+  sanitizer surfaces above.
 
 ## What the buckets found
 

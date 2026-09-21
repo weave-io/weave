@@ -50,7 +50,7 @@ Largest files, by case count:
 | 161 | `artifact-bundle.test.ts` | **migrated** — 337 cases across four bundle-writing files became 60 (task group 14) |
 | 153 | `langchain-agent-evals.test.ts` | judge adapter; mixed |
 | 140 | `sanitizer.test.ts` | **migrated** — 140 → 91 (task group 14) |
-| 114 | `report-markdown.test.ts` | rendering; observable |
+| 114 | `report-markdown.test.ts` | **migrated** — deleted outright, with `dashboard-indexes.test.ts` (104 → 19) and `github-contents-publisher.test.ts` (75 → 0), into 59 scenarios in [`tests/evals/reporting.scenario.test.ts`](../../tests/evals/reporting.scenario.test.ts) (task group 14) |
 
 The observable promises are far fewer than the case count suggests, and they
 are worth stating plainly before writing anything:
@@ -162,6 +162,60 @@ caught. Writing them against observed behaviour turned up four things:
   nothing on the `weave eval` path invokes it — the dry-run guarantee is
   instead enforced by `effectiveMode` inside `writeBundle()`. Its three unit
   cases were kept because no scenario can reach it.
+
+## Findings from the reporting migration (task group 14)
+
+`report-markdown`, `dashboard-indexes` and `github-contents-publisher` went
+from **293 unit cases to 19**, with 59 scenarios (113 at runtime) in
+[`tests/evals/reporting.scenario.test.ts`](../../tests/evals/reporting.scenario.test.ts).
+Twenty-nine mutations were run against that file alone; twenty-eight were
+caught. What it turned up:
+
+- **`public-report.md` renders the run's suite list unescaped.** The
+  `**Suites**:` header line interpolates `runSummary.suites` straight into the
+  document, while the `### Suite:` heading for the same value goes through
+  `sanitizeMdValue()`. A suite named `<script>alert(1)</script>` reaches the
+  file verbatim. Every malicious-suite unit case set `suiteSummaries[].suite`
+  and left `runSummary.suites` at its clean default, so the line was never
+  exercised — the vacuity trap again, this time hiding a real hole in layer 2
+  of [`docs/eval-xss-policy.md`](../eval-xss-policy.md). Pinned as observed;
+  the policy doc now carries a *Known gap* section. Suite names come from
+  `EVAL_SUITE_REGISTRY`, not from a model, so this is not currently reachable
+  by an attacker.
+- **Issue #201, at the seam.** A `ResultsRepoPublisher` is handed
+  `["run-summary.json", "score-loom-routing.json", "prompt-hashes.json",
+  "provenance-manifest.json", "public-report.json", "public-report.md",
+  "bundle-index.json"]` — every path in `filesWritten` — while the run's own
+  `bundle-index.json` declares only the last three public. What keeps the score
+  file off the remote is `GitHubContentsPublisher`'s own
+  `RUN_ARTIFACT_ALLOWLIST`, applied inside `publishFiles()`, not anything the
+  caller does. A different publisher implementation would upload all seven.
+  Both halves are pinned: what the publisher receives, and what actually gets a
+  PUT.
+- **The publisher's `raw/` filter cannot change an outcome.** `publishFiles()`
+  strips `raw/`-prefixed names and then applies the allowlist, which rejects
+  them regardless. Removing the first filter turns no scenario red.
+- **Four index validators have no production caller.**
+  `validateDashboardManifestCompatibility`, `validateSuiteHistoryCompatibility`,
+  `validateLatestSnapshotCompatibility` and
+  `validateScenarioHistoryCompatibility` are the consumer side of a contract
+  Weave only ever writes. Kept and flagged; the website is the intended caller.
+- **`INDEX_ARTIFACT_ALLOWLIST` is a deprecated alias with no caller.** Its
+  three cases were the only thing importing it.
+- **A publish that hits an existing run artifact stops dead.** The first
+  conflicting file aborts the whole publish with `PublishFailed` — no PUT for
+  it, and none for the run artifacts or indexes behind it. Correct for
+  immutability, but it means a partial re-publish leaves the indexes stale.
+
+Two traps worth carrying forward for whoever migrates the next file:
+
+- **Injecting `fetch` is not enough.** `GitHubContentsPublisher` reads the
+  local file before it PUTs, so a scenario naming a file the run never wrote
+  observes a failed read rather than the allowlist. Inject the `fileReader`
+  too when the file name is the thing under test.
+- **`dryRun` on `WriteBundleOptions` is not `dryRun` on a case summary.** The
+  first controls the report banner and forces local-only mode; the score bands
+  read `skip` only when the *case* carries it.
 
 ## Still open elsewhere
 
