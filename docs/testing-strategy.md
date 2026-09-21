@@ -282,7 +282,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
-| 9 | Populate the buckets | 10 | DSL: `tool_policy`, prompt composition. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness. Still open: workflows, config merge, and the OpenCode adapters, which register with a running harness rather than writing files and need a harness of their own | **partly done** |
+| 9 | Populate the buckets | 10 | DSL: `tool_policy`, prompt composition. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness; both OpenCode adapters, which register with a running harness rather than writing files, now have one each. Still open: workflows and config merge | **partly done** |
 | 6 | Consolidate duplicated factories | 6 | −164 lines. Only genuine duplicates: `makeDryRunSummary` (5 identical copies in one directory) and three same-package `makeDescriptor` pairs. `makeEvalRubric`'s 8 copies are 8 *different* rubrics, and the adapters' `makeDescriptor` variants differ per harness — neither is duplication | **done** |
 | 10 | Replace ad-hoc inline DSL with named scenario fixtures | 7 | — | **dropped** — see the withdrawal in finding 7 |
 | 11 | Resolve or delete the 2 genuine `it.skip` cases | 9 | Both deleted: neither asserted anything (`expect(true).toBe(true)` and an empty body), and both had their reasoning recorded where it belongs — beside the allowlist assertions that do the guarding, and in the `adapter.ts` MCP TODO | **done** |
@@ -536,6 +536,136 @@ not, three of them because those tests were testing themselves:
   detector still reads the line, so the case scores 0.4 rather than 0.
 - Smaller: `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one
   that does not name its suite.
+
+### The OpenCode 2 adapter
+
+The V2 adapter registers with a running host rather than writing files, so its
+black box is **the host the plugin leaves behind**: which agents
+`opencode2 debug agents` would list, what each may do, which slash command
+appears, and what that command does to a session. The seam is
+`setupOpenCode2(context)` — the exact callback
+`@weaveio/weave-adapter-opencode2/server` publishes — driven against the host
+double in [`tests/support/opencode2.ts`](../tests/support/opencode2.ts). It
+shares nothing with the V1 harness beside it, because
+[the two adapters are independent packages](opencode2-adapter.md).
+
+| | Before | After |
+| --- | --- | --- |
+| Unit files | 32 | 20 |
+| Unit cases (source) | 148 | 112 |
+| Scenarios added (source) | — | 73 |
+| Scenarios added (at runtime) | — | 79 |
+
+Twelve files went whole: `v2-agent-registration`, `v2-catalog`,
+`v2-commands`, `v2-delegation`, `v2-health`, `v2-model-resolution`,
+`v2-options`, `v2-plugin`, `v2-rpc`, `v2-session-hooks`,
+`v2-tool-policy-mapping` and `v2-translate-agent`. Every promise they made is
+one a user sees in the host: a permission rule on a registered agent, an agent
+that did or did not appear, the `/weave:start` command's effect on a session,
+or the `status` payload the plan panel renders. What stayed:
+
+| Kept | Why |
+| --- | --- |
+| `v2-config-refresh.test.ts` | Single-flight, last-valid and restore-on-reload-failure. A scenario sees a refreshed catalog and a failed one, but cannot race the controller or make the host's registry reload fail |
+| `v2-config-source.test.ts` | The exact-byte source cache and its per-attempt budgets. Reaching them would mean writing megabytes of fixture |
+| `v2-plan-session-state.test.ts` | A corrupt stored selection. Weave writes that record itself, so only another writer of the host's storage can produce one |
+| `v2-plan-ui-state.test.ts`, `v2-plan-ui.test.ts` | The plan panel ships as a separate `./tui` plugin the server plugin never loads |
+| `v2-plugin-loader-shape.test.ts` | A packaging guard on the published `./server` entry point |
+| `v2-session-scope.test.ts` | The workspace half of the scope check. The plugin takes its own workspace id and the session's from the same host, so a mismatch is unreachable from outside |
+| The thirteen top-level files | See the finding below |
+
+Thirty-seven mutations were run against
+[`tests/adapters/opencode2.scenario.test.ts`](../tests/adapters/opencode2.scenario.test.ts)
+alone, with all 36 deleted unit cases already gone. Thirty-six were caught:
+
+| Mutation | Result |
+| --- | --- |
+| An agent whose model the host cannot run is registered anyway | 30 red |
+| A session from another project is treated as in scope | 5 red |
+| An agent another plugin registered is overwritten | 4 red |
+| A subagent may interrupt the user with a question | 2 red |
+| The read policy is applied to writing and vice versa | 2 red |
+| Search tools stop following the read policy | 2 red |
+| Delegation is no longer denied by default | 2 red |
+| The Weave ownership marker is dropped from descriptions | 2 red |
+| An ambiguous bare model resolves to the first provider found | 2 red |
+| A requested variant is never applied | 2 red |
+| The plan command appears even when Weave does not own Tapestry | 2 red |
+| A failed catalog build still reports as fresh | 2 red |
+| An inventory change never rebuilds the catalog | 2 red |
+| The host's unmanaged safeguards are replaced too | 1 red |
+| The default agent is set even when Weave does not own it | 1 red |
+| The display name is ignored | 1 red |
+| An unknown variant falls back to the base model | 1 red |
+| An ordered model list stops at the first entry it cannot resolve | 1 red |
+| An unreadable prompt file is treated as an empty prompt | 1 red |
+| A skill the host does not have is reported as available | 1 red |
+| The delegation guidance is dropped from the orchestrator's prompt | 1 red |
+| A refused prompt leaves the session on Tapestry | 1 red |
+| The command's own message id is reused for the prompt | 1 red |
+| A plan name may point outside the plans directory | 1 red |
+| Skills are attached to another plugin's agent too | 1 red |
+| The caller's own skill choices are replaced | 1 red |
+| Temperature is applied to another plugin's agent | 1 red |
+| Unknown plugin options are ignored rather than refused | 1 red |
+| The project's own config is read even when it was turned off | 1 red |
+| A name collision is never reported | 1 red |
+| The plan command is not re-registered after the host reloads | 1 red |
+| Nothing is given back when the plugin is deactivated | 1 red |
+| The host is never told the plan changed | 1 red |
+| A finished plan still reads as ready | 1 red |
+| The project's path is echoed back to the panel | 1 red |
+| Readiness claims per-request setup works with no hooks installed | 1 red |
+| **Delegation targets are advertised even when delegation is denied** | **0 red — see below** |
+
+Four of those rows only turned red after the scenario was rewritten, and they
+are the vacuity lesson again. Three absence assertions — "skills are not
+attached to another plugin's agent", "temperature is not applied to another
+plugin's agent", "the project config is not read when it was turned off" —
+passed against deliberately broken code, because the value never reached the
+output at all. The first two named an agent that was in the *host* but not in
+Weave's *catalog*, so the guard under test was never consulted; putting the
+name in both, as a real collision does, made them live. The third declared an
+agent on a model the host could not run, so it would have been dropped whether
+the file was read or not.
+
+The one survivor is not a gap. `mapOpenCode2ToolPolicy` returns early when
+`delegate` is `deny`, but `buildDelegationTargets` in
+[`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) already
+returns `[]` for exactly that policy, so the adapter's guard cannot change an
+outcome end to end. Defence in depth, and the third finding of that shape after
+the publisher's `raw/` filter and `computeRunIdPrefix()`'s `"unknown"` branch.
+
+#### What the OpenCode 2 migration turned up
+
+- **Half the adapter is not on the path a user loads.** `package.json` exports
+  `.` (the barrel), `./server`, `./rpc` and `./tui`. `./server` re-exports
+  `src/v2/plugin.ts`, and the barrel exports `OpenCode2Adapter` plus its error
+  union. The thirteen top-level test files cover `OpenCode2Adapter` and the
+  modules it composes — a compatibility surface with no production caller in
+  this repository — and four of those modules are stronger than that:
+  `src/plugin.ts` (with its `Plugin.define` default), `src/run-workflow.ts` and
+  `src/start-plan-execution.ts` are imported by nothing and exported from no
+  entry point. **18 source cases cover code that nothing calls and nothing
+  publishes.** They were kept and flagged rather than deleted, like the
+  sanitizer surfaces above, because removing a published compatibility surface
+  is a product decision.
+- **One unreadable prompt file costs a user every agent, not one.** A
+  `prompt_file` that cannot be read makes the whole catalog build fail with
+  `config_unavailable`, so the host ends up with no Weave agents at all — not
+  seven of eight. The `status` payload reports `refresh: "failed"` with an
+  empty issue list, so nothing names the file. The per-agent
+  `materialization_failed` issue exists but this path never reaches it.
+- **A user whose host lacks the builtins' model gets a silently empty
+  install.** Every builtin declares `claude-sonnet-4-5`; on a host with no such
+  model each one is dropped with a `model_unavailable` issue, the
+  `/weave:start` command disappears with them, and nothing else marks the
+  install as failed. The issues are only visible through the plan panel's
+  `status` RPC.
+- **No test drove a subclass or a reimplementing mock.** `grep -rn "override |extends "`
+  over the package's tests finds only `extends` inside conditional types. The
+  eval-runner failure mode is absent here; `MockPluginContext` and the V2
+  fixtures are data doubles, not second implementations.
 
 ### A scenario can pass without testing anything
 

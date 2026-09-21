@@ -1,3 +1,12 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: the plan panel's own plugin definition. It ships as a
+ * separate `./tui` entry point that the server plugin never loads, so no
+ * scenario reaches it.
+ */
+
 import { describe, expect, it } from "bun:test";
 import tui, { WeaveTuiPlugin } from "../tui.js";
 

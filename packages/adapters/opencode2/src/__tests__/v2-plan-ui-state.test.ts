@@ -1,3 +1,12 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: the plan panel. It ships as a separate `./tui` plugin that
+ * the server plugin never loads, so the scenario harness — which drives the
+ * server plugin — cannot reach it.
+ */
+
 import { describe, expect, it } from "bun:test";
 import {
   PlanUiController,

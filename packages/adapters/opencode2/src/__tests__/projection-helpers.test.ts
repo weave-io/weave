@@ -1,3 +1,14 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: a compatibility surface with no path from the plugin a user
+ * loads. `@weaveio/weave-adapter-opencode2/server` — the only entry point the
+ * V2 plugin loader accepts — publishes `src/v2/plugin.ts`, and nothing on that
+ * path imports this module, so no scenario can reach it. See
+ * `docs/opencode2-adapter.md`.
+ */
+
 import { describe, expect, it } from "bun:test";
 
 import type { DispatchAgentEffect } from "@weaveio/weave-engine";

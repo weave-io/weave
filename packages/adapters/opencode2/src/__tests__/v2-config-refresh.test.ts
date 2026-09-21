@@ -1,3 +1,15 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: the refresh controller's single-flight, last-valid and
+ * restore-on-reload-failure behaviour. A scenario sees a refreshed catalog and
+ * a failed one, but not which of two concurrent builds won, nor that a
+ * candidate is rolled back when the host's registry reload fails — the host a
+ * scenario drives always reloads successfully, and a scenario cannot race the
+ * controller.
+ */
+
 import { describe, expect, it } from "bun:test";
 import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";

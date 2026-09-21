@@ -1,3 +1,13 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: what happens to a stored plan selection that is corrupt or
+ * carries unexpected fields. Weave writes that record itself, so no sequence
+ * of user actions produces a malformed one — only another writer of the host's
+ * storage can.
+ */
+
 import { describe, expect, it } from "bun:test";
 import type { PlanTaskSnapshot } from "@weaveio/weave-engine";
 import type { OpenCode2Context } from "../v2/host-types.js";

@@ -1,3 +1,12 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept, but read the note: this module is imported by nothing and
+ * exported from no package entry point, so it is reachable only from this
+ * test. See `docs/testing-strategy.md`.
+ */
+
 import { describe, expect, it, mock } from "bun:test";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import type { AgentDescriptor } from "@weaveio/weave-engine";

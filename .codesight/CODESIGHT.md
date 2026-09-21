@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 7 middleware | 1 events | 0% test coverage
-> **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~66,400 tokens. **Saves ~48,200 tokens per conversation.**
-> **Last scanned:** 2026-09-21 07:16 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 7 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~18,300 tokens. Without it, AI exploration would cost ~67,900 tokens. **Saves ~49,600 tokens per conversation.**
+> **Last scanned:** 2026-09-21 07:28 — re-run after significant changes
 
 ---
 
@@ -993,12 +993,12 @@
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/adapters/opencode2/src/v2/catalog.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/adapters/opencode2/src/__tests__/v2-fixtures.ts` — imported by **9** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
+- `packages/cli/src/evals/case-loader.ts` — imported by **9** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -1018,13 +1018,21 @@
 # Events & Queues
 
 - `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
+- `agent` [event] — `tests/support/opencode2.ts`
+- `command` [event] — `tests/support/opencode2.ts`
+- `get` [event] — `tests/support/opencode2.ts`
+- `switchAgent` [event] — `tests/support/opencode2.ts`
+- `switchModel` [event] — `tests/support/opencode2.ts`
+- `prompt` [event] — `tests/support/opencode2.ts`
+- `synthetic` [event] — `tests/support/opencode2.ts`
+- `rpc` [event] — `tests/support/opencode2.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 202 test files found
+> 192 test files found
 
 ---
 

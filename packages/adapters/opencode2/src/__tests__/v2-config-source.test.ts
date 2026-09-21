@@ -1,3 +1,13 @@
+/**
+ * Scenarios in `tests/adapters/opencode2.scenario.test.ts` cover what a
+ * user observes of this adapter.
+ *
+ * Kept: the exact-byte source cache and its per-attempt limits. A
+ * scenario sees only whether the catalog was rebuilt; it cannot see that the
+ * config and prompt readers shared one read, and reaching the byte and count
+ * budgets would mean writing megabytes of fixture to disk.
+ */
+
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
 import { buildOpenCode2Catalog } from "../v2/catalog.js";

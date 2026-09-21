@@ -1,53 +1,16 @@
-import type { ModelInfo, SkillInfo } from "@opencode-ai/client";
-import type { AgentDescriptor } from "@weaveio/weave-engine";
+/**
+ * Fixtures for the V2 unit tests that remain after the scenario migration.
+ *
+ * The model, skill and descriptor builders that used to live here went with
+ * the tests that used them: every promise they made about translation, agent
+ * registration and model resolution is now asserted end to end in
+ * `tests/adapters/opencode2.scenario.test.ts`. What is left is the minimum a
+ * catalog candidate needs, for the refresh-controller tests that drive the
+ * controller with a hand-built candidate.
+ */
+
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
 import type { OpenCode2AgentProjection } from "../v2/translate-agent.js";
-
-export function modelInfo(
-  providerID: string,
-  id: string,
-  variants: readonly string[] = [],
-): ModelInfo {
-  return {
-    id,
-    modelID: id,
-    providerID,
-    name: id,
-    capabilities: { tools: true, input: ["text"], output: ["text"] },
-    variants: variants.map((variant) => ({ id: variant })),
-    time: { released: 0 },
-    cost: [],
-    status: "active",
-    enabled: true,
-    limit: { context: 1_000, output: 1_000 },
-  };
-}
-
-export function skillInfo(id: string, name = id): SkillInfo {
-  return { id, name, location: "/skills", content: `# ${name}` };
-}
-
-export function descriptor(
-  overrides: Partial<AgentDescriptor> = {},
-): AgentDescriptor {
-  return {
-    name: "helper",
-    composedPrompt: "role prompt",
-    models: [],
-    mode: "subagent",
-    effectiveToolPolicy: {
-      read: "allow",
-      write: "deny",
-      execute: "ask",
-      delegate: "allow",
-      network: "ask",
-    },
-    rawToolPolicy: undefined,
-    delegationTargets: [],
-    skills: [],
-    ...overrides,
-  };
-}
 
 export function projection(id = "helper"): OpenCode2AgentProjection {
   return {
