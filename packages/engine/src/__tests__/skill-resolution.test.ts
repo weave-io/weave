@@ -1,13 +1,23 @@
 /**
- * Type-focused tests for the public skill-resolution types (Spec 09, Unit 1).
+ * Tests for skill resolution (Spec 09, Unit 1).
  *
- * These tests prove:
- * - `SkillInfo.name` is the only engine-owned matching key.
- * - Adapter-owned metadata is preserved in `ResolvedSkill` without engine inspection.
- * - `SkillResolutionError` carries `type`, `agentName`, and `skillName` only.
- * - `resolveSkillsForAgent` is importable and returns the correct `Result` shape.
+ * These stayed unit tests because most of this surface is not on a path any
+ * caller takes, so there is no user-visible form to assert against:
  *
- * No harness-specific paths, file reads, or process-spawning are used.
+ * - `resolveAvailableSkillsForAgent()` is called by exactly one consumer,
+ *   `packages/adapters/opencode2/src/v2/catalog.ts`, whose own scenarios cover
+ *   the live path end to end.
+ * - `resolveSkillsForAgent()`, `resolveSkillsForConfig()` and
+ *   `resolveAvailableSkillsForConfig()` have **no production caller at all**.
+ * - `HarnessAdapter.loadAvailableSkills()` is implemented by four adapters and
+ *   invoked by none of them: nothing in the Claude Code or Copilot bundles
+ *   carries a skill, so `skills [...]` in a `.weave` file reaches only
+ *   OpenCode 2.
+ *
+ * See the no-caller findings in `docs/testing-strategy.md`. What a config
+ * *can* show — that declared skill names reach an adapter on the descriptor,
+ * and that a category shuttle inherits the base shuttle's — is asserted in
+ * `tests/dsl/`.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -141,42 +151,6 @@ void _resultType;
 // ---------------------------------------------------------------------------
 // Runtime tests — prove behaviour without harness discovery
 // ---------------------------------------------------------------------------
-
-describe("SkillInfo — adapter metadata pass-through", () => {
-  it("(a) SkillInfo with only name is valid", () => {
-    const skill: SkillInfo = { name: "tdd" };
-    expect(skill.name).toBe("tdd");
-    expect(skill.metadata).toBeUndefined();
-  });
-
-  it("(b) SkillInfo preserves arbitrary adapter metadata without engine inspection", () => {
-    const adapterMetadata = {
-      path: "/adapters/opencode/skills/tdd.md",
-      scope: "project",
-      mountPoint: "opencode://skills/tdd",
-      apiKey: "should-not-be-read-by-engine",
-    };
-
-    const skill: SkillInfo = { name: "tdd", metadata: adapterMetadata };
-
-    // Engine only uses `name` — metadata is opaque pass-through
-    expect(skill.name).toBe("tdd");
-    // The metadata reference is preserved exactly as provided
-    expect(skill.metadata).toBe(adapterMetadata);
-  });
-
-  it("(c) SkillInfo metadata can be any shape — string, number, object, array", () => {
-    const stringMeta: SkillInfo = { name: "a", metadata: "some-path" };
-    const numberMeta: SkillInfo = { name: "b", metadata: 42 };
-    const arrayMeta: SkillInfo = { name: "c", metadata: ["x", "y"] };
-    const nullMeta: SkillInfo = { name: "d", metadata: null };
-
-    expect(stringMeta.metadata).toBe("some-path");
-    expect(numberMeta.metadata).toBe(42);
-    expect(arrayMeta.metadata).toEqual(["x", "y"]);
-    expect(nullMeta.metadata).toBeNull();
-  });
-});
 
 describe("ResolvedSkill — adapter metadata preserved", () => {
   it("(a) ResolvedSkill carries the original SkillInfo reference", () => {
@@ -547,40 +521,6 @@ describe("resolveSkillsForAgent — disabled-skill filtering", () => {
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toHaveLength(1);
-  });
-});
-
-describe("resolveSkillsForAgent — no-skills input", () => {
-  it("returns ok([]) when agentSkills is undefined", () => {
-    const result = resolveSkillsForAgent({
-      agentName: "loom",
-      availableSkills: [{ name: "tdd" }],
-      // agentSkills omitted
-    });
-
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
-  });
-
-  it("returns ok([]) when agentSkills is an empty array", () => {
-    const result = resolveSkillsForAgent({
-      agentName: "loom",
-      agentSkills: [],
-      availableSkills: [{ name: "tdd" }],
-    });
-
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
-  });
-
-  it("returns ok([]) when agentSkills is undefined and availableSkills is also empty", () => {
-    const result = resolveSkillsForAgent({
-      agentName: "loom",
-      availableSkills: [],
-    });
-
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
   });
 });
 

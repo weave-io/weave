@@ -1,9 +1,32 @@
+/**
+ * compose.test.ts
+ *
+ * `composeAgentDescriptor` is gone from this file: everything it promises a
+ * user is visible in the agents a `.weave` config resolves to, and
+ * `tests/dsl/` asserts it there — prompt sources and ordering, the template
+ * language, delegation, categories, tool policy, and the descriptor fields an
+ * adapter receives.
+ *
+ * What is left covers two exported functions with **no production caller**:
+ *
+ * - `composeWorkflowStepPrompt()` — the workflow-step append precedence rules
+ *   from Spec 22. Workflow execution renders its step prompt through
+ *   `renderTemplate()` in `execution-lifecycle/prompt-context.ts` and never
+ *   calls this, so no workflow run exercises step-local precedence,
+ *   workflow-scope fallback, or the append scope it reports.
+ * - `detectAppendCollisions()` — surfaces a same-scope `prompt_append`
+ *   collision across the merge stack for tooling that does not exist yet;
+ *   nothing in the CLI, the config loader or any adapter calls it.
+ *
+ * Both are kept rather than deleted because that is a product decision, not a
+ * testing one. See the no-caller findings in `docs/testing-strategy.md`.
+ */
+
 import { describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  AgentConfig,
   WeaveConfig,
   WorkflowConfig,
   WorkflowStep,
@@ -12,8 +35,6 @@ import { parseConfig } from "@weaveio/weave-core";
 
 import {
   type AppendCollision,
-  type CategoryMetadata,
-  composeAgentDescriptor,
   composeWorkflowStepPrompt,
   detectAppendCollisions,
 } from "../compose.js";
@@ -25,280 +46,6 @@ function cfg(source = ""): WeaveConfig {
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
-
-async function descriptorFor(
-  agentName: string,
-  agentConfig: AgentConfig,
-  config: WeaveConfig,
-  allAgents: Record<string, AgentConfig>,
-  category?: CategoryMetadata,
-) {
-  const result = await composeAgentDescriptor(
-    agentName,
-    agentConfig,
-    config,
-    allAgents,
-    category,
-  );
-
-  if (result.isErr()) throw new Error(JSON.stringify(result.error));
-  return result.value;
-}
-
-describe("composeAgentDescriptor", () => {
-  it.each([
-    true,
-  ])("retains explicit fast=%s in the normalized descriptor", async (fast) => {
-    const worker: AgentConfig = { prompt: "Worker", fast };
-    const descriptor = await descriptorFor("worker", worker, cfg(), { worker });
-    expect(descriptor.fast).toBe(fast);
-  });
-  describe("identity fields", () => {
-    it("Builtin_descriptor_keeps_stable_name_and_optional_displayName", async () => {
-      const config = cfg(`
-        agent loom {
-          display_name "Loom"
-          prompt "You are loom."
-          models ["claude-sonnet-4-5"]
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.name).toBe("loom");
-      expect(descriptor.displayName).toBe("Loom");
-    });
-
-    it("Builtin_descriptor_without_display_name_omits_displayName", async () => {
-      const config = cfg(`
-        agent shuttle {
-          prompt "Specialist."
-          models ["claude-sonnet-4-5"]
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "shuttle",
-        config.agents.shuttle,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.name).toBe("shuttle");
-      expect(descriptor.displayName).toBeUndefined();
-    });
-  });
-
-  describe("skills passthrough", () => {
-    it("Skills_array_is_passed_through_unchanged", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Base prompt."
-          skills ["review", "summarize", "handoff"]
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.skills).toEqual(["review", "summarize", "handoff"]);
-    });
-
-    it("Missing_skills_defaults_to_empty_array", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Base prompt."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.skills).toEqual([]);
-    });
-  });
-
-  describe("variant passthrough", () => {
-    it("Variant_string_is_passed_through_unchanged", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Base prompt."
-          variant "experimental-v2"
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.variant).toBe("experimental-v2");
-    });
-
-    it("Missing_variant_is_undefined", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Base prompt."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.variant).toBeUndefined();
-    });
-  });
-
-  describe("stable non-category descriptor contract", () => {
-    it("Custom_agent_descriptor_exposes_only_normalized_adapter_fields", async () => {
-      const config = cfg(`
-        agent router {
-          display_name "Task Router"
-          description "Routes implementation work"
-          prompt "Route with {{agent.name}}."
-          models ["model-primary", "model-fallback"]
-          mode all
-          temperature 0.4
-          skills ["tdd", "code-review"]
-          tool_policy {
-            read allow
-            write ask
-            execute deny
-            delegate allow
-            network deny
-          }
-          triggers [
-            "Build feature"
-          ]
-        }
-        agent helper {
-          description "Implementation helper"
-          prompt "Help."
-          triggers [
-            "Small implementation"
-          ]
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "router",
-        config.agents.router,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor).toMatchObject({
-        name: "router",
-        displayName: "Task Router",
-        description: "Routes implementation work",
-        composedPrompt: expect.stringContaining("Route with router."),
-        models: ["model-primary", "model-fallback"],
-        mode: "all",
-        temperature: 0.4,
-        rawToolPolicy: {
-          read: "allow",
-          write: "ask",
-          execute: "deny",
-          delegate: "allow",
-          network: "deny",
-        },
-        effectiveToolPolicy: {
-          read: "allow",
-          write: "ask",
-          execute: "deny",
-          delegate: "allow",
-          network: "deny",
-        },
-        skills: ["tdd", "code-review"],
-      });
-      expect(descriptor.delegationTargets).toEqual([
-        {
-          name: "helper",
-          description: "Implementation helper",
-          triggers: ["Small implementation"],
-          isCategory: false,
-        },
-      ]);
-    });
-
-    it("Descriptor_contains_composedPrompt_not_raw_prompt_sources", async () => {
-      const config = cfg(`
-        agent prompt-source-check {
-          prompt "Base {{agent.name}}."
-          prompt_append "Append {{agent.mode}}."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "prompt-source-check",
-        config.agents["prompt-source-check"],
-        config,
-        config.agents,
-      );
-      const descriptorRecord = descriptor as unknown as Record<string, unknown>;
-
-      expect(descriptor.composedPrompt).toBe(
-        "Base prompt-source-check.\n\nAppend subagent.",
-      );
-      expect("prompt" in descriptorRecord).toBe(false);
-      expect("prompt_file" in descriptorRecord).toBe(false);
-      expect("prompt_append" in descriptorRecord).toBe(false);
-    });
-
-    it("Descriptor_skills_are_requested_names_only", async () => {
-      const config = cfg(`
-        agent skill-check {
-          prompt "Skill check."
-          skills ["tdd", "security-review"]
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "skill-check",
-        config.agents["skill-check"],
-        config,
-        config.agents,
-      );
-      const serialized = JSON.stringify(descriptor);
-
-      expect(descriptor.skills).toEqual(["tdd", "security-review"]);
-      for (const skill of descriptor.skills) {
-        expect(typeof skill).toBe("string");
-      }
-      expect(serialized).not.toContain("prompt_file");
-      expect(serialized).not.toContain("/skills/");
-      expect(serialized).not.toContain("contents");
-      expect(serialized).not.toContain("metadata");
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// composeAgentDescriptor — trust boundary for prompt_append
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// composeWorkflowStepPrompt — Spec 22 Unit 4
-// ---------------------------------------------------------------------------
 
 /**
  * Build a minimal bounded template context for workflow step composition tests.

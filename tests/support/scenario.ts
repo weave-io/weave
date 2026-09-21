@@ -12,19 +12,13 @@
 import { expect } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import {
-  type AvailableConfigSkillResolution,
-  type ConfigSkillResolutionResult,
   type MaterializationPlan,
   type MaterializedAgent,
   materializeAgents,
-  resolveAvailableSkillsForConfig,
-  resolveSkillsForConfig,
-  type SkillInfo,
-  type SkillResolutionError,
 } from "@weaveio/weave-engine";
-import { errAsync, okAsync, type Result, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
-export type { MaterializationPlan, MaterializedAgent, SkillInfo };
+export type { MaterializationPlan, MaterializedAgent };
 
 // ---------------------------------------------------------------------------
 // Given — a .weave file the user wrote
@@ -142,46 +136,6 @@ export async function whenMaterializedWith(
     promptFileReader: prompts,
   });
   return { plan: result._unsafeUnwrap(), prompts };
-}
-
-// ---------------------------------------------------------------------------
-// When — Weave matches declared skills against what a harness offers
-// ---------------------------------------------------------------------------
-
-/**
- * Resolves every agent's `skills [...]` against the skills a harness says it
- * has. This is the seam an adapter uses once it has discovered its own skills:
- * Weave never goes looking for them itself, so the available list is an input.
- */
-export function whenSkillsResolved(
-  source: string,
-  availableSkills: SkillInfo[],
-): Result<ConfigSkillResolutionResult, SkillResolutionError[]> {
-  return resolveSkillsForConfig({
-    config: givenConfig(source),
-    availableSkills,
-  });
-}
-
-/**
- * As `whenSkillsResolved`, but on the tolerant path an adapter takes when one
- * unavailable skill should not cost an agent the skills it does have.
- */
-export function whenSkillsMatched(
-  source: string,
-  availableSkills: SkillInfo[],
-): AvailableConfigSkillResolution {
-  const result = resolveAvailableSkillsForConfig({
-    config: givenConfig(source),
-    availableSkills,
-  });
-  if (result.isErr()) {
-    expect(`skill resolution failed: ${JSON.stringify(result.error)}`).toBe(
-      "skills resolve",
-    );
-    throw new Error("unreachable");
-  }
-  return result.value;
 }
 
 // ---------------------------------------------------------------------------
