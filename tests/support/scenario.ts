@@ -24,6 +24,8 @@ import {
 } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type Result, type ResultAsync } from "neverthrow";
 
+export type { MaterializationPlan, MaterializedAgent, SkillInfo };
+
 // ---------------------------------------------------------------------------
 // Given — a .weave file the user wrote
 // ---------------------------------------------------------------------------
@@ -103,6 +105,28 @@ export async function whenMaterialized(
   return (
     await whenMaterializedWith(source, promptLibrary(options.promptFiles))
   ).plan;
+}
+
+/**
+ * Resolves one parsed config twice, the way a caller does when it materializes
+ * again after handing the first set of descriptors to a harness. Both passes
+ * share the config object, so anything the first pass leaves behind in it
+ * shows up in the second.
+ */
+export async function whenMaterializedTwice(
+  source: string,
+  options: ScenarioOptions = {},
+): Promise<[MaterializationPlan, MaterializationPlan]> {
+  const config = givenConfig(source);
+  const resolve = async () =>
+    (
+      await materializeAgents({
+        config,
+        promptFileReader: promptLibrary(options.promptFiles),
+      })
+    )._unsafeUnwrap();
+  const first = await resolve();
+  return [first, await resolve()];
 }
 
 /**

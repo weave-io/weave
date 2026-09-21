@@ -13,15 +13,15 @@
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/cli/src/errors.ts` — imported by **11** files
-- `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `tests/support/scenario.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **9** files
-- `packages/cli/src/evals/report-schema.ts` — imported by **9** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
+- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 

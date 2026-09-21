@@ -296,6 +296,44 @@ describe("a router should not route to one particular agent", () => {
   });
 });
 
+describe("two routers are offered the same specialist", () => {
+  it("gives each router its own copy, so an adapter editing one leaves the other alone", async () => {
+    const plan = await whenMaterialized(`
+      agent loom {
+        prompt "You are Loom."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode primary
+
+        tool_policy { delegate allow }
+      }
+
+      agent tapestry {
+        prompt "You are Tapestry."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode primary
+
+        tool_policy { delegate allow }
+      }
+
+      agent warp {
+        description "Warp (Security)"
+        prompt "You are Warp."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+
+        triggers ["Use for security review"]
+      }
+    `);
+
+    const loomTarget = agent(plan, "loom").descriptor.delegationTargets[0];
+    loomTarget?.triggers.push("Use for anything at all");
+
+    expect(
+      agent(plan, "tapestry").descriptor.delegationTargets[0]?.triggers,
+    ).toEqual(["Use for security review"]);
+  });
+});
+
 describe("a user declares an exclusion block but lists nothing in it", () => {
   it("changes nothing, so an emptied list is the same as no list", async () => {
     const plan = await whenMaterialized(`

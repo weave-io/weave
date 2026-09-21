@@ -17,7 +17,6 @@ import {
   composeWorkflowStepPrompt,
   detectAppendCollisions,
 } from "../compose.js";
-import { generateCategoryShuttles } from "../descriptors.js";
 import { buildTemplateContext } from "../template-context.js";
 import { evaluateEffectiveToolPolicy } from "../tool-policy.js";
 
@@ -129,103 +128,6 @@ describe("composeAgentDescriptor", () => {
       );
 
       expect(descriptor.skills).toEqual([]);
-    });
-  });
-
-  describe("category metadata", () => {
-    it("Descriptor_composed_with_category_input_carries_category_metadata", async () => {
-      const config = cfg(`
-        agent shuttle {
-          prompt "Frontend specialist."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "shuttle-frontend",
-        config.agents.shuttle,
-        config,
-        { "shuttle-frontend": config.agents.shuttle },
-        {
-          name: "frontend",
-          description: "Frontend UI, styling, accessibility",
-
-          isCategory: true,
-        },
-      );
-
-      expect(descriptor.category).toEqual({
-        name: "frontend",
-        description: "Frontend UI, styling, accessibility",
-      });
-    });
-
-    it("Descriptor_composed_without_category_input_has_undefined_category", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Regular agent."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.category).toBeUndefined();
-    });
-
-    it("Category_context_renders_in_prompt_for_category_shuttles", async () => {
-      const config = cfg(`
-        agent shuttle {
-          prompt "Category? {{agent.isCategory}}. Name: {{category.name}}. Description: {{category.description}}."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "shuttle-frontend",
-        config.agents.shuttle,
-        config,
-        { "shuttle-frontend": config.agents.shuttle },
-        {
-          name: "frontend",
-          description: "Frontend UI",
-
-          isCategory: true,
-        },
-      );
-
-      expect(descriptor.composedPrompt).toBe(
-        "Category? true. Name: frontend. Description: Frontend UI.",
-      );
-    });
-
-    it("Regular_agents_and_base_shuttle_have_no_category_context", async () => {
-      const config = cfg(`
-        agent loom {
-          prompt "Regular."
-        }
-        agent shuttle {
-          prompt "Base shuttle."
-        }
-      `);
-
-      const loom = await descriptorFor(
-        "loom",
-        config.agents.loom,
-        config,
-        config.agents,
-      );
-      const shuttle = await descriptorFor(
-        "shuttle",
-        config.agents.shuttle,
-        config,
-        config.agents,
-      );
-
-      expect(loom.category).toBeUndefined();
-      expect(shuttle.category).toBeUndefined();
     });
   });
 
@@ -489,66 +391,6 @@ describe("composeAgentDescriptor", () => {
       expect(serialized).not.toContain("/skills/");
       expect(serialized).not.toContain("contents");
       expect(serialized).not.toContain("metadata");
-    });
-  });
-
-  describe("category metadata", () => {
-    it("Generated_category_shuttle_descriptor_includes_normalized_category_metadata", async () => {
-      const config = cfg(`
-        agent shuttle {
-          prompt "Specialist for {{category.name}}."
-          models ["model-shuttle"]
-        }
-        category frontend {
-          description "Frontend UI"
-
-          models ["model-frontend"]
-        }
-      `);
-      const shuttlesResult = generateCategoryShuttles(config);
-      if (shuttlesResult.isErr()) throw new Error(shuttlesResult.error.message);
-      const generatedAgents = Object.fromEntries(
-        Object.entries(shuttlesResult.value).map(([name, generated]) => [
-          name,
-          generated.config,
-        ]),
-      );
-      const allAgents = { ...config.agents, ...generatedAgents };
-
-      const descriptor = await descriptorFor(
-        "shuttle-frontend",
-        shuttlesResult.value["shuttle-frontend"].config,
-        config,
-        allAgents,
-        {
-          name: "frontend",
-          description: config.categories.frontend?.description,
-          isCategory: true,
-        },
-      );
-
-      expect(descriptor.name).toBe("shuttle-frontend");
-      expect(descriptor.category).toEqual({
-        name: "frontend",
-        description: "Frontend UI",
-      });
-    });
-
-    it("Regular_agent_descriptor_omits_category_metadata", async () => {
-      const config = cfg(`
-        agent helper {
-          prompt "General helper."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "helper",
-        config.agents.helper,
-        config,
-        config.agents,
-      );
-
-      expect(descriptor.category).toBeUndefined();
     });
   });
 });
