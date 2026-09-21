@@ -11,9 +11,25 @@
  * published beside the case. The aggregate explanations are asserted against
  * `public-report.json` and the model-comparison index in
  * [`tests/evals/reporting.scenario.test.ts`](../../../../../tests/evals/reporting.scenario.test.ts).
- * Ninety-three cases that asserted those through direct calls were removed;
- * every scenario replacing one was watched fail against a mutated scorer first
- * — the table is in `docs/testing-strategy.md`.
+ * A hundred cases that asserted those through direct calls were removed; every
+ * scenario replacing one was watched fail against a mutated scorer first — the
+ * table is in `docs/testing-strategy.md`.
+ *
+ * Seven of the hundred were not replaced, because they could not fail. The
+ * `RealLangChainJudge — production adapter boundary` block asserted
+ * `expect(judge).toBeDefined()` on a `new`, `expect(scorer).toBeDefined()` on
+ * another, and `typeof x.then === "function"` twice — the compiler's job, or
+ * true of any object. Its remaining two cases named `RealLangChainJudge` and
+ * drove `StubLangChainJudge`: one set a default error on the stub and asserted
+ * the stub returned it, under the name *"evaluate() returns a typed
+ * ScorerAdapterError when openevals dynamic import fails"*. Its comment said
+ * the dynamic import could not be intercepted, which the
+ * `per-rubric evaluator isolation` block below disproves on the same page —
+ * it injects a `moduleLoader` and has covered that failure for real all along.
+ * The last of the seven, `satisfies <interface> — returns ResultAsync` on each
+ * stub, duplicated the default-fallback case beside it. One honest replacement
+ * was added: *"loads openevals on the first evaluate() and not before"*, which
+ * an eager import in the constructor turns red.
  *
  * What is left here is deliberately internal. Each survivor, and why a run
  * cannot reach it:
@@ -32,7 +48,9 @@
  *     in each runner copies a reason only for the dimensions that counted, so
  *     the scorer's "Not applicable: …" text reaches no file, not even a
  *     `--raw-artifacts` one. The rationale of an *applicable* dimension is a
- *     scenario.
+ *     scenario. The case pinning it asserts the reason names the case kind it
+ *     did not apply to; it used to assert `typeof rationale === "string"`,
+ *     which no change to the scorer could have broken.
  *   - **An injected `scoredAt`** — the `AgentEvalsScorer` interface takes one,
  *     and no runner passes it; every production call takes the `new Date()`
  *     default. The default is a scenario; the parameter is only exercised here.
@@ -70,22 +88,21 @@
  *     regression in it would misreport every eval scenario.
  *   - **`RealLangChainJudge`** — the adapter boundary to `openevals/llm`. It is
  *     the production judge, which scenarios replace by definition, so its
- *     dynamic-import failure path, its per-rubric evaluator cache and the exact
- *     `{reference_outputs}` placeholder names it must use are only testable
- *     with an injected module loader.
+ *     laziness, its dynamic-import failure path, its per-rubric evaluator cache
+ *     and the exact `{reference_outputs}` placeholder names it must use are
+ *     only testable with an injected module loader. Every case that claims to
+ *     test it now constructs one.
  *
  * Test isolation: no real LangChain, no network, no file I/O; fixtures inline.
  */
 
 import { describe, expect, it } from "bun:test";
 import {
-  type AgentEvalsScorer,
   buildJudgmentExecutionDimension,
   buildRationaleProjection,
   escapeTemplateBraces,
   type JudgeInput,
   LangChainAgentEvalsScorer,
-  type LangChainJudge,
   RATIONALE_PROJECTION_MAX_CHARS,
   RealLangChainJudge,
   StubAgentEvalsScorer,
@@ -243,7 +260,7 @@ describe("LangChainAgentEvalsScorer — rubric lookup errors", () => {
 // ---------------------------------------------------------------------------
 
 describe("LangChainAgentEvalsScorer — NormalizedScoreRecord shape", () => {
-  it("each dimension has score, rationale, and applicable fields", async () => {
+  it("says which kind of case a dimension did not apply to", async () => {
     const judge = makePerfectJudge();
     const scorer = new LangChainAgentEvalsScorer(judge);
 
@@ -255,12 +272,12 @@ describe("LangChainAgentEvalsScorer — NormalizedScoreRecord shape", () => {
     );
 
     const record = result._unsafeUnwrap();
-    for (const dim of Object.values(record.dimensions)) {
-      expect(typeof dim.score).toBe("number");
-      expect(typeof dim.rationale).toBe("string");
-      expect(dim.rationale.length).toBeGreaterThan(0);
-      expect(typeof dim.applicable).toBe("boolean");
-    }
+    expect(record.dimensions.delegationCorrectness.rationale).toBe(
+      'Not applicable: outcome kind is "agent_routing", not "delegation_chain"',
+    );
+    expect(record.dimensions.executionCompleteness.rationale).toBe(
+      'Not applicable: outcome kind is "agent_routing", not "task_completion"',
+    );
   });
 
   it("record.scoredAt matches injected timestamp", async () => {
@@ -436,27 +453,6 @@ describe("StubLangChainJudge — basic behaviour", () => {
     const judge = new StubLangChainJudge();
     expect(judge.calls).toHaveLength(0);
   });
-
-  it("satisfies LangChainJudge interface — evaluate returns ResultAsync", async () => {
-    const judge: LangChainJudge = new StubLangChainJudge();
-    (judge as StubLangChainJudge).setDefaultOutput({
-      score: 0.8,
-      rationale: "Ok.",
-    });
-
-    const input: JudgeInput = {
-      dimension: "rationaleQuality",
-      rubricDescription: "x",
-      response: "y",
-      reference: "z",
-    };
-
-    const result = judge.evaluate(input);
-    expect(typeof result.then).toBe("function");
-
-    const resolved = await result;
-    expect(resolved.isOk()).toBe(true);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -563,19 +559,6 @@ describe("StubAgentEvalsScorer — basic behaviour", () => {
     expect(result._unsafeUnwrapErr().type).toBe("RubricNotFound");
   });
 
-  it("satisfies AgentEvalsScorer interface — score() returns ResultAsync", async () => {
-    const scorer: AgentEvalsScorer = new StubAgentEvalsScorer();
-    (scorer as StubAgentEvalsScorer).setDefaultRecord(makeScoreRecord());
-
-    const result = scorer.score(makeRun(), makeAgentRoutingCase(), [
-      makeRubric(),
-    ]);
-    expect(typeof result.then).toBe("function");
-
-    const resolved = await result;
-    expect(resolved.isOk()).toBe(true);
-  });
-
   it("calls array is empty before any calls", () => {
     const scorer = new StubAgentEvalsScorer();
     expect(scorer.calls).toHaveLength(0);
@@ -592,150 +575,20 @@ describe("StubAgentEvalsScorer — basic behaviour", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RealLangChainJudge — production adapter boundary tests
-//
-// These tests prove that:
-//   1. RealLangChainJudge is exported from the module and implements LangChainJudge.
-//   2. It can be constructed with a mock BaseChatModel without making real calls.
-//   3. It returns typed ScorerAdapterError when the dynamic import or evaluator
-//      call fails — it never throws.
-//   4. The scorer can be composed with RealLangChainJudge the same way as any
-//      other LangChainJudge implementation.
-//
-// No real LangChain model calls are made. We use a minimal mock BaseChatModel
-// (satisfying only the subset of the interface that RealLangChainJudge needs)
-// and a controlled override of the evaluator path via StubLangChainJudge
-// combined with the scorer interface.
-// ---------------------------------------------------------------------------
-
 /**
- * Minimal mock that satisfies the BaseChatModel duck-type.
+ * Minimal stand-in for the `BaseChatModel` `RealLangChainJudge` is handed.
  *
- * RealLangChainJudge stores the model reference and passes it to
- * `createLLMAsJudge({ judge: this.model })` only when `evaluate()` is called.
- * Constructing with this mock does NOT trigger any LangChain calls.
+ * The judge stores the reference and passes it to `createLLMAsJudge` only when
+ * `evaluate()` runs, so nothing here is ever called.
  */
 class MockBaseChatModel {
   _modelType(): string {
     return "base_chat_model";
   }
   async invoke(_messages: unknown): Promise<unknown> {
-    // Never called in unit tests — this is only here to satisfy type-checking
-    // if the test environment resolves the dynamic import.
     throw new Error("MockBaseChatModel.invoke should not be called in tests");
   }
 }
-
-describe("RealLangChainJudge — production adapter boundary", () => {
-  it("can be constructed with a mock BaseChatModel without any LangChain calls", () => {
-    const mockModel = new MockBaseChatModel();
-    // Construction should be side-effect free (no dynamic import yet)
-    const judge = new RealLangChainJudge(
-      mockModel as unknown as ConstructorParameters<
-        typeof RealLangChainJudge
-      >[0],
-    );
-    expect(judge).toBeDefined();
-  });
-
-  it("satisfies the LangChainJudge interface (structural typing)", () => {
-    const mockModel = new MockBaseChatModel();
-    const judge: LangChainJudge = new RealLangChainJudge(
-      mockModel as unknown as ConstructorParameters<
-        typeof RealLangChainJudge
-      >[0],
-    );
-    // evaluate() must be a function returning a thenable ResultAsync
-    expect(typeof judge.evaluate).toBe("function");
-  });
-
-  it("can be passed to LangChainAgentEvalsScorer as a LangChainJudge", () => {
-    const mockModel = new MockBaseChatModel();
-    const judge = new RealLangChainJudge(
-      mockModel as unknown as ConstructorParameters<
-        typeof RealLangChainJudge
-      >[0],
-    );
-    // Constructing the scorer with a RealLangChainJudge should succeed with no errors
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    expect(scorer).toBeDefined();
-  });
-
-  it("evaluate() returns a ResultAsync (thenable)", () => {
-    const mockModel = new MockBaseChatModel();
-    const judge = new RealLangChainJudge(
-      mockModel as unknown as ConstructorParameters<
-        typeof RealLangChainJudge
-      >[0],
-    );
-    const input: JudgeInput = {
-      dimension: "routingCorrectness",
-      rubricDescription: "Route to shuttle",
-      response: "Routed to shuttle",
-      reference: "Expected: shuttle",
-    };
-    const resultAsync = judge.evaluate(input);
-    // Must be thenable (ResultAsync extends PromiseLike)
-    expect(typeof resultAsync.then).toBe("function");
-  });
-
-  it("evaluate() returns a typed ScorerAdapterError when openevals dynamic import fails", async () => {
-    // We cannot easily intercept the dynamic import() in Bun's test runner
-    // without module mocking infrastructure. Instead we prove the contract
-    // via the StubLangChainJudge's ScorerAdapterError variant, which mirrors
-    // exactly what RealLangChainJudge returns on load failure.
-    //
-    // This test exercises the error shape contract that consumers depend on:
-    const judge = new StubLangChainJudge();
-    judge.setDefaultError({
-      type: "ScorerAdapterError",
-      caseId: "(unknown — load failure)",
-      dimension: "rationaleQuality",
-      message:
-        "Failed to load openevals/llm via dynamic import: Error: Module not found. " +
-        "Ensure agentevals and its peer dependencies are installed.",
-    });
-
-    const input: JudgeInput = {
-      dimension: "routingCorrectness",
-      rubricDescription: "x",
-      response: "y",
-      reference: "z",
-    };
-
-    const result = await judge.evaluate(input);
-    expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr();
-    expect(error.type).toBe("ScorerAdapterError");
-    if (error.type === "ScorerAdapterError") {
-      expect(error.message).toContain("openevals/llm");
-    }
-  });
-
-  it("scorer with RealLangChainJudge fails with ScorerAdapterError when judge fails (no throw)", async () => {
-    // Use a StubLangChainJudge that mimics RealLangChainJudge's error response
-    // to prove the scorer propagates errors without throwing.
-    const judge = new StubLangChainJudge();
-    judge.setDefaultError({
-      type: "ScorerAdapterError",
-      caseId: "test-case-01",
-      dimension: "routingCorrectness",
-      message: "LangChain AgentEvals judge call failed: connection refused",
-    });
-
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("ScorerAdapterError");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // RealLangChainJudge — per-rubric evaluator isolation
@@ -838,6 +691,28 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       evaluatorCalls,
     };
   }
+
+  it("loads openevals on the first evaluate() and not before", async () => {
+    const mockModel = new MockBaseChatModel();
+    const { moduleLoader, moduleLoadCount } = makeFakeModuleLoader();
+    const judge = new RealLangChainJudge(
+      mockModel as unknown as ConstructorParameters<
+        typeof RealLangChainJudge
+      >[0],
+      moduleLoader,
+    );
+
+    expect(moduleLoadCount.value).toBe(0);
+
+    await judge.evaluate({
+      dimension: "rationaleQuality",
+      rubricDescription: "Evaluate the prose.",
+      response: "r",
+      reference: "ref",
+    });
+
+    expect(moduleLoadCount.value).toBe(1);
+  });
 
   it("escapes braces and keeps $ sequences literal when a rubric contains code", async () => {
     const mockModel = new MockBaseChatModel();
