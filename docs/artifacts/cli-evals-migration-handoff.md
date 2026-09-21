@@ -46,7 +46,7 @@ Largest files, by case count:
 | Cases | File | First read |
 | --- | --- | --- |
 | 188 | `report-schema.test.ts` | **migrated** — 188 → 112 (task group 14) |
-| 169 | `loom-routing-runner.test.ts` | runner behaviour; mixed |
+| 169 | `loom-routing-runner.test.ts` | **migrated** — the eight per-suite runners went 464 → 47 source cases (task group 14) |
 | 161 | `artifact-bundle.test.ts` | **migrated** — 337 cases across four bundle-writing files became 60 (task group 14) |
 | 153 | `langchain-agent-evals.test.ts` | judge adapter; mixed |
 | 140 | `sanitizer.test.ts` | **migrated** — 140 → 91 (task group 14) |
@@ -216,6 +216,62 @@ Two traps worth carrying forward for whoever migrates the next file:
 - **`dryRun` on `WriteBundleOptions` is not `dryRun` on a case summary.** The
   first controls the report banner and forces local-only mode; the score bands
   read `skip` only when the *case* carries it.
+
+## Findings from the suite-runner migration (task group 14)
+
+The eight per-suite runner test files went from **464 source cases (533 at
+runtime) to 47 (60)**, with 56 scenarios — 323 at runtime — in
+[`tests/evals/suite-runners.scenario.test.ts`](../../tests/evals/suite-runners.scenario.test.ts).
+`weft-review-runner.test.ts`, `warp-security-runner.test.ts` and
+`spindle-tools-runner.test.ts` are gone entirely.
+
+The seam is `EvalOrchestrator` + `buildEvalRunner` with two stubs — the model
+client and the LangChain judge — and a scenario-owned fixture root written to a
+temp directory by `withEvalFixtures()`. Everything else runs for real, so the
+assertions are on the exit code, `score-<suite>.json`, `public-report.*` and
+the opt-in raw artifacts. `runEvalSuite()` in
+[`tests/support/evals.ts`](../../tests/support/evals.ts) does the whole round
+trip and hands back what the run left on disk.
+
+Two facts make the suites deterministic enough to assert on, and both are worth
+knowing before adding rows:
+
+- `agent_routing` cases score `routingCorrectness` from the routed agents with
+  no judge involved.
+- `task_completion` cases **tagged `judgment`** score `executionCompleteness`
+  from produced artifacts against `required_artifacts`. Untagged ones go to the
+  LLM judge, so their signals are not observable — which is exactly the line
+  drawn between what moved and what stayed.
+
+What it turned up:
+
+- **Seven of the eight files were testing a copy of the runner.** Each defined
+  an `InMemory*Runner` that extended the real class and overrode `run()`. The
+  copies carried guards the product does not.
+- **A `--model` no fixture allows publishes an empty green run** on
+  `loom-routing` and `tapestry-execution` — full bundle, `suiteGreen: true`,
+  dashboard indexes updated, exit 0. The other six fail closed. Both runners'
+  unit tests asserted `NoCasesFound`, against the in-memory copy.
+- **The category-routing qualitative gate cannot fail** unless the judge scores
+  below 0.1, because it averages in two dimensions that are inapplicable on a
+  routing case and therefore scored 1.0.
+- **`→ \`shuttle-{category}\`` still earns 0.4** as a generic-shuttle
+  fallback, although the affirmative-route reader rejects it.
+- `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one that omits
+  its suite name.
+
+Notes for whoever takes the next runner-adjacent file:
+
+- **Raw artifacts are gated twice.** The runner only builds one under
+  `--raw-artifacts`, and the orchestrator only writes one under the same flag.
+  Breaking either gate alone changes nothing observable, so a mutation has to
+  break both before an absence assertion can prove itself.
+- **The bundle writer's allowlist absorbs a runner-level leak.** Adding a raw
+  field to a `CaseResultSummary` is invisible at the file level; a leak has to
+  go through an allowlisted field such as `publicExplanation.text` to show up.
+- **`loadModelMatrix()` always reads the repository's `evals/model-matrix.json`**,
+  whatever `evalsRoot` says. A fixture that restates the matrix defaults in
+  `allowed_models` is rejected, so name exactly one model instead.
 
 ## Still open elsewhere
 

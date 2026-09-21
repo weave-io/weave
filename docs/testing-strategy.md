@@ -394,6 +394,90 @@ the twenty-ninth is a finding rather than a gap:
 | A dry-run bundle is allowed through to the remote | 1 red |
 | **The `raw/` filter is dropped from the publisher** | **0 red — see below** |
 
+The eight per-suite runners went the same way, measured in source cases
+because both sides lean on tables:
+
+| | Before | After |
+| --- | --- | --- |
+| Unit files | 8 | 5 |
+| Unit cases (source) | 464 | 47 |
+| Unit cases (at runtime) | 533 | 60 |
+| Scenarios added (source) | — | 56 |
+| Scenarios added (at runtime) | — | 323 |
+
+The whole of `weft-review-runner.test.ts`, `warp-security-runner.test.ts` and
+`spindle-tools-runner.test.ts` is gone: every promise they made is one a run of
+`weave eval run` shows. What stayed:
+
+| Kept | Why |
+| --- | --- |
+| Loom's boundary-matrix block, Shuttle's structural cases, the tcr-04/tcr-10 block | They read the **repository's own fixture corpus** from disk with the production `EVALS_ROOT`. A scenario supplies its own corpus, so it cannot notice a real fixture drifting away from its `target_agent` |
+| `extractDelegationChain`, `detectCompletionSignal`, `extractProducedArtifacts` | They feed the judge's prompt and nothing else. In production the judge is an LLM, so no published file reveals what was extracted |
+| `scoreExecutionCompleteness`, the no-scorer routing gate | The local heuristics used when no scorer is injected. The orchestrator always injects one |
+| `extractAcceptanceCriteria` | The criteria list is never published; only the derived signal is, and a miscollected criterion can still produce the right signal |
+| tcr's qualitative-gate and routing-override cases | Both need a score record the real scorer cannot produce for an `agent_routing` case. They pin a contract for a future scorer |
+
+Eighteen mutations were run against `tests/evals` alone, with every deleted
+unit test already gone:
+
+| Mutation | Result |
+| --- | --- |
+| Loom scores every mentioned agent, not the primary route | 10 red |
+| A generic-shuttle fallback scores 1.0 instead of 0.4 | 13 red |
+| `buildEvalRunner` always exits 0 | 22 red |
+| Weft's prompt-provider failure falls back to a prompt | 3 red |
+| Shuttle never flags an unobserved pass claim | 3 red |
+| A model failure scores the case full marks | 2 red |
+| The local diagnostic is no longer redacted | 2 red |
+| The public explanation quotes the composed prompt | 2 red |
+| The public explanation quotes the model's answer | 1 red |
+| Weft calls an approval disciplined unconditionally | 1 red |
+| Weft's dry run takes the live path | 1 red |
+| Pattern never flags an undeclared command | 1 red |
+| Warp ignores the blocker cap | 1 red |
+| Spindle always reports a confidence | 1 red |
+| Tapestry always marks the task complete | 1 red |
+| Raw artifacts are built and written without `--raw-artifacts` | 2 red |
+| *(either raw-artifact gate alone)* | **0 red** — the other gate still holds |
+| *(the summary carries `rawContent`)* | **0 red** — the writer's allowlist strips it |
+
+The last two survivors are worth stating plainly: they are not gaps in the
+scenarios but **defence in depth**. Raw text reaches disk only if the runner
+builds the artifact *and* the orchestrator writes it, and an unknown field on a
+case summary is dropped by the bundle writer's allowlist projection. Breaking
+both raw-artifact gates together does turn two scenarios red, which is what
+proves the absence assertion is live rather than vacuous.
+
+### What the runner migration turned up
+
+Writing against observed behaviour found four things the 464 unit cases did
+not, three of them because those tests were testing themselves:
+
+- **Seven of the eight runner test files drove a reimplementation of the
+  runner.** `InMemoryLoomRunner`, `InMemoryWeftRunner` and their siblings
+  extended the real class and then `override run()` with a copy that read
+  in-memory fixtures. The copies diverged, and nothing noticed.
+- **`--model` with no matching fixture publishes an empty green run.**
+  `LoomRoutingRunner.run()` and `TapestryExecutionRunner.run()` guard an empty
+  *case* list but not an empty *work item* list, so the run writes a full
+  bundle with `totalCases: 0`, `suiteGreen: true`, updates the dashboard
+  indexes and exits 0. A typo'd `--model` reads as success in CI. The other six
+  suites return `NoCasesFound` and exit 1. Both runners' unit tests asserted
+  `NoCasesFound` — against the in-memory copy, which does carry the guard.
+- **The category-routing qualitative gate is all but inert.**
+  `mergeWithScorerDimensions()` averages `delegationCorrectness`,
+  `executionCompleteness` and `rationaleQuality` and requires 0.7, but on an
+  `agent_routing` case the first two are never applicable and the scorer scores
+  an inapplicable dimension 1.0. Only a rationale below 0.1 can fail the gate;
+  a judge verdict of 0.2 passes. The unit test that claimed the gate worked fed
+  a hand-built record the real scorer cannot produce.
+- **A documentation placeholder still earns fallback credit.** An answer
+  containing `→ \`shuttle-{category}\`` is rejected by the affirmative-route
+  reader — the property its unit test pinned — but the generic-fallback
+  detector still reads the line, so the case scores 0.4 rather than 0.
+- Smaller: `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one
+  that does not name its suite.
+
 ### A scenario can pass without testing anything
 
 The evals bucket produced the sharpest lesson so far, and every migration

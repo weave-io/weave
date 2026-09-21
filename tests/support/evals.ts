@@ -12,14 +12,37 @@
  */
 
 import { expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { err, ok, ResultAsync } from "neverthrow";
+import type { CliError } from "../../packages/cli/src/errors.js";
+import {
+  type JudgeInput,
+  type JudgeOutput,
+  LangChainAgentEvalsScorer,
+  StubLangChainJudge,
+} from "../../packages/cli/src/evals/langchain-agent-evals.js";
 import type {
+  ModelClientError,
+  ModelRequest,
+} from "../../packages/cli/src/evals/openrouter-client.js";
+import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
+import {
+  buildEvalRunner,
+  EvalOrchestrator,
+} from "../../packages/cli/src/evals/runner.js";
+import type {
+  BundleScoreFile,
   CaseResult,
   PromptProvenanceManifest,
+  PromptProvider,
+  ProvenanceError,
+  RawCaseResultArtifact,
+  RunnerError,
   RunnerResult,
   ScoringDimension,
+  ScoringError,
 } from "../../packages/cli/src/evals/types.js";
 
 export const FIXED_GIT_SHA = "abc123def456abc123def456abc123def456abc1";
@@ -156,4 +179,322 @@ export async function expectNothingPublishedContains(
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Suite runners — one run of `weave eval run`, start to finish
+// ---------------------------------------------------------------------------
+
+/**
+ * The model a suite-runner scenario asks for.
+ *
+ * A fixture naming a single model is a deliberate exception the loader allows;
+ * one that restates the matrix defaults is rejected, so scenarios name this.
+ */
+export const EVAL_MODEL = "anthropic/claude-sonnet-4.5";
+
+/** A case fixture and its rubric, as a scenario declares them. */
+export interface FixtureSpec {
+  /** Case ID — the fixture file name and the `--case` filter value. */
+  id: string;
+  /** Suite ID, e.g. `"loom-routing"`. */
+  suite: string;
+  /** The task text the runner puts to the model. */
+  description: string;
+  /** Agents the case may name. Checked against `KNOWN_AGENTS` at load. */
+  allowedAgents: string[];
+  /** The `expected_outcome` block, exactly as a fixture file carries it. */
+  expectedOutcome: Record<string, unknown>;
+  acceptedAlternates?: string[];
+  transcriptExpectations?: Array<Record<string, unknown>>;
+  tags?: string[];
+  /** Models the case allows. Defaults to `[EVAL_MODEL]`. */
+  allowedModels?: string[];
+  /** The rubric's `scoring.required`. Defaults to `true`. */
+  required?: boolean;
+}
+
+/**
+ * Runs `body` against a temporary `evals/` root holding exactly `fixtures`.
+ *
+ * The corpus under `evals/` is repo-owned and changes with the product; a
+ * scenario asserting how one answer scores needs a corpus it controls. The
+ * model matrix stays the repo's own — `loadModelMatrix()` reads it from a
+ * fixed path — so the models a case may run on are the real ones.
+ */
+export async function withEvalFixtures<T>(
+  fixtures: FixtureSpec[],
+  body: (evalsRoot: string) => Promise<T>,
+): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "weave-evals-fixtures-"));
+  try {
+    for (const spec of fixtures) {
+      await mkdir(join(root, "cases", spec.suite), { recursive: true });
+      await mkdir(join(root, "rubrics", spec.suite), { recursive: true });
+      await Bun.write(
+        join(root, "cases", spec.suite, `${spec.id}.json`),
+        JSON.stringify(
+          {
+            id: spec.id,
+            description: spec.description,
+            suite: spec.suite,
+            allowed_agents: spec.allowedAgents,
+            allowed_models: spec.allowedModels ?? [EVAL_MODEL],
+            expected_outcome: spec.expectedOutcome,
+            accepted_alternates: spec.acceptedAlternates ?? [],
+            transcript_expectations: spec.transcriptExpectations ?? [],
+            tags: spec.tags ?? [],
+          },
+          null,
+          2,
+        ),
+      );
+      await Bun.write(
+        join(root, "rubrics", spec.suite, `${spec.id}.json`),
+        JSON.stringify(
+          {
+            case_id: spec.id,
+            suite: spec.suite,
+            scoring: {
+              outcome_weight: 0.7,
+              per_expectation_weight: 0.3,
+              required: spec.required ?? true,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    return await body(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/** What a scenario asks `weave eval run` to do. */
+export interface SuiteRunOptions {
+  /** The fixture root from `withEvalFixtures`. */
+  evalsRoot: string;
+  /** `--agent`. A suite ID selects exactly one suite. */
+  agent: string;
+  /** The answers the model gives, in order. The last one repeats. */
+  answers?: string[];
+  /** Returned by the model instead of an answer. */
+  modelError?: ModelClientError;
+  /** The judge's verdict on every dimension it is asked to score. */
+  judgeOutput?: JudgeOutput;
+  /** Returned by the judge instead of a verdict. */
+  judgeError?: ScoringError;
+  /** The composed system prompt the runner sends. */
+  systemPrompt?: string;
+  /** When set, prompt composition fails and no model is ever called. */
+  promptProviderFails?: string;
+  /** `--case`. */
+  caseFilter?: string;
+  /** `--model`. Defaults to `EVAL_MODEL`. */
+  model?: string;
+  /** `--dry-run`. */
+  dryRun?: boolean;
+  /** `--raw-artifacts`. */
+  rawArtifacts?: boolean;
+  /** The environment the run reads. Defaults to a fake API key. */
+  env?: Record<string, string | undefined>;
+}
+
+/** Everything a run left behind, read back before its directory is removed. */
+export interface SuiteRunObservation {
+  /** The exit code `weave eval run` returns for this run. */
+  exitCode: number;
+  /** The error the run failed with before producing anything, or `null`. */
+  error: CliError | null;
+  /** Suites that could not run at all. */
+  partialFailures: RunnerError[];
+  /** Per-suite totals, as the run summary reports them. */
+  rollups: Array<{
+    suite: string;
+    totalCases: number;
+    passedCases: number;
+    failedCases: number;
+    suiteGreen: boolean;
+  }>;
+  /** Every file under the bundle root, relative to it. */
+  files: string[];
+  /** The parsed `score-<suite>.json`, or `null` when none was written. */
+  scoreFile: BundleScoreFile | null;
+  /**
+   * The case summaries the score file carries.
+   *
+   * This is the published row type, which is looser than `CaseResultSummary`:
+   * `BundleScoreFileSchema` does not require `suite` on a row, although every
+   * runner puts one there.
+   */
+  cases: PublishedCaseRow[];
+  /** The first case summary — what a single-case scenario asked about. */
+  firstCase: PublishedCaseRow | null;
+  /** Raw artifacts, written only under `--raw-artifacts`. */
+  rawArtifacts: RawCaseResultArtifact[];
+  /** Every request the runner made to the model. */
+  modelCalls: ModelRequest[];
+  /** Every dimension the runner asked the judge to score. */
+  judgeCalls: JudgeInput[];
+  /** The concatenated text of every written file. */
+  publishedText: string;
+}
+
+/** One row of a published `score-<suite>.json`. */
+export type PublishedCaseRow = BundleScoreFile["results"][number];
+
+/** A prompt provider whose composition always fails, carrying `marker`. */
+function failingPromptProvider(marker: string): PromptProvider {
+  return {
+    getPrompt: (agentName: string) =>
+      new ResultAsync<string, ProvenanceError>(
+        Promise.resolve(
+          err({
+            type: "PromptCompositionError" as const,
+            agentName,
+            message: marker,
+          }),
+        ),
+      ),
+  };
+}
+
+/**
+ * Runs one suite the way `weave eval run` runs it, and returns what it left
+ * on disk.
+ *
+ * The seam is `EvalOrchestrator` + `buildEvalRunner` — what
+ * `packages/cli/src/commands/eval.ts` builds once it has an API key. The
+ * model and the judge are the two external services, so those are stubbed and
+ * nothing else is: fixture loading, signal extraction, scoring, bundle
+ * assembly and artifact writing are all the product's own code.
+ *
+ * The bundle goes to a fresh temporary root, is read back, and is removed, so
+ * a scenario asserts on file contents without owning a directory.
+ */
+export async function runEvalSuite(
+  options: SuiteRunOptions,
+): Promise<SuiteRunObservation> {
+  const model = options.model ?? EVAL_MODEL;
+  const bundleRoot = await mkdtemp(join(tmpdir(), "weave-evals-run-"));
+
+  const modelClient = new StubModelClient();
+  if (options.modelError !== undefined) {
+    modelClient.setDefaultError(options.modelError);
+  } else {
+    const answers = options.answers ?? [""];
+    for (const content of answers) {
+      modelClient.enqueueResponse({ model, content });
+    }
+    modelClient.setDefaultResponse({ model, content: answers.at(-1) ?? "" });
+  }
+
+  const judge = new StubLangChainJudge();
+  if (options.judgeError !== undefined) {
+    judge.setDefaultError(options.judgeError);
+  } else {
+    judge.setDefaultOutput(
+      options.judgeOutput ?? { score: 1, rationale: "judge rationale" },
+    );
+  }
+
+  const promptProvider: PromptProvider =
+    options.promptProviderFails !== undefined
+      ? failingPromptProvider(options.promptProviderFails)
+      : {
+          getPrompt: (agentName: string) =>
+            ResultAsync.fromSafePromise<string, ProvenanceError>(
+              Promise.resolve(options.systemPrompt ?? `You are ${agentName}.`),
+            ),
+        };
+
+  const orchestrator = new EvalOrchestrator({
+    modelClient,
+    scorer: new LangChainAgentEvalsScorer(judge),
+    promptProvider,
+    snapshotProvider: { getSnapshots: () => Promise.resolve([]) },
+    gitShaProvider: { resolveGitSha: () => ok(FIXED_GIT_SHA) },
+    bundleRoot,
+    env: options.env ?? { OPENROUTER_API_KEY: "test-key" },
+    evalsRoot: options.evalsRoot,
+    assembledAt: FIXED_TIMESTAMP,
+    // The preflight resolves Loom's composed delegation targets from the
+    // developer's own config and validates the real fixture corpus against
+    // them. A scenario brings its own corpus, so it is stubbed out here;
+    // `loom-delegation-matrix.test.ts` is what covers the preflight itself.
+    loomDelegationMatrixPreflight: () =>
+      ResultAsync.fromSafePromise(Promise.resolve([])),
+  });
+
+  const request = {
+    agent: options.agent,
+    model,
+    case: options.caseFilter,
+    dryRun: options.dryRun ?? false,
+    rawArtifacts: options.rawArtifacts ?? false,
+  };
+
+  const runResult = await orchestrator.run(request);
+  const summary = runResult.isOk() ? runResult.value : null;
+  const error = runResult.isErr() ? runResult.error : null;
+  const exitCode = await buildEvalRunnerExitCode(runResult);
+
+  const absolute = await filesUnder(bundleRoot);
+  const files = absolute.map((path) => relative(bundleRoot, path));
+  const scorePaths = absolute.filter((path) => /score-[^/]+\.json$/.test(path));
+  const rawPaths = absolute.filter((path) => /\/raw\/case-/.test(path));
+  const scoreFiles: BundleScoreFile[] = [];
+  for (const path of scorePaths) {
+    scoreFiles.push((await Bun.file(path).json()) as BundleScoreFile);
+  }
+  const rawArtifacts: RawCaseResultArtifact[] = [];
+  for (const path of rawPaths) {
+    rawArtifacts.push((await Bun.file(path).json()) as RawCaseResultArtifact);
+  }
+  const publishedText = await allPublishedText(bundleRoot);
+
+  await rm(bundleRoot, { recursive: true, force: true });
+
+  const scoreFile = scoreFiles[0] ?? null;
+  const cases: PublishedCaseRow[] = scoreFile?.results ?? [];
+
+  return {
+    exitCode,
+    error,
+    partialFailures: summary?.partialFailures ?? [],
+    rollups: summary?.agentRollups ?? [],
+    files,
+    scoreFile,
+    cases,
+    firstCase: cases[0] ?? null,
+    rawArtifacts,
+    modelCalls: modelClient.calls,
+    judgeCalls: judge.calls,
+    publishedText,
+  };
+}
+
+/**
+ * The exit code the CLI turns this run into.
+ *
+ * `buildEvalRunner` is the adapter `commands/eval.ts` wraps the orchestrator
+ * in, and its mapping — a partial failure is a non-zero exit, a merely red
+ * suite is not — is the promise a CI job depends on.
+ */
+async function buildEvalRunnerExitCode(
+  runResult: Awaited<ReturnType<EvalOrchestrator["run"]>>,
+): Promise<number> {
+  const orchestrator = {
+    run: () => new ResultAsync(Promise.resolve(runResult)),
+  } as unknown as EvalOrchestrator;
+  const result = await buildEvalRunner(orchestrator)({
+    agent: undefined,
+    model: undefined,
+    case: undefined,
+    dryRun: false,
+    rawArtifacts: false,
+  });
+  return result.isOk() ? result.value : 1;
 }
