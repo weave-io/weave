@@ -99,6 +99,14 @@ async function readIndex(
   return Bun.file(join(root, fileName)).json();
 }
 
+/** Reads and parses the `public-report.json` of a written run. */
+async function readPublicReport(
+  written: BundleWriteResult,
+  // biome-ignore lint/suspicious/noExplicitAny: scenarios read published JSON untyped.
+): Promise<any> {
+  return Bun.file(join(written.bundleDir, "public-report.json")).json();
+}
+
 /** A run whose single case is the default one, assembled on the given day. */
 function onDay(day: string): Partial<WriteBundleOptions> {
   return { assembledAt: `2026-01-${day}T12:00:00.000Z` };
@@ -530,6 +538,176 @@ describe("a whole report is rendered from ordinary results", () => {
           `${pattern} in report: false`,
         );
       }
+    });
+  });
+});
+
+describe("a reader skims the run and wants one line per suite", () => {
+  /** The `explanation` the report carries for the first suite of a run. */
+  async function suiteLine(
+    root: string,
+    overrides: Partial<WriteBundleOptions>,
+    // biome-ignore lint/suspicious/noExplicitAny: scenarios read published JSON untyped.
+  ): Promise<any> {
+    const report = await readPublicReport(
+      await writeRun(root, { ...overrides, writeMarkdown: true }),
+    );
+    return report.suiteSummaries[0].explanation;
+  }
+
+  it("says a suite is green and that every case in it passed", async () => {
+    await withBundleRoot(async (root) => {
+      expect(await suiteLine(root, {})).toEqual({
+        text: "suite green; all 1 case(s) passed",
+        source: "structured_signal",
+      });
+    });
+  });
+
+  it("says how many cases failed once one of them did", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await suiteLine(root, {
+        runnerResults: [
+          runnerResult({
+            caseResults: [
+              caseResult({ caseId: "one", passed: true }),
+              caseResult({ caseId: "two", passed: false }),
+              caseResult({ caseId: "three", passed: false }),
+            ],
+          }),
+        ],
+      });
+
+      expect(line.text).toBe("suite not green; 1/3 passed, 2 failed");
+    });
+  });
+
+  it("counts a suite that ran nothing as green with nothing in it", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await suiteLine(root, {
+        runnerResults: [
+          runnerResult({ suite: "warp-security", caseResults: [] }),
+        ],
+      });
+
+      expect(line.text).toBe("suite green; all 0 case(s) passed");
+    });
+  });
+
+  it("says a dry run put nothing to a model, rather than reporting a green suite", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await suiteLine(root, {
+        dryRun: true,
+        runnerResults: [
+          runnerResult({
+            caseResults: [caseResult({ dryRun: true } as never)],
+          }),
+        ],
+      });
+
+      expect(line.text).toBe("dry-run suite; 1 case(s) in workload");
+    });
+  });
+
+  it("quotes nothing a model or a judge wrote", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await suiteLine(root, {
+        runnerResults: [
+          runnerResult({
+            caseResults: [
+              caseResult({
+                caseId: "leaky",
+                publicExplanation: {
+                  text: "PER-CASE-TEXT",
+                  source: "structured_signal",
+                },
+              } as never),
+            ],
+          }),
+        ],
+      });
+
+      // Positive first: the line exists, so the absence is about what the
+      // aggregate withheld rather than about a report that was never written.
+      expect(line.text).toContain("suite green");
+      expect(line.text).not.toContain("PER-CASE-TEXT");
+    });
+  });
+});
+
+describe("a reader compares how the models did on the same run", () => {
+  /** The `explanation` the comparison carries for one model of a run. */
+  async function modelLine(
+    root: string,
+    overrides: Partial<WriteBundleOptions>,
+    index = 0,
+    // biome-ignore lint/suspicious/noExplicitAny: scenarios read published JSON untyped.
+  ): Promise<any> {
+    const written = await writeRun(root, {
+      ...overrides,
+      generateIndexes: true,
+    });
+    const comparison = await readIndex(
+      root,
+      `model-comparison-${written.runId}.json`,
+    );
+    return comparison.models[index].explanation;
+  }
+
+  const TWO_MODELS = {
+    runnerResults: [
+      runnerResult({
+        caseResults: [
+          caseResult({ caseId: "one", modelId: "alpha/model", passed: false }),
+          caseResult({ caseId: "two", modelId: "zeta/model", passed: true }),
+        ],
+      }),
+    ],
+  };
+
+  it("gives each model its band and its tally, so the two are comparable", async () => {
+    await withBundleRoot(async (root) => {
+      expect(await modelLine(root, TWO_MODELS, 0)).toEqual({
+        text: "model bucket: fail; 0/1 passed, 1 failed",
+        source: "score_bucket_label",
+      });
+    });
+    await withBundleRoot(async (root) => {
+      expect((await modelLine(root, TWO_MODELS, 1)).text).toBe(
+        "model bucket: pass; 1/1 passed, 0 failed",
+      );
+    });
+  });
+
+  it("calls a model partial when it passed some of its cases and not others", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await modelLine(root, {
+        runnerResults: [
+          runnerResult({
+            caseResults: [
+              caseResult({ caseId: "one", passed: true }),
+              caseResult({ caseId: "two", passed: false }),
+            ],
+          }),
+        ],
+      });
+
+      expect(line.text).toBe("model bucket: partial; 1/2 passed, 1 failed");
+    });
+  });
+
+  it("says a dry run put nothing to the model, rather than reporting a failure", async () => {
+    await withBundleRoot(async (root) => {
+      const line = await modelLine(root, {
+        dryRun: true,
+        runnerResults: [
+          runnerResult({
+            caseResults: [caseResult({ dryRun: true } as never)],
+          }),
+        ],
+      });
+
+      expect(line.text).toBe("dry-run model; 1 case(s) in workload");
     });
   });
 });

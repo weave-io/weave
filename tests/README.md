@@ -28,6 +28,13 @@ reader or tryweave.io would receive come out. Its shared harness is
 [`support/evals.ts`](support/evals.ts), and unlike the other buckets it writes
 to a real temporary directory, because the bundle writer owns its own I/O.
 
+`runEvalSuite()` in that harness runs one whole `weave eval run` with only the
+model and the LLM judge stubbed, so what it returns is not just the published
+files: `judgeCalls` records every question the run put to the judge, with the
+rubric text and the projection of the answer it was shown. That is what makes
+[`evals/scoring.scenario.test.ts`](evals/scoring.scenario.test.ts) possible —
+the scorer's *inputs* are observable here, not only its outputs.
+
 ## How a scenario is written
 
 A scenario names a **situation**, and each `it` names **one promise Weave makes
