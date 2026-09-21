@@ -12,10 +12,17 @@
 import { expect } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import {
+  type AvailableConfigSkillResolution,
+  type ConfigSkillResolutionResult,
   type MaterializationPlan,
   type MaterializedAgent,
   materializeAgents,
+  resolveAvailableSkillsForConfig,
+  resolveSkillsForConfig,
+  type SkillInfo,
+  type SkillResolutionError,
 } from "@weaveio/weave-engine";
+import { errAsync, okAsync, type Result, type ResultAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------
 // Given — a .weave file the user wrote
@@ -43,15 +50,114 @@ export function givenConfig(source: string): WeaveConfig {
 // ---------------------------------------------------------------------------
 
 /**
+ * The `.md` files sitting in the user's `prompts/` directory, keyed by the path
+ * they wrote in `prompt_file` / `prompt_append_file`. A path the map does not
+ * hold reads as a missing file, which is what a typo in a config produces.
+ */
+export type PromptFiles = Record<string, string>;
+
+/** What the user's config directory holds besides `config.weave`. */
+export interface ScenarioOptions {
+  promptFiles?: PromptFiles;
+}
+
+/**
+ * The prompt-file reader an adapter supplies to `materializeAgents`, backed by
+ * an in-memory directory instead of a disk, plus the log of what it was asked
+ * to read. Scenarios assert on `reads` where re-reading the same file would
+ * cost a user real I/O.
+ */
+export interface PromptLibrary {
+  /** Every path the engine asked for, in order, including repeats. */
+  reads: string[];
+  read(path: string): ResultAsync<string, { message: string }>;
+}
+
+/** Backs `prompt_file` and `prompt_append_file` with files held in memory. */
+export function promptLibrary(files: PromptFiles = {}): PromptLibrary {
+  const reads: string[] = [];
+  return {
+    reads,
+    read(path: string) {
+      reads.push(path);
+      const content = files[path];
+      if (content === undefined) {
+        return errAsync({
+          message: `ENOENT: no such file or directory, open '${path}'`,
+        });
+      }
+      return okAsync(dedent(content));
+    },
+  };
+}
+
+/**
  * Runs the full public composition pipeline: `.weave` source in, the ordered
  * agent descriptors an adapter would be handed out. This is the outermost seam
  * of the engine — the same call `weave validate` and every adapter make.
  */
 export async function whenMaterialized(
   source: string,
+  options: ScenarioOptions = {},
 ): Promise<MaterializationPlan> {
-  const result = await materializeAgents({ config: givenConfig(source) });
-  return result._unsafeUnwrap();
+  return (
+    await whenMaterializedWith(source, promptLibrary(options.promptFiles))
+  ).plan;
+}
+
+/**
+ * As `whenMaterialized`, but hands back the prompt library too, so a scenario
+ * can also say what the engine asked the user's disk for.
+ */
+export async function whenMaterializedWith(
+  source: string,
+  prompts: PromptLibrary,
+): Promise<{ plan: MaterializationPlan; prompts: PromptLibrary }> {
+  const result = await materializeAgents({
+    config: givenConfig(source),
+    promptFileReader: prompts,
+  });
+  return { plan: result._unsafeUnwrap(), prompts };
+}
+
+// ---------------------------------------------------------------------------
+// When — Weave matches declared skills against what a harness offers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves every agent's `skills [...]` against the skills a harness says it
+ * has. This is the seam an adapter uses once it has discovered its own skills:
+ * Weave never goes looking for them itself, so the available list is an input.
+ */
+export function whenSkillsResolved(
+  source: string,
+  availableSkills: SkillInfo[],
+): Result<ConfigSkillResolutionResult, SkillResolutionError[]> {
+  return resolveSkillsForConfig({
+    config: givenConfig(source),
+    availableSkills,
+  });
+}
+
+/**
+ * As `whenSkillsResolved`, but on the tolerant path an adapter takes when one
+ * unavailable skill should not cost an agent the skills it does have.
+ */
+export function whenSkillsMatched(
+  source: string,
+  availableSkills: SkillInfo[],
+): AvailableConfigSkillResolution {
+  const result = resolveAvailableSkillsForConfig({
+    config: givenConfig(source),
+    availableSkills,
+  });
+  if (result.isErr()) {
+    expect(`skill resolution failed: ${JSON.stringify(result.error)}`).toBe(
+      "skills resolve",
+    );
+    throw new Error("unreachable");
+  }
+  return result.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +167,35 @@ export async function whenMaterialized(
 /** The agent names, in the order an adapter would materialize them. */
 export function agentNames(plan: MaterializationPlan): string[] {
   return plan.agents.map((entry) => entry.agentName);
+}
+
+/** The kinds of failure the plan reported, in the order Weave collected them. */
+export function errorTypes(plan: MaterializationPlan): string[] {
+  return plan.errors.map((error) => error.type);
+}
+
+/**
+ * Why each agent failed to resolve, as `"<agent>: <reason>"` — the two things
+ * a user needs to fix it, and the two a CLI message is built from.
+ */
+export function failures(plan: MaterializationPlan): string[] {
+  return plan.errors.flatMap((error) =>
+    error.type === "DescriptorCompositionFailure"
+      ? [`${error.agentName}: ${error.cause.type}`]
+      : [],
+  );
+}
+
+/** The prompt one agent's model would be given, composed and rendered. */
+export function promptFor(plan: MaterializationPlan, name: string): string {
+  return agent(plan, name).descriptor.composedPrompt;
+}
+
+/** The agents one agent may delegate to, in the order its prompt lists them. */
+export function delegatesTo(plan: MaterializationPlan, name: string): string[] {
+  return agent(plan, name).descriptor.delegationTargets.map(
+    (target) => target.name,
+  );
 }
 
 /** Looks up one agent by name, failing readably when the scenario drifted. */
