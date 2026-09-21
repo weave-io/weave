@@ -186,6 +186,19 @@ export function failures(plan: MaterializationPlan): string[] {
   );
 }
 
+/**
+ * Why Weave refused each prompt it could not render — the distinction a user
+ * reads in the message: an unknown path, an unsafe one, an unsupported tag.
+ */
+export function refusals(plan: MaterializationPlan): string[] {
+  return plan.errors.flatMap((error) =>
+    error.type === "DescriptorCompositionFailure" &&
+    error.cause.type === "PromptTemplateError"
+      ? [error.cause.reason.kind]
+      : [],
+  );
+}
+
 /** The prompt one agent's model would be given, composed and rendered. */
 export function promptFor(plan: MaterializationPlan, name: string): string {
   return agent(plan, name).descriptor.composedPrompt;

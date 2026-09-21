@@ -307,12 +307,12 @@ describe("a user's own text happens to contain braces", () => {
         models ["anthropic/claude-sonnet-4-5"]
         mode subagent
 
-        triggers ["{{hint}}"]
+        triggers ["{{hint}}", "{{> footer}}", "{{=<% %>=}}"]
       }
     `);
 
     expect(promptFor(plan, "router")).toBe(
-      "{{example}} {{{example}}} {{hint}}",
+      "{{example}} {{{example}}} {{hint}}{{> footer}}{{=<% %>=}}",
     );
   });
 });
