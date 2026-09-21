@@ -246,3 +246,121 @@ ${policy}
     expect(permission.bash).toBe("ask");
   });
 });
+
+describe("a user sets the fields OpenCode reads off an agent", () => {
+  it("carries the declared temperature through", async () => {
+    const cfg = await load(`
+      agent precise {
+        prompt "You are precise."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+        temperature 0.42
+      }
+    `);
+
+    expect(registeredAgent(cfg, "precise").temperature).toBe(0.42);
+  });
+
+  it("stops a subagent interrupting the user with a question", async () => {
+    const cfg = await load(`
+      agent helper {
+        prompt "You are a helper."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+      }
+    `);
+
+    // A delegated agent that asks a question stalls the run that delegated to
+    // it, so subagents are denied the question permission outright.
+    const permission = registeredAgent(cfg, "helper").permission as Record<
+      string,
+      string
+    >;
+    expect(permission.question).toBe("deny");
+  });
+
+  it("lets a primary agent ask the user a question", async () => {
+    const cfg = await load(`
+      agent loom {
+        prompt "You are Loom."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode primary
+      }
+    `);
+
+    const permission = registeredAgent(cfg, "loom").permission as Record<
+      string,
+      string
+    >;
+    expect(permission.question).not.toBe("deny");
+  });
+});
+
+describe("a user denies the capabilities OpenCode encodes outside its permission map", () => {
+  it("withholds every reading tool when read is denied", async () => {
+    const cfg = await load(`
+      agent blindfolded {
+        prompt "You are blindfolded."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+
+        tool_policy {
+          read deny
+          write allow
+          execute allow
+        }
+      }
+    `);
+
+    // `read` is not a permission in OpenCode; it is the tools map, and denying
+    // it has to switch off every tool that reads.
+    const tools = registeredAgent(cfg, "blindfolded").tools as Record<
+      string,
+      boolean
+    >;
+    for (const tool of ["read", "glob", "grep", "list"]) {
+      expect(tools[tool]).toBe(false);
+    }
+  });
+
+  it("leaves the reading tools alone when read is allowed", async () => {
+    const cfg = await load(`
+      agent sighted {
+        prompt "You are sighted."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+
+        tool_policy {
+          read allow
+          write allow
+        }
+      }
+    `);
+
+    const tools = registeredAgent(cfg, "sighted").tools as
+      | Record<string, boolean>
+      | undefined;
+    expect(tools?.read).not.toBe(false);
+  });
+
+  it("denies delegation through the permission OpenCode uses for it", async () => {
+    const cfg = await load(`
+      agent solo {
+        prompt "You are solo."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+
+        tool_policy {
+          read allow
+          delegate deny
+        }
+      }
+    `);
+
+    const permission = registeredAgent(cfg, "solo").permission as Record<
+      string,
+      string
+    >;
+    expect(permission.doom_loop).toBe("deny");
+  });
+});

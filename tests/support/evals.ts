@@ -12,7 +12,6 @@
  */
 
 import { expect } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
@@ -135,14 +134,54 @@ export function provenanceManifest(
 }
 
 /** Runs `body` with a fresh temporary bundle root, removed afterwards. */
+/**
+ * A unique temporary directory path.
+ *
+ * `AGENTS.md` forbids the Node `fs` runtime surface, so this does not call
+ * `mkdtemp`. `Bun.write()` creates parent directories on demand, so the
+ * directory comes into being with the first file written into it — the same
+ * pattern the adapters' own tests use.
+ */
+function tempProjectPath(prefix: string): string {
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return join(tmpdir(), `${prefix}${unique}`);
+}
+
+/**
+ * Creates a directory, parents included, through Bun's process API.
+ *
+ * `Bun.write()` makes parents on demand, so this is only needed where a
+ * directory must exist *before* anything writes into it — the bundle writer
+ * expects its root to be there already.
+ */
+async function makeDir(dir: string): Promise<void> {
+  const proc = Bun.spawn(["mkdir", "-p", dir], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+}
+
+/** Removes a directory tree through Bun's process API rather than `node:fs`. */
+async function removeTree(dir: string): Promise<void> {
+  const proc = Bun.spawn(["rm", "-rf", dir], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+}
+
 export async function withBundleRoot<T>(
   body: (root: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "weave-evals-scenario-"));
+  const root = tempProjectPath("weave-evals-scenario-");
+  // The writer expects its root to exist. Create it rather than seeding a file,
+  // so `filesUnder()` sees only what the writer actually wrote.
+  await makeDir(root);
   try {
     return await body(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 }
 
@@ -226,11 +265,12 @@ export async function withEvalFixtures<T>(
   fixtures: FixtureSpec[],
   body: (evalsRoot: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "weave-evals-fixtures-"));
+  const root = tempProjectPath("weave-evals-fixtures-");
   try {
     for (const spec of fixtures) {
-      await mkdir(join(root, "cases", spec.suite), { recursive: true });
-      await mkdir(join(root, "rubrics", spec.suite), { recursive: true });
+      // No mkdir: `Bun.write()` creates the parent directories for each file
+      // below, which is what keeps this off the Node `fs` surface AGENTS.md
+      // forbids.
       await Bun.write(
         join(root, "cases", spec.suite, `${spec.id}.json`),
         JSON.stringify(
@@ -268,7 +308,7 @@ export async function withEvalFixtures<T>(
     }
     return await body(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 }
 
@@ -378,7 +418,8 @@ export async function runEvalSuite(
   options: SuiteRunOptions,
 ): Promise<SuiteRunObservation> {
   const model = options.model ?? EVAL_MODEL;
-  const bundleRoot = await mkdtemp(join(tmpdir(), "weave-evals-run-"));
+  const bundleRoot = tempProjectPath("weave-evals-run-");
+  await makeDir(bundleRoot);
 
   const modelClient = new StubModelClient();
   if (options.modelError !== undefined) {
@@ -455,7 +496,7 @@ export async function runEvalSuite(
   }
   const publishedText = await allPublishedText(bundleRoot);
 
-  await rm(bundleRoot, { recursive: true, force: true });
+  await removeTree(bundleRoot);
 
   const scoreFile = scoreFiles[0] ?? null;
   const cases: PublishedCaseRow[] = scoreFile?.results ?? [];

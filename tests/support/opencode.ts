@@ -16,7 +16,6 @@
  */
 
 import { expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
@@ -82,16 +81,38 @@ export function pluginInput(directory: string, client: unknown) {
  * Runs `body` with a temporary project whose `.weave/config.weave` holds
  * `config`. The directory is removed afterwards.
  */
+/**
+ * A unique temporary directory path.
+ *
+ * `AGENTS.md` forbids the Node `fs` runtime surface, so this does not call
+ * `mkdtemp`. `Bun.write()` creates parent directories on demand, so the
+ * directory comes into being with the first file written into it — the same
+ * pattern the adapters' own tests use.
+ */
+function tempProjectPath(prefix: string): string {
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return join(tmpdir(), `${prefix}${unique}`);
+}
+
+/** Removes a directory tree through Bun's process API rather than `node:fs`. */
+async function removeTree(dir: string): Promise<void> {
+  const proc = Bun.spawn(["rm", "-rf", dir], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+}
+
 export async function withWeaveProject<T>(
   config: string,
   body: (root: string) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(join(tmpdir(), "weave-opencode-scenario-"));
+  const root = tempProjectPath("weave-opencode-scenario-");
   await Bun.write(join(root, ".weave", "config.weave"), config);
   try {
     return await body(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTree(root);
   }
 }
 
