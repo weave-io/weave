@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 200 lib files | 25 env vars | 7 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~18,300 tokens. Without it, AI exploration would cost ~67,900 tokens. **Saves ~49,600 tokens per conversation.**
-> **Last scanned:** 2026-09-21 11:40 — re-run after significant changes
+> **Last scanned:** 2026-09-21 12:16 — re-run after significant changes
 
 ---
 
@@ -997,8 +997,8 @@
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **9** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **9** files
 - `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -1032,7 +1032,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 192 test files found
+> 193 test files found
 
 ---
 

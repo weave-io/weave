@@ -282,7 +282,7 @@ Every finding maps to a step; steps are ordered by value per unit of risk.
 | 3 | Make the 23 ambient-state tests hermetic | 2 | Suite becomes trustworthy locally | **done** — #185, #186 |
 | 8 | Thread an injected filesystem and environment through `run()` to every command | 10 | Prerequisite for the CLI bucket; `compose` gained a seam, `prompt` and `runtime` gained fs-backed config discovery | **done** |
 | 4 | Promote existing end-to-end coverage into `tests/`, starting with `claude-code/integration.test.ts` and the opencode/opencode2 translation tests | 1, 8 | Real scenarios, refactor-proof | open |
-| 9 | Populate the buckets | 10 | DSL: `tool_policy`, prompt composition. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness; both OpenCode adapters, which register with a running harness rather than writing files, now have one each. Still open: workflows and config merge | **partly done** |
+| 9 | Populate the buckets | 10 | DSL: the engine's composition cluster is migrated — prompt sources, the template language, delegation, categories, `tool_policy` and the materialization plan. CLI: every command. Adapters: Copilot alongside Claude Code, on a shared harness; both OpenCode adapters, which register with a running harness rather than writing files, now have one each. Still open: workflows and config merge | **partly done** |
 | 6 | Consolidate duplicated factories | 6 | −164 lines. Only genuine duplicates: `makeDryRunSummary` (5 identical copies in one directory) and three same-package `makeDescriptor` pairs. `makeEvalRubric`'s 8 copies are 8 *different* rubrics, and the adapters' `makeDescriptor` variants differ per harness — neither is duplication | **done** |
 | 10 | Replace ad-hoc inline DSL with named scenario fixtures | 7 | — | **dropped** — see the withdrawal in finding 7 |
 | 11 | Resolve or delete the 2 genuine `it.skip` cases | 9 | Both deleted: neither asserted anything (`expect(true).toBe(true)` and an empty body), and both had their reasoning recorded where it belongs — beside the allowlist assertions that do the guarding, and in the `adapter.ts` MCP TODO | **done** |
@@ -956,6 +956,181 @@ describing an architecture the adapter no longer has:
 - **Turning off Tapestry leaves both commands pointing at an agent OpenCode does
   not have.** `disable agents ["tapestry"]` removes the agent and registers
   `start-work` and `weave:start` with `agent: "tapestry"` regardless.
+
+### The engine's composition cluster
+
+The DSL bucket's black box is `.weave` source in, resolved agent descriptors
+or a typed error out, through `parseConfig` → `materializeAgents`. Nine engine
+test files sat in front of that seam. Counted in **source cases**, because both
+sides use tables:
+
+| File | Before | After |
+| --- | --- | --- |
+| `compose.test.ts` | 107 | 43 |
+| `template-renderer.test.ts` | 65 | 13 |
+| `template-context.test.ts` | 53 | 1 |
+| `skill-resolution.test.ts` | 53 | 47 |
+| `tool-policy.test.ts` | 48 | 7 |
+| `materialization-orchestration.test.ts` | 48 | 0 — deleted |
+| `materialization.test.ts` | 45 | 0 — deleted |
+| `category-shuttle-routing.test.ts` | 44 | 0 — deleted |
+| `descriptors.test.ts` | 29 | 0 — deleted |
+| **Unit total (source cases)** | **492** | **111** |
+| Scenarios in `tests/dsl/` (source cases) | 21 | 114 |
+| Scenarios in `tests/dsl/` (cases at runtime) | 21 | 151 |
+
+The bucket gained a seam it did not have: `materializeAgents` takes the
+`promptFileReader` an adapter supplies, so `promptLibrary()` in
+[`tests/support/scenario.ts`](../tests/support/scenario.ts) describes the
+user's `prompts/` directory in memory and `prompt_file` / `prompt_append_file`
+become black-box testable. `whenMaterializedTwice()` resolves one parsed config
+twice, which is what an adapter does and what makes descriptor aliasing
+observable.
+
+What stayed, and why:
+
+| Kept | Why |
+| --- | --- |
+| `composeWorkflowStepPrompt` and `detectAppendCollisions` in `compose.test.ts` | Exported with **no production caller** — see below |
+| The renderer's function-value ban | The context builder projects strings, arrays and booleans; no config can put a function there |
+| The renderer's `allowedPaths` parameterisation and `extractTemplatePaths` | Composition always passes the one constant; `extractTemplatePaths` has no caller |
+| The context builder's defensive array copy | The builder is handed arrays its caller still owns |
+| The **unmapped** half of `resolveToolDecisions` | `CLAUDE_CODE_TOOL_IDS` and `COPILOT_TOOL_IDS` are derived from their own classification lists, so no tool either adapter resolves can come back unmapped |
+| `skill-resolution.test.ts`, near enough whole | Almost all of it has no live caller — see below |
+
+Around eighty mutations were run against `tests/dsl` alone, with every deleted
+unit case already gone. All but five are caught; the five that survive after
+the scenarios were sharpened are recorded below the table, because each says
+something.
+
+| Mutation | Result |
+| --- | --- |
+| Unknown template paths are accepted | 16 red |
+| A template error renders the source verbatim | 3 red |
+| The append is joined before the prompt | 3 red |
+| `prompt_append` is dropped entirely | 4 red |
+| An unreadable prompt file composes as empty text | 2 red |
+| Prompt files are re-read per agent | 1 red |
+| Every template error is blamed on the primary prompt | 2 red |
+| Partials / delimiter changes accepted | 2 / 1 red |
+| Escaped literals are not restored | 2 red |
+| Sections and their children are not validated | 1 / 1 red |
+| The context exposes `agent.models` | 2 red |
+| Skills, `isCategory`, the category block, a policy value, a target description, the target list | 1–4 red each |
+| Primary agents offered as delegation targets | 7 red |
+| An agent offered itself | 3 red |
+| `delegate: ask` clears the table like `deny` | 1 red |
+| `delegation_exclude` ignored | 1 red |
+| The shared-shuttle exclusion dropped | 2 red |
+| No target marked as a category | 1 red |
+| A target's triggers dropped | 3 red |
+| No category shuttle generated | 26 red |
+| Category models / temperature / variant ignored | 2 / 1 / 1 red |
+| The base shuttle's `fast` or skills not inherited | 1 / 2 red |
+| A category shuttle materialized in primary mode | 1 red |
+| The category append replaces the base's | 1 red |
+| A category's `prompt_append_file` ignored | 1 red |
+| Category triggers dropped | 2 red |
+| The category name on the descriptor is the agent name | 3 red |
+| A collision with an explicit agent not reported | 2 red |
+| Disabling the base shuttle stops suppressing its categories | 1 red |
+| An undeclared capability defaults to `allow` | 18 red |
+| A declared `read` ignored; `network` dropped | 6 / 19 red |
+| The raw policy dropped from the descriptor | 3 red |
+| A category's policy replaces rather than merges | 1 red |
+| Generated agents listed before declared ones | 8 red |
+| Every agent reported as `explicit` | 1 red |
+| A review variant carries no `reviewMeta` | 1 red |
+| Composition failures dropped; one failure aborts the plan | 43 / 44 red |
+| A category-shuttle or review-variant conflict swallowed | 2 / 1 red |
+| No review variants generated | 11 red |
+| A variant keeps the full model list / is not read-only | 1 / 1 red |
+| A model id keeps its slashes in the variant name | 10 red |
+| `display_name`, `variant`, temperature default, skills dropped | 1 / 3 / 1 / 4 red |
+| *(the disabled-agent filter in `buildDelegationTargets`)* | **0 red** — `materializeAgents` filters first |
+| *(the `categoryMeta?.description ??` preference)* | **0 red** — the generated config already carries the category description |
+| *(the disabled gate in `generateReviewVariants`)* | **0 red** — `materializeAgents` filters too |
+| *(both gates of any of those three pairs, together)* | 1–2 red each |
+| *(descriptor array copies, on a single materialization)* | **0 red** — until a scenario resolves the same config twice |
+| *(the prototype-traversal guard, asserting only that composition failed)* | **0 red** — until the scenario names the refusal |
+
+The first three are defence in depth: breaking either gate of a pair alone
+cannot change an outcome, and breaking both together does turn a scenario red.
+The last two were **false claims of unobservability**, and both are now
+scenarios:
+
+- **Descriptor arrays shared with the user's config are observable.** An
+  adapter resolves the same config object more than once. `whenMaterializedTwice`
+  does the same, and an adapter pushing to `descriptor.models` then changes
+  what the second pass returns.
+- **A prototype-traversal path deserves its own refusal.** Asserting only "it
+  failed" stayed green with the guard removed, because the path is not in the
+  allowlist either. The scenarios now assert `UnsafePath` versus `UnknownPath`
+  versus `UnsupportedTag` — which refusal the user is shown.
+
+### What the composition migration turned up
+
+- **Descriptions and triggers reach the model HTML-escaped.** `{{...}}` is
+  Mustache's escaping form, and the shipped `loom.md` uses it for
+  `{{description}}` and for `{{.}}` inside `{{#triggers}}`. Weave's own builtin
+  trigger *"Use when answering 'where is X' or 'how does Y work' questions"*
+  renders in Loom's composed prompt today as `&#39;where is X&#39;`. The same
+  applies to `&`, `<` and `>` in any description. `loom.md` already writes
+  `{{{model}}}` for review-routing model ids, which is the same bite found
+  once before. Pinned as observed in
+  [`tests/dsl/prompt-templates.scenario.test.ts`](../tests/dsl/prompt-templates.scenario.test.ts);
+  not fixed here.
+- **A category's `prompt_append_file` is silently dropped when the base shuttle
+  declares an inline `prompt_append`.** The two fields are mutually exclusive
+  in one block, but inheritance produces a config holding both, and
+  `loadAppendSourceFromInput()` prefers the inline one. The user's file is
+  never read and `plan.errors` stays empty. Pinned in
+  [`tests/dsl/category-routing.scenario.test.ts`](../tests/dsl/category-routing.scenario.test.ts).
+- **`\{{` needs a different number of backslashes per string form.** The lexer
+  unescapes a double-quoted string and leaves a triple-quoted one alone, so a
+  literal tag needs `\\{{` in the first and `\{{` in the second. Writing the
+  wrong one interpolates the value with no error. Both forms are pinned, and
+  `routing { delegation_exclude [...] }` is missing from the agent-field table
+  in [`docs/dsl-reference.md`](dsl-reference.md) although Spec 18 documents it.
+- **`skills [...]` reaches only one adapter.** The sole production consumer of
+  engine skill resolution is `resolveAvailableSkillsForAgent()`, called from
+  `packages/adapters/opencode2/src/v2/catalog.ts`.
+  `resolveSkillsForAgent()`, `resolveSkillsForConfig()` and
+  `resolveAvailableSkillsForConfig()` have no caller at all, and
+  `HarnessAdapter.loadAvailableSkills()` is implemented by four adapters and
+  invoked by none — nothing in the Claude Code or Copilot bundles carries a
+  skill. `disable skills [...]` therefore has no effect outside OpenCode 2.
+  Kept and flagged rather than deleted, like the sanitizer surfaces above.
+- **`composeWorkflowStepPrompt()` and `detectAppendCollisions()` have no
+  production caller.** Workflow execution renders its step prompt through
+  `renderTemplate()` in `execution-lifecycle/prompt-context.ts`, so the Spec 22
+  append-precedence rules — step-local wins, workflow-scope fallback, the
+  reported `appendScope` — are not exercised by any run. Together they are all
+  43 remaining cases in `compose.test.ts`.
+- **A test file can describe a lifecycle no product code performs.**
+  `materialization-orchestration.test.ts` defined `orchestrate()` — `init()` →
+  `loadAvailableSkills()` → `materializeAgents()` → `spawnSubagent()` — and
+  then asserted that order. The real sequence lives in
+  `packages/cli/src/commands/compose.ts`, which never calls
+  `loadAvailableSkills()`. Measured: with `materializeAgents()` mutated to
+  resolve nothing at all, **22 of its 48 cases stayed green**, including "calls
+  init exactly once before spawning any agent". The same mutation turns 262
+  cases red in `tests/`. This is finding 11 without the subclassing: the file
+  drove a second implementation of the thing it named.
+- **Four of its cases were vacuous in the documented way.** The "sanitized
+  descriptor coverage" block puts API keys and adapter file paths in skill
+  *metadata* and asserts no spawned descriptor contains them — but
+  `AgentDescriptor.skills` is a list of names, so the metadata had no path to
+  the output and nothing needed stripping.
+
+**What is left in this cluster.** The migration itself is finished: every
+remaining unit case is one of the kept categories above. What is outstanding is
+product work, not test work — the two defects pinned as observed (HTML escaping
+of descriptions and triggers, the dropped category `prompt_append_file`), and
+the decision of what to do about `composeWorkflowStepPrompt()`,
+`detectAppendCollisions()`, the config-wide skill resolvers and
+`loadAvailableSkills()`, which together account for 90 of the 111 remaining
+cases and have no caller between them.
 
 ### A scenario can pass without testing anything
 
