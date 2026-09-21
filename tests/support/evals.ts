@@ -20,6 +20,7 @@ import {
   type JudgeInput,
   type JudgeOutput,
   LangChainAgentEvalsScorer,
+  type LangChainJudge,
   StubLangChainJudge,
 } from "../../packages/cli/src/evals/langchain-agent-evals.js";
 import type {
@@ -251,6 +252,25 @@ export interface FixtureSpec {
   allowedModels?: string[];
   /** The rubric's `scoring.required`. Defaults to `true`. */
   required?: boolean;
+  /**
+   * The rubric's `scoring.outcome_weight` — how much the case's primary
+   * structural dimension counts toward the weighted total. Defaults to `0.7`.
+   */
+  outcomeWeight?: number;
+  /**
+   * The rubric's `scoring.per_expectation_weight` — how much rationale
+   * quality counts toward the weighted total. Defaults to `0.3`.
+   */
+  perExpectationWeight?: number;
+  /**
+   * The `case_id` written *inside* the rubric file, when it should differ
+   * from the file name. The scorer looks a rubric up by this field, so a
+   * value that does not match `id` is how a scenario reaches the
+   * no-rubric-for-this-case path with the file still present and valid.
+   */
+  rubricCaseId?: string;
+  /** Writes the case fixture with no rubric file beside it. */
+  withoutRubric?: boolean;
 }
 
 /**
@@ -289,15 +309,18 @@ export async function withEvalFixtures<T>(
           2,
         ),
       );
+      if (spec.withoutRubric === true) {
+        continue;
+      }
       await Bun.write(
         join(root, "rubrics", spec.suite, `${spec.id}.json`),
         JSON.stringify(
           {
-            case_id: spec.id,
+            case_id: spec.rubricCaseId ?? spec.id,
             suite: spec.suite,
             scoring: {
-              outcome_weight: 0.7,
-              per_expectation_weight: 0.3,
+              outcome_weight: spec.outcomeWeight ?? 0.7,
+              per_expectation_weight: spec.perExpectationWeight ?? 0.3,
               required: spec.required ?? true,
             },
           },
@@ -324,8 +347,24 @@ export interface SuiteRunOptions {
   modelError?: ModelClientError;
   /** The judge's verdict on every dimension it is asked to score. */
   judgeOutput?: JudgeOutput;
+  /**
+   * The judge's verdict per dimension, for a scenario that needs the primary
+   * structural dimension and rationale quality scored differently.
+   *
+   * A dimension with no entry falls back to `judgeOutput`. Dimensions the
+   * scorer decides itself — routing on every case, execution on a `judgment`
+   * case — never reach the judge, so an entry for one of those is ignored.
+   */
+  judgeOutputs?: Partial<Record<ScoringDimension, JudgeOutput>>;
   /** Returned by the judge instead of a verdict. */
   judgeError?: ScoringError;
+  /**
+   * Returned by the judge instead of a verdict, for the named dimensions
+   * only. Every other dimension is answered from `judgeOutputs` or
+   * `judgeOutput`, so a scenario can fail one of the two questions a case
+   * puts to the judge and leave the other answered.
+   */
+  judgeErrors?: Partial<Record<ScoringDimension, ScoringError>>;
   /** The composed system prompt the runner sends. */
   systemPrompt?: string;
   /** When set, prompt composition fails and no model is ever called. */
@@ -385,6 +424,62 @@ export interface SuiteRunObservation {
 /** One row of a published `score-<suite>.json`. */
 export type PublishedCaseRow = BundleScoreFile["results"][number];
 
+/**
+ * A judge that answers differently per dimension.
+ *
+ * `StubLangChainJudge` answers in call order, which couples a scenario to the
+ * order the scorer happens to fire its dimensions in. Keying on the dimension
+ * says what the scenario means: "the judge thought the chain was half right
+ * and the prose was fine". Like `StubLangChainJudge` it stands in for an
+ * external service — the LLM — and never for the scorer under test.
+ */
+class PerDimensionJudge implements LangChainJudge {
+  readonly calls: JudgeInput[] = [];
+
+  constructor(
+    private readonly outputs: Partial<Record<ScoringDimension, JudgeOutput>>,
+    private readonly errors: Partial<Record<ScoringDimension, ScoringError>>,
+    private readonly fallback: JudgeOutput,
+  ) {}
+
+  evaluate(input: JudgeInput): ResultAsync<JudgeOutput, ScoringError> {
+    this.calls.push(input);
+    const failure = this.errors[input.dimension];
+    if (failure !== undefined) {
+      return new ResultAsync(
+        Promise.resolve(err<JudgeOutput, ScoringError>(failure)),
+      );
+    }
+    return ResultAsync.fromSafePromise(
+      Promise.resolve(this.outputs[input.dimension] ?? this.fallback),
+    );
+  }
+}
+
+/** The judge a run puts behind the real scorer. */
+function buildJudge(
+  options: SuiteRunOptions,
+): LangChainJudge & { readonly calls: JudgeInput[] } {
+  const fallback = options.judgeOutput ?? {
+    score: 1,
+    rationale: "judge rationale",
+  };
+  if (options.judgeOutputs !== undefined || options.judgeErrors !== undefined) {
+    return new PerDimensionJudge(
+      options.judgeOutputs ?? {},
+      options.judgeErrors ?? {},
+      fallback,
+    );
+  }
+  const judge = new StubLangChainJudge();
+  if (options.judgeError !== undefined) {
+    judge.setDefaultError(options.judgeError);
+    return judge;
+  }
+  judge.setDefaultOutput(fallback);
+  return judge;
+}
+
 /** A prompt provider whose composition always fails, carrying `marker`. */
 function failingPromptProvider(marker: string): PromptProvider {
   return {
@@ -432,14 +527,7 @@ export async function runEvalSuite(
     modelClient.setDefaultResponse({ model, content: answers.at(-1) ?? "" });
   }
 
-  const judge = new StubLangChainJudge();
-  if (options.judgeError !== undefined) {
-    judge.setDefaultError(options.judgeError);
-  } else {
-    judge.setDefaultOutput(
-      options.judgeOutput ?? { score: 1, rationale: "judge rationale" },
-    );
-  }
+  const judge = buildJudge(options);
 
   const promptProvider: PromptProvider =
     options.promptProviderFails !== undefined
