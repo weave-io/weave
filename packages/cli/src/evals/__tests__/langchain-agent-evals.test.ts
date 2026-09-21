@@ -1,32 +1,80 @@
 /**
- * Tests for `langchain-agent-evals.ts`.
+ * Unit tests for `langchain-agent-evals.ts` — the parts a user cannot observe.
  *
- * Verifies:
- *   - `LangChainAgentEvalsScorer` produces a normalized `NormalizedScoreRecord`
- *     for every case kind (agent_routing, delegation_chain, task_completion).
- *   - `LangChainAgentEvalsScorer` marks non-applicable dimensions with
- *     `applicable: false` and a neutral score.
- *   - `LangChainAgentEvalsScorer` returns `RubricNotFound` when no rubric
- *     matches the case ID.
- *   - `LangChainAgentEvalsScorer` returns `RubricCaseMismatch` when the
- *     rubric and case IDs disagree.
- *   - `LangChainAgentEvalsScorer` propagates `ScorerAdapterError` from the
- *     judge back to the caller.
- *   - Score clamping: out-of-range judge outputs are clamped to [0, 1].
- *   - Weighted total computation uses rubric outcome_weight and
- *     per_expectation_weight correctly.
- *   - Pass/fail gate: required cases require a near-perfect primary dimension.
- *   - `StubLangChainJudge` records calls, returns FIFO results, falls back to
- *     default, and returns typed `NotConfigured` when unconfigured.
- *   - `StubAgentEvalsScorer` records calls and returns FIFO results, default,
- *     or typed `NotConfigured`.
- *   - No real LangChain, no network, no file I/O in any test.
+ * What the scorer promises a maintainer is asserted end to end in
+ * [`tests/evals/scoring.scenario.test.ts`](../../../../../tests/evals/scoring.scenario.test.ts),
+ * which drives a real `weave eval run` and reads the `score-<suite>.json` back:
+ * which dimensions a case kind is graded on, the neutral 1.0 for the ones it is
+ * not, the clamping of an out-of-range judge verdict, the rubric's weights, the
+ * pass gate and its near-perfect primary rule, the missing-rubric failure, the
+ * projection the judge is shown instead of the answer, and the explanation
+ * published beside the case. The aggregate explanations are asserted against
+ * `public-report.json` and the model-comparison index in
+ * [`tests/evals/reporting.scenario.test.ts`](../../../../../tests/evals/reporting.scenario.test.ts).
+ * Ninety-three cases that asserted those through direct calls were removed;
+ * every scenario replacing one was watched fail against a mutated scorer first
+ * — the table is in `docs/testing-strategy.md`.
  *
- * Test isolation:
- *   - All judge calls go through `StubLangChainJudge` — no LangChain imports.
- *   - All scorer-level tests use either `StubLangChainJudge` or
- *     `StubAgentEvalsScorer` — no real scoring models.
- *   - Fixtures are constructed inline — no file reads.
+ * What is left here is deliberately internal. Each survivor, and why a run
+ * cannot reach it:
+ *
+ *   - **`buildJudgmentExecutionDimension()` outside `task_completion`** — the
+ *     scorer calls it only after `scoreExecution()` has already established
+ *     that the case is a `task_completion` one, so its guard clause is
+ *     unreachable from any run. It is exported, so the guard is worth pinning
+ *     where a future caller would hit it.
+ *   - **`RubricCaseMismatch`** — a runner builds its `ModelRunOutput` with
+ *     `evalCase.id` as the `caseId`, and the scorer looks the rubric up by
+ *     `run.caseId` and then compares it to `evalCase.id`. The two are the same
+ *     string by construction, so the branch cannot fire in production. The
+ *     *reachable* half of rubric lookup — no rubric at all — is a scenario.
+ *   - **A non-applicable dimension's `rationale`** — `buildDimensionRationales()`
+ *     in each runner copies a reason only for the dimensions that counted, so
+ *     the scorer's "Not applicable: …" text reaches no file, not even a
+ *     `--raw-artifacts` one. The rationale of an *applicable* dimension is a
+ *     scenario.
+ *   - **An injected `scoredAt`** — the `AgentEvalsScorer` interface takes one,
+ *     and no runner passes it; every production call takes the `new Date()`
+ *     default. The default is a scenario; the parameter is only exercised here.
+ *   - **`RATIONALE_PROJECTION_MAX_CHARS` truncation** — the projection is built
+ *     from agent and artifact identifiers, and a case's `allowed_agents` is
+ *     checked against `KNOWN_AGENTS` at load, so no fixture can push it past
+ *     2000 characters. The cap guards a future unbounded list.
+ *   - **The dry-run and `skip` branches of `buildCaseExplanation()` /
+ *     `buildPublicExplanation()`** — every production caller passes
+ *     `dryRun: false`; a dry run takes `buildDryRunResult()`, which builds no
+ *     explanation at all. The same goes for `buildModelExplanation()`'s `skip`
+ *     bucket.
+ *   - **`source: "score_bucket_label"` on a case** — `rationaleQuality` is
+ *     applicable on every case the scorer produces, so `applicableDimensions`
+ *     is never empty and the branch is dead. The `structured_signal` branch is
+ *     a scenario.
+ *   - **The three-dimension cap and the `EXPLANATION_MAX_CHARS` truncations** —
+ *     at most two dimensions are ever applicable, and the text these builders
+ *     produce is a fixed template over integers and enum labels, so neither cap
+ *     can be reached with real inputs. They are defence in depth, and these are
+ *     the only tests that exercise one.
+ *   - **`OutcomeKind` values no fixture can carry** — `tool_call` is rejected
+ *     by the text-only fixture contract (`UnsupportedTextEvalAssertion`) and
+ *     `harness_trajectory` needs a live harness, so the label mapping for them,
+ *     and the behaviour on a kind cast in from outside the union, is only
+ *     reachable by calling the function directly.
+ *   - **`buildModelExplanation()` with zero cases** — the comparison index is
+ *     built by iterating models that have results, so a model row always has at
+ *     least one case.
+ *   - **`StubLangChainJudge` and `StubAgentEvalsScorer`** — test
+ *     infrastructure that happens to ship in `src`. Their FIFO ordering,
+ *     default fallback, `NotConfigured` call index and `.calls` recording are a
+ *     contract for test authors, not for users, and no scenario can assert
+ *     them. `StubLangChainJudge` backs `tests/support/evals.ts`, so a
+ *     regression in it would misreport every eval scenario.
+ *   - **`RealLangChainJudge`** — the adapter boundary to `openevals/llm`. It is
+ *     the production judge, which scenarios replace by definition, so its
+ *     dynamic-import failure path, its per-rubric evaluator cache and the exact
+ *     `{reference_outputs}` placeholder names it must use are only testable
+ *     with an injected module loader.
+ *
+ * Test isolation: no real LangChain, no network, no file I/O; fixtures inline.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -38,7 +86,6 @@ import {
   type JudgeInput,
   LangChainAgentEvalsScorer,
   type LangChainJudge,
-  PASS_THRESHOLD,
   RATIONALE_PROJECTION_MAX_CHARS,
   RealLangChainJudge,
   StubAgentEvalsScorer,
@@ -50,7 +97,6 @@ import type {
   EvalRubric,
   ModelRunOutput,
   NormalizedScoreRecord,
-  ScoringError,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -86,43 +132,6 @@ function makeAgentRoutingCase(overrides: Partial<EvalCase> = {}): EvalCase {
       kind: "agent_routing",
       target_agent: "shuttle",
       via: [],
-    },
-    accepted_alternates: [],
-    transcript_expectations: [],
-    tags: [],
-    ...overrides,
-  };
-}
-
-function makeDelegationCase(overrides: Partial<EvalCase> = {}): EvalCase {
-  return {
-    id: "test-case-02",
-    description: "Delegate from tapestry to shuttle",
-    suite: "tapestry-execution",
-    allowed_agents: ["tapestry", "shuttle"],
-    allowed_models: ["anthropic/claude-sonnet-4.5"],
-    expected_outcome: {
-      kind: "delegation_chain",
-      chain: ["tapestry", "shuttle"],
-    },
-    accepted_alternates: [],
-    transcript_expectations: [],
-    tags: [],
-    ...overrides,
-  };
-}
-
-function makeTaskCompletionCase(overrides: Partial<EvalCase> = {}): EvalCase {
-  return {
-    id: "test-case-03",
-    description: "Complete a coding task",
-    suite: "tapestry-execution",
-    allowed_agents: ["tapestry", "shuttle"],
-    allowed_models: ["anthropic/claude-sonnet-4.5"],
-    expected_outcome: {
-      kind: "task_completion",
-      description: "Implement the feature",
-      required_artifacts: ["plan_path"],
     },
     accepted_alternates: [],
     transcript_expectations: [],
@@ -191,84 +200,6 @@ function makePerfectJudge(): StubLangChainJudge {
   return judge;
 }
 
-// ---------------------------------------------------------------------------
-// Judgment cases: deterministic executionCompleteness
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — judgment cases", () => {
-  const judgmentCase = makeTaskCompletionCase({
-    id: "judgment-case",
-    tags: ["judgment"],
-    expected_outcome: {
-      kind: "task_completion",
-      description: "Reject with a traced blocker.",
-      required_artifacts: ["review_verdict_reject", "review_blocker_traced"],
-    },
-  });
-  const rubrics = [makeRubric("judgment-case", "tapestry-execution")];
-
-  it("scores execution from the detected signals without asking the judge", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const record = await scorer.score(
-      makeRun({
-        caseId: "judgment-case",
-        producedArtifacts: ["review_verdict_reject", "review_blocker_traced"],
-      }),
-      judgmentCase,
-      rubrics,
-      SCORED_AT,
-    );
-
-    expect(record._unsafeUnwrap().dimensions.executionCompleteness.score).toBe(
-      1,
-    );
-    expect(record._unsafeUnwrap().passed).toBe(true);
-    expect(judge.calls.map((call) => call.dimension)).toEqual([
-      "rationaleQuality",
-    ]);
-  });
-
-  it("does not accept a near-synonym for a missing signal", async () => {
-    const scorer = new LangChainAgentEvalsScorer(makePerfectJudge());
-
-    const record = (
-      await scorer.score(
-        makeRun({
-          caseId: "judgment-case",
-          producedArtifacts: ["review_verdict_reject", "review_blockers_cited"],
-        }),
-        judgmentCase,
-        rubrics,
-        SCORED_AT,
-      )
-    )._unsafeUnwrap();
-
-    expect(record.dimensions.executionCompleteness.score).toBe(0.5);
-    expect(record.dimensions.executionCompleteness.rationale).toContain(
-      "review_blocker_traced",
-    );
-    expect(record.passed).toBe(false);
-  });
-
-  it("leaves non-judgment task_completion cases on the LLM judge", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    expect(judge.calls.map((call) => call.dimension)).toContain(
-      "executionCompleteness",
-    );
-  });
-});
-
 describe("buildJudgmentExecutionDimension", () => {
   it("is not applicable outside task_completion", () => {
     const dimension = buildJudgmentExecutionDimension(
@@ -284,36 +215,6 @@ describe("buildJudgmentExecutionDimension", () => {
 // ---------------------------------------------------------------------------
 
 describe("LangChainAgentEvalsScorer — rubric lookup errors", () => {
-  it("returns RubricNotFound when no rubric matches the case ID", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "unknown-case" });
-    const evalCase = makeAgentRoutingCase({ id: "unknown-case" });
-    const rubrics: EvalRubric[] = [makeRubric("different-case")];
-
-    const result = await scorer.score(run, evalCase, rubrics, SCORED_AT);
-
-    expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr();
-    expect(error.type).toBe("RubricNotFound");
-    if (error.type === "RubricNotFound") {
-      expect(error.caseId).toBe("unknown-case");
-      expect(error.message).toContain("unknown-case");
-    }
-  });
-
-  it("returns RubricNotFound when rubrics array is empty", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun();
-    const evalCase = makeAgentRoutingCase();
-
-    const result = await scorer.score(run, evalCase, [], SCORED_AT);
-
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("RubricNotFound");
-  });
-
   it("returns RubricCaseMismatch when rubric case_id differs from run caseId", async () => {
     const judge = makePerfectJudge();
     const scorer = new LangChainAgentEvalsScorer(judge);
@@ -338,707 +239,10 @@ describe("LangChainAgentEvalsScorer — rubric lookup errors", () => {
 });
 
 // ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — agent_routing case
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — agent_routing case", () => {
-  it("returns ok(NormalizedScoreRecord) for a successful routing score", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun();
-    const evalCase = makeAgentRoutingCase();
-    const rubrics = [makeRubric()];
-
-    const result = await scorer.score(run, evalCase, rubrics, SCORED_AT);
-
-    expect(result.isOk()).toBe(true);
-    const record = result._unsafeUnwrap();
-    expect(record.caseId).toBe("test-case-01");
-    expect(record.modelId).toBe("anthropic/claude-sonnet-4.5");
-    expect(record.suite).toBe("loom-routing");
-    expect(record.scoredAt).toBe(SCORED_AT);
-  });
-
-  it("routingCorrectness dimension is applicable for agent_routing cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.applicable).toBe(true);
-  });
-
-  it("delegationCorrectness is NOT applicable for agent_routing cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.delegationCorrectness.applicable).toBe(false);
-  });
-
-  it("executionCompleteness is NOT applicable for agent_routing cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.executionCompleteness.applicable).toBe(false);
-  });
-
-  it("rationaleQuality is always applicable", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.rationaleQuality.applicable).toBe(true);
-  });
-
-  it("judge is called once for agent_routing rationale only", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.8, rationale: "Reasonable." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    expect(judge.calls).toHaveLength(1);
-    expect(judge.calls[0]?.dimension).toBe("rationaleQuality");
-  });
-
-  it("routing correctness is deterministic from accepted routed agents", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 1.0, rationale: "Correct." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ routedAgents: ["thread", "shuttle-backend"] }),
-      makeAgentRoutingCase({ accepted_alternates: ["shuttle-backend"] }),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBe(1);
-    expect(record.dimensions.routingCorrectness.rationale).toContain(
-      "shuttle-backend",
-    );
-    expect(judge.calls.some((c) => c.dimension === "routingCorrectness")).toBe(
-      false,
-    );
-  });
-
-  it("routing correctness accepts matched via-only staged routes", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.5, rationale: "Sparse rationale." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ routedAgents: ["thread"] }),
-      makeAgentRoutingCase({
-        expected_outcome: {
-          kind: "agent_routing",
-          target_agent: "shuttle",
-          via: ["thread"],
-        },
-      }),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBe(1);
-    expect(record.passed).toBe(true);
-  });
-
-  it("non-applicable dimension score is 1.0 (neutral, not penalizing)", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.delegationCorrectness.score).toBe(1.0);
-    expect(record.dimensions.executionCompleteness.score).toBe(1.0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — delegation_chain case
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — delegation_chain case", () => {
-  it("returns ok for a delegation_chain case", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({
-      caseId: "test-case-02",
-      delegationChain: ["tapestry", "shuttle"],
-    });
-    const evalCase = makeDelegationCase();
-    const rubrics = [makeRubric("test-case-02", "tapestry-execution")];
-
-    const result = await scorer.score(run, evalCase, rubrics, SCORED_AT);
-
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("delegationCorrectness is applicable for delegation_chain cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-02" });
-    const rubrics = [makeRubric("test-case-02", "tapestry-execution")];
-
-    const result = await scorer.score(
-      run,
-      makeDelegationCase(),
-      rubrics,
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.delegationCorrectness.applicable).toBe(true);
-  });
-
-  it("routingCorrectness is NOT applicable for delegation_chain cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-02" });
-    const rubrics = [makeRubric("test-case-02", "tapestry-execution")];
-
-    const result = await scorer.score(
-      run,
-      makeDelegationCase(),
-      rubrics,
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.applicable).toBe(false);
-  });
-
-  it("judge is called twice for delegation_chain (delegation + rationale)", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.9, rationale: "Good chain." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-02" });
-    const rubrics = [makeRubric("test-case-02", "tapestry-execution")];
-
-    await scorer.score(run, makeDelegationCase(), rubrics, SCORED_AT);
-
-    expect(judge.calls).toHaveLength(2);
-  });
-
-  it("judge call for delegation has dimension='delegationCorrectness'", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 1.0, rationale: "Correct chain." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-02" });
-    const rubrics = [makeRubric("test-case-02", "tapestry-execution")];
-
-    await scorer.score(run, makeDelegationCase(), rubrics, SCORED_AT);
-
-    const delegationCall = judge.calls.find(
-      (c) => c.dimension === "delegationCorrectness",
-    );
-    expect(delegationCall).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — task_completion case
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — task_completion case", () => {
-  it("returns ok for a task_completion case", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({
-      caseId: "test-case-03",
-      completionSignalled: true,
-      producedArtifacts: ["plan_path"],
-    });
-    const rubrics = [makeRubric("test-case-03", "tapestry-execution")];
-
-    const result = await scorer.score(
-      run,
-      makeTaskCompletionCase(),
-      rubrics,
-      SCORED_AT,
-    );
-
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("executionCompleteness is applicable for task_completion cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-03" });
-    const rubrics = [makeRubric("test-case-03", "tapestry-execution")];
-
-    const result = await scorer.score(
-      run,
-      makeTaskCompletionCase(),
-      rubrics,
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.executionCompleteness.applicable).toBe(true);
-  });
-
-  it("routing and delegation are NOT applicable for task_completion cases", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-03" });
-    const rubrics = [makeRubric("test-case-03", "tapestry-execution")];
-
-    const result = await scorer.score(
-      run,
-      makeTaskCompletionCase(),
-      rubrics,
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.applicable).toBe(false);
-    expect(record.dimensions.delegationCorrectness.applicable).toBe(false);
-  });
-
-  it("judge is called twice for task_completion (execution + rationale)", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.8, rationale: "Completed." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const run = makeRun({ caseId: "test-case-03" });
-    const rubrics = [makeRubric("test-case-03", "tapestry-execution")];
-
-    await scorer.score(run, makeTaskCompletionCase(), rubrics, SCORED_AT);
-
-    expect(judge.calls).toHaveLength(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — score clamping
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — score clamping", () => {
-  it("clamps judge scores > 1.0 to 1.0", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 1.5, rationale: "Overshoot." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBeLessThanOrEqual(1.0);
-    expect(record.dimensions.rationaleQuality.score).toBeLessThanOrEqual(1.0);
-  });
-
-  it("clamps judge scores < 0 to 0.0", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: -0.5, rationale: "Undershoot." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBeGreaterThanOrEqual(
-      0,
-    );
-    expect(record.dimensions.rationaleQuality.score).toBeGreaterThanOrEqual(0);
-  });
-
-  it("preserves scores in [0, 1] without modification", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.75, rationale: "Good." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBe(1);
-    expect(record.dimensions.rationaleQuality.score).toBe(0.75);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — weighted total
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — weighted total", () => {
-  it("weightedTotal is in [0, 1]", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.6, rationale: "Partial." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.weightedTotal).toBeGreaterThanOrEqual(0);
-    expect(record.weightedTotal).toBeLessThanOrEqual(1);
-  });
-
-  it("weightedTotal is 1.0 when all applicable scores are 1.0", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.weightedTotal).toBe(1.0);
-  });
-
-  it("weightedTotal is 0.0 when all applicable scores are 0.0", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.0, rationale: "Wrong." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.weightedTotal).toBe(0.0);
-  });
-
-  it("uses rubric outcome_weight and per_expectation_weight", async () => {
-    // execution score = 1.0, rationale score = 0.0
-    const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 1.0, rationale: "Perfect execution." }); // execution
-    judge.enqueueOutput({ score: 0.0, rationale: "No rationale." }); // rationale
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    // outcome_weight=0.8 for execution, per_expectation_weight=0.2 for rationale
-    const rubric = makeRubric("test-case-03", "tapestry-execution", {
-      scoring: {
-        outcome_weight: 0.8,
-        per_expectation_weight: 0.2,
-        required: true,
-      },
-    });
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03", completionSignalled: true }),
-      makeTaskCompletionCase(),
-      [rubric],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    // execution:1.0 × 0.8 + rationale:0.0 × 0.2 = 0.8 total weight = 1.0 → normalised = 0.8/1.0 = 0.8
-    expect(record.weightedTotal).toBeCloseTo(0.8, 5);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — pass/fail gate
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
-  it("passed is true when primary dimension is perfect", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.passed).toBe(true);
-  });
-
-  it("passed is false when weightedTotal < PASS_THRESHOLD", async () => {
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 0.0, rationale: "Wrong." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03" }),
-      makeTaskCompletionCase(),
-      [makeRubric("test-case-03", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.weightedTotal).toBeLessThan(PASS_THRESHOLD);
-    expect(record.passed).toBe(false);
-  });
-
-  it("required cases require near-perfect primary dimension even above threshold", async () => {
-    // execution score = 0.7 (above threshold if threshold were 0.5), rationale = 0.9
-    // but primary dim is below the near-perfect gate, and the case is required → must fail
-    const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 0.7, rationale: "Partial execution." }); // execution
-    judge.enqueueOutput({ score: 0.9, rationale: "Good rationale." }); // rationale
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const rubric = makeRubric("test-case-03", "tapestry-execution", {
-      scoring: {
-        outcome_weight: 0.5,
-        per_expectation_weight: 0.5,
-        required: true,
-      },
-    });
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03", completionSignalled: true }),
-      makeTaskCompletionCase(),
-      [rubric],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    // execution:0.7 × 0.5 + rationale:0.9 × 0.5 = 0.8 total weight=1.0 → 0.8 ≥ 0.5
-    // but required && primary dim (execution) is below the near-perfect gate → passed = false
-    expect(record.weightedTotal).toBeGreaterThanOrEqual(PASS_THRESHOLD);
-    expect(record.passed).toBe(false);
-  });
-
-  it("required cases pass when primary dimension is near-perfect even with weak rationale", async () => {
-    const judge = new StubLangChainJudge();
-    judge.enqueueOutput({
-      score: 0.95,
-      rationale: "Nearly complete execution.",
-    });
-    judge.enqueueOutput({ score: 0.0, rationale: "Sparse rationale." });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const rubric = makeRubric("test-case-03", "tapestry-execution", {
-      scoring: {
-        outcome_weight: 0.5,
-        per_expectation_weight: 0.5,
-        required: true,
-      },
-    });
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03", completionSignalled: true }),
-      makeTaskCompletionCase(),
-      [rubric],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.dimensions.executionCompleteness.score).toBe(0.95);
-    expect(record.dimensions.rationaleQuality.score).toBe(0.0);
-    expect(record.weightedTotal).toBeLessThan(PASS_THRESHOLD);
-    expect(record.passed).toBe(true);
-  });
-
-  it("non-required cases pass on total alone (primary dim does not need to be 1.0)", async () => {
-    const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 0.7, rationale: "Partial execution." }); // execution
-    judge.enqueueOutput({ score: 0.9, rationale: "Good rationale." }); // rationale
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const rubric = makeRubric("test-case-03", "tapestry-execution", {
-      scoring: {
-        outcome_weight: 0.5,
-        per_expectation_weight: 0.5,
-        required: false,
-      },
-    });
-
-    const result = await scorer.score(
-      makeRun({ caseId: "test-case-03", completionSignalled: true }),
-      makeTaskCompletionCase(),
-      [rubric],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.passed).toBe(true);
-  });
-
-  it("record.required reflects the rubric required flag", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const rubricRequired = makeRubric("test-case-01", "loom-routing", {
-      scoring: {
-        outcome_weight: 0.7,
-        per_expectation_weight: 0.3,
-        required: true,
-      },
-    });
-    const rubricOptional = makeRubric("test-case-01", "loom-routing", {
-      scoring: {
-        outcome_weight: 0.7,
-        per_expectation_weight: 0.3,
-        required: false,
-      },
-    });
-
-    const r1 = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [rubricRequired],
-      SCORED_AT,
-    );
-    const r2 = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [rubricOptional],
-      SCORED_AT,
-    );
-
-    expect(r1._unsafeUnwrap().required).toBe(true);
-    expect(r2._unsafeUnwrap().required).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LangChainAgentEvalsScorer — error propagation
-// ---------------------------------------------------------------------------
-
-describe("LangChainAgentEvalsScorer — error propagation from judge", () => {
-  it("propagates ScorerAdapterError from the judge", async () => {
-    const judge = new StubLangChainJudge();
-    const adapterErr: ScoringError = {
-      type: "ScorerAdapterError",
-      caseId: "test-case-02",
-      dimension: "delegationCorrectness",
-      message: "LangChain model timed out",
-    };
-    judge.setDefaultError(adapterErr);
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({
-        caseId: "test-case-02",
-        delegationChain: ["tapestry", "shuttle"],
-      }),
-      makeDelegationCase(),
-      [makeRubric("test-case-02", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr();
-    expect(error.type).toBe("ScorerAdapterError");
-    if (error.type === "ScorerAdapterError") {
-      expect(error.message).toContain("LangChain model timed out");
-    }
-  });
-
-  it("surfaces rationale quality error when judge fails on that dimension", async () => {
-    const judge = new StubLangChainJudge();
-    // First call (delegation) succeeds; second call (rationale) fails
-    judge.enqueueOutput({ score: 1.0, rationale: "Correct delegation." });
-    judge.enqueueError({
-      type: "ScorerAdapterError",
-      caseId: "test-case-02",
-      dimension: "rationaleQuality",
-      message: "Rationale judge failed",
-    });
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun({
-        caseId: "test-case-02",
-        delegationChain: ["tapestry", "shuttle"],
-      }),
-      makeDelegationCase(),
-      [makeRubric("test-case-02", "tapestry-execution")],
-      SCORED_AT,
-    );
-
-    expect(result.isErr()).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // LangChainAgentEvalsScorer — NormalizedScoreRecord shape
 // ---------------------------------------------------------------------------
 
 describe("LangChainAgentEvalsScorer — NormalizedScoreRecord shape", () => {
-  it("record has all four dimension keys", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    const dims = Object.keys(record.dimensions).sort();
-    expect(dims).toEqual([
-      "delegationCorrectness",
-      "executionCompleteness",
-      "rationaleQuality",
-      "routingCorrectness",
-    ]);
-  });
-
   it("each dimension has score, rationale, and applicable fields", async () => {
     const judge = makePerfectJudge();
     const scorer = new LangChainAgentEvalsScorer(judge);
@@ -1059,21 +263,6 @@ describe("LangChainAgentEvalsScorer — NormalizedScoreRecord shape", () => {
     }
   });
 
-  it("record.suite matches the evalCase.suite", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase({ suite: "loom-routing" }),
-      [makeRubric()],
-      SCORED_AT,
-    );
-
-    const record = result._unsafeUnwrap();
-    expect(record.suite).toBe("loom-routing");
-  });
-
   it("record.scoredAt matches injected timestamp", async () => {
     const judge = makePerfectJudge();
     const scorer = new LangChainAgentEvalsScorer(judge);
@@ -1086,22 +275,6 @@ describe("LangChainAgentEvalsScorer — NormalizedScoreRecord shape", () => {
     );
 
     expect(result._unsafeUnwrap().scoredAt).toBe(SCORED_AT);
-  });
-
-  it("record.scoredAt defaults to a valid ISO string when not injected", async () => {
-    const judge = makePerfectJudge();
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
-      // no scoredAt injected
-    );
-
-    const { scoredAt } = result._unsafeUnwrap();
-    expect(() => new Date(scoredAt)).not.toThrow();
-    expect(new Date(scoredAt).getFullYear()).toBeGreaterThanOrEqual(2024);
   });
 });
 
@@ -1416,45 +589,6 @@ describe("StubAgentEvalsScorer — basic behaviour", () => {
     await scorer.score(makeRun(), makeAgentRoutingCase(), rubrics);
 
     expect(scorer.calls[0]?.rubrics).toHaveLength(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// PASS_THRESHOLD constant
-// ---------------------------------------------------------------------------
-
-describe("PASS_THRESHOLD", () => {
-  it("is 0.5", () => {
-    expect(PASS_THRESHOLD).toBe(0.5);
-  });
-
-  it("a score of exactly PASS_THRESHOLD passes", async () => {
-    const judge = new StubLangChainJudge();
-    // With outcome_weight=1.0, per_expectation_weight=0.0 and routing=0.5
-    // → weightedTotal = 0.5 which is exactly PASS_THRESHOLD
-    judge.enqueueOutput({ score: 0.5, rationale: "Threshold." }); // routing
-    // rationale is always scored but with per_expectation_weight=0 it won't matter
-    judge.enqueueOutput({ score: 0.5, rationale: "Threshold." }); // rationale
-    const scorer = new LangChainAgentEvalsScorer(judge);
-
-    const rubric = makeRubric("test-case-01", "loom-routing", {
-      scoring: {
-        outcome_weight: 1.0,
-        per_expectation_weight: 0.0,
-        required: false,
-      },
-    });
-
-    const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [rubric],
-      SCORED_AT,
-    );
-
-    // weightedTotal should be 0.5 or close, and passed should be true for non-required
-    const record = result._unsafeUnwrap();
-    expect(record.weightedTotal).toBeGreaterThanOrEqual(PASS_THRESHOLD);
   });
 });
 
@@ -2080,111 +1214,10 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildRationaleProjection — structured safe judge input (Issue 3 regression tests)
+// buildRationaleProjection — the cap on an unbounded identifier list
 // ---------------------------------------------------------------------------
 
 describe("buildRationaleProjection — structured safe projection for judge", () => {
-  it("returns structured projection with all safe fields when run has data", () => {
-    const run = makeRun({
-      routedAgents: ["shuttle"],
-      delegationChain: ["loom", "shuttle"],
-      completionSignalled: true,
-      producedArtifacts: ["plan_path"],
-      transcript: [
-        { role: "user", content: "hello" },
-        { role: "assistant", content: "world" },
-      ],
-      rawContent:
-        "This is raw model output that must NOT appear in projection.",
-    });
-    const projection = buildRationaleProjection(run);
-    // Must contain the safe structural fields
-    expect(projection).toContain("routed_agents: [shuttle]");
-    expect(projection).toContain("delegation_chain: loom → shuttle");
-    expect(projection).toContain("completion_signalled: true");
-    expect(projection).toContain("produced_artifacts: [plan_path]");
-    expect(projection).toContain("transcript_message_count: 2");
-    // Must NOT contain any rawContent text
-    expect(projection).not.toContain("raw model output");
-    expect(projection).not.toContain("This is raw model output");
-  });
-
-  it("does NOT include rawContent in the projection under any circumstances", () => {
-    const sensitiveContent =
-      "sk-secret-key-abcdefg this is a sensitive api response";
-    const run = makeRun({ rawContent: sensitiveContent });
-    const projection = buildRationaleProjection(run);
-    // The raw content must never appear
-    expect(projection).not.toContain("sk-secret-key-abcdefg");
-    expect(projection).not.toContain("sensitive api response");
-    expect(projection).not.toContain(sensitiveContent);
-  });
-
-  it("does NOT include rawContent even when rawContent is empty string", () => {
-    const run = makeRun({ rawContent: "" });
-    const projection = buildRationaleProjection(run);
-    // Projection should still be a structured summary (not based on rawContent)
-    expect(projection).toContain("completion_signalled");
-    expect(projection).toContain("routed_agents");
-    expect(projection).not.toContain("empty response");
-  });
-
-  it("does NOT include rawContent even when rawContent is whitespace-only", () => {
-    const run = makeRun({ rawContent: "   " });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("routed_agents");
-    // Must not contain the whitespace rawContent
-    expect(projection.trim()).not.toBe("(empty response)");
-  });
-
-  it("shows (none) for empty routedAgents", () => {
-    const run = makeRun({ routedAgents: [] });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("routed_agents: (none)");
-  });
-
-  it("shows (none) for empty delegationChain", () => {
-    const run = makeRun({ delegationChain: [] });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("delegation_chain: (none)");
-  });
-
-  it("shows (none) for empty producedArtifacts", () => {
-    const run = makeRun({ producedArtifacts: [] });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("produced_artifacts: (none)");
-  });
-
-  it("reflects completion_signalled=false correctly", () => {
-    const run = makeRun({ completionSignalled: false });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("completion_signalled: false");
-  });
-
-  it("reflects completion_signalled=true correctly", () => {
-    const run = makeRun({ completionSignalled: true });
-    const projection = buildRationaleProjection(run);
-    expect(projection).toContain("completion_signalled: true");
-  });
-
-  it("includes transcript_message_count (count only, not content)", () => {
-    const run = makeRun({
-      transcript: [
-        { role: "user", content: "top secret: API_KEY=sk-supersecret" },
-        { role: "assistant", content: "classified response data" },
-        { role: "tool", content: "tool output", toolName: "bash" },
-      ],
-    });
-    const projection = buildRationaleProjection(run);
-    // Count appears
-    expect(projection).toContain("transcript_message_count: 3");
-    // Content must NOT appear
-    expect(projection).not.toContain("top secret");
-    expect(projection).not.toContain("sk-supersecret");
-    expect(projection).not.toContain("classified response data");
-    expect(projection).not.toContain("tool output");
-  });
-
   it("truncates to RATIONALE_PROJECTION_MAX_CHARS when projection is very long", () => {
     // Create a run with many agents to push the projection over the limit
     const manyAgents = Array.from({ length: 200 }, (_, i) => `agent-${i}`);
@@ -2198,61 +1231,10 @@ describe("buildRationaleProjection — structured safe projection for judge", ()
     );
     expect(projection).toContain("[truncated]");
   });
-
-  it("scorer does NOT forward rawContent to judge for rationaleQuality", async () => {
-    // This test proves the key invariant: rawContent is never forwarded to
-    // the judge. The projection is derived from structural fields only.
-    const judge = new StubLangChainJudge();
-    judge.setDefaultOutput({ score: 1.0, rationale: "ok" });
-
-    const scorer = new LangChainAgentEvalsScorer(judge);
-    const sensitiveMarker = "sk-secret-api-key-sentinel";
-    const run = makeRun({
-      rawContent: `This response contains a sensitive marker: ${sensitiveMarker}.`,
-      routedAgents: ["shuttle"],
-      delegationChain: [],
-      completionSignalled: false,
-      producedArtifacts: [],
-    });
-    const evalCase = makeAgentRoutingCase();
-    const rubric = makeRubric();
-
-    await scorer.score(run, evalCase, [rubric], SCORED_AT);
-
-    // Find the rationaleQuality call in the judge's recorded calls
-    const rqCall = judge.calls.find((c) => c.dimension === "rationaleQuality");
-    expect(rqCall).toBeDefined();
-    if (rqCall !== undefined) {
-      // The raw sensitive marker must NOT appear in what was sent to the judge
-      expect(rqCall.response).not.toContain(sensitiveMarker);
-      // The rawContent text must not appear at all
-      expect(rqCall.response).not.toContain("This response contains");
-      // The projection must use safe structural fields instead
-      expect(rqCall.response).toContain("routed_agents");
-    }
-  });
-
-  it("projection does not contain any rawContent text even when rawContent contains agent names", () => {
-    // Ensure that agent names mentioned in rawContent don't leak into projection
-    // through coincidental string overlap with structural field values.
-    const sensitiveMarker = "SENSITIVE_AGENT_SECRET_XYZ";
-    const run = makeRun({
-      rawContent: `I suggest routing to ${sensitiveMarker}`,
-      routedAgents: ["shuttle"],
-    });
-    const projection = buildRationaleProjection(run);
-    expect(projection).not.toContain(sensitiveMarker);
-    expect(projection).not.toContain("I suggest routing");
-  });
-
-  it("RATIONALE_PROJECTION_MAX_CHARS is exported and is a positive number", () => {
-    expect(RATIONALE_PROJECTION_MAX_CHARS).toBeGreaterThan(0);
-    expect(typeof RATIONALE_PROJECTION_MAX_CHARS).toBe("number");
-  });
 });
 
 // ---------------------------------------------------------------------------
-// buildCaseExplanation — deterministic structured-input explanation generator
+// buildCaseExplanation — the branches no run reaches
 // ---------------------------------------------------------------------------
 
 import {
@@ -2289,115 +1271,6 @@ describe("buildCaseExplanation — bounded explanation from structured inputs", 
     expect(text).toBe("dry-run; no model was called");
   });
 
-  it("includes 'passed' when bucket is 'pass'", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    );
-    expect(text).toContain("passed");
-  });
-
-  it("includes 'partially passed' when bucket is 'partial'", () => {
-    const text = buildCaseExplanation(
-      "partial",
-      false,
-      false,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    );
-    expect(text).toContain("partially passed");
-  });
-
-  it("includes 'failed' when bucket is 'fail'", () => {
-    const text = buildCaseExplanation(
-      "fail",
-      false,
-      true,
-      "agent_routing",
-      [],
-      false,
-    );
-    expect(text).toContain("failed");
-  });
-
-  it("includes 'routing' for agent_routing outcome kind", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    );
-    expect(text).toContain("routing");
-  });
-
-  it("includes 'delegation' for delegation_chain outcome kind", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "delegation_chain",
-      ["delegationCorrectness"],
-      false,
-    );
-    expect(text).toContain("delegation");
-  });
-
-  it("includes 'execution' for task_completion outcome kind", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "task_completion",
-      ["executionCompleteness"],
-      false,
-    );
-    expect(text).toContain("execution");
-  });
-
-  it("includes 'required' for required cases", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      [],
-      false,
-    );
-    expect(text).toContain("required");
-  });
-
-  it("includes 'optional' for non-required cases", () => {
-    const text = buildCaseExplanation(
-      "fail",
-      false,
-      false,
-      "agent_routing",
-      [],
-      false,
-    );
-    expect(text).toContain("optional");
-  });
-
-  it("lists applicable dimension names in the explanation", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      ["routingCorrectness", "rationaleQuality"],
-      false,
-    );
-    expect(text).toContain("routingCorrectness");
-    expect(text).toContain("rationaleQuality");
-  });
-
   it("caps to at most 3 applicable dimension names in the explanation", () => {
     const text = buildCaseExplanation(
       "pass",
@@ -2418,20 +1291,6 @@ describe("buildCaseExplanation — bounded explanation from structured inputs", 
     expect(dimCount).toBeLessThanOrEqual(3);
   });
 
-  it("is deterministic — same inputs always produce the same text", () => {
-    const inputs: Parameters<typeof buildCaseExplanation> = [
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    ];
-    const t1 = buildCaseExplanation(...inputs);
-    const t2 = buildCaseExplanation(...inputs);
-    expect(t1).toBe(t2);
-  });
-
   it("never exceeds EXPLANATION_MAX_CHARS characters", () => {
     // Test with maximal inputs
     const text = buildCaseExplanation(
@@ -2443,38 +1302,6 @@ describe("buildCaseExplanation — bounded explanation from structured inputs", 
       false,
     );
     expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
-  });
-
-  it("does not match any FORBIDDEN_EXPLANATION_PATTERNS", () => {
-    const text = buildCaseExplanation(
-      "pass",
-      true,
-      true,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    );
-    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-      expect(pattern.test(text)).toBe(false);
-    }
-  });
-
-  it("does not contain raw rationale, transcript markers, or chain-of-thought indicators", () => {
-    const text = buildCaseExplanation(
-      "fail",
-      false,
-      true,
-      "delegation_chain",
-      [],
-      false,
-    );
-    // Must not contain forbidden raw-output markers
-    expect(text.toLowerCase()).not.toContain("rationale:");
-    expect(text.toLowerCase()).not.toContain("score:");
-    expect(text.toLowerCase()).not.toContain("justification:");
-    expect(text.toLowerCase()).not.toContain("<thinking>");
-    expect(text.toLowerCase()).not.toContain("user:");
-    expect(text.toLowerCase()).not.toContain("assistant:");
   });
 
   // ---------------------------------------------------------------------------
@@ -2496,28 +1323,8 @@ describe("buildCaseExplanation — bounded explanation from structured inputs", 
       false,
     );
     for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-      expect(pattern.test(text)).toBe(false);
+      expect(`${name}: ${pattern.test(text)}`).toBe(`${name}: false`);
     }
-  });
-
-  it("never contains raw prompt, transcript role markers, or leakage sentinels", () => {
-    // A leakage sentinel that should NEVER appear in the output
-    const leakageSentinel = "LEAKAGE_SENTINEL_SECRET_XYZ";
-    // The outcome kind is an enum identifier — leakage sentinel cannot enter through it
-    const text = buildCaseExplanation(
-      "fail",
-      false,
-      true,
-      "agent_routing",
-      ["routingCorrectness"],
-      false,
-    );
-    expect(text).not.toContain(leakageSentinel);
-    expect(text).not.toContain("rawContent");
-    expect(text).not.toContain("transcript");
-    expect(text).not.toContain("composedPrompt");
-    expect(text).not.toContain("sk-");
-    expect(text).not.toContain("Bearer");
   });
 });
 
@@ -2526,30 +1333,6 @@ describe("buildCaseExplanation — bounded explanation from structured inputs", 
 // ---------------------------------------------------------------------------
 
 describe("buildPublicExplanation — CaseResultSummary.publicExplanation generation", () => {
-  it("returns a publicExplanation object for a scored (non-dry-run) result", () => {
-    const scoreRecord = makeScoreRecord({
-      passed: true,
-      weightedTotal: 1.0,
-      required: true,
-    });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    expect(expl).toBeDefined();
-    expect(typeof expl?.text).toBe("string");
-    expect((expl?.text ?? "").length).toBeGreaterThan(0);
-  });
-
-  it("returns explanation with source='structured_signal' when applicable dims present", () => {
-    const scoreRecord = makeScoreRecord({
-      passed: true,
-      weightedTotal: 1.0,
-      required: true,
-    });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    expect(expl?.source).toBe("structured_signal");
-  });
-
   it("returns explanation with source='score_bucket_label' when no applicable dims and not required", () => {
     const noApplicableDims = makeScoreRecord({
       passed: true,
@@ -2591,161 +1374,6 @@ describe("buildPublicExplanation — CaseResultSummary.publicExplanation generat
     const evalCase = makeAgentRoutingCase();
     const expl = buildPublicExplanation(scoreRecord, evalCase, false);
     expect((expl?.text ?? "").length).toBeLessThanOrEqual(
-      EXPLANATION_MAX_CHARS,
-    );
-  });
-
-  it("explanation text contains no forbidden patterns", () => {
-    const scoreRecord = makeScoreRecord({ passed: false, weightedTotal: 0.0 });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-      expect(pattern.test(expl?.text ?? "")).toBe(false);
-    }
-  });
-
-  it("is reproducible — same inputs produce the same explanation text", () => {
-    const scoreRecord = makeScoreRecord({
-      passed: true,
-      weightedTotal: 0.95,
-      required: true,
-    });
-    const evalCase = makeAgentRoutingCase();
-    const e1 = buildPublicExplanation(scoreRecord, evalCase, false);
-    const e2 = buildPublicExplanation(scoreRecord, evalCase, false);
-    expect(e1?.text).toBe(e2?.text);
-    expect(e1?.source).toBe(e2?.source);
-  });
-
-  it("adversarial: explanation does not contain raw rationale text even when rationale looks like a summary", () => {
-    const temptingRationale =
-      "The model correctly routed to shuttle. Score: 1.0 justification: excellent";
-    const scoreRecord: NormalizedScoreRecord = {
-      caseId: "test-case-01",
-      modelId: "anthropic/claude-sonnet-4.5",
-      suite: "loom-routing",
-      dimensions: {
-        routingCorrectness: {
-          score: 1.0,
-          rationale: temptingRationale, // adversarial rationale text
-          applicable: true,
-        },
-        delegationCorrectness: {
-          score: 1.0,
-          rationale: "N/A",
-          applicable: false,
-        },
-        executionCompleteness: {
-          score: 1.0,
-          rationale: "N/A",
-          applicable: false,
-        },
-        rationaleQuality: {
-          score: 0.9,
-          rationale: temptingRationale,
-          applicable: true,
-        },
-      },
-      weightedTotal: 0.95,
-      passed: true,
-      required: true,
-      scoredAt: SCORED_AT,
-    };
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    // The raw rationale text must never appear in the public explanation
-    expect(expl?.text).not.toContain(temptingRationale);
-    expect(expl?.text).not.toContain("Score: 1.0");
-    expect(expl?.text).not.toContain("justification:");
-    expect(expl?.text).not.toContain("The model correctly routed");
-  });
-
-  it("adversarial: explanation does not contain chain-of-thought fragments", () => {
-    // Even if the raw content or transcript had chain-of-thought, the explanation
-    // must not contain it because it's derived from structured inputs only
-    const scoreRecord = makeScoreRecord({
-      passed: true,
-      weightedTotal: 1.0,
-      required: true,
-    });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    expect(expl?.text).not.toContain("<thinking>");
-    expect(expl?.text).not.toContain("<cot>");
-    expect(expl?.text).not.toContain("<reasoning>");
-  });
-
-  it("adversarial: explanation does not contain secret-like patterns", () => {
-    const scoreRecord = makeScoreRecord({
-      passed: false,
-      weightedTotal: 0.0,
-      required: true,
-    });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    // No secret-like patterns
-    expect(expl?.text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
-    expect(expl?.text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
-    expect(expl?.text).not.toMatch(/ghp_[A-Za-z0-9]{8,}/);
-  });
-
-  it("adversarial: explanation does not contain transcript role markers", () => {
-    const scoreRecord = makeScoreRecord({ passed: true, weightedTotal: 0.95 });
-    const evalCase = makeAgentRoutingCase();
-    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
-    expect(expl?.text).not.toMatch(/\n?User\s*:/);
-    expect(expl?.text).not.toMatch(/\n?Assistant\s*:/);
-    expect(expl?.text).not.toMatch(/\n?Human\s*:/);
-  });
-
-  it("adversarial: explanation is reproducible even when adversarial data is in score record fields", () => {
-    // The rationale fields contain adversarial text — but since the explanation
-    // is derived from structured inputs only, the output must be stable and clean
-    const adversarialRationale =
-      "rationale: score: 1.0 justification: <thinking>route to shuttle</thinking>";
-    const scoreRecord: NormalizedScoreRecord = {
-      caseId: "test-case-01",
-      modelId: "anthropic/claude-sonnet-4.5",
-      suite: "loom-routing",
-      dimensions: {
-        routingCorrectness: {
-          score: 1.0,
-          rationale: adversarialRationale,
-          applicable: true,
-        },
-        delegationCorrectness: {
-          score: 1.0,
-          rationale: "N/A",
-          applicable: false,
-        },
-        executionCompleteness: {
-          score: 1.0,
-          rationale: "N/A",
-          applicable: false,
-        },
-        rationaleQuality: {
-          score: 0.9,
-          rationale: adversarialRationale,
-          applicable: true,
-        },
-      },
-      weightedTotal: 0.95,
-      passed: true,
-      required: true,
-      scoredAt: SCORED_AT,
-    };
-    const evalCase = makeAgentRoutingCase();
-    const expl1 = buildPublicExplanation(scoreRecord, evalCase, false);
-    const expl2 = buildPublicExplanation(scoreRecord, evalCase, false);
-
-    // Reproducible
-    expect(expl1?.text).toBe(expl2?.text);
-    // No forbidden patterns
-    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-      expect(pattern.test(expl1?.text ?? "")).toBe(false);
-    }
-    // Bounded
-    expect((expl1?.text ?? "").length).toBeLessThanOrEqual(
       EXPLANATION_MAX_CHARS,
     );
   });
@@ -2852,41 +1480,6 @@ import {
 } from "../langchain-agent-evals.js";
 
 describe("buildSuiteExplanation — bounded explanation from aggregate suite signals", () => {
-  it("returns a dry-run label for dry-run suites", () => {
-    const text = buildSuiteExplanation(0, 5, false, true);
-    expect(text).toContain("dry-run");
-    expect(text).toContain("5");
-  });
-
-  it("indicates 'green' when suiteGreen is true", () => {
-    const text = buildSuiteExplanation(10, 10, true, false);
-    expect(text).toContain("green");
-  });
-
-  it("indicates 'not green' when suiteGreen is false", () => {
-    const text = buildSuiteExplanation(8, 10, false, false);
-    expect(text).toContain("not green");
-  });
-
-  it("includes pass/fail counts in the text", () => {
-    const text = buildSuiteExplanation(7, 10, false, false);
-    expect(text).toContain("7");
-    expect(text).toContain("10");
-  });
-
-  it("handles all-pass case (zero failures)", () => {
-    const text = buildSuiteExplanation(5, 5, true, false);
-    expect(text).toContain("passed");
-    expect(text).not.toContain("failed");
-  });
-
-  it("handles all-fail case", () => {
-    const text = buildSuiteExplanation(0, 5, false, false);
-    expect(text).toContain("0");
-    expect(text).toContain("5");
-    expect(text).toContain("failed");
-  });
-
   it("never exceeds EXPLANATION_MAX_CHARS", () => {
     const text = buildSuiteExplanation(999, 1000, false, false);
     expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
@@ -2902,25 +1495,9 @@ describe("buildSuiteExplanation — bounded explanation from aggregate suite sig
     for (const [passed, total, green, dry] of inputs) {
       const text = buildSuiteExplanation(passed, total, green, dry);
       for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-        expect(pattern.test(text)).toBe(false);
+        expect(`${name}: ${pattern.test(text)}`).toBe(`${name}: false`);
       }
     }
-  });
-
-  it("is deterministic — same inputs produce identical text", () => {
-    const t1 = buildSuiteExplanation(8, 10, false, false);
-    const t2 = buildSuiteExplanation(8, 10, false, false);
-    expect(t1).toBe(t2);
-  });
-
-  it("does not contain raw prompts, transcripts, rationale markers, or secrets", () => {
-    const text = buildSuiteExplanation(9, 10, true, false);
-    expect(text).not.toContain("rationale");
-    expect(text).not.toContain("transcript");
-    expect(text).not.toContain("composedPrompt");
-    expect(text).not.toContain("rawContent");
-    expect(text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
-    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
   });
 
   it("adversarial: passing adversarial counts does not produce forbidden patterns", () => {
@@ -2937,36 +1514,9 @@ describe("buildSuiteExplanation — bounded explanation from aggregate suite sig
 // ---------------------------------------------------------------------------
 
 describe("buildModelExplanation — bounded explanation from aggregate model signals", () => {
-  it("returns a dry-run label for dry-run model results", () => {
-    const text = buildModelExplanation("skip", 0, 5, true);
-    expect(text).toContain("dry-run");
-    expect(text).toContain("5");
-  });
-
   it("returns a dry-run label when bucket is 'skip' even if dryRun=false", () => {
     const text = buildModelExplanation("skip", 0, 3, false);
     expect(text).toContain("dry-run");
-  });
-
-  it("includes 'pass' label for pass bucket", () => {
-    const text = buildModelExplanation("pass", 10, 10, false);
-    expect(text).toContain("pass");
-  });
-
-  it("includes 'partial' label for partial bucket", () => {
-    const text = buildModelExplanation("partial", 7, 10, false);
-    expect(text).toContain("partial");
-  });
-
-  it("includes 'fail' label for fail bucket", () => {
-    const text = buildModelExplanation("fail", 2, 10, false);
-    expect(text).toContain("fail");
-  });
-
-  it("includes pass/fail counts in the text", () => {
-    const text = buildModelExplanation("partial", 6, 10, false);
-    expect(text).toContain("6");
-    expect(text).toContain("10");
   });
 
   it("handles zero total cases", () => {
@@ -2993,25 +1543,9 @@ describe("buildModelExplanation — bounded explanation from aggregate model sig
     for (const [bucket, passed, total, dry] of inputs) {
       const text = buildModelExplanation(bucket, passed, total, dry);
       for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
-        expect(pattern.test(text)).toBe(false);
+        expect(`${name}: ${pattern.test(text)}`).toBe(`${name}: false`);
       }
     }
-  });
-
-  it("is deterministic — same inputs produce identical text", () => {
-    const t1 = buildModelExplanation("partial", 7, 10, false);
-    const t2 = buildModelExplanation("partial", 7, 10, false);
-    expect(t1).toBe(t2);
-  });
-
-  it("does not contain raw prompts, transcripts, rationale markers, or secrets", () => {
-    const text = buildModelExplanation("pass", 9, 10, false);
-    expect(text).not.toContain("rationale");
-    expect(text).not.toContain("transcript");
-    expect(text).not.toContain("composedPrompt");
-    expect(text).not.toContain("rawContent");
-    expect(text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
-    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
   });
 
   it("adversarial: all ScoreBucket values produce safe bounded output", () => {
