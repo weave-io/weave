@@ -26,9 +26,16 @@
  *   tagged that way, which is why an answer's shape alone decides the verdict.
  *
  * Signals that reach **only** the judge — a delegation chain, a completion
- * cue, a transcript — have no observable form, because in production the judge
- * is an LLM. Those keep their unit tests; see the note in each runner's test
- * file.
+ * cue, a transcript — do not decide a score here, because in production the
+ * judge is an LLM. They are still observable, and an earlier version of this
+ * note was wrong to say they were not: the judge is stubbed at this seam, so
+ * `judgeCalls` shows exactly what the runner asked it to score, and the runner
+ * builds that input itself. Where the runner *transforms* a signal on the way
+ * — `normalizeDelegationChain()` rewriting an accepted alternate — the
+ * transformation is the product's own deterministic work and belongs here.
+ * See `describe("Tapestry expresses a delegation chain on an execution case")`
+ * below, and `docs/testing-strategy.md`, finding 11, for what that mistaken
+ * note was holding up.
  *
  * ## Absence assertions
  *
@@ -2527,5 +2534,92 @@ describe("Tapestry decides whether a shuttle's report finishes the task", () => 
     );
     expect(asked).not.toContain("Required structural signals");
     expect(asked).not.toContain("tapestry_task_completed");
+  });
+});
+
+/**
+ * The delegation chain a Tapestry execution case expresses.
+ *
+ * This is observable after all, and the note at the top of this file was
+ * wrong to say otherwise. A delegation chain never reaches a score directly —
+ * the judge decides that, and in production the judge is an LLM — but the
+ * runner has to *serialise the chain into the judge's input* before the judge
+ * ever sees it. That serialisation is the product's own work, it is
+ * deterministic, and `runEvalSuite` already exposes it as `judgeCalls`. So the
+ * seam holds: a model's answer goes in, and what the runner asked the judge to
+ * score comes out.
+ *
+ * It matters because `normalizeDelegationChain()` rewrites the chain on the
+ * way through. A case may name `accepted_alternates`, and an answer that ends
+ * at one of them is rewritten to end at the canonical expected delegate, so
+ * the judge is asked about `tapestry → shuttle` even though the model wrote
+ * `shuttle-backend`. That rewrite decides whether a legitimate alternate reads
+ * as a miss, and until now nothing exercised it against the real runner: the
+ * unit tests asserted it against `InMemoryTapestryRunner`, a 140-line
+ * reimplementation of `run()` inside the test file that carried its own
+ * verbatim copy of the normalizer. See `docs/testing-strategy.md`, finding 11.
+ */
+describe("Tapestry expresses a delegation chain on an execution case", () => {
+  const fixture: FixtureSpec = {
+    id: "tapestry-delegates-to-a-specialist",
+    suite: "tapestry-execution",
+    description: "Add a --json flag to the export command.",
+    allowedAgents: ["tapestry", "shuttle", "shuttle-backend"],
+    expectedOutcome: {
+      kind: "delegation_chain",
+      chain: ["tapestry", "shuttle"],
+    },
+    tags: ["execution"],
+  };
+
+  /** What the runner put to the judge about the delegation dimension. */
+  async function chainPutToTheJudge(
+    answer: string,
+    spec: FixtureSpec = fixture,
+  ): Promise<string> {
+    const run = await withEvalFixtures([spec], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "tapestry-execution",
+        answers: [answer],
+      }),
+    );
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "delegationCorrectness",
+    );
+    return call?.response ?? "(no delegationCorrectness call)";
+  }
+
+  it("passes the chain the model wrote through to the judge", async () => {
+    expect(await chainPutToTheJudge("tapestry → shuttle")).toBe(
+      "Delegation chain: tapestry → shuttle",
+    );
+  });
+
+  it("rewrites an accepted alternate to the canonical expected delegate", async () => {
+    const asked = await chainPutToTheJudge("tapestry → shuttle-backend", {
+      ...fixture,
+      acceptedAlternates: ["shuttle-backend"],
+    });
+
+    expect(asked).toBe("Delegation chain: tapestry → shuttle");
+  });
+
+  /**
+   * The contrast that keeps the scenario above honest. The same answer, the
+   * same expected chain, and only `accepted_alternates` removed — so a green
+   * result there cannot come from the runner rewriting every chain, or from
+   * the judge never being asked.
+   */
+  it("leaves the same delegate alone when the case never accepted it", async () => {
+    expect(await chainPutToTheJudge("tapestry → shuttle-backend")).toBe(
+      "Delegation chain: tapestry → shuttle-backend",
+    );
+  });
+
+  it("tells the judge plainly when no chain was expressed", async () => {
+    expect(
+      await chainPutToTheJudge("I had a look at the export command."),
+    ).toBe("(no delegation chain expressed)");
   });
 });

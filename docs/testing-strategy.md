@@ -210,6 +210,65 @@ discovery, which is what actually closes the gap.
   `triggers`. That stale key is what invalidated the global config which made
   finding 2 visible.
 
+**11. A test double can reimplement the thing it is meant to test, and hide a
+real bug indefinitely.** This is the one finding that is not about
+organisation, and it is why the migration is worth more than a tidier tree.
+
+The shape: a test file declares `class InMemoryXRunner extends XRunner` and
+`override run()`, because the real `run()` touches the file system. The
+override is not a stub — it is a second implementation of the method under
+test, 140 lines in the Tapestry case, complete with its own copy of the
+runner's helpers. Every `it()` in the file then asserts against that copy. The
+tests are green, thorough, and describe a product that does not exist.
+
+Two independently verified consequences:
+
+- **`loom-routing` and `tapestry-execution` publish an empty green run.** Any
+  `--model` typo filters every case out, and those two runners — alone among
+  the eight — have no `workItems.length === 0` guard, so the run exits 0 with
+  `totalCases: 0` and a published bundle. `loom-routing-runner.test.ts`
+  referenced `NoCasesFound` eleven times and its docblock stated the guard
+  existed. The guard was in `InMemoryLoomRunner`, at line 229 of the *test*
+  file. Filed as [#205](https://github.com/pgermishuys/weave/issues/205).
+- **Tapestry's alternate-delegate normalization was never exercised.**
+  `normalizeDelegationChain()` rewrites a chain ending at an
+  `accepted_alternates` entry back to the canonical expected delegate. The
+  test file carried a verbatim copy named `normalizeDelegationChainForTest`.
+  Replacing the product's condition with `if (false)` — disabling
+  normalization outright — left all 32 unit tests green, including the one
+  named *"normalizes accepted alternate shuttle variants back to the canonical
+  expected delegate"*.
+
+**How far it spread.** Eight eval runner test files on `main` used the pattern;
+[#203](https://github.com/pgermishuys/weave/pull/203) and
+[#204](https://github.com/pgermishuys/weave/pull/204) removed seven as a
+side-effect of migrating those areas, and this change removes the last one.
+Outside the eval runners it does not occur. The other test subclasses in the
+repo — `SymlinkFileSystem extends MemoryFileSystem`, `FailingProbes extends
+MemoryDetectionProbes`, `Mock/FailingOpenCodeAdapter extends OpenCodeAdapter` —
+all override a *collaborator* to inject a condition, which is the legitimate
+use and stays.
+
+**The rule this gives us.** A test double may stand in for a dependency; it may
+never stand in for the unit under test. Concretely: if a test file `extends` a
+production class and `override`s a method, that method must be a collaborator
+the test is injecting, never the behaviour the `it()` names. Where the real
+method is untestable because of I/O, the fix is a seam — `withEvalFixtures()`
+gives the runners a temporary `evals/` root and the real `run()` executes.
+
+**What justified keeping them.** Each file argued that the signals involved —
+a delegation chain, a completion cue — reach only the LLM judge and so have no
+observable form. The premise was false. The judge is stubbed at the scenario
+seam, so `judgeCalls` shows precisely what the runner asked it to score, and
+the runner builds that input itself, normalization included. A claim that
+something is unobservable deserves the same suspicion as an absence assertion:
+check it against the harness before it is allowed to protect a double.
+
+**Still open.** The four extractor suites in
+`tapestry-execution-runner.test.ts` (~30 cases) are pure-function tests of
+exported helpers. They are honest tests, but the same `judgeCalls` seam makes
+their output observable end-to-end, so they are candidates for migration.
+
 ## Cleanup plan
 
 Every finding maps to a step; steps are ordered by value per unit of risk.
