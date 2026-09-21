@@ -21,7 +21,7 @@
 - `tests/support/scenario.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **9** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 

@@ -507,6 +507,166 @@ case summary is dropped by the bundle writer's allowlist projection. Breaking
 both raw-artifact gates together does turn two scenarios red, which is what
 proves the absence assertion is live rather than vacuous.
 
+The **scorer** went last, and it is the largest single file the migration has
+taken: `langchain-agent-evals.test.ts` held 153 source cases and no `it.each`,
+so source and runtime counts coincide for once.
+
+| | Before | After |
+| --- | --- | --- |
+| `langchain-agent-evals.test.ts` (source cases) | 153 | 53 |
+| Scenarios added to `scoring.scenario.test.ts` (source) | — | 52 |
+| Scenarios added to `scoring.scenario.test.ts` (at runtime) | — | 67 |
+| Scenarios added to `reporting.scenario.test.ts` (source) | — | 8 |
+
+`runEvalSuite()` already built the **real** `EvalOrchestrator` with
+`scorer: new LangChainAgentEvalsScorer(judge)`, so almost the whole scorer was
+observable without changing a seam. The harness gained four knobs to reach the
+rest: `outcomeWeight` / `perExpectationWeight` on a fixture's rubric,
+`withoutRubric` and `rubricCaseId` for the missing-rubric path, and
+`judgeOutputs` / `judgeErrors` keyed by dimension so a scenario can score the
+structural verdict and the prose differently, or fail one of the two questions
+a case puts to the judge.
+
+The claim worth recording is the one about the **rationale projection**.
+`buildRationaleProjection()` never appears in a published file — it builds the
+`response` the judge is shown for `rationaleQuality` — and the fourteen unit
+cases around it read as the canonical "no user can see this". They were wrong in
+exactly the way finding 11 warns about: the judge is stubbed at the scenario
+seam, so `judgeCalls` carries that projection verbatim. Thirteen of the fourteen
+migrated. The same applies to the rubric text and reference the scorer builds
+for each dimension, which no unit test had covered at all.
+
+What stayed, in
+[`langchain-agent-evals.test.ts`](../packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts):
+
+| Kept | Why |
+| --- | --- |
+| `StubLangChainJudge`, `StubAgentEvalsScorer` | Test infrastructure that ships in `src`. FIFO order, default fallback, the `NotConfigured` call index and `.calls` are a contract for test authors, not users. `StubLangChainJudge` backs `tests/support/evals.ts`, so a regression in it would misreport every eval scenario |
+| `RealLangChainJudge` | The production judge, which every scenario replaces by definition. Its dynamic-import failure path, per-rubric evaluator cache and the exact `{reference_outputs}` placeholder names need an injected module loader |
+| `buildJudgmentExecutionDimension()` outside `task_completion` | The scorer calls it only once `scoreExecution()` has established the kind, so the guard is unreachable from a run |
+| `RubricCaseMismatch` | A runner builds its `ModelRunOutput` with `evalCase.id` as the `caseId`; the scorer looks the rubric up by `run.caseId` and compares it to `evalCase.id`. Same string by construction — the branch cannot fire. The reachable half, *no rubric at all*, is a scenario |
+| A non-applicable dimension's `rationale` | `buildDimensionRationales()` copies a reason only for the dimensions that counted, so "Not applicable: …" reaches no file, not even a `--raw-artifacts` one |
+| An injected `scoredAt` | On the `AgentEvalsScorer` interface and passed by no runner. The `new Date()` default is a scenario |
+| `RATIONALE_PROJECTION_MAX_CHARS` truncation | The projection is agent and artifact identifiers, and `allowed_agents` is checked against `KNOWN_AGENTS` at load, so no fixture reaches 2000 characters |
+| The dry-run / `skip` explanation branches | Every production caller of `buildPublicExplanation()` passes `dryRun: false`; a dry run takes `buildDryRunResult()`, which builds no explanation |
+| `source: "score_bucket_label"` on a case | `rationaleQuality` is applicable on every record the scorer produces, so `applicableDimensions` is never empty |
+| The three-dimension cap and the `EXPLANATION_MAX_CHARS` truncations | At most two dimensions are ever applicable, and the text is a fixed template over integers and enum labels. Defence in depth |
+| `tool_call` and cast-in `OutcomeKind` values | `tool_call` is rejected by the text-only fixture contract as `UnsupportedTextEvalAssertion`, so no fixture can carry it |
+| `buildModelExplanation()` with zero cases | The comparison index iterates models that have results, so a row always has at least one case |
+
+Thirty-seven mutations were run: twenty-nine against
+[`tests/evals/scoring.scenario.test.ts`](../tests/evals/scoring.scenario.test.ts),
+six against the aggregate-explanation scenarios in
+`reporting.scenario.test.ts`, and two against the two unit cases the audit
+below rewrote. Each ran with the 100 deleted unit cases already gone:
+
+| Mutation | Result |
+| --- | --- |
+| Every case kind grades every dimension | 20 red |
+| The explanation drops its dimension list | 6 red |
+| The explanation reflects the raw outcome kind | 5 red |
+| The near-perfect primary rule is removed | 5 red |
+| The weighted total counts inapplicable dimensions | 4 red |
+| A non-applicable dimension scores 0 instead of 1.0 | 3 red |
+| The required flag stops gating a pass | 3 red |
+| Routing is scored by the judge rather than read from the answer | 3 red |
+| Judge scores are no longer clamped | 2 red |
+| The rubric's weights are ignored | 2 red |
+| A judgment case is sent to the judge after all | 2 red |
+| The projection appends the raw answer | 2 red |
+| The projection drops the completion flag | 2 red |
+| Every case's explanation says it passed | 2 red |
+| `PASS_THRESHOLD` drops to zero | 1 red |
+| A judgment case always scores full marks | 1 red |
+| Rubric lookup falls back to the first rubric | 1 red |
+| `accepted_alternates` is ignored | 1 red |
+| Any routed agent counts as accepted | 1 red |
+| A declared `via` stop no longer counts | 1 red |
+| The projection drops the transcript count | 1 red |
+| The judge is shown the reference as the answer, and vice versa | 1 red |
+| The explanation always says "required" | 1 red |
+| The explanation declares the wrong source | 1 red |
+| `scoredAt` is fixed at the epoch | 1 red |
+| A failed rationale call no longer fails the case | 1 red |
+| The raw artifact carries reasons for dimensions that did not count | 1 red |
+| The routing rationale stops naming the matched agent | 1 red |
+| The projection drops its `(none)` placeholders | **1 red — after a fix; see below** |
+| The suite line drops its counts | 3 red |
+| A model is always reported as passing | 2 red |
+| The model line drops its counts | 2 red |
+| Every suite is reported green | 1 red |
+| A dry-run suite is reported as a real one | 1 red |
+| A dry-run model is reported as a real one | 1 red |
+| The `openevals` import stops being lazy | 3 red |
+| A dimension's reason stops naming the kind it did not apply to | 1 red |
+
+The `(none)` row is the vacuity lesson again, in miniature. On the first pass it
+turned **0 red**: the scenario asserted `delegation_chain: (none)` and
+`produced_artifacts: (none)` on a routing case, and never once asked what a
+case with *no route* projects. The mutation deleted the `routed_agents` branch,
+which nothing looked at. The scenario now reads both a routing answer and a task
+answer, so every signal is seen present on one and absent on the other, and the
+same mutation is caught.
+
+### Seven cases that could not fail
+
+Seven of the hundred deletions were not replaced by anything, because nothing
+could have broken them. They are the shape that let `/weave:health` ship broken
+(see "What the OpenCode runtime migration turned up" below): an assertion true
+of the code and of its negation. They are worth naming, because they read as
+coverage of the one class in this file that talks to a third party.
+
+The `RealLangChainJudge — production adapter boundary` block had six cases:
+
+| Case | What it asserted |
+| --- | --- |
+| "can be constructed with a mock BaseChatModel without any LangChain calls" | `expect(judge).toBeDefined()` on a `new` |
+| "can be passed to LangChainAgentEvalsScorer as a LangChainJudge" | `expect(scorer).toBeDefined()` on another `new` |
+| "satisfies the LangChainJudge interface (structural typing)" | `typeof judge.evaluate === "function"`, already proved by the `: LangChainJudge` annotation on the line above |
+| "evaluate() returns a ResultAsync (thenable)" | `typeof resultAsync.then === "function"` |
+| "evaluate() returns a typed ScorerAdapterError when openevals dynamic import fails" | Sets a default error on a **`StubLangChainJudge`** and asserts the stub returned it |
+| "scorer with RealLangChainJudge fails with ScorerAdapterError when judge fails (no throw)" | Also a `StubLangChainJudge`; the promise is the scorer's, and it is a scenario |
+
+The fifth is finding 11 without the subclassing: a double standing in for the
+unit the test names. Its own comment justified this — *"We cannot easily
+intercept the dynamic import() in Bun's test runner without module mocking
+infrastructure"* — and the claim is false two hundred lines further down the
+same file, where `RealLangChainJudge — per-rubric evaluator isolation` injects
+a `moduleLoader` and has a case named *"moduleLoader failure returns typed
+ScorerAdapterError (not a throw)"*. The real failure path was covered all
+along; the stub case was covering the stub.
+
+The seventh was `satisfies <interface> — returns ResultAsync` on each stub,
+whose only non-type-echo assertion duplicated the default-fallback case beside
+it.
+
+One replacement was added, in the isolation block where the loader fixture
+already lives: *"loads openevals on the first evaluate() and not before"*,
+asserting the load count is 0 after construction and 1 after the first call.
+An eager `import()` in the constructor turns it red. Separately, *"each
+dimension has score, rationale, and applicable fields"* — three `typeof`
+assertions and one length check — became *"says which kind of case a dimension
+did not apply to"*, which pins the text and fails when the reason is blanked.
+
+The lesson generalises past this file: **a kept test earns its place by being
+falsifiable, not by being about something unobservable.** When a migration
+decides a case cannot move to a scenario, that decision should be followed by
+the question of whether the case asserts anything at all.
+
+Three things the 153 unit cases did not say:
+
+- **`NormalizedScoreRecord.suite` has no reader.** The scorer fills it from
+  `evalCase.suite`, and every runner builds its `CaseResultSummary.suite` from
+  `evalCase.suite` directly. A unit case asserted the field; nothing in the
+  product consumes it.
+- **The `scoredAt` parameter has no production caller.** Same shape as the
+  seven uncalled sanitizer surfaces above: it is on the interface, tested, and
+  never passed.
+- **`RubricCaseMismatch` is unreachable by construction.** Its two-line error
+  message tells a maintainer to "pass matching case and rubric fixtures to the
+  scorer", which no `weave eval run` can ever print, because the two ids it
+  compares are the same string.
+
 ### What the runner migration turned up
 
 Writing against observed behaviour found four things the 464 unit cases did
