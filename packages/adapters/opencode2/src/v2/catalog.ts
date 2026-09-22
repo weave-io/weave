@@ -157,14 +157,27 @@ function buildCandidate(
             materialized.descriptor.variant,
             input.models,
           );
+          // An unresolvable declared model costs the agent its model, not its
+          // existence: the agent is registered without a model ref, which is
+          // the same `inherit` shape an agent that declares no model produces,
+          // so OpenCode applies its own native model selection. Dropping the
+          // agent instead removed every builtin on a host whose catalog does
+          // not carry the builtins' declared model, taking `/weave:start`
+          // with it and leaving an install that looked inert.
+          //
+          // The issue is still recorded, so `status` names each agent whose
+          // declared model did not resolve. A fallback is not a silent
+          // success: the agent runs on a model the user did not name.
           if (resolvedModel.isErr()) {
             issues.push({
               code: "model_unavailable",
               agentName: materialized.agentName,
               details: resolvedModel.error,
             });
-            continue;
           }
+          const modelRef = resolvedModel.isOk()
+            ? resolvedModel.value.ref
+            : undefined;
           const skillResolution = resolveAvailableSkillsForAgent({
             agentName: materialized.agentName,
             agentSkills: materialized.descriptor.skills,
@@ -183,7 +196,7 @@ function buildCandidate(
           }
           const projection = translateOpenCode2Agent(
             materialized.descriptor,
-            resolvedModel.value.ref,
+            modelRef,
           );
           const skillIDs = skillResolution.resolved.flatMap((skill) => {
             const native = nativeSkillByName.get(skill.name);

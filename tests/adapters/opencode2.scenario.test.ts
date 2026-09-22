@@ -165,13 +165,21 @@ describe("a user's host has none of the models their agents ask for", () => {
     models: [{ providerID: "probe", id: "fast" }],
   };
 
-  it("leaves the host with no Weave agents at all, rather than agents that cannot answer", async () => {
+  it("still registers every agent, leaving the model to the host", async () => {
     const host = await load({ host: NO_ANTHROPIC });
 
-    expect(host.agentNames()).toEqual([]);
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
   });
 
-  it("names every agent it had to drop and why, so the cause is visible", async () => {
+  it("registers them without a model, so the host applies its own selection", async () => {
+    const host = await load({ host: NO_ANTHROPIC });
+
+    for (const name of BUILTIN_AGENTS) {
+      expect(host.agent(name).model).toBeUndefined();
+    }
+  });
+
+  it("names every agent whose model did not resolve, so the substitution is visible", async () => {
     const report = await statusOf({ host: NO_ANTHROPIC });
 
     expect(report.issues.map((issue) => issue.code)).toEqual(
@@ -182,10 +190,10 @@ describe("a user's host has none of the models their agents ask for", () => {
     );
   });
 
-  it("withholds the plan command too, so a user cannot start work with nothing to run it", async () => {
+  it("keeps the plan command, because Tapestry survived to run it", async () => {
     const host = await load({ host: NO_ANTHROPIC });
 
-    expect(host.commandNames()).toEqual([]);
+    expect(host.commandNames()).toEqual(["weave:start"]);
   });
 });
 
@@ -211,7 +219,7 @@ describe("a user names a model without saying which provider should serve it", (
     });
   });
 
-  it("refuses to guess when two providers offer it, and drops the agent instead", async () => {
+  it("refuses to guess when two providers offer it, and leaves the model to the host", async () => {
     const input = {
       config: CONFIG,
       host: {
@@ -222,7 +230,7 @@ describe("a user names a model without saying which provider should serve it", (
       },
     };
 
-    expect((await load(input)).agentNames()).not.toContain("scribe");
+    expect((await load(input)).agent("scribe").model).toBeUndefined();
     expect((await statusOf(input)).issues).toContainEqual({
       code: "model_unavailable",
       agentName: "scribe",
@@ -250,7 +258,7 @@ describe("a user asks for a model variant", () => {
     } as never);
   });
 
-  it("drops the agent rather than silently running the base model when the variant is unknown", async () => {
+  it("will not fall back to the base model when the variant is unknown, and leaves the model to the host", async () => {
     const input = {
       config: `
         agent scribe {
@@ -262,7 +270,10 @@ describe("a user asks for a model variant", () => {
       host: ANTHROPIC_HOST,
     };
 
-    expect((await load(input)).agentNames()).not.toContain("scribe");
+    // Not the requested variant, and not the base model either — an
+    // unresolvable variant hands model choice back to OpenCode rather than
+    // quietly downgrading to the same model without its variant.
+    expect((await load(input)).agent("scribe").model).toBeUndefined();
     expect((await statusOf(input)).issues).toContainEqual({
       code: "model_unavailable",
       agentName: "scribe",
@@ -665,7 +676,9 @@ describe("another plugin already registered an agent under a name Weave wants", 
     const report = await statusOf(INPUT);
 
     expect(report.issues).toContainEqual({ code: "agent_collision", count: 1 });
-    expect(report.agentCount).toBe(0);
+    // The builtins are Weave's; the collided `scribe` is not counted among
+    // them, so the owned count stays at exactly the builtin set.
+    expect(report.agentCount).toBe(BUILTIN_AGENTS.length);
   });
 });
 
@@ -1100,7 +1113,7 @@ describe("the host applies agent transforms lazily, as the real one does", () =>
       host: { lazyAgents: true },
     });
 
-    expect(host.agentNames()).toEqual(["scribe"]);
+    expect(host.agentNames()).toEqual([...BUILTIN_AGENTS, "scribe"].sort());
   });
 });
 

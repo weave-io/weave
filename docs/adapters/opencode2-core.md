@@ -108,8 +108,20 @@ category `patterns` remain part of the DSL.
 
 An explicit model entry uses `provider/model` and can add a native variant as
 `provider/model#variant`. A bare model ID is accepted only when exactly one live
-catalog entry matches. The first viable declared entry wins. An agent is
-omitted when it declares models but none are valid or available.
+catalog entry matches. The first viable declared entry wins.
+
+When an agent declares models and none are valid or available, the agent is
+still registered — without a model ref, the same shape an agent that declares
+no model produces — and OpenCode applies its own native model selection. The
+adapter reports one `model_unavailable` issue per affected agent, so `status`
+names every agent whose declared model did not resolve.
+
+This is a deliberate trade. The agent runs on a model the user did not name,
+which `status` is the only record of. The alternative, omitting the agent, cost
+every builtin on a host whose catalog does not carry the builtins' declared
+model: all eight disappeared, `/weave:start` went with them because it requires
+an owned Tapestry, and the install looked inert. Declaring a model that does not
+resolve is not treated as a request to have no agent.
 
 If an agent declares no model, OpenCode keeps native model selection. The
 adapter does not reset a user's model on each turn. A descriptor-level
