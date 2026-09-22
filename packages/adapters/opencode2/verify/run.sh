@@ -15,7 +15,9 @@
 #   5. Agent-materialization test (embedded SDK) — boots
 #      `OpenCode.create({ plugins: [weavePlugin] })` against a fixture
 #      project directory with `.weave/config.weave`, then asserts
-#      `host.agent.list()` contains a Weave-owned `loom` entry. Runs inside
+#      `host.agent.list()` contains a Weave-owned entry for EVERY agent that
+#      fixture declares — not just `loom`, so a per-agent drop (e.g. the
+#      `model_unavailable` path in issue #209) fails the layer. Runs inside
 #      the Podman container.
 #   6. Agent-materialization test (real opencode2 CLI) — closes the seam
 #      layer 4 left open (marker files prove the real CLI ran the plugin's
@@ -24,9 +26,9 @@
 #      after calling the real adapter's `setup(ctx)`, calls
 #      `ctx.agent.list()` (envelope-unwrapped per A4) and writes the result
 #      to a marker file. The layer reads that marker and asserts the CLI's
-#      own ctx surfaces a `loom` entry with the V2 ownership marker. No
-#      embedded host is created; the observation is strictly CLI-side. Runs
-#      inside the Podman container.
+#      own ctx surfaces every agent the fixture declares, each carrying the
+#      V2 ownership marker. No embedded host is created; the observation is
+#      strictly CLI-side. Runs inside the Podman container.
 #   7. (Covered by layer 1) Assertions over the materialized V2 agent shape
 #      — `system`, structured model ref, ordered `permissions`, `mode`, and
 #      the V2-package-local ownership marker — live in
@@ -187,21 +189,21 @@ else
   abort_on_failure "4-real-loader" "failed" "real opencode2 plugin-loader smoke test failed"
 fi
 
-echo "==> Layer 5/9: agent-materialization test — embedded (Loom via host.agent.list())"
+echo "==> Layer 5/9: agent-materialization test — embedded (all declared agents via host.agent.list())"
 if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures/agent-materialization "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts agent-materialization'; then
-  abort_on_failure "5-agent-materialization" "passed" "host.agent.list() reports a Weave-owned loom agent"
+  abort_on_failure "5-agent-materialization" "passed" "host.agent.list() reports every declared Weave agent as Weave-owned"
 else
-  abort_on_failure "5-agent-materialization" "failed" "host.agent.list() did not report a Weave-owned loom agent"
+  abort_on_failure "5-agent-materialization" "failed" "host.agent.list() did not report every declared Weave agent as Weave-owned"
 fi
 
-echo "==> Layer 6/9: agent-materialization test — real opencode2 CLI (Loom via ctx.agent.list())"
+echo "==> Layer 6/9: agent-materialization test — real opencode2 CLI (all declared agents via ctx.agent.list())"
 if podman run --rm \
     -e FIXTURE_DIR=/work/verify/fixtures-layer6 \
     -e WEAVE_VERIFY_MARKER_DIR=/tmp/weave-verify-markers-layer6 \
-    "${IMAGE_TAG}" -c 'cd /work && timeout 45 bun run verify/container-smoke.ts real-cli-materialization'; then
-  abort_on_failure "6-real-cli-materialization" "passed" "real opencode2 CLI's ctx.agent.list() reports a Weave-owned loom agent"
+    "${IMAGE_TAG}" -c 'cd /work && timeout 60 bun run verify/container-smoke.ts real-cli-materialization'; then
+  abort_on_failure "6-real-cli-materialization" "passed" "real opencode2 CLI's ctx.agent.list() reports every declared Weave agent as Weave-owned"
 else
-  abort_on_failure "6-real-cli-materialization" "failed" "real opencode2 CLI's ctx.agent.list() did not report a Weave-owned loom agent"
+  abort_on_failure "6-real-cli-materialization" "failed" "real opencode2 CLI's ctx.agent.list() did not report every declared Weave agent as Weave-owned"
 fi
 
 print_summary

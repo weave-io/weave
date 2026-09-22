@@ -12,9 +12,10 @@
  * to a marker file the host process (`verify/container-smoke.ts`) reads.
  *
  * Invariant proved: the CLI's own view of `agent.list()` — via the exact
- * `ctx` the real V2 loader delivered to the plugin subprocess — contains
- * a Weave-owned `loom` entry. No embedded `OpenCode.create` host is
- * involved; the observation is strictly CLI-side.
+ * `ctx` the real V2 loader delivered to the plugin subprocess — contains a
+ * Weave-owned entry for every agent the fixture declares, not just `loom`.
+ * No embedded `OpenCode.create` host is involved; the observation is
+ * strictly CLI-side.
  *
  * Imports the real built adapter via its `./server` subpath export — the
  * same path a user's `opencode.jsonc` would reference — so this exercises
@@ -32,6 +33,22 @@ import weavePlugin, {
 
 function markerDir(): string {
   return process.env.WEAVE_VERIFY_MARKER_DIR ?? process.cwd();
+}
+
+/**
+ * The Weave agents this observation waits for, handed down by
+ * `verify/container-smoke.ts` (which parses them from the fixture's
+ * `.weave/config.weave`) so the wrapper's poll and the host's assertion
+ * cannot drift apart. Falls back to the two primary-mode builtins when the
+ * variable is absent, which keeps the wrapper usable standalone.
+ */
+function expectedAgents(): string[] {
+  const raw = process.env.WEAVE_VERIFY_EXPECTED_AGENTS ?? "";
+  const names = raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return names.length > 0 ? names : ["loom", "tapestry"];
 }
 
 type AgentEntry = {
@@ -76,6 +93,51 @@ const wrapped = {
       let agents: AgentEntry[] = [];
       let listError: string | null = null;
       let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      // Persist what has been seen so far. Called on every poll iteration,
+      // not only at the end: when an expected agent never materializes the
+      // poll runs to its deadline, and the real CLI tears the plugin scope
+      // down long before that — so a write deferred to the end never lands
+      // and the host would report "cleanup.marker not found" instead of
+      // naming the agent that went missing.
+      const writeMarker = async (): Promise<void> => {
+        await Bun.write(
+          `${markerDir()}/agent-list.marker.json`,
+          JSON.stringify(
+            {
+              error: listError,
+              count: agents.length,
+              agents: agents.map((a) => {
+                const promptStr =
+                  typeof a?.prompt === "string" ? a.prompt : null;
+                return {
+                  name: a?.name ?? null,
+                  description: a?.description ?? null,
+                  // Additive fields consumed by the extended active-agent
+                  // proof. Existing layer-6 assertions ignore these.
+                  mode: typeof a?.mode === "string" ? a.mode : null,
+                  permissionKeys:
+                    a?.permission && typeof a.permission === "object"
+                      ? Object.keys(a.permission as Record<string, unknown>)
+                      : null,
+                  promptLength: promptStr === null ? null : promptStr.length,
+                  promptContainsLoomHeader:
+                    promptStr === null
+                      ? null
+                      : promptStr.includes("loom — Main Orchestrator"),
+                  promptContainsDelegation:
+                    promptStr === null
+                      ? null
+                      : promptStr.includes("Delegation"),
+                };
+              }),
+            },
+            null,
+            2,
+          ),
+        );
+      };
+
       try {
         const rpc = ctx as { agent?: { list?: () => Promise<unknown> } } | null;
         if (typeof rpc?.agent?.list === "function") {
@@ -96,8 +158,9 @@ const wrapped = {
             } else if (envelope && Array.isArray(envelope.data)) {
               agents = envelope.data;
             }
+            await writeMarker();
             if (
-              ["loom", "tapestry"].every((name) =>
+              expectedAgents().every((name) =>
                 agents.some(
                   (agent) =>
                     agent.name === name &&
@@ -117,38 +180,7 @@ const wrapped = {
         clearTimeout(timeout);
       }
 
-      await Bun.write(
-        `${markerDir()}/agent-list.marker.json`,
-        JSON.stringify(
-          {
-            error: listError,
-            count: agents.length,
-            agents: agents.map((a) => {
-              const promptStr = typeof a?.prompt === "string" ? a.prompt : null;
-              return {
-                name: a?.name ?? null,
-                description: a?.description ?? null,
-                // Additive fields consumed by the extended active-agent proof.
-                // Existing verify:opencode2 layer-6 assertions ignore these.
-                mode: typeof a?.mode === "string" ? a.mode : null,
-                permissionKeys:
-                  a?.permission && typeof a.permission === "object"
-                    ? Object.keys(a.permission as Record<string, unknown>)
-                    : null,
-                promptLength: promptStr === null ? null : promptStr.length,
-                promptContainsLoomHeader:
-                  promptStr === null
-                    ? null
-                    : promptStr.includes("loom — Main Orchestrator"),
-                promptContainsDelegation:
-                  promptStr === null ? null : promptStr.includes("Delegation"),
-              };
-            }),
-          },
-          null,
-          2,
-        ),
-      );
+      await writeMarker();
     })();
 
     return async (): Promise<void> => {

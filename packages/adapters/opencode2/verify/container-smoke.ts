@@ -33,6 +33,53 @@
 
 const mode = process.argv[2];
 
+/**
+ * The Weave agents a fixture's `.weave/config.weave` declares.
+ *
+ * Both materialization layers assert against the fixture's own declarations
+ * rather than a hardcoded list, so a fixture edit can never silently narrow
+ * what the layer proves. The DSL shape parsed here is the single-line
+ * `agent <name> { ... }` form both fixtures use.
+ */
+async function declaredWeaveAgents(configPath: string): Promise<string[]> {
+  const source = await Bun.file(configPath).text();
+  const names = new Set<string>();
+  for (const match of source.matchAll(/^\s*agent\s+([A-Za-z0-9_-]+)\s*\{/gm)) {
+    const name = match[1];
+    if (name !== undefined) names.add(name);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Names in `expected` that are absent from `agents`, or present without the
+ * V2 ownership marker on their description. An agent the host dropped and an
+ * agent some other plugin registered under the same name are both failures,
+ * so the two cases are reported together with their reason.
+ */
+function unownedOrMissing(
+  agents: ReadonlyArray<{ name?: string | null; description?: string | null }>,
+  expected: readonly string[],
+  ownershipMarker: string,
+): string[] {
+  const byName = new Map<string, { description?: string | null }>();
+  for (const agent of agents) {
+    if (typeof agent.name === "string") byName.set(agent.name, agent);
+  }
+  const failures: string[] = [];
+  for (const name of expected) {
+    const agent = byName.get(name);
+    if (agent === undefined) {
+      failures.push(`${name} (absent)`);
+      continue;
+    }
+    if (!(agent.description ?? "").startsWith(ownershipMarker)) {
+      failures.push(`${name} (present but not Weave-owned)`);
+    }
+  }
+  return failures;
+}
+
 async function runEmbedded(): Promise<number> {
   const { OpenCode } = await import("@opencode-ai/sdk");
   // Resolves through the package's own `exports` map ("./server" ->
@@ -146,10 +193,14 @@ async function runRealLoader(): Promise<number> {
  *
  * Assertions (via `host.agent.list()`, unwrapped per A4):
  *   1. `data` is non-empty.
- *   2. At least one entry has `name === "loom"`.
- *   3. That entry's `description` starts with the V2-package-local
+ *   2. EVERY agent the fixture's `.weave/config.weave` declares is present.
+ *   3. Each of those entries' `description` starts with the V2-package-local
  *      `WEAVE_OWNERSHIP_MARKER` — imported from the package's `./server`
  *      subpath so this check verifies the exact same constant Weave writes.
+ *
+ * Asserting the whole declared set, not just `loom`, is what makes this layer
+ * catch a per-agent drop — e.g. the `model_unavailable` path in issue #209,
+ * where a host that cannot serve one agent's model silently omits it.
  *
  * Never sends a prompt / triggers a real LLM call.
  */
@@ -158,10 +209,19 @@ async function runAgentMaterialization(): Promise<number> {
     process.env.FIXTURE_DIR ??
     `${process.cwd()}/verify/fixtures/agent-materialization`;
 
-  const marker = await Bun.file(`${fixtureDir}/.weave/config.weave`).exists();
+  const configPath = `${fixtureDir}/.weave/config.weave`;
+  const marker = await Bun.file(configPath).exists();
   if (!marker) {
     console.error(
-      `FAIL: agent-materialization — fixture ${fixtureDir}/.weave/config.weave not found`,
+      `FAIL: agent-materialization — fixture ${configPath} not found`,
+    );
+    return 1;
+  }
+
+  const expectedAgents = await declaredWeaveAgents(configPath);
+  if (expectedAgents.length === 0) {
+    console.error(
+      `FAIL: agent-materialization — fixture ${configPath} declares no agents; the layer would assert nothing`,
     );
     return 1;
   }
@@ -196,7 +256,12 @@ async function runAgentMaterialization(): Promise<number> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
       timeout = setTimeout(
-        () => reject(new Error("Timed out waiting for owned Loom")),
+        () =>
+          reject(
+            new Error(
+              `Timed out waiting for owned Weave agents: ${expectedAgents.join(", ")}`,
+            ),
+          ),
         10_000,
       );
     });
@@ -204,11 +269,8 @@ async function runAgentMaterialization(): Promise<number> {
     try {
       envelope = await Promise.race([host.agent.list(), expired]);
       while (
-        !envelope.data.some(
-          (agent) =>
-            agent.name === "loom" &&
-            agent.description?.startsWith(WEAVE_OWNERSHIP_MARKER),
-        ) &&
+        unownedOrMissing(envelope.data, expectedAgents, WEAVE_OWNERSHIP_MARKER)
+          .length > 0 &&
         Date.now() < deadline
       ) {
         await Bun.sleep(50);
@@ -231,26 +293,22 @@ async function runAgentMaterialization(): Promise<number> {
       return 1;
     }
 
-    const loom = data.find((entry) => entry.name === "loom");
-    if (!loom) {
+    const failures = unownedOrMissing(
+      data,
+      expectedAgents,
+      WEAVE_OWNERSHIP_MARKER,
+    );
+    if (failures.length > 0) {
       console.error(
-        `FAIL: agent-materialization — no agent named "loom" found; got: ${data
-          .map((e) => e.name)
-          .join(", ")}`,
-      );
-      return 1;
-    }
-
-    const description = loom.description ?? "";
-    if (!description.startsWith(WEAVE_OWNERSHIP_MARKER)) {
-      console.error(
-        `FAIL: agent-materialization — loom description does not start with WEAVE_OWNERSHIP_MARKER; got: ${JSON.stringify(description)}`,
+        `FAIL: agent-materialization — declared Weave agents not materialized as Weave-owned: ${failures.join(
+          ", ",
+        )}. Observed: ${data.map((e) => e.name).join(", ")}`,
       );
       return 1;
     }
 
     console.log(
-      `OK: agent-materialization — host.agent.list() contains ${data.length} agent(s); "loom" is Weave-owned`,
+      `OK: agent-materialization — host.agent.list() contains ${data.length} agent(s); all ${expectedAgents.length} declared Weave agents are Weave-owned (${expectedAgents.join(", ")})`,
     );
     return 0;
   } finally {
@@ -278,9 +336,11 @@ async function runAgentMaterialization(): Promise<number> {
  *      lifecycle — same invariant as layer 4).
  *   2. `agent-list.marker.json.error` is null (the ctx.agent.list RPC
  *      call inside the CLI's plugin subprocess did not throw).
- *   3. `agent-list.marker.json.agents` contains a `loom` entry whose
- *      description starts with the V2-package-local
- *      `WEAVE_OWNERSHIP_MARKER`.
+ *   3. `agent-list.marker.json.agents` contains EVERY agent the fixture's
+ *      `.weave/config.weave` declares, each with a description starting with
+ *      the V2-package-local `WEAVE_OWNERSHIP_MARKER`. The expected set is
+ *      handed to the plugin-wrapper through `WEAVE_VERIFY_EXPECTED_AGENTS`
+ *      so the wrapper's poll and this assertion share one source of truth.
  *
  * The trigger is the same one layer 4 uses (`opencode2 run hi --standalone
  * --print-logs`) — that invocation is the harness's single sanctioned
@@ -300,15 +360,22 @@ async function runRealCliMaterialization(): Promise<number> {
   // Fixture sanity check — the real V2 loader silently drops entries that
   // resolve to a file (A2), so a broken fixture would fail with no CLI
   // error, only a missing setup.marker. Fail loudly here instead.
-  const configExists = await Bun.file(
-    `${fixtureDir}/.weave/config.weave`,
-  ).exists();
+  const configPath = `${fixtureDir}/.weave/config.weave`;
+  const configExists = await Bun.file(configPath).exists();
   const opencodeJsoncExists = await Bun.file(
     `${fixtureDir}/opencode.jsonc`,
   ).exists();
   if (!configExists || !opencodeJsoncExists) {
     console.error(
       `FAIL: real-cli-materialization — fixture ${fixtureDir} missing .weave/config.weave or opencode.jsonc`,
+    );
+    return 1;
+  }
+
+  const expectedAgents = await declaredWeaveAgents(configPath);
+  if (expectedAgents.length === 0) {
+    console.error(
+      `FAIL: real-cli-materialization — fixture ${configPath} declares no agents; the layer would assert nothing`,
     );
     return 1;
   }
@@ -332,12 +399,21 @@ async function runRealCliMaterialization(): Promise<number> {
       "-c",
       `cd "${fixtureDir}" && exec opencode2 run hi --standalone --print-logs --log-level warn`,
     ],
-    env: { ...process.env, WEAVE_VERIFY_MARKER_DIR: markerDir },
+    env: {
+      ...process.env,
+      WEAVE_VERIFY_MARKER_DIR: markerDir,
+      WEAVE_VERIFY_EXPECTED_AGENTS: expectedAgents.join(","),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const timeoutMs = 20_000;
+  // Long enough for the wrapper's full 10s agent poll plus CLI startup. On
+  // the happy path the poll breaks as soon as every expected agent appears,
+  // so this ceiling is only reached when an agent is genuinely missing —
+  // and killing the CLI before its cleanup would report "cleanup.marker not
+  // found" instead of naming the agent that never materialized.
+  const timeoutMs = 30_000;
   await Promise.race([
     proc.exited,
     new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
@@ -357,20 +433,18 @@ async function runRealCliMaterialization(): Promise<number> {
   }
 
   const setupInvoked = await Bun.file(`${markerDir}/setup.marker`).exists();
-  const cleanupInvoked = await Bun.file(`${markerDir}/cleanup.marker`).exists();
   if (!setupInvoked) {
     console.error(
       "FAIL: real-cli-materialization — setup.marker not found; plugin setup() did not run",
     );
     return 1;
   }
-  if (!cleanupInvoked) {
-    console.error(
-      "FAIL: real-cli-materialization — cleanup.marker not found; plugin cleanup did not run",
-    );
-    return 1;
-  }
 
+  // The cleanup marker is checked AFTER the agent assertions below. The
+  // wrapper's poll only runs to its deadline when an expected agent never
+  // arrives, and the CLI tears the plugin scope down first — so a missing
+  // agent also costs the cleanup marker. Asserting cleanup first would
+  // report that symptom instead of the cause.
   const listMarkerPath = `${markerDir}/agent-list.marker.json`;
   const listMarker = Bun.file(listMarkerPath);
   if (!(await listMarker.exists())) {
@@ -400,20 +474,26 @@ async function runRealCliMaterialization(): Promise<number> {
     return 1;
   }
 
-  const loom = parsed.agents.find((a) => a.name === "loom");
-  if (!loom) {
+  const failures = unownedOrMissing(
+    parsed.agents,
+    expectedAgents,
+    WEAVE_OWNERSHIP_MARKER,
+  );
+  if (failures.length > 0) {
     console.error(
-      `FAIL: real-cli-materialization — no agent named "loom" observed via CLI ctx.agent.list(); got: ${parsed.agents
-        .map((a) => a.name)
-        .join(", ")}`,
+      `FAIL: real-cli-materialization — declared Weave agents not observed as Weave-owned via CLI ctx.agent.list(): ${failures.join(
+        ", ",
+      )}. Observed: ${parsed.agents.map((a) => a.name).join(", ")}`,
     );
     return 1;
   }
 
-  const description = loom.description ?? "";
-  if (!description.startsWith(WEAVE_OWNERSHIP_MARKER)) {
+  // Lifecycle claim, checked once the substantive agent claim holds — see
+  // the note next to the setup-marker check above.
+  const cleanupInvoked = await Bun.file(`${markerDir}/cleanup.marker`).exists();
+  if (!cleanupInvoked) {
     console.error(
-      `FAIL: real-cli-materialization — loom description observed via CLI ctx.agent.list() does not start with WEAVE_OWNERSHIP_MARKER; got: ${JSON.stringify(description)}`,
+      "FAIL: real-cli-materialization — cleanup.marker not found; plugin cleanup did not run",
     );
     return 1;
   }
@@ -429,7 +509,7 @@ async function runRealCliMaterialization(): Promise<number> {
   }
 
   console.log(
-    `OK: real-cli-materialization — CLI's own ctx.agent.list() reports ${parsed.count} agent(s); "loom" is Weave-owned`,
+    `OK: real-cli-materialization — CLI's own ctx.agent.list() reports ${parsed.count} agent(s); all ${expectedAgents.length} declared Weave agents are Weave-owned (${expectedAgents.join(", ")})`,
   );
   return 0;
 }
@@ -446,17 +526,22 @@ async function runRealCliMaterialization(): Promise<number> {
  *
  *   A. setup + cleanup markers present (plugin lifecycle ran)
  *   B. ctx.agent.list() succeeded, non-empty
- *   C. Both primary-mode Weave-owned builtins observed: `loom` AND
- *      `tapestry` (the only Weave agents whose mode is `primary`; all
- *      other builtins are `subagent`, which V2's ctx.agent.list() does
- *      not surface — see issue #165)
- *   D. Both are Weave-owned (description starts with V2 ownership marker)
- *   E. Both have a `mode` string reported by the CLI
+ *   C. EVERY Weave agent the fixture declares is observed — both the
+ *      primary-mode ones (`loom`, `tapestry`) and the subagent-mode ones
+ *      (`shuttle`, `pattern`, `thread`, `spindle`, `weft`, `warp`)
+ *   D. All are Weave-owned (description starts with V2 ownership marker)
+ *   E. All have a `mode` string reported by the CLI
+ *
+ * Correction (beta-19151, observed): an earlier revision of this docstring
+ * claimed `ctx.agent.list()` surfaces only primary-mode agents and that the
+ * six subagent-mode builtins were therefore unverifiable here. That is not
+ * what the pinned host does — it returns all eight, each carrying `mode`
+ * (`primary` for loom/tapestry, `subagent` for the rest). The claim is
+ * asserted rather than assumed, so a host that does start hiding subagents
+ * fails this proof instead of silently weakening it.
  *
  * Claims that CANNOT be checked via `ctx.agent.list()` today (V2 gap;
  * covered by unit tests in src/__tests__/ against MockPluginContext):
- *   - subagent-mode Weave agents (shuttle, pattern, thread, spindle,
- *     weft, warp) — not returned by ctx.agent.list()
  *   - tool policy → permission mapping — .permission not present in the
  *     ctx.agent.list() summary shape
  *   - prompt composition — .prompt not present in the summary shape
@@ -499,23 +584,28 @@ async function runActiveAgentProofExtended(): Promise<number> {
     return 1;
   }
 
-  // V2's ctx.agent.list() surfaces only primary-mode agents. Weave's
-  // primary-mode builtins are exactly loom + tapestry.
-  const expectedPrimaryBuiltins = ["loom", "tapestry"];
+  // Every agent the layer-6 fixture declares — primary and subagent mode
+  // alike — is expected in the CLI's own view. See the docstring's
+  // correction note on the pinned host's actual behaviour.
+  const fixtureDir =
+    process.env.FIXTURE_DIR ?? `${process.cwd()}/verify/fixtures-layer6`;
+  const expectedBuiltins = await declaredWeaveAgents(
+    `${fixtureDir}/.weave/config.weave`,
+  );
   const byName = new Map<string, (typeof parsed.agents)[number]>();
   for (const a of parsed.agents) {
     if (a.name !== null) byName.set(a.name, a);
   }
 
-  const missing = expectedPrimaryBuiltins.filter((n) => !byName.has(n));
+  const missing = expectedBuiltins.filter((n) => !byName.has(n));
   if (missing.length > 0) {
     console.error(
-      `FAIL: extended proof — primary-mode Weave builtins missing from CLI ctx.agent.list(): ${missing.join(", ")}. Observed: ${[...byName.keys()].join(", ")}`,
+      `FAIL: extended proof — declared Weave builtins missing from CLI ctx.agent.list(): ${missing.join(", ")}. Observed: ${[...byName.keys()].join(", ")}`,
     );
     return 1;
   }
 
-  for (const name of expectedPrimaryBuiltins) {
+  for (const name of expectedBuiltins) {
     const agent = byName.get(name);
     if (!agent) {
       console.error(
@@ -539,7 +629,7 @@ async function runActiveAgentProofExtended(): Promise<number> {
   }
 
   console.log(
-    `OK: extended proof — both primary-mode Weave builtins (${expectedPrimaryBuiltins.join(", ")}) present, Weave-owned, and mode-labelled in real CLI ctx.agent.list() (${parsed.count} total agents including opencode2 builtins)`,
+    `OK: extended proof — all ${expectedBuiltins.length} declared Weave builtins (${expectedBuiltins.join(", ")}) present, Weave-owned, and mode-labelled in real CLI ctx.agent.list() (${parsed.count} total agents including opencode2 builtins)`,
   );
   return 0;
 }

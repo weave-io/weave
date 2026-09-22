@@ -25,6 +25,7 @@
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
 - `WEAVE_TRAJECTORY_START_AGENT` **required** — sandboxes/opencode/entrypoint.ts
 - `WEAVE_VERIFY_BASE_URL` **required** — packages/adapters/opencode2/verify/container-smoke.ts
+- `WEAVE_VERIFY_EXPECTED_AGENTS` (has default) — packages/adapters/opencode2/verify/fixtures-layer6/plugin-wrapper/server.ts
 - `WEAVE_VERIFY_MARKER_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `XDG_CONFIG_HOME` **required** — packages/cli/src/detect/probes.ts
 

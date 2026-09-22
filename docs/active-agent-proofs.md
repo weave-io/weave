@@ -50,7 +50,7 @@ container. Runtime ~5s.
 ### V2 opencode2 — bounded by V2's introspection gap
 
 V2 has no `debug config` equivalent and its `ctx.agent.list()` returns
-only a **summary shape** for **primary-mode** agents. See
+only a **summary shape**. See
 [issue #165](https://github.com/weave-io/weave/issues/165) for the tracking
 of what's missing. Concrete impact on this proof:
 
@@ -58,16 +58,24 @@ of what's missing. Concrete impact on this proof:
 
 - Plugin setup + cleanup ran (lifecycle)
 - `ctx.agent.list()` succeeded and returned a non-empty list
-- Both primary-mode Weave builtins (`loom`, `tapestry`) present
-- Both are Weave-owned (description starts with the V2 ownership marker)
-- Both have a mode string
+- Every Weave builtin the fixture declares is present — the primary-mode
+  ones (`loom`, `tapestry`) and the subagent-mode ones (`shuttle`,
+  `pattern`, `thread`, `spindle`, `weft`, `warp`)
+- All are Weave-owned (description starts with the V2 ownership marker)
+- All have a mode string
+
+> **Corrected 2026-09-22.** This section previously said `ctx.agent.list()`
+> surfaces only primary-mode agents, and therefore listed the six
+> subagent-mode builtins as unverifiable. That is not what the pinned host
+> does: `0.0.0-beta-19151` returns all eight, each carrying `mode`. The
+> proof and `verify:opencode2` layers 5–6 now assert the whole declared set,
+> so a host that does start hiding subagents fails rather than silently
+> narrowing what the proof covers.
 
 **What is NOT checkable via the real CLI today** (covered by V2 unit
 tests against `MockPluginContext` in
 [`packages/adapters/opencode2/src/__tests__/`](../packages/adapters/opencode2/src/__tests__/)):
 
-- Subagent-mode Weave builtins (`shuttle`, `pattern`, `thread`, `spindle`,
-  `weft`, `warp`) — not surfaced by `ctx.agent.list()`
 - Tool-policy → permission mapping — `.permission` is `null` in the
   `ctx.agent.list()` summary shape
 - Prompt composition end-to-end — `.prompt` is `null` in the summary shape
