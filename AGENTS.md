@@ -692,6 +692,11 @@ bun run verify:test-coverage  # check every workspace package runs tests hermeti
 bun run clean                 # remove all dist/ folders
 ```
 
+Releases are cut by pushing a `<package>@<version>` tag. Follow
+[`RELEASING.md`](RELEASING.md), and its "Releasing as an agent" runbook when you
+cut one: the tag must land on the `origin/main` commit that carries the version
+bump, and a published version can never be reused.
+
 ### A new package must run its tests
 
 `bun run test` fans out with `bun run --filter '*' test`, which silently skips
