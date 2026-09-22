@@ -40,6 +40,7 @@ Each package has a unique tag prefix:
 |---------|-----------|-------------|------------------|
 | CLI | `cli@` | `cli@1.2.4` | `@weaveio/weave-cli` |
 | OpenCode adapter | `opencode@` | `opencode@0.3.1` | `@weaveio/weave-adapter-opencode` |
+| OpenCode 2 adapter | `opencode2@` | `opencode2@0.2.0` | `@weaveio/weave-adapter-opencode2` |
 | Claude Code adapter | `claude-code@` | `claude-code@0.2.0` | `@weaveio/weave-adapter-claude-code` |
 
 **Format**: `<prefix>@<semver>` where `<semver>` is `major.minor.patch` (e.g. `1.2.3`), or `major.minor.patch-next.N` for a pre-release (e.g. `1.3.0-next.0`).

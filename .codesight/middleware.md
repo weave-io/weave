@@ -7,6 +7,7 @@
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
