@@ -50,7 +50,7 @@
     },
     "packages/adapters/opencode": {
       "name": "@weaveio/weave-adapter-opencode",
-      "version": "0.1.2",
+      "version": "0.2.0-next.1",
       "dependencies": {
         "@opencode-ai/plugin": "~1.15.9",
         "@opencode-ai/sdk": "~1.15.9",
@@ -67,7 +67,7 @@
     },
     "packages/adapters/opencode2": {
       "name": "@weaveio/weave-adapter-opencode2",
-      "version": "0.1.2",
+      "version": "0.2.0-next.1",
       "dependencies": {
         "@opencode-ai/client": "0.0.0-beta-19151",
         "@opencode-ai/plugin": "0.0.0-beta-19151",
@@ -118,7 +118,7 @@
     },
     "packages/cli": {
       "name": "@weaveio/weave-cli",
-      "version": "0.1.2",
+      "version": "0.2.0-next.1",
       "bin": {
         "weave": "./dist/main.js",
       },

@@ -227,6 +227,12 @@ configuration:
   merely out of date, while passing in CI, which has no global config.
 - **CI jobs, containers and sandboxed harness runs**, where the home directory
   may be shared, surprising, or not the user's own.
+- **Host applications** that start a harness for the user and keep a Weave
+  config of their own, such as Weave Fleet starting OpenCode. The host sets the
+  variable to a folder it owns when it launches the harness: that folder's
+  `config.weave` becomes the global layer, its `prompts/` serves
+  `prompt_file` and `prompt_append_file`, and the project's `.weave/` layer
+  still merges on top.
 
 A test that *needs* global-scope config points the variable at its own fixture
 directory rather than writing to the developer's home.
