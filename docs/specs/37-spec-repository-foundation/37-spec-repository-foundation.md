@@ -1,6 +1,6 @@
 # Spec 37 — Repository Foundation
 
-**Status:** In progress — G1 and G3 have largely landed (#186, #194); see [37 tasks](37-tasks-repository-foundation.md) for what remains · **Workstream:** WS0 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md)
+**Status:** In progress — G1 and G3 have largely landed (#186, #194); see [37 tasks](37-tasks-repository-foundation.md) for what remains. Since 23 Sep 2026 the eval goals G9–G11 come first · **Workstream:** WS0 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md)
 
 **Related:** [37 tasks](37-tasks-repository-foundation.md) · [Agent Evals](../../agent-evals.md) · [Eval Sanitization and Publish Pipeline](../../eval-sanitization-and-publish-pipeline.md) · [Spec 33 — Harness Trajectory Evals](../33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) · [Spec 35 — Verification Trajectory Evals](../35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md) · [Documentation Policy](../../documentation-policy.md)
 
@@ -13,6 +13,7 @@ The session audit found that Weave loses the most time to failed delegations, se
 - The website must present eval results reliably. A `schemaVersion` bump on 5 Sep silently dropped models from tryweave.io/evals.
 - Evals and tests must be easy to understand and diagnose, for maintainers and for agents.
 - Real-session behaviour must be measurable, so WS1–WS4 have baselines and targets.
+- The evals must be able to show whether a prompt or agent change helped. Today one flipped case moves a model's suite score by 50%, and a scoring hole can publish an empty run as green (see [Eval findings (23 Sep 2026)](#eval-findings-23-sep-2026)).
 
 ## Findings (19 Sep 2026)
 
@@ -31,6 +32,22 @@ The session audit found that Weave loses the most time to failed delegations, se
 | Website | `weave-website/src/lib/evals-data.ts` hand-copies the report types and hard-codes `schemaVersion` checks in four places. When the summary schema moved to v2, rows failed validation and were dropped silently. The fix was a one-line patch in the website. | `evals-data.ts:341,385,415,449` |
 | Sessions | Real-session metrics exist only as one-off scripts from the audit. | [Session audit](../../artifacts/session-audit-2026-09.md) |
 
+## Eval findings (23 Sep 2026)
+
+Added after the maintainer decided the agent evals must be fixed before any agent or prompt work.
+
+| Area | Finding | Evidence |
+| --- | --- | --- |
+| Coverage | The last published run is 5 Sep (commit `80ffde6`): 296 results, 37 cases × 8 models. 12 of the current 49 cases have never been in a published run. | `weave-io/weave-agent-evals` |
+| Noise | Most suites had 2 cases per model in that run, and each case runs once (temperature 0.2), so one flipped case moves a model's suite score by 50%. Only Pattern and Loom have repeatability diagnostics, and those compare separate runs after the fact. | `repeatability-diagnostics.json`, `packages/cli/src/evals/runner.ts` ~1514 |
+| Tooling | `eval run` accepts only `--agent`, `--case`, `--model`, `--raw-artifacts` and `--dry-run`. There is no way to repeat a case or compare two runs. | `packages/cli/src/commands/eval.ts` |
+| Scoring | A `--model` typo publishes an empty green run on `loom-routing` and `tapestry-execution` (#205). | `tests/evals/suite-runners.scenario.test.ts` (`EMPTY_RUN_ON_MODEL_FILTER`) |
+| Scoring | The `tapestry-category-routing` qualitative gate averages in two inapplicable dimensions scored 1.0, so only a judge verdict below 0.1 can fail it. The placeholder `shuttle-{category}` still earns 0.4 through the generic-fallback detector. | `tapestry-category-routing-runner.ts` |
+| Judge | The LLM judge is hard-coded to `anthropic/claude-sonnet-4.5`, which is also a scored matrix model. Neither the provenance manifest nor the report schema records which judge scored a run. The judge scores the 11 untagged `task_completion` cases (pattern, weft, warp, spindle, shuttle, tapestry) and feeds the 10 category-routing cases. | `packages/cli/src/commands/eval.ts:415` |
+| Judge | A candidate replacement, TypeSafe Jev (`typesafe/jev-1.13` on OpenRouter), is a decisions model: it is called through `POST /api/alpha/decisions` rather than chat completions, returns probabilities and confidence without a free-text rationale, has a 32k context, and costs about $0.000015 per call. It is about a week old and the endpoint is alpha. A smoke test separated an evidenced from an unevidenced verification report correctly. It cannot go through openevals' `createLLMAsJudge`, but `LangChainJudge` is an interface a Jev judge can implement. | `packages/cli/src/evals/langchain-agent-evals.ts:167` |
+| Runtime | 46 of 49 cases are text-only; 3 are `harness_trajectory` cases, and the trajectory CI job was skipped on the 5 Sep dispatch. The session audit's problems (delegation failures, serial execution, environment awareness) are runtime behaviour. | `.github/workflows/agent-evals.yml`, [session audit](../../artifacts/session-audit-2026-09.md) |
+| Cost | A full run takes about 65 minutes over 8 models and is manual dispatch only. | `gh run list --workflow agent-evals.yml` |
+
 ## Goals and outcomes
 
 | # | Goal | Outcome that shows it is met |
@@ -42,7 +59,10 @@ The session audit found that Weave loses the most time to failed delegations, se
 | G5 | Evals are easy to understand. | A single-page map, `docs/evals-overview.md`, covers suite → case → rubric → runner → report → publish → website, with the commands to run one case. `docs/agent-evals.md` links to it. An audit of the nine runners records what they share, as input for a later consolidation. |
 | G6 | An eval failure can be diagnosed from one command. | `bun packages/cli/src/main.ts eval run --agent <suite> --case <id> --model <id>` (or a documented equivalent) prints the verdict, the rubric criteria that failed, and where the raw transcript was written, without publishing. |
 | G7 | Real sessions are measurable. | `bun scripts/audit/opencode-sessions.ts --since <date> [--project <path>]` reproduces the September baseline within rounding and prints the scorecard as Markdown and JSON. |
-| G8 | Published scores describe current prompts. | After G3/G4 land, a full default-matrix eval run on current `main` is published and the website shows it, including the commit the run used. |
+| G8 | Published scores describe current prompts. | After G3, G4 and G9–G11 land, a full default-matrix eval run on current `main`, with each case repeated, is published as the baseline and the website shows it, including the commit the run used. |
+| G9 | Eval scores are truthful. | No suite reports green with zero cases, and a run with zero cases is never published or indexed. A failing judge verdict can fail a category-routing case, and the `shuttle-{category}` placeholder scores 0. The judge is chosen by agreement with maintainer hand labels (`docs/artifacts/judge-bakeoff-<date>.md`), is not a scored matrix model, and its id and version are recorded in provenance and in the report. |
+| G10 | Eval runs are repeatable, comparable and cheap to iterate on. | A development subset of one or two inexpensive models runs without editing the matrix. `eval run --repeat N` reports a pass rate per case and model. `eval compare <baseline> <candidate>` states per suite whether a difference is outside the noise, and refuses to compare runs scored by different judges. Per-case flip rates are recorded, and each suite has at least the case count they call for. |
+| G11 | Evals cover runtime behaviour. | `harness_trajectory` cases cover delegation accuracy, parallel execution and environment awareness, each tied to a session-audit metric, and the trajectory job runs on every manual dispatch instead of being skipped. |
 
 ## Non-goals
 
@@ -58,4 +78,6 @@ The session audit found that Weave loses the most time to failed delegations, se
 - The session audit script reads a harness database, which is harness-owned, so it lives under `scripts/`, not in the engine ([Adapter Boundary](../../adapter-boundary.md)). It opens the database read-only and never writes it.
 - Eval case schema changes (G3) follow the schema-change rule: schema, validate and end-to-end tests in the same commit.
 - Cross-repository changes (G4) land in `weave-io/weave` first, publishing the schema; `weave-website` then consumes it. Neither side may break the currently deployed page.
+- Report schema changes from G10 (repeats) and G9 (judge id and version) land before G4 publishes the versioned contract, so the contract is written once.
+- Baselines are only compared with runs scored by the same judge id and version.
 - Every user-visible change (G4, G8) includes a tryweave.io update ([website repo](https://github.com/pgermishuys/weave-website)).

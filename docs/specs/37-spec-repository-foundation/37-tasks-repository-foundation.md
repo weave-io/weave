@@ -4,13 +4,13 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 
 ## Start here (for a new session)
 
-1. Read [Spec 37](37-spec-repository-foundation.md) (goals G1–G8) and skim the [session audit](../../artifacts/session-audit-2026-09.md) for context.
-2. Pick the first unchecked task group below. Groups are ordered; tasks inside a group can usually be done together.
+1. Read [Spec 37](37-spec-repository-foundation.md) (goals G1–G11) and skim the [session audit](../../artifacts/session-audit-2026-09.md) for context.
+2. Pick the next unchecked task group using **Order and dependencies** below. Groups appear in the file in their working order, not their number order; tasks inside a group can usually be done together.
 3. Keep one pull request per task group. Reference the group's tracking issue in the PR (AGENTS.md requires a related issue); if none exists, create it first.
 4. Tick the boxes in this file in the same PR that does the work, and add the PR number next to the group heading.
 5. Keep sessions short: stop after a group lands and start the next group in a fresh session from this file.
 
-**Order and dependencies:** 1 → 2 → 3 are independent quick wins and can run in parallel sessions. 4 depends on nothing. 5 depends on 4 (the schema must be published before the website consumes it). 6 depends on 3 and 5. 7 can happen any time.
+**Order and dependencies:** The agent evals are fixed before any prompt or agent work, because today they cannot show whether a change helped (see [Eval findings (23 Sep 2026)](37-spec-repository-foundation.md#eval-findings-23-sep-2026)). The eval work runs in this order: **16 → 17 → 18 → 19 → 20 → 5 → 7**. 16.3 may use an ad hoc version of 17.1 before group 17 lands. 5 comes after 20 because 18 changes the report schema, so the versioned contract is written once; 5 also covers #201. 7, the fresh baseline, comes last and uses repeats. Groups 2, 3, 4.4–4.6 and 6.1, 6.3, 6.4 are independent and can run in parallel sessions at any point. 6.2 has moved to 17.2. _(Before 23 Sep 2026 the order was 1 → 2 → 3 in parallel, 4, then 5 after 4, 6 after 3 and 5, and 7 at any time.)_
 
 ## 1. Every test runs (G1) — PR: #186
 
@@ -47,7 +47,38 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 
 Added to #183 on 20 Sep 2026 after a second audit of the suite, and complete. The taxonomy, inventory and the corrections to three findings are in [`docs/testing-strategy.md`](../../testing-strategy.md); the scenario contract is [`tests/README.md`](../../../tests/README.md). Migrating the remaining unit tests into scenarios continues area by area (#195 onwards) and is tracked there, not here.
 
+## 16. Truthful scores (G9) — PR: _
+
+- [ ] 16.1 Fix #205 once, at the orchestrator rather than per runner: `EvalOrchestrator` (`packages/cli/src/evals/runner.ts`) reports a suite that ran zero cases as a failure, never green, and `ArtifactBundleWriter` (`artifact-bundle.ts`) refuses to publish or index a run whose `totalCases` is 0. Flip the scenarios in `tests/evals/suite-runners.scenario.test.ts` that pin today's behaviour (`EMPTY_RUN_ON_MODEL_FILTER`, currently `loom-routing` and `tapestry-execution`) so they assert the new one.
+- [ ] 16.2 Category-routing gate: in `tapestry-category-routing-runner.ts`, stop inapplicable dimensions (scored 1.0) diluting the qualitative gate, so a failing judge verdict can fail the case; today only a verdict below 0.1 can. The placeholder `shuttle-{category}` scores 0, not the 0.4 the generic-fallback detector gives it. Add a scenario for each.
+- [ ] 16.3 Judge bake-off. Make a fresh run on the cheap development subset (17.1, ad hoc if group 17 has not landed) with `--raw-artifacts` on the judge-scored suites: the 11 untagged `task_completion` cases (pattern, weft, warp, spindle, shuttle, tapestry) and the 10 category-routing cases. Select about 20 outputs, weighted to weft, warp and pattern. The maintainer hand-labels each pass or fail. Score the same outputs with TypeSafe Jev (`typesafe/jev-1.13`, OpenRouter decisions endpoint) and with Sonnet 5 (not in the matrix). Decision rule, fixed before scoring: adopt Jev if its agreement with the human labels is at least as high as Sonnet 5's; otherwise adopt Sonnet 5. Record the outputs, labels, both judges' verdicts, agreement and the decision in `docs/artifacts/judge-bakeoff-<date>.md`. The labels double as the human calibration set for later judge changes.
+- [ ] 16.4 Implement the winner behind `LangChainJudge` (`langchain-agent-evals.ts`), replacing the hard-coded `JUDGE_MODEL_ID` in `packages/cli/src/commands/eval.ts`. Pin the judge's version. Record the judge id and version in the provenance manifest and the public report, and make comparisons (18.2) refuse to compare runs scored by different judges. If Jev wins: add a `JevJudge` that calls `POST https://openrouter.ai/api/alpha/decisions`, convert each judge-scored case's rubric into Jev questions (`noul` yes/no checks and anchored `score` questions), and derive the rationale from which questions failed, since Jev returns no free text. Schema, validate and end-to-end tests change in the same commit as any report schema change.
+
+## 17. Cheap runs (G6, G10) — PR: _
+
+- [ ] 17.1 Add a development subset of one or two inexpensive models, selectable without editing the matrix (for example a `dev` marker in `evals/model-matrix.json` and a `--models dev` selector), kept separate from the full default matrix. A plain `eval run` still runs the full default matrix.
+- [ ] 17.2 Single-case diagnosis (moved from 6.2): running one case for one model without publishing prints the verdict, the rubric criteria that failed, and the path to the raw transcript. Fix the output where it doesn't; document the command in `docs/agent-evals.md` and in 6.1's overview when that lands.
+
+## 18. Repeatable and comparable runs (G10) — PR: _
+
+This changes the report schema, so it lands before group 5 and the versioned contract is written once.
+
+- [ ] 18.1 Add `--repeat N` to `eval run`. Each case runs N times per model, and the report gives a pass rate per case and model (and per suite) instead of a single pass or fail. `N = 1` keeps today's behaviour.
+- [ ] 18.2 Add `eval compare <baseline> <candidate>`: per suite and model, show both pass rates and state whether the difference is outside the noise measured by the repeats. Build on the existing repeatability diagnostics (`repeatability-diagnostics.json`, written by `runner.ts` for Pattern and Loom only) and generalise them to every suite. Refuse to compare runs with different judges (16.4) or different case sets, and say why.
+
+## 19. Noise and suite growth (G10) — PR: _
+
+- [ ] 19.1 Run the current cases with repeats (18.1) on the development subset (17.1). Record the per-case flip rate (how often a case's verdict differs between repeats) in `docs/artifacts/eval-noise-<date>.md`.
+- [ ] 19.2 From those flip rates, derive a target case count per suite that lets a real change be told apart from noise, and record the reasoning in the same artifact. Grow the thin suites to their targets: spindle (2 cases), pattern, weft, warp and shuttle (4 each), tapestry-execution (5).
+
+## 20. Runtime behaviour coverage (G11) — PR: _
+
+- [ ] 20.1 Add `harness_trajectory` cases for the three runtime problems in the session audit, each tied to a metric in [Metric definitions](#metric-definitions-for-the-session-audit-script): delegation accuracy (Delegations, Configuration delegation failures, Category-shuttle success), parallel execution (Parallel dispatch, Plan-task delegation by Loom) and environment awareness (Environment reminders). Each case states which metric it stands in for.
+- [ ] 20.2 Make the `trajectory-evals` job in `.github/workflows/agent-evals.yml` run on manual dispatch instead of being skipped by its changed-paths gate (it was skipped on the 5 Sep dispatch). Update `workflow-sync.test.ts` in the same commit.
+
 ## 5. Website contract (G4) — PR (weave): _ · PR (website): _
+
+Comes after group 20 (see [Order and dependencies](#start-here-for-a-new-session)), so the schema it publishes already includes repeats (18) and the judge (16.4).
 
 - [ ] 5.1 In this repo, generate JSON Schema from the Zod schemas in `packages/cli/src/evals/report-schema.ts` (public report, suite summary, report bundle, dashboard indexes) and write it with each published bundle (e.g. `schemas/v<N>/*.json` in weave-agent-evals). Add a test that the generated schema matches the committed copy.
 - [ ] 5.2 Commit a small, sanitized fixture bundle (one run, two models, two suites) under `packages/cli/src/evals/__fixtures__/` that the report tests validate.
@@ -55,19 +86,22 @@ Added to #183 on 20 Sep 2026 after a second audit of the suite, and complete. Th
 - [ ] 5.4 In `weave-website`: when a report or summary has an unknown `schemaVersion`, show the last readable run and a visible "newer results available; site update needed" note, rather than dropping rows.
 - [ ] 5.5 In `weave-website`: add a test that loads the same fixture bundle (copied, or fetched in CI) and asserts every model and suite renders.
 - [ ] 5.6 Show each run's commit and date on the evals page so stale results are obvious.
+- [ ] 5.7 Resolve #201: decide which files a published bundle contains, make the publisher upload only those (today it uploads every file the run wrote, including `score-<suite>.json` with unbounded explanations), and make the published JSON Schema cover every published file.
 
 ## 6. Understandable and diagnosable evals (G5, G6) — PR: _
 
 - [ ] 6.1 Write `docs/evals-overview.md` (one page): the suites, where cases, rubrics and fixtures live, which runner handles which suite, how scoring works, how a run becomes a published bundle and a website page, and the three commands most people need. Link it from `docs/README.md`, `evals/README.md`, and the top of `docs/agent-evals.md`.
-- [ ] 6.2 Verify that a single case can be run locally for one model without publishing, and that failure output shows the verdict, the failed rubric criteria, and the path to the raw transcript. Fix the output where it doesn't; document the command in 6.1.
+- [ ] 6.2 _Moved to 17.2 on 23 Sep 2026._ Verify that a single case can be run locally for one model without publishing, and that failure output shows the verdict, the failed rubric criteria, and the path to the raw transcript. Fix the output where it doesn't; document the command in 6.1.
 - [ ] 6.3 Audit the nine runners in `packages/cli/src/evals/*-runner.ts`: list the steps each performs and which are shared. Record the result as `docs/artifacts/eval-runner-audit.md` with a recommendation (consolidate or not) for a future spec. No refactor in this group.
 - [ ] 6.4 Prune `docs/agent-evals.md` of anything now covered by 6.1 or stale since #182 (the verification feedback loops), keeping it as the detailed reference.
 
 ## 7. Fresh baseline (G8) — PR: _
 
-- [ ] 7.1 After groups 4 and 5 land, dispatch a full default-matrix eval run on current `main` (check OpenRouter credits first).
+Comes last, after groups 16–20 and 5.
+
+- [ ] 7.1 Dispatch a full default-matrix eval run on current `main` with repeats (`--repeat`, 18.1; the count chosen from 19.1's flip rates) and the trajectory job enabled (20.2). Check OpenRouter credits first.
 - [ ] 7.2 Confirm the website shows every model from that run with its commit and date.
-- [ ] 7.3 Record the per-suite scores as the pre-WS1 baseline in a new artifact, `docs/artifacts/eval-baseline-<date>.md`.
+- [ ] 7.3 Record the per-suite pass rates, their noise bands and the judge id and version as the pre-WS1 baseline in a new artifact, `docs/artifacts/eval-baseline-<date>.md`. Later runs are compared against it with `eval compare` (18.2).
 
 ## Metric definitions for the session audit script
 
@@ -107,3 +141,8 @@ All metrics are computed over top-level sessions (`parent_id IS NULL`) and their
 | `~/source/weave-website/src/lib/evals-data.ts` | Website eval loader (group 5). |
 | `docs/agent-evals.md`, `evals/README.md` | Eval documentation (groups 4, 6). |
 | `scripts/audit/` | New session audit script (group 3). |
+| `packages/cli/src/evals/runner.ts` | `EvalOrchestrator` and repeatability diagnostics (groups 16, 18). |
+| `packages/cli/src/evals/artifact-bundle.ts` | Bundle writer and publisher hand-off (groups 16.1, 5.7). |
+| `packages/cli/src/evals/tapestry-category-routing-runner.ts` | Category-routing gate and generic-fallback detector (group 16.2). |
+| `packages/cli/src/evals/langchain-agent-evals.ts`, `packages/cli/src/commands/eval.ts` | `LangChainJudge` interface and the hard-coded judge model (group 16.4). |
+| `tests/evals/suite-runners.scenario.test.ts` | Scenarios pinning the empty-run behaviour of #205 (group 16.1). |

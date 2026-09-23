@@ -7,10 +7,10 @@
 Let a host point Weave's global config at its own folder with
 `WEAVE_GLOBAL_CONFIG_DIR`.
 
-Weave read its global layer from `~/.weave` only, so anything that ran Weave
-for someone else, such as a CI job, a container, or an app like Weave Fleet
-that starts OpenCode for the user, picked up whatever personal config lived in
-that home directory, or had nowhere of its own to put one.
+Until now, Weave always read its global layer from `~/.weave`, so anything
+that ran Weave for someone else, such as a CI job, a container, or an app like
+Weave Fleet that starts OpenCode for the user, picked up whatever personal
+config lived in that home directory, or had nowhere of its own to put one.
 
 Set `WEAVE_GLOBAL_CONFIG_DIR` to a folder the host owns and Weave uses it as
 the global scope root:
