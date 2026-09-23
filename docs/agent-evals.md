@@ -527,6 +527,11 @@ flag `pass-rates.ts` already reads for repeated attempts) and sets
 (`model-empty-response`, `model-truncated-response`, `model-network-failure`,
 `scoring-adapter-failure`, `scoring-rubric-missing`, `trajectory-<type>`, …).
 Before 16.5 all of these were published as failed cases with zero scores.
+One exception is deliberate: in `tapestry-category-routing` a judge failure
+does not error the case, because the suite scores routing itself without the
+judge. The case is still scored, on routing alone
+(`buildScorerUnavailableScoreRecord()`), so a correct route still passes and
+a wrong one still fails.
 
 **How errored cases are counted.** `countCaseOutcomes()` in
 `case-outcomes.ts` is the one place every runner, the bundle writer and the
