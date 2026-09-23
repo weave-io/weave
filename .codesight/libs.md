@@ -937,7 +937,7 @@
   - function displayResponse: (item, "response">) => string
   - function buildJevState: (item) => string
   - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
-  - _...37 more_
+  - _...39 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>

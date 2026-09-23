@@ -19,11 +19,13 @@ import {
   JEV_MAX_STATE_CHARS,
   JevClient,
   judgeAcceptance,
+  mergeItems,
   parseJevResponse,
   parseLabelSheet,
   renderComparison,
   renderLabelSheet,
   SonnetBakeoffJudge,
+  unscoredItems,
 } from "../judge-bakeoff.js";
 
 // ---------------------------------------------------------------------------
@@ -397,6 +399,17 @@ describe("parseLabelSheet", () => {
     });
   });
 
+  it("reads labels for constructed negatives (N ids)", () => {
+    const sheet = renderLabelSheet([taskItem("N01")]).replace(
+      "**Label (N01):** pass | fail",
+      "**Label (N01):** fail",
+    );
+    expect(parseLabelSheet(sheet)._unsafeUnwrap().get("N01")).toEqual({
+      verdict: "fail",
+      note: "",
+    });
+  });
+
   it("lists items still unlabelled", () => {
     const sheet = renderLabelSheet([taskItem("B01"), taskItem("B02")]).replace(
       "**Label (B01):** pass | fail",
@@ -508,50 +521,74 @@ describe("compare", () => {
     ]);
   });
 
-  it("states ACCEPTED with the agreement count, false passes and false fails", () => {
-    const ids = Array.from(
-      { length: 20 },
-      (_, i) => `B${String(i + 1).padStart(2, "0")}`,
+  it("states ACCEPTED with the agreement count, fails caught, false passes and false fails", () => {
+    // 18 real items labelled pass, 12 labelled fail (as with 10 negatives).
+    const ids = Array.from({ length: 30 }, (_, i) =>
+      i < 20
+        ? `B${String(i + 1).padStart(2, "0")}`
+        : `N${String(i - 19).padStart(2, "0")}`,
     );
-    // 17 agree (15 pass, 2 fail), 2 false passes, 1 false fail.
-    const human: Array<"pass" | "fail"> = ids.map((_, i) =>
-      i < 16 ? "pass" : "fail",
+    const human = ids.map((_, i): "pass" | "fail" =>
+      i < 18 ? "pass" : "fail",
     );
-    const jevPass = ids.map((_, i) => i < 15 || i === 16 || i === 17);
-    const report = compare(
-      ids.map((id) => taskItem(id)),
-      ids.map((id, i) => verdicts(id, jevPass[i] as boolean, true)),
-      labels(ids.map((id, i) => [id, human[i] as "pass" | "fail"])),
-    )._unsafeUnwrap();
+    // Jev: 4 false fails (items 0-3), 2 false passes (items 18-19).
+    const jevPass = ids.map(
+      (_, i) => (i >= 4 && i < 18) || i === 18 || i === 19,
+    );
+    const allItems = ids.map((id) => taskItem(id));
+    const allVerdicts = ids.map((id, i) =>
+      verdicts(id, jevPass[i] as boolean, true),
+    );
+    const allLabels = labels(
+      ids.map((id, i) => [id, human[i] as "pass" | "fail"]),
+    );
+    const report = compare(allItems, allVerdicts, allLabels)._unsafeUnwrap();
     expect(report.acceptance).toEqual({
       accepted: true,
-      n: 20,
-      agree: 17,
-      requiredAgree: 16,
+      n: 30,
+      agree: 24,
+      requiredAgree: 24,
+      failLabelled: 12,
+      failsCaught: 10,
+      requiredFailsCaught: 10,
       falsePasses: 2,
-      maxFalsePasses: 2,
-      falseFails: 1,
+      falseFails: 4,
       errors: 0,
     });
-    const markdown = renderComparison(
-      report,
-      ids.map((id) => taskItem(id)),
-      ids.map((id, i) => verdicts(id, jevPass[i] as boolean, true)),
-      labels(ids.map((id, i) => [id, human[i] as "pass" | "fail"])),
-    );
+    const markdown = renderComparison(report, allItems, allVerdicts, allLabels);
     expect(markdown).toContain("**Jev: ACCEPTED.**");
     expect(markdown).toContain(
-      "| Agrees with the labels | at least 16/20 | 17/20 | met |",
+      "| Agrees with the labels | at least 24/30 | 24/30 | met |",
     );
     expect(markdown).toContain(
-      "| False passes (Jev pass, human fail) | at most 2 | 2 | met |",
+      "| Fails caught (Jev fail, human fail) | at least 10/12 | 10/12 | met |",
     );
     expect(markdown).toContain(
-      "| False fails (Jev fail, human pass) | not limited | 1 | — |",
+      "| False passes (Jev pass, human fail) | — | 2 | — |",
     );
     expect(markdown).toContain(
-      "Sonnet 5, for reference only: 16/20 agree, 4 false passes, 0 false fails.",
+      "| False fails (Jev fail, human pass) | — | 4 | — |",
     );
+    expect(markdown).toContain(
+      "Sonnet 5, for reference only: 18/30 agree, 0/12 fails caught, 12 false passes, 0 false fails.",
+    );
+  });
+
+  it("marks a constructed negative with the item it was derived from", () => {
+    const negative = { ...taskItem("N01"), derivedFrom: "B01" };
+    const all = [taskItem("B01"), negative];
+    const allVerdicts = [
+      verdicts("B01", true, true),
+      verdicts("N01", false, true),
+    ];
+    const allLabels = labels([
+      ["B01", "pass"],
+      ["N01", "fail"],
+    ]);
+    const report = compare(all, allVerdicts, allLabels)._unsafeUnwrap();
+    const markdown = renderComparison(report, all, allVerdicts, allLabels);
+    expect(markdown).toContain("| B01 | real | weft-review |");
+    expect(markdown).toContain("| N01 | negative of B01 | weft-review |");
   });
 
   it("refuses to compare until every item is labelled and scored", () => {
@@ -609,61 +646,92 @@ function pairs(counts: {
 }
 
 describe("judgeAcceptance", () => {
-  it("accepts 16/20 agreement with 2 false passes", () => {
+  it("accepts 24/30 agreement with 10 of 12 fails caught", () => {
     const a = agreement(
       "jev",
-      pairs({ passPass: 12, failFail: 4, falsePass: 2, falseFail: 2 }),
+      pairs({ passPass: 14, failFail: 10, falsePass: 2, falseFail: 4 }),
     );
     expect(judgeAcceptance(a)).toMatchObject({
       accepted: true,
-      agree: 16,
-      requiredAgree: 16,
+      agree: 24,
+      requiredAgree: 24,
+      failLabelled: 12,
+      failsCaught: 10,
+      requiredFailsCaught: 10,
       falsePasses: 2,
-      falseFails: 2,
+      falseFails: 4,
     });
   });
 
-  it("rejects 16/20 agreement with 3 false passes", () => {
+  it("rejects 24/30 agreement with only 9 of 12 fails caught", () => {
     const a = agreement(
       "jev",
-      pairs({ passPass: 12, failFail: 4, falsePass: 3, falseFail: 1 }),
+      pairs({ passPass: 15, failFail: 9, falsePass: 3, falseFail: 3 }),
     );
     expect(judgeAcceptance(a)).toMatchObject({
       accepted: false,
-      agree: 16,
+      agree: 24,
+      failsCaught: 9,
       falsePasses: 3,
     });
   });
 
-  it("rejects 15/20 agreement even with no false passes", () => {
+  it("rejects 23/30 agreement even with 10 of 12 fails caught", () => {
     const a = agreement(
       "jev",
-      pairs({ passPass: 11, failFail: 4, falsePass: 0, falseFail: 5 }),
+      pairs({ passPass: 13, failFail: 10, falsePass: 2, falseFail: 5 }),
     );
     expect(judgeAcceptance(a)).toMatchObject({
       accepted: false,
-      agree: 15,
-      requiredAgree: 16,
-      falsePasses: 0,
+      agree: 23,
+      requiredAgree: 24,
+      failsCaught: 10,
     });
   });
 
-  it("counts a judge error against agreement but not as a false pass", () => {
+  it("counts a judge error on a fail item as a fail not caught, not a false pass", () => {
     const a = agreement(
       "jev",
       pairs({
-        passPass: 12,
-        failFail: 4,
+        passPass: 15,
+        failFail: 9,
         falsePass: 2,
-        falseFail: 1,
+        falseFail: 3,
         errors: 1,
       }),
     );
     expect(judgeAcceptance(a)).toMatchObject({
-      accepted: true,
-      agree: 16,
+      accepted: false,
+      agree: 24,
+      failLabelled: 12,
+      failsCaught: 9,
       falsePasses: 2,
       errors: 1,
     });
+  });
+});
+
+describe("mergeItems", () => {
+  it("joins real items and negatives", () => {
+    const merged = mergeItems([taskItem("B01")], [taskItem("N01")]);
+    expect(merged._unsafeUnwrap().map((i) => i.id)).toEqual(["B01", "N01"]);
+  });
+
+  it("rejects an id used in both files", () => {
+    const merged = mergeItems([taskItem("B01")], [taskItem("B01")]);
+    expect(merged._unsafeUnwrapErr()).toEqual({
+      type: "DuplicateItemIds",
+      ids: ["B01"],
+    });
+  });
+});
+
+describe("unscoredItems", () => {
+  it("keeps verdicts already written and scores only new items", () => {
+    const toScore = unscoredItems(
+      [taskItem("B01"), taskItem("N01")],
+      [verdicts("B01", true, true)],
+    );
+    expect(toScore.map((i) => i.id)).toEqual(["N01"]);
   });
 });

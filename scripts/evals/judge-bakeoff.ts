@@ -19,10 +19,13 @@
  *     selection file, joins them with their case and rubric fixtures, and
  *     writes `items.json` plus a blind `labels.md` (no model id, no verdict).
  *
- *   score --items <file> --out <file>
- *     Runs both judges over every item and writes their verdicts.
+ *   score --items <file> [--negatives <file>] --out <file>
+ *     Runs both judges over every item not already in `--out` and writes
+ *     the merged verdicts. `--negatives` adds constructed negatives (same
+ *     shape as `items.json`, plus `derivedFrom` and `defect`).
  *
- *   compare --items <file> --verdicts <file> --labels <file> [--out <file>]
+ *   compare --items <file> [--negatives <file>] --verdicts <file>
+ *           --labels <file> [--out <file>]
  *     Parses the maintainer's labels from `labels.md` and emits a Markdown
  *     report: Jev ACCEPTED or REJECTED against `JEV_ACCEPTANCE_RULE`, then
  *     per-judge agreement, confusion counts, Cohen's kappa, a per-suite
@@ -36,7 +39,7 @@
 
 import { basename, dirname, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
-import { err, errAsync, ok, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { LangChainOpenAIModule } from "../../packages/cli/src/commands/eval.js";
 import {
@@ -170,7 +173,9 @@ export type BakeoffError =
   | { type: "SonnetJudgeFailed"; itemId: string; message: string }
   | { type: "MissingLabels"; ids: string[] }
   | { type: "UnknownLabelIds"; ids: string[] }
-  | { type: "MissingVerdicts"; ids: string[] };
+  | { type: "MissingVerdicts"; ids: string[] }
+  | { type: "DuplicateItemIds"; ids: string[] }
+  | { type: "JudgeModelMismatch"; path: string; message: string };
 
 export type Verdict = "pass" | "fail";
 
@@ -205,6 +210,14 @@ export interface BakeoffItem {
   criteria: BakeoffCriterion[];
   /** Sonnet 5 passes the item when its score is at least this value. */
   sonnetPassThreshold: number;
+  /**
+   * Constructed negatives only: the real item this one was derived from.
+   * A negative keeps that item's task, rubric, reference, criteria and
+   * threshold, and changes only the response to plant `defect`.
+   */
+  derivedFrom?: string;
+  /** Constructed negatives only: the defect planted in the response. */
+  defect?: string;
 }
 
 export interface JevVerdict {
@@ -670,8 +683,8 @@ export class BakeoffScorer {
 // Labelling sheet (pure)
 // ---------------------------------------------------------------------------
 
-const LABEL_RE = /^\*\*Label \((B\d+)\):\*\*[ \t]*(.*)$/gm;
-const NOTE_RE = /^\*\*Note \((B\d+)\):\*\*[ \t]*(.*)$/gm;
+const LABEL_RE = /^\*\*Label \(([BN]\d+)\):\*\*[ \t]*(.*)$/gm;
+const NOTE_RE = /^\*\*Note \(([BN]\d+)\):\*\*[ \t]*(.*)$/gm;
 
 /** A code fence longer than any backtick run in `text`. */
 function fenceFor(text: string): string {
@@ -779,6 +792,8 @@ export interface Agreement {
   failFail: number;
   /** Items the judge could not score; each counts as a disagreement. */
   errors: number;
+  /** Items the human labelled fail, including any the judge errored on. */
+  humanFails: number;
 }
 
 export interface SuiteAgreement {
@@ -789,20 +804,25 @@ export interface SuiteAgreement {
 }
 
 /**
- * The acceptance rule for Jev, fixed by the maintainer before labelling
- * (23 Sep 2026). Jev is accepted when it agrees with the labels on at least
- * `minAgreementShare` of the items (16 of 20) and wrongly passes at most
- * `maxFalsePasses` items the maintainer labelled fail. A judge error counts
- * as a disagreement but not as a false pass.
+ * The acceptance rule for Jev (maintainer decision, 23 Sep 2026, revised
+ * before any comparison was run). Jev is accepted when both hold:
+ *
+ *   - its agreement with the labels is at least `minAgreementShare` of all
+ *     items (24 of 30), and
+ *   - it correctly fails all but at most `maxMissedFails` of the items the
+ *     labels mark fail (at least 10 of 12, so at most 2 false passes).
+ *
+ * A judge error counts as a disagreement and as a fail not caught, but not
+ * as a false pass.
  *
  * Why an acceptance check and not a head-to-head: a chat-model judge could
  * never later join the eval matrix without grading itself, while Jev can
  * never be an evaluated model. If Jev is rejected, the fallback is a chat
- * model deliberately kept out of the matrix.
+ * model deliberately kept out of the matrix. Sonnet 5 is a reference only.
  */
 export const JEV_ACCEPTANCE_RULE = {
   minAgreementShare: 0.8,
-  maxFalsePasses: 2,
+  maxMissedFails: 2,
 } as const;
 
 export interface Acceptance {
@@ -811,9 +831,14 @@ export interface Acceptance {
   agree: number;
   /** Agreements the rule requires for `n` items. */
   requiredAgree: number;
+  /** Items the labels mark fail. */
+  failLabelled: number;
+  /** Fail-labelled items the judge failed. */
+  failsCaught: number;
+  /** Fails the rule requires the judge to catch. */
+  requiredFailsCaught: number;
   /** Judge pass, human fail. */
   falsePasses: number;
-  maxFalsePasses: number;
   /** Judge fail, human pass. */
   falseFails: number;
   errors: number;
@@ -834,20 +859,23 @@ export function judgeAcceptance(
   a: Agreement,
   rule: {
     minAgreementShare: number;
-    maxFalsePasses: number;
+    maxMissedFails: number;
   } = JEV_ACCEPTANCE_RULE,
 ): Acceptance {
-  // Round before ceil so 0.8 * 20 (16.000000000000004) needs 16, not 17.
+  // Round before ceil so 0.8 * 30 (24.000000000000004) needs 24, not 25.
   const requiredAgree = Math.ceil(
     Math.round(rule.minAgreementShare * a.n * 1e9) / 1e9,
   );
+  const requiredFailsCaught = Math.max(0, a.humanFails - rule.maxMissedFails);
   return {
-    accepted: a.agree >= requiredAgree && a.failPass <= rule.maxFalsePasses,
+    accepted: a.agree >= requiredAgree && a.failFail >= requiredFailsCaught,
     n: a.n,
     agree: a.agree,
     requiredAgree,
+    failLabelled: a.humanFails,
+    failsCaught: a.failFail,
+    requiredFailsCaught,
     falsePasses: a.failPass,
-    maxFalsePasses: rule.maxFalsePasses,
     falseFails: a.passFail,
     errors: a.errors,
   };
@@ -876,6 +904,7 @@ export function agreement(
     if (pair.human === "fail" && pair.judge === "fail") counts.failFail += 1;
   }
   const n = pairs.length;
+  const humanFails = pairs.filter((p) => p.human === "fail").length;
   const agree = counts.passPass + counts.failFail;
   const scored = n - counts.errors;
   return {
@@ -884,6 +913,7 @@ export function agreement(
     agree,
     agreement: n === 0 ? 0 : agree / n,
     kappa: cohensKappa(counts, scored),
+    humanFails,
     ...counts,
   };
 }
@@ -1002,8 +1032,7 @@ export function renderComparison(
   const byId = new Map(verdicts.map((v) => [v.id, v]));
   const a = report.acceptance;
   const outcome = a.accepted ? "ACCEPTED" : "REJECTED";
-  const agreeMark = a.agree >= a.requiredAgree ? "met" : "not met";
-  const falsePassMark = a.falsePasses <= a.maxFalsePasses ? "met" : "not met";
+  const mark = (met: boolean) => (met ? "met" : "not met");
   const lines = [
     "### Jev acceptance",
     "",
@@ -1011,12 +1040,13 @@ export function renderComparison(
     "",
     "| Condition | Required | Jev | Result |",
     "| --- | --- | --- | --- |",
-    `| Agrees with the labels | at least ${a.requiredAgree}/${a.n} | ${a.agree}/${a.n} | ${agreeMark} |`,
-    `| False passes (Jev pass, human fail) | at most ${a.maxFalsePasses} | ${a.falsePasses} | ${falsePassMark} |`,
-    `| False fails (Jev fail, human pass) | not limited | ${a.falseFails} | — |`,
-    `| Judge errors (count as disagreements) | not limited | ${a.errors} | — |`,
+    `| Agrees with the labels | at least ${a.requiredAgree}/${a.n} | ${a.agree}/${a.n} | ${mark(a.agree >= a.requiredAgree)} |`,
+    `| Fails caught (Jev fail, human fail) | at least ${a.requiredFailsCaught}/${a.failLabelled} | ${a.failsCaught}/${a.failLabelled} | ${mark(a.failsCaught >= a.requiredFailsCaught)} |`,
+    `| False passes (Jev pass, human fail) | — | ${a.falsePasses} | — |`,
+    `| False fails (Jev fail, human pass) | — | ${a.falseFails} | — |`,
+    `| Judge errors (count as disagreements) | — | ${a.errors} | — |`,
     "",
-    `Sonnet 5, for reference only: ${report.sonnet.agree}/${report.sonnet.n} agree, ${report.sonnet.failPass} false passes, ${report.sonnet.passFail} false fails.`,
+    `Sonnet 5, for reference only: ${report.sonnet.agree}/${report.sonnet.n} agree, ${report.sonnet.failFail}/${report.sonnet.humanFails} fails caught, ${report.sonnet.failPass} false passes, ${report.sonnet.passFail} false fails.`,
     "",
     "### Agreement with the human labels",
     "",
@@ -1038,8 +1068,8 @@ export function renderComparison(
     "",
     "### Per item",
     "",
-    "| Item | Suite | Case | Human | Jev (overall noul) | Sonnet 5 (score, reference) |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Item | Source | Suite | Case | Human | Jev (overall noul) | Sonnet 5 (score, reference) |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
     ...items.map((item) => {
       const v = byId.get(item.id) as ItemVerdicts;
       const jev = verdictCell(v.jev, v.jev.ok ? v.jev.overall.toFixed(2) : "");
@@ -1049,7 +1079,11 @@ export function renderComparison(
           ? `${v.sonnet.score.toFixed(2)} vs ${item.sonnetPassThreshold}`
           : "",
       );
-      return `| ${item.id} | ${item.suite} | ${item.caseId} | ${labels.get(item.id)?.verdict ?? "?"} | ${jev} | ${sonnet} |`;
+      const source =
+        item.derivedFrom === undefined
+          ? "real"
+          : `negative of ${item.derivedFrom}`;
+      return `| ${item.id} | ${source} | ${item.suite} | ${item.caseId} | ${labels.get(item.id)?.verdict ?? "?"} | ${jev} | ${sonnet} |`;
     }),
     "",
   ];
@@ -1136,6 +1170,8 @@ const ItemsSchema = z.array(
     response: z.string(),
     criteria: z.array(z.object({ key: z.string(), question: z.string() })),
     sonnetPassThreshold: z.number(),
+    derivedFrom: z.string().optional(),
+    defect: z.string().optional(),
   }),
 );
 
@@ -1180,6 +1216,63 @@ function loadFixtures(
         .mapErr(fixtureError)
         .map((rubric) => ({ evalCase, rubric })),
     );
+}
+
+/**
+ * Join the real items with the constructed negatives. Ids must be unique
+ * across both files.
+ */
+export function mergeItems(
+  items: BakeoffItem[],
+  negatives: BakeoffItem[],
+): Result<BakeoffItem[], BakeoffError> {
+  const all = [...items, ...negatives];
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const item of all) {
+    if (seen.has(item.id)) duplicates.add(item.id);
+    seen.add(item.id);
+  }
+  if (duplicates.size > 0) {
+    return err({ type: "DuplicateItemIds", ids: [...duplicates] });
+  }
+  return ok(all);
+}
+
+/**
+ * Items not yet in `existing`. `score` keeps verdicts it has already written
+ * instead of re-scoring them, so adding negatives later leaves the first
+ * verdicts untouched.
+ */
+export function unscoredItems(
+  items: BakeoffItem[],
+  existing: ItemVerdicts[],
+): BakeoffItem[] {
+  const scored = new Set(existing.map((v) => v.id));
+  return items.filter((item) => !scored.has(item.id));
+}
+
+function readItems(args: Args): ResultAsync<BakeoffItem[], BakeoffError> {
+  const itemsPath = requireArg(args, "items");
+  if (itemsPath.isErr()) return errAsync(itemsPath.error);
+  const negativesPath = args.negatives;
+  return readJson(itemsPath.value, ItemsSchema).andThen((items) => {
+    if (typeof negativesPath !== "string") return okAsync(items);
+    return readJson(negativesPath, ItemsSchema).andThen((negatives) =>
+      mergeItems(items, negatives),
+    );
+  });
+}
+
+function readExistingVerdicts(
+  path: string,
+): ResultAsync<VerdictFile | undefined, BakeoffError> {
+  return ResultAsync.fromSafePromise(Bun.file(path).exists()).andThen(
+    (exists): ResultAsync<VerdictFile | undefined, BakeoffError> => {
+      if (!exists) return okAsync(undefined);
+      return readJson(path, VerdictFileSchema);
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,8 +1384,6 @@ function buildSonnetJudge(
 }
 
 async function scoreCommand(args: Args): Promise<Result<void, BakeoffError>> {
-  const itemsPath = requireArg(args, "items");
-  if (itemsPath.isErr()) return err(itemsPath.error);
   const outPath = requireArg(args, "out");
   if (outPath.isErr()) return err(outPath.error);
   const apiKey = Bun.env.OPENROUTER_API_KEY;
@@ -1309,8 +1400,21 @@ async function scoreCommand(args: Args): Promise<Result<void, BakeoffError>> {
       ? args["sonnet-model"]
       : SONNET_MODEL;
 
-  const items = await readJson(itemsPath.value, ItemsSchema);
+  const items = await readItems(args);
   if (items.isErr()) return err(items.error);
+  const existing = await readExistingVerdicts(outPath.value);
+  if (existing.isErr()) return err(existing.error);
+  const previous = existing.value;
+  if (
+    previous !== undefined &&
+    (previous.jevModel !== jevModel || previous.sonnetModel !== sonnetModel)
+  ) {
+    return err({
+      type: "JudgeModelMismatch",
+      path: outPath.value,
+      message: `existing verdicts were scored with ${previous.jevModel} and ${previous.sonnetModel}`,
+    });
+  }
   const sonnet = await buildSonnetJudge(apiKey, sonnetModel);
   if (sonnet.isErr()) return err(sonnet.error);
 
@@ -1318,12 +1422,17 @@ async function scoreCommand(args: Args): Promise<Result<void, BakeoffError>> {
     new JevClient(apiKey, jevModel),
     sonnet.value,
   );
-  const verdicts = await scorer.scoreAll(items.value);
+  const toScore = unscoredItems(items.value, previous?.verdicts ?? []);
+  log.info(
+    { toScore: toScore.length, kept: previous?.verdicts.length ?? 0 },
+    "Scoring bake-off items not yet scored",
+  );
+  const verdicts = await scorer.scoreAll(toScore);
   const file: VerdictFile = {
     scoredAt: new Date().toISOString(),
     jevModel,
     sonnetModel,
-    verdicts,
+    verdicts: [...(previous?.verdicts ?? []), ...verdicts],
   };
   const written = await writeText(
     outPath.value,
@@ -1348,14 +1457,12 @@ async function scoreCommand(args: Args): Promise<Result<void, BakeoffError>> {
 }
 
 async function compareCommand(args: Args): Promise<Result<void, BakeoffError>> {
-  const itemsPath = requireArg(args, "items");
-  if (itemsPath.isErr()) return err(itemsPath.error);
   const verdictsPath = requireArg(args, "verdicts");
   if (verdictsPath.isErr()) return err(verdictsPath.error);
   const labelsPath = requireArg(args, "labels");
   if (labelsPath.isErr()) return err(labelsPath.error);
 
-  const items = await readJson(itemsPath.value, ItemsSchema);
+  const items = await readItems(args);
   if (items.isErr()) return err(items.error);
   const verdicts = await readJson(verdictsPath.value, VerdictFileSchema);
   if (verdicts.isErr()) return err(verdicts.error);
