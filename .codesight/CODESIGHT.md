@@ -3,15 +3,18 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 207 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,900 tokens. Without it, AI exploration would cost ~70,400 tokens. **Saves ~51,500 tokens per conversation.**
-> **Last scanned:** 2026-09-23 20:51 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 210 lib files | 26 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~19,000 tokens. Without it, AI exploration would cost ~71,700 tokens. **Saves ~52,700 tokens per conversation.**
+> **Last scanned:** 2026-09-23 21:00 — re-run after significant changes
 
 ---
 
 # Libraries
 
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
+- `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
+- `evals/fixtures/orders-api/src/ui/order-badge.ts` — function orderBadge: (order) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
@@ -975,7 +978,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1006,12 +1009,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1077,7 +1082,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 206 test files found
+> 211 test files found
 
 ---
 
