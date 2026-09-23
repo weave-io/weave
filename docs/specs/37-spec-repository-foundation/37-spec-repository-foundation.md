@@ -1,6 +1,6 @@
 # Spec 37 — Repository Foundation
 
-**Status:** Proposed · **Workstream:** WS0 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md)
+**Status:** In progress — G1 and G3 have largely landed (#186, #194); see [37 tasks](37-tasks-repository-foundation.md) for what remains · **Workstream:** WS0 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md)
 
 **Related:** [37 tasks](37-tasks-repository-foundation.md) · [Agent Evals](../../agent-evals.md) · [Eval Sanitization and Publish Pipeline](../../eval-sanitization-and-publish-pipeline.md) · [Spec 33 — Harness Trajectory Evals](../33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md) · [Spec 35 — Verification Trajectory Evals](../35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md) · [Documentation Policy](../../documentation-policy.md)
 
