@@ -149,3 +149,34 @@ describe("a user runs weave eval with filters set in the environment", () => {
     expect(withFilter.output).not.toEqual(withoutFilter.output);
   });
 });
+
+/**
+ * #205, through the command a CI job runs. `openai/gpt-4o-mini` is in the
+ * model matrix but is not a default model, so no `tapestry-execution` fixture
+ * allows it. That suite used to publish an empty, green run here and exit 0.
+ */
+describe("a user narrows a dry run to a model no case of the suite allows", () => {
+  const args = [
+    "eval",
+    "run",
+    "--dry-run",
+    "--agent",
+    "tapestry-execution",
+    "--model",
+    "openai/gpt-4o-mini",
+  ];
+
+  it("exits non-zero, so the run cannot read as green", async () => {
+    const { exitCode } = await runWeave(args, projectOnly);
+
+    expect(exitCode).toBe(1);
+  });
+
+  it("names the suite and the model it found no cases for", async () => {
+    const { output } = await runWeave(args, projectOnly);
+
+    expect(output).toContain(
+      'No cases ran in suite "tapestry-execution" matching model filter "openai/gpt-4o-mini".',
+    );
+  });
+});

@@ -338,18 +338,29 @@ describe("a maintainer downloads the Markdown report of a run that failed", () =
   });
 });
 
-describe("a suite ran no cases at all", () => {
+/**
+ * A run whose every suite is empty is refused before it is written (#205;
+ * `bundle-writing.scenario.test.ts`), so an empty suite only reaches a report
+ * beside one that ran cases.
+ */
+describe("a suite ran no cases at all, beside one that did", () => {
   it("says so rather than printing an empty table a reader would mistrust", async () => {
     await withBundleRoot(async (root) => {
       const markdown = await markdownOf(root, {
         runnerResults: [
           runnerResult({ suite: "warp-security", caseResults: [] }),
+          runnerResult(),
         ],
       });
 
-      expect(markdown).toContain("### Suite: warp-security — 🟢 green");
-      expect(markdown).toContain("_No cases in this suite._");
-      expect(markdown).not.toContain("| Case ID |");
+      const emptySection = markdown.slice(
+        markdown.indexOf("### Suite: warp-security"),
+        markdown.indexOf("### Suite: loom-routing"),
+      );
+
+      expect(emptySection).toContain("### Suite: warp-security — 🟢 green");
+      expect(emptySection).toContain("_No cases in this suite._");
+      expect(emptySection).not.toContain("| Case ID |");
     });
   });
 });
@@ -582,11 +593,12 @@ describe("a reader skims the run and wants one line per suite", () => {
     });
   });
 
-  it("counts a suite that ran nothing as green with nothing in it", async () => {
+  it("counts a suite that ran nothing, beside one that did, as green with nothing in it", async () => {
     await withBundleRoot(async (root) => {
       const line = await suiteLine(root, {
         runnerResults: [
           runnerResult({ suite: "warp-security", caseResults: [] }),
+          runnerResult(),
         ],
       });
 

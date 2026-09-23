@@ -230,6 +230,10 @@ Two independently verified consequences:
   referenced `NoCasesFound` eleven times and its docblock stated the guard
   existed. The guard was in `InMemoryLoomRunner`, at line 229 of the *test*
   file. Filed as [#205](https://github.com/pgermishuys/weave/issues/205).
+  _Since fixed (Spec 37 task 16.1): `EvalOrchestrator` now fails any suite
+  that ran no cases with `NoCasesFound`, and the bundle writer refuses a run
+  with `totalCases: 0`. See
+  [agent-evals.md](agent-evals.md#when-the-filters-leave-a-suite-nothing-to-run)._
 - **Tapestry's alternate-delegate normalization was never exercised.**
   `normalizeDelegationChain()` rewrites a chain ending at an
   `accepted_alternates` entry back to the canonical expected delegate. The
@@ -683,6 +687,7 @@ not, three of them because those tests were testing themselves:
   indexes and exits 0. A typo'd `--model` reads as success in CI. The other six
   suites return `NoCasesFound` and exit 1. Both runners' unit tests asserted
   `NoCasesFound` — against the in-memory copy, which does carry the guard.
+  _Fixed for all eight suites by Spec 37 task 16.1 (#205)._
 - **The category-routing qualitative gate is all but inert.**
   `mergeWithScorerDimensions()` averages `delegationCorrectness`,
   `executionCompleteness` and `rationaleQuality` and requires 0.7, but on an
@@ -698,7 +703,8 @@ not, three of them because those tests were testing themselves:
   detector still reads the line, so the case scores 0.4 rather than 0.
   *Fixed by Spec 37 task 16.2: the placeholder scores 0.*
 - Smaller: `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one
-  that does not name its suite.
+  that does not name its suite. _Gone with 16.1: the per-runner work-item
+  guards were removed, and the orchestrator's message names the suite._
 
 ### The OpenCode 2 adapter
 

@@ -1602,6 +1602,9 @@ export class LoomRoutingRunner {
       }
 
       // Build the list of (case, modelId) pairs to execute
+      // An empty list is not a failure here: a model may be outside every
+      // case's allowed_models. `EvalOrchestrator` fails a suite that ran no
+      // cases on any model (#205).
       const workItems = this.buildWorkItems(cases, request.modelFilter);
 
       if (dryRun) {

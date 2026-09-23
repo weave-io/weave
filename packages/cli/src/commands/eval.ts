@@ -46,6 +46,7 @@ import type {
   EvalRubric,
   ModelRunOutput,
   NormalizedScoreRecord,
+  RunnerError,
   ScoringError,
 } from "../evals/types.js";
 import {
@@ -329,9 +330,16 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
   // Dry-runs intentionally use a validation-only runner that exercises the
   // same suite fixture/rubric path without requiring secrets, model calls,
   // or artifact writes.
+  // A suite that could not run (e.g. `NoCasesFound` when a filter matched no
+  // fixture) exits 1; say which one and why, rather than exiting silently.
+  const reportPartialFailure = (failure: RunnerError): void => {
+    terminal.stderr(
+      formatCliError({ type: "EvalValidation", message: failure.message }),
+    );
+  };
   const runnerResult = request.dryRun
-    ? buildDryRunRunner(ctx.env)
-    : await buildLiveRunner(ctx.env);
+    ? buildDryRunRunner(reportPartialFailure, ctx.env)
+    : await buildLiveRunner(reportPartialFailure, ctx.env);
   if (runnerResult.isErr()) {
     terminal.stderr(formatCliError(runnerResult.error));
     return ok(1);
@@ -386,6 +394,7 @@ class DryRunScorer implements AgentEvalsScorer {
 }
 
 function buildDryRunRunner(
+  reportPartialFailure: (failure: RunnerError) => void,
   env?: Record<string, string | undefined>,
 ): Result<
   (request: EvalRunRequest) => Promise<Result<number, CliError>>,
@@ -397,7 +406,7 @@ function buildDryRunRunner(
     env: env ?? Bun.env,
   });
 
-  return ok(buildEvalRunner(orchestrator));
+  return ok(buildEvalRunner(orchestrator, reportPartialFailure));
 }
 
 /**
@@ -431,11 +440,13 @@ const JUDGE_MODEL_ID = "anthropic/claude-sonnet-4.5";
  * The API key is validated eagerly here before constructing any clients.
  * Validation errors surface as typed `CliError` values, not thrown exceptions.
  *
+ * @param reportPartialFailure - Writes one partial failure to stderr.
  * @param env - Environment variable map. Defaults to `Bun.env`.
  * @returns A `Promise<Result<runner, CliError>>` — err when the environment
  *          is invalid or the scorer cannot be constructed.
  */
 async function buildLiveRunner(
+  reportPartialFailure: (failure: RunnerError) => void,
   env?: Record<string, string | undefined>,
 ): Promise<
   Result<
@@ -503,7 +514,7 @@ async function buildLiveRunner(
     publishMode,
   });
 
-  return ok(buildEvalRunner(orchestrator));
+  return ok(buildEvalRunner(orchestrator, reportPartialFailure));
 }
 
 /**

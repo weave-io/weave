@@ -1031,6 +1031,21 @@ All three filters use **strict exact-match** semantics:
 
 No filter means all values in that dimension are included. Default no-filter runs all default-marked models (`evals/model-matrix.json`; at least 3 enforced) against all cases in all registered suites.
 
+### When the filters leave a suite nothing to run
+
+A filter can be valid on its own and still leave a suite with no work. `--model openai/gpt-4o-mini` is in the matrix, for example, but it is not a default model, so only a case that lists it in `allowed_models` runs on it. A `--case` that names a case which does not allow the `--model` does the same.
+
+A suite in that state **fails; it is never reported green**:
+
+- `EvalOrchestrator` (`packages/cli/src/evals/runner.ts`) checks each selected suite after every model has run. A suite that ran no cases on any model, and did not already fail for another reason, gets a `NoCasesFound` partial failure naming the suite and the filters: `No cases ran in suite "tapestry-execution" matching model filter "openai/gpt-4o-mini".`
+- `weave eval run` prints that message on stderr and exits 1. Dry runs behave the same way.
+- Nothing is written for the empty suite. When no selected suite ran a case, no bundle is written, no dashboard index is updated and nothing is published.
+- `ArtifactBundleWriter.writeBundle()` refuses a run whose `totalCases` is 0 with a typed `EmptyRun` error, before it writes, indexes or publishes anything. This is a second guard: whoever calls the writer, an empty run cannot be published.
+
+The check is per suite, across the whole run, because a runner is called once per model and can only see one model at a time. A model outside a case's `allowed_models` is not a failure when another model in the run executes the case, which happens with trajectory cases that allow only part of the matrix. A `(suite, model)` pair that ran nothing is left out of the run summary, so it does not show up as a green rollup of zero cases.
+
+Before #205 was fixed, `loom-routing` and `tapestry-execution` published an empty run in this situation: `totalCases: 0`, `suiteGreen: true`, exit 0, and updated dashboard indexes, so a `--model` typo looked like a passing run in CI. The other six suites each had their own guard. Those six guards have been removed. The orchestrator check replaces them and treats all eight suites the same way. The scenarios in `tests/evals/suite-runners.scenario.test.ts` (under "a maintainer narrows the run to one case or one model") and in `tests/cli/command-seams.scenario.test.ts` cover this behaviour.
+
 ### Required environment variable for live runs
 
 ```

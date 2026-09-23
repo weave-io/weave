@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
 > 0 routes | 0 models | 0 components | 200 lib files | 26 env vars | 7 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,300 tokens. Without it, AI exploration would cost ~68,100 tokens. **Saves ~49,700 tokens per conversation.**
-> **Last scanned:** 2026-09-23 05:10 — re-run after significant changes
+> **Token savings:** this file is ~18,300 tokens. Without it, AI exploration would cost ~68,100 tokens. **Saves ~49,800 tokens per conversation.**
+> **Last scanned:** 2026-09-23 05:24 — re-run after significant changes
 
 ---
 
@@ -456,7 +456,7 @@
   - interface PublishBundleRequest
   - _...2 more_
 - `packages/cli/src/evals/runner.ts`
-  - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
   - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
   - interface EvalRunMetadata

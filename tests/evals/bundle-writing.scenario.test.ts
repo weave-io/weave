@@ -37,6 +37,7 @@ import { RawArtifactsWriter } from "../../packages/cli/src/evals/raw-artifacts.j
 import type {
   PromptSnapshot,
   RawCaseResultArtifact,
+  RunnerResult,
 } from "../../packages/cli/src/evals/types.js";
 import {
   caseResult,
@@ -822,30 +823,104 @@ describe("a required case in a suite failed", () => {
   });
 });
 
-describe("a run produced no suites at all", () => {
-  it("writes the run but declares no public report, so a loader is not sent to a missing file", async () => {
-    await withBundleRoot(async (root) => {
-      const written = await write(root, { runnerResults: [] });
-      const index = await readRunJson(root, written.runId, "bundle-index.json");
+/**
+ * An empty run is refused at the writer (#205), not merely avoided by the
+ * orchestrator. With no failures, a run that scored nothing reads as green —
+ * which is how a `--model` typo once published a passing run. The orchestrator
+ * no longer produces one (`suite-runners.scenario.test.ts`), and this is the
+ * second line: whoever calls the writer, nothing with `totalCases: 0` is
+ * written, indexed or handed to the results repo.
+ */
+describe("a run scored no cases at all", () => {
+  const EMPTY_SUITE = runnerResult({ caseResults: [] });
 
-      expect(await runFiles(root, written.runId)).not.toContain(
-        "public-report.json",
-      );
-      expect(index.publicFiles).toEqual(["bundle-index.json"]);
-      expect(index.runSummary.totalCases).toBe(0);
+  /** Attempts a write and returns the result and what landed on disk. */
+  async function attempt(
+    root: string,
+    overrides: Partial<WriteBundleOptions> = {},
+  ) {
+    const result = await new ArtifactBundleWriter(root).writeBundle({
+      runnerResults: [EMPTY_SUITE],
+      provenanceManifest: provenanceManifest(),
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      ...overrides,
+    });
+    return { result, files: await tree(root) };
+  }
+
+  it.each([
+    ["no suites", [] as RunnerResult[]],
+    ["one suite with no cases", [EMPTY_SUITE]],
+    [
+      "two suites with no cases",
+      [EMPTY_SUITE, runnerResult({ suite: "weft-review", caseResults: [] })],
+    ],
+  ])("refuses a run of %s, and says it scored nothing", async (_label, runnerResults) => {
+    await withBundleRoot(async (root) => {
+      const { result } = await attempt(root, { runnerResults });
+
+      expect(result.isErr()).toBe(true);
+      const error = result._unsafeUnwrapErr();
+      expect(error.type).toBe("EmptyRun");
+      expect(error.message).toContain("totalCases: 0");
     });
   });
 
-  it("still publishes a suite that ran no cases, so an empty suite is visible", async () => {
+  it("writes nothing at all, not even the dashboard indexes", async () => {
+    await withBundleRoot(async (root) => {
+      const { files } = await attempt(root, {
+        writeMarkdown: true,
+        generateIndexes: true,
+      });
+
+      expect(files).toEqual([]);
+    });
+  });
+
+  it("never hands the run to the results repo", async () => {
+    await withBundleRoot(async (root) => {
+      const handed: unknown[] = [];
+      const { result, files } = await attempt(root, {
+        mode: "publish",
+        env: TOKEN_ENV,
+        generateIndexes: true,
+        publisher: {
+          publish(request) {
+            handed.push(request);
+            return okAsync({
+              commitSha: null,
+              branch: "main",
+              filesPublished: 0,
+              simulated: true,
+            });
+          },
+        },
+      });
+
+      expect(result._unsafeUnwrapErr().type).toBe("EmptyRun");
+      expect(handed).toEqual([]);
+      expect(files).toEqual([]);
+    });
+  });
+
+  it("still refuses a dry run, which has no cases to show either", async () => {
+    await withBundleRoot(async (root) => {
+      const { result, files } = await attempt(root, { dryRun: true });
+
+      expect(result._unsafeUnwrapErr().type).toBe("EmptyRun");
+      expect(files).toEqual([]);
+    });
+  });
+});
+
+describe("one suite of a run scored no cases, and another did", () => {
+  it("writes the run, and still lists the empty suite so it is visible", async () => {
     await withBundleRoot(async (root) => {
       const written = await write(root, {
         runnerResults: [
-          runnerResult({
-            caseResults: [],
-            totalCases: 0,
-            passedCases: 0,
-            failedCases: 0,
-          }),
+          runnerResult(),
+          runnerResult({ suite: "weft-review", caseResults: [] }),
         ],
       });
       const report = await readRunJson(
@@ -855,10 +930,10 @@ describe("a run produced no suites at all", () => {
       );
 
       expect(await runFiles(root, written.runId)).toContain(
-        "score-loom-routing.json",
+        "score-weft-review.json",
       );
-      expect(report.runSummary.suites).toEqual(["loom-routing"]);
-      expect(report.suiteSummaries[0].cases).toEqual([]);
+      expect(report.runSummary.suites).toEqual(["loom-routing", "weft-review"]);
+      expect(report.suiteSummaries[1].cases).toEqual([]);
     });
   });
 });

@@ -556,24 +556,10 @@ export class ShuttleExecutionRunner {
         );
       }
 
+      // An empty list is not a failure here: a model may be outside every
+      // case's allowed_models. `EvalOrchestrator` fails a suite that ran no
+      // cases on any model (#205).
       const workItems = this.buildWorkItems(cases, request.modelFilter);
-      // A case filter runs once per matrix model; a model the selected case
-      // does not allow (trajectory cases allow a subset) yields no work, not
-      // a suite failure.
-      if (workItems.length === 0 && request.caseFilter === undefined) {
-        return new ResultAsync(
-          Promise.resolve(
-            err<RunnerResult, RunnerError>({
-              type: "NoCasesFound",
-              suite: SHUTTLE_EXECUTION_SUITE,
-              message:
-                request.modelFilter !== undefined
-                  ? `No cases match model filter "${request.modelFilter}".`
-                  : `No cases found in suite "${SHUTTLE_EXECUTION_SUITE}".`,
-            }),
-          ),
-        );
-      }
 
       if (dryRun) {
         const caseResults = workItems.map(({ evalCase, modelId }) =>

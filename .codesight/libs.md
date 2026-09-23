@@ -445,7 +445,7 @@
   - interface PublishBundleRequest
   - _...2 more_
 - `packages/cli/src/evals/runner.ts`
-  - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
   - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
   - interface EvalRunMetadata

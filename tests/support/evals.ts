@@ -373,6 +373,11 @@ export interface SuiteRunOptions {
   caseFilter?: string;
   /** `--model`. Defaults to `EVAL_MODEL`. */
   model?: string;
+  /**
+   * Omit `--model`, so the run fans out over every default model in
+   * `evals/model-matrix.json`. The model still answers as `model`.
+   */
+  wholeMatrix?: boolean;
   /** `--dry-run`. */
   dryRun?: boolean;
   /** `--raw-artifacts`. */
@@ -559,7 +564,7 @@ export async function runEvalSuite(
 
   const request = {
     agent: options.agent,
-    model,
+    model: options.wholeMatrix === true ? undefined : model,
     case: options.caseFilter,
     dryRun: options.dryRun ?? false,
     rawArtifacts: options.rawArtifacts ?? false,

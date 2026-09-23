@@ -1366,8 +1366,10 @@ export type RunnerError =
       /**
        * No cases were found for the requested suite (after filters applied).
        *
-       * Returned when the case set is empty — either the suite has no fixture
-       * files, or the applied `--case` filter eliminated all cases.
+       * Returned by a runner when its fixture set is empty, and by
+       * `EvalOrchestrator` when a selected suite ran no cases on any model —
+       * most often because a `--model` or `--case` filter matched no fixture
+       * (#205). Either way the suite fails; it is never reported green.
        */
       type: "NoCasesFound";
       /** The suite name(s) that yielded no cases. */
@@ -1630,6 +1632,15 @@ export type BundleError =
     }
   | {
       type: "PublishPolicyViolation";
+      message: string;
+    }
+  | {
+      /**
+       * The run scored no cases (`totalCases: 0`), so there is nothing to
+       * write, publish or index. A run with no failures would otherwise read
+       * as green (#205). Returned before any file is written.
+       */
+      type: "EmptyRun";
       message: string;
     };
 

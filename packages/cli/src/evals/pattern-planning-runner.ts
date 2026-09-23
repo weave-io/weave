@@ -801,21 +801,10 @@ export class PatternPlanningRunner {
         );
       }
 
+      // An empty list is not a failure here: a model may be outside every
+      // case's allowed_models. `EvalOrchestrator` fails a suite that ran no
+      // cases on any model (#205).
       const workItems = this.buildWorkItems(cases, request.modelFilter);
-      if (workItems.length === 0) {
-        return new ResultAsync(
-          Promise.resolve(
-            err<RunnerResult, RunnerError>({
-              type: "NoCasesFound",
-              suite: PATTERN_PLANNING_SUITE,
-              message:
-                request.modelFilter !== undefined
-                  ? `No cases found in suite "${PATTERN_PLANNING_SUITE}" matching model filter "${request.modelFilter}".`
-                  : `No cases found in suite "${PATTERN_PLANNING_SUITE}".`,
-            }),
-          ),
-        );
-      }
 
       if (dryRun) {
         const caseResults = workItems.map(({ evalCase, modelId }) =>

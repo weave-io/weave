@@ -346,15 +346,6 @@ const only = (...suites: string[]): Array<[string, SuiteProbe]> =>
 const except = (...suites: string[]): Array<[string, SuiteProbe]> =>
   EVERY_SUITE.filter(([name]) => !suites.includes(name));
 
-/** The six suites that refuse to run when `--model` matches no fixture. */
-const FAIL_CLOSED_ON_MODEL_FILTER = except(
-  "loom-routing",
-  "tapestry-execution",
-);
-
-/** The two that publish an empty, green run instead. */
-const EMPTY_RUN_ON_MODEL_FILTER = only("loom-routing", "tapestry-execution");
-
 /** The seven suites whose verdict needs the judge. */
 const JUDGE_DECIDES = except("tapestry-category-routing");
 
@@ -619,8 +610,17 @@ describe("a maintainer narrows the run to one case or one model", () => {
     expect(run.files).toEqual([]);
   });
 
+  /**
+   * Every suite fails closed when its filters leave it nothing to run (#205).
+   *
+   * Before the fix, `loom-routing` and `tapestry-execution` published an
+   * empty run here — `totalCases: 0`, `suiteGreen: true`, exit 0, dashboard
+   * indexes updated — so a typo'd `--model` read as a green run in CI. The
+   * guard now lives once in `EvalOrchestrator`, which alone sees every model
+   * of the run, and `ArtifactBundleWriter` refuses an empty run as well.
+   */
   it.each(
-    FAIL_CLOSED_ON_MODEL_FILTER,
+    EVERY_SUITE,
   )("%s: says no case runs on a model the fixtures do not allow", async (_name, probe) => {
     const run = await answer(probe, probe.goodAnswer, {
       model: "openai/gpt-5.5",
@@ -629,48 +629,78 @@ describe("a maintainer narrows the run to one case or one model", () => {
       | { type: string; suite?: string; message: string }
       | undefined;
 
+    expect(run.partialFailures).toHaveLength(1);
     expect(failure?.type).toBe("NoCasesFound");
     expect(failure?.suite).toBe(probe.suite);
+    expect(failure?.message).toContain(probe.suite);
     expect(failure?.message).toContain("openai/gpt-5.5");
     expect(run.modelCalls).toEqual([]);
     expect(run.exitCode).toBe(1);
-    expect(run.files).toEqual([]);
   });
 
-  /**
-   * Two suites do not fail closed, and this is a defect, not a design.
-   *
-   * `LoomRoutingRunner.run()` and `TapestryExecutionRunner.run()` guard an
-   * empty *case* list but not an empty *work item* list, so a `--model` no
-   * fixture allows runs nothing and reports success: a complete bundle is
-   * written with `totalCases: 0` and `suiteGreen: true`, and the dashboard
-   * indexes are updated with it. A typo'd model filter therefore reads as a
-   * green run in CI. The other six suites return `NoCasesFound` and exit 1.
-   *
-   * Both runners' unit tests claimed `NoCasesFound` here — but they asserted
-   * it against an `InMemory*Runner` subclass that overrode `run()` with its
-   * own implementation, which does carry the guard. The test's copy fails
-   * closed; the product does not.
-   */
   it.each(
-    EMPTY_RUN_ON_MODEL_FILTER,
-  )("%s: publishes an empty green run instead, which a typo'd --model makes look like success", async (_name, probe) => {
+    EVERY_SUITE,
+  )("%s: publishes nothing for it, so an empty run can never read as green", async (_name, probe) => {
     const run = await answer(probe, probe.goodAnswer, {
       model: "openai/gpt-5.5",
     });
 
+    expect(run.files).toEqual([]);
+    expect(run.scoreFile).toBeNull();
+    expect(run.rollups).toEqual([]);
+  });
+
+  it.each(
+    EVERY_SUITE,
+  )("%s: names both filters when the case it names does not allow the model", async (_name, probe) => {
+    const run = await answer(probe, probe.goodAnswer, {
+      model: "openai/gpt-5.5",
+      caseFilter: probe.fixture.id,
+    });
+    const failure = run.partialFailures[0];
+
+    expect(failure?.type).toBe("NoCasesFound");
+    expect(failure?.message).toContain("openai/gpt-5.5");
+    expect(failure?.message).toContain(probe.fixture.id);
+    expect(run.exitCode).toBe(1);
+    expect(run.files).toEqual([]);
+  });
+
+  it.each(
+    EVERY_SUITE,
+  )("%s: fails a dry run the same way, before anything is spent on a live one", async (_name, probe) => {
+    const run = await answer(probe, probe.goodAnswer, {
+      model: "openai/gpt-5.5",
+      dryRun: true,
+    });
+
+    expect(run.partialFailures[0]?.type).toBe("NoCasesFound");
+    expect(run.exitCode).toBe(1);
+  });
+
+  /**
+   * The other side of the guard: a model outside a case's `allowed_models` is
+   * not a failure when another model runs it. The fixture allows one model of
+   * the matrix, so the rest have no work — and report nothing, rather than a
+   * green rollup of zero cases each.
+   */
+  it.each(
+    EVERY_SUITE,
+  )("%s: runs a case on the one matrix model it allows, and reports no empty rollup for the rest", async (_name, probe) => {
+    const run = await answer(probe, probe.goodAnswer, { wholeMatrix: true });
+
     expect(run.partialFailures).toEqual([]);
     expect(run.exitCode).toBe(0);
-    expect(run.modelCalls).toEqual([]);
-    expect(run.scoreFile?.totals).toEqual({
-      totalCases: 0,
-      passedCases: 0,
-      failedCases: 0,
-      suiteGreen: true,
-    });
-    expect(run.files).toContain(
-      `runs/abc123d-2026-01-15-001/score-${probe.suite}.json`,
-    );
+    expect(run.modelCalls.map((call) => call.model)).toEqual([EVAL_MODEL]);
+    expect(run.rollups).toEqual([
+      {
+        suite: probe.suite,
+        totalCases: 1,
+        passedCases: 1,
+        failedCases: 0,
+        suiteGreen: true,
+      },
+    ]);
   });
 
   it.each(

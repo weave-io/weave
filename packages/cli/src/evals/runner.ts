@@ -968,6 +968,7 @@ export class EvalOrchestrator {
 
     const runnerResults: RunnerResult[] = [];
     const partialFailures: RunnerError[] = [];
+    const failedSuites = new Set<string>();
 
     // Fan out across all selected models.
     //
@@ -992,6 +993,7 @@ export class EvalOrchestrator {
             runnerResults.push(result.value);
           } else {
             partialFailures.push(result.error);
+            failedSuites.add(suite.suiteId);
           }
         }
       }
@@ -999,12 +1001,16 @@ export class EvalOrchestrator {
 
     return ResultAsync.fromSafePromise(
       executeSuites().then(async () => {
+        const guarded = this.failEmptySuites(
+          request,
+          selectedSuites.map((suite) => suite.suiteId),
+          runnerResults,
+          partialFailures,
+          failedSuites,
+        );
+
         if (request.dryRun) {
-          return {
-            runnerResults,
-            partialFailures,
-            provenanceManifest: null,
-          };
+          return { ...guarded, provenanceManifest: null };
         }
 
         // Collect prompt snapshots for the shared eval-covered agent surface
@@ -1015,9 +1021,68 @@ export class EvalOrchestrator {
         );
         // Derive provenance manifest from the collected snapshots
         const provenanceManifest = this.deriveProvenance(snapshots, repoSha);
-        return { runnerResults, partialFailures, provenanceManifest };
+        return { ...guarded, provenanceManifest };
       }),
     );
+  }
+
+  /**
+   * The empty-run guard (#205): no suite may report green having run nothing.
+   *
+   * A runner is called once per model, so a runner on its own can only see
+   * "this model has no work" — which is legitimate when a case allows a
+   * subset of the matrix (trajectory cases do). Only the orchestrator sees
+   * every model, so only it can tell that from "this suite has no work",
+   * which is what a `--model` or `--case` filter that matches no fixture
+   * produces.
+   *
+   * Two rules, applied after every model has run:
+   *
+   * - A `RunnerResult` with no cases is dropped. It carries no rows, and left
+   *   in it would publish a green rollup for a model that ran nothing.
+   * - A selected suite left with no results and no hard failure of its own
+   *   fails with `NoCasesFound`, naming the suite and the filters, so the run
+   *   exits non-zero and nothing is written for it.
+   *
+   * `ArtifactBundleWriter.writeBundle()` independently refuses a run whose
+   * `totalCases` is 0 (`EmptyRun`), so a regression here still cannot
+   * publish an empty run.
+   */
+  private failEmptySuites(
+    request: EvalRunRequest,
+    selectedSuiteIds: readonly string[],
+    runnerResults: readonly RunnerResult[],
+    partialFailures: readonly RunnerError[],
+    failedSuites: ReadonlySet<string>,
+  ): { runnerResults: RunnerResult[]; partialFailures: RunnerError[] } {
+    const nonEmpty = runnerResults.filter((result) => result.totalCases > 0);
+    const suitesWithCases = new Set(nonEmpty.map((result) => result.suite));
+    const emptySuiteFailures: RunnerError[] = selectedSuiteIds
+      .filter((suiteId) => !suitesWithCases.has(suiteId))
+      .filter((suiteId) => !failedSuites.has(suiteId))
+      .map((suiteId) => ({
+        type: "NoCasesFound",
+        suite: suiteId,
+        message: this.describeEmptySuite(suiteId, request),
+      }));
+
+    return {
+      runnerResults: nonEmpty,
+      partialFailures: [...partialFailures, ...emptySuiteFailures],
+    };
+  }
+
+  private describeEmptySuite(suiteId: string, request: EvalRunRequest): string {
+    const filters: string[] = [];
+    if (request.model !== undefined) {
+      filters.push(`model filter "${request.model}"`);
+    }
+    if (request.case !== undefined) {
+      filters.push(`case filter "${request.case}"`);
+    }
+    const base = `No cases ran in suite "${suiteId}"`;
+    if (filters.length === 0) return `${base}.`;
+    return `${base} matching ${filters.join(" and ")}.`;
   }
 
   /**
@@ -2183,11 +2248,17 @@ export class EvalOrchestrator {
  * caller may inspect `summary.allSuitesGreen` and `summary.partialFailures` to
  * decide whether to apply a separate quality gate.
  *
+ * Each partial failure is handed to `reportPartialFailure`, so the command can
+ * say why it exited 1 — for example the `NoCasesFound` of a `--model` filter
+ * that matched no fixture (#205).
+ *
  * @param orchestrator - The configured `EvalOrchestrator` instance.
+ * @param reportPartialFailure - Called once per partial failure, in order.
  * @returns A runner function suitable for `EvalContext.runner`.
  */
 export function buildEvalRunner(
   orchestrator: EvalOrchestrator,
+  reportPartialFailure: (failure: RunnerError) => void = () => {},
 ): (request: EvalRunRequest) => Promise<Result<number, CliError>> {
   return async (request: EvalRunRequest): Promise<Result<number, CliError>> => {
     const result = await orchestrator.run(request);
@@ -2195,6 +2266,9 @@ export function buildEvalRunner(
       return err(result.error);
     }
     const summary = result.value;
+    for (const failure of summary.partialFailures) {
+      reportPartialFailure(failure);
+    }
     const exitCode = summary.partialFailures.length === 0 ? 0 : 1;
     return ok(exitCode);
   };

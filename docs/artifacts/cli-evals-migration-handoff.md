@@ -252,13 +252,16 @@ What it turned up:
   `loom-routing` and `tapestry-execution` — full bundle, `suiteGreen: true`,
   dashboard indexes updated, exit 0. The other six fail closed. Both runners'
   unit tests asserted `NoCasesFound`, against the in-memory copy.
+  _Fixed by Spec 37 task 16.1 (#205): all eight suites now fail closed; see
+  [agent-evals.md](../agent-evals.md#when-the-filters-leave-a-suite-nothing-to-run)._
 - **The category-routing qualitative gate cannot fail** unless the judge scores
   below 0.1, because it averages in two dimensions that are inapplicable on a
   routing case and therefore scored 1.0.
 - **`→ \`shuttle-{category}\`` still earns 0.4** as a generic-shuttle
   fallback, although the affirmative-route reader rejects it.
 - `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one that omits
-  its suite name.
+  its suite name. _Resolved by 16.1, which removed the per-runner work-item
+  guards in favour of one in the orchestrator that names the suite._
 
 Notes for whoever takes the next runner-adjacent file:
 

@@ -716,7 +716,8 @@ export class ArtifactBundleWriter {
    * Assemble and write an immutable eval result bundle.
    *
    * Steps:
-   * 1. Resolve `assembledAt` and `mode` defaults.
+   * 1. Resolve `assembledAt` and `mode` defaults, and refuse a run whose
+   *    `totalCases` is 0 with `EmptyRun` — nothing is written or indexed.
    * 2. For `"publish"` mode: verify `EVAL_RESULTS_REPO_TOKEN` is set.
    * 3. Assemble the `EvalBundle` (pure; runs through sanitizer).
    * 4. Compute the run ID prefix and scan for the next sequence number.
@@ -742,6 +743,26 @@ export class ArtifactBundleWriter {
     const env = options.env ?? Bun.env;
     const writeMarkdown = options.writeMarkdown ?? false;
     const generateIndexes = options.generateIndexes ?? false;
+
+    // Policy: a run that scored no cases is never written, published or
+    // indexed. With no failures it would read as green (#205).
+    const totalCases = options.runnerResults.reduce(
+      (sum, result) => sum + result.totalCases,
+      0,
+    );
+    if (totalCases === 0) {
+      return new ResultAsync(
+        Promise.resolve(
+          err<BundleWriteResult, BundleError>({
+            type: "EmptyRun",
+            message:
+              "Refusing to write a run that scored no cases (totalCases: 0). " +
+              "An empty run has nothing to publish and would read as green. " +
+              "Check the --model and --case filters against the suite's fixtures.",
+          }),
+        ),
+      );
+    }
 
     // Policy: dry-run bundles are always local-only
     const effectiveMode: BundleWriteMode = dryRun ? "local" : mode;
