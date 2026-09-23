@@ -929,6 +929,15 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/evals/judge-bakeoff.ts`
+  - function signalQuestion: (signal) => string
+  - function sonnetThreshold: (evalCase, rubric) => number
+  - function buildItem: (entry, raw, "caseId" | "modelId" | "transcript" | "rawContent"
+  >, evalCase, rubric) => Result<BakeoffItem, BakeoffError>
+  - function displayResponse: (item, "response">) => string
+  - function buildJevState: (item) => string
+  - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
+  - _...34 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
