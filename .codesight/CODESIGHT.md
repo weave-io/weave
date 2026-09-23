@@ -3,18 +3,15 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 209 lib files | 26 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,900 tokens. Without it, AI exploration would cost ~71,400 tokens. **Saves ~52,500 tokens per conversation.**
-> **Last scanned:** 2026-09-23 20:40 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 207 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~18,900 tokens. Without it, AI exploration would cost ~70,400 tokens. **Saves ~51,500 tokens per conversation.**
+> **Last scanned:** 2026-09-23 20:51 — re-run after significant changes
 
 ---
 
 # Libraries
 
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
-- `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
-- `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
-- `evals/fixtures/orders-api/src/ui/order-badge.ts` — function orderBadge: (order) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
@@ -322,6 +319,14 @@
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - _...4 more_
+- `packages/cli/src/evals/case-outcomes.ts`
+  - function classifyErrorType: (errorType) => string
+  - function caseOutcome: (row) => CaseOutcome
+  - function countCaseOutcomes: (rows) => CaseOutcomeCounts
+  - function scoredPassRate: (passedCases, totalCases, erroredCases) => number | null
+  - function erroredCasesField: (erroredCases) => void
+  - interface CaseOutcomeRow
+  - _...2 more_
 - `packages/cli/src/evals/compare-report.ts` — class ComparisonReport
 - `packages/cli/src/evals/compare.ts`
   - function compareRuns: (baseline, candidate) => Result<RunComparison, CompareError>
@@ -382,8 +387,8 @@
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
-  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
-  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
+  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun, erroredCases) => string
+  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun, erroredCases) => string
   - _...13 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
@@ -414,13 +419,13 @@
   - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
   - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
+  - function isRetryableAnswerError: (error) => boolean
   - class OpenRouterClient
+  - class RetryingModelClient
   - class StubModelClient
   - interface ChatMessage
   - interface ModelRequest
-  - interface ModelResponse
-  - interface ModelClient
-  - _...1 more_
+  - _...6 more_
 - `packages/cli/src/evals/pass-rates.ts`
   - function isErroredAttempt: (outcome) => boolean
   - function tallyAttempts: (outcomes) => AttemptTally
@@ -436,7 +441,7 @@
   - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
   - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
   - function redactSecrets: (raw) => string
-  - _...7 more_
+  - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -482,7 +487,7 @@
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
   - type ModelAttemptTallyEntry
-  - _...43 more_
+  - _...44 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -970,7 +975,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1001,14 +1006,12 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
-- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1026,21 +1029,21 @@
 - `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **15** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/cli/src/errors.ts` — imported by **11** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
 - `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/cli.ts` — imported by **9** files
-- `packages/cli/src/evals/case-loader.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -1049,9 +1052,9 @@
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/trajectory-dispatch.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
-- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/trajectory-dispatch.test.ts` +10 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
 
@@ -1074,7 +1077,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 209 test files found
+> 206 test files found
 
 ---
 
