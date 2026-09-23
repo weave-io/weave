@@ -80,7 +80,7 @@ export interface ParsedArgs {
     evalCase?: string;
     /** --repeat <n> for `weave eval run`, as typed; validated by the eval command */
     evalRepeat?: string;
-    /** --track <text|trajectory> for `weave eval run`; validated by the eval command */
+    /** --track for `weave eval run` (`text` or `trajectory`); validated by the eval command */
     evalTrack?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
     dryRun?: boolean;

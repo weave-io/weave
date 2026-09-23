@@ -1,6 +1,9 @@
 # Libraries
 
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
+- `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
+- `evals/fixtures/orders-api/src/ui/order-badge.ts` — function orderBadge: (order) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput

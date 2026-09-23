@@ -5,6 +5,7 @@
 ```ts
 
 import { Result } from 'neverthrow';
+import { ResultAsync } from 'neverthrow';
 
 // @public (undocumented)
 export type ArgParseError = {
@@ -35,16 +36,20 @@ export interface CliDeps {
     argv: string[];
     // (undocumented)
     colorEnabled?: boolean;
+    env?: Record<string, string | undefined>;
+    // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
+    fs?: FileSystem_2;
     // (undocumented)
     terminal: TerminalIO;
 }
 
+// Warning: (ae-forgotten-export) The symbol "FileWriteError" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "AgentNotFoundError" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "CompositionFailureError" needs to be exported by the entry point index.d.ts
 // Warning: (ae-forgotten-export) The symbol "EvalValidationError" needs to be exported by the entry point index.d.ts
 //
 // @public
-export type CliError = InvalidArgsError | MissingFileError | FileReadError | ParseFailureError | ValidationFailureError | AgentNotFoundError | CompositionFailureError | UnknownCommandError | EvalValidationError;
+export type CliError = InvalidArgsError | MissingFileError | FileReadError | FileWriteError | ParseFailureError | ValidationFailureError | AgentNotFoundError | CompositionFailureError | UnknownCommandError | EvalValidationError;
 
 // @public (undocumented)
 export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "unknown";
@@ -107,10 +112,13 @@ export interface ParsedArgs {
         promptSubcommand?: "inspect" | "list" | "self-modify";
         agentName?: string;
         initSubmode?: "migrate";
-        evalSubcommand?: "run";
+        evalSubcommand?: "run" | "compare";
         evalAgent?: string;
         evalModel?: string;
+        evalModels?: string;
         evalCase?: string;
+        evalRepeat?: string;
+        evalTrack?: string;
         dryRun?: boolean;
         rawArtifacts?: boolean;
         adapter?: string;
