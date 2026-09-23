@@ -28,6 +28,9 @@
  *   - `--models <set>` (or `WEAVE_EVAL_MODELS`) selects a named model set
  *     from `MODEL_SET_NAMES`. `dev` names the cheap development subset and
  *     cannot be combined with `--model`, which already names one model.
+ *   - `--repeat <n>` (or `WEAVE_EVAL_REPEAT`) runs every selected case `n`
+ *     times per model, 1 to `MAX_EVAL_REPEAT`. Omitted means 1, which is
+ *     exactly the run `weave eval run` made before repeats existed.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -58,6 +61,11 @@ export type EvalRunRequest = {
    */
   modelSet?: ModelSetName;
   /**
+   * How many times each selected case runs per model (`--repeat N`).
+   * Omitted means 1. Always an integer in `[1, MAX_EVAL_REPEAT]`.
+   */
+  repeat?: number;
+  /**
    * When `true`, skip actual execution and print what would be run.
    * Always safe in any environment.
    */
@@ -84,6 +92,8 @@ export type EvalRunInputs = {
   case?: string;
   /** Model set name from --models flag. */
   models?: string;
+  /** Repeat count from --repeat flag, as typed. */
+  repeat?: string;
   /** Whether --dry-run was passed. */
   dryRun?: boolean;
   /** Whether --raw-artifacts was passed. */
@@ -140,6 +150,16 @@ export type EvalInputValidationError =
     }
   | {
       /**
+       * The `--repeat` value is not a whole number from 1 to
+       * `MAX_EVAL_REPEAT`.
+       */
+      type: "InvalidRepeatCount";
+      /** The value supplied by the caller. */
+      value: string;
+      message: string;
+    }
+  | {
+      /**
        * `--models dev` and `--model <id>` were both supplied. One names a
        * set, the other a single model; running both is ambiguous.
        */
@@ -163,6 +183,33 @@ export type EvalInputValidationError =
  * unambiguous as regex input.
  */
 const VALID_IDENTIFIER_RE = /^[A-Za-z0-9_./:@-]+$/;
+
+/**
+ * The most repeats one run may ask for.
+ *
+ * A cost guard: a run makes `repeat × cases × models` model calls, plus the
+ * judge calls of every judge-scored attempt. Twenty repeats already give a
+ * 95% interval of roughly ±20 points on one case's pass rate; more is a
+ * baseline job, which can run twice.
+ */
+export const MAX_EVAL_REPEAT = 20;
+
+/**
+ * Validate a `--repeat` value: a whole number from 1 to `MAX_EVAL_REPEAT`,
+ * written plainly (`3`, not `3.0`, `+3` or `03`).
+ */
+function validateRepeat(
+  value: string,
+): Result<number, EvalInputValidationError> {
+  const parsed = Number.parseInt(value, 10);
+  const plain = String(parsed) === value.trim();
+  if (plain && parsed >= 1 && parsed <= MAX_EVAL_REPEAT) return ok(parsed);
+  return err({
+    type: "InvalidRepeatCount",
+    value,
+    message: `--repeat "${value}" must be a whole number from 1 to ${MAX_EVAL_REPEAT}`,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Agent allowlist — closed set of permitted agent/suite filter values
@@ -319,6 +366,7 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
   "WEAVE_EVAL_MODEL",
   "WEAVE_EVAL_CASE",
   "WEAVE_EVAL_MODELS",
+  "WEAVE_EVAL_REPEAT",
   "WEAVE_EVAL_PUBLISH_MODE",
 ]);
 
@@ -389,6 +437,7 @@ export function parseEvalRunRequest(
   const envModel = normalizeEnvFilterValue(env.WEAVE_EVAL_MODEL);
   const envCase = normalizeEnvFilterValue(env.WEAVE_EVAL_CASE);
   const envModels = normalizeEnvFilterValue(env.WEAVE_EVAL_MODELS);
+  const envRepeat = normalizeEnvFilterValue(env.WEAVE_EVAL_REPEAT);
 
   // Resolve agent filter: merge CLI flag + env variable
   const agentMerge = detectDuplicate("agent", inputs.agent, envAgent);
@@ -455,6 +504,15 @@ export function parseEvalRunRequest(
   const selection = validateModelSelection(validatedModel, validatedModelSet);
   if (selection.isErr()) return err(selection.error);
 
+  // Resolve the repeat count
+  const repeatMerge = detectDuplicate("repeat", inputs.repeat, envRepeat);
+  if (repeatMerge.isErr()) return err(repeatMerge.error);
+  const rawRepeat = repeatMerge.value;
+  const repeatValidation =
+    rawRepeat !== undefined ? validateRepeat(rawRepeat) : ok(undefined);
+  if (repeatValidation.isErr()) return err(repeatValidation.error);
+  const validatedRepeat = repeatValidation.value;
+
   // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
   // control var, not a filter, but it is part of the eval env contract.
   const evalEnvKeys = Object.keys(env).filter((k) =>
@@ -483,5 +541,6 @@ export function parseEvalRunRequest(
     rawArtifacts,
   };
   if (validatedModelSet !== undefined) request.modelSet = validatedModelSet;
+  if (validatedRepeat !== undefined) request.repeat = validatedRepeat;
   return ok(request);
 }

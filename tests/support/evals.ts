@@ -30,6 +30,7 @@ import type {
   ModelRequest,
 } from "../../packages/cli/src/evals/openrouter-client.js";
 import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
+import type { PublicReportBundle } from "../../packages/cli/src/evals/report-schema.js";
 import {
   buildEvalRunner,
   EvalOrchestrator,
@@ -397,6 +398,8 @@ export interface SuiteRunOptions {
   modelSet?: "default" | "dev";
   /** `--dry-run`. */
   dryRun?: boolean;
+  /** `--repeat`. Omitted means each case runs once. */
+  repeat?: number;
   /** `--raw-artifacts`. */
   rawArtifacts?: boolean;
   /** The environment the run reads. Defaults to a fake API key. */
@@ -433,6 +436,15 @@ export interface SuiteRunObservation {
   cases: PublishedCaseRow[];
   /** The first case summary — what a single-case scenario asked about. */
   firstCase: PublishedCaseRow | null;
+  /** The parsed `public-report.json`, or `null` when none was written. */
+  publicReport: PublicReportBundle | null;
+  /** The text of `public-report.md`, or `null` when none was written. */
+  markdown: string | null;
+  /**
+   * The dashboard index files at the bundle root (`dashboard-manifest.json`,
+   * `latest.json`, `suite-history-<suite>.json`, …), parsed, keyed by name.
+   */
+  indexes: Record<string, unknown>;
   /** Raw artifacts, written only under `--raw-artifacts`. */
   rawArtifacts: RawCaseResultArtifact[];
   /** Every request the runner made to the model. */
@@ -595,6 +607,7 @@ export async function runEvalSuite(
         : model,
     ...(options.modelSet !== undefined ? { modelSet: options.modelSet } : {}),
     case: options.caseFilter,
+    ...(options.repeat !== undefined ? { repeat: options.repeat } : {}),
     dryRun: options.dryRun ?? false,
     rawArtifacts: options.rawArtifacts ?? false,
   };
@@ -618,6 +631,24 @@ export async function runEvalSuite(
     rawArtifacts.push((await Bun.file(path).json()) as RawCaseResultArtifact);
   }
   const publishedText = await allPublishedText(bundleRoot);
+  const reportPath = absolute.find((path) =>
+    path.endsWith("/public-report.json"),
+  );
+  const markdownPath = absolute.find((path) =>
+    path.endsWith("/public-report.md"),
+  );
+  const publicReport =
+    reportPath !== undefined
+      ? ((await Bun.file(reportPath).json()) as PublicReportBundle)
+      : null;
+  const markdown =
+    markdownPath !== undefined ? await Bun.file(markdownPath).text() : null;
+  const indexes: Record<string, unknown> = {};
+  for (const path of absolute) {
+    const name = relative(bundleRoot, path);
+    if (name.includes("/") || !name.endsWith(".json")) continue;
+    indexes[name] = await Bun.file(path).json();
+  }
 
   await removeTree(bundleRoot);
 
@@ -633,6 +664,9 @@ export async function runEvalSuite(
     scoreFile,
     cases,
     firstCase: cases[0] ?? null,
+    publicReport,
+    markdown,
+    indexes,
     rawArtifacts,
     modelCalls: modelClient.calls,
     judgeCalls: judge.calls,

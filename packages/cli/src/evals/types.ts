@@ -1222,6 +1222,20 @@ export interface CaseResultSummary {
    * reference, which remain local-only.
    */
   trajectorySummary?: TrajectorySummary;
+  /**
+   * Which repeat of the case this result is, 1-based, when the run repeated
+   * each case (`weave eval run --repeat N`, N > 1). Absent when every case
+   * ran once, so a run without `--repeat` publishes exactly what it did
+   * before repeats existed.
+   */
+  attempt?: number;
+  /**
+   * `true` when this attempt produced no scorable answer (for example the
+   * model returned an empty or truncated answer) rather than a wrong one.
+   * An errored attempt still has `passed: false`, but pass rates leave it out
+   * of their denominator and count it separately (see `pass-rates.ts`).
+   */
+  errored?: boolean;
 }
 
 /**
@@ -1238,6 +1252,12 @@ export interface RawCaseResultArtifact {
   caseId: string;
   /** The model identifier used for this run. */
   modelId: string;
+  /**
+   * Which repeat this artifact belongs to, 1-based, when the run repeated
+   * each case. Absent when every case ran once. Also part of the file name,
+   * so repeats of one case never overwrite each other.
+   */
+  attempt?: number;
   /**
    * The full composed prompt text sent to the model.
    * Local-only; never publish.
@@ -1521,7 +1541,17 @@ export interface BundleScoreFile {
      * only for `harness_trajectory` cases; absent for text-only cases.
      */
     trajectorySummary?: TrajectorySummary;
+    /** 1-based repeat index; present only when the run repeated cases. */
+    attempt?: number;
+    /** `true` when the attempt produced no scorable answer. */
+    errored?: boolean;
   }>;
+  /**
+   * How many times each case ran per model (`--repeat N`). Present only when
+   * N > 1; absent means every case ran once. With repeats, `results` holds
+   * one row per attempt and `totals` counts attempts.
+   */
+  repeatCount?: number;
   /** Aggregate pass/fail totals. */
   totals: {
     totalCases: number;
@@ -1606,6 +1636,11 @@ export interface EvalBundle {
     allSuitesGreen: boolean;
     /** Names of the suites included in this bundle. */
     suites: string[];
+    /**
+     * How many times each case ran per model. Present only when greater
+     * than 1; the counts above are then attempts, not cases.
+     */
+    repeatCount?: number;
   };
   /** Per-suite sanitized score files. */
   scoreFiles: BundleScoreFile[];

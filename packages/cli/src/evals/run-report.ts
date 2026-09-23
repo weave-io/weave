@@ -7,6 +7,10 @@
  * raw transcript — so running one case for one model is enough to see why it
  * failed without opening the bundle.
  *
+ * With `--repeat N` (N > 1) it prints one block per case × model instead: the
+ * pass rate over the repeats (errored attempts left out and counted
+ * separately), then the same breakdown for each attempt that did not pass.
+ *
  * What it prints is limited to the publishable `CaseReport` fields plus local
  * paths. The transcript, the model's answer, the composed prompt and the
  * judge's rationales stay in the raw artifact file, which exists only under
@@ -19,6 +23,7 @@ import {
   PASS_THRESHOLD,
   PRIMARY_STRUCTURAL_PASS_THRESHOLD,
 } from "./langchain-agent-evals.js";
+import { tallyAttempts } from "./pass-rates.js";
 import type { CaseReport, EvalRunSummary } from "./runner.js";
 import { QUALITATIVE_PASS_THRESHOLD } from "./tapestry-category-routing-runner.js";
 import type { ScoringDimension } from "./types.js";
@@ -59,20 +64,91 @@ export class EvalRunReport {
 
   render(summary: EvalRunSummary): string {
     const lines: string[] = ["", ...this.header(summary)];
-    for (const report of summary.caseReports) {
-      lines.push("", ...this.caseLines(report));
+    if (summary.metadata.repeatCount > 1) {
+      for (const group of groupRepeats(summary.caseReports)) {
+        lines.push("", ...this.repeatLines(group));
+      }
+    } else {
+      for (const report of summary.caseReports) {
+        lines.push("", ...this.caseLines(report));
+      }
     }
     lines.push(...this.footer(summary), "");
     return lines.join("\n");
   }
 
   private header(summary: EvalRunSummary): string[] {
-    const counts =
-      `${summary.totalCases} ${plural(summary.totalCases, "case")}, ` +
-      `${summary.passedCases} passed, ${summary.failedCases} failed`;
+    const counts = this.headerCounts(summary);
     const title = `${this.theme.boldCyan("Eval run")} ${summary.runId ?? "(no run written)"}: ${counts}`;
     if (summary.runId === null) return [title];
     return [title, `  ${this.whereWritten(summary)}`];
+  }
+
+  private headerCounts(summary: EvalRunSummary): string {
+    const tail = `${summary.passedCases} passed, ${summary.failedCases} failed`;
+    const repeatCount = summary.metadata.repeatCount;
+    if (repeatCount <= 1) {
+      return `${summary.totalCases} ${plural(summary.totalCases, "case")}, ${tail}`;
+    }
+    return (
+      `${summary.totalCases} ${plural(summary.totalCases, "attempt")} ` +
+      `(each case ${repeatCount} times per model), ${tail}`
+    );
+  }
+
+  /**
+   * One case × model over its repeats: the pass rate, then each attempt that
+   * did not pass with its dimensions, explanation and transcript path.
+   */
+  private repeatLines(attempts: readonly CaseReport[]): string[] {
+    const first = attempts[0];
+    if (first === undefined) return [];
+    const tally = tallyAttempts(attempts);
+    const scored = tally.passed + tally.failed;
+    const requirement = first.required ? "required" : "optional";
+    const lines = [
+      `  ${this.repeatVerdict(tally)}  ${tally.passed}/${scored} passed  ${first.caseId} on ${first.modelId}  ${this.theme.dim(`(${first.suite}, ${requirement})`)}`,
+    ];
+    if (tally.errored > 0) {
+      lines.push(
+        `        ${tally.errored} errored ${plural(tally.errored, "attempt")} left out of the pass rate`,
+      );
+    }
+    for (const report of attempts) {
+      if (report.passed) continue;
+      lines.push(...this.missedAttemptLines(report));
+    }
+    return lines;
+  }
+
+  private repeatVerdict(tally: {
+    passed: number;
+    failed: number;
+    passRate: number | null;
+  }): string {
+    if (tally.passRate === null) return this.theme.boldRed("ERRORED");
+    if (tally.failed === 0) return this.theme.boldGreen("PASS");
+    if (tally.passed === 0) return this.theme.boldRed("FAIL");
+    return this.theme.yellow("FLAKY");
+  }
+
+  private missedAttemptLines(report: CaseReport): string[] {
+    const label = `        Attempt ${report.attempt ?? 1}:`;
+    if (report.errored) {
+      return [
+        `${label} ${this.theme.boldRed("ERRORED")} (no scorable answer)`,
+        ...this.transcriptLines(report),
+      ];
+    }
+    const lines = [
+      `${label} ${this.theme.boldRed("FAIL")}  weighted total ${score(report.weightedTotal)} (pass mark ${score(PASS_THRESHOLD)})`,
+      ...this.dimensionLines(report),
+    ];
+    if (report.publicExplanation !== null) {
+      lines.push(`        Why: ${report.publicExplanation}`);
+    }
+    lines.push(...this.transcriptLines(report));
+    return lines;
   }
 
   private whereWritten(summary: EvalRunSummary): string {
@@ -148,6 +224,21 @@ export class EvalRunReport {
       ),
     ];
   }
+}
+
+/**
+ * Group case reports by suite, case and model, keeping the order in which
+ * each group first appears. Attempts inside a group keep run order.
+ */
+function groupRepeats(reports: readonly CaseReport[]): CaseReport[][] {
+  const groups = new Map<string, CaseReport[]>();
+  for (const report of reports) {
+    const key = `${report.suite}\u0000${report.caseId}\u0000${report.modelId}`;
+    const group = groups.get(key) ?? [];
+    group.push(report);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
 }
 
 function score(value: number): string {

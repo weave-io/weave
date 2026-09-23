@@ -2069,6 +2069,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       agentFilter: "loom",
       modelFilter: null,
       modelSet: "default",
+      repeatCount: 1,
       caseFilter: null,
       rawArtifactsEnabled: false,
       publishMode: "local" as const,

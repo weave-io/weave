@@ -170,6 +170,11 @@ export interface EvalRunMetadata {
    */
   modelSet: ModelSetName;
   /**
+   * How many times each selected case ran per model (`--repeat N`).
+   * `1` when `--repeat` was not supplied.
+   */
+  repeatCount: number;
+  /**
    * Effective case filter applied to this run.
    * `null` when no case filter was set.
    */
@@ -231,6 +236,11 @@ export interface RepeatabilityComparisonKey {
    */
   modelSet?: ModelSetName;
   caseFilter: string | null;
+  /**
+   * How many times each case ran per model. Absent in artifacts written
+   * before `--repeat` existed, which all ran each case once.
+   */
+  repeatCount?: number;
   suites: string[];
 }
 
@@ -421,7 +431,11 @@ export interface CaseReport {
   suite: string;
   caseId: string;
   modelId: string;
+  /** 1-based repeat index, or `null` when every case ran once. */
+  attempt: number | null;
   passed: boolean;
+  /** `true` when the attempt produced no scorable answer. */
+  errored: boolean;
   required: boolean;
   weightedTotal: number;
   dimensionScores: CaseResultSummary["dimensionScores"];
@@ -1057,21 +1071,36 @@ export class EvalOrchestrator {
     // (already filtered by `resolveModelSet()`). When no model filter is set,
     // `modelEntries` contains the full default matrix (≥ 3 models per the
     // model matrix constraint).
+    //
+    // With `--repeat N` the whole models × suites pass runs N times, one
+    // attempt after another, so the repeats of a case are spread over the run
+    // rather than sent back to back. Each result is tagged with its attempt.
+    // A suite that fails hard on a model (fixture load, prompt provider) is
+    // not retried on later attempts: the failure would only repeat.
+    const repeatCount = request.repeat ?? 1;
+    const hardFailed = new Set<string>();
     const executeSuites = async (): Promise<void> => {
-      for (const modelEntry of modelEntries) {
-        const modelFilter = modelEntry.id;
+      for (let attempt = 1; attempt <= repeatCount; attempt += 1) {
+        for (const modelEntry of modelEntries) {
+          const modelFilter = modelEntry.id;
 
-        for (const suite of selectedSuites) {
-          const result = await this.runSuiteById(
-            suite.suiteId,
-            request,
-            modelFilter,
-          );
-          if (result.isOk()) {
-            runnerResults.push(result.value);
-          } else {
-            partialFailures.push(result.error);
-            failedSuites.add(suite.suiteId);
+          for (const suite of selectedSuites) {
+            const key = `${suite.suiteId}\u0000${modelFilter}`;
+            if (hardFailed.has(key)) continue;
+            const result = await this.runSuiteById(
+              suite.suiteId,
+              request,
+              modelFilter,
+            );
+            if (result.isOk()) {
+              runnerResults.push(
+                tagAttempt(result.value, attempt, repeatCount),
+              );
+            } else {
+              partialFailures.push(result.error);
+              failedSuites.add(suite.suiteId);
+              hardFailed.add(key);
+            }
           }
         }
       }
@@ -1522,6 +1551,7 @@ export class EvalOrchestrator {
             env: this.env,
             publisher,
             remoteSequenceReader,
+            repeatCount: request.repeat ?? 1,
             // Produce the human-readable Markdown report alongside the JSON
             // report for every non-dry-run bundle so all registered suites surface
             // through the same public reporting pipeline.
@@ -1848,6 +1878,9 @@ export class EvalOrchestrator {
       modelFilter: metadata.modelFilter,
       modelSet: metadata.modelSet,
       caseFilter: metadata.caseFilter,
+      ...(metadata.repeatCount > 1
+        ? { repeatCount: metadata.repeatCount }
+        : {}),
       suites,
     };
   }
@@ -1862,6 +1895,7 @@ export class EvalOrchestrator {
       return false;
     }
     if (left.caseFilter !== right.caseFilter) return false;
+    if ((left.repeatCount ?? 1) !== (right.repeatCount ?? 1)) return false;
     if (left.suites.length !== right.suites.length) return false;
 
     for (let index = 0; index < left.suites.length; index += 1) {
@@ -2204,7 +2238,9 @@ export class EvalOrchestrator {
         suite: summary.suite,
         caseId: summary.caseId,
         modelId: summary.modelId,
+        attempt: summary.attempt ?? null,
         passed: summary.passed,
+        errored: summary.errored === true,
         required: summary.required,
         weightedTotal: summary.weightedTotal,
         dimensionScores: summary.dimensionScores,
@@ -2291,6 +2327,7 @@ export class EvalOrchestrator {
       agentFilter: request.agent ?? null,
       modelFilter: request.model ?? null,
       modelSet: request.modelSet ?? "default",
+      repeatCount: request.repeat ?? 1,
       caseFilter: request.case ?? null,
       rawArtifactsEnabled: request.rawArtifacts,
       publishMode: this.publishMode,
@@ -2468,9 +2505,36 @@ function makeDefaultSnapshotProvider(): SnapshotProvider {
 
 /** The key `writeRawArtifacts` and `buildCaseReports` share for one case result. */
 function caseReportKey(
-  summary: Pick<CaseResultSummary, "suite" | "caseId" | "modelId">,
+  summary: Pick<CaseResultSummary, "suite" | "caseId" | "modelId" | "attempt">,
 ): string {
-  return `${summary.suite}\u0000${summary.caseId}\u0000${summary.modelId}`;
+  const attempt = summary.attempt ?? 1;
+  return `${summary.suite}\u0000${summary.caseId}\u0000${summary.modelId}\u0000${attempt}`;
+}
+
+/**
+ * Tag every case result of one attempt with its 1-based attempt index.
+ *
+ * A run without `--repeat` (`repeatCount` 1) is returned unchanged, so it
+ * publishes exactly what a run published before repeats existed. The raw
+ * artifact carries the attempt too, which keeps its file name distinct from
+ * the other repeats of the same case.
+ */
+function tagAttempt(
+  result: RunnerResult,
+  attempt: number,
+  repeatCount: number,
+): RunnerResult {
+  if (repeatCount <= 1) return result;
+  return {
+    ...result,
+    caseResults: result.caseResults.map((caseResult) => ({
+      ...caseResult,
+      summary: { ...caseResult.summary, attempt },
+      ...(caseResult.rawArtifact !== undefined
+        ? { rawArtifact: { ...caseResult.rawArtifact, attempt } }
+        : {}),
+    })),
+  };
 }
 
 export function getEvalCoveredPromptAgents(): readonly string[] {

@@ -202,6 +202,72 @@ Deterministic suites (routing, structural checks) cost only the model call.
 > [Diagnose one case](#diagnose-one-case). Until that is explained, check a
 > dev-subset failure's raw transcript before trusting its score.
 
+### Repeat cases (`--repeat N`)
+
+Each case runs once per model by default, at temperature 0.2, and most suites
+have two to five cases, so one flipped verdict moves a model's suite score by
+20–50 points. `--repeat N` runs every selected case N times per model and
+reports a **pass rate** instead of a single pass or fail (Spec 37, task 18.1):
+
+```bash
+# Every suite on the dev subset, each case three times per model
+bun packages/cli/src/main.ts eval run --models dev --repeat 3
+
+# One case, five times, on one model
+bun packages/cli/src/main.ts eval run --agent loom --case loom-route-backend-api \
+  --model deepseek/deepseek-v4-flash-0731 --repeat 5
+```
+
+- `N` is a whole number from 1 to `MAX_EVAL_REPEAT` (20, a cost guard in
+  `input-validation.ts`). `WEAVE_EVAL_REPEAT` is the env-var form; a blank
+  value means "not set", like the other `WEAVE_EVAL_*` inputs.
+- A run costs N times as much: every attempt makes its model call and, on a
+  judge-scored case, its judge calls.
+- The whole models × suites pass runs N times, one **attempt** after another,
+  so the repeats of one case are spread over the run rather than sent back to
+  back. A suite that fails hard on a model (fixture load, prompt provider) is
+  not retried on later attempts.
+- **`N = 1` (or no `--repeat`) is exactly today's run.** No attempt number, no
+  repeat count and no pass-rate block is written anywhere, so its score files,
+  public report, Markdown report, indexes and raw file names are byte-for-byte
+  what a run wrote before repeats existed.
+
+**Pass rate.** For a case on a model, and for a model over a suite:
+
+```
+passRate = passed / (passed + failed)
+```
+
+An **errored** attempt — one that produced no scorable answer, such as an
+empty or truncated answer, as opposed to a wrong one — carries
+`errored: true`. It is left out of the denominator and counted separately
+(`errored`), because it says nothing about whether the prompt works. When
+every attempt errored, `passRate` is `null`, never 0. The legacy counts
+(`totalCases`, `passedCases`, `failedCases`) keep their meaning: every
+attempt counts, and an errored one counts as failed. `pass-rates.ts` owns the
+calculation; the report schema rejects a tally whose counts do not add up or
+whose rate is not `passed / (passed + failed)`.
+
+**Where repeats appear.**
+
+| Surface | With `--repeat N` (N > 1) |
+| --- | --- |
+| `score-<suite>.json` (internal) | One row per attempt, each with `attempt` (1-based); top-level `repeatCount`. `totals` count attempts. |
+| `run-summary.json`, `bundle-index.json` | `runSummary.repeatCount`; the counts are attempts. |
+| `public-report.json` | `runSummary.repeatCount`. Each suite summary gets a `repeats` block — `repeatCount` and, per model (sorted), `attempts`, `passed`, `failed`, `errored`, `passRate` and the same per case. Every attempt stays in `cases` as its own entry with `attempt`; an errored attempt also has `errored: true`. |
+| `public-report.md` | A "Repeats" line under the run totals; per suite, a pass-rate table per model and per case × model, then only the attempts that did not pass (with attempt number and explanation). |
+| `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-<suite>.json`, `model-comparison-<runId>.json` | `repeatCount` on the run, point or manifest, so a reader knows the counts and pass rates are over attempts. |
+| `scenario-history-<suite>.json` | Still counted per **model**: a model passes a case in a run only if every scored attempt passed, so a flaky case counts as failed for that model. Errored attempts are not considered; a model with only errored attempts is skipped. |
+| stdout run report | One block per case × model: `PASS 5/5`, `FLAKY 3/5`, `FAIL 0/5` or `ERRORED`, the number of errored attempts, then the dimension breakdown and transcript path of each attempt that did not pass. |
+| `raw/` (with `--raw-artifacts`) | One file per attempt: `case-<case>-<model>-attempt<n>-<timestamp>.json`. |
+| `repeatability-diagnostics.json` | `comparisonKey.repeatCount`, so a repeated run is only compared with runs of the same repeat count. |
+
+No `schemaVersion` changed: every new field is optional and only written when
+N > 1, so a reader of today's schema still reads a single run unchanged, and
+a repeated run's counts and pass rates stay correct for a reader that ignores
+the new fields (it just sees more entries per case). The versioned JSON Schema
+contract (group 5) is written after this change, so it includes them.
+
 ## Eval Suites
 
 Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
@@ -839,7 +905,7 @@ This keeps the suite focused on observable planning shape while making local rer
 Pattern and Loom now write one extra local-only artifact on every non-dry run: `repeatability-diagnostics.json` in the run directory root next to `run-summary.json` and `public-report.json`.
 
 - It is **developer diagnostics only**. It is not part of the published dashboard surface.
-- It compares the current run only against earlier local runs with the **exact same filter tuple**: `agentFilter`, `modelFilter`, `caseFilter`, and effective suite list.
+- It compares the current run only against earlier local runs with the **exact same filter tuple**: `agentFilter`, `modelFilter`, `modelSet`, `caseFilter`, `repeatCount` (absent means 1) and effective suite list.
 - That means `--agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api` compares only to earlier reruns with those same three filters, not to a broader `--agent loom` suite run.
 - The artifact shows drift at two levels:
   - per suite × per model pass-rate drift
@@ -1115,6 +1181,9 @@ weave eval run --model anthropic/claude-sonnet-4.5
 # Run the cheap development subset instead of the full default matrix
 weave eval run --models dev
 
+# Run each case three times per model and report pass rates
+weave eval run --models dev --repeat 3
+
 # Filter to a single case ID
 weave eval run --case loom-route-backend-api
 weave eval run --case shuttle-execution-report-structured-evidence
@@ -1142,6 +1211,7 @@ WEAVE_EVAL_AGENT=loom
 WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5
 WEAVE_EVAL_MODELS=dev
 WEAVE_EVAL_CASE=loom-route-backend-api
+WEAVE_EVAL_REPEAT=3
 ```
 
 `--dry-run` now exercises the same suite fixture/rubric loading path as a live run, so shipped case/rubric drift fails closed before any model call would happen. It still does **not** require `OPENROUTER_API_KEY` because dry-run skips model execution.
@@ -1369,7 +1439,7 @@ Published as `indexes/v1/scenario-history-<suite>.json`. Provides a per-case vie
 | `"partial"` | At least one considered entry passed AND at least one failed |
 | `"skip"` | No considered entries (all are `dryRun=true` or `scoreBucket="skip"`) |
 
-"Considered" means `!dryRun && scoreBucket !== "skip"`.
+"Considered" means `!dryRun && scoreBucket !== "skip"` and not `errored`. The counts are per model: with `--repeat`, a model's attempts are grouped first and the model passes only if every considered attempt passed (see [Repeat cases](#repeat-cases---repeat-n)).
 
 **`lastRuns` ordering and cap**: per-case run entries are in **oldest-first** chronological order (ascending `assembledAt`). Website consumers wanting newest-first should reverse the array. The array is capped at `SCENARIO_HISTORY_MAX_RUNS` (10): when more than 10 runs exist for a case, the oldest are evicted.
 

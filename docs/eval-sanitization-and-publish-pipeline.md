@@ -51,7 +51,7 @@ All functions here produce allowlisted projections of internal types:
 | `assertPublishSafe()` | any object | `Result<undefined, SanitizerError>` |
 | `assertJsonPublishSafe()` | JSON string | `Result<undefined, SanitizerError>` |
 
-**Allowlist design** — serialization is allowlist-first: only fields declared in `SanitizedCaseResultSummary`, `SanitizedScoreRecord`, etc. appear in publishable output. Unknown fields are silently dropped. This prevents accidental leakage when new fields are added to runner types.
+**Allowlist design** — serialization is allowlist-first: only fields declared in `SanitizedCaseResultSummary`, `SanitizedScoreRecord`, etc. appear in publishable output. Unknown fields are silently dropped. This prevents accidental leakage when new fields are added to runner types. `attempt` (a 1-based integer set by the orchestrator under `--repeat`) and `errored` (a boolean) are allowlisted on `SanitizedCaseResultSummary`; both are written only when set, so a run without repeats publishes the same fields as before. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 
 **`SENSITIVE_FIELD_NAMES`** — a `Set<string>` of field names that must never appear in any publishable object. `assertPublishSafe()` rejects any object whose top-level keys include a member of this set. `assertJsonPublishSafe()` scans the serialized JSON string for these keys as JSON key patterns (`"fieldName"`).
 
@@ -165,7 +165,7 @@ After a live run `weave eval run` prints a per-case report (`packages/cli/src/ev
 
 | Artifact | Filename |
 |---|---|
-| `RawCaseResultArtifact` | `case-<safeCaseId>-<safeModelId>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json` |
+| `RawCaseResultArtifact` | `case-<safeCaseId>-<safeModelId>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json`; with `--repeat`, `case-<safeCaseId>-<safeModelId>-attempt<n>-<…>.json` so repeats written at one timestamp stay apart |
 | `RawPromptArtifact` | `prompt-<safeAgentName>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json` |
 
 Case IDs, model IDs, and agent names are sanitized before they become filename components. Slashes, backslashes, traversal segments such as `..`, and other unsafe characters are replaced or stripped. The writer also checks the resolved path before write so raw artifacts stay inside `<localBundleDir>/raw/`.

@@ -291,7 +291,7 @@
   - function computeBundleDirName: (gitSha, assembledAt) => string
   - function resolveNextSequence: (runsDir, prefix, remoteRunIds) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun, repeatCount) => BundleScoreFile
   - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function caseModelDefaults: (matrix) => CaseModelDefaults
@@ -329,8 +329,9 @@
   - type EvalRunRequest
   - type EvalRunInputs
   - type EvalInputValidationError
+  - const MAX_EVAL_REPEAT
   - const KNOWN_EVAL_AGENTS
-  - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
+  - _...1 more_
 - `packages/cli/src/evals/judgment-cases.ts`
   - function isJudgmentCase: (evalCase) => boolean
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
@@ -384,6 +385,14 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
+- `packages/cli/src/evals/pass-rates.ts`
+  - function isErroredAttempt: (outcome) => boolean
+  - function tallyAttempts: (outcomes) => AttemptTally
+  - function tallyByModelAndCase: (outcomes) => ModelAttemptTally[]
+  - interface AttemptOutcome
+  - interface AttemptTally
+  - interface CaseAttemptTally
+  - _...2 more_
 - `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractAcceptanceCriteria: (content) => string[]
   - function extractVerificationSignals: (content, description) => VerificationSignals
@@ -410,7 +419,7 @@
   - _...4 more_
 - `packages/cli/src/evals/raw-artifacts.ts`
   - function sanitizeFilenamePart: (raw) => string
-  - function rawCaseResultFilename: (caseId, modelId, date) => string
+  - function rawCaseResultFilename: (caseId, modelId, date, attempt?) => string
   - function rawPromptFilename: (agentName, date) => string
   - function isoToFilesafeDatetime: (iso) => string
   - class RawArtifactsWriter
@@ -435,9 +444,9 @@
   - type ExplanationSource
   - type ScoreBucket
   - type BoundedExplanation
-  - type PublicCaseEntry
-  - type SuiteSummaryEntry
-  - _...36 more_
+  - type CaseAttemptTallyEntry
+  - type ModelAttemptTallyEntry
+  - _...43 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>

@@ -69,3 +69,47 @@ describe("a maintainer asks for the cheap development subset", () => {
     expect(terminal.err.join("\n")).toContain("--models dev");
   });
 });
+
+describe("a maintainer asks for repeats", () => {
+  it("refuses zero repeats, naming the range it accepts", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--repeat", "0"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('--repeat "0"');
+    expect(stderr).toContain("from 1 to 20");
+  });
+
+  it("refuses more repeats than a run may spend", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--repeat", "21"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('--repeat "21"');
+  });
+
+  it("refuses a repeat count that is not a whole number", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--repeat", "2.5"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('--repeat "2.5"');
+  });
+
+  it("asks for a number when --repeat is given none", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--repeat"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--repeat requires a number of repeats");
+  });
+
+  it("lists --repeat in the usage text", async () => {
+    const terminal = new BufferTerminal();
+    await run({
+      argv: ["bun", "weave", "eval"],
+      terminal,
+      colorEnabled: false,
+      fs: new MemoryFileSystem({}, "/project", "/home/user"),
+      env: {},
+    });
+
+    expect(terminal.err.join("\n")).toContain("--repeat <n>");
+  });
+});

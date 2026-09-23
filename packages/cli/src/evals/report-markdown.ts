@@ -81,6 +81,7 @@
 import type {
   PublicCaseEntry,
   PublicReportBundle,
+  SuiteRepeats,
   SuiteSummaryEntry,
 } from "./report-schema.js";
 
@@ -286,15 +287,100 @@ export function renderSuiteSummary(summary: SuiteSummaryEntry): string {
 
   if (summary.cases.length === 0) {
     lines.push("_No cases in this suite._");
-  } else {
-    lines.push("| Case ID | Model | Score | Passed | Explanation |");
-    lines.push("|---------|-------|-------|--------|-------------|");
-    for (const entry of summary.cases) {
-      lines.push(renderCaseRow(entry));
-    }
+    return lines.join("\n");
+  }
+
+  if (summary.repeats !== undefined) {
+    lines.push(...renderRepeats(summary.repeats, summary.cases));
+    return lines.join("\n");
+  }
+
+  lines.push("| Case ID | Model | Score | Passed | Explanation |");
+  lines.push("|---------|-------|-------|--------|-------------|");
+  for (const entry of summary.cases) {
+    lines.push(renderCaseRow(entry));
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Repeated runs
+// ---------------------------------------------------------------------------
+
+/**
+ * `passed/scored (NN%)`, or `n/a` when every attempt errored.
+ *
+ * Built from integers only, so it needs no escaping.
+ */
+function formatPassRate(tally: {
+  passed: number;
+  failed: number;
+  passRate: number | null;
+}): string {
+  if (tally.passRate === null) return "n/a";
+  const scored = tally.passed + tally.failed;
+  return `${tally.passed}/${scored} (${Math.round(tally.passRate * 100)}%)`;
+}
+
+/**
+ * The body of a repeated suite: pass rate per model, pass rate per case and
+ * model, and the attempts that did not pass.
+ *
+ * Every attempt is still in `public-report.json`; the Markdown lists only the
+ * attempts that did not pass, so a five-repeat run stays readable.
+ */
+function renderRepeats(
+  repeats: SuiteRepeats,
+  cases: readonly PublicCaseEntry[],
+): string[] {
+  const lines: string[] = [
+    `**Repeats**: each case ran ${repeats.repeatCount} times per model. Pass rates leave errored attempts out.`,
+    "",
+    "| Model | Pass rate | Errored |",
+    "|-------|-----------|---------|",
+  ];
+  for (const model of repeats.models) {
+    lines.push(
+      `| ${escapeMdCell(model.modelId)} | ${formatPassRate(model)} | ${model.errored} |`,
+    );
+  }
+
+  lines.push(
+    "",
+    "| Case ID | Model | Pass rate | Errored |",
+    "|---------|-------|-----------|---------|",
+  );
+  for (const model of repeats.models) {
+    for (const entry of model.cases) {
+      lines.push(
+        `| ${escapeMdCell(entry.caseId)} | ${escapeMdCell(model.modelId)} | ${formatPassRate(entry)} | ${entry.errored} |`,
+      );
+    }
+  }
+
+  const missed = cases.filter((entry) => !entry.passed);
+  if (missed.length === 0) return lines;
+
+  lines.push(
+    "",
+    "Attempts that did not pass:",
+    "",
+    "| Case ID | Model | Attempt | Score | Explanation |",
+    "|---------|-------|---------|-------|-------------|",
+  );
+  for (const entry of missed) {
+    const score =
+      entry.errored === true ? "errored" : bucketLabel(entry.scoreBucket);
+    const explanation =
+      entry.explanation !== undefined
+        ? escapeMdCell(entry.explanation.text)
+        : "";
+    lines.push(
+      `| ${escapeMdCell(entry.caseId)} | ${escapeMdCell(entry.modelId)} | ${entry.attempt ?? ""} | ${score} | ${explanation} |`,
+    );
+  }
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +424,11 @@ export function renderPublicReportBundle(bundle: PublicReportBundle): string {
   lines.push(
     `**Total cases**: ${bundle.runSummary.totalCases} | **Passed**: ${bundle.runSummary.passedCases} | **Failed**: ${bundle.runSummary.failedCases}`,
   );
+  if (bundle.runSummary.repeatCount !== undefined) {
+    lines.push(
+      `**Repeats**: each case ran ${bundle.runSummary.repeatCount} times per model, so the counts above are attempts.`,
+    );
+  }
   lines.push(
     `**Suites**: ${bundle.runSummary.suites.map(escapeMdCell).join(", ")}`,
   );

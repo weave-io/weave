@@ -76,6 +76,7 @@ import {
   type DashboardManifest,
   DashboardManifestSchema,
   type ModelComparisonManifest,
+  type PublicCaseEntry,
   type PublicReportBundle,
   PublicReportBundleSchema,
   SCENARIO_HISTORY_MAX_RUNS,
@@ -177,6 +178,11 @@ export interface LatestRunSnapshot {
   failedCases: number;
   /** Suite names included in the most recent run. */
   suites: string[];
+  /**
+   * How many times each case ran per model in the most recent run. Present
+   * only when greater than 1; the counts are then attempts.
+   */
+  repeatCount?: number;
 }
 
 /**
@@ -203,6 +209,8 @@ export interface LastNRunEntry {
   failedCases: number;
   /** Suite names in this run. */
   suites: string[];
+  /** How many times each case ran per model; present only when > 1. */
+  repeatCount?: number;
 }
 
 /**
@@ -337,7 +345,14 @@ export function buildLatestSnapshot(
     passedCases: bundle.runSummary.passedCases,
     failedCases: bundle.runSummary.failedCases,
     suites: bundle.runSummary.suites,
+    ...repeatCountOf(bundle),
   };
+}
+
+/** `{ repeatCount }` when the run repeated cases, else nothing. */
+function repeatCountOf(bundle: PublicReportBundle): { repeatCount?: number } {
+  if (bundle.runSummary.repeatCount === undefined) return {};
+  return { repeatCount: bundle.runSummary.repeatCount };
 }
 
 /**
@@ -367,6 +382,7 @@ export function buildLastNRuns(
     passedCases: bundle.runSummary.passedCases,
     failedCases: bundle.runSummary.failedCases,
     suites: bundle.runSummary.suites,
+    ...repeatCountOf(bundle),
   }));
 
   return {
@@ -406,6 +422,48 @@ function deriveScenarioRunStatus(
 }
 
 /**
+ * Count the models that passed, failed or were skipped on one case in one run.
+ *
+ * The counts are per **model**, whatever the number of repeats. A model's
+ * attempts that were dry runs, skipped or errored are not considered. A model
+ * with no considered attempt is skipped; otherwise it passed only if every
+ * considered attempt passed, so a case that passed on some repeats and failed
+ * on others counts as failed for that model. Without repeats each model has
+ * one entry and this is the plain per-entry count.
+ */
+function countScenarioModels(entries: readonly PublicCaseEntry[]): {
+  passedModels: number;
+  failedModels: number;
+  skippedModels: number;
+} {
+  const byModel = new Map<string, PublicCaseEntry[]>();
+  for (const entry of entries) {
+    const group = byModel.get(entry.modelId) ?? [];
+    group.push(entry);
+    byModel.set(entry.modelId, group);
+  }
+
+  let passedModels = 0;
+  let failedModels = 0;
+  let skippedModels = 0;
+  for (const attempts of byModel.values()) {
+    const considered = attempts.filter(
+      (e) => !e.dryRun && e.scoreBucket !== "skip" && e.errored !== true,
+    );
+    if (considered.length === 0) {
+      skippedModels++;
+      continue;
+    }
+    if (considered.every((e) => e.passed)) {
+      passedModels++;
+      continue;
+    }
+    failedModels++;
+  }
+  return { passedModels, failedModels, skippedModels };
+}
+
+/**
  * Build `ScenarioHistoryIndex` maps from a set of run descriptors.
  *
  * Iterates runs oldest-first (to build chronological lastRuns arrays) and
@@ -440,21 +498,8 @@ export function buildScenarioHistories(
       }
 
       for (const [caseId, entries] of caseGroups) {
-        // Compute model counts
-        let passedModels = 0;
-        let failedModels = 0;
-        let skippedModels = 0;
-
-        for (const e of entries) {
-          const isSkipped = e.dryRun || e.scoreBucket === "skip";
-          if (isSkipped) {
-            skippedModels++;
-          } else if (e.passed) {
-            passedModels++;
-          } else {
-            failedModels++;
-          }
-        }
+        const { passedModels, failedModels, skippedModels } =
+          countScenarioModels(entries);
 
         const totalModels = passedModels + failedModels;
         const status = deriveScenarioRunStatus(
@@ -659,6 +704,7 @@ export function generateDashboardIndexes(
         passedCases: suiteSummary.passedCases,
         suiteGreen: suiteSummary.suiteGreen,
         passRate,
+        ...repeatCountOf(bundle),
       };
 
       const existing = suiteHistories.get(suiteSummary.suite) ?? null;

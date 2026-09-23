@@ -141,7 +141,9 @@ export function sanitizeFilenamePart(raw: string): string {
 /**
  * Compute the filename for a raw case result artifact.
  *
- * Format: `case-<safeCaseId>-<safeModelId>-<datetimeMs>.json`
+ * Format: `case-<safeCaseId>-<safeModelId>-<datetimeMs>.json`, or
+ * `case-<safeCaseId>-<safeModelId>-attempt<n>-<datetimeMs>.json` for one
+ * repeat of a case run with `--repeat`.
  *
  * Both `caseId` and `modelId` are sanitized via `sanitizeFilenamePart` to
  * produce valid, traversal-free filename components. The existing behavior of
@@ -161,11 +163,16 @@ export function rawCaseResultFilename(
   caseId: string,
   modelId: string,
   date: string,
+  attempt?: number,
 ): string {
   const safeCaseId = sanitizeFilenamePart(caseId);
   const safeModelId = sanitizeFilenamePart(modelId);
   const datetimeComponent = isoToFilesafeDatetime(date);
-  return `case-${safeCaseId}-${safeModelId}-${datetimeComponent}.json`;
+  // Repeats of one case are written with one timestamp, so the attempt is
+  // what keeps their files apart.
+  const attemptComponent =
+    attempt !== undefined ? `-attempt${Math.trunc(attempt)}` : "";
+  return `case-${safeCaseId}-${safeModelId}${attemptComponent}-${datetimeComponent}.json`;
 }
 
 /**
@@ -302,6 +309,7 @@ export class RawArtifactsWriter {
       artifact.caseId,
       artifact.modelId,
       timestamp,
+      artifact.attempt,
     );
     const filePath = join(this.rawDir, fileName);
 

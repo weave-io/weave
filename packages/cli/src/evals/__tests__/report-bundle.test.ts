@@ -298,3 +298,93 @@ describe("appendSuiteHistoryPoint", () => {
     expect(result.isOk()).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Repeated runs (Spec 37, 18.1)
+// ---------------------------------------------------------------------------
+
+describe("assemblePublicReportBundle — repeated run", () => {
+  const rows: ScoreRow[] = [
+    makeScoreRow({ caseId: "case-a", modelId: "m/one", attempt: 1 }),
+    makeScoreRow({
+      caseId: "case-b",
+      modelId: "m/one",
+      attempt: 1,
+      passed: false,
+    }),
+    makeScoreRow({
+      caseId: "case-a",
+      modelId: "m/two",
+      attempt: 1,
+      passed: false,
+      errored: true,
+    }),
+    makeScoreRow({
+      caseId: "case-a",
+      modelId: "m/one",
+      attempt: 2,
+      passed: false,
+    }),
+    makeScoreRow({ caseId: "case-b", modelId: "m/one", attempt: 2 }),
+    makeScoreRow({ caseId: "case-a", modelId: "m/two", attempt: 2 }),
+  ];
+  const bundle = makeEvalBundle({
+    runSummary: {
+      totalCases: 6,
+      passedCases: 3,
+      failedCases: 3,
+      allSuitesGreen: false,
+      suites: ["loom-routing"],
+      repeatCount: 2,
+    },
+    scoreFiles: [makeBundleScoreFile({ results: rows, repeatCount: 2 })],
+  });
+
+  it("publishes a pass rate per model over the suite", () => {
+    const report = assemblePublicReportBundle(bundle, "run-1")._unsafeUnwrap();
+    const models = report.suiteSummaries[0]?.repeats?.models ?? [];
+
+    expect(
+      models.map((m) => [m.modelId, m.passed, m.failed, m.errored, m.passRate]),
+    ).toEqual([
+      ["m/one", 2, 2, 0, 0.5],
+      ["m/two", 1, 0, 1, 1],
+    ]);
+  });
+
+  it("publishes a pass rate per case on each model", () => {
+    const report = assemblePublicReportBundle(bundle, "run-1")._unsafeUnwrap();
+    const one = report.suiteSummaries[0]?.repeats?.models[0];
+
+    expect(one?.cases.map((c) => [c.caseId, c.passed, c.attempts])).toEqual([
+      ["case-a", 1, 2],
+      ["case-b", 1, 2],
+    ]);
+  });
+
+  it("carries the repeat count to the run summary, the dashboard entry and the model comparison", () => {
+    const report = assemblePublicReportBundle(bundle, "run-1")._unsafeUnwrap();
+
+    expect(report.runSummary.repeatCount).toBe(2);
+    expect(
+      buildDashboardEntry(report, "run-1", "x/public-report.json").repeatCount,
+    ).toBe(2);
+    expect(
+      assembleModelComparisonManifest(report, "run-1")._unsafeUnwrap()
+        .repeatCount,
+    ).toBe(2);
+  });
+
+  it("publishes no repeat fields for a run that ran each case once", () => {
+    const report = assemblePublicReportBundle(
+      makeEvalBundle(),
+      "run-1",
+    )._unsafeUnwrap();
+
+    expect(report.runSummary).not.toHaveProperty("repeatCount");
+    expect(report.suiteSummaries[0]).not.toHaveProperty("repeats");
+    expect(buildDashboardEntry(report, "run-1", "x")).not.toHaveProperty(
+      "repeatCount",
+    );
+  });
+});

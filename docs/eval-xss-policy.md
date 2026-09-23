@@ -78,7 +78,7 @@ These patterns are belt-and-suspenders: the primary defence is that explanation 
 All strings placed into the Markdown document go through one of:
 
 1. **Fixed enum literals** — `bucketLabel()` returns fixed emoji strings. No user input.
-2. **Numeric counts** — `totalCases`, `passedCases`, `failedCases` are integers. Cannot contain HTML.
+2. **Numeric counts** — `totalCases`, `passedCases`, `failedCases` are integers. Cannot contain HTML. The repeat tables (`--repeat`, Spec 37 18.1) add only integers too: `repeatCount`, `attempt`, `errored`, and pass rates rendered as `passed/scored (NN%)` from integer counts, or the fixed literal `n/a`; their `caseId` and `modelId` cells go through `sanitizeMdValue()` like every other table cell.
 3. **Boolean labels** — `"yes"` / `"no"` and `"🟢 green"` / `"🔴 red"`. Fixed literals.
 4. **ISO 8601 timestamps** — schema-validated. Cannot contain `<`, `>`, or `"`.
 5. **Git SHA hex strings** — schema-validated (`/^[A-Za-z0-9._-]+$/`). Cannot contain HTML.

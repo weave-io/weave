@@ -39,10 +39,11 @@ import {
   dropUnknownFields,
   FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS,
   REDACTED,
+  sanitizeCaseResultSummary,
   sanitizeScoreRecord,
   truncateExplanation,
 } from "../sanitizer.js";
-import type { NormalizedScoreRecord } from "../types.js";
+import type { CaseResultSummary, NormalizedScoreRecord } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -911,5 +912,40 @@ describe("truncateExplanation + buildExplanation round-trip", () => {
     const truncated = truncateExplanation(longText);
     const safeResult = assertExplanationSafe(truncated);
     expect(safeResult.isOk()).toBe(true);
+  });
+});
+
+describe("sanitizeCaseResultSummary — repeat fields", () => {
+  const base: CaseResultSummary = {
+    caseId: "c",
+    modelId: "m/one",
+    suite: "loom-routing",
+    passed: false,
+    required: true,
+    weightedTotal: 0,
+    dimensionScores: {
+      routingCorrectness: { score: 0, applicable: true },
+      delegationCorrectness: { score: 0, applicable: false },
+      executionCompleteness: { score: 0, applicable: false },
+      rationaleQuality: { score: 0, applicable: false },
+    },
+    scoredAt: "2026-01-01T00:00:00.000Z",
+    dryRun: false,
+  };
+
+  it("keeps the attempt index and the errored flag", () => {
+    const sanitized = sanitizeCaseResultSummary({
+      ...base,
+      attempt: 2,
+      errored: true,
+    });
+    expect(sanitized.attempt).toBe(2);
+    expect(sanitized.errored).toBe(true);
+  });
+
+  it("writes neither when they are unset, and drops errored: false", () => {
+    const sanitized = sanitizeCaseResultSummary({ ...base, errored: false });
+    expect(sanitized).not.toHaveProperty("attempt");
+    expect(sanitized).not.toHaveProperty("errored");
   });
 });

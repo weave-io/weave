@@ -403,6 +403,7 @@ weave eval run --case loom-route-backend-api          # restrict to one case ID 
 weave eval run --case shuttle-execution-report-structured-evidence  # restrict to one shuttle-execution case
 weave eval run --case weft-review-clean-approval      # restrict to one weft-review case
 weave eval run --case warp-security-block-evidence-findings  # restrict to one warp-security case
+weave eval run --repeat 3                             # run each case 3 times per model; report pass rates
 weave eval run --dry-run                              # print what would run, no execution
 weave eval run --raw-artifacts                        # emit raw prompt text locally (NEVER in CI)
 ```
@@ -413,7 +414,10 @@ Filters can also be supplied via environment variables — useful in CI workflow
 WEAVE_EVAL_AGENT=loom weave eval run
 WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5 weave eval run
 WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
+WEAVE_EVAL_REPEAT=3 weave eval run
 ```
+
+`--repeat N` (1–20) runs every selected case N times per model and reports a pass rate per case × model and per suite × model; errored attempts (no scorable answer) are left out of the rate and counted separately. Without it, a run is exactly what it was before repeats existed. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 
 CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed. Empty env filter values are treated as unset, which lets CI workflow dispatch pass blank optional inputs when you want no filter. Empty CLI flag values are still rejected.
 

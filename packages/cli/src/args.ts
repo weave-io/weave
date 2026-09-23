@@ -74,6 +74,8 @@ export interface ParsedArgs {
     evalModels?: string;
     /** --case <id> filter for `weave eval run` */
     evalCase?: string;
+    /** --repeat <n> for `weave eval run`, as typed; validated by the eval command */
+    evalRepeat?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
     dryRun?: boolean;
     /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
@@ -355,6 +357,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.evalCase = val;
+      continue;
+    }
+    if (arg === "--repeat") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--repeat",
+          message: "--repeat requires a number of repeats",
+        });
+      }
+      flags.evalRepeat = val;
       continue;
     }
 

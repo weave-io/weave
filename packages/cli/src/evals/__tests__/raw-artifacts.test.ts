@@ -246,3 +246,34 @@ describe("sanitizeFilenamePart", () => {
     expect(result).toContain("4.5");
   });
 });
+
+describe("rawCaseResultFilename", () => {
+  it("names a single-run case without an attempt", () => {
+    expect(
+      rawCaseResultFilename(
+        "loom-route",
+        "openai/gpt-5.5",
+        "2026-09-23T06:01:43.182Z",
+      ),
+    ).toBe("case-loom-route-openai_gpt-5.5-2026-09-23T06-01-43-182Z.json");
+  });
+
+  it("puts the attempt in the name, so repeats written at one timestamp stay apart", () => {
+    const first = rawCaseResultFilename(
+      "loom-route",
+      "openai/gpt-5.5",
+      "2026-09-23T06:01:43.182Z",
+      1,
+    );
+    const second = rawCaseResultFilename(
+      "loom-route",
+      "openai/gpt-5.5",
+      "2026-09-23T06:01:43.182Z",
+      2,
+    );
+    expect(first).toBe(
+      "case-loom-route-openai_gpt-5.5-attempt1-2026-09-23T06-01-43-182Z.json",
+    );
+    expect(second).not.toBe(first);
+  });
+});

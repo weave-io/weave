@@ -204,6 +204,10 @@ export interface SanitizedCaseResultSummary {
    * Never carries the full event stream or a raw artifact reference.
    */
   readonly trajectorySummary?: TrajectorySummary;
+  /** 1-based repeat index; present only when the run repeated cases. */
+  readonly attempt?: number;
+  /** `true` when the attempt produced no scorable answer. */
+  readonly errored?: boolean;
 }
 
 /**
@@ -279,6 +283,11 @@ export function sanitizeCaseResultSummary(
           },
         }
       : {}),
+    // attempt and errored are allowlisted: an integer repeat index and a
+    // boolean, derived from the orchestrator's loop and the runner's typed
+    // error path, never from model output.
+    ...(summary.attempt !== undefined ? { attempt: summary.attempt } : {}),
+    ...(summary.errored === true ? { errored: true } : {}),
   };
 }
 

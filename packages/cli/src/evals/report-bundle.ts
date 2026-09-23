@@ -38,6 +38,7 @@ import {
   buildModelExplanation,
   buildSuiteExplanation,
 } from "./langchain-agent-evals.js";
+import { tallyByModelAndCase } from "./pass-rates.js";
 import {
   BoundedExplanationSchema,
   computeScoreBucket,
@@ -140,6 +141,8 @@ export function assembleCaseEntry(
           },
         }
       : {}),
+    ...(row.attempt !== undefined ? { attempt: row.attempt } : {}),
+    ...(row.errored === true ? { errored: true } : {}),
   };
 
   return entry;
@@ -205,6 +208,16 @@ export function assembleSuiteSummary(
     hasRuntimeVerifiedCases,
     ...(suiteExplanation !== undefined
       ? { explanation: suiteExplanation }
+      : {}),
+    // Pass rates over repeats, only for a repeated run: a run that ran each
+    // case once publishes exactly what it did before repeats existed.
+    ...(scoreFile.repeatCount !== undefined && scoreFile.repeatCount > 1
+      ? {
+          repeats: {
+            repeatCount: scoreFile.repeatCount,
+            models: tallyByModelAndCase(cases),
+          },
+        }
       : {}),
     cases,
   };
@@ -278,6 +291,10 @@ export function assemblePublicReportBundle(
       failedCases,
       allSuitesGreen,
       suites: suiteSummaries.map((ss) => ss.suite),
+      ...(bundle.runSummary.repeatCount !== undefined &&
+      bundle.runSummary.repeatCount > 1
+        ? { repeatCount: bundle.runSummary.repeatCount }
+        : {}),
     },
     suiteSummaries,
   };
@@ -359,6 +376,9 @@ export function buildDashboardEntry(
     failedCases: bundle.runSummary.failedCases,
     suites: bundle.runSummary.suites,
     bundleReportPath,
+    ...(bundle.runSummary.repeatCount !== undefined
+      ? { repeatCount: bundle.runSummary.repeatCount }
+      : {}),
   };
 }
 
@@ -463,6 +483,9 @@ export function assembleModelComparisonManifest(
     assembledAt: bundle.assembledAt,
     gitSha: bundle.gitSha,
     dryRun: bundle.dryRun,
+    ...(bundle.runSummary.repeatCount !== undefined
+      ? { repeatCount: bundle.runSummary.repeatCount }
+      : {}),
     models,
   };
 

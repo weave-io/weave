@@ -36,11 +36,13 @@
 import { describe, expect, it } from "bun:test";
 import {
   BoundedExplanationSchema,
+  CaseAttemptTallySchema,
   DASHBOARD_MANIFEST_SCHEMA_VERSION,
   DashboardEntrySchema,
   DashboardManifestSchema,
   EXPLANATION_MAX_CHARS,
   MODEL_COMPARISON_SCHEMA_VERSION,
+  ModelAttemptTallySchema,
   ModelComparisonEntrySchema,
   ModelComparisonManifestSchema,
   PublicCaseEntrySchema,
@@ -1427,5 +1429,299 @@ describe("ScenarioHistoryIndexSchema", () => {
 
   it("SCENARIO_HISTORY_MAX_RUNS constant is 10", () => {
     expect(SCENARIO_HISTORY_MAX_RUNS).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repeats (Spec 37, task 18.1)
+// ---------------------------------------------------------------------------
+
+function makeCaseTally(overrides: Record<string, unknown> = {}) {
+  return {
+    caseId: "route-to-shuttle",
+    attempts: 4,
+    passed: 2,
+    failed: 1,
+    errored: 1,
+    passRate: 2 / 3,
+    ...overrides,
+  };
+}
+
+function makeModelTally(overrides: Record<string, unknown> = {}) {
+  return {
+    modelId: "anthropic/claude-sonnet-4.5",
+    attempts: 4,
+    passed: 2,
+    failed: 1,
+    errored: 1,
+    passRate: 2 / 3,
+    cases: [makeCaseTally()],
+    ...overrides,
+  };
+}
+
+function makeRepeatedSuite(overrides: Record<string, unknown> = {}) {
+  return makeValidSuiteSummaryEntry({
+    totalCases: 2,
+    passedCases: 1,
+    failedCases: 1,
+    repeats: {
+      repeatCount: 2,
+      models: [
+        makeModelTally({
+          attempts: 2,
+          passed: 1,
+          failed: 1,
+          errored: 0,
+          passRate: 0.5,
+          cases: [
+            makeCaseTally({
+              attempts: 2,
+              passed: 1,
+              failed: 1,
+              errored: 0,
+              passRate: 0.5,
+            }),
+          ],
+        }),
+      ],
+    },
+    cases: [
+      makeValidPublicCaseEntry({ attempt: 1 }),
+      makeValidPublicCaseEntry({
+        attempt: 2,
+        passed: false,
+        scoreBucket: "fail",
+      }),
+    ],
+    ...overrides,
+  });
+}
+
+describe("CaseAttemptTallySchema", () => {
+  it("accepts counts that add up, with the pass rate leaving errored attempts out", () => {
+    expect(CaseAttemptTallySchema.safeParse(makeCaseTally()).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects counts that do not add up to the attempts", () => {
+    const result = CaseAttemptTallySchema.safeParse(
+      makeCaseTally({ attempts: 5 }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain(
+      "passed + failed + errored must equal attempts",
+    );
+  });
+
+  it("rejects a pass rate that counts errored attempts as failures", () => {
+    const result = CaseAttemptTallySchema.safeParse(
+      makeCaseTally({ passRate: 0.5 }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["passRate"]);
+  });
+
+  it("requires a null pass rate when every attempt errored", () => {
+    const allErrored = makeCaseTally({
+      attempts: 2,
+      passed: 0,
+      failed: 0,
+      errored: 2,
+      passRate: null,
+    });
+    expect(CaseAttemptTallySchema.safeParse(allErrored).success).toBe(true);
+    const zero = { ...allErrored, passRate: 0 };
+    expect(CaseAttemptTallySchema.safeParse(zero).success).toBe(false);
+  });
+
+  it("rejects a null pass rate when attempts were scored", () => {
+    const result = CaseAttemptTallySchema.safeParse(
+      makeCaseTally({ passRate: null }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys", () => {
+    const result = CaseAttemptTallySchema.safeParse(
+      makeCaseTally({ rationale: "no" }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("ModelAttemptTallySchema", () => {
+  it("accepts a model tally with its per-case tallies", () => {
+    expect(ModelAttemptTallySchema.safeParse(makeModelTally()).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a model tally whose rate is not its counts", () => {
+    const result = ModelAttemptTallySchema.safeParse(
+      makeModelTally({ passRate: 1 }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a malformed per-case tally", () => {
+    const result = ModelAttemptTallySchema.safeParse(
+      makeModelTally({ cases: [makeCaseTally({ attempts: 0 })] }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("PublicCaseEntrySchema — attempt and errored", () => {
+  it("accepts an attempt index and an errored flag", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({ attempt: 3, errored: true, passed: false }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an attempt index below 1", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({ attempt: 0 }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a fractional attempt index", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({ attempt: 1.5 }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-boolean errored flag", () => {
+    const result = PublicCaseEntrySchema.safeParse(
+      makeValidPublicCaseEntry({ errored: "yes" }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("SuiteSummaryEntrySchema — repeats", () => {
+  it("accepts a repeated suite whose entries carry their attempts", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(makeRepeatedSuite());
+    expect(result.success).toBe(true);
+  });
+
+  it("still accepts a suite that ran each case once, with no repeat fields", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(
+      makeValidSuiteSummaryEntry(),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a repeat count of 1, which is written as no repeats at all", () => {
+    const suite = makeRepeatedSuite();
+    const result = SuiteSummaryEntrySchema.safeParse({
+      ...suite,
+      repeats: { ...(suite as { repeats?: object }).repeats, repeatCount: 1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an attempt on a suite without repeats", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(
+      makeValidSuiteSummaryEntry({
+        cases: [makeValidPublicCaseEntry({ attempt: 1 })],
+      }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["cases", 0, "attempt"]);
+  });
+
+  it("rejects a repeated suite with an entry missing its attempt", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(
+      makeRepeatedSuite({ cases: [makeValidPublicCaseEntry()] }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an attempt beyond the repeat count", () => {
+    const result = SuiteSummaryEntrySchema.safeParse(
+      makeRepeatedSuite({ cases: [makeValidPublicCaseEntry({ attempt: 3 })] }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys in the repeats block", () => {
+    const suite = makeRepeatedSuite();
+    const result = SuiteSummaryEntrySchema.safeParse({
+      ...suite,
+      repeats: {
+        ...(suite as { repeats?: object }).repeats,
+        transcript: "leak",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("repeatCount on the report and the indexes", () => {
+  it("accepts repeatCount on the run summary", () => {
+    const bundle = makeValidPublicReportBundle();
+    const result = PublicReportBundleSchema.safeParse({
+      ...bundle,
+      runSummary: { ...bundle.runSummary, repeatCount: 3 },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects repeatCount 1 on the run summary", () => {
+    const bundle = makeValidPublicReportBundle();
+    const result = PublicReportBundleSchema.safeParse({
+      ...bundle,
+      runSummary: { ...bundle.runSummary, repeatCount: 1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts repeatCount on a dashboard entry, and rejects a fraction", () => {
+    expect(
+      DashboardEntrySchema.safeParse(
+        makeValidDashboardEntry({ repeatCount: 5 }),
+      ).success,
+    ).toBe(true);
+    expect(
+      DashboardEntrySchema.safeParse(
+        makeValidDashboardEntry({ repeatCount: 2.5 }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("accepts repeatCount on a suite history point, and rejects 0", () => {
+    const manifest = makeValidSuiteHistoryManifest();
+    const point = (manifest.history as Array<Record<string, unknown>>)[0];
+    expect(
+      SuiteHistoryManifestSchema.safeParse({
+        ...manifest,
+        history: [{ ...point, repeatCount: 3 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      SuiteHistoryManifestSchema.safeParse({
+        ...manifest,
+        history: [{ ...point, repeatCount: 0 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts repeatCount on a model-comparison manifest, and rejects a string", () => {
+    expect(
+      ModelComparisonManifestSchema.safeParse(
+        makeValidModelComparisonManifest({ repeatCount: 3 }),
+      ).success,
+    ).toBe(true);
+    expect(
+      ModelComparisonManifestSchema.safeParse(
+        makeValidModelComparisonManifest({ repeatCount: "3" }),
+      ).success,
+    ).toBe(false);
   });
 });

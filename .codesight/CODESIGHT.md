@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 201 lib files | 26 env vars | 7 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,400 tokens. Without it, AI exploration would cost ~68,300 tokens. **Saves ~50,000 tokens per conversation.**
-> **Last scanned:** 2026-09-23 06:21 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 202 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~18,500 tokens. Without it, AI exploration would cost ~69,100 tokens. **Saves ~50,600 tokens per conversation.**
+> **Last scanned:** 2026-09-23 06:40 — re-run after significant changes
 
 ---
 
@@ -302,7 +302,7 @@
   - function computeBundleDirName: (gitSha, assembledAt) => string
   - function resolveNextSequence: (runsDir, prefix, remoteRunIds) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun, repeatCount) => BundleScoreFile
   - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function caseModelDefaults: (matrix) => CaseModelDefaults
@@ -340,8 +340,9 @@
   - type EvalRunRequest
   - type EvalRunInputs
   - type EvalInputValidationError
+  - const MAX_EVAL_REPEAT
   - const KNOWN_EVAL_AGENTS
-  - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
+  - _...1 more_
 - `packages/cli/src/evals/judgment-cases.ts`
   - function isJudgmentCase: (evalCase) => boolean
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
@@ -395,6 +396,14 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
+- `packages/cli/src/evals/pass-rates.ts`
+  - function isErroredAttempt: (outcome) => boolean
+  - function tallyAttempts: (outcomes) => AttemptTally
+  - function tallyByModelAndCase: (outcomes) => ModelAttemptTally[]
+  - interface AttemptOutcome
+  - interface AttemptTally
+  - interface CaseAttemptTally
+  - _...2 more_
 - `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractAcceptanceCriteria: (content) => string[]
   - function extractVerificationSignals: (content, description) => VerificationSignals
@@ -421,7 +430,7 @@
   - _...4 more_
 - `packages/cli/src/evals/raw-artifacts.ts`
   - function sanitizeFilenamePart: (raw) => string
-  - function rawCaseResultFilename: (caseId, modelId, date) => string
+  - function rawCaseResultFilename: (caseId, modelId, date, attempt?) => string
   - function rawPromptFilename: (agentName, date) => string
   - function isoToFilesafeDatetime: (iso) => string
   - class RawArtifactsWriter
@@ -446,9 +455,9 @@
   - type ExplanationSource
   - type ScoreBucket
   - type BoundedExplanation
-  - type PublicCaseEntry
-  - type SuiteSummaryEntry
-  - _...36 more_
+  - type CaseAttemptTallyEntry
+  - type ModelAttemptTallyEntry
+  - _...43 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -969,6 +978,8 @@
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
+- pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
+- pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
 - migrate — `packages/cli/src/commands/migrate.ts`
@@ -994,6 +1005,7 @@
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/cli/src/errors.ts` — imported by **11** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **10** files
@@ -1001,7 +1013,6 @@
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **9** files
-- `packages/cli/src/evals/report-schema.ts` — imported by **9** files
 - `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **9** files
 
 ## Import Map (who imports what)
@@ -1036,7 +1047,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 197 test files found
+> 199 test files found
 
 ---
 

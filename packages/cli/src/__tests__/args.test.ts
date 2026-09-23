@@ -388,3 +388,20 @@ describe("eval run --models", () => {
     });
   });
 });
+
+describe("eval run --repeat", () => {
+  it("parses --repeat into evalRepeat, as typed", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--repeat", "3"]);
+
+    expect(result._unsafeUnwrap().flags.evalRepeat).toBe("3");
+  });
+
+  it("rejects --repeat with no value", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--repeat"]);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--repeat",
+    });
+  });
+});

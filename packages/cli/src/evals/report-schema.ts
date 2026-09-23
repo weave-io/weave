@@ -362,6 +362,126 @@ export const BoundedExplanationSchema = z
 export type BoundedExplanation = z.infer<typeof BoundedExplanationSchema>;
 
 // ---------------------------------------------------------------------------
+// Repeats and pass rates (Spec 37, task 18.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many times each case ran per model (`weave eval run --repeat N`).
+ *
+ * Only ever written when N > 1. A run without `--repeat` omits every
+ * repeat-related field, so its report is exactly what it was before repeats
+ * existed; absence means "each case ran once".
+ */
+export const RepeatCountSchema = z
+  .number()
+  .int()
+  .min(2, "repeatCount is written only when each case ran more than once");
+
+/** Pass rates are compared with this tolerance (floating-point division). */
+const PASS_RATE_EPSILON = 1e-9;
+
+/**
+ * The counts every pass-rate tally carries. See `pass-rates.ts`:
+ * `passRate = passed / (passed + failed)`, errored attempts excluded, and
+ * `null` when no attempt was scored.
+ */
+const attemptTallyShape = {
+  /** Every attempt, errored ones included. */
+  attempts: z.number().int().min(1),
+  /** Scored attempts that passed. */
+  passed: z.number().int().nonnegative(),
+  /** Scored attempts that did not pass (errored attempts excluded). */
+  failed: z.number().int().nonnegative(),
+  /** Attempts that produced no scorable answer. */
+  errored: z.number().int().nonnegative(),
+  /** `passed / (passed + failed)`; `null` when every attempt errored. */
+  passRate: z.union([z.number().min(0).max(1), z.null()]),
+};
+
+/** Reject a tally whose counts do not add up or whose rate is not theirs. */
+function refineAttemptTally(
+  tally: {
+    attempts: number;
+    passed: number;
+    failed: number;
+    errored: number;
+    passRate: number | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (tally.passed + tally.failed + tally.errored !== tally.attempts) {
+    ctx.addIssue({
+      code: "custom",
+      message: "passed + failed + errored must equal attempts",
+      path: ["attempts"],
+    });
+    return;
+  }
+  const scored = tally.passed + tally.failed;
+  if (scored === 0) {
+    if (tally.passRate !== null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "passRate must be null when no attempt was scored",
+        path: ["passRate"],
+      });
+    }
+    return;
+  }
+  const expected = tally.passed / scored;
+  if (
+    tally.passRate === null ||
+    Math.abs(tally.passRate - expected) > PASS_RATE_EPSILON
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "passRate must equal passed / (passed + failed)",
+      path: ["passRate"],
+    });
+  }
+}
+
+/** One case's pass rate on one model over its repeats. */
+export const CaseAttemptTallySchema = z
+  .object({
+    /** The eval case ID. */
+    caseId: z.string().min(1, "caseId must be non-empty"),
+    ...attemptTallyShape,
+  })
+  .strict()
+  .superRefine(refineAttemptTally);
+
+export type CaseAttemptTallyEntry = z.infer<typeof CaseAttemptTallySchema>;
+
+/** One model's pass rate over a suite, with its per-case pass rates. */
+export const ModelAttemptTallySchema = z
+  .object({
+    /** The model identifier. */
+    modelId: z.string().min(1, "modelId must be non-empty"),
+    ...attemptTallyShape,
+    /** Per-case pass rates for this model, sorted by `caseId`. */
+    cases: z.array(CaseAttemptTallySchema),
+  })
+  .strict()
+  .superRefine(refineAttemptTally);
+
+export type ModelAttemptTallyEntry = z.infer<typeof ModelAttemptTallySchema>;
+
+/**
+ * The pass rates of one suite in a repeated run: per model, and per case ×
+ * model. Present on a `SuiteSummaryEntry` only when the run repeated cases.
+ */
+export const SuiteRepeatsSchema = z
+  .object({
+    repeatCount: RepeatCountSchema,
+    /** Per-model pass rates, sorted by `modelId`. */
+    models: z.array(ModelAttemptTallySchema),
+  })
+  .strict();
+
+export type SuiteRepeats = z.infer<typeof SuiteRepeatsSchema>;
+
+// ---------------------------------------------------------------------------
 // Per-case public report entry
 // ---------------------------------------------------------------------------
 
@@ -427,6 +547,16 @@ export const PublicCaseEntrySchema = z
      * artifact reference — those stay in the local-only raw artifact path.
      */
     trajectorySummary: TrajectorySummarySchema.optional(),
+    /**
+     * Which repeat of the case this entry is, 1-based. Present only when the
+     * run repeated cases; each repeat is then its own entry.
+     */
+    attempt: z.number().int().min(1).optional(),
+    /**
+     * `true` when this attempt produced no scorable answer. Absent otherwise.
+     * An errored attempt has `passed: false` and is left out of pass rates.
+     */
+    errored: z.boolean().optional(),
   })
   .strict();
 
@@ -492,10 +622,42 @@ export const SuiteSummaryEntrySchema = z
      * "Runtime-verified" badge next to the suite name.
      */
     hasRuntimeVerifiedCases: z.boolean(),
-    /** Ordered per-case public entries. */
+    /**
+     * Pass rates over repeats: per model, and per case × model. Present only
+     * when the run repeated cases (`--repeat N`, N > 1). The counts above
+     * then count attempts, not cases.
+     */
+    repeats: SuiteRepeatsSchema.optional(),
+    /**
+     * Ordered per-case public entries. With repeats, one entry per attempt,
+     * each carrying its `attempt`.
+     */
     cases: z.array(PublicCaseEntrySchema),
   })
-  .strict();
+  .strict()
+  .superRefine((summary, ctx) => {
+    // A repeated suite tags every entry with its attempt, within the repeat
+    // count; a suite that ran each case once tags none.
+    const repeatCount = summary.repeats?.repeatCount;
+    summary.cases.forEach((entry, index) => {
+      if (repeatCount === undefined && entry.attempt !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "attempt is only allowed when the suite has repeats",
+          path: ["cases", index, "attempt"],
+        });
+        return;
+      }
+      if (repeatCount === undefined) return;
+      if (entry.attempt === undefined || entry.attempt > repeatCount) {
+        ctx.addIssue({
+          code: "custom",
+          message: `a repeated suite's entries need an attempt from 1 to ${repeatCount}`,
+          path: ["cases", index, "attempt"],
+        });
+      }
+    });
+  });
 
 export type SuiteSummaryEntry = z.infer<typeof SuiteSummaryEntrySchema>;
 
@@ -558,6 +720,11 @@ export const PublicReportBundleSchema = z
         allSuitesGreen: z.boolean(),
         /** Names of suites included in this bundle. */
         suites: z.array(z.string().min(1)),
+        /**
+         * How many times each case ran per model. Present only when greater
+         * than 1; the counts above are then attempts.
+         */
+        repeatCount: RepeatCountSchema.optional(),
       })
       .strict(),
     /** Per-suite public summaries. */
@@ -612,6 +779,11 @@ export const DashboardEntrySchema = z
     suites: z.array(z.string().min(1)),
     /** Relative path to the public-report.json for this run. */
     bundleReportPath: z.string().min(1, "bundleReportPath must be non-empty"),
+    /**
+     * How many times each case ran per model. Present only when greater
+     * than 1; the counts above are then attempts.
+     */
+    repeatCount: RepeatCountSchema.optional(),
   })
   .strict();
 
@@ -686,6 +858,11 @@ export const SuiteHistoryPointSchema = z
      * `null` when `totalCases === 0` (no cases ran).
      */
     passRate: z.union([z.number().min(0).max(1), z.null()]),
+    /**
+     * How many times each case ran per model in this run. Present only when
+     * greater than 1; the counts are then attempts.
+     */
+    repeatCount: RepeatCountSchema.optional(),
   })
   .strict();
 
@@ -817,6 +994,11 @@ export const ModelComparisonManifestSchema = z
     gitSha: z.string().min(1, "gitSha must be non-empty"),
     /** Whether this run was a dry-run. */
     dryRun: z.boolean(),
+    /**
+     * How many times each case ran per model in this run. Present only when
+     * greater than 1; the per-model counts are then attempts.
+     */
+    repeatCount: RepeatCountSchema.optional(),
     /** Per-model comparison entries. */
     models: z.array(ModelComparisonEntrySchema),
   })

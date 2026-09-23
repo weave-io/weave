@@ -17,7 +17,9 @@ function caseReport(overrides: Partial<CaseReport> = {}): CaseReport {
     suite: "pattern-planning",
     caseId: "pattern-plan-release-checklist",
     modelId: "deepseek/deepseek-v4-flash-0731",
+    attempt: null,
     passed: false,
+    errored: false,
     required: true,
     weightedTotal: 0.35,
     dimensionScores: {
@@ -47,6 +49,7 @@ function summary(
       agentFilter: null,
       modelFilter: null,
       modelSet: "default",
+      repeatCount: 1,
       caseFilter: null,
       rawArtifactsEnabled: false,
       publishMode: "local",
@@ -150,5 +153,41 @@ describe("EvalRunReport", () => {
     expect(text).toContain("(no run written): 0 cases, 0 passed, 0 failed");
     expect(text).not.toContain("Bundle:");
     expect(text).not.toContain("--raw-artifacts");
+  });
+});
+
+describe("EvalRunReport — repeated run", () => {
+  function repeated(outcomes: Array<"pass" | "fail" | "errored">): string {
+    const reports = outcomes.map((outcome, index) =>
+      caseReport({
+        attempt: index + 1,
+        passed: outcome === "pass",
+        errored: outcome === "errored",
+      }),
+    );
+    return new EvalRunReport(plain).render(
+      summary(reports, {}, { repeatCount: outcomes.length }),
+    );
+  }
+
+  it("says FAIL when no scored attempt passed", () => {
+    expect(repeated(["fail", "fail"])).toContain("FAIL  0/2 passed");
+  });
+
+  it("says FLAKY when some attempts passed and some did not", () => {
+    expect(repeated(["pass", "fail", "pass"])).toContain("FLAKY  2/3 passed");
+  });
+
+  it("says ERRORED when no attempt could be scored", () => {
+    const text = repeated(["errored", "errored"]);
+    expect(text).toContain("ERRORED  0/0 passed");
+    expect(text).toContain("2 errored attempts left out of the pass rate");
+    expect(text).toContain("Attempt 2: ERRORED (no scorable answer)");
+  });
+
+  it("leaves errored attempts out of the pass rate", () => {
+    const text = repeated(["pass", "errored", "pass"]);
+    expect(text).toContain("PASS  2/2 passed");
+    expect(text).toContain("1 errored attempt left out of the pass rate");
   });
 });

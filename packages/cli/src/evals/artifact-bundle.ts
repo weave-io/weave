@@ -277,6 +277,14 @@ export interface WriteBundleOptions {
    * When omitted, remote-aware sequencing is disabled.
    */
   remoteSequenceReader?: RemoteSequenceReader;
+  /**
+   * How many times each case ran per model (`weave eval run --repeat N`).
+   * Defaults to 1. When greater than 1, the score files, run summary and
+   * public report record it, and their counts are attempts, not cases.
+   * A value of 1 writes nothing new: the bundle is byte-for-byte what a run
+   * wrote before repeats existed.
+   */
+  repeatCount?: number;
 }
 
 /**
@@ -491,6 +499,7 @@ export function aggregateScoreFile(
   gitSha: string,
   assembledAt: string,
   dryRun: boolean,
+  repeatCount = 1,
 ): BundleScoreFile {
   // Merge all case results from all runner results for this suite
   const allRows = results.flatMap((rr) =>
@@ -513,6 +522,7 @@ export function aggregateScoreFile(
     gitSha,
     dryRun,
     results: allRows,
+    ...(repeatCount > 1 ? { repeatCount } : {}),
     totals: {
       totalCases,
       passedCases,
@@ -573,9 +583,12 @@ export function assembleBundle(options: {
   gitSha: string;
   assembledAt: string;
   dryRun: boolean;
+  /** How many times each case ran per model. Defaults to 1. */
+  repeatCount?: number;
 }): Result<EvalBundle, BundleError> {
   const { runnerResults, provenanceManifest, gitSha, assembledAt, dryRun } =
     options;
+  const repeatCount = options.repeatCount ?? 1;
 
   // Group runner results by suite name so multi-model runs (one RunnerResult
   // per model per suite) are merged into one score file per suite.
@@ -590,7 +603,14 @@ export function assembleBundle(options: {
   const scoreFiles: BundleScoreFile[] = [];
   for (const [suiteName, suiteResults] of bySuite) {
     scoreFiles.push(
-      aggregateScoreFile(suiteName, suiteResults, gitSha, assembledAt, dryRun),
+      aggregateScoreFile(
+        suiteName,
+        suiteResults,
+        gitSha,
+        assembledAt,
+        dryRun,
+        repeatCount,
+      ),
     );
   }
 
@@ -629,6 +649,7 @@ export function assembleBundle(options: {
       failedCases,
       allSuitesGreen,
       suites: [...bySuite.keys()],
+      ...(repeatCount > 1 ? { repeatCount } : {}),
     },
     scoreFiles,
     promptHashRecords,
@@ -793,6 +814,7 @@ export class ArtifactBundleWriter {
       gitSha: options.gitSha,
       assembledAt,
       dryRun,
+      repeatCount: options.repeatCount,
     });
 
     if (bundleResult.isErr()) {

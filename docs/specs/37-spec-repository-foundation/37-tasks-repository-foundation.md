@@ -63,7 +63,7 @@ Added to #183 on 20 Sep 2026 after a second audit of the suite, and complete. Th
 
 This changes the report schema, so it lands before group 5 and the versioned contract is written once.
 
-- [ ] 18.1 Add `--repeat N` to `eval run`. Each case runs N times per model, and the report gives a pass rate per case and model (and per suite) instead of a single pass or fail. `N = 1` keeps today's behaviour.
+- [x] 18.1 Add `--repeat N` to `eval run`. Each case runs N times per model, and the report gives a pass rate per case and model (and per suite) instead of a single pass or fail. `N = 1` keeps today's behaviour. _PR_18_1_: `--repeat N` (1–20, or `WEAVE_EVAL_REPEAT`) runs the models × suites pass N times; every attempt is published as its own entry with `attempt`, and each suite summary gets a `repeats` block with a pass rate per model and per case × model (`pass-rates.ts`). Errored attempts are left out of the rate and counted as `errored`. `N = 1` writes no new field. No `schemaVersion` changed: the new fields are optional. The workflow has no `repeat` input yet; 7.1 needs one. See "Repeat cases" in `docs/agent-evals.md`._
 - [ ] 18.2 Add `eval compare <baseline> <candidate>`: per suite and model, show both pass rates and state whether the difference is outside the noise measured by the repeats. Build on the existing repeatability diagnostics (`repeatability-diagnostics.json`, written by `runner.ts` for Pattern and Loom only) and generalise them to every suite. Refuse to compare runs with different judges (16.4) or different case sets, and say why.
 
 ## 19. Noise and suite growth (G10) — PR: _

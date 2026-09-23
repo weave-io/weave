@@ -3,6 +3,7 @@ import {
   type EvalRunInputs,
   KNOWN_EVAL_AGENTS,
   KNOWN_EVAL_AGENTS_SORTED,
+  MAX_EVAL_REPEAT,
   parseEvalRunRequest,
 } from "../input-validation.js";
 import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
@@ -683,6 +684,70 @@ describe("parseEvalRunRequest — --models model set", () => {
         models: "dev",
         envOverrides: { WEAVE_EVAL_MODELS: "default" },
       }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --repeat: repeats per case and model (Spec 37, 18.1)
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — --repeat", () => {
+  it("leaves repeat unset when --repeat is not supplied, so each case runs once", () => {
+    const req = parseEvalRunRequest(inputs())._unsafeUnwrap();
+    expect(req.repeat).toBeUndefined();
+  });
+
+  it("accepts a whole number of repeats", () => {
+    const req = parseEvalRunRequest(inputs({ repeat: "5" }))._unsafeUnwrap();
+    expect(req.repeat).toBe(5);
+  });
+
+  it("accepts 1 and the maximum", () => {
+    expect(
+      parseEvalRunRequest(inputs({ repeat: "1" }))._unsafeUnwrap().repeat,
+    ).toBe(1);
+    expect(
+      parseEvalRunRequest(
+        inputs({ repeat: String(MAX_EVAL_REPEAT) }),
+      )._unsafeUnwrap().repeat,
+    ).toBe(MAX_EVAL_REPEAT);
+  });
+
+  it.each([
+    "0",
+    "-1",
+    "21",
+    "2.5",
+    "abc",
+    "03",
+    "+3",
+    "1e1",
+  ])("rejects --repeat %p", (value) => {
+    const result = parseEvalRunRequest(inputs({ repeat: value }));
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("InvalidRepeatCount");
+    expect(error.message).toContain(`--repeat "${value}"`);
+  });
+
+  it("reads WEAVE_EVAL_REPEAT when the flag is absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_REPEAT: "3" } }),
+    )._unsafeUnwrap();
+    expect(req.repeat).toBe(3);
+  });
+
+  it("treats a blank WEAVE_EVAL_REPEAT as absent, as workflow dispatch sends it", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_REPEAT: "" } }),
+    )._unsafeUnwrap();
+    expect(req.repeat).toBeUndefined();
+  });
+
+  it("rejects a flag and env var that ask for different repeats", () => {
+    const result = parseEvalRunRequest(
+      inputs({ repeat: "3", envOverrides: { WEAVE_EVAL_REPEAT: "5" } }),
     );
     expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
   });
