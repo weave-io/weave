@@ -10,7 +10,16 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 4. Tick the boxes in this file in the same PR that does the work, and add the PR number next to the group heading.
 5. Keep sessions short: stop after a group lands and start the next group in a fresh session from this file.
 
-**Order and dependencies:** The agent evals are fixed before any prompt or agent work, because today they cannot show whether a change helped (see [Eval findings (23 Sep 2026)](37-spec-repository-foundation.md#eval-findings-23-sep-2026)). The eval work runs in this order: **16 → 17 → 18 → 19 → 20 → 5 → 7**. 16.3 may use an ad hoc version of 17.1 before group 17 lands. 5 comes after 20 because 18 changes the report schema, so the versioned contract is written once; 5 also covers #201. 7, the fresh baseline, comes last and uses repeats. Groups 2, 3, 4.4–4.6 and 6.1, 6.3, 6.4 are independent and can run in parallel sessions at any point. 6.2 has moved to 17.2. _(Before 23 Sep 2026 the order was 1 → 2 → 3 in parallel, 4, then 5 after 4, 6 after 3 and 5, and 7 at any time.)_
+**Order and dependencies:** The agent evals are fixed before any prompt or agent work, and only up to the [finish line](37-spec-repository-foundation.md#finish-line-for-the-eval-work-23-sep-2026). What remains runs in this order:
+
+1. 16.5 and 20.2 (in progress).
+2. 16.3 → 16.4, the judge. Waits on the maintainer's hand labels, or on the maintainer choosing Sonnet 5 directly.
+3. 20.1: one trajectory case per behaviour. Extend the case schema only if it is unavoidable.
+4. 6.1, the overview.
+5. 7.1–7.4, the baseline. It includes the per-case flip rates of 19.1.
+6. 7.5, one weave-website docs PR for the user-visible CLI changes: `--models dev`, `--repeat`, `eval compare` and single-case diagnosis.
+
+Then WS1 starts. **Deferred** as outside the eval finish line: groups 2, 3 and 5 (with #201; the baseline stays a local artifact for now), 4.4–4.6, 6.3 (no runner refactor), 6.4 and 19.2 (grow a suite only where the baseline shows it cannot detect a change). The tasks stay here so they can be picked up later. 6.2 has moved to 17.2. _(Earlier orders: before 23 Sep 2026, 1 → 2 → 3 in parallel, 4, then 5 after 4, 6 after 3 and 5, and 7 at any time. On 23 Sep 2026, before the finish line was set, 16 → 17 → 18 → 19 → 20 → 5 → 7, with 2, 3, 4.4–4.6 and 6 in parallel.)_
 
 ## 1. Every test runs (G1) — PR: #186
 
@@ -22,11 +31,15 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 
 ## 2. Quiet, diagnosable test output (G2) — PR: _
 
+_Deferred on 23 Sep 2026: outside the eval finish line._
+
 - [ ] 2.1 Make tests default to `LOG_LEVEL=silent` (e.g. `[test] preload` in `bunfig.toml`, or env in each package's test script) while `LOG_LEVEL=debug bun run test` still shows logs. Don't change the runtime default. _Partly done: #186 applied the preload on the CI path, so passing runs are quiet. `scripts/test-setup.ts` assigns `LOG_LEVEL = "silent"` unconditionally, so `LOG_LEVEL=debug` does not yet bring logs back._
 - [ ] 2.2 Check that no test asserts on log output in a way that breaks; adjust with an injected logger if one does.
 - [ ] 2.3 Add `docs/testing/README.md`: how to run everything, one package, one file, one test (`bun test <file> -t <name>`), how to turn logs on, and where the proof scripts (`scripts/proof/*`) and trajectory evals fit. Link it from `docs/README.md`.
 
 ## 3. Session audit script (G7) — PR: _
+
+_Deferred on 23 Sep 2026: outside the eval finish line._
 
 - [ ] 3.1 Add `scripts/audit/opencode-sessions.ts` (Bun, `bun:sqlite`, `readonly: true`). Flags: `--db` (default `~/.local/share/opencode/opencode.db`), `--since`, `--until`, `--project <dir>`, `--format md|json`. Exclude sessions whose directory starts with `/tmp/`.
 - [ ] 3.2 Implement the metrics in [Metric definitions](#metric-definitions-for-the-session-audit-script) below, keeping each as a small named function so it can be unit-tested against a fixture database.
@@ -39,9 +52,9 @@ Task tracking for [Spec 37](37-spec-repository-foundation.md). Non-normative: ti
 - [x] 4.1 Change case semantics: a missing `allowed_models` means "every default model in the matrix". Keep `allowed_models` only for cases that deliberately restrict (e.g. the `openai/gpt-4o-mini` trajectory case and the two 4-model cases). Update the case schema, `case-loader.ts`, and the schema/validate/end-to-end tests in the same commit. _An explicit list that restates the defaults is now rejected at load time._
 - [x] 4.2 Remove the repeated 8-model `allowed_models` arrays from the 46 case files that list the full default set.
 - [x] 4.3 Derive `ALLOWED_MODELS` in `.github/workflows/agent-evals.yml` from `evals/model-matrix.json` at run time (e.g. `jq -r '.models[].id'`), keeping the validate-before-secrets ordering described in `docs/agent-evals.md`. Update `workflow-sync.test.ts` to assert the derivation rather than a copied list. _`ALLOWED_TRAJECTORY_MODELS` is derived from the trajectory cases the same way._
-- [ ] 4.4 Make `model-matrix.test.ts` assert invariants (unique ids, provider matches the id prefix, at least one default) instead of a hard-coded list. _Still open: the test asserts "exactly the canonical default seven-model matrix"._
-- [ ] 4.5 Proof: add one current model chosen by the maintainer (e.g. Sonnet 5 or Fable 5.1 via OpenRouter) with a diff to `evals/model-matrix.json` only. Run one cheap case against it locally. _Partly done: #194 proved the one-file claim with a throwaway `acme/test-model-9` and reverted it. No current model has been added or run._
-- [ ] 4.6 Document "Add a model" as a short numbered section at the top of `evals/README.md`. _Partly done: #194 added "Adding a model" to [`docs/agent-evals.md`](../../agent-evals.md); `evals/README.md` does not have it yet._
+- [ ] 4.4 _Deferred on 23 Sep 2026: outside the eval finish line._ Make `model-matrix.test.ts` assert invariants (unique ids, provider matches the id prefix, at least one default) instead of a hard-coded list. _Still open: the test asserts "exactly the canonical default seven-model matrix"._
+- [ ] 4.5 _Deferred on 23 Sep 2026: outside the eval finish line._ Proof: add one current model chosen by the maintainer (e.g. Sonnet 5 or Fable 5.1 via OpenRouter) with a diff to `evals/model-matrix.json` only. Run one cheap case against it locally. _Partly done: #194 proved the one-file claim with a throwaway `acme/test-model-9` and reverted it. No current model has been added or run._
+- [ ] 4.6 _Deferred on 23 Sep 2026: outside the eval finish line._ Document "Add a model" as a short numbered section at the top of `evals/README.md`. _Partly done: #194 added "Adding a model" to [`docs/agent-evals.md`](../../agent-evals.md); `evals/README.md` does not have it yet._
 
 ## 8–15. Outside-in test taxonomy (WS0b) — PRs: #185, #186, #187, #189, #190, #191, #192, #193
 
@@ -68,8 +81,8 @@ This changes the report schema, so it lands before group 5 and the versioned con
 
 ## 19. Noise and suite growth (G10) — PR: _
 
-- [ ] 19.1 Run the current cases with repeats (18.1) on the development subset (17.1). Record the per-case flip rate (how often a case's verdict differs between repeats) in `docs/artifacts/eval-noise-<date>.md`.
-- [ ] 19.2 From those flip rates, derive a target case count per suite that lets a real change be told apart from noise, and record the reasoning in the same artifact. Grow the thin suites to their targets: spindle (2 cases), pattern, weft, warp and shuttle (4 each), tapestry-execution (5).
+- [ ] 19.1 _Folded into group 7 (7.2) on 23 Sep 2026; tick it there._ Run the current cases with repeats (18.1) on the development subset (17.1). Record the per-case flip rate (how often a case's verdict differs between repeats) in `docs/artifacts/eval-noise-<date>.md`.
+- [ ] 19.2 _Deferred on 23 Sep 2026: outside the eval finish line. Grow a suite only where the baseline (7.4) shows it cannot detect a change._ From those flip rates, derive a target case count per suite that lets a real change be told apart from noise, and record the reasoning in the same artifact. Grow the thin suites to their targets: spindle (2 cases), pattern, weft, warp and shuttle (4 each), tapestry-execution (5).
 
 ## 20. Runtime behaviour coverage (G11) — PR: _
 
@@ -78,7 +91,9 @@ This changes the report schema, so it lands before group 5 and the versioned con
 
 ## 5. Website contract (G4) — PR (weave): _ · PR (website): _
 
-Comes after group 20 (see [Order and dependencies](#start-here-for-a-new-session)), so the schema it publishes already includes repeats (18) and the judge (16.4).
+_Deferred on 23 Sep 2026: outside the eval finish line._ #201 is deferred with it; the baseline stays a local artifact for now.
+
+When picked up, it comes after group 20 (see [Order and dependencies](#start-here-for-a-new-session)), so the schema it publishes already includes repeats (18) and the judge (16.4).
 
 - [ ] 5.1 In this repo, generate JSON Schema from the Zod schemas in `packages/cli/src/evals/report-schema.ts` (public report, suite summary, report bundle, dashboard indexes) and write it with each published bundle (e.g. `schemas/v<N>/*.json` in weave-agent-evals). Add a test that the generated schema matches the committed copy.
 - [ ] 5.2 Commit a small, sanitized fixture bundle (one run, two models, two suites) under `packages/cli/src/evals/__fixtures__/` that the report tests validate.
@@ -92,16 +107,19 @@ Comes after group 20 (see [Order and dependencies](#start-here-for-a-new-session
 
 - [ ] 6.1 Write `docs/evals-overview.md` (one page): the suites, where cases, rubrics and fixtures live, which runner handles which suite, how scoring works, how a run becomes a published bundle and a website page, and the three commands most people need. Link it from `docs/README.md`, `evals/README.md`, and the top of `docs/agent-evals.md`.
 - [x] 6.2 _Moved to 17.2 on 23 Sep 2026; done in #224._ Verify that a single case can be run locally for one model without publishing, and that failure output shows the verdict, the failed rubric criteria, and the path to the raw transcript. Fix the output where it doesn't; document the command in 6.1.
-- [ ] 6.3 Audit the nine runners in `packages/cli/src/evals/*-runner.ts`: list the steps each performs and which are shared. Record the result as `docs/artifacts/eval-runner-audit.md` with a recommendation (consolidate or not) for a future spec. No refactor in this group.
-- [ ] 6.4 Prune `docs/agent-evals.md` of anything now covered by 6.1 or stale since #182 (the verification feedback loops), keeping it as the detailed reference.
+- [ ] 6.3 _Deferred on 23 Sep 2026: outside the eval finish line; no runner refactor._ Audit the nine runners in `packages/cli/src/evals/*-runner.ts`: list the steps each performs and which are shared. Record the result as `docs/artifacts/eval-runner-audit.md` with a recommendation (consolidate or not) for a future spec. No refactor in this group.
+- [ ] 6.4 _Deferred on 23 Sep 2026: outside the eval finish line._ Prune `docs/agent-evals.md` of anything now covered by 6.1 or stale since #182 (the verification feedback loops), keeping it as the detailed reference.
 
 ## 7. Fresh baseline (G8) — PR: _
 
-Comes last, after groups 16–20 and 5.
+Comes last among the eval work, after 16.3–16.5, 20 and 6.1. Rewritten on 23 Sep 2026 for the [finish line](37-spec-repository-foundation.md#finish-line-for-the-eval-work-23-sep-2026); 19.1 is folded in as 7.2.
 
-- [ ] 7.1 Dispatch a full default-matrix eval run on current `main` with repeats (`--repeat`, 18.1; the count chosen from 19.1's flip rates) and the trajectory job enabled (20.2). Check OpenRouter credits first.
-- [ ] 7.2 Confirm the website shows every model from that run with its commit and date.
-- [ ] 7.3 Record the per-suite pass rates, their noise bands and the judge id and version as the pre-WS1 baseline in a new artifact, `docs/artifacts/eval-baseline-<date>.md`. Later runs are compared against it with `eval compare` (18.2).
+- [ ] 7.1 Replace the delisted qwen model (`qwen/qwen3.8-max`) in `evals/model-matrix.json` with a listed one, so the full matrix runs without infrastructure errors.
+- [ ] 7.2 Run the development subset with repeats on current `main`: `weave eval run --models dev --repeat 3`. It must complete without infrastructure errors. Record its time and cost, and the per-case flip rate (how often a case's verdict differs between repeats; was 19.1). Check OpenRouter credits first.
+- [ ] 7.3 Run the full default matrix once on current `main`, with the trajectory job (20.2). Record its time and cost.
+- [ ] 7.4 Record the pre-WS1 baseline in `docs/artifacts/eval-baseline-<date>.md`: per-suite pass rates, their noise bands, the per-case flip rates, the judge id and version, and the time and cost of each run. Later runs are compared against it with `eval compare` (18.2). Publishing it to the website is not required.
+- [ ] 7.5 Open one weave-website docs PR for the user-visible CLI changes: `--models dev`, `--repeat`, `eval compare` and single-case diagnosis.
+- [ ] 7.6 _Deferred on 23 Sep 2026: outside the eval finish line (with group 5)._ Confirm the website shows every model from the baseline run with its commit and date.
 
 ## Metric definitions for the session audit script
 
