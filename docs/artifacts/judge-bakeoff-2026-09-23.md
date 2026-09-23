@@ -21,6 +21,8 @@ A fresh local run with `--raw-artifacts` (never published) on the judge-scored c
 | `deepseek/deepseek-v4-flash-0731` | Cheapest default model; expected to produce failures. |
 | `openai/gpt-5.6-sol` | A stronger default model at moderate price; expected to produce passes. |
 
+This is the ad hoc development subset the task allows: task 17.1 had not landed when the runs were made. It has since landed (#222) as `deepseek/deepseek-v4-flash-0731` and `openai/gpt-6-luna`, so the DeepSeek half of the items matches it and the other half does not. The bake-off compares judges, not agent models, so the second model only needs to produce a mix of outputs.
+
 The judge-scored cases are the 11 `task_completion` cases without the `judgment` tag (pattern-planning 2, weft-review 2, warp-security 2, spindle-tools 2, shuttle-execution 2, tapestry-execution 1) and the 10 tapestry-category-routing cases. Each ran once per model (42 runs). DeepSeek returned an empty response on 4 of its 21 first-pass runs; those four were re-run once, and `weft-review-clean-approval` stayed empty on three further attempts. That empty response is kept as item B14, as a known-fail anchor.
 
 ### 2. Selection
