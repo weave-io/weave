@@ -275,6 +275,23 @@ describe("the trajectory eval job runs every trajectory case", () => {
   });
 });
 
+describe("an agent filter names a suite the track cannot reach", () => {
+  it("fails instead of reporting an empty run as green", async () => {
+    const run = await withEvalFixtures([PATTERN_TEXT], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "pattern-planning",
+        track: "trajectory",
+        dryRun: true,
+      }),
+    );
+
+    expect(run.exitCode).not.toBe(0);
+    expect(run.error?.type).toBe("EvalValidation");
+    expect(JSON.stringify(run.error)).toContain("selects no suite");
+  });
+});
+
 describe("a local run names no track", () => {
   it("runs text-only and trajectory cases alike", async () => {
     const run = await withEvalFixtures(

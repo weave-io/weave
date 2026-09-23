@@ -20,7 +20,7 @@
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
-- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs)
+- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs, run-evals)
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`

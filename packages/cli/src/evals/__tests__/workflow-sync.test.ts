@@ -501,13 +501,20 @@ describe("workflow-sync — agent-evals.yml runs the trajectory job on manual di
     const text = await Bun.file(WORKFLOW_PATH).text();
     const job = jobBlock(text, "trajectory-evals");
 
-    expect(job).toContain("needs: validate-inputs");
     expect(job).toContain(
-      "if: needs.validate-inputs.outputs.run_trajectory == 'true'",
+      "if: always() && needs.validate-inputs.result == 'success' && needs.validate-inputs.outputs.run_trajectory == 'true'",
     );
     expect(text).toContain(
       "run_trajectory: ${{ steps.check.outputs.run_trajectory }}",
     );
+  });
+
+  it("publishes after the text job, never beside it, so run IDs cannot collide", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, "trajectory-evals");
+
+    expect(job).toContain("needs: [validate-inputs, run-evals]");
+    expect(job).toContain("if: always() &&");
   });
 
   it("offers a boolean trajectory input that is on by default", async () => {

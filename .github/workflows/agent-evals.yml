@@ -347,6 +347,10 @@ jobs:
           # job `--track trajectory`. A job whose track the filters exclude is
           # skipped rather than failed:
           #   - a case filter runs only the job of that case's track;
+          #   - the text job needs a model filter that some text-only case
+          #     allows (ALLOWED_TEXT_MODELS: the default and dev sets, which
+          #     cases without `allowed_models` inherit, plus any model a text
+          #     case names itself);
           #   - the trajectory job needs an agent filter that names a suite
           #     holding trajectory cases, and a model filter that some
           #     trajectory case allows.
@@ -366,6 +370,11 @@ jobs:
             exit 1
           fi
 
+          ALLOWED_TEXT_MODELS="$( {
+            jq -r '.models[] | select(.default == true or .dev == true) | .id' evals/model-matrix.json
+            jq -rs '[.[] | select(.expected_outcome.kind != "harness_trajectory") | .allowed_models[]?] | unique | .[]' evals/cases/*/*.json
+          } | sort -u | tr '\n' ' ')"
+
           in_list() {
             for item in $2; do
               if [ "$1" = "${item}" ]; then return 0; fi
@@ -381,6 +390,9 @@ jobs:
             else
               RUN_TRAJECTORY=false
             fi
+          fi
+          if [ -n "${MODEL_OUT}" ] && ! in_list "${MODEL_OUT}" "${ALLOWED_TEXT_MODELS}"; then
+            RUN_TEXT=false
           fi
           if [ -n "${AGENT_OUT}" ] && ! in_list "${AGENT_OUT}" "${ALLOWED_TRAJECTORY_AGENTS}"; then
             RUN_TRAJECTORY=false
@@ -432,7 +444,8 @@ jobs:
     name: Run agent evals
     runs-on: ubuntu-latest
     needs: validate-inputs
-    # Skipped only when a case filter names a trajectory case.
+    # Skipped when a case filter names a trajectory case, or a model filter
+    # names a model no text-only case allows.
     if: needs.validate-inputs.outputs.run_text == 'true'
     permissions:
       contents: read
@@ -629,8 +642,14 @@ jobs:
   trajectory-evals:
     name: Run trajectory evals (harness track)
     runs-on: ubuntu-latest
-    needs: validate-inputs
-    if: needs.validate-inputs.outputs.run_trajectory == 'true'
+    # Runs after run-evals, never beside it: both jobs publish, and a run ID
+    # (`<sha7>-<date>-<NNN>`) is allocated by reading the published manifest,
+    # so two concurrent publications could pick the same ID and the second
+    # immutable upload would be rejected. `always()` keeps a skipped or
+    # failed text job from suppressing the trajectory job; validate-inputs
+    # must still have succeeded.
+    needs: [validate-inputs, run-evals]
+    if: always() && needs.validate-inputs.result == 'success' && needs.validate-inputs.outputs.run_trajectory == 'true'
     permissions:
       contents: read
     steps:

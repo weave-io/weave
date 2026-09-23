@@ -1066,6 +1066,22 @@ export class EvalOrchestrator {
         ) && suiteSupportsTrack(suite, request.track),
     );
 
+    // An agent filter naming a suite that cannot hold the track's cases
+    // (e.g. `--agent pattern --track trajectory`) selects nothing; that must
+    // fail rather than report an empty run as green.
+    if (selectedSuites.length === 0) {
+      return new ResultAsync(
+        Promise.resolve(
+          err({
+            type: "EvalValidation" as const,
+            message:
+              `Agent filter "${request.agent ?? ""}" selects no suite on the ` +
+              `"${request.track ?? ""}" track.`,
+          }),
+        ),
+      );
+    }
+
     const runnerResults: RunnerResult[] = [];
     const partialFailures: RunnerError[] = [];
     const failedSuites = new Set<string>();
