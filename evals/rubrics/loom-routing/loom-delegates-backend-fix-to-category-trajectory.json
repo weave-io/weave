@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-delegates-backend-fix-to-category-trajectory",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Delegation accuracy (Spec 37, 20.1). Stands in for the session-audit metrics Delegations, Configuration delegation failures, Built-in agent delegations and Category-shuttle success. The fixture declares `backend` and `frontend` categories, and the user describes an HTTP handler bug. The case passes only if Loom delegates to the `shuttle-backend` category shuttle and to nothing else (not the harness built-ins `explore` or `general`, and no agent that does not exist), and `shuttle-backend` then edits the code, which proves the delegated agent's model resolved. This is checked deterministically by `allowed_delegates` from the spawn events and the observer's per-agent edit records. A failed delegation that Loom papers over by editing the file itself fails the case. The fix itself is not verified: this case measures delegation, not implementation quality."
+  }
+}

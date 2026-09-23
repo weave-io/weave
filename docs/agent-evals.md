@@ -1088,9 +1088,10 @@ Sandbox hardening beyond Podman defaults and cross-harness trajectory comparison
 - **`start_agent`**: a primary agent (`loom` or `tapestry`) passed as `opencode run --agent`. Sub-agents are rejected at load time because OpenCode silently falls back to its default agent for them.
 - **`expected_commands`**: shell commands the agent must run, each `{ contains, after_last_edit, expect_success }`. Command text and exit codes come from an observer plugin the runner writes into the workspace (`tool.execute.after` hooks, all sessions). They stay local-only.
 - **`verifier`**: `{ fixture, command, expect }`. After the session a second container runs `command` with the verifier fixture read-only at `/verifier`. The agent's container never sees it.
+- **`allowed_delegates`** (Spec 37, 20.1): the sub-agents the session may delegate to. One execution check requires that the session spawned at least one sub-agent, that every spawned sub-agent is in the list, and that one of them made a code edit (from the observer's per-agent edit records). The edit is what proves the delegated agent could run: a delegation that fails, for example on a model that cannot resolve, leaves the primary agent to edit the file itself, and the check fails. Like `expected_commands`, it gates the pass.
 - **`sandbox_profile: "opencode-local"`**: the same image as `opencode-default`, but the CLI bundles the working tree's OpenCode plugin (builtin prompts included) and the runner loads it from the workspace, so prompt changes are measured before release.
 
-A case that declares `expected_commands` or a `verifier` passes only when `executionCompleteness` reaches 0.95, so correct routing alone cannot carry it. Cases without these fields keep the Spec 33 rule (any near-perfect primary dimension passes). Run a local trajectory case with `TMPDIR` pointing at a roomy disk, since each run creates a workspace there:
+A case that declares `expected_commands`, a `verifier` or `allowed_delegates` passes only when `executionCompleteness` reaches 0.95, so correct routing alone cannot carry it. Cases without these fields keep the Spec 33 rule (any near-perfect primary dimension passes). Run a local trajectory case with `TMPDIR` pointing at a roomy disk, since each run creates a workspace there:
 
 ```sh
 TMPDIR=~/.cache/weave-trajectory-tmp \
@@ -1099,6 +1100,14 @@ TMPDIR=~/.cache/weave-trajectory-tmp \
 ```
 
 The sandbox image must include the Spec 35 entrypoint (`--agent` support). Rebuild it after pulling: `podman build -t weave-sandbox-opencode-default -f sandboxes/opencode/Containerfile sandboxes/opencode`.
+
+#### Runtime behaviour cases (Spec 37, 20.1)
+
+One trajectory case for each runtime problem in the [September 2026 session audit](artifacts/session-audit-2026-09.md). Each case names the audit metric it stands in for ([metric definitions](specs/37-spec-repository-foundation/37-tasks-repository-foundation.md#metric-definitions-for-the-session-audit-script)). A case that fails because Weave behaves badly records the baseline and is left as it is, not tuned until it passes.
+
+| Behaviour | Case | Session-audit metric | How it is checked | First live run |
+| --- | --- | --- | --- | --- |
+| Delegation accuracy | `loom-delegates-backend-fix-to-category-trajectory` (fixture `orders-api`) | Delegations, Configuration delegation failures, Built-in agent delegations, Category-shuttle success | `allowed_delegates: ["shuttle-backend"]`: Loom delegates only to the category shuttle, and the category shuttle edits the code | Pass on `deepseek/deepseek-v4-flash-0731` (23 Sep 2026) |
 
 #### Text-only judgment cases
 

@@ -1,0 +1,19 @@
+# Trajectory eval fixture: builtin agents plus two categories.
+#
+# Loom should hand the backend fix to the `shuttle-backend` category shuttle
+# that these categories generate. Neither category declares models, so both
+# category shuttles inherit Shuttle's, which the runner's generated global
+# config pins to the model under test (Spec 35).
+category backend {
+  description "Backend HTTP handlers and data access"
+  triggers ["Use for HTTP handlers, status codes and data access under src/api/ and src/db/"]
+}
+
+category frontend {
+  description "Frontend UI components and formatting"
+  triggers ["Use for UI components and display formatting under src/ui/"]
+}
+
+settings {
+  log_level INFO
+}

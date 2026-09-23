@@ -62,6 +62,17 @@ Rules:
 - `start_agent` must be a known agent name (`KNOWN_AGENTS` in `case-loader.ts`) that runs in primary mode (`loom` or `tapestry` for the builtins). OpenCode silently falls back to its default agent when `--agent` names a sub-agent (see the spike), so the loader rejects `start_agent` values for builtin sub-agents rather than letting a case measure the wrong agent.
 - Fixture directories contain only synthetic project files. They must never contain secrets, and the same raw-artifact and sanitizer rules apply to anything a run produces from them.
 
+### Runtime behaviour checks (Spec 37, task 20.1)
+
+[Spec 37](../37-spec-repository-foundation/37-spec-repository-foundation.md) (G11) adds trajectory cases for runtime problems found in the [September 2026 session audit](../../artifacts/session-audit-2026-09.md). The checks they need are added here, one optional field at a time, and only when the existing fields could not express them. They follow this spec's rules: deterministic, computed from the local-only event stream, and not published.
+
+```ts
+  /** Sub-agents the session may delegate to. */
+  allowed_delegates: z.array(IdentifierSchema).min(1).optional(),
+```
+
+- `allowed_delegates` (delegation accuracy). `expected_spawns` checks an exact ordered sequence, but under the Spec 33 pass rule a matching sequence passes the case even when the spawned agent then failed, and a case with a verifier passes when the primary agent did the work itself. This field states the actual promise: the session delegated, it delegated only to these agents (so not to a harness built-in such as `explore` or `general`, and not to an agent that does not exist), and the delegated agent did the work.
+
 ---
 
 ## `TrajectoryCase` projection additions
@@ -143,10 +154,11 @@ The engine never sees the observer file, the fixture, or the verifier. It consum
 
   One event must satisfy every condition of its entry;
 - `verifier`: `result.verifier.passed` matches `expect === "pass"`. A missing verifier result counts as unsatisfied.
+- `allowed_delegates`: one check. It is satisfied when at least one `subagent-spawned` event was observed, every one names an agent in the list, and at least one code edit (defined as for `after_last_edit`) has an `agentName` in the list. An agent's name on an edit comes from the observer record's session, joined to the session's spawn event.
 
 A case with none of the new fields scores exactly as under Spec 33. The weighted total and the other dimensions are unchanged.
 
-**Verification gates the pass.** Under Spec 33 a case passes when *any* primary dimension scores at least 0.95, so correct routing alone can pass a case whose required tool never ran. A case that declares `expected_commands` or a `verifier` additionally requires `executionCompleteness` of at least 0.95. Cases without these fields keep the Spec 33 rule.
+**Verification gates the pass.** Under Spec 33 a case passes when *any* primary dimension scores at least 0.95, so correct routing alone can pass a case whose required tool never ran. A case that declares `expected_commands`, a `verifier` or `allowed_delegates` additionally requires `executionCompleteness` of at least 0.95. Cases without these fields keep the Spec 33 rule.
 
 ---
 

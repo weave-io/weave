@@ -1066,8 +1066,14 @@ describe("EvalOrchestrator — Loom delegation-matrix preflight", () => {
       // Intentionally NOT overriding loomDelegationMatrixPreflight.
     });
 
+    // Text track only: the real loom-routing corpus holds harness_trajectory
+    // cases for this model, which would start a Podman sandbox.
     const result = await orchestrator.run(
-      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+      makeRequest({
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+        track: "text",
+      }),
     );
 
     expect(result.isOk()).toBe(true);
@@ -1109,8 +1115,14 @@ describe("EvalOrchestrator — Loom delegation-matrix preflight", () => {
       }),
     );
 
+    // Text track only: the real loom-routing corpus holds harness_trajectory
+    // cases for this model, which would start a Podman sandbox.
     const result = await orchestrator.run(
-      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+      makeRequest({
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+        track: "text",
+      }),
     );
 
     expect(result.isOk()).toBe(true);
@@ -1142,8 +1154,14 @@ describe("EvalOrchestrator — Loom delegation-matrix preflight", () => {
       }),
     );
 
+    // Text track only: the real loom-routing corpus holds harness_trajectory
+    // cases for this model, which would start a Podman sandbox.
     const result = await orchestrator.run(
-      makeRequest({ agent: "loom", model: "anthropic/claude-sonnet-4.5" }),
+      makeRequest({
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+        track: "text",
+      }),
     );
 
     expect(result.isOk()).toBe(true);
@@ -2210,10 +2228,13 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       });
     }
 
+    // Text track only: the real loom-routing corpus holds harness_trajectory
+    // cases for this model, which would start a Podman sandbox.
     const broadRun = await buildOrchestrator().run({
       agent: "loom",
       model: modelId,
       case: undefined,
+      track: "text",
       dryRun: false,
       rawArtifacts: false,
     });

@@ -107,6 +107,31 @@ describe("ExpectedOutcomeSchema — harness_trajectory variant", () => {
     expect(missingTools.success).toBe(false);
   });
 
+  it("accepts allowed_delegates and rejects an empty or invalid list", () => {
+    const base = {
+      kind: "harness_trajectory",
+      expected_spawns: ["shuttle-backend"],
+      expected_tools: ["edit"],
+      max_duration_seconds: 300,
+      sandbox_profile: "opencode-local",
+    };
+    const accepted = ExpectedOutcomeSchema.safeParse({
+      ...base,
+      allowed_delegates: ["shuttle-backend"],
+    });
+    expect(accepted.success).toBe(true);
+    expect(
+      ExpectedOutcomeSchema.safeParse({ ...base, allowed_delegates: [] })
+        .success,
+    ).toBe(false);
+    expect(
+      ExpectedOutcomeSchema.safeParse({
+        ...base,
+        allowed_delegates: ["not an agent"],
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects an invalid identifier in expected_spawns", () => {
     const parsed = ExpectedOutcomeSchema.safeParse({
       kind: "harness_trajectory",

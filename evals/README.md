@@ -18,7 +18,8 @@ evals/
 │   ├── loom-routing/                   # Loom agent routing eval cases
 │   │   ├── loom-route-backend-api.json
 │   │   ├── loom-route-frontend-ui.json
-│   │   └── loom-route-ambiguous-direct-shuttle.json
+│   │   ├── loom-route-ambiguous-direct-shuttle.json
+│   │   └── loom-delegates-backend-fix-to-category-trajectory.json   # harness_trajectory
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
 │   │   ├── tapestry-delegate-to-shuttle.json
@@ -63,7 +64,8 @@ evals/
     ├── loom-routing/                   # Scoring rubrics for loom-routing cases
     │   ├── loom-route-backend-api.json
     │   ├── loom-route-frontend-ui.json
-    │   └── loom-route-ambiguous-direct-shuttle.json
+    │   ├── loom-route-ambiguous-direct-shuttle.json
+    │   └── loom-delegates-backend-fix-to-category-trajectory.json
     ├── tapestry-execution/             # Scoring rubrics for tapestry-execution cases
     │   ├── tapestry-execute-plan-step.json
     │   ├── tapestry-delegate-to-shuttle.json
@@ -111,6 +113,7 @@ Trajectory fixtures (Spec 35) live next to the cases and rubrics:
 ```
 evals/fixtures/
 ├── buggy-slugify/              # Bun project with a slug bug its tests miss
+├── orders-api/                 # Bun project with backend and frontend categories (delegation accuracy)
 ├── plan-bash-verification/     # same project plus a plan whose Verification is a bash block
 └── slugify-edges.verifier/     # hidden verifier, mounted only in the second container
 ```

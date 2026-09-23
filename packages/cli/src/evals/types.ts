@@ -337,6 +337,14 @@ export const ExpectedOutcomeSchema = z.discriminatedUnion("kind", [
     expected_commands: z.array(ExpectedCommandSchema).optional(),
     /** Independent check run after the session in a second container. */
     verifier: TrajectoryVerifierSchema.optional(),
+    /**
+     * Sub-agents the session may delegate to (Spec 37, 20.1). When set, one
+     * execution check requires that the session spawned at least one
+     * sub-agent, that every spawned sub-agent is in this list, and that one
+     * of them made a code edit, so the delegation reached a working agent.
+     * Like `expected_commands`, it gates the pass.
+     */
+    allowed_delegates: z.array(IdentifierSchema).min(1).optional(),
   }),
 ]);
 

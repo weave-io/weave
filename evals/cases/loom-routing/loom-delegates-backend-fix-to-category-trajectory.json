@@ -1,0 +1,25 @@
+{
+  "id": "loom-delegates-backend-fix-to-category-trajectory",
+  "description": "`GET /orders/:id` returns 200 with a `null` body when the order doesn't exist. It should return 404 with `{ \"error\": \"order not found\" }`. Please fix it.",
+  "suite": "loom-routing",
+  "allowed_agents": ["loom", "shuttle-backend"],
+  "allowed_models": [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-opus-5",
+    "openai/gpt-5.5",
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "expected_outcome": {
+    "kind": "harness_trajectory",
+    "expected_spawns": ["shuttle-backend"],
+    "expected_tools": ["edit"],
+    "max_duration_seconds": 420,
+    "sandbox_profile": "opencode-local",
+    "fixture": "orders-api",
+    "start_agent": "loom",
+    "allowed_delegates": ["shuttle-backend"]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": ["trajectory", "delegation", "session-audit:delegations"]
+}

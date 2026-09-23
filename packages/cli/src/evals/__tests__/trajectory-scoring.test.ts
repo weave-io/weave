@@ -399,6 +399,121 @@ describe("scoreTrajectoryResult — verification checks", () => {
     expect(missing.passed).toBe(false);
   });
 
+  describe("allowed_delegates (Spec 37, 20.1)", () => {
+    const DELEGATE_TO_BACKEND = makeExpectedOutcome({
+      expected_spawns: ["shuttle-backend"],
+      expected_tools: [],
+      allowed_delegates: ["shuttle-backend"],
+    });
+
+    function spawn(second: number, child: string): TrajectoryEvent {
+      return event({
+        sessionId: `session-${child}`,
+        timestamp: at(second),
+        kind: "subagent-spawned",
+        parentAgentName: "loom",
+        childAgentName: child,
+      });
+    }
+
+    function codeEditBy(second: number, agentName: string): TrajectoryEvent {
+      return event({
+        sessionId: `session-${agentName}`,
+        timestamp: at(second),
+        kind: "tool-call-after",
+        toolName: "edit",
+        agentName,
+        succeeded: true,
+        detail: { path: "src/api/orders.ts" },
+      });
+    }
+
+    const LOOM_STARTS = event({
+      ...BASE_ENVELOPE,
+      kind: "session-created",
+      agentName: "loom",
+      model: "deepseek/deepseek-v4-flash-0731",
+    });
+
+    it("passes when an allowed delegate is spawned and edits the code", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [
+            LOOM_STARTS,
+            spawn(1, "shuttle-backend"),
+            codeEditBy(5, "shuttle-backend"),
+          ],
+          expectedOutcome: DELEGATE_TO_BACKEND,
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+      expect(record.passed).toBe(true);
+    });
+
+    it("fails a delegation to a harness built-in agent, even beside a good one", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [
+            LOOM_STARTS,
+            spawn(1, "explore"),
+            spawn(3, "shuttle-backend"),
+            codeEditBy(5, "shuttle-backend"),
+          ],
+          expectedOutcome: DELEGATE_TO_BACKEND,
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.score).toBe(0);
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "spawned [explore, shuttle-backend]",
+      );
+      expect(record.passed).toBe(false);
+    });
+
+    it("fails when the primary agent does the work itself", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [LOOM_STARTS, codeEditBy(5, "loom")],
+          expectedOutcome: DELEGATE_TO_BACKEND,
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.score).toBe(0);
+      expect(record.passed).toBe(false);
+    });
+
+    it("fails when the delegate never edits, as after a model that cannot resolve", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [
+            LOOM_STARTS,
+            spawn(1, "shuttle-backend"),
+            codeEditBy(5, "loom"),
+          ],
+          expectedOutcome: DELEGATE_TO_BACKEND,
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "no delegate edited code",
+      );
+      // Routing matched, but the delegation check gates the pass.
+      expect(record.dimensions.routingCorrectness.score).toBe(1);
+      expect(record.passed).toBe(false);
+    });
+
+    it("does not count a bookkeeping edit under .weave/ as the delegate's work", () => {
+      const planNote: TrajectoryEvent = {
+        ...codeEditBy(5, "shuttle-backend"),
+        detail: { path: ".weave/learnings/notes.md" },
+      } as TrajectoryEvent;
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [LOOM_STARTS, spawn(1, "shuttle-backend"), planNote],
+          expectedOutcome: DELEGATE_TO_BACKEND,
+        }),
+      );
+      expect(record.passed).toBe(false);
+    });
+  });
+
   it("scores a case with none of the new fields exactly as before", () => {
     const record = scoreTrajectoryResult(
       buildInput({ events: happyPathEvents().slice(0, 2) }),

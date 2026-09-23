@@ -209,38 +209,60 @@ function isBookkeepingPath(path: string | undefined): boolean {
   );
 }
 
+type ToolCallEvent = Extract<
+  TrajectoryEvent,
+  { kind: "tool-call-before" | "tool-call-after" }
+>;
+
 /**
- * Timestamp (ms) of the last code edit, if any. Completed edits
- * (`tool-call-after`) carry the changed path, so bookkeeping edits can be
- * excluded; when a run has none (older Channel-A-only streams), the
- * permission-check `tool-call-before` events are used instead.
+ * The run's code edits. Completed edits (`tool-call-after`) carry the
+ * changed path, so bookkeeping edits can be excluded; when a run has none
+ * (older Channel-A-only streams), the permission-check `tool-call-before`
+ * events are used instead.
  */
+function codeEdits(events: TrajectoryEvent[]): ToolCallEvent[] {
+  const editsOf = (kind: ToolCallEvent["kind"]): ToolCallEvent[] =>
+    events.filter(
+      (event): event is ToolCallEvent =>
+        event.kind === kind && EDIT_TOOL_NAMES.has(event.toolName),
+    );
+
+  const completed = editsOf("tool-call-after");
+  const edits = completed.length > 0 ? completed : editsOf("tool-call-before");
+  return edits.filter((event) => !isBookkeepingPath(event.detail?.path));
+}
+
+/** Timestamp (ms) of the last code edit, if any. */
 function lastEditTime(events: TrajectoryEvent[]): number | undefined {
-  const isEditOf =
-    (kind: TrajectoryEvent["kind"]) => (event: TrajectoryEvent) =>
-      event.kind === kind &&
-      (event.kind === "tool-call-before" || event.kind === "tool-call-after") &&
-      EDIT_TOOL_NAMES.has(event.toolName);
-
-  const completed = events.filter(isEditOf("tool-call-after"));
-  const edits =
-    completed.length > 0
-      ? completed
-      : events.filter(isEditOf("tool-call-before"));
-
   let last: number | undefined;
-  for (const event of edits) {
-    const path =
-      event.kind === "tool-call-before" || event.kind === "tool-call-after"
-        ? event.detail?.path
-        : undefined;
-    if (isBookkeepingPath(path)) {
-      continue;
-    }
+  for (const event of codeEdits(events)) {
     const time = Date.parse(event.timestamp);
     last = last === undefined ? time : Math.max(last, time);
   }
   return last;
+}
+
+/**
+ * The `allowed_delegates` check (Spec 37, 20.1): the session spawned at
+ * least one sub-agent, every spawned sub-agent is allowed, and an allowed
+ * sub-agent made a code edit. The last part proves the delegation reached
+ * an agent that could run (its model resolved), rather than one that failed
+ * and left the primary agent to do the work itself.
+ */
+function describeDelegation(
+  events: TrajectoryEvent[],
+  allowed: readonly string[],
+): { satisfied: boolean; label: string } {
+  const allowedSet = new Set(allowed);
+  const spawned = observedSpawns(events);
+  const disallowed = spawned.filter((name) => !allowedSet.has(name));
+  const editedByDelegate = codeEdits(events).some((event) =>
+    allowedSet.has(event.agentName),
+  );
+  const satisfied =
+    spawned.length > 0 && disallowed.length === 0 && editedByDelegate;
+  const label = `delegation only to [${allowed.join(", ")}], with a code edit by one of them (spawned [${spawned.join(", ") || "(none)"}]${editedByDelegate ? "" : ", no delegate edited code"})`;
+  return { satisfied, label };
 }
 
 /**
@@ -275,19 +297,24 @@ function describeCommand(command: ExpectedCommand): string {
     : `command containing "${command.contains}"`;
 }
 
-/** True when the case declares Spec 35 verification checks. */
+/**
+ * True when the case declares checks that gate the pass: Spec 35
+ * verification checks, or an `allowed_delegates` list (Spec 37, 20.1).
+ */
 function hasVerificationChecks(expected: HarnessTrajectoryOutcome): boolean {
   return (
     (expected.expected_commands?.length ?? 0) > 0 ||
-    expected.verifier !== undefined
+    expected.verifier !== undefined ||
+    expected.allowed_delegates !== undefined
   );
 }
 
 /**
  * Score `executionCompleteness` as the fraction of satisfied checks: each
  * `expected_tools` entry must have been observed at least once, each
- * `expected_commands` entry must be satisfied by one shell call, and a
- * verifier's result must match its expected outcome (Spec 35).
+ * `expected_commands` entry must be satisfied by one shell call, a
+ * verifier's result must match its expected outcome (Spec 35), and an
+ * `allowed_delegates` list must be respected (Spec 37, 20.1).
  */
 function buildExecutionCompletenessDimension(
   events: TrajectoryEvent[],
@@ -315,6 +342,9 @@ function buildExecutionCompletenessDimension(
               verifier.passed === (expected.verifier.expect === "pass"),
           },
         ]
+      : []),
+    ...(expected.allowed_delegates !== undefined
+      ? [describeDelegation(events, expected.allowed_delegates)]
       : []),
   ];
 
