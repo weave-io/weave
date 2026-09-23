@@ -97,6 +97,126 @@ function makeEvalBundle(overrides: Partial<EvalBundle> = {}): EvalBundle {
 }
 
 // ---------------------------------------------------------------------------
+// Errored cases (Spec 37, 16.5) — the transform from score rows to the
+// public report and the model comparison
+// ---------------------------------------------------------------------------
+
+describe("errored cases in the public report", () => {
+  const ERRORED_ROW = makeScoreRow({
+    caseId: "route-errored",
+    passed: false,
+    weightedTotal: 0,
+    errored: true,
+    errorClassification: "model-truncated-response",
+  });
+
+  const MIXED = makeEvalBundle({
+    scoreFiles: [
+      makeBundleScoreFile({
+        results: [
+          makeScoreRow(),
+          makeScoreRow({
+            caseId: "route-missed",
+            passed: false,
+            weightedTotal: 0.2,
+          }),
+          ERRORED_ROW,
+        ],
+      }),
+    ],
+  });
+
+  it("buckets an errored case as skip and carries its classification", () => {
+    const report = assemblePublicReportBundle(MIXED, "run-1")._unsafeUnwrap();
+    const entry = report.suiteSummaries[0]?.cases.find(
+      (c) => c.caseId === "route-errored",
+    );
+
+    expect(entry?.scoreBucket).toBe("skip");
+    expect(entry?.passed).toBe(false);
+    expect(entry?.errored).toBe(true);
+    expect(entry?.errorClassification).toBe("model-truncated-response");
+  });
+
+  it("counts errored cases apart from failures, per suite and per run", () => {
+    const report = assemblePublicReportBundle(MIXED, "run-1")._unsafeUnwrap();
+
+    expect(report.suiteSummaries[0]).toMatchObject({
+      totalCases: 3,
+      passedCases: 1,
+      failedCases: 1,
+      erroredCases: 1,
+      suiteGreen: false,
+    });
+    expect(report.runSummary).toMatchObject({
+      totalCases: 3,
+      passedCases: 1,
+      failedCases: 1,
+      erroredCases: 1,
+    });
+    expect(report.suiteSummaries[0]?.explanation?.text).toBe(
+      "suite not green; 1/3 passed, 1 failed, 1 errored",
+    );
+  });
+
+  it("writes no erroredCases field when no case errored", () => {
+    const report = assemblePublicReportBundle(
+      makeEvalBundle(),
+      "run-1",
+    )._unsafeUnwrap();
+
+    expect("erroredCases" in report.runSummary).toBe(false);
+    expect("erroredCases" in (report.suiteSummaries[0] ?? {})).toBe(false);
+  });
+
+  it("leaves errored cases out of a model's pass rate", () => {
+    const report = assemblePublicReportBundle(MIXED, "run-1")._unsafeUnwrap();
+    const model = assembleModelComparisonManifest(
+      report,
+      "run-1",
+    )._unsafeUnwrap().models[0];
+
+    expect(model).toMatchObject({
+      totalCases: 3,
+      passedCases: 1,
+      failedCases: 1,
+      erroredCases: 1,
+      passRate: 0.5,
+    });
+    expect(model?.perSuitePassRates["loom-routing"]).toBe(0.5);
+  });
+
+  it("buckets a model whose every case errored as skip, not fail", () => {
+    const allErrored = makeEvalBundle({
+      scoreFiles: [makeBundleScoreFile({ results: [ERRORED_ROW] })],
+    });
+    const report = assemblePublicReportBundle(
+      allErrored,
+      "run-1",
+    )._unsafeUnwrap();
+    const model = assembleModelComparisonManifest(
+      report,
+      "run-1",
+    )._unsafeUnwrap().models[0];
+
+    expect(model?.passRate).toBeNull();
+    expect(model?.overallBucket).toBe("skip");
+    expect(model?.explanation?.text).toBe(
+      "model bucket: skip; 0/1 passed, 0 failed, 1 errored",
+    );
+  });
+
+  it("carries the errored count onto the dashboard entry", () => {
+    const report = assemblePublicReportBundle(MIXED, "run-1")._unsafeUnwrap();
+
+    expect(
+      buildDashboardEntry(report, "run-1", "runs/v1/run-1/public-report.json")
+        .erroredCases,
+    ).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // assembleDashboardManifest — clean inputs
 // ---------------------------------------------------------------------------
 

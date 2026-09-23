@@ -91,6 +91,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -1177,29 +1178,6 @@ interface ScorerDegradation {
   rawMessage?: string;
 }
 
-function classifyErrorType(errorType: string): string {
-  switch (errorType) {
-    case "NetworkError":
-      return "model-network-failure";
-    case "HttpError":
-      return "model-http-failure";
-    case "ParseError":
-      return "model-parse-failure";
-    case "EmptyResponse":
-      return "model-empty-response";
-    case "NotConfigured":
-      return "stub-not-configured";
-    case "RubricNotFound":
-      return "scoring-rubric-missing";
-    case "RubricCaseMismatch":
-      return "scoring-rubric-mismatch";
-    case "ScorerAdapterError":
-      return "scoring-adapter-failure";
-    default:
-      return "unknown-error";
-  }
-}
-
 const LOCAL_DIAGNOSTIC_MAX_CHARS = 500;
 
 const SECRET_REDACTION_PATTERNS: Array<[RegExp, string]> = [
@@ -1256,6 +1234,8 @@ function buildErrorResult(
     dimensionScores,
     scoredAt,
     dryRun: false,
+    errored: true,
+    errorClassification: classifyErrorType(errorType),
   };
 
   const errorSummary: RawErrorSummary = {
@@ -2158,20 +2138,10 @@ export class TapestryCategoryRoutingRunner {
     suite: string,
     caseResults: CaseResult[],
   ): RunnerResult {
-    const passedCases = caseResults.filter((r) => r.summary.passed).length;
-    const failedCases = caseResults.length - passedCases;
-
-    const suiteGreen = caseResults
-      .filter((r) => r.summary.required && !r.summary.dryRun)
-      .every((r) => r.summary.passed);
-
     return {
       suite,
-      suiteGreen,
       caseResults,
-      totalCases: caseResults.length,
-      passedCases,
-      failedCases,
+      ...countCaseOutcomes(caseResults.map((r) => r.summary)),
       completedAt: new Date().toISOString(),
     };
   }

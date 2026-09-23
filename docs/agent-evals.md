@@ -202,10 +202,13 @@ run costs is the judge: every judge-scored case still makes its judge call on
 `anthropic/claude-sonnet-4.5` ($3 / $15), whatever model produced the answer.
 Deterministic suites (routing, structural checks) cost only the model call.
 
-> **Caveat (23 Sep 2026).** The first real single-case run on
-> `deepseek/deepseek-v4-flash-0731` came back with an empty answer; see
-> [Diagnose one case](#diagnose-one-case). Until that is explained, check a
-> dev-subset failure's raw transcript before trusting its score.
+Both dev-subset models are reasoning models. Their hidden reasoning shares the
+completion-token budget with the answer, which is why the eval client asks for
+16384 tokens and why an answer that still comes back empty or truncated is
+reported as an errored case rather than a failure; see
+[Empty and truncated answers](#empty-and-truncated-answers-errored-cases).
+Dev-run scores from before that fix (Spec 37, task 16.5) can contain such
+answers scored as zeros.
 
 ### Repeat cases (`--repeat N`)
 
@@ -247,11 +250,12 @@ An **errored** attempt — one that produced no scorable answer, such as an
 empty or truncated answer, as opposed to a wrong one — carries
 `errored: true`. It is left out of the denominator and counted separately
 (`errored`), because it says nothing about whether the prompt works. When
-every attempt errored, `passRate` is `null`, never 0. The legacy counts
-(`totalCases`, `passedCases`, `failedCases`) keep their meaning: every
-attempt counts, and an errored one counts as failed. `pass-rates.ts` owns the
-calculation; the report schema rejects a tally whose counts do not add up or
-whose rate is not `passed / (passed + failed)`.
+every attempt errored, `passRate` is `null`, never 0. Since 16.5 the
+aggregate counts agree: `failedCases` counts scored attempts only, and
+errored ones are counted in `erroredCases` (see
+[Empty and truncated answers](#empty-and-truncated-answers-errored-cases)).
+`pass-rates.ts` owns the calculation; the report schema rejects a tally
+whose counts do not add up or whose rate is not `passed / (passed + failed)`.
 
 **Where repeats appear.**
 
@@ -473,6 +477,104 @@ This suite scores `routingCorrectness` itself, in `tapestry-category-routing-run
 
 > **Score change, 23 Sep 2026 (Spec 37, task 16.2).** Before this change both the gate and `weightedTotal` averaged in the two inapplicable dimensions at their neutral 1.0, so the gate read `(1 + 1 + rationale) / 3` and only a judge verdict below 0.1 could fail it, and `weightedTotal` credited 2/3 of `per_expectation_weight` for free. The placeholder `shuttle-{category}` also earned the 0.4 fallback score. Runs scored after the fix publish lower `weightedTotal` values on every case the judge scores below 1.0, and required cases with transcript expectations now fail on a judge verdict below 0.7. A drop in this suite's pass rate or scores between a run before this change and one after it is the scoring becoming truthful, not a Tapestry regression; compare only runs scored on the same side of it.
 
+### Empty and truncated answers (errored cases)
+
+A case is **passed** or **failed** only when it was scored: the model answered
+and the scorer judged the answer. A case whose run broke before that point is
+**errored** (Spec 37, task 16.5). It says nothing about the model's
+behaviour, so it is reported on its own and never counted as a failure.
+
+**The cause that prompted this (confirmed 23 Sep 2026).** On OpenRouter a
+reasoning model's hidden reasoning tokens count against `max_tokens`. The
+eval client used to ask for 2048. Six calls of one Weft case to
+`deepseek/deepseek-v4-flash-0731` spent 1,221 to 7,508 reasoning tokens. One
+of the three calls at the 2048 cap spent all 2048 reasoning and came back with
+`finish_reason: "length"`, `completion_tokens_details.reasoning_tokens: 2048`
+and an answer of a single space. Every call at 16384 answered. The single
+space passed the old "content is empty" check, so it was scored, as zeros.
+`openai/gpt-6-luna` reasons too (323 reasoning tokens on the same case) but
+stayed well inside the cap.
+
+**The fix, in two halves:**
+
+1. **Room to answer.** `OpenRouterClient` now asks for
+   `DEFAULT_MAX_COMPLETION_TOKENS` (16384) unless a runner sets its own. It
+   applies to every model and suite, so adding a model stays a one-line edit
+   to `evals/model-matrix.json`. OpenRouter bills only generated tokens, so a
+   model that answers in 500 tokens costs the same as before; the cap bounds a
+   runaway call. It also replaces the Pattern runner's own 8192-token plan
+   budget. No `reasoning` setting is sent: reasoning effort changes what is
+   being measured, and on a Claude model a `reasoning` parameter would switch
+   extended thinking on. The matrix measures each model as OpenRouter serves
+   it by default.
+2. **An answer with nothing in it is not a score.** The client returns a typed
+   error instead of an answer when the content is missing, `null`, empty or
+   whitespace only: `TruncatedResponse` when `finish_reason` is `"length"`
+   (carrying the token usage, reasoning included), `EmptyResponse` otherwise.
+   `EvalOrchestrator` wraps its client in a `RetryingModelClient`, which asks
+   again on either error, up to `MAX_ANSWER_ATTEMPTS` (3) attempts in all.
+   Other errors (`NetworkError`, `HttpError`, `ParseError`) are not retried.
+   An answer that was cut off after it started still has content, so it is
+   scored as the model's answer.
+
+**What counts as errored.** Every error path a runner has: the model's
+answer was empty or truncated each time it was asked, the request to the
+model failed, the judge failed, the rubric was missing, or a harness
+trajectory could not run. Each runner marks the case `errored: true` (the
+flag `pass-rates.ts` already reads for repeated attempts) and sets
+`errorClassification`, a fixed label from `classifyErrorType()` in
+[`case-outcomes.ts`](../packages/cli/src/evals/case-outcomes.ts)
+(`model-empty-response`, `model-truncated-response`, `model-network-failure`,
+`scoring-adapter-failure`, `scoring-rubric-missing`, `trajectory-<type>`, …).
+Before 16.5 all of these were published as failed cases with zero scores.
+
+**How errored cases are counted.** `countCaseOutcomes()` in
+`case-outcomes.ts` is the one place every runner, the bundle writer and the
+public report count outcomes:
+
+- `totalCases = passedCases + failedCases + erroredCases`. `failedCases`
+  counts scored cases only.
+- Pass rates (model comparison, suite history, repeatability) are over scored
+  cases: `passedCases / (totalCases - erroredCases)`, `null` when none was
+  scored.
+- A suite with an errored case is never green: it was not measured, so it
+  cannot be said to have passed.
+- In repeatability diagnostics a run where the case errored is left out of
+  that case's drift classification. With `--repeat`, the per-case and
+  per-model pass rates in the `repeats` block already left errored attempts
+  out (18.1); the aggregate counts now agree with them.
+
+**How they are reported.**
+
+- The run report prints `ERROR` instead of `PASS`/`FAIL`, the classification
+  and what it means, no scores, and the raw file path when there is one. The
+  header adds `, N errored`.
+- `EvalOrchestrator` adds a `CasesErrored` partial failure for each suite with
+  an errored case, naming the count per classification, so `weave eval run`
+  prints it on stderr and **exits 1**. A threshold miss still exits 0; a run
+  that did not measure everything it set out to does not.
+- When **every** case in a publish-mode run errored, nothing is published or
+  indexed: the orchestrator skips the bundle and
+  `ArtifactBundleWriter.writeBundle()` refuses it independently with a typed
+  `NoScoredCases` error, as it refuses an empty run with `EmptyRun`. A local
+  run in the same state is still written, every case marked errored, so it
+  can be inspected and `weave eval compare` can say it has no scored attempt.
+  Either way the run report lists each case and the run exits 1.
+- Otherwise the errored cases are written and published with the rest. In
+  `score-<suite>.json` and `public-report.json` each carries
+  `errored: true`, `errorClassification`, `passed: false`, and (in the public
+  report) `scoreBucket: "skip"`. The schema rejects an errored entry that
+  claims to have passed, and an `errorClassification` without `errored`. Aggregates carry `erroredCases` when it is non-zero;
+  the field is omitted at zero, so a run without errored cases publishes
+  exactly what it did before. `SuiteSummaryEntrySchema` rejects a summary
+  whose `erroredCases` does not match its errored entries, so an errored case
+  cannot be dropped from, or counted without, the published list. See
+  [`public-report.json`](#public-reportjson--primary-dashboard-artifact).
+
+The scenarios in
+[`tests/evals/errored-cases.scenario.test.ts`](../tests/evals/errored-cases.scenario.test.ts)
+cover each of these promises.
+
 ### Provenance verification
 
 Every published run bundle includes `provenance-manifest.json`, an internal (never-published-standalone) artifact that records a prompt hash per agent so a reader can confirm which prompt composition actually produced a given run's results. To verify provenance locally:
@@ -552,11 +654,18 @@ Eval run b42a14b-2026-09-23-001: 1 case, 0 passed, 1 failed
 
 The example above is a real run (23 Sep 2026). The scores alone read as "Weft
 missed the blocker"; the raw file showed the model's answer was a single
-space, so the case never reached Weft's behaviour at all. Both dev-subset
-models are reasoning models on OpenRouter, and the runner asks for at most 2048
-completion tokens (`OpenRouterClient`), so a likely cause is reasoning using
-the whole budget. That is unconfirmed and is not fixed here; check the raw
-file before reading a dev-subset failure as a prompt problem.
+space, so the case never reached Weft's behaviour at all. The cause was
+confirmed the same day: the model spent the whole 2048-token budget reasoning
+(see [Empty and truncated answers](#empty-and-truncated-answers-errored-cases)).
+Since Spec 37 task 16.5 the same situation prints an `ERROR` line instead of a
+`FAIL`, and is never scored:
+
+```text
+Eval run 4338f9c-2026-09-23-001: 1 case, 0 passed, 0 failed, 1 errored
+
+  ERROR weft-review-traced-true-positive on deepseek/deepseek-v4-flash-0731  (weft-review, required)
+        Not scored: model-truncated-response — the model reached its token cap before answering, each time it was asked
+```
 
 The report prints only publishable fields and local paths, never the answer,
 the prompt or a rationale, so it is safe in a CI log too; the same report
@@ -1516,7 +1625,8 @@ eval-bundles/
 - Per-suite `cases` arrays with `PublicCaseEntry` records
 - Score buckets (`"pass"` / `"partial"` / `"fail"` / `"skip"`) — human-interpretable, not raw floats
 - Optional bounded `explanation` fields (max 300 chars, allowlisted source kind, no forbidden patterns)
-- Aggregate `totalCases`, `passedCases`, `failedCases` counts
+- Aggregate `totalCases`, `passedCases`, `failedCases` counts, plus `erroredCases` when a case produced no score
+- `errored: true` and `errorClassification` on each case that produced no score, which is also `passed: false` and bucketed `"skip"` (see [Empty and truncated answers](#empty-and-truncated-answers-errored-cases))
 - `assembledAt` ISO 8601 timestamp and `gitSha`
 
 **Explanation fields**: all `explanation.text` values derive exclusively from allowlisted structured sources (`rubric_template`, `score_bucket_label`, `structured_signal`, `operator_note`). Raw model output, rationale strings, chain-of-thought traces, prompt text, and LLM freeform summaries are categorically forbidden and are rejected by `BoundedExplanationSchema`. Explanations that fail validation are silently dropped — the case entry is still published with its score bucket and pass/fail boolean.
@@ -1610,7 +1720,7 @@ Published as `indexes/v1/scenario-history-<suite>.json`. Provides a per-case vie
 | `"partial"` | At least one considered entry passed AND at least one failed |
 | `"skip"` | No considered entries (all are `dryRun=true` or `scoreBucket="skip"`) |
 
-"Considered" means `!dryRun && scoreBucket !== "skip"` and not `errored`. The counts are per model: with `--repeat`, a model's attempts are grouped first and the model passes only if every considered attempt passed (see [Repeat cases](#repeat-cases---repeat-n)).
+"Considered" means `!dryRun && scoreBucket !== "skip"` and not `errored`. The counts are per model: with `--repeat`, a model's attempts are grouped first and the model passes only if every considered attempt passed (see [Repeat cases](#repeat-cases---repeat-n)). A model whose every attempt errored counts in `skippedModels`, never in `failedModels`, and `erroredModels` (omitted at zero) says how many of the skipped models were skipped for that reason.
 
 **`lastRuns` ordering and cap**: per-case run entries are in **oldest-first** chronological order (ascending `assembledAt`). Website consumers wanting newest-first should reverse the array. The array is capped at `SCENARIO_HISTORY_MAX_RUNS` (10): when more than 10 runs exist for a case, the oldest are evicted.
 

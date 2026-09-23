@@ -175,6 +175,7 @@ function makeRunnerResult(
     totalCases: caseResults.length,
     passedCases,
     failedCases,
+    erroredCases: 0,
     completedAt: scoredAt,
   };
 }

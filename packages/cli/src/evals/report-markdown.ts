@@ -236,6 +236,24 @@ function bucketLabel(bucket: "pass" | "partial" | "fail" | "skip"): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * "yes", "no", or — for a case that produced no score — "errored" with its
+ * classification label, so an errored case never reads as a failure.
+ */
+function passedCellText(entry: PublicCaseEntry): string {
+  if (entry.errored === true) {
+    const label = entry.errorClassification ?? "unknown-error";
+    return `errored (${escapeMdCell(label)})`;
+  }
+  return entry.passed ? "yes" : "no";
+}
+
+/** " | **Errored**: N" when some case errored, "" otherwise. */
+function erroredCountText(erroredCases: number | undefined): string {
+  if (erroredCases === undefined || erroredCases === 0) return "";
+  return ` | **Errored**: ${erroredCases}`;
+}
+
+/**
  * Render a single `PublicCaseEntry` as a Markdown table row.
  *
  * Columns: case ID | model ID | bucket | passed | explanation
@@ -250,7 +268,7 @@ export function renderCaseRow(entry: PublicCaseEntry): string {
   const caseIdCell = escapeMdCell(entry.caseId);
   const modelIdCell = escapeMdCell(entry.modelId);
   const bucketCell = bucketLabel(entry.scoreBucket);
-  const passedCell = entry.passed ? "yes" : "no";
+  const passedCell = passedCellText(entry);
   const explanationCell =
     entry.explanation !== undefined ? escapeMdCell(entry.explanation.text) : "";
 
@@ -281,7 +299,7 @@ export function renderSuiteSummary(summary: SuiteSummaryEntry): string {
   lines.push(`### Suite: ${escapeMdCell(summary.suite)} — ${statusBadge}`);
   lines.push("");
   lines.push(
-    `**Total**: ${summary.totalCases} | **Passed**: ${summary.passedCases} | **Failed**: ${summary.failedCases}`,
+    `**Total**: ${summary.totalCases} | **Passed**: ${summary.passedCases} | **Failed**: ${summary.failedCases}${erroredCountText(summary.erroredCases)}`,
   );
   lines.push("");
 
@@ -422,7 +440,7 @@ export function renderPublicReportBundle(bundle: PublicReportBundle): string {
   );
   lines.push("");
   lines.push(
-    `**Total cases**: ${bundle.runSummary.totalCases} | **Passed**: ${bundle.runSummary.passedCases} | **Failed**: ${bundle.runSummary.failedCases}`,
+    `**Total cases**: ${bundle.runSummary.totalCases} | **Passed**: ${bundle.runSummary.passedCases} | **Failed**: ${bundle.runSummary.failedCases}${erroredCountText(bundle.runSummary.erroredCases)}`,
   );
   if (bundle.runSummary.repeatCount !== undefined) {
     lines.push(

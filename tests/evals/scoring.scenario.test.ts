@@ -50,6 +50,7 @@
 import { describe, expect, it } from "bun:test";
 import { FORBIDDEN_EXPLANATION_PATTERNS } from "../../packages/cli/src/evals/report-schema.js";
 import {
+  EVAL_MODEL,
   type FixtureSpec,
   runEvalSuite,
   type SuiteRunObservation,
@@ -573,24 +574,46 @@ describe("a case has no rubric to be scored against", () => {
     withoutRubric: true,
   };
 
-  it("publishes the case as failed rather than dropping it from the run", async () => {
+  it("reports the case as errored, not failed, rather than dropping it from the run", async () => {
     const run = await score(ORPHAN, ROUTED);
 
-    expect(run.firstCase?.caseId).toBe("scoring-case-without-a-rubric");
-    expect(run.firstCase?.passed).toBe(false);
-    expect(run.firstCase?.weightedTotal).toBe(0);
+    expect(run.stdout).toContain(
+      `ERROR scoring-case-without-a-rubric on ${EVAL_MODEL}`,
+    );
+    expect(run.stdout).toContain("Not scored: scoring-rubric-missing");
+    expect(run.stdout).toContain("1 case, 0 passed, 0 failed, 1 errored");
+    expect(run.exitCode).toBe(1);
   });
 
-  it("marks every dimension inapplicable, so the failure reads as unscored", async () => {
-    const run = await score(ORPHAN, ROUTED);
+  it("publishes it beside the scored cases as errored, with every dimension inapplicable", async () => {
+    const run = await withEvalFixtures([ORPHAN, ROUTING], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "loom-routing",
+        answers: [ROUTED],
+      }),
+    );
+    const orphan = run.cases.find(
+      (row) => row.caseId === "scoring-case-without-a-rubric",
+    );
 
-    expect(run.firstCase?.dimensionScores.routingCorrectness).toEqual({
+    expect(orphan?.errored).toBe(true);
+    expect(orphan?.errorClassification).toBe("scoring-rubric-missing");
+    expect(orphan?.passed).toBe(false);
+    expect(orphan?.dimensionScores.routingCorrectness).toEqual({
       score: 0,
       applicable: false,
     });
-    expect(run.firstCase?.dimensionScores.rationaleQuality).toEqual({
+    expect(orphan?.dimensionScores.rationaleQuality).toEqual({
       score: 0,
       applicable: false,
+    });
+    expect(run.scoreFile?.totals).toMatchObject({
+      totalCases: 2,
+      passedCases: 1,
+      failedCases: 0,
+      erroredCases: 1,
+      suiteGreen: false,
     });
   });
 
@@ -640,7 +663,7 @@ describe("the judge answers one question and fails the other", () => {
     message: "judge transport failed",
   };
 
-  it("fails the whole case rather than publishing the half it did get", async () => {
+  it("reports the whole case as errored rather than publishing the half it did get", async () => {
     const run = await score(DELEGATION, DELEGATED, {
       judgeOutputs: {
         delegationCorrectness: { score: 1, rationale: "chain is right" },
@@ -648,11 +671,10 @@ describe("the judge answers one question and fails the other", () => {
       judgeErrors: { rationaleQuality: JUDGE_FAILED },
     });
 
-    expect(run.firstCase?.passed).toBe(false);
-    expect(run.firstCase?.dimensionScores.delegationCorrectness).toEqual({
-      score: 0,
-      applicable: false,
-    });
+    expect(run.stdout).toContain(`ERROR scoring-delegate-to-shuttle`);
+    expect(run.stdout).toContain("Not scored: scoring-adapter-failure");
+    expect(run.stdout).not.toContain("delegationCorrectness");
+    expect(run.exitCode).toBe(1);
   });
 
   it("scores the same case normally when both questions are answered", async () => {

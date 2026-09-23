@@ -901,8 +901,16 @@ describe("buildEvalRunner — exit code mapping", () => {
     const modelId = "anthropic/claude-sonnet-4.5";
     const scorer = new StubAgentEvalsScorer();
     scorer.setDefaultRecord(makeFailingScoreRecord(caseId, modelId));
+    // The model must answer for the case to be scored at all. Before errored
+    // cases were told apart (Spec 37, 16.5) this test passed on an
+    // unconfigured stub whose NotConfigured error was counted as a failure.
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: "→ shuttle for the implementation.",
+    });
     const orchestrator = new EvalOrchestrator(
-      makeOptions({ scorer, evalsRoot: REAL_EVALS_ROOT }),
+      makeOptions({ scorer, modelClient, evalsRoot: REAL_EVALS_ROOT }),
     );
     const runner = buildEvalRunner(orchestrator);
     const request = makeRequest({
@@ -2109,6 +2117,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
         totalCases: 3,
         passedCases: 2,
         failedCases: 1,
+        erroredCases: 0,
         completedAt: FIXED_TIMESTAMP,
       },
     ];

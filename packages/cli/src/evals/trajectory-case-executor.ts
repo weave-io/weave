@@ -85,8 +85,9 @@ function dimensionRationales(
 }
 
 /**
- * Zero-score result for a trajectory case that could not run. The error
- * type is a bounded label; no raw error text reaches the summary.
+ * Result for a trajectory case that could not run: errored, never scored
+ * (see `case-outcomes.ts`). The error type is a bounded label; no raw error
+ * text reaches the summary.
  */
 function errorResult(
   evalCase: EvalCase,
@@ -111,6 +112,8 @@ function errorResult(
     },
     scoredAt: new Date().toISOString(),
     dryRun: false,
+    errored: true,
+    errorClassification: `trajectory-${errorType}`,
   };
   const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
     ? {

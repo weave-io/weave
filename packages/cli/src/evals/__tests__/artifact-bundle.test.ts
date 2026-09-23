@@ -125,6 +125,7 @@ function makeRunnerResult(overrides: Partial<RunnerResult> = {}): RunnerResult {
     totalCases: 1,
     passedCases: 1,
     failedCases: 0,
+    erroredCases: 0,
     completedAt: FIXED_TIMESTAMP,
     ...overrides,
   };

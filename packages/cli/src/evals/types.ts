@@ -1230,12 +1230,26 @@ export interface CaseResultSummary {
    */
   attempt?: number;
   /**
-   * `true` when this attempt produced no scorable answer (for example the
-   * model returned an empty or truncated answer) rather than a wrong one.
-   * An errored attempt still has `passed: false`, but pass rates leave it out
-   * of their denominator and count it separately (see `pass-rates.ts`).
+   * `true` when this attempt produced no score because something other than
+   * the model's behaviour failed: the model returned an empty or truncated
+   * answer, the request failed, the judge failed, or the rubric was missing
+   * (Spec 37, 16.5). Set by every runner's error path.
+   *
+   * An errored case is neither passed nor failed. It is counted in
+   * `erroredCases`, left out of `passedCases`, `failedCases` and every pass
+   * rate, and it keeps its suite from being green (see `case-outcomes.ts`
+   * and `pass-rates.ts`). `passed` is `false` and every score is `0` only so
+   * older readers that do not know this field still read it as not passed.
    */
   errored?: boolean;
+  /**
+   * Why the case errored, as a fixed label derived from the typed error
+   * discriminant by `classifyErrorType()` (e.g. `"model-empty-response"`,
+   * `"model-truncated-response"`), never provider or scorer message text.
+   * Present only when `errored` is `true`. The full, redacted diagnostic
+   * stays in the local-only `RawErrorSummary`.
+   */
+  errorClassification?: string;
 }
 
 /**
@@ -1448,6 +1462,23 @@ export type RunnerError =
     }
   | {
       /**
+       * One or more cases in the suite produced no score: the model's answer
+       * was empty or truncated after every retry, the request failed, or
+       * scoring failed. Added by `EvalOrchestrator` after every model has
+       * run, one per affected suite. The cases stay in the run as errored
+       * rows; this failure is what makes `weave eval run` exit 1 and say so,
+       * because a run with unscored cases did not measure what it set out to.
+       */
+      type: "CasesErrored";
+      /** The suite with errored cases. */
+      suite: string;
+      /** How many of its cases errored, across every model. */
+      erroredCases: number;
+      /** Human-readable description (classification labels only). */
+      message: string;
+    }
+  | {
+      /**
        * The prompt provider failed to compose the agent prompt.
        *
        * Returned when the `PromptProvider` returns an error before any model
@@ -1476,14 +1507,15 @@ export interface RunnerResult {
   suite: string;
   /**
    * Whether all required cases passed.
-   * `true` iff every `CaseResult.summary` where `required === true` has
-   * `passed === true`.
+   * `true` iff no case errored and every non-dry-run `CaseResult.summary`
+   * where `required === true` has `passed === true`.
    */
   suiteGreen: boolean;
   /** Ordered list of per-case results (one per case × model pair). */
   caseResults: CaseResult[];
   /**
-   * Total number of cases executed (including failures).
+   * Total number of cases executed:
+   * `passedCases + failedCases + erroredCases`.
    */
   totalCases: number;
   /**
@@ -1491,9 +1523,14 @@ export interface RunnerResult {
    */
   passedCases: number;
   /**
-   * Number of cases that failed.
+   * Number of scored cases that did not pass. Errored cases are not counted.
    */
   failedCases: number;
+  /**
+   * Number of cases that produced no score (`CaseResultSummary.errored`).
+   * Any errored case makes the suite not green.
+   */
+  erroredCases: number;
   /** ISO 8601 timestamp when the runner completed. */
   completedAt: string;
 }
@@ -1543,8 +1580,10 @@ export interface BundleScoreFile {
     trajectorySummary?: TrajectorySummary;
     /** 1-based repeat index; present only when the run repeated cases. */
     attempt?: number;
-    /** `true` when the attempt produced no scorable answer. */
+    /** `true` when the attempt produced no score; see `CaseResultSummary.errored`. */
     errored?: boolean;
+    /** Why it errored; see `CaseResultSummary.errorClassification`. */
+    errorClassification?: string;
   }>;
   /**
    * How many times each case ran per model (`--repeat N`). Present only when
@@ -1552,11 +1591,15 @@ export interface BundleScoreFile {
    * one row per attempt and `totals` counts attempts.
    */
   repeatCount?: number;
-  /** Aggregate pass/fail totals. */
+  /**
+   * Aggregate totals. `failedCases` counts scored cases only; `erroredCases`
+   * is present, and non-zero, only when some case produced no score.
+   */
   totals: {
     totalCases: number;
     passedCases: number;
     failedCases: number;
+    erroredCases?: number;
     suiteGreen: boolean;
   };
 }
@@ -1630,9 +1673,11 @@ export interface EvalBundle {
     totalCases: number;
     /** Total passing cases. */
     passedCases: number;
-    /** Total failing cases. */
+    /** Total failing cases (scored cases that did not pass). */
     failedCases: number;
-    /** Whether all required cases passed. */
+    /** Cases that produced no score. Present only when non-zero. */
+    erroredCases?: number;
+    /** Whether all required cases passed and none errored. */
     allSuitesGreen: boolean;
     /** Names of the suites included in this bundle. */
     suites: string[];
@@ -1684,6 +1729,17 @@ export type BundleError =
        * as green (#205). Returned before any file is written.
        */
       type: "EmptyRun";
+      message: string;
+    }
+  | {
+      /**
+       * A publish-mode write of a run in which every case errored (see
+       * `CaseResultSummary.errored`). The run has no score, and published it
+       * would add a run with no measurement to the dashboard history.
+       * Returned before any file is written. A local-mode write of the same
+       * run succeeds, so it can be inspected and compared.
+       */
+      type: "NoScoredCases";
       message: string;
     };
 

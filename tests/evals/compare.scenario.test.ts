@@ -118,7 +118,10 @@ async function writeRun(root: string, spec: RunSpec): Promise<string> {
       caseResults: results,
       totalCases: results.length,
       passedCases: results.filter((r) => r.summary.passed).length,
-      failedCases: results.filter((r) => !r.summary.passed).length,
+      failedCases: results.filter(
+        (r) => !r.summary.passed && r.summary.errored !== true,
+      ).length,
+      erroredCases: results.filter((r) => r.summary.errored === true).length,
       completedAt: FIXED_TIMESTAMP,
     }),
   );

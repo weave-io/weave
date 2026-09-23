@@ -21,6 +21,7 @@ function caseReport(overrides: Partial<CaseReport> = {}): CaseReport {
     passed: false,
     errored: false,
     required: true,
+    errorClassification: null,
     weightedTotal: 0.35,
     dimensionScores: {
       routingCorrectness: { score: 1, applicable: false },
@@ -41,6 +42,7 @@ function summary(
   metadata: Partial<EvalRunSummary["metadata"]> = {},
 ): EvalRunSummary {
   const passed = caseReports.filter((c) => c.passed).length;
+  const errored = caseReports.filter((c) => c.errored).length;
   return {
     metadata: {
       bunVersion: "1.3.10",
@@ -60,7 +62,8 @@ function summary(
     modelRollups: [],
     totalCases: caseReports.length,
     passedCases: passed,
-    failedCases: caseReports.length - passed,
+    failedCases: caseReports.length - passed - errored,
+    erroredCases: errored,
     allSuitesGreen: passed === caseReports.length,
     bundleDir: "/work/eval-bundles/runs/abc1234-2026-09-23-001",
     runId: "abc1234-2026-09-23-001",
@@ -145,6 +148,65 @@ describe("EvalRunReport", () => {
     expect(text).toContain(
       "not written — the runner produced no raw artifact for this case",
     );
+  });
+
+  it("prints an errored case as ERROR, with its classification and no scores", () => {
+    const text = render(
+      summary([
+        caseReport({
+          errored: true,
+          errorClassification: "model-truncated-response",
+        }),
+      ]),
+    );
+
+    expect(text).toContain(
+      "ERROR pattern-plan-release-checklist on deepseek/deepseek-v4-flash-0731",
+    );
+    expect(text).toContain(
+      "Not scored: model-truncated-response — the model reached its token cap before answering, each time it was asked",
+    );
+    expect(text).toContain("1 case, 0 passed, 0 failed, 1 errored");
+    expect(text).not.toContain("FAIL");
+    expect(text).not.toContain("Weighted total");
+    expect(text).not.toContain("executionCompleteness");
+  });
+
+  it("describes an unrecognised or trajectory classification in general terms", () => {
+    const text = render(
+      summary([
+        caseReport({
+          errored: true,
+          errorClassification: "trajectory-TrajectoryRunnerUnavailable",
+        }),
+        caseReport({
+          caseId: "other",
+          errored: true,
+          errorClassification: null,
+        }),
+      ]),
+    );
+
+    expect(text).toContain("the harness trajectory could not run");
+    expect(text).toContain("the case could not be run or scored");
+  });
+
+  it("still prints where an errored case's raw diagnostic was written", () => {
+    const text = render(
+      summary(
+        [
+          caseReport({
+            errored: true,
+            errorClassification: "model-empty-response",
+            rawArtifactPath: "/work/raw/case.json",
+          }),
+        ],
+        {},
+        { rawArtifactsEnabled: true },
+      ),
+    );
+
+    expect(text).toContain("Raw transcript: /work/raw/case.json");
   });
 
   it("reports a run that wrote nothing without a bundle line or a hint", () => {

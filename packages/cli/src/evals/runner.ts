@@ -60,6 +60,11 @@ import {
 } from "./artifact-bundle.js";
 import { loadSuiteCases, loadSuiteRubrics } from "./case-loader.js";
 import {
+  countCaseOutcomes,
+  erroredCasesField,
+  scoredPassRate,
+} from "./case-outcomes.js";
+import {
   type EvalEnvError,
   OPENROUTER_API_KEY_ENV_VAR,
   readEvalEnv,
@@ -79,7 +84,7 @@ import {
   type ModelSetName,
   resolveModelSet,
 } from "./model-matrix.js";
-import type { ModelClient } from "./openrouter-client.js";
+import { type ModelClient, RetryingModelClient } from "./openrouter-client.js";
 import {
   PATTERN_PLANNING_SUITE,
   PatternPlanningRunner,
@@ -210,12 +215,14 @@ export interface ModelRollup {
   totalCases: number;
   /** Passing cases for this model. */
   passedCases: number;
-  /** Failing cases for this model. */
+  /** Failing cases for this model (scored cases that did not pass). */
   failedCases: number;
+  /** Cases for this model that produced no score. */
+  erroredCases: number;
   /**
-   * Pass rate in [0, 1].
-   * `1.0` when all cases passed; `0.0` when all failed.
-   * `null` when no cases were run (totalCases === 0).
+   * Pass rate in [0, 1] over the scored cases.
+   * `1.0` when all scored cases passed; `0.0` when all failed.
+   * `null` when no case was scored.
    */
   passRate: number | null;
 }
@@ -254,6 +261,12 @@ export interface RepeatabilityCaseSnapshot {
   required: boolean;
   weightedTotal: number;
   dryRun: boolean;
+  /**
+   * `true` when the case produced no score in this run. Absent otherwise,
+   * and in artifacts written before errored cases existed. An errored run
+   * is left out of the case's drift classification.
+   */
+  errored?: true;
 }
 
 /**
@@ -264,7 +277,11 @@ export interface RepeatabilityModelSnapshot {
   modelId: string;
   totalCases: number;
   passedCases: number;
+  /** Scored cases that did not pass. */
   failedCases: number;
+  /** Cases that produced no score. Absent when none did. */
+  erroredCases?: number;
+  /** Over scored cases; `null` when none was scored. */
   passRate: number | null;
   cases: RepeatabilityCaseSnapshot[];
 }
@@ -335,6 +352,8 @@ export interface RepeatabilityCaseModelDriftSummary {
     passed: boolean;
     required: boolean;
     weightedTotal: number;
+    /** `true` when the case errored in this run; absent otherwise. */
+    errored?: true;
   }>;
 }
 
@@ -410,9 +429,11 @@ export interface AgentRollup {
   totalCases: number;
   /** Passing cases in this suite. */
   passedCases: number;
-  /** Failing cases in this suite. */
+  /** Failing cases in this suite (scored cases that did not pass). */
   failedCases: number;
-  /** Whether all required cases in this suite passed. */
+  /** Cases in this suite that produced no score. */
+  erroredCases: number;
+  /** Whether all required cases in this suite passed and none errored. */
   suiteGreen: boolean;
 }
 
@@ -438,6 +459,11 @@ export interface CaseReport {
   /** `true` when the attempt produced no scorable answer. */
   errored: boolean;
   required: boolean;
+  /**
+   * The classification label when the case produced no score (e.g.
+   * `"model-empty-response"`), `null` when it was scored.
+   */
+  errorClassification: string | null;
   weightedTotal: number;
   dimensionScores: CaseResultSummary["dimensionScores"];
   /** The bounded, publishable explanation, when the runner produced one. */
@@ -495,9 +521,11 @@ export interface EvalRunSummary {
   totalCases: number;
   /** Total passing cases across all suites. */
   passedCases: number;
-  /** Total failing cases across all suites. */
+  /** Total failing cases across all suites (scored cases that did not pass). */
   failedCases: number;
-  /** `true` when every required case in every suite passed. */
+  /** Total cases across all suites that produced no score. */
+  erroredCases: number;
+  /** `true` when every required case in every suite passed and none errored. */
   allSuitesGreen: boolean;
   /** Absolute path of the bundle directory written by the orchestrator. */
   bundleDir: string;
@@ -815,7 +843,9 @@ export class EvalOrchestrator {
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
 
   constructor(options: EvalOrchestratorOptions) {
-    this.modelClient = options.modelClient;
+    // Every suite asks again when a model returns an empty or truncated
+    // answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5).
+    this.modelClient = new RetryingModelClient(options.modelClient);
     this.scorer = options.scorer;
     this.promptProvider = options.promptProvider;
     this.snapshotProvider =
@@ -1132,13 +1162,20 @@ export class EvalOrchestrator {
 
     return ResultAsync.fromSafePromise(
       executeSuites().then(async () => {
-        const guarded = this.failEmptySuites(
+        const nonEmpty = this.failEmptySuites(
           request,
           selectedSuites.map((suite) => suite.suiteId),
           runnerResults,
           partialFailures,
           failedSuites,
         );
+        const guarded = {
+          runnerResults: nonEmpty.runnerResults,
+          partialFailures: [
+            ...nonEmpty.partialFailures,
+            ...this.erroredSuiteFailures(nonEmpty.runnerResults),
+          ],
+        };
 
         if (request.dryRun) {
           return { ...guarded, provenanceManifest: null };
@@ -1225,6 +1262,60 @@ export class EvalOrchestrator {
     if (request.agent !== undefined) return false;
     if (request.case !== undefined) return false;
     return suitesWithCases.size > 0;
+  }
+
+  /**
+   * The errored-case guard (Spec 37, 16.5): a suite with a case that
+   * produced no score fails with `CasesErrored`, so the run exits 1 and says
+   * which cases were not measured and why.
+   *
+   * The errored cases themselves stay in the run as errored rows: reported,
+   * counted in `erroredCases`, and kept out of pass/fail. This failure only
+   * makes sure a run that did not measure everything it set out to cannot
+   * exit as if it had. Like the empty-suite guard it runs after every model,
+   * so a suite errored on two models gets one failure naming both counts.
+   */
+  private erroredSuiteFailures(
+    runnerResults: readonly RunnerResult[],
+  ): RunnerError[] {
+    const bySuite = new Map<string, CaseResultSummary[]>();
+    for (const result of runnerResults) {
+      const errored = result.caseResults
+        .map((caseResult) => caseResult.summary)
+        .filter((summary) => summary.errored === true);
+      if (errored.length === 0) continue;
+      bySuite.set(result.suite, [
+        ...(bySuite.get(result.suite) ?? []),
+        ...errored,
+      ]);
+    }
+
+    return [...bySuite.entries()].map(([suite, errored]) => ({
+      type: "CasesErrored",
+      suite,
+      erroredCases: errored.length,
+      message: this.describeErroredSuite(suite, errored),
+    }));
+  }
+
+  private describeErroredSuite(
+    suite: string,
+    errored: readonly CaseResultSummary[],
+  ): string {
+    const byClassification = new Map<string, number>();
+    for (const summary of errored) {
+      const label = summary.errorClassification ?? "unknown-error";
+      byClassification.set(label, (byClassification.get(label) ?? 0) + 1);
+    }
+    const reasons = [...byClassification.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, count]) => `${label} ×${count}`)
+      .join(", ");
+    const noun = errored.length === 1 ? "case" : "cases";
+    return (
+      `${errored.length} ${noun} in suite "${suite}" errored and ${errored.length === 1 ? "was" : "were"} not scored (${reasons}). ` +
+      "They are reported as errored, not failed; re-run them before reading the suite's scores."
+    );
   }
 
   private describeEmptySuite(suiteId: string, request: EvalRunRequest): string {
@@ -1543,8 +1634,19 @@ export class EvalOrchestrator {
     { bundleDir: string; runId: string | null; filesWritten: string[] },
     CliError
   > {
-    // Skip writing when there are no results to bundle
-    if (runnerResults.length === 0) {
+    // Skip writing when there are no results to bundle, or when a publish-mode
+    // run errored on every case: a run that scored nothing is never published
+    // or indexed (the writer refuses it too, with `NoScoredCases`). The run
+    // report still lists each errored case, and `CasesErrored` makes the run
+    // exit 1. A local run that errored on every case is still written, so it
+    // can be inspected and compared.
+    const scoredCases = runnerResults.reduce(
+      (sum, result) => sum + result.totalCases - result.erroredCases,
+      0,
+    );
+    const nothingToPublish =
+      this.publishMode === "publish" && !request.dryRun && scoredCases === 0;
+    if (runnerResults.length === 0 || nothingToPublish) {
       // Return a synthetic empty result — the bundle root is still the configured dir
       return ResultAsync.fromSafePromise(
         Promise.resolve({
@@ -1986,40 +2088,42 @@ export class EvalOrchestrator {
           0,
         );
         const suiteGreen = suiteResults.every((result) => result.suiteGreen);
-        const modelGroups = new Map<
-          string,
-          RepeatabilityModelSnapshot["cases"]
-        >();
+        const modelGroups = new Map<string, CaseResultSummary[]>();
 
         for (const result of suiteResults) {
           for (const caseResult of result.caseResults) {
             const modelId = caseResult.summary.modelId;
             const existing = modelGroups.get(modelId) ?? [];
-            existing.push({
-              caseId: caseResult.summary.caseId,
-              passed: caseResult.summary.passed,
-              required: caseResult.summary.required,
-              weightedTotal: caseResult.summary.weightedTotal,
-              dryRun: caseResult.summary.dryRun,
-            });
+            existing.push(caseResult.summary);
             modelGroups.set(modelId, existing);
           }
         }
 
         const models = [...modelGroups.entries()]
-          .map(([modelId, cases]) => {
-            const passedModelCases = cases.filter(
-              (caseSnapshot) => caseSnapshot.passed,
-            ).length;
-            const failedModelCases = cases.length - passedModelCases;
+          .map(([modelId, summaries]) => {
+            const counts = countCaseOutcomes(summaries);
+            const cases: RepeatabilityCaseSnapshot[] = summaries.map(
+              (summary) => ({
+                caseId: summary.caseId,
+                passed: summary.passed,
+                required: summary.required,
+                weightedTotal: summary.weightedTotal,
+                dryRun: summary.dryRun,
+                ...(summary.errored === true ? { errored: true as const } : {}),
+              }),
+            );
 
             return {
               modelId,
-              totalCases: cases.length,
-              passedCases: passedModelCases,
-              failedCases: failedModelCases,
-              passRate:
-                cases.length === 0 ? null : passedModelCases / cases.length,
+              totalCases: counts.totalCases,
+              passedCases: counts.passedCases,
+              failedCases: counts.failedCases,
+              ...erroredCasesField(counts.erroredCases),
+              passRate: scoredPassRate(
+                counts.passedCases,
+                counts.totalCases,
+                counts.erroredCases,
+              ),
               cases: [...cases].sort((a, b) =>
                 a.caseId.localeCompare(b.caseId),
               ),
@@ -2157,6 +2261,7 @@ export class EvalOrchestrator {
         passed: boolean;
         required: boolean;
         weightedTotal: number;
+        errored?: true;
       }>
     >();
 
@@ -2174,6 +2279,9 @@ export class EvalOrchestrator {
               passed: caseSnapshot.passed,
               required: caseSnapshot.required,
               weightedTotal: caseSnapshot.weightedTotal,
+              ...(caseSnapshot.errored === true
+                ? { errored: true as const }
+                : {}),
             });
             groups.set(key, existing);
           }
@@ -2188,7 +2296,11 @@ export class EvalOrchestrator {
           return [];
         }
 
-        const weightedTotals = runs.map((run) => run.weightedTotal);
+        // An errored run's zero is not a score; keep it out of the range.
+        const scoredTotals = runs
+          .filter((run) => run.errored !== true)
+          .map((run) => run.weightedTotal);
+        const weightedTotals = scoredTotals.length === 0 ? [0] : scoredTotals;
         return [
           {
             suite: firstRun.suite,
@@ -2213,13 +2325,19 @@ export class EvalOrchestrator {
       });
   }
 
+  /**
+   * Classify a case's outcome across comparable runs. Runs in which the case
+   * errored were not measurements, so they are left out: a case that passed
+   * once and errored once is a single run, not a mix of pass and fail.
+   */
   private classifyCaseModelDrift(
-    runs: Array<{ passed: boolean }>,
+    runs: Array<{ passed: boolean; errored?: true }>,
   ): "single-run" | "consistent-pass" | "consistent-fail" | "mixed" {
-    if (runs.length <= 1) return "single-run";
+    const scored = runs.filter((run) => run.errored !== true);
+    if (scored.length <= 1) return "single-run";
 
-    const passCount = runs.filter((run) => run.passed).length;
-    if (passCount === runs.length) return "consistent-pass";
+    const passCount = scored.filter((run) => run.passed).length;
+    if (passCount === scored.length) return "consistent-pass";
     if (passCount === 0) return "consistent-fail";
     return "mixed";
   }
@@ -2243,6 +2361,10 @@ export class EvalOrchestrator {
     const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
     const passedCases = runnerResults.reduce((s, rr) => s + rr.passedCases, 0);
     const failedCases = runnerResults.reduce((s, rr) => s + rr.failedCases, 0);
+    const erroredCases = runnerResults.reduce(
+      (s, rr) => s + rr.erroredCases,
+      0,
+    );
     const allSuitesGreen = runnerResults.every((rr) => rr.suiteGreen);
 
     // Per-agent rollups (one per suite)
@@ -2251,6 +2373,7 @@ export class EvalOrchestrator {
       totalCases: rr.totalCases,
       passedCases: rr.passedCases,
       failedCases: rr.failedCases,
+      erroredCases: rr.erroredCases,
       suiteGreen: rr.suiteGreen,
     }));
 
@@ -2264,6 +2387,7 @@ export class EvalOrchestrator {
       totalCases,
       passedCases,
       failedCases,
+      erroredCases,
       allSuitesGreen,
       bundleDir,
       runId,
@@ -2296,6 +2420,7 @@ export class EvalOrchestrator {
         passed: summary.passed,
         errored: summary.errored === true,
         required: summary.required,
+        errorClassification: summary.errorClassification ?? null,
         weightedTotal: summary.weightedTotal,
         dimensionScores: summary.dimensionScores,
         publicExplanation: summary.publicExplanation?.text ?? null,
@@ -2321,28 +2446,30 @@ export class EvalOrchestrator {
    * all suites, grouped by `modelId`.
    */
   private computeModelRollups(runnerResults: RunnerResult[]): ModelRollup[] {
-    const byModel = new Map<string, { total: number; passed: number }>();
+    const byModel = new Map<string, CaseResultSummary[]>();
 
     for (const rr of runnerResults) {
       for (const cr of rr.caseResults) {
-        const { modelId, passed } = cr.summary;
-        const existing = byModel.get(modelId) ?? { total: 0, passed: 0 };
-        byModel.set(modelId, {
-          total: existing.total + 1,
-          passed: existing.passed + (passed ? 1 : 0),
-        });
+        const existing = byModel.get(cr.summary.modelId) ?? [];
+        existing.push(cr.summary);
+        byModel.set(cr.summary.modelId, existing);
       }
     }
 
     const rollups: ModelRollup[] = [];
-    for (const [modelId, counts] of byModel) {
-      const passRate = counts.total === 0 ? null : counts.passed / counts.total;
+    for (const [modelId, summaries] of byModel) {
+      const counts = countCaseOutcomes(summaries);
       rollups.push({
         modelId,
-        totalCases: counts.total,
-        passedCases: counts.passed,
-        failedCases: counts.total - counts.passed,
-        passRate,
+        totalCases: counts.totalCases,
+        passedCases: counts.passedCases,
+        failedCases: counts.failedCases,
+        erroredCases: counts.erroredCases,
+        passRate: scoredPassRate(
+          counts.passedCases,
+          counts.totalCases,
+          counts.erroredCases,
+        ),
       });
     }
 

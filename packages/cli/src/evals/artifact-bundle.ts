@@ -87,6 +87,7 @@
 
 import { basename, join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { countCaseOutcomes, erroredCasesField } from "./case-outcomes.js";
 import { DashboardIndexWriter } from "./dashboard-indexes.js";
 import { assemblePublicReportBundle } from "./report-bundle.js";
 import { renderPublicReportBundle } from "./report-markdown.js";
@@ -469,6 +470,7 @@ export function assembleScoreFile(
       totalCases: runnerResult.totalCases,
       passedCases: runnerResult.passedCases,
       failedCases: runnerResult.failedCases,
+      ...erroredCasesField(runnerResult.erroredCases),
       suiteGreen: runnerResult.suiteGreen,
     },
   };
@@ -506,15 +508,9 @@ export function aggregateScoreFile(
     rr.caseResults.map((cr) => sanitizeCaseResultSummary(cr.summary)),
   );
 
-  // Recompute aggregate totals from the merged set
-  const totalCases = allRows.length;
-  const passedCases = allRows.filter((r) => r.passed).length;
-  const failedCases = totalCases - passedCases;
-
-  // Suite is green iff all required, non-dry-run rows passed
-  const suiteGreen = allRows
-    .filter((r) => r.required && !r.dryRun)
-    .every((r) => r.passed);
+  // Recompute aggregate totals from the merged set. The suite is green iff
+  // no row errored and every required, non-dry-run row passed.
+  const counts = countCaseOutcomes(allRows);
 
   return {
     suite: suiteName,
@@ -524,10 +520,11 @@ export function aggregateScoreFile(
     results: allRows,
     ...(repeatCount > 1 ? { repeatCount } : {}),
     totals: {
-      totalCases,
-      passedCases,
-      failedCases,
-      suiteGreen,
+      totalCases: counts.totalCases,
+      passedCases: counts.passedCases,
+      failedCases: counts.failedCases,
+      ...erroredCasesField(counts.erroredCases),
+      suiteGreen: counts.suiteGreen,
     },
   };
 }
@@ -636,6 +633,7 @@ export function assembleBundle(options: {
   const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
   const passedCases = runnerResults.reduce((s, rr) => s + rr.passedCases, 0);
   const failedCases = runnerResults.reduce((s, rr) => s + rr.failedCases, 0);
+  const erroredCases = runnerResults.reduce((s, rr) => s + rr.erroredCases, 0);
   const allSuitesGreen = runnerResults.every((rr) => rr.suiteGreen);
 
   const bundle: EvalBundle = {
@@ -647,6 +645,7 @@ export function assembleBundle(options: {
       totalCases,
       passedCases,
       failedCases,
+      ...erroredCasesField(erroredCases),
       allSuitesGreen,
       suites: [...bySuite.keys()],
       ...(repeatCount > 1 ? { repeatCount } : {}),
@@ -738,7 +737,8 @@ export class ArtifactBundleWriter {
    *
    * Steps:
    * 1. Resolve `assembledAt` and `mode` defaults, and refuse a run whose
-   *    `totalCases` is 0 with `EmptyRun` — nothing is written or indexed.
+   *    `totalCases` is 0 with `EmptyRun`, or whose every case errored with
+   *    `NoScoredCases` — nothing is written or indexed.
    * 2. For `"publish"` mode: verify `EVAL_RESULTS_REPO_TOKEN` is set.
    * 3. Assemble the `EvalBundle` (pure; runs through sanitizer).
    * 4. Compute the run ID prefix and scan for the next sequence number.
@@ -787,6 +787,27 @@ export class ArtifactBundleWriter {
 
     // Policy: dry-run bundles are always local-only
     const effectiveMode: BundleWriteMode = dryRun ? "local" : mode;
+
+    // Policy: a run in which every case errored measured nothing, so it is
+    // never published or indexed for the dashboard (Spec 37, 16.5). Locally
+    // it is still written, errored cases and all, so it can be inspected and
+    // `weave eval compare` can say it has no scored attempt.
+    const erroredCases = options.runnerResults.reduce(
+      (sum, result) => sum + result.erroredCases,
+      0,
+    );
+    if (effectiveMode === "publish" && erroredCases === totalCases) {
+      return new ResultAsync(
+        Promise.resolve(
+          err<BundleWriteResult, BundleError>({
+            type: "NoScoredCases",
+            message:
+              `Refusing to publish a run in which all ${totalCases} case(s) errored. ` +
+              "No case was scored, so there is nothing to publish.",
+          }),
+        ),
+      );
+    }
 
     // Token gate: publish mode requires EVAL_RESULTS_REPO_TOKEN
     if (effectiveMode === "publish") {

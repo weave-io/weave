@@ -396,6 +396,11 @@ get the verdict and the scores, but no transcript. See
 [Diagnose one case](../docs/agent-evals.md#diagnose-one-case) for a worked
 example and why raw artifacts stay opt-in.
 
+A case printed as `ERROR` rather than `FAIL` was never scored: the model's
+answer was empty or cut off by the token cap each time it was asked, or the request
+or the judge failed. It is not counted as a failure, and the run exits 1. See
+[Empty and truncated answers](../docs/agent-evals.md#empty-and-truncated-answers-errored-cases).
+
 Dry-run is the recommended contributor preflight path. It validates suite, model, and case allowlists without making model calls or requiring `OPENROUTER_API_KEY`. Valid dry runs exit `0`. Invalid dry runs exit non-zero because input validation still runs in dry-run mode.
 
 ### Filter semantics reminder

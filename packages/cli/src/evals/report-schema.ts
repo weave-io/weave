@@ -486,6 +486,31 @@ export type SuiteRepeats = z.infer<typeof SuiteRepeatsSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * Why a case produced no score, as a public report carries it
+ * (`errorClassification`).
+ *
+ * Only a fixed classification label derived from the typed error
+ * discriminant (e.g. `"model-empty-response"`, `"model-truncated-response"`,
+ * `"trajectory-TrajectoryRunnerUnavailable"`), never provider or scorer
+ * message text: the pattern admits letters, digits and hyphens only.
+ */
+export const ErrorClassificationSchema = z
+  .string()
+  .min(1, "errorClassification must be non-empty")
+  .max(80, "errorClassification must be at most 80 characters")
+  .regex(
+    /^[A-Za-z0-9-]+$/,
+    "errorClassification must be a label of letters, digits and hyphens",
+  );
+
+/**
+ * Optional count of errored cases on an aggregate record. Omitted when no
+ * case errored, so a run without errored cases publishes exactly what it
+ * did before the field existed.
+ */
+const ErroredCasesCountSchema = z.number().int().nonnegative().optional();
+
+/**
  * A single case entry in a public report suite summary.
  *
  * This is the publishable projection of a scored case result. It contains:
@@ -553,12 +578,35 @@ export const PublicCaseEntrySchema = z
      */
     attempt: z.number().int().min(1).optional(),
     /**
-     * `true` when this attempt produced no scorable answer. Absent otherwise.
-     * An errored attempt has `passed: false` and is left out of pass rates.
+     * `true` when this attempt produced no score: the model's answer was
+     * empty or truncated, the request failed, or scoring failed (Spec 37,
+     * 16.5). Absent otherwise. An errored entry is neither passed nor failed:
+     * it must have `passed: false`, and pass rates and counts leave it out.
      */
     errored: z.boolean().optional(),
+    /**
+     * Why the entry errored, as a fixed classification label. Allowed only
+     * with `errored: true`.
+     */
+    errorClassification: ErrorClassificationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((entry, ctx) => {
+    if (entry.errored === true && entry.passed) {
+      ctx.addIssue({
+        code: "custom",
+        message: "An errored case must have passed: false; it was never scored",
+        path: ["passed"],
+      });
+    }
+    if (entry.errorClassification !== undefined && entry.errored !== true) {
+      ctx.addIssue({
+        code: "custom",
+        message: "errorClassification is only allowed with errored: true",
+        path: ["errorClassification"],
+      });
+    }
+  });
 
 export type PublicCaseEntry = z.infer<typeof PublicCaseEntrySchema>;
 
@@ -599,9 +647,14 @@ export const SuiteSummaryEntrySchema = z
     totalCases: z.number().int().nonnegative(),
     /** Number of cases that passed. */
     passedCases: z.number().int().nonnegative(),
-    /** Number of cases that failed. */
+    /** Number of scored cases that failed. Errored cases are not counted. */
     failedCases: z.number().int().nonnegative(),
-    /** Whether all required cases passed. */
+    /**
+     * Number of cases that produced no score (`cases[].errored`). Omitted
+     * when none did. Must equal the number of errored case entries.
+     */
+    erroredCases: ErroredCasesCountSchema,
+    /** Whether all required cases passed and no case errored. */
     suiteGreen: z.boolean(),
     /**
      * Optional bounded explanation summarising the suite outcome.
@@ -636,6 +689,19 @@ export const SuiteSummaryEntrySchema = z
   })
   .strict()
   .superRefine((summary, ctx) => {
+    // Every errored entry is counted, and every count has its entry, so an
+    // errored case can be neither dropped nor invented (Spec 37, 16.5).
+    const erroredEntries = summary.cases.filter(
+      (c) => c.errored === true,
+    ).length;
+    if ((summary.erroredCases ?? 0) !== erroredEntries) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "erroredCases must equal the number of errored case entries; an errored case may not be dropped from a summary or counted without its entry",
+        path: ["erroredCases"],
+      });
+    }
     // A repeated suite tags every entry with its attempt, within the repeat
     // count; a suite that ran each case once tags none.
     const repeatCount = summary.repeats?.repeatCount;
@@ -714,9 +780,11 @@ export const PublicReportBundleSchema = z
         totalCases: z.number().int().nonnegative(),
         /** Total passing cases. */
         passedCases: z.number().int().nonnegative(),
-        /** Total failing cases. */
+        /** Total failing cases (scored cases that did not pass). */
         failedCases: z.number().int().nonnegative(),
-        /** Whether all required cases across all suites passed. */
+        /** Total cases that produced no score. Omitted when none did. */
+        erroredCases: ErroredCasesCountSchema,
+        /** Whether all required cases across all suites passed and none errored. */
         allSuitesGreen: z.boolean(),
         /** Names of suites included in this bundle. */
         suites: z.array(z.string().min(1)),
@@ -773,8 +841,10 @@ export const DashboardEntrySchema = z
     totalCases: z.number().int().nonnegative(),
     /** Total passing cases in this run. */
     passedCases: z.number().int().nonnegative(),
-    /** Total failing cases in this run. */
+    /** Total failing cases in this run (scored cases that did not pass). */
     failedCases: z.number().int().nonnegative(),
+    /** Cases in this run that produced no score. Omitted when none did. */
+    erroredCases: ErroredCasesCountSchema,
     /** Names of suites included in this run. */
     suites: z.array(z.string().min(1)),
     /** Relative path to the public-report.json for this run. */
@@ -851,11 +921,14 @@ export const SuiteHistoryPointSchema = z
     totalCases: z.number().int().nonnegative(),
     /** Passing cases in this run for this suite. */
     passedCases: z.number().int().nonnegative(),
+    /** Cases in this run for this suite that produced no score. Omitted when none did. */
+    erroredCases: ErroredCasesCountSchema,
     /** Whether all required cases passed (suite green status). */
     suiteGreen: z.boolean(),
     /**
-     * Pass rate in [0.0, 1.0].
-     * `null` when `totalCases === 0` (no cases ran).
+     * Pass rate in [0.0, 1.0] over the scored cases:
+     * `passedCases / (totalCases - erroredCases)`.
+     * `null` when no case was scored.
      */
     passRate: z.union([z.number().min(0).max(1), z.null()]),
     /**
@@ -924,15 +997,17 @@ export const ModelComparisonEntrySchema = z
     totalCases: z.number().int().nonnegative(),
     /** Passing cases for this model. */
     passedCases: z.number().int().nonnegative(),
-    /** Failing cases for this model. */
+    /** Failing cases for this model (scored cases that did not pass). */
     failedCases: z.number().int().nonnegative(),
+    /** Cases for this model that produced no score. Omitted when none did. */
+    erroredCases: ErroredCasesCountSchema,
     /**
-     * Pass rate in [0.0, 1.0].
-     * `null` when no cases were run for this model.
+     * Pass rate in [0.0, 1.0] over the scored cases.
+     * `null` when no case was scored for this model.
      */
     passRate: z.union([z.number().min(0).max(1), z.null()]),
     /**
-     * Per-suite pass rates for this model.
+     * Per-suite pass rates for this model, over scored cases.
      * Keys are suite names; values are pass rates in [0.0, 1.0] or null.
      */
     perSuitePassRates: z.record(
@@ -1068,6 +1143,11 @@ export const ScenarioRunHistoryEntrySchema = z
     failedModels: z.number().int().nonnegative(),
     /** Number of model runs that were skipped (dryRun or scoreBucket === "skip"). */
     skippedModels: z.number().int().nonnegative(),
+    /**
+     * Of `skippedModels`, the model runs that errored (produced no score).
+     * Omitted when none did.
+     */
+    erroredModels: ErroredCasesCountSchema,
   })
   .strict();
 

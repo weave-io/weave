@@ -18,9 +18,10 @@
  *
  * A set with no scored attempt has `passRate: null`, never 0 or 1.
  *
- * The legacy counts (`totalCases`, `passedCases`, `failedCases`) are not
- * derived here and keep their meaning: every attempt counts, and an errored
- * one counts as failed.
+ * The aggregate counts (`totalCases`, `passedCases`, `failedCases`,
+ * `erroredCases`) are not derived here but agree with it: since Spec 37 task
+ * 16.5 `failedCases` counts scored attempts only and errored ones are
+ * counted in `erroredCases` (see `case-outcomes.ts`).
  *
  * Pure functions only; no I/O.
  */

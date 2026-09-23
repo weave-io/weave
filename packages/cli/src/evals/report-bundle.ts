@@ -35,6 +35,12 @@
 
 import { err, ok, type Result } from "neverthrow";
 import {
+  caseOutcome,
+  countCaseOutcomes,
+  erroredCasesField,
+  scoredPassRate,
+} from "./case-outcomes.js";
+import {
   buildModelExplanation,
   buildSuiteExplanation,
 } from "./langchain-agent-evals.js";
@@ -102,7 +108,12 @@ export function assembleCaseEntry(
   row: BundleScoreFile["results"][number],
   suite: string,
 ): PublicCaseEntry {
-  const scoreBucket = computeScoreBucket(row.weightedTotal, row.dryRun);
+  // An errored case was never scored: it is bucketed "skip", like a dry run,
+  // so no reader counts its zero as a result.
+  const scoreBucket = computeScoreBucket(
+    row.errored === true ? undefined : row.weightedTotal,
+    row.dryRun,
+  );
 
   // Attempt to thread the publicExplanation through BoundedExplanationSchema.
   // Explanations that fail validation are silently dropped — the entry is still
@@ -143,6 +154,9 @@ export function assembleCaseEntry(
       : {}),
     ...(row.attempt !== undefined ? { attempt: row.attempt } : {}),
     ...(row.errored === true ? { errored: true } : {}),
+    ...(row.errored === true && row.errorClassification !== undefined
+      ? { errorClassification: row.errorClassification }
+      : {}),
   };
 
   return entry;
@@ -169,12 +183,8 @@ export function assembleSuiteSummary(
     return assembleCaseEntry(row, scoreFile.suite);
   });
 
-  const totalCases = cases.length;
-  const passedCases = cases.filter((c) => c.passed).length;
-  const failedCases = totalCases - passedCases;
-  const suiteGreen = cases
-    .filter((c) => c.required && !c.dryRun)
-    .every((c) => c.passed);
+  const { totalCases, passedCases, failedCases, erroredCases, suiteGreen } =
+    countCaseOutcomes(cases);
   const hasRuntimeVerifiedCases = cases.some(
     (c) => c.trajectorySummary !== undefined,
   );
@@ -187,6 +197,7 @@ export function assembleSuiteSummary(
     totalCases,
     suiteGreen,
     scoreFile.dryRun,
+    erroredCases,
   );
   const suiteExplanationValidated = BoundedExplanationSchema.safeParse({
     text: suiteExplanationText,
@@ -204,6 +215,7 @@ export function assembleSuiteSummary(
     totalCases,
     passedCases,
     failedCases,
+    ...erroredCasesField(erroredCases),
     suiteGreen,
     hasRuntimeVerifiedCases,
     ...(suiteExplanation !== undefined
@@ -277,7 +289,11 @@ export function assemblePublicReportBundle(
 
   const totalCases = suiteSummaries.reduce((s, ss) => s + ss.totalCases, 0);
   const passedCases = suiteSummaries.reduce((s, ss) => s + ss.passedCases, 0);
-  const failedCases = totalCases - passedCases;
+  const erroredCases = suiteSummaries.reduce(
+    (s, ss) => s + (ss.erroredCases ?? 0),
+    0,
+  );
+  const failedCases = totalCases - passedCases - erroredCases;
   const allSuitesGreen = suiteSummaries.every((ss) => ss.suiteGreen);
 
   const candidate: PublicReportBundle = {
@@ -289,6 +305,7 @@ export function assemblePublicReportBundle(
       totalCases,
       passedCases,
       failedCases,
+      ...erroredCasesField(erroredCases),
       allSuitesGreen,
       suites: suiteSummaries.map((ss) => ss.suite),
       ...(bundle.runSummary.repeatCount !== undefined &&
@@ -374,6 +391,7 @@ export function buildDashboardEntry(
     totalCases: bundle.runSummary.totalCases,
     passedCases: bundle.runSummary.passedCases,
     failedCases: bundle.runSummary.failedCases,
+    ...erroredCasesField(bundle.runSummary.erroredCases ?? 0),
     suites: bundle.runSummary.suites,
     bundleReportPath,
     ...(bundle.runSummary.repeatCount !== undefined
@@ -401,12 +419,15 @@ export function assembleModelComparisonManifest(
   runId: string,
 ): Result<ModelComparisonManifest, ReportAssemblyError> {
   // Aggregate per-model, per-suite counts from suite summaries
+  // Errored cases count toward a model's total but not its pass rate: they
+  // were never scored.
   const byModel = new Map<
     string,
     {
       total: number;
       passed: number;
-      bySuite: Map<string, { total: number; passed: number }>;
+      errored: number;
+      bySuite: Map<string, { total: number; passed: number; errored: number }>;
     }
   >();
 
@@ -415,18 +436,23 @@ export function assembleModelComparisonManifest(
       const existing = byModel.get(caseEntry.modelId) ?? {
         total: 0,
         passed: 0,
+        errored: 0,
         bySuite: new Map(),
       };
+      const outcome = caseOutcome(caseEntry);
 
       existing.total += 1;
-      if (caseEntry.passed) existing.passed += 1;
+      if (outcome === "passed") existing.passed += 1;
+      if (outcome === "errored") existing.errored += 1;
 
       const suiteStats = existing.bySuite.get(suiteSummary.suite) ?? {
         total: 0,
         passed: 0,
+        errored: 0,
       };
       suiteStats.total += 1;
-      if (caseEntry.passed) suiteStats.passed += 1;
+      if (outcome === "passed") suiteStats.passed += 1;
+      if (outcome === "errored") suiteStats.errored += 1;
       existing.bySuite.set(suiteSummary.suite, suiteStats);
       byModel.set(caseEntry.modelId, existing);
     }
@@ -434,13 +460,20 @@ export function assembleModelComparisonManifest(
 
   const models: ModelComparisonEntry[] = [];
   for (const [modelId, stats] of byModel) {
-    const passRate = stats.total === 0 ? null : stats.passed / stats.total;
+    const passRate = scoredPassRate(stats.passed, stats.total, stats.errored);
     const perSuitePassRates: Record<string, number | null> = {};
     for (const [suite, suiteStats] of stats.bySuite) {
-      perSuitePassRates[suite] =
-        suiteStats.total === 0 ? null : suiteStats.passed / suiteStats.total;
+      perSuitePassRates[suite] = scoredPassRate(
+        suiteStats.passed,
+        suiteStats.total,
+        suiteStats.errored,
+      );
     }
-    const overallBucket = computeScoreBucket(passRate ?? 0, bundle.dryRun);
+    // No scored case (every case errored) buckets as "skip", not "fail".
+    const overallBucket = computeScoreBucket(
+      passRate ?? undefined,
+      bundle.dryRun,
+    );
 
     // Build the model-level bounded explanation from structured aggregate signals only.
     // The text is derived from the score bucket enum, integer counts, and the dryRun
@@ -450,6 +483,7 @@ export function assembleModelComparisonManifest(
       stats.passed,
       stats.total,
       bundle.dryRun,
+      stats.errored,
     );
     const modelExplanationValidated = BoundedExplanationSchema.safeParse({
       text: modelExplanationText,
@@ -464,7 +498,8 @@ export function assembleModelComparisonManifest(
       displayName: modelId, // Use modelId as displayName when no model matrix available
       totalCases: stats.total,
       passedCases: stats.passed,
-      failedCases: stats.total - stats.passed,
+      failedCases: stats.total - stats.passed - stats.errored,
+      ...erroredCasesField(stats.errored),
       passRate,
       perSuitePassRates,
       overallBucket,

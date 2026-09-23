@@ -914,6 +914,82 @@ describe("a run scored no cases at all", () => {
   });
 });
 
+describe("every case the writer is handed errored and none was scored", () => {
+  const ALL_ERRORED = runnerResult({
+    caseResults: [
+      caseResult({
+        passed: false,
+        errored: true,
+        errorClassification: "model-empty-response",
+      }),
+      caseResult({
+        caseId: "route-to-pattern",
+        passed: false,
+        errored: true,
+        errorClassification: "model-truncated-response",
+      }),
+    ],
+  });
+
+  it("refuses to write, index or publish it, and says nothing was scored", async () => {
+    await withBundleRoot(async (root) => {
+      const handed: unknown[] = [];
+      const result = await new ArtifactBundleWriter(root).writeBundle({
+        runnerResults: [ALL_ERRORED],
+        provenanceManifest: provenanceManifest(),
+        gitSha: FIXED_GIT_SHA,
+        assembledAt: FIXED_TIMESTAMP,
+        mode: "publish",
+        env: TOKEN_ENV,
+        generateIndexes: true,
+        publisher: {
+          publish(request) {
+            handed.push(request);
+            return okAsync({
+              commitSha: null,
+              branch: "main",
+              filesPublished: 0,
+              simulated: true,
+            });
+          },
+        },
+      });
+
+      const error = result._unsafeUnwrapErr();
+      expect(error.type).toBe("NoScoredCases");
+      expect(error.message).toContain("all 2 case(s) errored");
+      expect(handed).toEqual([]);
+      expect(await tree(root)).toEqual([]);
+    });
+  });
+
+  it("writes the run once one case beside them was scored, with the errored ones marked", async () => {
+    await withBundleRoot(async (root) => {
+      const written = await write(root, {
+        runnerResults: [
+          runnerResult({
+            caseResults: [
+              ...ALL_ERRORED.caseResults,
+              caseResult({ caseId: "route-to-thread" }),
+            ],
+          }),
+        ],
+      });
+      const report = await Bun.file(
+        join(written.bundleDir, "public-report.json"),
+      ).json();
+
+      expect(report.runSummary).toMatchObject({
+        totalCases: 3,
+        passedCases: 1,
+        failedCases: 0,
+        erroredCases: 2,
+        allSuitesGreen: false,
+      });
+    });
+  });
+});
+
 describe("one suite of a run scored no cases, and another did", () => {
   it("writes the run, and still lists the empty suite so it is visible", async () => {
     await withBundleRoot(async (root) => {

@@ -559,6 +559,7 @@ describe("a maintainer dry-runs a suite before spending anything", () => {
         totalCases: 1,
         passedCases: 0,
         failedCases: 1,
+        erroredCases: 0,
         suiteGreen: true,
       },
     ]);
@@ -698,6 +699,7 @@ describe("a maintainer narrows the run to one case or one model", () => {
         totalCases: 1,
         passedCases: 1,
         failedCases: 0,
+        erroredCases: 0,
         suiteGreen: true,
       },
     ]);
@@ -778,17 +780,23 @@ describe("the model is unreachable mid-run", () => {
 
   it.each(
     EVERY_SUITE,
-  )("%s: scores the case zero and still publishes the run", async (_name, probe) => {
+  )("%s: reports the case as errored rather than scoring it zero, and exits non-zero", async (_name, probe) => {
     const run = await answer(probe, probe.goodAnswer, {
       modelError: NETWORK_ERROR,
     });
 
-    expect(run.firstCase?.passed).toBe(false);
-    expect(run.firstCase?.weightedTotal).toBe(0);
-    expect(run.exitCode).toBe(0);
-    expect(run.files).toContain(
-      `runs/abc123d-2026-01-15-001/score-${probe.suite}.json`,
-    );
+    expect(run.stdout).toContain(`ERROR ${probe.fixture.id} on ${EVAL_MODEL}`);
+    expect(run.stdout).toContain("Not scored: model-network-failure");
+    expect(run.stdout).toContain("1 case, 0 passed, 0 failed, 1 errored");
+    expect(run.partialFailures.map((failure) => failure.type)).toEqual([
+      "CasesErrored",
+    ]);
+    expect(run.exitCode).toBe(1);
+    expect(run.firstCase).toMatchObject({
+      passed: false,
+      errored: true,
+      errorClassification: "model-network-failure",
+    });
   });
 
   it.each(
@@ -814,9 +822,12 @@ describe("the model is unreachable mid-run", () => {
       modelError: NETWORK_ERROR,
     });
 
-    expect(run.firstCase?.caseId).toBe(probe.fixture.id);
+    // Positive first: the case was reported, so the absence is not a run
+    // that never got that far.
+    expect(run.stdout).toContain(`ERROR ${probe.fixture.id}`);
     expect(run.rawArtifacts).toEqual([]);
     expect(run.publishedText).not.toContain("ECONNREFUSED");
+    expect(run.stdout).not.toContain("ECONNREFUSED");
   });
 });
 
@@ -830,16 +841,17 @@ describe("the judge is unavailable", () => {
 
   it.each(
     JUDGE_DECIDES,
-  )("%s: scores the case zero rather than guessing, and keeps the suite running", async (_name, probe) => {
+  )("%s: reports the case as errored rather than guessing a score", async (_name, probe) => {
     const run = await answer(probe, probe.goodAnswer, {
       judgeError: JUDGE_ERROR,
     });
 
-    expect(run.firstCase?.caseId).toBe(probe.fixture.id);
-    expect(run.firstCase?.passed).toBe(false);
-    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain(`ERROR ${probe.fixture.id}`);
+    expect(run.stdout).toContain("Not scored: scoring-adapter-failure");
+    expect(run.exitCode).toBe(1);
     expect(run.publishedText).not.toContain("sk-ant-abcdef");
     expect(run.publishedText).not.toContain("judge transport failed");
+    expect(run.stdout).not.toContain("judge transport failed");
   });
 
   it.each(

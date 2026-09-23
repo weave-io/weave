@@ -1725,3 +1725,202 @@ describe("repeatCount on the report and the indexes", () => {
     ).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Errored cases (Spec 37, 16.5)
+// ---------------------------------------------------------------------------
+
+describe("errored cases in public schemas", () => {
+  const ERRORED_ENTRY = makeValidPublicCaseEntry({
+    caseId: "route-errored",
+    scoreBucket: "skip",
+    passed: false,
+    errored: true,
+    errorClassification: "model-empty-response",
+  });
+
+  describe("PublicCaseEntrySchema.errorClassification", () => {
+    it("accepts an errored entry with its classification", () => {
+      expect(PublicCaseEntrySchema.safeParse(ERRORED_ENTRY).success).toBe(true);
+    });
+
+    it("accepts a trajectory classification label", () => {
+      const result = PublicCaseEntrySchema.safeParse({
+        ...ERRORED_ENTRY,
+        errorClassification: "trajectory-TrajectoryRunnerUnavailable",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects an errored entry that claims to have passed", () => {
+      const result = PublicCaseEntrySchema.safeParse({
+        ...ERRORED_ENTRY,
+        passed: true,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["passed"]);
+      expect(result.error?.issues[0]?.message).toContain("never scored");
+    });
+
+    it("rejects a classification on an entry that did not error", () => {
+      const result = PublicCaseEntrySchema.safeParse(
+        makeValidPublicCaseEntry({
+          errorClassification: "model-empty-response",
+        }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["errorClassification"]);
+    });
+
+    it("rejects a classification carrying message text", () => {
+      const result = PublicCaseEntrySchema.safeParse({
+        ...ERRORED_ENTRY,
+        errorClassification: "connect ECONNREFUSED sk-or-v1-abc",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an empty or overlong classification", () => {
+      for (const errorClassification of ["", "a".repeat(81)]) {
+        expect(
+          PublicCaseEntrySchema.safeParse({
+            ...ERRORED_ENTRY,
+            errorClassification,
+          }).success,
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe("SuiteSummaryEntrySchema.erroredCases", () => {
+    it("accepts a count that matches the errored entries", () => {
+      const result = SuiteSummaryEntrySchema.safeParse(
+        makeValidSuiteSummaryEntry({
+          totalCases: 2,
+          passedCases: 1,
+          failedCases: 0,
+          erroredCases: 1,
+          cases: [makeValidPublicCaseEntry(), ERRORED_ENTRY],
+        }),
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it("still accepts a summary without the field when no case errored", () => {
+      const result = SuiteSummaryEntrySchema.safeParse(
+        makeValidSuiteSummaryEntry(),
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects an errored entry the count leaves out", () => {
+      const result = SuiteSummaryEntrySchema.safeParse(
+        makeValidSuiteSummaryEntry({
+          cases: [makeValidPublicCaseEntry(), ERRORED_ENTRY],
+        }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["erroredCases"]);
+    });
+
+    it("rejects a count with no errored entry behind it", () => {
+      const result = SuiteSummaryEntrySchema.safeParse(
+        makeValidSuiteSummaryEntry({ erroredCases: 1 }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("may not be dropped");
+    });
+
+    it("rejects a negative or fractional count", () => {
+      for (const erroredCases of [-1, 0.5]) {
+        expect(
+          SuiteSummaryEntrySchema.safeParse(
+            makeValidSuiteSummaryEntry({ erroredCases }),
+          ).success,
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe("aggregate records accept an optional erroredCases", () => {
+    it("PublicReportBundleSchema.runSummary", () => {
+      const bundle = makeValidPublicReportBundle();
+      const accepted = PublicReportBundleSchema.safeParse({
+        ...bundle,
+        runSummary: { ...bundle.runSummary, erroredCases: 1 },
+      });
+      const rejected = PublicReportBundleSchema.safeParse({
+        ...bundle,
+        runSummary: { ...bundle.runSummary, erroredCases: -1 },
+      });
+      expect(accepted.success).toBe(true);
+      expect(rejected.success).toBe(false);
+    });
+
+    it("DashboardEntrySchema", () => {
+      expect(
+        DashboardEntrySchema.safeParse(
+          makeValidDashboardEntry({ erroredCases: 2 }),
+        ).success,
+      ).toBe(true);
+      expect(
+        DashboardEntrySchema.safeParse(
+          makeValidDashboardEntry({ erroredCases: "2" }),
+        ).success,
+      ).toBe(false);
+    });
+
+    it("SuiteHistoryManifestSchema history points", () => {
+      const manifest = makeValidSuiteHistoryManifest();
+      const point = { ...manifest.history[0], erroredCases: 1, passRate: 1 };
+      expect(
+        SuiteHistoryManifestSchema.safeParse({ ...manifest, history: [point] })
+          .success,
+      ).toBe(true);
+      expect(
+        SuiteHistoryManifestSchema.safeParse({
+          ...manifest,
+          history: [{ ...point, erroredCases: -3 }],
+        }).success,
+      ).toBe(false);
+    });
+
+    it("ModelComparisonEntrySchema", () => {
+      const entry = {
+        modelId: "deepseek/deepseek-v4-flash-0731",
+        displayName: "DeepSeek V4 Flash",
+        totalCases: 3,
+        passedCases: 0,
+        failedCases: 0,
+        erroredCases: 3,
+        passRate: null,
+        perSuitePassRates: { "loom-routing": null },
+        overallBucket: "skip",
+      };
+      expect(ModelComparisonEntrySchema.safeParse(entry).success).toBe(true);
+      expect(
+        ModelComparisonEntrySchema.safeParse({ ...entry, erroredCases: 1.5 })
+          .success,
+      ).toBe(false);
+    });
+
+    it("ScenarioRunHistoryEntrySchema.erroredModels", () => {
+      const entry = {
+        runId: "abc1234-2026-01-15-001",
+        assembledAt: "2026-01-15T12:00:00.000Z",
+        status: "skip",
+        passed: false,
+        totalModels: 0,
+        passedModels: 0,
+        failedModels: 0,
+        skippedModels: 1,
+        erroredModels: 1,
+      };
+      expect(ScenarioRunHistoryEntrySchema.safeParse(entry).success).toBe(true);
+      expect(
+        ScenarioRunHistoryEntrySchema.safeParse({ ...entry, erroredModels: -1 })
+          .success,
+      ).toBe(false);
+    });
+  });
+});

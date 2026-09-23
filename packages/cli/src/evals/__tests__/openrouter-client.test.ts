@@ -27,9 +27,13 @@ import type { EvalEnv } from "../env.js";
 import { DEFAULT_OPENROUTER_BASE_URL } from "../env.js";
 import {
   type ChatMessage,
+  DEFAULT_MAX_COMPLETION_TOKENS,
+  isRetryableAnswerError,
+  MAX_ANSWER_ATTEMPTS,
   type ModelClientError,
   type ModelRequest,
   OpenRouterClient,
+  RetryingModelClient,
   StubModelClient,
 } from "../openrouter-client.js";
 
@@ -512,6 +516,177 @@ describe("OpenRouterClient — empty response", () => {
 
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("EmptyResponse");
+  });
+});
+
+describe("OpenRouterClient — answers with no usable content (Spec 37, 16.5)", () => {
+  /**
+   * What `deepseek/deepseek-v4-flash-0731` returned on 23 Sep 2026 at the old
+   * 2048-token cap: every completion token spent reasoning, a single space
+   * as the answer, `finish_reason: "length"`.
+   */
+  const REASONING_EXHAUSTED = {
+    model: "deepseek/deepseek-v4-flash-0731",
+    choices: [
+      {
+        finish_reason: "length",
+        message: { role: "assistant", content: " " },
+      },
+    ],
+    usage: {
+      prompt_tokens: 1785,
+      completion_tokens: 2048,
+      total_tokens: 3833,
+      completion_tokens_details: { reasoning_tokens: 2048 },
+    },
+  };
+
+  it("returns TruncatedResponse, with the reasoning tokens, when the cap is hit before any answer", async () => {
+    globalThis.fetch = mockFetchOk(REASONING_EXHAUSTED);
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "TruncatedResponse",
+      usage: { completionTokens: 2048, reasoningTokens: 2048 },
+    });
+    expect(result._unsafeUnwrapErr().message).toContain(
+      "2048 of 2048 completion tokens were reasoning",
+    );
+  });
+
+  it("returns EmptyResponse for a whitespace-only answer that was not cut off", async () => {
+    globalThis.fetch = mockFetchOk({
+      model: "deepseek/deepseek-v4-flash-0731",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { role: "assistant", content: " \n" },
+        },
+      ],
+    });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "EmptyResponse",
+      finishReason: "stop",
+    });
+  });
+
+  it("returns an answer that was cut off after it started, with its finish reason", async () => {
+    globalThis.fetch = mockFetchOk({
+      ...REASONING_EXHAUSTED,
+      choices: [
+        {
+          finish_reason: "length",
+          message: { role: "assistant", content: "[REJECT] Reviewed" },
+        },
+      ],
+    });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap()).toMatchObject({
+      content: "[REJECT] Reviewed",
+      finishReason: "length",
+      usage: { reasoningTokens: 2048 },
+    });
+  });
+
+  it("asks for DEFAULT_MAX_COMPLETION_TOKENS, room for reasoning and an answer, by default", async () => {
+    let sentBody: Record<string, unknown> = {};
+    globalThis.fetch = mock(
+      async (_url: URL | RequestInfo, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify(openRouterSuccess("ok")), {
+          status: 200,
+        });
+      },
+    ) as unknown as typeof fetch;
+
+    await new OpenRouterClient(VALID_ENV).complete(MINIMAL_REQUEST);
+
+    expect(sentBody.max_tokens).toBe(DEFAULT_MAX_COMPLETION_TOKENS);
+    expect(DEFAULT_MAX_COMPLETION_TOKENS).toBeGreaterThanOrEqual(16384);
+  });
+});
+
+describe("RetryingModelClient", () => {
+  const EMPTY: ModelClientError = { type: "EmptyResponse", message: "empty" };
+  const TRUNCATED: ModelClientError = {
+    type: "TruncatedResponse",
+    message: "truncated",
+  };
+  const ANSWER = { model: "m", content: "an answer" };
+
+  it("asks again after an empty or truncated answer and returns the answer that follows", async () => {
+    const stub = new StubModelClient();
+    stub.enqueueError(EMPTY);
+    stub.enqueueError(TRUNCATED);
+    stub.enqueueResponse(ANSWER);
+
+    const result = await new RetryingModelClient(stub).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap()).toEqual(ANSWER);
+    expect(stub.calls).toHaveLength(3);
+  });
+
+  it(`stops after ${MAX_ANSWER_ATTEMPTS} attempts and returns the last error`, async () => {
+    const stub = new StubModelClient();
+    stub.enqueueError(EMPTY);
+    stub.enqueueError(EMPTY);
+    stub.enqueueError(TRUNCATED);
+    stub.setDefaultResponse(ANSWER);
+
+    const result = await new RetryingModelClient(stub).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr().type).toBe("TruncatedResponse");
+    expect(stub.calls).toHaveLength(MAX_ANSWER_ATTEMPTS);
+  });
+
+  it.each<ModelClientError>([
+    { type: "NetworkError", message: "down" },
+    { type: "HttpError", statusCode: 500, message: "boom" },
+    { type: "ParseError", message: "bad json" },
+  ])("returns a $type at once, without asking again", async (error) => {
+    const stub = new StubModelClient();
+    stub.enqueueError(error);
+    stub.setDefaultResponse(ANSWER);
+
+    const result = await new RetryingModelClient(stub).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr().type).toBe(error.type);
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it("returns a first answer without a second call", async () => {
+    const stub = new StubModelClient();
+    stub.setDefaultResponse(ANSWER);
+
+    await new RetryingModelClient(stub).complete(MINIMAL_REQUEST);
+
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it("classifies only empty and truncated answers as retryable", () => {
+    expect(isRetryableAnswerError(EMPTY)).toBe(true);
+    expect(isRetryableAnswerError(TRUNCATED)).toBe(true);
+    expect(isRetryableAnswerError({ type: "NetworkError", message: "x" })).toBe(
+      false,
+    );
   });
 });
 

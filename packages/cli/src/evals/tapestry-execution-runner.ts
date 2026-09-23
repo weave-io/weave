@@ -71,6 +71,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
 import { hasAffirmedMatch, isJudgmentCase } from "./judgment-cases.js";
 import {
@@ -449,37 +450,6 @@ function buildModelRunOutput(
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a sanitized, allowlisted classification label from a typed error
- * discriminant.
- *
- * Maps known error type strings to short classification labels safe to store
- * in `RawErrorSummary.classification`. Never copies raw provider/scorer
- * message text.
- */
-function classifyErrorType(errorType: string): string {
-  switch (errorType) {
-    case "NetworkError":
-      return "model-network-failure";
-    case "HttpError":
-      return "model-http-failure";
-    case "ParseError":
-      return "model-parse-failure";
-    case "EmptyResponse":
-      return "model-empty-response";
-    case "NotConfigured":
-      return "stub-not-configured";
-    case "RubricNotFound":
-      return "scoring-rubric-missing";
-    case "RubricCaseMismatch":
-      return "scoring-rubric-mismatch";
-    case "ScorerAdapterError":
-      return "scoring-adapter-failure";
-    default:
-      return "unknown-error";
-  }
-}
-
-/**
  * Maximum character length for `RawErrorSummary.localDiagnostic`.
  */
 const LOCAL_DIAGNOSTIC_MAX_CHARS = 500;
@@ -555,6 +525,8 @@ function buildErrorResult(
     dimensionScores,
     scoredAt,
     dryRun: false,
+    errored: true,
+    errorClassification: classifyErrorType(errorType),
   };
 
   const errorSummary: RawErrorSummary = {
@@ -1159,20 +1131,10 @@ export class TapestryExecutionRunner {
     suite: string,
     caseResults: CaseResult[],
   ): RunnerResult {
-    const passedCases = caseResults.filter((r) => r.summary.passed).length;
-    const failedCases = caseResults.length - passedCases;
-
-    const suiteGreen = caseResults
-      .filter((r) => r.summary.required && !r.summary.dryRun)
-      .every((r) => r.summary.passed);
-
     return {
       suite,
-      suiteGreen,
       caseResults,
-      totalCases: caseResults.length,
-      passedCases,
-      failedCases,
+      ...countCaseOutcomes(caseResults.map((r) => r.summary)),
       completedAt: new Date().toISOString(),
     };
   }

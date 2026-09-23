@@ -311,6 +311,14 @@
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - _...4 more_
+- `packages/cli/src/evals/case-outcomes.ts`
+  - function classifyErrorType: (errorType) => string
+  - function caseOutcome: (row) => CaseOutcome
+  - function countCaseOutcomes: (rows) => CaseOutcomeCounts
+  - function scoredPassRate: (passedCases, totalCases, erroredCases) => number | null
+  - function erroredCasesField: (erroredCases) => void
+  - interface CaseOutcomeRow
+  - _...2 more_
 - `packages/cli/src/evals/compare-report.ts` — class ComparisonReport
 - `packages/cli/src/evals/compare.ts`
   - function compareRuns: (baseline, candidate) => Result<RunComparison, CompareError>
@@ -371,8 +379,8 @@
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
-  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
-  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
+  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun, erroredCases) => string
+  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun, erroredCases) => string
   - _...13 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
@@ -403,13 +411,13 @@
   - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>
   - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
+  - function isRetryableAnswerError: (error) => boolean
   - class OpenRouterClient
+  - class RetryingModelClient
   - class StubModelClient
   - interface ChatMessage
   - interface ModelRequest
-  - interface ModelResponse
-  - interface ModelClient
-  - _...1 more_
+  - _...6 more_
 - `packages/cli/src/evals/pass-rates.ts`
   - function isErroredAttempt: (outcome) => boolean
   - function tallyAttempts: (outcomes) => AttemptTally
@@ -425,7 +433,7 @@
   - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
   - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
   - function redactSecrets: (raw) => string
-  - _...7 more_
+  - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -471,7 +479,7 @@
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
   - type ModelAttemptTallyEntry
-  - _...43 more_
+  - _...44 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>

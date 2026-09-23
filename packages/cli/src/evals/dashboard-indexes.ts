@@ -64,6 +64,7 @@
 import { join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { RUNS_SUBDIR } from "./artifact-bundle.js";
+import { erroredCasesField, scoredPassRate } from "./case-outcomes.js";
 import { TARGET_RUNS_PREFIX } from "./github-contents-publisher.js";
 import {
   appendSuiteHistoryPoint,
@@ -174,8 +175,10 @@ export interface LatestRunSnapshot {
   totalCases: number;
   /** Passing cases in the most recent run. */
   passedCases: number;
-  /** Failing cases in the most recent run. */
+  /** Failing cases in the most recent run (scored cases that did not pass). */
   failedCases: number;
+  /** Cases in the most recent run that produced no score. Omitted when none did. */
+  erroredCases?: number;
   /** Suite names included in the most recent run. */
   suites: string[];
   /**
@@ -205,8 +208,10 @@ export interface LastNRunEntry {
   totalCases: number;
   /** Passing cases in this run. */
   passedCases: number;
-  /** Failing cases in this run. */
+  /** Failing cases in this run (scored cases that did not pass). */
   failedCases: number;
+  /** Cases in this run that produced no score. Omitted when none did. */
+  erroredCases?: number;
   /** Suite names in this run. */
   suites: string[];
   /** How many times each case ran per model; present only when > 1. */
@@ -344,6 +349,7 @@ export function buildLatestSnapshot(
     totalCases: bundle.runSummary.totalCases,
     passedCases: bundle.runSummary.passedCases,
     failedCases: bundle.runSummary.failedCases,
+    ...erroredCasesField(bundle.runSummary.erroredCases ?? 0),
     suites: bundle.runSummary.suites,
     ...repeatCountOf(bundle),
   };
@@ -381,6 +387,7 @@ export function buildLastNRuns(
     totalCases: bundle.runSummary.totalCases,
     passedCases: bundle.runSummary.passedCases,
     failedCases: bundle.runSummary.failedCases,
+    ...erroredCasesField(bundle.runSummary.erroredCases ?? 0),
     suites: bundle.runSummary.suites,
     ...repeatCountOf(bundle),
   }));
@@ -430,11 +437,16 @@ function deriveScenarioRunStatus(
  * considered attempt passed, so a case that passed on some repeats and failed
  * on others counts as failed for that model. Without repeats each model has
  * one entry and this is the plain per-entry count.
+ *
+ * `erroredModels` counts the skipped models that were skipped because every
+ * attempt they made errored (Spec 37, 16.5), so an errored model is never
+ * counted as failed and is still visible.
  */
 function countScenarioModels(entries: readonly PublicCaseEntry[]): {
   passedModels: number;
   failedModels: number;
   skippedModels: number;
+  erroredModels: number;
 } {
   const byModel = new Map<string, PublicCaseEntry[]>();
   for (const entry of entries) {
@@ -446,12 +458,14 @@ function countScenarioModels(entries: readonly PublicCaseEntry[]): {
   let passedModels = 0;
   let failedModels = 0;
   let skippedModels = 0;
+  let erroredModels = 0;
   for (const attempts of byModel.values()) {
     const considered = attempts.filter(
       (e) => !e.dryRun && e.scoreBucket !== "skip" && e.errored !== true,
     );
     if (considered.length === 0) {
       skippedModels++;
+      if (attempts.some((e) => e.errored === true)) erroredModels++;
       continue;
     }
     if (considered.every((e) => e.passed)) {
@@ -460,7 +474,7 @@ function countScenarioModels(entries: readonly PublicCaseEntry[]): {
     }
     failedModels++;
   }
-  return { passedModels, failedModels, skippedModels };
+  return { passedModels, failedModels, skippedModels, erroredModels };
 }
 
 /**
@@ -498,7 +512,7 @@ export function buildScenarioHistories(
       }
 
       for (const [caseId, entries] of caseGroups) {
-        const { passedModels, failedModels, skippedModels } =
+        const { passedModels, failedModels, skippedModels, erroredModels } =
           countScenarioModels(entries);
 
         const totalModels = passedModels + failedModels;
@@ -517,6 +531,7 @@ export function buildScenarioHistories(
           passedModels,
           failedModels,
           skippedModels,
+          ...(erroredModels === 0 ? {} : { erroredModels }),
         };
 
         let latestDescription: string | undefined;
@@ -691,10 +706,13 @@ export function generateDashboardIndexes(
 
   for (const { runId, bundle } of runsOldestFirst) {
     for (const suiteSummary of bundle.suiteSummaries) {
-      const passRate =
-        suiteSummary.totalCases === 0
-          ? null
-          : suiteSummary.passedCases / suiteSummary.totalCases;
+      // Over scored cases only: an errored case was never measured.
+      const erroredCases = suiteSummary.erroredCases ?? 0;
+      const passRate = scoredPassRate(
+        suiteSummary.passedCases,
+        suiteSummary.totalCases,
+        erroredCases,
+      );
 
       const point = {
         assembledAt: bundle.assembledAt,
@@ -702,6 +720,7 @@ export function generateDashboardIndexes(
         runId,
         totalCases: suiteSummary.totalCases,
         passedCases: suiteSummary.passedCases,
+        ...erroredCasesField(erroredCases),
         suiteGreen: suiteSummary.suiteGreen,
         passRate,
         ...repeatCountOf(bundle),

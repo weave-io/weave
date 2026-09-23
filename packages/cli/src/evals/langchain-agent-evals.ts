@@ -1093,6 +1093,21 @@ export function buildPublicExplanation(
 }
 
 /**
+ * "<label>; P/T passed, F failed[, E errored]" from integer counts. Errored
+ * cases are named separately so they never read as failures.
+ */
+function describeCounts(
+  label: string,
+  passedCases: number,
+  totalCases: number,
+  erroredCases: number,
+): string {
+  const failedCases = totalCases - passedCases - erroredCases;
+  const errored = erroredCases === 0 ? "" : `, ${erroredCases} errored`;
+  return `${label}; ${passedCases}/${totalCases} passed, ${failedCases} failed${errored}`;
+}
+
+/**
  * Build a short bounded explanation for a suite summary.
  *
  * # Security contract
@@ -1117,18 +1132,22 @@ export function buildSuiteExplanation(
   totalCases: number,
   suiteGreen: boolean,
   dryRun: boolean,
+  erroredCases = 0,
 ): string {
   if (dryRun) {
     return `dry-run suite; ${totalCases} case(s) in workload`;
   }
 
   const greenLabel = suiteGreen ? "green" : "not green";
-  const failedCases = totalCases - passedCases;
-
   const text =
-    failedCases === 0
+    passedCases === totalCases
       ? `suite ${greenLabel}; all ${totalCases} case(s) passed`
-      : `suite ${greenLabel}; ${passedCases}/${totalCases} passed, ${failedCases} failed`;
+      : describeCounts(
+          `suite ${greenLabel}`,
+          passedCases,
+          totalCases,
+          erroredCases,
+        );
 
   // Hard cap for defense-in-depth
   if (text.length > EXPLANATION_MAX_CHARS) {
@@ -1163,8 +1182,12 @@ export function buildModelExplanation(
   passedCases: number,
   totalCases: number,
   dryRun: boolean,
+  erroredCases = 0,
 ): string {
-  if (dryRun || overallBucket === "skip") {
+  if (dryRun) {
+    return `dry-run model; ${totalCases} case(s) in workload`;
+  }
+  if (overallBucket === "skip" && erroredCases === 0) {
     return `dry-run model; ${totalCases} case(s) in workload`;
   }
 
@@ -1175,12 +1198,19 @@ export function buildModelExplanation(
   if (overallBucket === "partial") {
     bucketLabel = "partial";
   }
+  if (overallBucket === "skip") {
+    bucketLabel = "skip";
+  }
 
-  const failedCases = totalCases - passedCases;
   const text =
     totalCases === 0
       ? `model bucket: ${bucketLabel}; no cases run`
-      : `model bucket: ${bucketLabel}; ${passedCases}/${totalCases} passed, ${failedCases} failed`;
+      : describeCounts(
+          `model bucket: ${bucketLabel}`,
+          passedCases,
+          totalCases,
+          erroredCases,
+        );
 
   // Hard cap for defense-in-depth
   if (text.length > EXPLANATION_MAX_CHARS) {

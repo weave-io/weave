@@ -36,8 +36,38 @@
  * `Authorization` header and never reads it back.
  */
 
+import { logger } from "@weaveio/weave-engine";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalEnv } from "./env.js";
+
+const log = logger.child({ module: "eval-model-client" });
+
+/**
+ * The completion-token cap `OpenRouterClient` sends when a request sets none.
+ *
+ * On OpenRouter a reasoning model's hidden reasoning tokens count against
+ * `max_tokens`. At the old cap of 2048, `deepseek/deepseek-v4-flash-0731`
+ * sometimes spent all of it reasoning and returned `finish_reason: "length"`
+ * with a single space as its answer (measured 23 Sep 2026: 1,221–7,508
+ * reasoning tokens for one Weft case across six calls). The cap is sized for
+ * reasoning plus the answer, not for the answer alone. Only tokens a model
+ * actually generates are billed, so a model that answers in 500 tokens costs
+ * the same under either cap; the cap bounds only a runaway call.
+ *
+ * It applies to every model and every suite, so adding a model to
+ * `evals/model-matrix.json` stays a one-line edit. It replaces the Pattern
+ * runner's own 8192-token budget for plans (`PATTERN_PLAN_MAX_TOKENS`), which
+ * existed because the old default cut plans off. See `docs/agent-evals.md`,
+ * "Empty and truncated answers".
+ */
+export const DEFAULT_MAX_COMPLETION_TOKENS = 16384;
+
+/**
+ * How many times `RetryingModelClient` asks for an answer before it reports
+ * an empty or truncated one as an infrastructure error: the first attempt
+ * plus two retries.
+ */
+export const MAX_ANSWER_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // Chat message types (OpenAI-compatible)
@@ -70,8 +100,8 @@ export interface ModelRequest {
   /** The ordered list of messages forming the conversation. */
   messages: ChatMessage[];
   /**
-   * Maximum number of tokens to generate in the response.
-   * Defaults to `2048` when omitted.
+   * Maximum number of tokens to generate in the response, reasoning tokens
+   * included. Defaults to `DEFAULT_MAX_COMPLETION_TOKENS` when omitted.
    */
   maxTokens?: number;
   /**
@@ -94,17 +124,30 @@ export interface ModelResponse {
   /** The text content of the first (and usually only) choice. */
   content: string;
   /**
+   * Why the model stopped (`"stop"`, `"length"`, …), as OpenRouter reports
+   * it in `choices[0].finish_reason`. `undefined` when the provider omits it.
+   */
+  finishReason?: string;
+  /**
    * Token usage reported by the provider.
    * Present when the provider returns it; `undefined` otherwise.
    */
-  usage?: {
-    /** Tokens in the input prompt. */
-    promptTokens: number;
-    /** Tokens in the generated completion. */
-    completionTokens: number;
-    /** Total tokens (prompt + completion). */
-    totalTokens: number;
-  };
+  usage?: ModelUsage;
+}
+
+/** Token usage as `ModelResponse` and the answer errors report it. */
+export interface ModelUsage {
+  /** Tokens in the input prompt. */
+  promptTokens: number;
+  /** Tokens in the generated completion, reasoning tokens included. */
+  completionTokens: number;
+  /** Total tokens (prompt + completion). */
+  totalTokens: number;
+  /**
+   * Of `completionTokens`, how many the model spent reasoning. Present only
+   * when the provider reports it.
+   */
+  reasoningTokens?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,9 +183,30 @@ export type ModelClientError =
       message: string;
     }
   | {
+      /**
+       * The model finished but its answer has no usable content: missing,
+       * `null`, empty, or whitespace only. This is an infrastructure error,
+       * not an answer: the case is reported as errored and never scored
+       * (see `case-outcomes.ts`).
+       */
       type: "EmptyResponse";
       /** Human-readable description. */
       message: string;
+      /** `choices[0].finish_reason`, when the provider sent one. */
+      finishReason?: string;
+    }
+  | {
+      /**
+       * The model hit the completion-token cap (`finish_reason: "length"`)
+       * before producing any usable content, typically a reasoning model
+       * that spent the whole budget reasoning. Like `EmptyResponse`, the
+       * case is reported as errored and never scored.
+       */
+      type: "TruncatedResponse";
+      /** Human-readable description. */
+      message: string;
+      /** Token usage the provider reported, when it sent any. */
+      usage?: ModelUsage;
     }
   | {
       /**
@@ -192,18 +256,73 @@ export interface ModelClient {
 interface OpenRouterChatCompletionResponse {
   model?: string;
   choices?: Array<{
+    finish_reason?: string | null;
     message?: {
       content?: string | null;
     };
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
+  usage?: OpenRouterUsage;
   error?: {
     message?: string;
     code?: number | string;
+  };
+}
+
+/** The `usage` block of an OpenRouter chat completion response. */
+interface OpenRouterUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+  };
+}
+
+function normalizeUsage(
+  usage: OpenRouterUsage | undefined,
+): ModelUsage | undefined {
+  if (usage === undefined) return undefined;
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
+  return {
+    promptTokens: usage.prompt_tokens ?? 0,
+    completionTokens: usage.completion_tokens ?? 0,
+    totalTokens: usage.total_tokens ?? 0,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+  };
+}
+
+/**
+ * Whether an answer has anything in it to score. A reasoning model cut off
+ * by the token cap returns a single space, so whitespace-only counts as none.
+ */
+function hasUsableContent(
+  content: string | null | undefined,
+): content is string {
+  if (content === undefined || content === null) return false;
+  return content.trim() !== "";
+}
+
+/** The typed error for an answer with no usable content. */
+function unusableAnswerError(
+  finishReason: string | undefined,
+  usage: ModelUsage | undefined,
+): ModelClientError {
+  if (finishReason === "length") {
+    const reasoning =
+      usage?.reasoningTokens !== undefined
+        ? ` (${usage.reasoningTokens} of ${usage.completionTokens} completion tokens were reasoning)`
+        : "";
+    return {
+      type: "TruncatedResponse",
+      message: `The model reached its completion-token cap before answering${reasoning}.`,
+      ...(usage !== undefined ? { usage } : {}),
+    };
+  }
+  return {
+    type: "EmptyResponse",
+    message:
+      "OpenRouter returned a response with no usable content in choices[0].message.content",
+    ...(finishReason !== undefined ? { finishReason } : {}),
   };
 }
 
@@ -250,7 +369,7 @@ export class OpenRouterClient implements ModelClient {
     const body = JSON.stringify({
       model: request.model,
       messages: request.messages,
-      max_tokens: request.maxTokens ?? 2048,
+      max_tokens: request.maxTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
       temperature: request.temperature ?? 0.2,
     });
 
@@ -320,40 +439,95 @@ export class OpenRouterClient implements ModelClient {
           );
         }
 
-        const content = data.choices?.[0]?.message?.content;
-        if (content === undefined || content === null || content === "") {
+        const choice = data.choices?.[0];
+        const content = choice?.message?.content;
+        const finishReason = choice?.finish_reason ?? undefined;
+        const usage = normalizeUsage(data.usage);
+
+        if (!hasUsableContent(content)) {
           return new ResultAsync(
             Promise.resolve(
-              err<ModelResponse, ModelClientError>({
-                type: "EmptyResponse",
-                message:
-                  "OpenRouter returned a response with no content in choices[0].message.content",
-              }),
+              err<ModelResponse, ModelClientError>(
+                unusableAnswerError(finishReason, usage),
+              ),
             ),
           );
         }
 
         const modelId = data.model ?? request.model;
 
-        const usage =
-          data.usage !== undefined
-            ? {
-                promptTokens: data.usage.prompt_tokens ?? 0,
-                completionTokens: data.usage.completion_tokens ?? 0,
-                totalTokens: data.usage.total_tokens ?? 0,
-              }
-            : undefined;
-
         return new ResultAsync(
           Promise.resolve(
             ok<ModelResponse, ModelClientError>({
               model: modelId,
               content,
+              ...(finishReason !== undefined ? { finishReason } : {}),
               usage,
             }),
           ),
         );
       });
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RetryingModelClient — bounded retry for answers with no usable content
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether an error is an answer with nothing in it, which asking again can
+ * fix. Reasoning models vary a lot from call to call in how long they reason
+ * (see `DEFAULT_MAX_COMPLETION_TOKENS`), so a second call usually answers.
+ *
+ * Transport errors (`NetworkError`, `HttpError`, `ParseError`) are not
+ * retried here: they are reported as errored cases like these, but whether
+ * and how to retry them is a transport policy this client does not own.
+ */
+export function isRetryableAnswerError(error: ModelClientError): boolean {
+  return error.type === "EmptyResponse" || error.type === "TruncatedResponse";
+}
+
+/**
+ * A `ModelClient` that asks again, up to `maxAttempts` times in all, when the
+ * model returns an empty or truncated answer. Any other error, and any
+ * answer, is returned at once. When every attempt comes back empty or
+ * truncated, the last attempt's error is returned, and the runner reports
+ * the case as errored rather than scoring it.
+ *
+ * `EvalOrchestrator` wraps the client it is given in one of these, so every
+ * suite gets the same policy and a stubbed client exercises it too.
+ */
+export class RetryingModelClient implements ModelClient {
+  constructor(
+    private readonly inner: ModelClient,
+    private readonly maxAttempts: number = MAX_ANSWER_ATTEMPTS,
+  ) {}
+
+  complete(
+    request: ModelRequest,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    return this.attempt(request, 1);
+  }
+
+  private attempt(
+    request: ModelRequest,
+    attempt: number,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    return this.inner.complete(request).orElse((error) => {
+      if (!isRetryableAnswerError(error)) return err(error);
+      if (attempt >= this.maxAttempts) {
+        log.warn(
+          { model: request.model, errorType: error.type, attempts: attempt },
+          "Model returned no usable answer on every attempt; the case is reported as errored",
+        );
+        return err(error);
+      }
+      log.warn(
+        { model: request.model, errorType: error.type, attempt },
+        "Model returned no usable answer; asking again",
+      );
+      return this.attempt(request, attempt + 1);
     });
   }
 }

@@ -12,6 +12,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import { buildRequiredSignalsLine } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
@@ -36,14 +37,6 @@ import type {
 } from "./types.js";
 
 export const PATTERN_PLANNING_SUITE = "pattern-planning";
-
-/**
- * Output budget for a plan. Full plans run to several thousand characters,
- * and reasoning models spend part of the budget before answering; at the
- * client default (2048) plans were cut off mid-task, which failed them on
- * structure they would otherwise have had.
- */
-export const PATTERN_PLAN_MAX_TOKENS = 8192;
 
 const STRUCTURAL_TAG_RE = /(?:^|\s)#(?<tag>[a-z_][a-z0-9_-]*)\b/gim;
 const TASK_CHECKBOX_LINE_RE = /^\s*[-*]\s*\[[ xX]?\]\s+.+$/gm;
@@ -537,29 +530,6 @@ export function buildModelRunOutput(
   };
 }
 
-function classifyErrorType(errorType: string): string {
-  switch (errorType) {
-    case "NetworkError":
-      return "model-network-failure";
-    case "HttpError":
-      return "model-http-failure";
-    case "ParseError":
-      return "model-parse-failure";
-    case "EmptyResponse":
-      return "model-empty-response";
-    case "NotConfigured":
-      return "stub-not-configured";
-    case "RubricNotFound":
-      return "scoring-rubric-missing";
-    case "RubricCaseMismatch":
-      return "scoring-rubric-mismatch";
-    case "ScorerAdapterError":
-      return "scoring-adapter-failure";
-    default:
-      return "unknown-error";
-  }
-}
-
 const LOCAL_DIAGNOSTIC_MAX_CHARS = 500;
 const SECRET_REDACTION_PATTERNS: Array<[RegExp, string]> = [
   [/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [REDACTED]"],
@@ -610,6 +580,8 @@ function buildErrorResult(
     dimensionScores,
     scoredAt,
     dryRun: false,
+    errored: true,
+    errorClassification: classifyErrorType(errorType),
   };
 
   const errorSummary: RawErrorSummary = {
@@ -907,7 +879,6 @@ export class PatternPlanningRunner {
         { role: "user", content: userMessage },
       ],
       temperature: 0.1,
-      maxTokens: PATTERN_PLAN_MAX_TOKENS,
     });
 
     const matchPromise = modelResultAsync
@@ -1002,19 +973,10 @@ export class PatternPlanningRunner {
     suite: string,
     caseResults: CaseResult[],
   ): RunnerResult {
-    const passedCases = caseResults.filter((r) => r.summary.passed).length;
-    const failedCases = caseResults.length - passedCases;
-    const suiteGreen = caseResults
-      .filter((r) => r.summary.required && !r.summary.dryRun)
-      .every((r) => r.summary.passed);
-
     return {
       suite,
-      suiteGreen,
       caseResults,
-      totalCases: caseResults.length,
-      passedCases,
-      failedCases,
+      ...countCaseOutcomes(caseResults.map((r) => r.summary)),
       completedAt: new Date().toISOString(),
     };
   }

@@ -206,8 +206,13 @@ export interface SanitizedCaseResultSummary {
   readonly trajectorySummary?: TrajectorySummary;
   /** 1-based repeat index; present only when the run repeated cases. */
   readonly attempt?: number;
-  /** `true` when the attempt produced no scorable answer. */
+  /** `true` when the attempt produced no score. */
   readonly errored?: boolean;
+  /**
+   * Why it errored: a fixed classification label, never an error message.
+   * Present only with `errored: true`.
+   */
+  readonly errorClassification?: string;
 }
 
 /**
@@ -283,11 +288,14 @@ export function sanitizeCaseResultSummary(
           },
         }
       : {}),
-    // attempt and errored are allowlisted: an integer repeat index and a
-    // boolean, derived from the orchestrator's loop and the runner's typed
-    // error path, never from model output.
+    // attempt, errored and errorClassification are allowlisted: an integer
+    // repeat index, a boolean, and a fixed label derived from the typed error
+    // discriminant, never from model output or provider/scorer text.
     ...(summary.attempt !== undefined ? { attempt: summary.attempt } : {}),
     ...(summary.errored === true ? { errored: true } : {}),
+    ...(summary.errored === true && summary.errorClassification !== undefined
+      ? { errorClassification: summary.errorClassification }
+      : {}),
   };
 }
 

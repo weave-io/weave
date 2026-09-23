@@ -1742,3 +1742,108 @@ describe("a rerun asks the results repository which runs it already holds", () =
     expect(ids._unsafeUnwrap()).toEqual([]);
   });
 });
+
+describe("a reader looks at a run in which one model's answer was empty (Spec 37, 16.5)", () => {
+  /**
+   * Two cases on two models: every answer scored and passed, except that
+   * `route-to-shuttle` on the second model came back empty and errored.
+   */
+  const WITH_ERRORED = {
+    runnerResults: [
+      runnerResult({
+        caseResults: [
+          caseResult({ caseId: "route-to-shuttle", modelId: "alpha/model" }),
+          caseResult({ caseId: "route-to-warp", modelId: "alpha/model" }),
+          caseResult({
+            caseId: "route-to-shuttle",
+            modelId: "zeta/model",
+            passed: false,
+            weightedTotal: 0,
+            errored: true,
+            errorClassification: "model-empty-response",
+          }),
+          caseResult({ caseId: "route-to-warp", modelId: "zeta/model" }),
+        ],
+      }),
+    ],
+    generateIndexes: true,
+    writeMarkdown: true,
+  };
+
+  it("charts the suite's pass rate over the cases that were scored", async () => {
+    await withBundleRoot(async (root) => {
+      await writeRun(root, WITH_ERRORED);
+      const history = await readIndex(root, "suite-history-loom-routing.json");
+
+      expect(history.history[0]).toMatchObject({
+        totalCases: 4,
+        passedCases: 3,
+        erroredCases: 1,
+        passRate: 1,
+        suiteGreen: false,
+      });
+    });
+  });
+
+  it("does not count the errored model as a failure in the case's history", async () => {
+    await withBundleRoot(async (root) => {
+      await writeRun(root, WITH_ERRORED);
+      const scenarios = await readIndex(
+        root,
+        "scenario-history-loom-routing.json",
+      );
+      const shuttle = scenarios.scenarios.find(
+        (s: { caseId: string }) => s.caseId === "route-to-shuttle",
+      );
+
+      expect(shuttle.lastRuns[0]).toMatchObject({
+        status: "pass",
+        passedModels: 1,
+        failedModels: 0,
+        skippedModels: 1,
+        erroredModels: 1,
+      });
+    });
+  });
+
+  it("gives the model a pass rate over its scored cases, and names the errored one", async () => {
+    await withBundleRoot(async (root) => {
+      const written = await writeRun(root, WITH_ERRORED);
+      const comparison = await readIndex(
+        root,
+        `model-comparison-${written.runId}.json`,
+      );
+      const zeta = comparison.models.find(
+        (m: { modelId: string }) => m.modelId === "zeta/model",
+      );
+
+      expect(zeta).toMatchObject({
+        totalCases: 2,
+        passedCases: 1,
+        failedCases: 0,
+        erroredCases: 1,
+        passRate: 1,
+      });
+    });
+  });
+
+  it("shows the errored count on the latest-run snapshot and the run list", async () => {
+    await withBundleRoot(async (root) => {
+      await writeRun(root, WITH_ERRORED);
+      const latest = await readIndex(root, "latest.json");
+      const lastN = await readIndex(root, "last-N-runs.json");
+
+      expect(latest).toMatchObject({ failedCases: 0, erroredCases: 1 });
+      expect(lastN.runs[0]).toMatchObject({ failedCases: 0, erroredCases: 1 });
+    });
+  });
+
+  it("marks the case as errored in the Markdown report, not as a no", async () => {
+    await withBundleRoot(async (root) => {
+      const markdown = await markdownOf(root, WITH_ERRORED);
+
+      expect(markdown).toContain("errored (model-empty-response)");
+      expect(markdown).toContain("**Failed**: 0 | **Errored**: 1");
+    });
+  });
+});

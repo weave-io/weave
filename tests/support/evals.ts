@@ -14,7 +14,7 @@
 import { expect } from "bun:test";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
 import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
@@ -32,6 +32,7 @@ import type {
 } from "../../packages/cli/src/evals/openrouter-client.js";
 import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
 import type { PublicReportBundle } from "../../packages/cli/src/evals/report-schema.js";
+import type { PublishBundleRequest } from "../../packages/cli/src/evals/results-repo.js";
 import {
   buildEvalRunner,
   EvalOrchestrator,
@@ -113,7 +114,10 @@ export function runnerResult(
     caseResults,
     totalCases: caseResults.length,
     passedCases: caseResults.filter((c) => c.summary.passed).length,
-    failedCases: caseResults.filter((c) => !c.summary.passed).length,
+    failedCases: caseResults.filter(
+      (c) => !c.summary.passed && c.summary.errored !== true,
+    ).length,
+    erroredCases: caseResults.filter((c) => c.summary.errored === true).length,
     completedAt: FIXED_TIMESTAMP,
     ...overrides,
   };
@@ -362,6 +366,17 @@ export interface SuiteRunOptions {
   answers?: string[];
   /** Returned by the model instead of an answer. */
   modelError?: ModelClientError;
+  /**
+   * Returned by the model's first calls, in order, before it gives
+   * `answers` (or `modelError`). How a scenario has a model come back empty
+   * once and answer when asked again.
+   */
+  modelErrorsFirst?: ModelClientError[];
+  /**
+   * Run in publish mode, handing the run to a stub results repository that
+   * only records what it receives (see `SuiteRunObservation.published`).
+   */
+  publish?: boolean;
   /** The judge's verdict on every dimension it is asked to score. */
   judgeOutput?: JudgeOutput;
   /**
@@ -426,6 +441,7 @@ export interface SuiteRunObservation {
     totalCases: number;
     passedCases: number;
     failedCases: number;
+    erroredCases: number;
     suiteGreen: boolean;
   }>;
   /** Every file under the bundle root, relative to it. */
@@ -444,6 +460,8 @@ export interface SuiteRunObservation {
   firstCase: PublishedCaseRow | null;
   /** The parsed `public-report.json`, or `null` when none was written. */
   publicReport: PublicReportBundle | null;
+  /** How many runs a publish-mode run handed to the results repository. */
+  published: number;
   /** The text of `public-report.md`, or `null` when none was written. */
   markdown: string | null;
   /**
@@ -565,6 +583,9 @@ export async function runEvalSuite(
   await makeDir(bundleRoot);
 
   const modelClient = new StubModelClient();
+  for (const failure of options.modelErrorsFirst ?? []) {
+    modelClient.enqueueError(failure);
+  }
   if (options.modelError !== undefined) {
     modelClient.setDefaultError(options.modelError);
   } else {
@@ -587,6 +608,28 @@ export async function runEvalSuite(
             ),
         };
 
+  // Publish mode hands the run to a stub results repository that only
+  // records what it was given; nothing leaves the machine.
+  const published: PublishBundleRequest[] = [];
+  const publishing =
+    options.publish === true
+      ? {
+          publishMode: "publish" as const,
+          publisher: {
+            publish(publishRequest: PublishBundleRequest) {
+              published.push(publishRequest);
+              return okAsync({
+                commitSha: null,
+                branch: "main",
+                filesPublished: publishRequest.fileNames?.length ?? 0,
+                simulated: true,
+              });
+            },
+          },
+        }
+      : {};
+  const baseEnv = options.env ?? { OPENROUTER_API_KEY: "test-key" };
+
   const orchestrator = new EvalOrchestrator({
     modelClient,
     scorer: new LangChainAgentEvalsScorer(judge),
@@ -594,7 +637,11 @@ export async function runEvalSuite(
     snapshotProvider: { getSnapshots: () => Promise.resolve([]) },
     gitShaProvider: { resolveGitSha: () => ok(FIXED_GIT_SHA) },
     bundleRoot,
-    env: options.env ?? { OPENROUTER_API_KEY: "test-key" },
+    ...publishing,
+    env:
+      options.publish === true
+        ? { ...baseEnv, EVAL_RESULTS_REPO_TOKEN: "test-repo-token" }
+        : baseEnv,
     evalsRoot: options.evalsRoot,
     assembledAt: FIXED_TIMESTAMP,
     // The preflight resolves Loom's composed delegation targets from the
@@ -672,6 +719,7 @@ export async function runEvalSuite(
     cases,
     firstCase: cases[0] ?? null,
     publicReport,
+    published: published.length,
     markdown,
     indexes,
     rawArtifacts,

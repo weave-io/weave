@@ -1,7 +1,9 @@
 /**
  * The report `weave eval run` prints after a live run (Spec 37, task 17.2).
  *
- * For every case × model result it prints the verdict. A failed case also
+ * For every case × model result it prints the verdict: `PASS`, `FAIL`, or
+ * `ERROR` for a case that produced no score (Spec 37, 16.5), with the
+ * classification of what went wrong instead of scores. A failed case also
  * gets each applicable scoring dimension with its score, marked where it fell
  * below its bar, the case's bounded public explanation, and the path of its
  * raw transcript — so running one case for one model is enough to see why it
@@ -85,7 +87,9 @@ export class EvalRunReport {
   }
 
   private headerCounts(summary: EvalRunSummary): string {
-    const tail = `${summary.passedCases} passed, ${summary.failedCases} failed`;
+    const errored =
+      summary.erroredCases === 0 ? "" : `, ${summary.erroredCases} errored`;
+    const tail = `${summary.passedCases} passed, ${summary.failedCases} failed${errored}`;
     const repeatCount = summary.metadata.repeatCount;
     if (repeatCount <= 1) {
       return `${summary.totalCases} ${plural(summary.totalCases, "case")}, ${tail}`;
@@ -136,7 +140,7 @@ export class EvalRunReport {
     const label = `        Attempt ${report.attempt ?? 1}:`;
     if (report.errored) {
       return [
-        `${label} ${this.theme.boldRed("ERRORED")} (no scorable answer)`,
+        `${label} ${this.theme.boldRed("ERRORED")} (no scorable answer${report.errorClassification === null ? "" : `: ${report.errorClassification}`})`,
         ...this.transcriptLines(report),
       ];
     }
@@ -159,6 +163,12 @@ export class EvalRunReport {
   }
 
   private caseLines(report: CaseReport): string[] {
+    if (report.errored) {
+      return this.erroredCaseLines(
+        report,
+        report.errorClassification ?? "unknown-error",
+      );
+    }
     const verdict = report.passed
       ? this.theme.boldGreen("PASS")
       : this.theme.boldRed("FAIL");
@@ -177,6 +187,22 @@ export class EvalRunReport {
 
     lines.push(...this.transcriptLines(report));
     return lines;
+  }
+
+  /**
+   * A case that produced no score: no weighted total and no dimensions,
+   * because there was nothing to score, only why.
+   */
+  private erroredCaseLines(
+    report: CaseReport,
+    classification: string,
+  ): string[] {
+    const requirement = report.required ? "required" : "optional";
+    return [
+      `  ${this.theme.boldYellow("ERROR")} ${report.caseId} on ${report.modelId}  ${this.theme.dim(`(${report.suite}, ${requirement})`)}`,
+      `        Not scored: ${classification} — ${describeClassification(classification)}`,
+      ...this.transcriptLines(report),
+    ];
   }
 
   /**
@@ -239,6 +265,29 @@ function groupRepeats(reports: readonly CaseReport[]): CaseReport[][] {
     groups.set(key, group);
   }
   return [...groups.values()];
+}
+
+/** What an errored case's classification label means, in a phrase. */
+const CLASSIFICATION_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  "model-empty-response":
+    "the model returned an empty answer each time it was asked",
+  "model-truncated-response":
+    "the model reached its token cap before answering, each time it was asked",
+  "model-network-failure": "the request to the model failed",
+  "model-http-failure": "the model provider returned an error",
+  "model-parse-failure": "the model provider's response could not be read",
+  "scoring-adapter-failure": "the judge could not score the answer",
+  "scoring-rubric-missing": "the case has no rubric",
+  "scoring-rubric-mismatch": "the case's rubric names a different case",
+};
+
+function describeClassification(classification: string): string {
+  const known = CLASSIFICATION_DESCRIPTIONS[classification];
+  if (known !== undefined) return known;
+  if (classification.startsWith("trajectory-")) {
+    return "the harness trajectory could not run";
+  }
+  return "the case could not be run or scored";
 }
 
 function score(value: number): string {
