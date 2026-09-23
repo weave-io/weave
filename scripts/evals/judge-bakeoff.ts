@@ -1222,9 +1222,11 @@ function writeText(
   );
 }
 
-const SelectionSchema = z.array(
-  z.object({ id: z.string().regex(/^B\d+$/), raw: z.string().min(1) }),
-);
+const SelectionSchema = z
+  .array(z.object({ id: z.string().regex(/^B\d+$/), raw: z.string().min(1) }))
+  .refine((entries) => duplicateIds(entries.map((e) => e.id)).length === 0, {
+    message: "selection ids must be unique",
+  });
 
 const RawArtifactSchema = z.object({
   caseId: z.string(),
