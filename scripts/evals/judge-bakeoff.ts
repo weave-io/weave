@@ -175,6 +175,10 @@ export type BakeoffError =
   | { type: "UnknownLabelIds"; ids: string[] }
   | { type: "MissingVerdicts"; ids: string[] }
   | { type: "DuplicateItemIds"; ids: string[] }
+  | { type: "DuplicateVerdictIds"; ids: string[] }
+  | { type: "UnknownVerdictIds"; ids: string[] }
+  | { type: "DuplicateLabelIds"; ids: string[] }
+  | { type: "NoItems" }
   | { type: "JudgeModelMismatch"; path: string; message: string };
 
 export type Verdict = "pass" | "fail";
@@ -472,10 +476,16 @@ export function buildJevRequest(
   return ok({ model, state, questions });
 }
 
-const JevNoulSchema = z.object({ type: z.literal("noul"), noul: z.number() });
+const JevNoulSchema = z.object({
+  type: z.literal("noul"),
+  noul: z.number().min(0).max(1),
+});
 const JevScoreSchema = z.object({
   type: z.literal("score"),
-  score: z.number(),
+  score: z
+    .number()
+    .min(0)
+    .max(QUALITY_ANCHORS.length - 1),
 });
 const JevResponseSchema = z.object({
   model: z.string(),
@@ -503,7 +513,7 @@ export function parseJevResponse(
       return err({
         type: "JevResponseInvalid",
         itemId: item.id,
-        message: `answer "${key}" is missing or not a noul`,
+        message: `answer "${key}" is missing or not a noul in [0, 1]`,
       });
     }
     return ok(answer.data.noul);
@@ -522,7 +532,7 @@ export function parseJevResponse(
     return err({
       type: "JevResponseInvalid",
       itemId: item.id,
-      message: 'answer "quality" is missing or not a score',
+      message: `answer "quality" is missing or not a score in [0, ${QUALITY_ANCHORS.length - 1}]`,
     });
   }
 
@@ -567,22 +577,26 @@ export class JevClient {
     itemId: string,
     request: JevRequest,
   ): ResultAsync<unknown, BakeoffError> {
-    return ResultAsync.fromPromise(
-      this.fetchImpl(this.endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-      }),
+    // fromThrowable also catches a fetch implementation that throws
+    // synchronously, so every failure becomes a recorded judge error.
+    const send = ResultAsync.fromThrowable(
+      () =>
+        this.fetchImpl(this.endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
+        }),
       (cause): BakeoffError => ({
         type: "JevHttpError",
         itemId,
         status: 0,
         body: String(cause),
       }),
-    ).andThen((response) =>
+    );
+    return send().andThen((response) =>
       ResultAsync.fromPromise(
         response.text(),
         (cause): BakeoffError => ({
@@ -683,8 +697,8 @@ export class BakeoffScorer {
 // Labelling sheet (pure)
 // ---------------------------------------------------------------------------
 
-const LABEL_RE = /^\*\*Label \(([BN]\d+)\):\*\*[ \t]*(.*)$/gm;
-const NOTE_RE = /^\*\*Note \(([BN]\d+)\):\*\*[ \t]*(.*)$/gm;
+const LABEL_LINE_RE = /^\*\*Label \(([BN]\d+)\):\*\*[ \t]*(.*)$/;
+const NOTE_LINE_RE = /^\*\*Note \(([BN]\d+)\):\*\*[ \t]*(.*)$/;
 
 /** A code fence longer than any backtick run in `text`. */
 function fenceFor(text: string): string {
@@ -746,26 +760,68 @@ export function renderLabelSheet(items: BakeoffItem[]): string {
 }
 
 /**
+ * The sheet's lines outside fenced blocks. Task and response text sit inside
+ * fences, so a response that happens to contain a `**Label (Bxx):**` line
+ * can never set or overwrite a label.
+ */
+function linesOutsideFences(markdown: string): string[] {
+  const outside: string[] = [];
+  let openFence: string | undefined;
+  for (const line of markdown.split("\n")) {
+    const fence = line.match(/^(`{3,})/)?.[1];
+    if (openFence === undefined) {
+      if (fence !== undefined) {
+        openFence = fence;
+        continue;
+      }
+      outside.push(line);
+      continue;
+    }
+    if (
+      fence !== undefined &&
+      line.trim() === fence &&
+      fence.length >= openFence.length
+    ) {
+      openFence = undefined;
+    }
+  }
+  return outside;
+}
+
+/**
  * Parse labels from the sheet. A label line still reading `pass | fail` (or
- * anything but `pass` or `fail`) is unlabelled.
+ * anything but `pass` or `fail`) is unlabelled; an id labelled twice is an
+ * error.
  */
 export function parseLabelSheet(
   markdown: string,
 ): Result<Map<string, HumanLabel>, BakeoffError> {
+  const lines = linesOutsideFences(markdown);
   const notes = new Map<string, string>();
-  for (const match of markdown.matchAll(NOTE_RE)) {
+  for (const line of lines) {
+    const match = line.match(NOTE_LINE_RE);
+    if (match === null) continue;
     notes.set(match[1] ?? "", (match[2] ?? "").trim());
   }
   const labels = new Map<string, HumanLabel>();
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
   const missing: string[] = [];
-  for (const match of markdown.matchAll(LABEL_RE)) {
+  for (const line of lines) {
+    const match = line.match(LABEL_LINE_RE);
+    if (match === null) continue;
     const id = match[1] ?? "";
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
     const value = (match[2] ?? "").trim().toLowerCase();
     if (value !== "pass" && value !== "fail") {
       missing.push(id);
       continue;
     }
     labels.set(id, { verdict: value, note: notes.get(id) ?? "" });
+  }
+  if (duplicates.size > 0) {
+    return err({ type: "DuplicateLabelIds", ids: [...duplicates] });
   }
   if (missing.length > 0) return err({ type: "MissingLabels", ids: missing });
   return ok(labels);
@@ -947,6 +1003,16 @@ function sonnetVerdict(v: ItemVerdicts): Verdict | undefined {
   return v.sonnet.ok ? toVerdict(v.sonnet.pass) : undefined;
 }
 
+function duplicateIds(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  return [...duplicates];
+}
+
 /**
  * Compare Jev (and Sonnet 5, as a reference) with the human labels, and
  * apply `JEV_ACCEPTANCE_RULE` to Jev.
@@ -956,7 +1022,22 @@ export function compare(
   verdicts: ItemVerdicts[],
   labels: Map<string, HumanLabel>,
 ): Result<ComparisonReport, BakeoffError> {
+  if (items.length === 0) return err({ type: "NoItems" });
+  const duplicateItems = duplicateIds(items.map((i) => i.id));
+  if (duplicateItems.length > 0) {
+    return err({ type: "DuplicateItemIds", ids: duplicateItems });
+  }
+  const duplicateVerdicts = duplicateIds(verdicts.map((v) => v.id));
+  if (duplicateVerdicts.length > 0) {
+    return err({ type: "DuplicateVerdictIds", ids: duplicateVerdicts });
+  }
   const itemIds = new Set(items.map((i) => i.id));
+  const unknownVerdicts = verdicts
+    .map((v) => v.id)
+    .filter((id) => !itemIds.has(id));
+  if (unknownVerdicts.length > 0) {
+    return err({ type: "UnknownVerdictIds", ids: unknownVerdicts });
+  }
   const unknown = [...labels.keys()].filter((id) => !itemIds.has(id));
   if (unknown.length > 0) return err({ type: "UnknownLabelIds", ids: unknown });
   const unlabelled = items.filter((i) => !labels.has(i.id)).map((i) => i.id);
@@ -1175,17 +1256,52 @@ const ItemsSchema = z.array(
   }),
 );
 
-const VerdictFileSchema = z.object({
-  scoredAt: z.string(),
-  jevModel: z.string(),
-  sonnetModel: z.string(),
-  // Verdicts are written by `score`; they are trusted as written.
-  verdicts: z.array(
-    z.custom<ItemVerdicts>(
-      (v) => typeof v === "object" && v !== null && "id" in v,
-    ),
+const FailedVerdictSchema = z.object({
+  ok: z.literal(false),
+  error: z.custom<BakeoffError>(
+    (v) =>
+      typeof v === "object" &&
+      v !== null &&
+      typeof (v as { type?: unknown }).type === "string",
   ),
 });
+
+const ItemVerdictsSchema = z.object({
+  id: z.string(),
+  jev: z.union([
+    z.object({
+      ok: z.literal(true),
+      modelVersion: z.string(),
+      overall: z.number().min(0).max(1),
+      criteria: z.record(z.string(), z.number().min(0).max(1)),
+      quality: z.number(),
+      pass: z.boolean(),
+      allCriteriaPass: z.boolean(),
+      cost: z.number(),
+    }),
+    FailedVerdictSchema,
+  ]),
+  sonnet: z.union([
+    z.object({
+      ok: z.literal(true),
+      score: z.number(),
+      pass: z.boolean(),
+      rationale: z.string(),
+    }),
+    FailedVerdictSchema,
+  ]),
+});
+
+const VerdictFileSchema = z
+  .object({
+    scoredAt: z.string(),
+    jevModel: z.string(),
+    sonnetModel: z.string(),
+    verdicts: z.array(ItemVerdictsSchema),
+  })
+  .refine((file) => duplicateIds(file.verdicts.map((v) => v.id)).length === 0, {
+    message: "verdict ids must be unique",
+  });
 
 function findCaseFile(caseId: string): Result<string, BakeoffError> {
   const glob = new Bun.Glob(`cases/*/${caseId}.json`);
@@ -1227,14 +1343,9 @@ export function mergeItems(
   negatives: BakeoffItem[],
 ): Result<BakeoffItem[], BakeoffError> {
   const all = [...items, ...negatives];
-  const seen = new Set<string>();
-  const duplicates = new Set<string>();
-  for (const item of all) {
-    if (seen.has(item.id)) duplicates.add(item.id);
-    seen.add(item.id);
-  }
-  if (duplicates.size > 0) {
-    return err({ type: "DuplicateItemIds", ids: [...duplicates] });
+  const duplicates = duplicateIds(all.map((i) => i.id));
+  if (duplicates.length > 0) {
+    return err({ type: "DuplicateItemIds", ids: duplicates });
   }
   return ok(all);
 }
@@ -1489,7 +1600,15 @@ async function compareCommand(args: Args): Promise<Result<void, BakeoffError>> {
     );
     return ok(undefined);
   }
-  await Bun.write(Bun.stdout, markdown);
+  const printed = await ResultAsync.fromPromise(
+    Bun.write(Bun.stdout, markdown),
+    (cause): BakeoffError => ({
+      type: "FileWriteError",
+      path: "(stdout)",
+      message: String(cause),
+    }),
+  );
+  if (printed.isErr()) return err(printed.error);
   return ok(undefined);
 }
 

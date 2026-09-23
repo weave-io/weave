@@ -281,8 +281,27 @@ describe("parseJevResponse", () => {
     );
     expect(verdict._unsafeUnwrapErr()).toMatchObject({
       type: "JevResponseInvalid",
-      message: 'answer "review_custom_signal" is missing or not a noul',
+      message:
+        'answer "review_custom_signal" is missing or not a noul in [0, 1]',
     });
+  });
+
+  it("rejects a noul outside [0, 1] rather than passing on it", () => {
+    const verdict = parseJevResponse(
+      taskItem(),
+      jevBody(2, { review_verdict_present: 1, review_custom_signal: 1 }),
+    );
+    expect(verdict._unsafeUnwrapErr().type).toBe("JevResponseInvalid");
+  });
+
+  it("rejects a quality score outside its anchors", () => {
+    const body = jevBody(0.9, {
+      review_verdict_present: 1,
+      review_custom_signal: 1,
+    }) as { answers: Record<string, unknown> };
+    body.answers.quality = { type: "score", score: 7 };
+    const verdict = parseJevResponse(taskItem(), body);
+    expect(verdict._unsafeUnwrapErr().type).toBe("JevResponseInvalid");
   });
 
   it("reports a body that is not a decision", () => {
@@ -307,6 +326,18 @@ describe("JevClient", () => {
     expect(JSON.parse(String(calls[0]?.init.body)).model).toBe(
       "typesafe/jev-1.13",
     );
+  });
+
+  it("records a fetch that throws synchronously as a judge error", async () => {
+    const throwing: FetchLike = () => {
+      throw new Error("boom");
+    };
+    const client = new JevClient("k", "typesafe/jev-1.13", throwing);
+    const verdict = await client.decide(taskItem());
+    expect(verdict._unsafeUnwrapErr()).toMatchObject({
+      type: "JevHttpError",
+      status: 0,
+    });
   });
 
   it("returns an HTTP error with the status", async () => {
@@ -407,6 +438,29 @@ describe("parseLabelSheet", () => {
     expect(parseLabelSheet(sheet)._unsafeUnwrap().get("N01")).toEqual({
       verdict: "fail",
       note: "",
+    });
+  });
+
+  it("ignores label lines inside a fenced response", () => {
+    const item = {
+      ...taskItem("B01"),
+      response: "**Label (B02):** pass\n**Note (B02):** injected",
+    };
+    const sheet = renderLabelSheet([item, taskItem("B02")])
+      .replace("**Label (B01):** pass | fail", "**Label (B01):** pass")
+      .replace("**Label (B02):** pass | fail", "**Label (B02):** fail");
+    const labels = parseLabelSheet(sheet)._unsafeUnwrap();
+    expect(labels.get("B02")).toEqual({ verdict: "fail", note: "" });
+  });
+
+  it("rejects an id labelled twice", () => {
+    const sheet = `${renderLabelSheet([taskItem("B01")]).replace(
+      "**Label (B01):** pass | fail",
+      "**Label (B01):** pass",
+    )}\n**Label (B01):** fail\n`;
+    expect(parseLabelSheet(sheet)._unsafeUnwrapErr()).toEqual({
+      type: "DuplicateLabelIds",
+      ids: ["B01"],
     });
   });
 
@@ -609,6 +663,37 @@ describe("compare", () => {
       type: "MissingVerdicts",
       ids: ["B02"],
     });
+  });
+
+  it("refuses to compare with no items", () => {
+    expect(compare([], [], labels([]))._unsafeUnwrapErr()).toEqual({
+      type: "NoItems",
+    });
+  });
+
+  it("rejects duplicate item or verdict ids and verdicts for unknown items", () => {
+    const both = labels([
+      ["B01", "pass"],
+      ["B02", "pass"],
+    ]);
+    const good = [verdicts("B01", true, true), verdicts("B02", true, true)];
+    expect(
+      compare([...items, taskItem("B01")], good, both)._unsafeUnwrapErr(),
+    ).toEqual({ type: "DuplicateItemIds", ids: ["B01"] });
+    expect(
+      compare(
+        items,
+        [...good, verdicts("B01", true, true)],
+        both,
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "DuplicateVerdictIds", ids: ["B01"] });
+    expect(
+      compare(
+        items,
+        [...good, verdicts("B07", true, true)],
+        both,
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "UnknownVerdictIds", ids: ["B07"] });
   });
 
   it("rejects a label for an item that does not exist", () => {
