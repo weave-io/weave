@@ -689,11 +689,14 @@ not, three of them because those tests were testing themselves:
   `agent_routing` case the first two are never applicable and the scorer scores
   an inapplicable dimension 1.0. Only a rationale below 0.1 can fail the gate;
   a judge verdict of 0.2 passes. The unit test that claimed the gate worked fed
-  a hand-built record the real scorer cannot produce.
+  a hand-built record the real scorer cannot produce. *Fixed by Spec 37 task
+  16.2: the gate and `weightedTotal` count only applicable dimensions, and the
+  scenarios now assert that a 0.2 verdict fails.*
 - **A documentation placeholder still earns fallback credit.** An answer
   containing `→ \`shuttle-{category}\`` is rejected by the affirmative-route
   reader — the property its unit test pinned — but the generic-fallback
   detector still reads the line, so the case scores 0.4 rather than 0.
+  *Fixed by Spec 37 task 16.2: the placeholder scores 0.*
 - Smaller: `ShuttleExecutionRunner`'s `NoCasesFound` message is the only one
   that does not name its suite.
 

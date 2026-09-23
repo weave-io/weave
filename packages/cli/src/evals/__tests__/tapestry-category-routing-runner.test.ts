@@ -18,10 +18,11 @@
  *   needs a scorer that returns a routing score at all; the real scorer
  *   computes that dimension itself and never disagrees with it.
  * - **The qualitative gate** case builds a score record with all three
- *   qualitative dimensions low. The real scorer cannot produce that for an
- *   `agent_routing` case — it marks two of them inapplicable at 1.0 — so the
- *   gate this pins is a contract for a future scorer rather than current
- *   behaviour. The scenario file records what the gate does today.
+ *   qualitative dimensions applicable and low. The real scorer cannot produce
+ *   that for an `agent_routing` case — it marks two of them inapplicable at
+ *   1.0 — so the gate this pins is a contract for a future scorer rather than
+ *   current behaviour. The scenario file drives the gate the real scorer
+ *   reaches, where only the applicable `rationaleQuality` counts.
  * - **The tcr-04/tcr-10 block** reads the repository's own fixtures from disk
  *   with the production `EVALS_ROOT`. A scenario brings its own corpus, so it
  *   cannot notice a real fixture drifting.

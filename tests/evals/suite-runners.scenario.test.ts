@@ -1333,14 +1333,23 @@ const CATEGORY_ANSWERS: Array<[string, string, number]> = [
     "**shuttle**\n\nReasoning: shuttle-client-frontend would normally apply but is disabled.",
     0.4,
   ],
-  // The affirmative-route reader rejects the `shuttle-{category}` placeholder,
-  // but the generic-fallback detector still reads the line as a route to the
-  // bare `shuttle`, so the answer keeps its 0.4. The unit test that pinned the
-  // rejection asserted only the reader, not what the suite scores.
+  // A routing rule copied from the prompt names no shuttle at all: neither
+  // the affirmative-route reader nor the generic-fallback detector may read
+  // the `shuttle` in `shuttle-{category}` as the bare agent.
   [
     "a documentation placeholder",
     'Per routing rules: "Match a configured category pattern → `shuttle-{category}`"',
-    0.4,
+    0,
+  ],
+  [
+    "a documentation placeholder in plain text",
+    "Match a configured category pattern → shuttle-{category}",
+    0,
+  ],
+  [
+    "a placeholder on a route-to line",
+    "Route to shuttle-{category} when a category pattern matches.",
+    0,
   ],
   [
     "the category named beside a negated fallback",
@@ -1423,29 +1432,57 @@ describe("Tapestry answers a routing question on a case that expects a category 
   });
 
   /**
-   * The qualitative gate is all but inert, and that is a defect.
+   * The qualitative gate reads only the dimensions that apply to the case.
    *
-   * `mergeWithScorerDimensions()` averages `delegationCorrectness`,
-   * `executionCompleteness` and `rationaleQuality` and requires 0.7. On an
-   * `agent_routing` case the first two are never applicable, and the scorer
-   * gives an inapplicable dimension the neutral score 1.0 — so the average is
-   * `(1 + 1 + rationale) / 3`, and only a rationale below 0.1 can fail the
-   * gate. A judge verdict of 0.2 on the one dimension it actually scored still
-   * passes.
+   * On an `agent_routing` case the scorer marks `delegationCorrectness` and
+   * `executionCompleteness` inapplicable and gives them the neutral score 1.0.
+   * Averaging them in made the gate `(1 + 1 + rationale) / 3 >= 0.7`, which
+   * only a judge verdict below 0.1 could fail. The gate now averages the
+   * applicable dimensions alone, so on a routing case it is the judge's
+   * verdict on `rationaleQuality` against 0.7.
    *
-   * The unit test that claimed this gate worked fed a hand-built score record
-   * with all three dimensions low, which the real scorer cannot produce for a
-   * routing case.
+   * `[judge verdict, passed]` on a case whose route is exactly right.
    */
-  it("lets a case with transcript expectations through on a judge verdict of 0.2", async () => {
-    const withExpectations: FixtureSpec = {
-      ...fixture,
-      id: "tcr-with-transcript-expectations",
-      transcriptExpectations: [
-        { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
-      ],
-    };
+  const withExpectations: FixtureSpec = {
+    ...fixture,
+    id: "tcr-with-transcript-expectations",
+    transcriptExpectations: [
+      { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
+    ],
+  };
+  const JUDGE_VERDICTS: Array<[number, boolean]> = [
+    [0, false],
+    [0.2, false],
+    [0.5, false],
+    [0.69, false],
+    [0.7, true],
+    [1, true],
+  ];
 
+  it.each(
+    JUDGE_VERDICTS,
+  )("gates a case with transcript expectations on a judge verdict of %p (passes: %p)", async (verdict, passes) => {
+    const run = await withEvalFixtures([withExpectations], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "tapestry-category-routing",
+        answers: ["→ shuttle-client-frontend"],
+        judgeOutput: { score: verdict, rationale: "judge verdict" },
+      }),
+    );
+
+    expect(run.firstCase?.dimensionScores.routingCorrectness.score).toBe(1);
+    expect(run.firstCase?.dimensionScores.rationaleQuality.score).toBe(verdict);
+    expect(
+      run.firstCase?.dimensionScores.delegationCorrectness.applicable,
+    ).toBe(false);
+    expect(run.firstCase?.passed).toBe(passes);
+  });
+
+  it("does not credit inapplicable dimensions in the weighted total", async () => {
+    // Rubric weights 0.7 / 0.3: the judge's 0.2 carries the whole 0.3, so the
+    // total is 0.7 + 0.06. Crediting the two inapplicable 1.0s would read
+    // 0.7 + (1 + 1 + 0.2) × 0.1 = 0.92.
     const run = await withEvalFixtures([withExpectations], (evalsRoot) =>
       runEvalSuite({
         evalsRoot,
@@ -1455,29 +1492,30 @@ describe("Tapestry answers a routing question on a case that expects a category 
       }),
     );
 
-    expect(run.firstCase?.dimensionScores.rationaleQuality.score).toBe(0.2);
-    expect(run.firstCase?.passed).toBe(true);
+    expect(run.firstCase?.weightedTotal).toBeCloseTo(0.76, 5);
   });
 
-  it("fails the same case only when the judge scores it at zero", async () => {
-    const withExpectations: FixtureSpec = {
+  it("fails an optional generic-shuttle fallback the judge scores at 0.5", async () => {
+    // An optional case passes on weightedTotal >= 0.5. Routing 0.4 × 0.7 plus
+    // the judge's 0.5 × 0.3 is 0.43; with the inapplicable 1.0s credited it
+    // was 0.28 + (1 + 1 + 0.5) × 0.1 = 0.53, a pass the judge did not give.
+    const optional: FixtureSpec = {
       ...fixture,
-      id: "tcr-with-transcript-expectations",
-      transcriptExpectations: [
-        { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
-      ],
+      id: "tcr-optional-generic-fallback",
+      required: false,
     };
 
-    const run = await withEvalFixtures([withExpectations], (evalsRoot) =>
+    const run = await withEvalFixtures([optional], (evalsRoot) =>
       runEvalSuite({
         evalsRoot,
         agent: "tapestry-category-routing",
-        answers: ["→ shuttle-client-frontend"],
-        judgeOutput: { score: 0, rationale: "unusable" },
+        answers: ["route to shuttle for this task"],
+        judgeOutput: { score: 0.5, rationale: "thin rationale" },
       }),
     );
 
-    expect(run.firstCase?.dimensionScores.routingCorrectness.score).toBe(1);
+    expect(run.firstCase?.dimensionScores.routingCorrectness.score).toBe(0.4);
+    expect(run.firstCase?.weightedTotal).toBeCloseTo(0.43, 5);
     expect(run.firstCase?.passed).toBe(false);
   });
 

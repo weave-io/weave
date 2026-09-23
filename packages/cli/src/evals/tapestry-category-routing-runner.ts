@@ -54,10 +54,13 @@
  *
  * For required cases that declare `transcript_expectations` (non-empty), an
  * additional qualitative threshold is enforced when a scorer is present:
- * the average of `delegationCorrectness`, `executionCompleteness`, and
- * `rationaleQuality` must be ≥ `QUALITATIVE_PASS_THRESHOLD` (0.7) for the
- * case to pass. The deterministic routing gate (≥ 0.95) is always enforced
- * first — if routing fails, the case fails regardless of qualitative scores.
+ * the average of whichever of `delegationCorrectness`, `executionCompleteness`
+ * and `rationaleQuality` the scorer marked applicable must be ≥
+ * `QUALITATIVE_PASS_THRESHOLD` (0.7) for the case to pass. Inapplicable
+ * dimensions carry a neutral 1.0 and are left out, so on an `agent_routing`
+ * case the gate is the judge's `rationaleQuality` verdict. The deterministic
+ * routing gate (≥ 0.95) is always enforced first — if routing fails, the case
+ * fails regardless of qualitative scores.
  *
  * When no scorer is present (heuristic path), only the routing gate applies.
  * Optional cases (required: false) always use weighted scoring regardless of
@@ -142,14 +145,24 @@ const GENERIC_SHUTTLE = "shuttle";
 export const GENERIC_SHUTTLE_FALLBACK_SCORE = 0.4;
 
 /**
- * Minimum average of `delegationCorrectness`, `executionCompleteness`, and
- * `rationaleQuality` required for a required case with `transcript_expectations`
- * to pass when a scorer is present.
+ * Minimum average of the applicable qualitative dimensions
+ * (`delegationCorrectness`, `executionCompleteness`, `rationaleQuality`)
+ * required for a required case with `transcript_expectations` to pass when a
+ * scorer is present.
  *
  * Only enforced after the deterministic routing gate (≥ 0.95) passes. Optional
  * cases (required: false) always use weighted scoring, not this threshold.
  */
 export const QUALITATIVE_PASS_THRESHOLD = 0.7;
+
+/** The dimensions the injected scorer supplies and the qualitative gate averages. */
+type QualitativeDimension = Exclude<ScoringDimension, "routingCorrectness">;
+
+const QUALITATIVE_DIMENSIONS: readonly QualitativeDimension[] = [
+  "delegationCorrectness",
+  "executionCompleteness",
+  "rationaleQuality",
+];
 
 // ---------------------------------------------------------------------------
 // Category-routing extraction (no canonicalization)
@@ -705,8 +718,14 @@ export function extractCategoryShuttles(content: string): string[] {
  * hyphen (which would make it a `shuttle-{category}` name). This ensures
  * that `shuttle-backend` or `shuttle-client-frontend` are never treated as
  * generic-shuttle fallbacks.
+ *
+ * Any hyphen disqualifies the token, not only one followed by a valid
+ * category character: the documentation placeholder `shuttle-{category}`
+ * names no real shuttle, and reading its `shuttle` as the bare agent would
+ * score a copied routing rule as a generic fallback. This mirrors the
+ * trailing `(?!-)` guard on the affirmative-route patterns.
  */
-const BARE_SHUTTLE_RE = /\bshuttle(?!-[a-z0-9_-])\b/gi;
+const BARE_SHUTTLE_RE = /\bshuttle(?!-)\b/gi;
 
 /**
  * Determine whether the content contains a standalone bare `shuttle` token
@@ -1423,6 +1442,55 @@ export function buildScorerUnavailableScoreRecord(
 }
 
 /**
+ * Average of the qualitative dimensions (`delegationCorrectness`,
+ * `executionCompleteness`, `rationaleQuality`) that actually apply to the case,
+ * or `undefined` when none of them does.
+ *
+ * The scorer gives a dimension that does not apply to a case the neutral score
+ * 1.0 with `applicable: false`. On an `agent_routing` case — every case in this
+ * suite — `delegationCorrectness` and `executionCompleteness` never apply, so
+ * averaging all three would read `(1 + 1 + rationale) / 3` and only a judge
+ * verdict below 0.1 could fail the 0.7 gate. Excluding them makes the average
+ * the judge's verdict on the dimensions it was asked about.
+ */
+function averageApplicableQualitative(
+  dimensions: Pick<NormalizedScoreRecord["dimensions"], QualitativeDimension>,
+): number | undefined {
+  const applicable = QUALITATIVE_DIMENSIONS.map((d) => dimensions[d]).filter(
+    (d) => d.applicable,
+  );
+  if (applicable.length === 0) {
+    return undefined;
+  }
+  const sum = applicable.reduce((total, d) => total + d.score, 0);
+  return sum / applicable.length;
+}
+
+/**
+ * The pass gates for a required case whose qualitative dimensions came from
+ * the scorer: the deterministic routing gate first, then — for a case with
+ * `transcript_expectations` — the qualitative gate over the applicable
+ * dimensions. A case with no applicable qualitative dimension has nothing for
+ * that gate to judge, so the routing gate decides alone.
+ */
+function passesRequiredGates(
+  evalCase: EvalCase,
+  routingCorrectness: DimensionScore,
+  qualitative: number | undefined,
+): boolean {
+  if (routingCorrectness.score < 0.95) {
+    return false;
+  }
+  if (evalCase.transcript_expectations.length === 0) {
+    return true;
+  }
+  if (qualitative === undefined) {
+    return true;
+  }
+  return qualitative >= QUALITATIVE_PASS_THRESHOLD;
+}
+
+/**
  * Merge the locally computed `routingCorrectness` with qualitative dimensions
  * from an injected scorer's `NormalizedScoreRecord`.
  *
@@ -1431,10 +1499,16 @@ export function buildScorerUnavailableScoreRecord(
  * `delegationCorrectness`, `executionCompleteness`, and `rationaleQuality`
  * replace the local heuristic dimensions.
  *
+ * Only qualitative dimensions the scorer marked applicable count — see
+ * `averageApplicableQualitative()`. Their average carries the rubric's whole
+ * `per_expectation_weight` in `weightedTotal`; when none applies, that weight
+ * goes to `routingCorrectness`.
+ *
  * Pass gate (required cases):
  *   1. `routingCorrectness >= 0.95` (deterministic gate — always enforced)
- *   2. When the case has `transcript_expectations`: average qualitative score
- *      ≥ `QUALITATIVE_PASS_THRESHOLD` (executable rationale/evidence gate).
+ *   2. When the case has `transcript_expectations` and at least one
+ *      qualitative dimension applies: their average ≥
+ *      `QUALITATIVE_PASS_THRESHOLD` (executable rationale/evidence gate).
  *
  * Optional cases use weighted total >= 0.5.
  */
@@ -1449,32 +1523,17 @@ function mergeWithScorerDimensions(
   const executionCompleteness = scorerRecord.dimensions.executionCompleteness;
   const rationaleQuality = scorerRecord.dimensions.rationaleQuality;
 
+  const qualitative = averageApplicableQualitative(scorerRecord.dimensions);
+  const { outcome_weight, per_expectation_weight } = rubric.scoring;
   const weightedTotal =
-    routingCorrectness.score * rubric.scoring.outcome_weight +
-    delegationCorrectness.score * (rubric.scoring.per_expectation_weight / 3) +
-    executionCompleteness.score * (rubric.scoring.per_expectation_weight / 3) +
-    rationaleQuality.score * (rubric.scoring.per_expectation_weight / 3);
+    qualitative === undefined
+      ? routingCorrectness.score * (outcome_weight + per_expectation_weight)
+      : routingCorrectness.score * outcome_weight +
+        qualitative * per_expectation_weight;
 
-  let passed: boolean;
-  if (rubric.scoring.required) {
-    // Deterministic routing gate is always first
-    const routingPasses = routingCorrectness.score >= 0.95;
-    if (!routingPasses) {
-      passed = false;
-    } else if (evalCase.transcript_expectations.length > 0) {
-      // Qualitative gate: average of three qualitative dimensions must meet threshold
-      const avgQualitative =
-        (delegationCorrectness.score +
-          executionCompleteness.score +
-          rationaleQuality.score) /
-        3;
-      passed = avgQualitative >= QUALITATIVE_PASS_THRESHOLD;
-    } else {
-      passed = true;
-    }
-  } else {
-    passed = weightedTotal >= 0.5;
-  }
+  const passed = rubric.scoring.required
+    ? passesRequiredGates(evalCase, routingCorrectness, qualitative)
+    : weightedTotal >= 0.5;
 
   return {
     caseId: evalCase.id,
@@ -1641,8 +1700,8 @@ export interface TapestryCategoryRoutingRunRequest {
  * Required cases (`required: true`):
  *   - `routingCorrectness >= 0.95` is always required (deterministic gate).
  *   - When `transcript_expectations` is non-empty AND a scorer is present:
- *     average of `delegationCorrectness + executionCompleteness + rationaleQuality`
- *     must also be ≥ `QUALITATIVE_PASS_THRESHOLD` (0.7).
+ *     the average of the applicable qualitative dimensions must also be
+ *     ≥ `QUALITATIVE_PASS_THRESHOLD` (0.7).
  *   - When no scorer is present: only the routing gate applies.
  *
  * Optional cases (`required: false`): `weightedTotal >= 0.5`.
