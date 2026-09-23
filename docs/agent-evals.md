@@ -273,6 +273,31 @@ a repeated run's counts and pass rates stay correct for a reader that ignores
 the new fields (it just sees more entries per case). The versioned JSON Schema
 contract (group 5) is written after this change, so it includes them.
 
+### Run one track (`--track`)
+
+A run without `--track` runs text-only and [harness trajectory](#harness-trajectory-evals)
+cases alike, as it always has. `--track text` runs only the text-only cases;
+`--track trajectory` runs only the `harness_trajectory` cases, and only in the
+suites whose registry entry allows them (`loom-routing`, `tapestry-execution`,
+`shuttle-execution`). `WEAVE_EVAL_TRACK` is the env-var form. See
+[`eval-track.ts`](../packages/cli/src/evals/eval-track.ts).
+
+```bash
+# Every trajectory case on the dev subset (needs Podman and the sandbox image)
+TMPDIR=~/.cache/weave-trajectory-tmp \
+  bun packages/cli/src/main.ts eval run --track trajectory --models dev
+```
+
+CI uses it to split the two tracks into [two jobs](#ci-dispatch): only the
+trajectory job builds the sandbox image, so the text job must never reach a
+trajectory case. One rule differs on the trajectory track: with no agent or
+case filter, a suite whose trajectory cases allow none of the selected models
+is left out instead of failing the run with `NoCasesFound`, the same way a
+model outside every case's `allowed_models` already is. The run still fails
+when no suite ran anything, and an explicit agent or case filter keeps the
+strict rule. A case filter naming a case of the other track fails with
+`NoCasesFound`.
+
 ### Measure a change
 
 To find out whether a prompt, case or rubric change helped, run the same
@@ -559,8 +584,17 @@ The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_di
 - `model` — an exact model ID from `evals/model-matrix.json` (blank runs the model set below).
 - `models` — a choice of `default` (the full default matrix, the default) or `dev` (the [development subset](#the-development-subset---models-dev)). `dev` cannot be combined with `model`. For example `gh workflow run agent-evals.yml -f models=dev`.
 - `case` — an exact case ID from `evals/cases/**` (blank runs every case).
+- `repeat` — how many times each case runs per model ([`--repeat`](#repeat-cases---repeat-n)), a whole number from 1 to 20; blank runs each case once. For example `gh workflow run agent-evals.yml -f models=dev -f repeat=3`.
+- `trajectory` — a boolean, on by default: also run the [harness trajectory](#harness-trajectory-evals) job. Untick it (`-f trajectory=false`) to run the text-only job alone.
 
-Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_MODEL_SETS`, `ALLOWED_CASES`) before the eval job ever spends OpenRouter quota or touches secrets. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
+The workflow runs two eval jobs, one per [track](#run-one-track---track):
+
+- **`run-evals`** runs `weave eval run --track text`: every text-only case the filters select.
+- **`trajectory-evals`** builds the Podman sandbox image and runs `weave eval run --track trajectory`: every `harness_trajectory` case the filters select, each on the selected models its `allowed_models` permits. It runs on every dispatch (Spec 37, 20.2); until then it skipped itself unless trajectory-relevant paths had changed since the default branch, which a dispatch from `main` never has. A default dispatch therefore also runs the Spec 35 trajectory cases on their default-matrix models, one sandboxed session each (up to its `max_duration_seconds`), times `repeat`. The Phase 1 case `loom-route-shuttle-implement-utility-trajectory` allows only `openai/gpt-4o-mini`, which is outside the default matrix, so it runs only when that model is dispatched (`-f model=openai/gpt-4o-mini`) or locally with `bun run eval:trajectory`.
+
+A job whose track the filters exclude is skipped, not failed: a `case` filter runs only the job of that case's track, and the trajectory job is skipped when `agent` names a suite that cannot hold trajectory cases (`ALLOWED_TRAJECTORY_AGENTS`) or `model` names a model no trajectory case allows.
+
+Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_MODEL_SETS`, `ALLOWED_CASES`, `ALLOWED_TRAJECTORY_CASES`, `ALLOWED_TRAJECTORY_AGENTS`, the repeat range) before either eval job ever spends OpenRouter quota or touches secrets, and each job dry-runs its selection before the step that holds them. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, the suite registry, `MAX_EVAL_REPEAT`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
 
 ### Remote checks
 

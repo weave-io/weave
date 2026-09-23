@@ -31,9 +31,13 @@
  *   - `--repeat <n>` (or `WEAVE_EVAL_REPEAT`) runs every selected case `n`
  *     times per model, 1 to `MAX_EVAL_REPEAT`. Omitted means 1, which is
  *     exactly the run `weave eval run` made before repeats existed.
+ *   - `--track <text|trajectory>` (or `WEAVE_EVAL_TRACK`) runs only the
+ *     text-only cases or only the `harness_trajectory` cases. Omitted runs
+ *     both. See `eval-track.ts`.
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { EVAL_TRACKS, type EvalTrack } from "./eval-track.js";
 import { MODEL_SET_NAMES, type ModelSetName } from "./model-matrix.js";
 import { EVAL_AGENT_FILTERS } from "./types.js";
 
@@ -66,6 +70,11 @@ export type EvalRunRequest = {
    */
   repeat?: number;
   /**
+   * Which eval track to run (`--track`): only the text-only cases, or only
+   * the `harness_trajectory` cases. Omitted runs both.
+   */
+  track?: EvalTrack;
+  /**
    * When `true`, skip actual execution and print what would be run.
    * Always safe in any environment.
    */
@@ -94,6 +103,8 @@ export type EvalRunInputs = {
   models?: string;
   /** Repeat count from --repeat flag, as typed. */
   repeat?: string;
+  /** Track name from --track flag. */
+  track?: string;
   /** Whether --dry-run was passed. */
   dryRun?: boolean;
   /** Whether --raw-artifacts was passed. */
@@ -156,6 +167,15 @@ export type EvalInputValidationError =
       type: "InvalidRepeatCount";
       /** The value supplied by the caller. */
       value: string;
+      message: string;
+    }
+  | {
+      /** The `--track` value is not a known eval track. */
+      type: "UnknownEvalTrack";
+      /** The unrecognised value supplied by the caller. */
+      value: string;
+      /** The permitted track names. */
+      allowedValues: string[];
       message: string;
     }
   | {
@@ -312,6 +332,24 @@ function validateModelSet(
 }
 
 /**
+ * Validate the `--track` value against `EVAL_TRACKS`.
+ */
+function validateTrack(
+  value: string,
+): Result<EvalTrack, EvalInputValidationError> {
+  const match = EVAL_TRACKS.find((name) => name === value);
+  if (match !== undefined) return ok(match);
+  return err({
+    type: "UnknownEvalTrack",
+    value,
+    allowedValues: [...EVAL_TRACKS],
+    message:
+      `--track "${value}" is not a known eval track. ` +
+      `Allowed values: ${EVAL_TRACKS.join(", ")}`,
+  });
+}
+
+/**
  * Reject `--models dev` combined with `--model <id>`.
  *
  * `--models default` alongside `--model` is accepted: `default` is what a run
@@ -367,6 +405,7 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
   "WEAVE_EVAL_CASE",
   "WEAVE_EVAL_MODELS",
   "WEAVE_EVAL_REPEAT",
+  "WEAVE_EVAL_TRACK",
   "WEAVE_EVAL_PUBLISH_MODE",
 ]);
 
@@ -438,6 +477,7 @@ export function parseEvalRunRequest(
   const envCase = normalizeEnvFilterValue(env.WEAVE_EVAL_CASE);
   const envModels = normalizeEnvFilterValue(env.WEAVE_EVAL_MODELS);
   const envRepeat = normalizeEnvFilterValue(env.WEAVE_EVAL_REPEAT);
+  const envTrack = normalizeEnvFilterValue(env.WEAVE_EVAL_TRACK);
 
   // Resolve agent filter: merge CLI flag + env variable
   const agentMerge = detectDuplicate("agent", inputs.agent, envAgent);
@@ -513,6 +553,15 @@ export function parseEvalRunRequest(
   if (repeatValidation.isErr()) return err(repeatValidation.error);
   const validatedRepeat = repeatValidation.value;
 
+  // Resolve the eval track
+  const trackMerge = detectDuplicate("track", inputs.track, envTrack);
+  if (trackMerge.isErr()) return err(trackMerge.error);
+  const rawTrack = trackMerge.value;
+  const trackValidation =
+    rawTrack !== undefined ? validateTrack(rawTrack) : ok(undefined);
+  if (trackValidation.isErr()) return err(trackValidation.error);
+  const validatedTrack = trackValidation.value;
+
   // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
   // control var, not a filter, but it is part of the eval env contract.
   const evalEnvKeys = Object.keys(env).filter((k) =>
@@ -542,5 +591,6 @@ export function parseEvalRunRequest(
   };
   if (validatedModelSet !== undefined) request.modelSet = validatedModelSet;
   if (validatedRepeat !== undefined) request.repeat = validatedRepeat;
+  if (validatedTrack !== undefined) request.track = validatedTrack;
   return ok(request);
 }

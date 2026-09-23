@@ -113,3 +113,26 @@ describe("a maintainer asks for repeats", () => {
     expect(terminal.err.join("\n")).toContain("--repeat <n>");
   });
 });
+
+describe("a maintainer runs one eval track", () => {
+  it("refuses a track it does not know, naming the two it has", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--track", "both"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('--track "both"');
+    expect(stderr).toContain("text, trajectory");
+  });
+
+  it("lists --track in the usage text", async () => {
+    const terminal = new BufferTerminal();
+    await run({
+      argv: ["bun", "weave", "eval"],
+      terminal,
+      colorEnabled: false,
+      fs: new MemoryFileSystem({}, "/project", "/home/user"),
+      env: {},
+    });
+
+    expect(terminal.err.join("\n")).toContain("--track <name>");
+  });
+});

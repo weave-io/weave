@@ -406,6 +406,30 @@ describe("eval run --repeat", () => {
   });
 });
 
+describe("eval run --track", () => {
+  it("parses --track into evalTrack, as typed", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "run",
+      "--track",
+      "trajectory",
+    ]);
+
+    expect(result._unsafeUnwrap().flags.evalTrack).toBe("trajectory");
+  });
+
+  it("rejects --track with no value", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--track"]);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--track",
+    });
+  });
+});
+
 describe("eval compare", () => {
   it("parses the subcommand and keeps the two runs in order", () => {
     const parsed = parseArgs([

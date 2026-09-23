@@ -161,6 +161,7 @@ const EVAL_USAGE = [
   "  weave eval run --models dev           Run the cheap development subset of models",
   "  weave eval run --case <id>            Filter to a specific case",
   "  weave eval run --repeat <n>           Run each case n times per model and report pass rates",
+  "  weave eval run --track <name>         Run only text-only cases (text) or harness cases (trajectory)",
   "  weave eval run --dry-run              Print what would run without executing",
   "  weave eval run --raw-artifacts        Emit raw artifacts to disk (local-only)",
   "  weave eval compare <baseline> <candidate>",
@@ -201,6 +202,9 @@ function renderDryRunSummary(
     lines.push(
       `  ${theme.cyan("Repeats:")}       each case ${request.repeat} times per model`,
     );
+  }
+  if (request.track !== undefined) {
+    lines.push(`  ${theme.cyan("Track:")}         ${request.track}`);
   }
   if (!request.agent && !request.model && !request.case) {
     lines.push(`  ${theme.dim("No filters applied — all cases would be run")}`);
@@ -331,6 +335,7 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
     case: flags.evalCase,
     models: flags.evalModels,
     repeat: flags.evalRepeat,
+    track: flags.evalTrack,
     dryRun: flags.dryRun ?? false,
     rawArtifacts: flags.rawArtifacts ?? false,
     env,

@@ -39,6 +39,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { EVALS_ROOT, loadCaseFile } from "../case-loader.js";
+import { MAX_EVAL_REPEAT } from "../input-validation.js";
 import { loadModelMatrix, MODEL_SET_NAMES } from "../model-matrix.js";
 import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
@@ -458,21 +459,129 @@ describe("workflow-sync — agent-evals.yml trajectory-track allowlists match ha
     }
   });
 
-  it("the trajectory-evals job filters on the expected paths", async () => {
+  it("ALLOWED_TRAJECTORY_AGENTS names exactly the suites that can hold trajectory cases", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
-    const expectedPaths = [
-      "evals/**",
-      "packages/config/src/builtins.ts",
-      ".weave/prompts/**",
-      "sandboxes/**",
-      "packages/cli/src/evals/**",
-      "packages/adapters/opencode/src/**",
-    ];
+    const match = workflowText.match(
+      /ALLOWED_TRAJECTORY_AGENTS\s*=\s*"([^"]+)"/,
+    );
+    const workflowAgents = (match?.[1] ?? "").trim().split(/\s+/);
+    const registryAgents = EVAL_SUITE_REGISTRY.filter((suite) =>
+      suite.allowedExpectedOutcomeKinds.includes("harness_trajectory"),
+    ).flatMap((suite) => [suite.suiteId, suite.shortAgentFilter]);
 
-    expect(workflowText).toContain("trajectory-evals:");
-    for (const path of expectedPaths) {
-      expect(workflowText).toContain(path);
+    expect(workflowAgents.sort()).toEqual([...new Set(registryAgents)].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The trajectory job runs on manual dispatch (Spec 37, 20.2)
+// ---------------------------------------------------------------------------
+
+/** The text of one top-level job, from its key to the next job's. */
+function jobBlock(workflowText: string, job: string): string {
+  const start = workflowText.indexOf(`\n  ${job}:\n`);
+  if (start === -1) return "";
+  const rest = workflowText.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
+describe("workflow-sync — agent-evals.yml runs the trajectory job on manual dispatch", () => {
+  it("has no changed-paths gate, which skipped every dispatch from main", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, "trajectory-evals");
+
+    expect(job).toContain("runs-on: ubuntu-latest");
+    expect(job).not.toContain("git diff");
+    expect(job).not.toContain("steps.filter");
+    expect(job).not.toContain("fetch-depth");
+  });
+
+  it("gates the job only on the validated run_trajectory output", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, "trajectory-evals");
+
+    expect(job).toContain("needs: validate-inputs");
+    expect(job).toContain(
+      "if: needs.validate-inputs.outputs.run_trajectory == 'true'",
+    );
+    expect(text).toContain(
+      "run_trajectory: ${{ steps.check.outputs.run_trajectory }}",
+    );
+  });
+
+  it("offers a boolean trajectory input that is on by default", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const block = text.slice(
+      text.indexOf("      trajectory:\n"),
+      text.indexOf("\n# Minimal permissions"),
+    );
+
+    expect(block).toContain("type: boolean");
+    expect(block).toContain("default: true");
+  });
+
+  it("runs each track in its own job, never both in one", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const textJob = jobBlock(text, "run-evals");
+    const trajectoryJob = jobBlock(text, "trajectory-evals");
+
+    expect(textJob.match(/WEAVE_EVAL_TRACK: "text"/g)).toHaveLength(2);
+    expect(textJob).not.toContain('WEAVE_EVAL_TRACK: "trajectory"');
+    expect(trajectoryJob.match(/WEAVE_EVAL_TRACK: "trajectory"/g)).toHaveLength(
+      2,
+    );
+    expect(trajectoryJob).not.toContain('WEAVE_EVAL_TRACK: "text"');
+  });
+
+  it("forwards the validated filters to the trajectory job instead of a fixed case", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, "trajectory-evals");
+
+    for (const filter of ["agent", "model", "models", "case", "repeat"]) {
+      expect(
+        job.match(
+          new RegExp(
+            `WEAVE_EVAL_${filter.toUpperCase()}:\\s+\\$\\{\\{ needs\\.validate-inputs\\.outputs\\.${filter} \\}\\}`,
+            "g",
+          ),
+        ),
+      ).toHaveLength(2);
     }
+    expect(job).not.toContain("eval:trajectory");
+  });
+
+  it("dry-runs the trajectory selection before the step that holds secrets", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, "trajectory-evals");
+    const dryRun = job.indexOf("eval run --dry-run");
+    const firstSecret = job.indexOf("${{ secrets.");
+
+    expect(dryRun).toBeGreaterThan(-1);
+    expect(firstSecret).toBeGreaterThan(dryRun);
+    expect(jobBlock(text, "validate-inputs")).not.toContain("${{ secrets.");
+  });
+});
+
+describe("workflow-sync — agent-evals.yml passes --repeat through", () => {
+  it("validates repeat against the CLI's maximum before any eval job", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const validate = jobBlock(text, "validate-inputs");
+
+    expect(validate).toContain(`MAX_REPEAT=${MAX_EVAL_REPEAT}`);
+    expect(validate).toContain("RAW_REPEAT: ${{ github.event.inputs.repeat }}");
+    expect(text).toContain("repeat: ${{ steps.check.outputs.repeat }}");
+  });
+
+  it("forwards the validated repeat count to both jobs, dry run and live", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const forwards = text.match(
+      /WEAVE_EVAL_REPEAT: \$\{\{ needs\.validate-inputs\.outputs\.repeat \}\}/g,
+    );
+
+    expect(forwards).toHaveLength(4);
+    // The raw input is read once, by validate-inputs; jobs see only its output.
+    expect(text.match(/github\.event\.inputs\.repeat/g)).toHaveLength(1);
   });
 });
 
@@ -511,12 +620,12 @@ describe("workflow-sync — agent-evals.yml can choose the dev model subset", ()
     expect(block).toContain('default: "default"');
   });
 
-  it("forwards the validated model set to both the dry run and the live run", async () => {
+  it("forwards the validated model set to the dry run and the live run of both jobs", async () => {
     const text = await Bun.file(WORKFLOW_PATH).text();
     const forwards = text.match(
       /WEAVE_EVAL_MODELS: \$\{\{ needs\.validate-inputs\.outputs\.models \}\}/g,
     );
-    expect(forwards).toHaveLength(2);
+    expect(forwards).toHaveLength(4);
     expect(text).toContain("models: ${{ steps.check.outputs.models }}");
   });
 

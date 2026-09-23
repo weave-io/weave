@@ -80,6 +80,8 @@ export interface ParsedArgs {
     evalCase?: string;
     /** --repeat <n> for `weave eval run`, as typed; validated by the eval command */
     evalRepeat?: string;
+    /** --track <text|trajectory> for `weave eval run`; validated by the eval command */
+    evalTrack?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
     dryRun?: boolean;
     /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
@@ -373,6 +375,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.evalRepeat = val;
+      continue;
+    }
+    if (arg === "--track") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--track",
+          message: "--track requires a track name (text or trajectory)",
+        });
+      }
+      flags.evalTrack = val;
       continue;
     }
 

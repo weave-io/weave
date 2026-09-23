@@ -70,6 +70,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -1414,6 +1415,8 @@ export interface LoomRunRequest {
    * (limited to the first model for simplicity).
    */
   modelFilter?: string;
+  /** Optional track filter (`--track`). When omitted, every case runs. */
+  track?: EvalTrack;
   /**
    * When `true`, no model calls are made. Returns dry-run `CaseResult` entries.
    */
@@ -1588,6 +1591,10 @@ export class LoomRoutingRunner {
         }
         cases = [filterResult];
       }
+
+      // Apply the track filter (`--track`): keep only the text-only or only
+      // the `harness_trajectory` cases.
+      cases = selectCasesForTrack(cases, request.track);
 
       if (cases.length === 0) {
         return new ResultAsync(

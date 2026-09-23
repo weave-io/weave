@@ -752,3 +752,51 @@ describe("parseEvalRunRequest — --repeat", () => {
     expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
   });
 });
+
+describe("parseEvalRunRequest — --track", () => {
+  it("leaves track unset when --track is not supplied, so both tracks run", () => {
+    const req = parseEvalRunRequest(inputs())._unsafeUnwrap();
+    expect(req.track).toBeUndefined();
+  });
+
+  it.each(["text", "trajectory"] as const)("accepts --track %p", (track) => {
+    const req = parseEvalRunRequest(inputs({ track }))._unsafeUnwrap();
+    expect(req.track).toBe(track);
+  });
+
+  it.each([
+    "both",
+    "Text",
+    "harness_trajectory",
+  ])("rejects --track %p with the allowed values", (value) => {
+    const error = parseEvalRunRequest(
+      inputs({ track: value }),
+    )._unsafeUnwrapErr();
+    expect(error.type).toBe("UnknownEvalTrack");
+    expect(error.message).toContain("text, trajectory");
+  });
+
+  it("reads WEAVE_EVAL_TRACK when the flag is absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_TRACK: "trajectory" } }),
+    )._unsafeUnwrap();
+    expect(req.track).toBe("trajectory");
+  });
+
+  it("treats a blank WEAVE_EVAL_TRACK as absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_TRACK: "" } }),
+    )._unsafeUnwrap();
+    expect(req.track).toBeUndefined();
+  });
+
+  it("rejects a flag and env var that name different tracks", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        track: "text",
+        envOverrides: { WEAVE_EVAL_TRACK: "trajectory" },
+      }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
+  });
+});

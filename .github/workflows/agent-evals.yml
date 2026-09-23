@@ -91,6 +91,22 @@ on:
         required: false
         default: ""
         type: string
+      repeat:
+        description: |
+          How many times each selected case runs per model (`weave eval run --repeat`).
+          A whole number from 1 to 20; blank runs each case once. Applies to both the
+          text-only and the trajectory job.
+        required: false
+        default: ""
+        type: string
+      trajectory:
+        description: |
+          Also run the harness trajectory job (every `harness_trajectory` case the
+          other filters select, in a Podman sandbox). On by default; untick to run
+          the text-only job alone.
+        required: false
+        default: true
+        type: boolean
 
 # Minimal permissions: read-only for the source repo.
 #
@@ -137,6 +153,9 @@ jobs:
       model: ${{ steps.check.outputs.model }}
       models: ${{ steps.check.outputs.models }}
       case:  ${{ steps.check.outputs.case }}
+      repeat: ${{ steps.check.outputs.repeat }}
+      run_text: ${{ steps.check.outputs.run_text }}
+      run_trajectory: ${{ steps.check.outputs.run_trajectory }}
     steps:
       # The model allowlist is derived from evals/model-matrix.json rather than
       # restated here, so adding a model is a single edit to that file. Reading
@@ -159,6 +178,8 @@ jobs:
           RAW_MODEL: ${{ github.event.inputs.model }}
           RAW_MODELS: ${{ github.event.inputs.models }}
           RAW_CASE:  ${{ github.event.inputs.case }}
+          RAW_REPEAT: ${{ github.event.inputs.repeat }}
+          RAW_TRAJECTORY: ${{ github.event.inputs.trajectory }}
         run: |
           set -euo pipefail
 
@@ -286,6 +307,89 @@ jobs:
           fi
 
           # ---------------------------------------------------------------------------
+          # Validate --repeat input
+          #
+          # Blank means each case runs once. Otherwise a plain whole number from
+          # 1 to MAX_REPEAT, which mirrors MAX_EVAL_REPEAT in
+          # packages/cli/src/evals/input-validation.ts (workflow-sync.test.ts
+          # enforces parity). The CLI validates the value again.
+          # ---------------------------------------------------------------------------
+          MAX_REPEAT=20
+          REPEAT_OUT=""
+          if [ -n "${RAW_REPEAT}" ]; then
+            if ! printf '%s' "${RAW_REPEAT}" | grep -qE '^[1-9][0-9]*$'; then
+              echo "::error::Invalid repeat input: a whole number from 1 to ${MAX_REPEAT} is required"
+              exit 1
+            fi
+            if [ "${#RAW_REPEAT}" -gt 2 ] || [ "${RAW_REPEAT}" -gt "${MAX_REPEAT}" ]; then
+              echo "::error::Invalid repeat input: at most ${MAX_REPEAT} repeats"
+              exit 1
+            fi
+            REPEAT_OUT="${RAW_REPEAT}"
+          fi
+
+          # ---------------------------------------------------------------------------
+          # Validate --trajectory input (a boolean input, validated again here)
+          # ---------------------------------------------------------------------------
+          case "${RAW_TRAJECTORY}" in
+            true|"") TRAJECTORY_ON=true ;;
+            false) TRAJECTORY_ON=false ;;
+            *)
+              echo "::error::Invalid trajectory input: true or false is required"
+              exit 1
+              ;;
+          esac
+
+          # ---------------------------------------------------------------------------
+          # Decide which eval jobs have work.
+          #
+          # The text-only job runs `weave eval run --track text`, the trajectory
+          # job `--track trajectory`. A job whose track the filters exclude is
+          # skipped rather than failed:
+          #   - a case filter runs only the job of that case's track;
+          #   - the trajectory job needs an agent filter that names a suite
+          #     holding trajectory cases, and a model filter that some
+          #     trajectory case allows.
+          #
+          # ALLOWED_TRAJECTORY_CASES: exact IDs of the harness_trajectory cases
+          # under evals/cases/**. ALLOWED_TRAJECTORY_AGENTS: the suite IDs and
+          # short agent names of the suites that can hold them (the registry
+          # entries allowing harness_trajectory). workflow-sync.test.ts enforces
+          # both. ALLOWED_TRAJECTORY_MODELS is the union of those cases'
+          # allowed_models, read from the fixtures rather than restated.
+          # ---------------------------------------------------------------------------
+          ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory shuttle-verify-tests-after-edit-trajectory tapestry-runs-plan-verification-trajectory"
+          ALLOWED_TRAJECTORY_AGENTS="loom tapestry shuttle loom-routing tapestry-execution shuttle-execution"
+          ALLOWED_TRAJECTORY_MODELS="$(jq -rs '[.[] | select(.expected_outcome.kind=="harness_trajectory") | .allowed_models[]?] | unique | .[]' evals/cases/*/*.json | tr '\n' ' ')"
+          if [ -z "${ALLOWED_TRAJECTORY_MODELS// /}" ]; then
+            echo "::error::Could not derive trajectory model allowlist from evals/cases"
+            exit 1
+          fi
+
+          in_list() {
+            for item in $2; do
+              if [ "$1" = "${item}" ]; then return 0; fi
+            done
+            return 1
+          }
+
+          RUN_TEXT=true
+          RUN_TRAJECTORY="${TRAJECTORY_ON}"
+          if [ -n "${CASE_OUT}" ]; then
+            if in_list "${CASE_OUT}" "${ALLOWED_TRAJECTORY_CASES}"; then
+              RUN_TEXT=false
+            else
+              RUN_TRAJECTORY=false
+            fi
+          fi
+          if [ -n "${AGENT_OUT}" ] && ! in_list "${AGENT_OUT}" "${ALLOWED_TRAJECTORY_AGENTS}"; then
+            RUN_TRAJECTORY=false
+          fi
+          if [ -n "${MODEL_OUT}" ] && ! in_list "${MODEL_OUT}" "${ALLOWED_TRAJECTORY_MODELS}"; then
+            RUN_TRAJECTORY=false
+          fi
+
+          # ---------------------------------------------------------------------------
           # Emit validated outputs — never the raw dispatch values.
           # Downstream jobs reference these outputs, not the raw inputs.
           # ---------------------------------------------------------------------------
@@ -294,9 +398,13 @@ jobs:
             printf 'model=%s\n' "${MODEL_OUT}"
             printf 'models=%s\n' "${MODELS_OUT}"
             printf 'case=%s\n'  "${CASE_OUT}"
+            printf 'repeat=%s\n' "${REPEAT_OUT}"
+            printf 'run_text=%s\n' "${RUN_TEXT}"
+            printf 'run_trajectory=%s\n' "${RUN_TRAJECTORY}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "Validation passed: agent='${AGENT_OUT}' model='${MODEL_OUT}' models='${MODELS_OUT}' case='${CASE_OUT}'"
+          echo "Validation passed: agent='${AGENT_OUT}' model='${MODEL_OUT}' models='${MODELS_OUT}' case='${CASE_OUT}' repeat='${REPEAT_OUT}'"
+          echo "Jobs: text=${RUN_TEXT} trajectory=${RUN_TRAJECTORY}"
 
   # ---------------------------------------------------------------------------
   # Job 2: Run evals and publish sanitized bundles to weave-io/weave-agent-evals.
@@ -324,6 +432,8 @@ jobs:
     name: Run agent evals
     runs-on: ubuntu-latest
     needs: validate-inputs
+    # Skipped only when a case filter names a trajectory case.
+    if: needs.validate-inputs.outputs.run_text == 'true'
     permissions:
       contents: read
     steps:
@@ -404,6 +514,10 @@ jobs:
           WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
           WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
           WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          WEAVE_EVAL_REPEAT: ${{ needs.validate-inputs.outputs.repeat }}
+          # Text-only cases only: harness_trajectory cases need the sandbox
+          # image, which only the trajectory-evals job builds.
+          WEAVE_EVAL_TRACK: "text"
           CI: "true"
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
@@ -431,6 +545,9 @@ jobs:
           WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
           WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
           WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          WEAVE_EVAL_REPEAT: ${{ needs.validate-inputs.outputs.repeat }}
+          # Text-only cases only; see the dry-run step.
+          WEAVE_EVAL_TRACK: "text"
           # CI=true prevents --raw-artifacts from being accepted (policy guard
           # in packages/cli/src/evals/input-validation.ts: RawArtifactsInCI).
           CI: "true"
@@ -484,20 +601,21 @@ jobs:
   # This job runs cases whose expected_outcome.kind is "harness_trajectory" -
   # cases that need a real OpenCode harness session inside a sandbox container,
   # not just a text-only model completion. It is a separate track from
-  # run-evals because it requires building and running a container image.
+  # run-evals because it requires building and running a container image:
+  # run-evals passes `--track text` and this job `--track trajectory`, so each
+  # case runs in exactly one job.
   #
-  # This workflow is manual-dispatch-only (see the header comment above), so
-  # there is no push/pull_request trigger for GitHub Actions' native `paths:`
-  # filter to apply to. Instead this job uses dorny/paths-filter to compute
-  # whether trajectory-relevant paths changed since the base ref and skips the
-  # expensive steps (sandbox build, harness run) when nothing relevant
-  # changed. The gated paths are:
-  #   - evals/**
-  #   - packages/config/src/builtins.ts
-  #   - .weave/prompts/**
-  #   - sandboxes/**
-  #   - packages/cli/src/evals/**
-  #   - packages/adapters/opencode/src/**
+  # It runs on every manual dispatch (Spec 37, 20.2). It used to skip itself
+  # unless trajectory-relevant paths had changed since the default branch,
+  # which a dispatch from `main` never has, so it skipped every time. It now
+  # skips only when the `trajectory` input is unticked or when the validated
+  # filters leave it no work (see "Decide which eval jobs have work" in
+  # validate-inputs). It honours the same agent, model, model-set, case and
+  # repeat filters as run-evals.
+  #
+  # Cost: every trajectory case the filters select runs on every selected
+  # model its `allowed_models` permits, one sandboxed session each (up to its
+  # `max_duration_seconds`), times `repeat`.
   #
   # RISK (tracked from the plan's risks section):
   #   Podman on the GitHub-hosted ubuntu-latest runner is the initial sandbox
@@ -509,15 +627,15 @@ jobs:
   #   pre-provisioned container backend.
   # ---------------------------------------------------------------------------
   trajectory-evals:
-    name: Run trajectory eval (harness track)
+    name: Run trajectory evals (harness track)
     runs-on: ubuntu-latest
     needs: validate-inputs
+    if: needs.validate-inputs.outputs.run_trajectory == 'true'
     permissions:
       contents: read
     steps:
       # -----------------------------------------------------------------------
-      # Step 1: Checkout source repo (needed for paths-filter and the harness
-      # sandbox build).
+      # Step 1: Checkout source repo (needed for the harness sandbox build).
       # -----------------------------------------------------------------------
       - name: Checkout source repo
         # actions/checkout v4.2.2
@@ -525,127 +643,45 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-          fetch-depth: 0
 
       # -----------------------------------------------------------------------
-      # Step 2: Compute whether trajectory-relevant paths changed.
+      # Step 2: Hardcoded sandbox profile allowlist (defense-in-depth).
       #
-      # This is the per-job equivalent of a `paths:` trigger filter, needed
-      # because the workflow trigger itself is workflow_dispatch-only (no
-      # push/pull_request event to attach a native `paths:` filter to).
-      #
-      # Implemented inline via `git diff` rather than a third-party action to
-      # stay within the repo's approved-action-owners allowlist (see
-      # scripts/ci/verify-action-pins.ts: only actions/* and oven-sh/* are
-      # permitted). The gated globs are enforced by workflow-sync.test.ts.
+      # This job builds one sandbox image. Every sandbox_profile a trajectory
+      # case names must be one it can serve, or the job fails closed here,
+      # before any secret is in scope. workflow-sync.test.ts enforces that
+      # ALLOWED_SANDBOX_PROFILES matches the profiles the cases reference.
       # -----------------------------------------------------------------------
-      - name: Detect trajectory-relevant changes
-        id: filter
-        # Gated glob paths (workflow-sync.test.ts verifies these substrings
-        # are present in this workflow file):
-        #   - evals/**
-        #   - packages/config/src/builtins.ts
-        #   - .weave/prompts/**
-        #   - sandboxes/**
-        #   - packages/cli/src/evals/**
-        #   - packages/adapters/opencode/src/**
-        env:
-          BASE_REF: ${{ github.event.repository.default_branch }}
+      - name: Validate trajectory sandbox profiles
         run: |
           set -euo pipefail
-          # Gated paths: evals/**, packages/config/src/builtins.ts,
-          # .weave/prompts/**, sandboxes/**, packages/cli/src/evals/**,
-          # packages/adapters/opencode/src/**
-          PATTERN='^(evals/|packages/config/src/builtins\.ts$|\.weave/prompts/|sandboxes/|packages/cli/src/evals/|packages/adapters/opencode/src/)'
-          # For workflow_dispatch there is no PR base; diff against the default
-          # branch's tip. Fall back to HEAD~1 if the default branch ref is not
-          # resolvable (e.g. running from the default branch itself).
-          if git rev-parse --verify "origin/${BASE_REF}" >/dev/null 2>&1; then
-            CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
-          else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD || true)
-          fi
-          MATCH=$(printf '%s\n' "${CHANGED}" | grep -E "${PATTERN}" || true)
-          if [ -n "${MATCH}" ]; then
-            echo "trajectory=true" >> "${GITHUB_OUTPUT}"
-            echo "Trajectory-relevant paths changed:"
-            printf '  %s\n' ${MATCH}
-          else
-            echo "trajectory=false" >> "${GITHUB_OUTPUT}"
-            echo "No trajectory-relevant paths changed; job steps will skip."
-          fi
-
-      # -----------------------------------------------------------------------
-      # Step 3: Hardcoded trajectory allowlists (defense-in-depth).
-      #
-      # Unlike run-evals, this job does not accept a dispatch-supplied case or
-      # model - the trajectory track currently runs a single fixed case. These
-      # allowlists are validated against a fixed target instead of a raw input,
-      # but they follow the same hardcoded-list pattern as ALLOWED_AGENTS and
-      # ALLOWED_CASES above so this job fails closed if the fixed values ever
-      # drift out of sync with the fixture set. workflow-sync.test.ts enforces
-      # that these allowlists stay in sync with evals/cases/** fixture reality.
-      # -----------------------------------------------------------------------
-      - name: Validate trajectory allowlists
-        if: steps.filter.outputs.trajectory == 'true'
-        run: |
-          set -euo pipefail
-
-          # Case allowlist: exact case IDs with expected_outcome.kind ==
-          # "harness_trajectory" from evals/cases/**
-          ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory shuttle-verify-tests-after-edit-trajectory tapestry-runs-plan-verification-trajectory"
-
-          # Model allowlist: the union of allowed_models across the trajectory
-          # cases themselves, so it follows the fixtures rather than being
-          # restated here.
-          ALLOWED_TRAJECTORY_MODELS="$(jq -rs '[.[] | select(.expected_outcome.kind=="harness_trajectory") | .allowed_models[]?] | unique | .[]' evals/cases/*/*.json | tr '\n' ' ')"
-          if [ -z "${ALLOWED_TRAJECTORY_MODELS// /}" ]; then
-            echo "::error::Could not derive trajectory model allowlist from evals/cases"
-            exit 1
-          fi
 
           # Sandbox profile allowlist: exact expected_outcome.sandbox_profile
           # values referenced by trajectory cases.
           ALLOWED_SANDBOX_PROFILES="opencode-default opencode-local"
 
-          TRAJECTORY_CASE="loom-route-shuttle-implement-utility-trajectory"
-          TRAJECTORY_MODEL="openai/gpt-4o-mini"
-          TRAJECTORY_SANDBOX_PROFILE="opencode-default"
-
-          MATCHED=false
-          for c in ${ALLOWED_TRAJECTORY_CASES}; do
-            if [ "${TRAJECTORY_CASE}" = "${c}" ]; then MATCHED=true; break; fi
-          done
-          if [ "${MATCHED}" = "false" ]; then
-            echo "::error::Trajectory case '${TRAJECTORY_CASE}' not in ALLOWED_TRAJECTORY_CASES"
+          PROFILES="$(jq -rs '[.[] | select(.expected_outcome.kind=="harness_trajectory") | .expected_outcome.sandbox_profile] | unique | .[]' evals/cases/*/*.json)"
+          if [ -z "${PROFILES}" ]; then
+            echo "::error::No harness_trajectory cases found under evals/cases"
             exit 1
           fi
-
-          MATCHED=false
-          for m in ${ALLOWED_TRAJECTORY_MODELS}; do
-            if [ "${TRAJECTORY_MODEL}" = "${m}" ]; then MATCHED=true; break; fi
+          for profile in ${PROFILES}; do
+            MATCHED=false
+            for p in ${ALLOWED_SANDBOX_PROFILES}; do
+              if [ "${profile}" = "${p}" ]; then MATCHED=true; break; fi
+            done
+            if [ "${MATCHED}" = "false" ]; then
+              echo "::error::Sandbox profile '${profile}' not in ALLOWED_SANDBOX_PROFILES"
+              exit 1
+            fi
           done
-          if [ "${MATCHED}" = "false" ]; then
-            echo "::error::Trajectory model '${TRAJECTORY_MODEL}' not in ALLOWED_TRAJECTORY_MODELS"
-            exit 1
-          fi
 
-          MATCHED=false
-          for p in ${ALLOWED_SANDBOX_PROFILES}; do
-            if [ "${TRAJECTORY_SANDBOX_PROFILE}" = "${p}" ]; then MATCHED=true; break; fi
-          done
-          if [ "${MATCHED}" = "false" ]; then
-            echo "::error::Sandbox profile '${TRAJECTORY_SANDBOX_PROFILE}' not in ALLOWED_SANDBOX_PROFILES"
-            exit 1
-          fi
-
-          echo "Trajectory allowlist validation passed."
+          echo "Trajectory sandbox profile validation passed."
 
       # -----------------------------------------------------------------------
-      # Step 4: Set up Bun runtime.
+      # Step 3: Set up Bun runtime.
       # -----------------------------------------------------------------------
       - name: Set up Bun
-        if: steps.filter.outputs.trajectory == 'true'
         # oven-sh/setup-bun v2.2.0
         # SHA pinned to the upstream commit for this tag.
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -653,28 +689,25 @@ jobs:
           bun-version: "1.3.10"
 
       # -----------------------------------------------------------------------
-      # Step 5: Install dependencies.
+      # Step 4: Install dependencies.
       # -----------------------------------------------------------------------
       - name: Install dependencies
-        if: steps.filter.outputs.trajectory == 'true'
         run: bun install --frozen-lockfile
 
       # -----------------------------------------------------------------------
-      # Step 6: Build the CLI.
+      # Step 5: Build the CLI.
       # -----------------------------------------------------------------------
       - name: Build
-        if: steps.filter.outputs.trajectory == 'true'
         run: bun run build
 
       # -----------------------------------------------------------------------
-      # Step 7: Build the sandbox container image.
+      # Step 6: Build the sandbox container image.
       #
       # See the RISK comment above the job: Podman on ubuntu-latest is the
       # initial target. If this step proves unreliable in practice, move the
       # job to a self-hosted runner with a pre-provisioned container backend.
       # -----------------------------------------------------------------------
       - name: Build sandbox image
-        if: steps.filter.outputs.trajectory == 'true'
         # Tag must match resolveSandboxProfileImage()'s mapping for the
         # "opencode-default" sandbox_profile in
         # packages/adapters/opencode/src/trajectory/opencode-trajectory-runner.ts
@@ -683,17 +716,38 @@ jobs:
         run: podman build -t weave-sandbox-opencode-default sandboxes/opencode
 
       # -----------------------------------------------------------------------
-      # Step 8: Run the trajectory eval and publish results.
+      # Step 7: Dry-run the trajectory selection.
+      #
+      # No secrets. Validates the same filters the live step uses and fails
+      # closed on an invalid combination before any model call.
+      # -----------------------------------------------------------------------
+      - name: Dry-run trajectory evals in CI env
+        env:
+          WEAVE_EVAL_PUBLISH_MODE: "publish"
+          WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
+          WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
+          WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          WEAVE_EVAL_REPEAT: ${{ needs.validate-inputs.outputs.repeat }}
+          WEAVE_EVAL_TRACK: "trajectory"
+          CI: "true"
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bun packages/cli/src/main.ts eval run --dry-run
+
+      # -----------------------------------------------------------------------
+      # Step 8: Run the trajectory evals and publish results.
       #
       # Uses the same publish contract as run-evals: OPENROUTER_API_KEY and
       # EVAL_RESULTS_REPO_TOKEN are scoped to this step only, and the CLI's
       # sanitizer pipeline (assertPublishSafe, assertJsonPublishSafe,
       # enforcePublishPolicy) runs before any external push to
       # weave-io/weave-agent-evals. Bundle shape and publisher target are
-      # unchanged from the text-only track.
+      # unchanged from the text-only track. Filters are forwarded as
+      # WEAVE_EVAL_* env vars, never as argv.
       # -----------------------------------------------------------------------
-      - name: Run trajectory eval
-        if: steps.filter.outputs.trajectory == 'true'
+      - name: Run trajectory evals
         env:
           # Secret: OpenRouter inference API key.
           # Scoped to this step only - not available in any other step.
@@ -702,11 +756,17 @@ jobs:
           # Scoped to this step only - not available in any other step.
           EVAL_RESULTS_REPO_TOKEN: ${{ secrets.EVAL_RESULTS_REPO_TOKEN }}
           WEAVE_EVAL_PUBLISH_MODE: "publish"
+          WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
+          WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
+          WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          WEAVE_EVAL_REPEAT: ${{ needs.validate-inputs.outputs.repeat }}
+          WEAVE_EVAL_TRACK: "trajectory"
           CI: "true"
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          bun run eval:trajectory
+          bun packages/cli/src/main.ts eval run
 
       # -----------------------------------------------------------------------
       # Step 9: Upload local bundle artifacts (backup).
@@ -718,7 +778,7 @@ jobs:
         # actions/upload-artifact v4.6.2
         # SHA pinned to the upstream commit for this tag — immune to tag mutation.
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always() && steps.filter.outputs.trajectory == 'true'
+        if: always()
         with:
           name: trajectory-eval-bundles-${{ github.run_id }}
           path: eval-bundles/

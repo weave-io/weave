@@ -14,6 +14,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
 import {
   buildRequiredSignalsLine,
   hasAffirmedMatch,
@@ -434,6 +435,8 @@ export interface ShuttleExecutionRunnerOptions {
 export interface ShuttleExecutionRunRequest {
   caseFilter?: string;
   modelFilter?: string;
+  /** Optional track filter (`--track`). When omitted, every case runs. */
+  track?: EvalTrack;
   dryRun?: boolean;
   rawArtifacts?: boolean;
 }
@@ -538,6 +541,10 @@ export class ShuttleExecutionRunner {
         }
         cases = [filterResult];
       }
+
+      // Apply the track filter (`--track`): keep only the text-only or only
+      // the `harness_trajectory` cases.
+      cases = selectCasesForTrack(cases, request.track);
 
       if (cases.length === 0) {
         return new ResultAsync(

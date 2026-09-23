@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
 import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
+import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
 import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
 import {
   type JudgeInput,
@@ -352,8 +353,11 @@ export async function withEvalFixtures<T>(
 export interface SuiteRunOptions {
   /** The fixture root from `withEvalFixtures`. */
   evalsRoot: string;
-  /** `--agent`. A suite ID selects exactly one suite. */
-  agent: string;
+  /**
+   * `--agent`. A suite ID selects exactly one suite; omitted selects every
+   * suite (the fixture root decides which have cases).
+   */
+  agent?: string;
   /** The answers the model gives, in order. The last one repeats. */
   answers?: string[];
   /** Returned by the model instead of an answer. */
@@ -400,6 +404,8 @@ export interface SuiteRunOptions {
   dryRun?: boolean;
   /** `--repeat`. Omitted means each case runs once. */
   repeat?: number;
+  /** `--track`. Omitted runs text-only and trajectory cases alike. */
+  track?: EvalTrack;
   /** `--raw-artifacts`. */
   rawArtifacts?: boolean;
   /** The environment the run reads. Defaults to a fake API key. */
@@ -608,6 +614,7 @@ export async function runEvalSuite(
     ...(options.modelSet !== undefined ? { modelSet: options.modelSet } : {}),
     case: options.caseFilter,
     ...(options.repeat !== undefined ? { repeat: options.repeat } : {}),
+    ...(options.track !== undefined ? { track: options.track } : {}),
     dryRun: options.dryRun ?? false,
     rawArtifacts: options.rawArtifacts ?? false,
   };

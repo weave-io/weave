@@ -71,6 +71,7 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
+import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
 import { hasAffirmedMatch, isJudgmentCase } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
@@ -737,6 +738,8 @@ export interface TapestryRunRequest {
    * Optional model ID filter. When set, only cases that allow this model run.
    */
   modelFilter?: string;
+  /** Optional track filter (`--track`). When omitted, every case runs. */
+  track?: EvalTrack;
   /** When `true`, no model calls are made. */
   dryRun?: boolean;
   /** When `true`, populate `rawArtifact` with local-only raw data. */
@@ -898,6 +901,10 @@ export class TapestryExecutionRunner {
         }
         cases = [filterResult];
       }
+
+      // Apply the track filter (`--track`): keep only the text-only or only
+      // the `harness_trajectory` cases.
+      cases = selectCasesForTrack(cases, request.track);
 
       if (cases.length === 0) {
         return new ResultAsync(
