@@ -1368,7 +1368,7 @@ function readItems(args: Args): ResultAsync<BakeoffItem[], BakeoffError> {
   if (itemsPath.isErr()) return errAsync(itemsPath.error);
   const negativesPath = args.negatives;
   return readJson(itemsPath.value, ItemsSchema).andThen((items) => {
-    if (typeof negativesPath !== "string") return okAsync(items);
+    if (typeof negativesPath !== "string") return mergeItems(items, []);
     return readJson(negativesPath, ItemsSchema).andThen((negatives) =>
       mergeItems(items, negatives),
     );
