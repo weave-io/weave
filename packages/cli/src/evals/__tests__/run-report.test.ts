@@ -28,6 +28,7 @@ function caseReport(overrides: Partial<CaseReport> = {}): CaseReport {
     },
     publicExplanation: null,
     rawArtifactPath: null,
+    rawArtifactMissing: null,
     ...overrides,
   };
 }
@@ -113,6 +114,34 @@ describe("EvalRunReport", () => {
 
     expect(text).toContain("Raw transcript: /work/raw/case.json");
     expect(text).not.toContain("--raw-artifacts");
+  });
+
+  it("says why a case has no transcript when --raw-artifacts was given and the write failed", () => {
+    const text = render(
+      summary(
+        [caseReport({ rawArtifactMissing: "RawArtifactWriteError" })],
+        {},
+        { rawArtifactsEnabled: true },
+      ),
+    );
+
+    expect(text).toContain(
+      "Raw transcript: not written — writing it failed (RawArtifactWriteError)",
+    );
+  });
+
+  it("says when the runner produced no raw artifact for a case", () => {
+    const text = render(
+      summary(
+        [caseReport({ passed: true, rawArtifactMissing: "NotProduced" })],
+        {},
+        { rawArtifactsEnabled: true },
+      ),
+    );
+
+    expect(text).toContain(
+      "not written — the runner produced no raw artifact for this case",
+    );
   });
 
   it("reports a run that wrote nothing without a bundle line or a hint", () => {

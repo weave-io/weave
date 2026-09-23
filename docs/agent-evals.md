@@ -321,7 +321,9 @@ Eval run b42a14b-2026-09-23-001: 1 case, 0 passed, 1 failed
 - **Where the raw transcript is** — the `raw/case-…json` file holds the
   composed prompt, the full transcript, the model's answer, the judge's
   rationale for each dimension and the runner's diagnostics (for example the
-  required signals it did not detect). Open it to see *why*.
+  required signals it did not detect). Open it to see *why*. If
+  `--raw-artifacts` was given but no file was written for a case, the line says
+  so and why (the writer's error type, or that the runner produced none).
 
 The example above is a real run (23 Sep 2026). The scores alone read as "Weft
 missed the blocker"; the raw file showed the model's answer was a single

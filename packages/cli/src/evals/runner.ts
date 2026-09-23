@@ -432,6 +432,21 @@ export interface CaseReport {
    * for this case, or `null` when raw artifacts were not written.
    */
   rawArtifactPath: string | null;
+  /**
+   * Why this case has no raw artifact although `--raw-artifacts` was given:
+   * the writer's error type (e.g. `"RawArtifactWriteError"`), or
+   * `"NotProduced"` when the runner made none. `null` when a path was written
+   * or raw artifacts were not requested.
+   */
+  rawArtifactMissing: string | null;
+}
+
+/** The raw artifacts `writeRawArtifacts` wrote or failed to write, per case. */
+interface RawArtifactOutcomes {
+  /** Written file path, keyed by `caseReportKey`. */
+  paths: Map<string, string>;
+  /** Writer error type, keyed by `caseReportKey`. */
+  failures: Map<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +880,7 @@ export class EvalOrchestrator {
                   [],
                   [],
                   null,
-                  null,
+                  undefined,
                 ),
               ),
             );
@@ -879,13 +894,13 @@ export class EvalOrchestrator {
             request,
           ).andThen((writeResult) => {
             // Step 7: Optionally write raw artifacts
-            const rawArtifactResults = request.rawArtifacts
+            const rawArtifactResults: Promise<{
+              written: string[];
+              byCase: RawArtifactOutcomes | null;
+              errors: string[];
+            }> = request.rawArtifacts
               ? this.writeRawArtifacts(runnerResults, writeResult.bundleDir)
-              : Promise.resolve({
-                  written: [] as string[],
-                  byCase: new Map<string, string>(),
-                  errors: [] as string[],
-                });
+              : Promise.resolve({ written: [], byCase: null, errors: [] });
 
             return ResultAsync.fromSafePromise(rawArtifactResults).andThen(
               (rawResult) =>
@@ -1548,13 +1563,16 @@ export class EvalOrchestrator {
     bundleDir: string,
   ): Promise<{
     written: string[];
-    byCase: Map<string, string>;
+    byCase: RawArtifactOutcomes;
     errors: string[];
   }> {
     const rawWriter = new RawArtifactsWriter(bundleDir, true);
     const timestamp = new Date().toISOString();
     const written: string[] = [];
-    const byCase = new Map<string, string>();
+    const byCase: RawArtifactOutcomes = {
+      paths: new Map(),
+      failures: new Map(),
+    };
     const errors: string[] = [];
 
     for (const runnerResult of runnerResults) {
@@ -1567,10 +1585,14 @@ export class EvalOrchestrator {
         );
         if (result.isOk()) {
           written.push(result.value);
-          byCase.set(caseReportKey(caseResult.summary), result.value);
+          byCase.paths.set(caseReportKey(caseResult.summary), result.value);
         } else {
           // Record the error type (not the raw message — may contain paths)
           errors.push(result.error.type);
+          byCase.failures.set(
+            caseReportKey(caseResult.summary),
+            result.error.type,
+          );
         }
       }
     }
@@ -2127,7 +2149,7 @@ export class EvalOrchestrator {
     filesWritten: string[],
     rawArtifactsWritten: string[],
     repeatabilityDiagnostics: RepeatabilityDiagnosticsResult | null,
-    rawArtifactsByCase: ReadonlyMap<string, string> | null,
+    rawArtifactsByCase: RawArtifactOutcomes | null | undefined,
   ): EvalRunSummary {
     // Aggregate totals
     const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
@@ -2166,14 +2188,17 @@ export class EvalOrchestrator {
   }
 
   /**
-   * One `CaseReport` per case result, in run order. `rawArtifactsByCase` is
-   * `null` for a dry run, which scored nothing and so reports nothing.
+   * One `CaseReport` per case result, in run order.
+   *
+   * `rawArtifacts` is `undefined` for a dry run, which scored nothing and so
+   * reports nothing; `null` for a live run without `--raw-artifacts`; and the
+   * per-case outcomes of the raw writer otherwise.
    */
   private buildCaseReports(
     runnerResults: RunnerResult[],
-    rawArtifactsByCase: ReadonlyMap<string, string> | null,
+    rawArtifacts: RawArtifactOutcomes | null | undefined,
   ): CaseReport[] {
-    if (rawArtifactsByCase === null) return [];
+    if (rawArtifacts === undefined) return [];
     return runnerResults.flatMap((runnerResult) =>
       runnerResult.caseResults.map(({ summary }) => ({
         suite: summary.suite,
@@ -2184,9 +2209,21 @@ export class EvalOrchestrator {
         weightedTotal: summary.weightedTotal,
         dimensionScores: summary.dimensionScores,
         publicExplanation: summary.publicExplanation?.text ?? null,
-        rawArtifactPath: rawArtifactsByCase.get(caseReportKey(summary)) ?? null,
+        rawArtifactPath:
+          rawArtifacts?.paths.get(caseReportKey(summary)) ?? null,
+        rawArtifactMissing: this.rawArtifactMissing(rawArtifacts, summary),
       })),
     );
+  }
+
+  private rawArtifactMissing(
+    rawArtifacts: RawArtifactOutcomes | null,
+    summary: CaseResultSummary,
+  ): string | null {
+    if (rawArtifacts === null) return null;
+    const key = caseReportKey(summary);
+    if (rawArtifacts.paths.has(key)) return null;
+    return rawArtifacts.failures.get(key) ?? "NotProduced";
   }
 
   /**

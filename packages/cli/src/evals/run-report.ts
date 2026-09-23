@@ -99,10 +99,27 @@ export class EvalRunReport {
       }
     }
 
-    if (report.rawArtifactPath !== null) {
-      lines.push(`        Raw transcript: ${report.rawArtifactPath}`);
-    }
+    lines.push(...this.transcriptLines(report));
     return lines;
+  }
+
+  /**
+   * The transcript path, or — when `--raw-artifacts` was given but this case
+   * has none — a line saying why, rather than a silence the footer (which
+   * only covers runs without the flag) would not explain.
+   */
+  private transcriptLines(report: CaseReport): string[] {
+    if (report.rawArtifactPath !== null) {
+      return [`        Raw transcript: ${report.rawArtifactPath}`];
+    }
+    if (report.rawArtifactMissing === null) return [];
+    const reason =
+      report.rawArtifactMissing === "NotProduced"
+        ? "the runner produced no raw artifact for this case"
+        : `writing it failed (${report.rawArtifactMissing})`;
+    return [
+      `        Raw transcript: ${this.theme.yellow("not written")} — ${reason}`,
+    ];
   }
 
   private dimensionLines(report: CaseReport): string[] {
