@@ -140,6 +140,7 @@ const EVAL_USAGE = [
   "  weave eval run                        Run all configured evals",
   "  weave eval run --agent <name>         Filter to a specific short agent or suite",
   "  weave eval run --model <id>           Filter to a specific model",
+  "  weave eval run --models dev           Run the cheap development subset of models",
   "  weave eval run --case <id>            Filter to a specific case",
   "  weave eval run --dry-run              Print what would run without executing",
   "  weave eval run --raw-artifacts        Emit raw artifacts to disk (local-only)",
@@ -167,6 +168,9 @@ function renderDryRunSummary(
   }
   if (request.model !== undefined) {
     lines.push(`  ${theme.cyan("Model filter:")}  ${request.model}`);
+  }
+  if (request.modelSet !== undefined) {
+    lines.push(`  ${theme.cyan("Model set:")}     ${request.modelSet}`);
   }
   if (request.case !== undefined) {
     lines.push(`  ${theme.cyan("Case filter:")}   ${request.case}`);
@@ -285,6 +289,7 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
     agent: flags.evalAgent,
     model: flags.evalModel,
     case: flags.evalCase,
+    models: flags.evalModels,
     dryRun: flags.dryRun ?? false,
     rawArtifacts: flags.rawArtifacts ?? false,
     env,

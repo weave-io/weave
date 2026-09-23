@@ -75,7 +75,8 @@ import {
 import {
   filterMatrix,
   loadModelMatrix,
-  resolveDefaultModels,
+  type ModelSetName,
+  resolveModelSet,
 } from "./model-matrix.js";
 import type { ModelClient } from "./openrouter-client.js";
 import {
@@ -162,6 +163,12 @@ export interface EvalRunMetadata {
    */
   modelFilter: string | null;
   /**
+   * The named model set the run fanned out over when no model filter was
+   * set: `"default"` (the full default matrix) or `"dev"` (the development
+   * subset). `"default"` when `--models` was not supplied.
+   */
+  modelSet: ModelSetName;
+  /**
    * Effective case filter applied to this run.
    * `null` when no case filter was set.
    */
@@ -217,6 +224,11 @@ export interface ModelRollup {
 export interface RepeatabilityComparisonKey {
   agentFilter: string | null;
   modelFilter: string | null;
+  /**
+   * The model set of the run. Absent in artifacts written before the dev
+   * subset existed, which all ran the default set.
+   */
+  modelSet?: ModelSetName;
   caseFilter: string | null;
   suites: string[];
 }
@@ -906,8 +918,21 @@ export class EvalOrchestrator {
           }
           return ResultAsync.fromSafePromise(Promise.resolve(filtered));
         }
-        const defaultModels = resolveDefaultModels(matrix);
-        return ResultAsync.fromSafePromise(Promise.resolve(defaultModels));
+        const setName = request.modelSet ?? "default";
+        const setModels = resolveModelSet(matrix, setName);
+        if (setModels.length === 0) {
+          return new ResultAsync(
+            Promise.resolve(
+              err<ModelMatrixEntry[], CliError>({
+                type: "EvalValidation",
+                message:
+                  `Model set "${setName}" is empty: no model in evals/model-matrix.json ` +
+                  `is marked ${setName}: true.`,
+              }),
+            ),
+          );
+        }
+        return ResultAsync.fromSafePromise(Promise.resolve(setModels));
       });
   }
 
@@ -1755,6 +1780,7 @@ export class EvalOrchestrator {
     return {
       agentFilter: metadata.agentFilter,
       modelFilter: metadata.modelFilter,
+      modelSet: metadata.modelSet,
       caseFilter: metadata.caseFilter,
       suites,
     };
@@ -1766,6 +1792,9 @@ export class EvalOrchestrator {
   ): boolean {
     if (left.agentFilter !== right.agentFilter) return false;
     if (left.modelFilter !== right.modelFilter) return false;
+    if ((left.modelSet ?? "default") !== (right.modelSet ?? "default")) {
+      return false;
+    }
     if (left.caseFilter !== right.caseFilter) return false;
     if (left.suites.length !== right.suites.length) return false;
 
@@ -2154,6 +2183,7 @@ export class EvalOrchestrator {
       workflowRunId,
       agentFilter: request.agent ?? null,
       modelFilter: request.model ?? null,
+      modelSet: request.modelSet ?? "default",
       caseFilter: request.case ?? null,
       rawArtifactsEnabled: request.rawArtifacts,
       publishMode: this.publishMode,

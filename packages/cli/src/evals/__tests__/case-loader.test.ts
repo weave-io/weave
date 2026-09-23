@@ -1264,3 +1264,68 @@ describe("tapestry-category-routing fixtures stay aligned with extraction/scorer
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// allowed_models resolution against the matrix (#194, Spec 37 17.1)
+// ---------------------------------------------------------------------------
+
+describe("loadCaseFile — allowed_models and the model matrix", () => {
+  const modelDefaults = {
+    defaults: ["p/full-a", "p/full-b"],
+    fill: ["p/full-a", "p/full-b", "p/dev"],
+  };
+
+  function caseWithout(): Record<string, unknown> {
+    const { allowed_models: _omitted, ...rest } = makeCase();
+    return rest;
+  }
+
+  it("fills an omitted allowed_models with the default set plus the dev subset", async () => {
+    const filePath = await writeTempJson("omitted-models", caseWithout());
+    const result = await loadCaseFile(filePath, modelDefaults);
+    expect(result._unsafeUnwrap().allowed_models).toEqual([
+      "p/full-a",
+      "p/full-b",
+      "p/dev",
+    ]);
+  });
+
+  it("fills from the real matrix, so every dev model reaches an ordinary case", async () => {
+    const filePath = await writeTempJson("omitted-models-real", caseWithout());
+    const evalCase = (await loadCaseFile(filePath))._unsafeUnwrap();
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    for (const model of matrix.models.filter((m) => m.default || m.dev)) {
+      expect(evalCase.allowed_models).toContain(model.id);
+    }
+  });
+
+  it("rejects an explicit list that restates the default set", async () => {
+    const filePath = await writeTempJson(
+      "restates-defaults",
+      makeCase({ allowed_models: ["p/full-b", "p/full-a"] }),
+    );
+    const e = (await loadCaseFile(filePath, modelDefaults))._unsafeUnwrapErr();
+    expect(e.type).toBe("FixtureValidationFailed");
+    expect(e.message).toContain("identical to the model matrix defaults");
+  });
+
+  it("rejects an explicit list that restates the default set plus the dev subset", async () => {
+    const filePath = await writeTempJson(
+      "restates-fill",
+      makeCase({ allowed_models: ["p/dev", "p/full-a", "p/full-b"] }),
+    );
+    const e = (await loadCaseFile(filePath, modelDefaults))._unsafeUnwrapErr();
+    expect(e.type).toBe("FixtureValidationFailed");
+  });
+
+  it("keeps a deliberate exception exactly as declared", async () => {
+    const filePath = await writeTempJson(
+      "exception",
+      makeCase({ allowed_models: ["p/dev"] }),
+    );
+    const evalCase = (
+      await loadCaseFile(filePath, modelDefaults)
+    )._unsafeUnwrap();
+    expect(evalCase.allowed_models).toEqual(["p/dev"]);
+  });
+});

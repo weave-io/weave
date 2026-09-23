@@ -22,7 +22,11 @@
 
 import { resolve } from "node:path";
 import { err, ok, okAsync, ResultAsync } from "neverthrow";
-import { loadModelMatrix, resolveDefaultModels } from "./model-matrix.js";
+import {
+  loadModelMatrix,
+  resolveCaseDefaultModels,
+  resolveDefaultModels,
+} from "./model-matrix.js";
 import {
   EVAL_SUITE_IDS,
   type EvalCase,
@@ -33,6 +37,7 @@ import {
   type FixtureSchemaError,
   getEvalSuiteMetadata,
   isKnownEvalSuiteId,
+  type ModelMatrix,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -279,6 +284,27 @@ function validateTrajectoryVerificationFields(
 // ---------------------------------------------------------------------------
 
 /**
+ * The model lists a case fixture's `allowed_models` is resolved against.
+ */
+export interface CaseModelDefaults {
+  /** Every `default: true` model — the full default matrix. */
+  readonly defaults: readonly string[];
+  /**
+   * What an omitted `allowed_models` is filled with: the default matrix plus
+   * the `dev: true` development subset (`resolveCaseDefaultModels()`).
+   */
+  readonly fill: readonly string[];
+}
+
+/** The `CaseModelDefaults` a model matrix implies. */
+export function caseModelDefaults(matrix: ModelMatrix): CaseModelDefaults {
+  return {
+    defaults: resolveDefaultModels(matrix).map((entry) => entry.id),
+    fill: resolveCaseDefaultModels(matrix).map((entry) => entry.id),
+  };
+}
+
+/**
  * Load and validate a single case fixture file.
  *
  * Returns `ok(EvalCase)` on success. Validates the file against
@@ -286,17 +312,15 @@ function validateTrajectoryVerificationFields(
  */
 export function loadCaseFile(
   filePath: string,
-  defaultModels?: readonly string[],
+  modelDefaults?: CaseModelDefaults,
 ): ResultAsync<EvalCase, FixtureSchemaError> {
   // Callers that load many cases pass the defaults in, so the matrix is read
   // once. A single-file caller gets the same contract — `allowed_models` always
   // populated — at the cost of reading the matrix here.
-  const defaults: ResultAsync<readonly string[], FixtureSchemaError> =
-    defaultModels !== undefined
-      ? okAsync(defaultModels)
-      : loadModelMatrix().map((matrix) =>
-          resolveDefaultModels(matrix).map((entry) => entry.id),
-        );
+  const defaults: ResultAsync<CaseModelDefaults, FixtureSchemaError> =
+    modelDefaults !== undefined
+      ? okAsync(modelDefaults)
+      : loadModelMatrix().map(caseModelDefaults);
 
   return defaults.andThen((resolvedDefaults) =>
     loadCaseFileWithDefaults(filePath, resolvedDefaults),
@@ -305,7 +329,7 @@ export function loadCaseFile(
 
 function loadCaseFileWithDefaults(
   filePath: string,
-  defaultModels: readonly string[],
+  modelDefaults: CaseModelDefaults,
 ): ResultAsync<EvalCase, FixtureSchemaError> {
   return readFixtureFile(filePath).andThen((raw) => {
     const parsed = EvalCaseSchema.safeParse(raw);
@@ -344,19 +368,20 @@ function loadCaseFileWithDefaults(
     const modelsError = validateAllowedModels(
       parsed.data,
       filePath,
-      defaultModels,
+      modelDefaults,
     );
     if (modelsError !== undefined) {
       return err(modelsError);
     }
 
-    return ok(withResolvedModels(parsed.data, defaultModels));
+    return ok(withResolvedModels(parsed.data, modelDefaults.fill));
   });
 }
 
 /**
  * Rejects an explicit `allowed_models` that merely restates the matrix
- * defaults.
+ * defaults — either the `default: true` set alone, or that set plus the
+ * `dev: true` subset an omitted field is filled with.
  *
  * Such a list looks harmless but silently stops tracking the matrix: adding a
  * model would reach every other case and skip this one. Omitting the field is
@@ -365,13 +390,15 @@ function loadCaseFileWithDefaults(
 function validateAllowedModels(
   parsed: EvalCaseFile,
   filePath: string,
-  defaultModels: readonly string[],
+  modelDefaults: CaseModelDefaults,
 ): FixtureSchemaError | undefined {
   if (parsed.allowed_models === undefined) return undefined;
 
-  const declared = [...parsed.allowed_models].sort().join(",");
-  const defaults = [...defaultModels].sort().join(",");
-  if (declared !== defaults) return undefined;
+  const declared = sortedKey(parsed.allowed_models);
+  const restates =
+    declared === sortedKey(modelDefaults.defaults) ||
+    declared === sortedKey(modelDefaults.fill);
+  if (!restates) return undefined;
 
   return {
     type: "FixtureValidationFailed" as const,
@@ -389,15 +416,22 @@ function validateAllowedModels(
   } satisfies FixtureSchemaError;
 }
 
-/** Fills `allowed_models` from the matrix defaults when the fixture omits it. */
+function sortedKey(ids: readonly string[]): string {
+  return [...ids].sort().join(",");
+}
+
+/**
+ * Fills `allowed_models` when the fixture omits it: with the matrix defaults
+ * plus the dev subset, so `--models dev` reaches the case too.
+ */
 function withResolvedModels(
   parsed: EvalCaseFile,
-  defaultModels: readonly string[],
+  fillModels: readonly string[],
 ): EvalCase {
   if (parsed.allowed_models !== undefined) {
     return parsed as EvalCase;
   }
-  return { ...parsed, allowed_models: [...defaultModels] };
+  return { ...parsed, allowed_models: [...fillModels] };
 }
 
 /**
@@ -462,11 +496,12 @@ export function loadSuiteCases(
   }
 
   // Load the matrix once, not per case: every fixture that omits
-  // `allowed_models` is filled from its `default: true` entries.
+  // `allowed_models` is filled from its `default: true` and `dev: true`
+  // entries.
   return loadModelMatrix().andThen((matrix) => {
-    const defaultModels = resolveDefaultModels(matrix).map((m) => m.id);
+    const modelDefaults = caseModelDefaults(matrix);
     const loadAll = fileNames.map((name) =>
-      loadCaseFile(resolve(casesDir, name), defaultModels),
+      loadCaseFile(resolve(casesDir, name), modelDefaults),
     );
 
     // Chain sequentially so the first error surfaces with its file path intact

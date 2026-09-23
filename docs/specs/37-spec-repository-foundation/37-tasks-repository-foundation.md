@@ -56,7 +56,7 @@ Added to #183 on 20 Sep 2026 after a second audit of the suite, and complete. Th
 
 ## 17. Cheap runs (G6, G10) — PR: _
 
-- [ ] 17.1 Add a development subset of one or two inexpensive models, selectable without editing the matrix (for example a `dev` marker in `evals/model-matrix.json` and a `--models dev` selector), kept separate from the full default matrix. A plain `eval run` still runs the full default matrix.
+- [x] 17.1 Add a development subset of one or two inexpensive models, selectable without editing the matrix (for example a `dev` marker in `evals/model-matrix.json` and a `--models dev` selector), kept separate from the full default matrix. A plain `eval run` still runs the full default matrix. _#PRNUM: `dev: true` on matrix entries (at most 2), `--models dev` / `WEAVE_EVAL_MODELS` / the `models` dispatch input. Subset: `deepseek/deepseek-v4-flash-0731` and `openai/gpt-6-luna`; see `docs/agent-evals.md`._
 - [ ] 17.2 Single-case diagnosis (moved from 6.2): running one case for one model without publishing prints the verdict, the rubric criteria that failed, and the path to the raw transcript. Fix the output where it doesn't; document the command in `docs/agent-evals.md` and in 6.1's overview when that lands.
 
 ## 18. Repeatable and comparable runs (G10) — PR: _
@@ -146,3 +146,4 @@ All metrics are computed over top-level sessions (`parent_id IS NULL`) and their
 | `packages/cli/src/evals/tapestry-category-routing-runner.ts` | Category-routing gate and generic-fallback detector (group 16.2). |
 | `packages/cli/src/evals/langchain-agent-evals.ts`, `packages/cli/src/commands/eval.ts` | `LangChainJudge` interface and the hard-coded judge model (group 16.4). |
 | `tests/evals/suite-runners.scenario.test.ts` | Scenarios for the empty-run guard of #205: every suite fails closed (group 16.1). |
+| `packages/cli/src/evals/model-matrix.ts`, `tests/evals/model-sets.scenario.test.ts` | The `dev` model subset and `--models` selector, and its scenarios (group 17.1). |

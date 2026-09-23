@@ -15,12 +15,24 @@ on:
         type: string
       model:
         description: |
-          Optional model ID filter. Leave blank to run the full default model matrix.
+          Optional model ID filter. Leave blank to run the model set chosen below.
           Allowed values are every `id` in evals/model-matrix.json; an unknown
           value is rejected before any eval runs.
         required: false
         default: ""
         type: string
+      models:
+        description: |
+          Model set to run when no model ID is given. `default` runs the full
+          default matrix; `dev` runs only the cheap development subset (the
+          `dev: true` entries in evals/model-matrix.json). `dev` cannot be
+          combined with a model ID.
+        required: false
+        default: "default"
+        type: choice
+        options:
+          - default
+          - dev
       case:
         description: |
           Optional eval case ID filter. Leave blank to run all cases.
@@ -123,6 +135,7 @@ jobs:
     outputs:
       agent: ${{ steps.check.outputs.agent }}
       model: ${{ steps.check.outputs.model }}
+      models: ${{ steps.check.outputs.models }}
       case:  ${{ steps.check.outputs.case }}
     steps:
       # The model allowlist is derived from evals/model-matrix.json rather than
@@ -144,6 +157,7 @@ jobs:
         env:
           RAW_AGENT: ${{ github.event.inputs.agent }}
           RAW_MODEL: ${{ github.event.inputs.model }}
+          RAW_MODELS: ${{ github.event.inputs.models }}
           RAW_CASE:  ${{ github.event.inputs.case }}
         run: |
           set -euo pipefail
@@ -165,6 +179,12 @@ jobs:
             echo "::error::Could not read model IDs from evals/model-matrix.json"
             exit 1
           fi
+
+          # Model set allowlist: the named sets `--models` accepts. Mirrors
+          # MODEL_SET_NAMES in packages/cli/src/evals/model-matrix.ts;
+          # workflow-sync.test.ts enforces parity. The models in each set are
+          # read from evals/model-matrix.json by the CLI, never listed here.
+          ALLOWED_MODEL_SETS="default dev"
 
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI
@@ -217,6 +237,26 @@ jobs:
           fi
 
           # ---------------------------------------------------------------------------
+          # Validate --models input (a choice input, validated again here)
+          # ---------------------------------------------------------------------------
+          MODELS_OUT=""
+          if [ -n "${RAW_MODELS}" ]; then
+            MATCHED=false
+            for s in ${ALLOWED_MODEL_SETS}; do
+              if [ "${RAW_MODELS}" = "${s}" ]; then MATCHED=true; break; fi
+            done
+            if [ "${MATCHED}" = "false" ]; then
+              echo "::error::Unknown model set '${RAW_MODELS}'. Allowed: ${ALLOWED_MODEL_SETS}"
+              exit 1
+            fi
+            MODELS_OUT="${RAW_MODELS}"
+          fi
+          if [ "${MODELS_OUT}" = "dev" ] && [ -n "${MODEL_OUT}" ]; then
+            echo "::error::The dev model set cannot be combined with a model ID; clear one of them"
+            exit 1
+          fi
+
+          # ---------------------------------------------------------------------------
           # Validate --case input
           #
           # Validated against the hardcoded case allowlist from evals/cases/**
@@ -252,10 +292,11 @@ jobs:
           {
             printf 'agent=%s\n' "${AGENT_OUT}"
             printf 'model=%s\n' "${MODEL_OUT}"
+            printf 'models=%s\n' "${MODELS_OUT}"
             printf 'case=%s\n'  "${CASE_OUT}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "Validation passed: agent='${AGENT_OUT}' model='${MODEL_OUT}' case='${CASE_OUT}'"
+          echo "Validation passed: agent='${AGENT_OUT}' model='${MODEL_OUT}' models='${MODELS_OUT}' case='${CASE_OUT}'"
 
   # ---------------------------------------------------------------------------
   # Job 2: Run evals and publish sanitized bundles to weave-io/weave-agent-evals.
@@ -361,6 +402,7 @@ jobs:
           WEAVE_EVAL_PUBLISH_MODE: "publish"
           WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
           WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
           WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
           CI: "true"
           GITHUB_RUN_ID: ${{ github.run_id }}
@@ -387,6 +429,7 @@ jobs:
           # Empty string means "no filter" (all agents / models / cases).
           WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
           WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_MODELS: ${{ needs.validate-inputs.outputs.models }}
           WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
           # CI=true prevents --raw-artifacts from being accepted (policy guard
           # in packages/cli/src/evals/input-validation.ts: RawArtifactsInCI).

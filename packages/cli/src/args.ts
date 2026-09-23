@@ -70,6 +70,8 @@ export interface ParsedArgs {
     evalAgent?: string;
     /** --model <id> filter for `weave eval run` */
     evalModel?: string;
+    /** --models <set> model set for `weave eval run` (`default` or `dev`) */
+    evalModels?: string;
     /** --case <id> filter for `weave eval run` */
     evalCase?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
@@ -329,6 +331,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.evalModel = val;
+      continue;
+    }
+    if (arg === "--models") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--models",
+          message: "--models requires a model set name (default or dev)",
+        });
+      }
+      flags.evalModels = val;
       continue;
     }
     if (arg === "--case") {

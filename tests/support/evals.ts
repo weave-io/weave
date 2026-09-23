@@ -250,6 +250,12 @@ export interface FixtureSpec {
   tags?: string[];
   /** Models the case allows. Defaults to `[EVAL_MODEL]`. */
   allowedModels?: string[];
+  /**
+   * Omit `allowed_models` from the fixture, so the loader fills it from
+   * `evals/model-matrix.json` — the default set plus the dev subset — as it
+   * does for every ordinary case in the corpus.
+   */
+  inheritModels?: boolean;
   /** The rubric's `scoring.required`. Defaults to `true`. */
   required?: boolean;
   /**
@@ -299,7 +305,9 @@ export async function withEvalFixtures<T>(
             description: spec.description,
             suite: spec.suite,
             allowed_agents: spec.allowedAgents,
-            allowed_models: spec.allowedModels ?? [EVAL_MODEL],
+            ...(spec.inheritModels === true
+              ? {}
+              : { allowed_models: spec.allowedModels ?? [EVAL_MODEL] }),
             expected_outcome: spec.expectedOutcome,
             accepted_alternates: spec.acceptedAlternates ?? [],
             transcript_expectations: spec.transcriptExpectations ?? [],
@@ -378,6 +386,11 @@ export interface SuiteRunOptions {
    * `evals/model-matrix.json`. The model still answers as `model`.
    */
   wholeMatrix?: boolean;
+  /**
+   * `--models <set>`. Like `wholeMatrix`, omits `--model`, so the run fans
+   * out over the named set of `evals/model-matrix.json`.
+   */
+  modelSet?: "default" | "dev";
   /** `--dry-run`. */
   dryRun?: boolean;
   /** `--raw-artifacts`. */
@@ -564,7 +577,11 @@ export async function runEvalSuite(
 
   const request = {
     agent: options.agent,
-    model: options.wholeMatrix === true ? undefined : model,
+    model:
+      options.wholeMatrix === true || options.modelSet !== undefined
+        ? undefined
+        : model,
+    ...(options.modelSet !== undefined ? { modelSet: options.modelSet } : {}),
     case: options.caseFilter,
     dryRun: options.dryRun ?? false,
     rawArtifacts: options.rawArtifacts ?? false,

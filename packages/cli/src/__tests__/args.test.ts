@@ -363,3 +363,28 @@ describe("existing commands remain unaffected", () => {
     });
   });
 });
+
+describe("eval run --models", () => {
+  it("parses --models into evalModels", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "run",
+      "--models",
+      "dev",
+    ]);
+
+    expect(result._unsafeUnwrap().flags.evalModels).toBe("dev");
+  });
+
+  it("rejects --models with no value", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--models"]);
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--models",
+    });
+  });
+});

@@ -2068,6 +2068,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       workflowRunId: null,
       agentFilter: "loom",
       modelFilter: null,
+      modelSet: "default",
       caseFilter: null,
       rawArtifactsEnabled: false,
       publishMode: "local" as const,
@@ -2228,6 +2229,74 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
 
     expect(diag.comparableRunCount).toBe(1);
     expect(diag.comparableRunIds).toEqual([narrowedRun.value.runId]);
+  });
+
+  it("repeatability diagnostics compare a dev-subset run only with other dev-subset runs", async () => {
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-model-set-${uid()}`);
+
+    function buildOrchestrator(): EvalOrchestrator {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        model: "stub",
+        content: 'I will route to the "shuttle" agent.',
+      });
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(makePassingScoreRecord(caseId, "stub"));
+      return new EvalOrchestrator({
+        modelClient,
+        scorer,
+        promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+        snapshotProvider: new StubSnapshotProvider(),
+        gitShaProvider: makeGitShaProvider(),
+        bundleRoot,
+        evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
+        env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+      });
+    }
+
+    const request = {
+      agent: "loom",
+      model: undefined,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    };
+
+    const firstDev = await buildOrchestrator().run({
+      ...request,
+      modelSet: "dev",
+    });
+    expect(firstDev.isOk()).toBe(true);
+    if (!firstDev.isOk()) return;
+    expect(firstDev.value.metadata.modelSet).toBe("dev");
+
+    const fullMatrix = await buildOrchestrator().run(request);
+    expect(fullMatrix.isOk()).toBe(true);
+    if (!fullMatrix.isOk()) return;
+    expect(fullMatrix.value.metadata.modelSet).toBe("default");
+    const fullDiag = fullMatrix.value.repeatabilityDiagnostics;
+    if (fullDiag === null || fullDiag.status !== "written") {
+      throw new Error("expected written diagnostics for the full-matrix run");
+    }
+    expect(fullDiag.comparableRunCount).toBe(1);
+
+    const secondDev = await buildOrchestrator().run({
+      ...request,
+      modelSet: "dev",
+    });
+    expect(secondDev.isOk()).toBe(true);
+    if (!secondDev.isOk()) return;
+    const devDiag = secondDev.value.repeatabilityDiagnostics;
+    if (devDiag === null || devDiag.status !== "written") {
+      throw new Error("expected written diagnostics for the dev run");
+    }
+    expect(devDiag.comparableRunCount).toBe(2);
+    expect(devDiag.comparableRunIds).toContain(firstDev.value.runId ?? "");
+    expect(devDiag.comparableRunIds).not.toContain(
+      fullMatrix.value.runId ?? "",
+    );
   });
 
   it("repeatability diagnostics ignore previous artifacts with incompatible schemaVersion", async () => {

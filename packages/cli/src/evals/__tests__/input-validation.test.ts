@@ -550,7 +550,9 @@ describe("KNOWN_EVAL_AGENTS — exported constants", () => {
     // Both suite IDs must be individually present.
     expect(
       KNOWN_EVAL_AGENTS.has(
-        "tapestry-execution" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+        "tapestry-execution" as Parameters<
+          (typeof KNOWN_EVAL_AGENTS)["has"]
+        >[0],
       ),
     ).toBe(true);
     expect(
@@ -604,5 +606,84 @@ describe("KNOWN_EVAL_AGENTS — exported constants", () => {
   it("KNOWN_EVAL_AGENTS_SORTED is sorted alphabetically", () => {
     const sorted = [...KNOWN_EVAL_AGENTS_SORTED].sort();
     expect(KNOWN_EVAL_AGENTS_SORTED).toEqual(sorted);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --models: the named model set (Spec 37, 17.1)
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — --models model set", () => {
+  it("leaves modelSet unset when --models is not supplied, so a plain run means the default matrix", () => {
+    const req = parseEvalRunRequest(inputs())._unsafeUnwrap();
+    expect(req.modelSet).toBeUndefined();
+  });
+
+  it("accepts --models dev", () => {
+    const req = parseEvalRunRequest(inputs({ models: "dev" }))._unsafeUnwrap();
+    expect(req.modelSet).toBe("dev");
+  });
+
+  it("accepts --models default", () => {
+    const req = parseEvalRunRequest(
+      inputs({ models: "default" }),
+    )._unsafeUnwrap();
+    expect(req.modelSet).toBe("default");
+  });
+
+  it("reads WEAVE_EVAL_MODELS from the env", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_MODELS: "dev" } }),
+    )._unsafeUnwrap();
+    expect(req.modelSet).toBe("dev");
+  });
+
+  it("treats a blank WEAVE_EVAL_MODELS as unset", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_MODELS: "" } }),
+    )._unsafeUnwrap();
+    expect(req.modelSet).toBeUndefined();
+  });
+
+  it("rejects an unknown model set, naming the allowed ones", () => {
+    const result = parseEvalRunRequest(inputs({ models: "cheap" }));
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("UnknownModelSet");
+    expect(error.message).toContain("cheap");
+    expect(error.message).toContain("default, dev");
+  });
+
+  it("rejects an empty --models flag", () => {
+    const result = parseEvalRunRequest(inputs({ models: "" }));
+    expect(result._unsafeUnwrapErr().type).toBe("EmptyFilterValue");
+  });
+
+  it("rejects --models dev together with --model", () => {
+    const result = parseEvalRunRequest(
+      inputs({ models: "dev", model: "openai/gpt-5.5" }),
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ConflictingModelSelection");
+    expect(error.message).toContain("openai/gpt-5.5");
+  });
+
+  it("accepts --models default together with --model, as workflow dispatch sends it", () => {
+    const req = parseEvalRunRequest(
+      inputs({ models: "default", model: "openai/gpt-5.5" }),
+    )._unsafeUnwrap();
+    expect(req.model).toBe("openai/gpt-5.5");
+    expect(req.modelSet).toBe("default");
+  });
+
+  it("rejects a flag and env var that name different model sets", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        models: "dev",
+        envOverrides: { WEAVE_EVAL_MODELS: "default" },
+      }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
   });
 });

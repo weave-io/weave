@@ -11,6 +11,13 @@
  *     `default: true`. This is enforced as a `ModelMatrixConstraintViolation`
  *     so runners can fail fast before attempting any eval execution.
  *   - `resolveDefaultModels()` returns only models with `default: true`.
+ *   - At most `MAX_DEV_MODELS` models may carry `dev: true`, so the
+ *     development subset stays cheap. `resolveModelSet(matrix, "dev")`
+ *     returns them; `resolveModelSet(matrix, "default")` is the full default
+ *     matrix. A plain `eval run` always means the default set.
+ *   - `resolveCaseDefaultModels()` is what a case fixture that omits
+ *     `allowed_models` may run on: the default set plus the dev subset, so a
+ *     dev-subset run reaches every ordinary case without editing it.
  *   - `filterMatrix()` returns only entries whose `id` matches the supplied
  *     filter value; an unknown filter value returns an empty array.
  *   - All path resolution is relative to the repo root (`MATRIX_PATH`).
@@ -46,6 +53,26 @@ export const MATRIX_PATH = resolve(
  * the default three-model matrix when no model filter is provided.
  */
 export const MIN_DEFAULT_MODELS = 3;
+
+/**
+ * Maximum number of models that may carry `dev: true`.
+ *
+ * The development subset exists so that iterating on a prompt, a case or a
+ * rubric costs cents rather than dollars (Spec 37, 17.1). A cap in the loader
+ * keeps it that way: growing the subset past this is a deliberate edit here,
+ * not a quiet addition to the matrix.
+ */
+export const MAX_DEV_MODELS = 2;
+
+/**
+ * The named model sets `--models` selects between.
+ *
+ * - `default` — every `default: true` entry; what a plain `eval run` runs.
+ * - `dev` — every `dev: true` entry; the cheap development subset.
+ */
+export const MODEL_SET_NAMES = ["default", "dev"] as const;
+
+export type ModelSetName = (typeof MODEL_SET_NAMES)[number];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,6 +143,16 @@ export function loadModelMatrix(
       } satisfies FixtureSchemaError);
     }
 
+    // Constraint: the dev subset stays small, so it stays cheap
+    const devCount = matrix.models.filter((m) => m.dev).length;
+    if (devCount > MAX_DEV_MODELS) {
+      return err({
+        type: "ModelMatrixConstraintViolation" as const,
+        file: matrixPath,
+        message: `Model matrix may mark at most ${MAX_DEV_MODELS} models dev: true, but found ${devCount} in ${matrixPath}`,
+      } satisfies FixtureSchemaError);
+    }
+
     return ok(matrix);
   });
 }
@@ -133,6 +170,41 @@ export function loadModelMatrix(
  */
 export function resolveDefaultModels(matrix: ModelMatrix): ModelMatrixEntry[] {
   return matrix.models.filter((m) => m.default);
+}
+
+/**
+ * Return only the models marked `dev: true` in the matrix — the cheap
+ * development subset. May be empty when no entry is marked.
+ */
+export function resolveDevModels(matrix: ModelMatrix): ModelMatrixEntry[] {
+  return matrix.models.filter((m) => m.dev);
+}
+
+/**
+ * Return the models in the named set, in matrix order.
+ */
+export function resolveModelSet(
+  matrix: ModelMatrix,
+  set: ModelSetName,
+): ModelMatrixEntry[] {
+  if (set === "dev") return resolveDevModels(matrix);
+  return resolveDefaultModels(matrix);
+}
+
+/**
+ * Return the models a case fixture that omits `allowed_models` may run on:
+ * every `default: true` or `dev: true` entry, in matrix order.
+ *
+ * Omitting `allowed_models` means "the usual set". The dev subset is a cheap
+ * stand-in for that set, so it belongs to it: a `--models dev` run reaches
+ * every ordinary case without the case naming the dev models. Which models a
+ * run actually executes is still decided by the model set it selects — a
+ * plain `eval run` fans out over the default set only.
+ */
+export function resolveCaseDefaultModels(
+  matrix: ModelMatrix,
+): ModelMatrixEntry[] {
+  return matrix.models.filter((m) => m.default || m.dev);
 }
 
 /**

@@ -117,7 +117,7 @@ evals/fixtures/
 
 ## Model Matrix (`model-matrix.json`)
 
-The model matrix defines the **closed set of models** that evals run against. At minimum, three models must have `default: true` — these are the models used when no `--model` filter is supplied.
+The model matrix defines the **closed set of models** that evals run against. At minimum, three models must have `default: true` — these are the models used when neither `--model` nor `--models dev` is supplied.
 
 ### Schema
 
@@ -130,13 +130,27 @@ The model matrix defines the **closed set of models** that evals run against. At
       "display_name": "Claude Sonnet 4.5",   // Human-readable name for reports (required)
       "provider": "anthropic",               // Provider/owner (required)
       "default": true,                       // Included in default run (required)
+      "dev": false,                          // In the cheap dev subset (optional, default false)
       "tags": ["fast", "balanced"]           // Optional tags for grouping
     }
   ]
 }
 ```
 
-**Constraint**: At least three entries must have `"default": true`. The loader (`packages/cli/src/evals/model-matrix.ts`) enforces this constraint at load time with a `ModelMatrixConstraintViolation` error.
+**Constraints**: At least three entries must have `"default": true`, and at most two may have `"dev": true`. The loader (`packages/cli/src/evals/model-matrix.ts`) enforces both at load time with a `ModelMatrixConstraintViolation` error.
+
+### The development subset
+
+Entries marked `"dev": true` form the cheap development subset, run with
+`weave eval run --models dev` instead of the full default matrix. Use it while
+iterating on a prompt, a case or a rubric; use a plain `weave eval run` (the
+full default matrix) for a baseline. `dev` is independent of `default`.
+
+A case that omits `allowed_models` runs on the default models **and** the dev
+subset, so the subset reaches every ordinary case with no fixture edit. To
+change the subset, set or clear `dev` on a matrix entry — nothing else lists
+the dev models. The current subset and why it was chosen are recorded in
+[`docs/agent-evals.md`](../docs/agent-evals.md#the-development-subset---models-dev).
 
 ## Case Fixtures (`cases/<suite>/<case-id>.json`)
 
@@ -165,7 +179,7 @@ All current suites are **text-only**. A fixture may assert only what is visible 
   "description": "...",                    // Human-readable description (required)
   "suite": "loom-routing",                 // Suite this case belongs to (required)
   "allowed_agents": ["loom", "shuttle"],   // Closed set of valid agents (min 1)
-  "allowed_models": ["anthropic/..."],     // Closed set of valid model IDs (min 1)
+  "allowed_models": ["anthropic/..."],     // Optional; omit for the default + dev models. Exceptions only
   "expected_outcome": { ... },             // Discriminated union (see below)
   "accepted_alternates": [],               // Optional substitute agent/model IDs
   "transcript_expectations": [],           // Optional ordered transcript assertions
@@ -377,7 +391,7 @@ The fixture loading and validation logic lives in the CLI package:
 | Module                                              | Exports                                                               |
 | --------------------------------------------------- | --------------------------------------------------------------------- |
 | `packages/cli/src/evals/types.ts`                   | Zod schemas and inferred TypeScript types for all fixture shapes      |
-| `packages/cli/src/evals/model-matrix.ts`            | `loadModelMatrix`, `resolveDefaultModels`, `filterMatrix`, `validateModelInMatrix` |
+| `packages/cli/src/evals/model-matrix.ts`            | `loadModelMatrix`, `resolveDefaultModels`, `resolveDevModels`, `resolveModelSet`, `resolveCaseDefaultModels`, `filterMatrix`, `validateModelInMatrix` |
 | `packages/cli/src/evals/case-loader.ts`             | `loadCaseFile`, `loadRubricFile`, `loadSuiteCases`, `loadSuiteRubrics`, `validateCaseFilter` |
 
 All loader functions return `Result<T, FixtureSchemaError>` or `ResultAsync<T, FixtureSchemaError>` — errors include the offending file path for actionable diagnostics.

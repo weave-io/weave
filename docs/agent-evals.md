@@ -24,7 +24,7 @@ weave eval run
     ├── readEvalEnv()                  Require OPENROUTER_API_KEY (fail fast)
     │
     ├── loadModelMatrix()              Load evals/model-matrix.json
-    │   └── resolveDefaultModels()     Apply --model filter or use default-marked models
+    │   └── resolveModelSet()          Apply --model filter, or the --models set (default | dev)
     │
     ├── EvalOrchestrator.run()
     │   ├── executeSuites()            Fan out: suite runners from the shared registry
@@ -47,7 +47,7 @@ The fixture tree is intentionally flat and registry-shaped. The shared eval suit
 
 ```
 evals/
-├── model-matrix.json              Canonical model allowlist (default-marked models; at least 3 enforced)
+├── model-matrix.json              Canonical model allowlist (default-marked models, at least 3; dev-marked subset, at most 2)
 ├── cases/
 │   ├── loom-routing/              Loom agent routing eval cases
 │   │   └── <case-id>.json
@@ -131,7 +131,7 @@ Everything else derives from it:
 
 | Consumer | How it follows the matrix |
 | --- | --- |
-| Case fixtures | `allowed_models` is omitted, and the loader fills it with every `default: true` entry |
+| Case fixtures | `allowed_models` is omitted, and the loader fills it with every `default: true` or `dev: true` entry |
 | `agent-evals.yml` dispatch allowlist | `jq -r '.models[].id' evals/model-matrix.json` at run time |
 | Trajectory model allowlist | the union of `allowed_models` across `harness_trajectory` cases, computed with `jq` |
 
@@ -147,6 +147,55 @@ while every other case picked the new model up.
 
 `TRAJECTORY_MODEL` in the workflow stays a literal: it chooses which cheap model
 CI runs by default, which is a policy decision rather than an allowlist.
+
+### The development subset (`--models dev`)
+
+A full run fans out over every `default: true` model, which is the right
+baseline and the wrong loop for iterating on a prompt, a case or a rubric. The
+**development subset** is the `dev: true` entries of `evals/model-matrix.json`,
+selected with `--models dev` instead of the full default matrix (Spec 37,
+task 17.1):
+
+```bash
+# Every suite, on the dev subset only
+bun packages/cli/src/main.ts eval run --models dev
+
+# One suite on the dev subset
+bun packages/cli/src/main.ts eval run --agent pattern --models dev
+```
+
+- A plain `eval run` (or `--models default`) still runs the full default
+  matrix. Nothing changes for a baseline run.
+- `dev` is independent of `default`: a model can be in both, either or neither.
+  The loader rejects a matrix that marks more than `MAX_DEV_MODELS` (2) models
+  `dev`, so the subset cannot quietly grow expensive.
+- A case that omits `allowed_models` runs on the default set **and** the dev
+  subset, so `--models dev` reaches every ordinary case without editing it. A
+  case that pins `allowed_models` (the trajectory cases) keeps exactly its own
+  list; a dev run that selects only such cases fails with `NoCasesFound`.
+- `--models dev` cannot be combined with `--model <id>`; `--model` already
+  names the one model to run. `--models default` alongside `--model` is
+  accepted, because that is what the workflow dispatch form sends.
+- The model set is part of the local repeatability comparison key, so a dev
+  run is compared only with earlier dev runs of the same filters.
+- `WEAVE_EVAL_MODELS` is the env-var form, used by the workflow.
+
+Changing the subset is the same single edit as adding a model: set or clear
+`dev` on a matrix entry. The workflow never names the dev models.
+
+**Current subset (chosen 23 Sep 2026 from OpenRouter list prices, per million
+tokens in/out):**
+
+| Model | Price | Why |
+| --- | --- | --- |
+| `deepseek/deepseek-v4-flash-0731` | $0.04 / $0.64 | Already in the default matrix, so a dev-run result for it is directly comparable with the full run. Cheapest tool-capable model in the matrix. |
+| `openai/gpt-6-luna` | $0.10 / $0.50 | The inexpensive tier of the GPT-6 generation the default matrix tests through `openai/gpt-6-astra` ($10 / $50), and a second vendor so one provider's quirks do not dominate what a dev run shows. `default: false`, so it never enters a baseline. |
+
+For comparison the default matrix's Claude and GPT entries cost $2–10 per
+million input tokens and $10–50 per million output tokens. Most of what a dev
+run costs is the judge: every judge-scored case still makes its judge call on
+`anthropic/claude-sonnet-4.5` ($3 / $15), whatever model produced the answer.
+Deterministic suites (routing, structural checks) cost only the model call.
 
 ## Eval Suites
 
@@ -225,13 +274,14 @@ bun packages/cli/src/main.ts eval run --model anthropic/claude-sonnet-4.5
 
 ### CI dispatch
 
-The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_dispatch`, no push/PR/schedule triggers). Dispatch it from the Actions tab (or `gh workflow run agent-evals.yml -f agent=loom-routing -f model=anthropic/claude-sonnet-4.5 -f case=""`) with any combination of the three optional inputs:
+The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_dispatch`, no push/PR/schedule triggers). Dispatch it from the Actions tab (or `gh workflow run agent-evals.yml -f agent=loom-routing -f model=anthropic/claude-sonnet-4.5 -f case=""`) with any combination of the four optional inputs:
 
 - `agent` — a suite ID or short agent alias from the shared registry (blank runs all suites).
-- `model` — an exact model ID from `evals/model-matrix.json` (blank runs the full default matrix).
+- `model` — an exact model ID from `evals/model-matrix.json` (blank runs the model set below).
+- `models` — a choice of `default` (the full default matrix, the default) or `dev` (the [development subset](#the-development-subset---models-dev)). `dev` cannot be combined with `model`. For example `gh workflow run agent-evals.yml -f models=dev`.
 - `case` — an exact case ID from `evals/cases/**` (blank runs every case).
 
-Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_CASES`) before the eval job ever spends OpenRouter quota or touches secrets. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
+Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_MODEL_SETS`, `ALLOWED_CASES`) before the eval job ever spends OpenRouter quota or touches secrets. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
 
 ### Remote checks
 

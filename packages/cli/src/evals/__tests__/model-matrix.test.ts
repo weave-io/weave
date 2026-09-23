@@ -26,8 +26,13 @@ import { resolve } from "node:path";
 import {
   filterMatrix,
   loadModelMatrix,
+  MAX_DEV_MODELS,
   MIN_DEFAULT_MODELS,
+  MODEL_SET_NAMES,
+  resolveCaseDefaultModels,
   resolveDefaultModels,
+  resolveDevModels,
+  resolveModelSet,
   validateModelInMatrix,
 } from "../model-matrix.js";
 import type { ModelMatrix } from "../types.js";
@@ -141,6 +146,7 @@ describe("resolveDefaultModels", () => {
           display_name: "M1",
           provider: "a",
           default: true,
+          dev: false,
           tags: [],
         },
         {
@@ -148,6 +154,7 @@ describe("resolveDefaultModels", () => {
           display_name: "M2",
           provider: "b",
           default: false,
+          dev: false,
           tags: [],
         },
         {
@@ -155,6 +162,7 @@ describe("resolveDefaultModels", () => {
           display_name: "M3",
           provider: "c",
           default: true,
+          dev: false,
           tags: [],
         },
       ],
@@ -174,6 +182,7 @@ describe("resolveDefaultModels", () => {
           display_name: "M1",
           provider: "a",
           default: false,
+          dev: false,
           tags: [],
         },
       ],
@@ -195,6 +204,7 @@ describe("filterMatrix", () => {
         display_name: "Claude",
         provider: "anthropic",
         default: true,
+        dev: false,
         tags: [],
       },
       {
@@ -202,6 +212,7 @@ describe("filterMatrix", () => {
         display_name: "GPT-4o",
         provider: "openai",
         default: true,
+        dev: false,
         tags: [],
       },
     ],
@@ -238,6 +249,7 @@ describe("validateModelInMatrix", () => {
         display_name: "Claude",
         provider: "anthropic",
         default: true,
+        dev: false,
         tags: [],
       },
       {
@@ -245,6 +257,7 @@ describe("validateModelInMatrix", () => {
         display_name: "GPT-4o",
         provider: "openai",
         default: true,
+        dev: false,
         tags: [],
       },
     ],
@@ -305,6 +318,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "M1",
           provider: "a",
           default: true,
+          dev: false,
           tags: [],
         },
         {
@@ -312,6 +326,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "M2",
           provider: "b",
           default: true,
+          dev: false,
           tags: [],
         },
         {
@@ -319,6 +334,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "M3",
           provider: "c",
           default: true,
+          dev: false,
           tags: [],
         },
       ],
@@ -342,6 +358,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "Bad",
           provider: "x",
           default: true,
+          dev: false,
           tags: [],
         },
         {
@@ -349,6 +366,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "M2",
           provider: "b",
           default: true,
+          dev: false,
           tags: [],
         },
         {
@@ -356,6 +374,7 @@ describe("loadModelMatrix — schema violations", () => {
           display_name: "M3",
           provider: "c",
           default: true,
+          dev: false,
           tags: [],
         },
       ],
@@ -428,5 +447,145 @@ describe("loadModelMatrix — constraint violations", () => {
     if (e.type === "ModelMatrixConstraintViolation") {
       expect(e.file).toBe(filePath);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The dev subset — `dev: true` (Spec 37, 17.1)
+// ---------------------------------------------------------------------------
+
+/** A matrix of three defaults plus the given extra entries. */
+function matrixWith(extra: Array<Record<string, unknown>>): unknown {
+  const defaults = [0, 1, 2].map((i) => ({
+    id: `provider/default-${i}`,
+    display_name: `Default ${i}`,
+    provider: "provider",
+    default: true,
+  }));
+  return { version: 1, models: [...defaults, ...extra] };
+}
+
+function devEntry(i: number, isDefault = false): Record<string, unknown> {
+  return {
+    id: `provider/dev-${i}`,
+    display_name: `Dev ${i}`,
+    provider: "provider",
+    default: isDefault,
+    dev: true,
+  };
+}
+
+describe("loadModelMatrix — the dev field", () => {
+  it("defaults dev to false when an entry omits it", async () => {
+    const filePath = await writeTempJson("dev-omitted", matrixWith([]));
+    const matrix = (await loadModelMatrix(filePath))._unsafeUnwrap();
+    expect(matrix.models.every((m) => m.dev === false)).toBe(true);
+  });
+
+  it("accepts dev: true", async () => {
+    const filePath = await writeTempJson("dev-true", matrixWith([devEntry(0)]));
+    const matrix = (await loadModelMatrix(filePath))._unsafeUnwrap();
+    expect(matrix.models.filter((m) => m.dev).map((m) => m.id)).toEqual([
+      "provider/dev-0",
+    ]);
+  });
+
+  it("rejects a dev value that is not a boolean, pointing at the field", async () => {
+    const filePath = await writeTempJson(
+      "dev-not-boolean",
+      matrixWith([{ ...devEntry(0), dev: "yes" }]),
+    );
+    const e = (await loadModelMatrix(filePath))._unsafeUnwrapErr();
+    expect(e.type).toBe("FixtureValidationFailed");
+    if (e.type === "FixtureValidationFailed") {
+      expect(e.issues.map((i) => i.path)).toContain("models.3.dev");
+    }
+  });
+
+  it(`accepts up to ${MAX_DEV_MODELS} dev models`, async () => {
+    const extra = Array.from({ length: MAX_DEV_MODELS }, (_, i) => devEntry(i));
+    const filePath = await writeTempJson("dev-at-cap", matrixWith(extra));
+    expect((await loadModelMatrix(filePath)).isOk()).toBe(true);
+  });
+
+  it(`rejects more than ${MAX_DEV_MODELS} dev models, so the subset stays cheap`, async () => {
+    const extra = Array.from({ length: MAX_DEV_MODELS + 1 }, (_, i) =>
+      devEntry(i),
+    );
+    const filePath = await writeTempJson("dev-over-cap", matrixWith(extra));
+    const e = (await loadModelMatrix(filePath))._unsafeUnwrapErr();
+    expect(e.type).toBe("ModelMatrixConstraintViolation");
+    expect(e.message).toContain(`at most ${MAX_DEV_MODELS}`);
+  });
+});
+
+describe("resolveModelSet / resolveDevModels / resolveCaseDefaultModels", () => {
+  const entry = (
+    id: string,
+    isDefault: boolean,
+    dev: boolean,
+  ): ModelMatrix["models"][number] => ({
+    id,
+    display_name: id,
+    provider: "p",
+    default: isDefault,
+    dev,
+    tags: [],
+  });
+  const matrix: ModelMatrix = {
+    version: 1,
+    models: [
+      entry("p/full-only", true, false),
+      entry("p/both", true, true),
+      entry("p/dev-only", false, true),
+      entry("p/neither", false, false),
+    ],
+  };
+
+  it("resolves the dev set to the dev: true entries only", () => {
+    expect(resolveDevModels(matrix).map((m) => m.id)).toEqual([
+      "p/both",
+      "p/dev-only",
+    ]);
+    expect(resolveModelSet(matrix, "dev").map((m) => m.id)).toEqual([
+      "p/both",
+      "p/dev-only",
+    ]);
+  });
+
+  it("resolves the default set to the default: true entries, never a dev-only one", () => {
+    expect(resolveModelSet(matrix, "default").map((m) => m.id)).toEqual([
+      "p/full-only",
+      "p/both",
+    ]);
+  });
+
+  it("lets a case that omits allowed_models run on the default and dev sets, not on neither", () => {
+    expect(resolveCaseDefaultModels(matrix).map((m) => m.id)).toEqual([
+      "p/full-only",
+      "p/both",
+      "p/dev-only",
+    ]);
+  });
+
+  it("names exactly the two sets --models accepts", () => {
+    expect([...MODEL_SET_NAMES]).toEqual(["default", "dev"]);
+  });
+});
+
+describe("loadModelMatrix — the real dev subset", () => {
+  it(`marks between one and ${MAX_DEV_MODELS} models dev`, async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const dev = resolveDevModels(matrix);
+    expect(dev.length).toBeGreaterThanOrEqual(1);
+    expect(dev.length).toBeLessThanOrEqual(MAX_DEV_MODELS);
+  });
+
+  it("is the subset chosen for Spec 37 17.1", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    expect(resolveDevModels(matrix).map((m) => m.id)).toEqual([
+      "deepseek/deepseek-v4-flash-0731",
+      "openai/gpt-6-luna",
+    ]);
   });
 });

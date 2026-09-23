@@ -292,6 +292,51 @@ describe("runEval run — runner delegation", () => {
     expect(capturedAgent).toBe("loom");
   });
 
+  it("hands --models dev to the runner as the dev model set", async () => {
+    let capturedSet: string | undefined;
+    const { ctx } = context(
+      { evalSubcommand: "run", evalModels: "dev" },
+      {},
+      async (req) => {
+        capturedSet = req.modelSet;
+        return ok(0);
+      },
+    );
+    const result = await runEval(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    expect(capturedSet).toBe("dev");
+  });
+
+  it("shows the model set in the dry-run summary", async () => {
+    const { terminal, ctx } = context(
+      { evalSubcommand: "run", evalModels: "dev", dryRun: true },
+      {},
+      async () => ok(0),
+    );
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toMatch(/Model set:\s+dev/);
+  });
+
+  it("refuses --models dev with --model before calling the runner", async () => {
+    let called = false;
+    const { terminal, ctx } = context(
+      {
+        evalSubcommand: "run",
+        evalModels: "dev",
+        evalModel: "openai/gpt-5.5",
+      },
+      {},
+      async () => {
+        called = true;
+        return ok(0);
+      },
+    );
+    const result = await runEval(ctx);
+    expect(result._unsafeUnwrap()).toBe(1);
+    expect(called).toBe(false);
+    expect(terminal.err.join("\n")).toContain("cannot be combined");
+  });
+
   it("propagates non-zero exit code from runner", async () => {
     const { ctx } = context({ evalSubcommand: "run" }, {}, async () => ok(42));
     const result = await runEval(ctx);

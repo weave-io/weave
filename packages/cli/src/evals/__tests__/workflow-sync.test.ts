@@ -39,7 +39,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { EVALS_ROOT, loadCaseFile } from "../case-loader.js";
-import { loadModelMatrix } from "../model-matrix.js";
+import { loadModelMatrix, MODEL_SET_NAMES } from "../model-matrix.js";
 import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -472,6 +472,74 @@ describe("workflow-sync — agent-evals.yml trajectory-track allowlists match ha
     expect(workflowText).toContain("trajectory-evals:");
     for (const path of expectedPaths) {
       expect(workflowText).toContain(path);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model set dispatch input (Spec 37, 17.1)
+// ---------------------------------------------------------------------------
+
+describe("workflow-sync — agent-evals.yml can choose the dev model subset", () => {
+  function extractAllowedModelSets(workflowText: string): string[] {
+    const match = workflowText.match(/ALLOWED_MODEL_SETS\s*=\s*"([^"]+)"/);
+    if (match === null || match[1] === undefined) return [];
+    return match[1].trim().split(/\s+/).filter(Boolean);
+  }
+
+  function extractModelsChoiceOptions(workflowText: string): string[] {
+    const start = workflowText.indexOf("      models:\n");
+    const end = workflowText.indexOf("      case:\n", start);
+    const block = workflowText.slice(start, end);
+    const options = block.slice(block.indexOf("options:"));
+    return [...options.matchAll(/^\s+- (\S+)$/gm)].map((m) => m[1] ?? "");
+  }
+
+  it("ALLOWED_MODEL_SETS matches MODEL_SET_NAMES exactly", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    expect(extractAllowedModelSets(text)).toEqual([...MODEL_SET_NAMES]);
+  });
+
+  it("offers every model set as a dispatch choice, defaulting to the full matrix", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    expect(extractModelsChoiceOptions(text)).toEqual([...MODEL_SET_NAMES]);
+    const block = text.slice(
+      text.indexOf("      models:\n"),
+      text.indexOf("      case:\n"),
+    );
+    expect(block).toContain("type: choice");
+    expect(block).toContain('default: "default"');
+  });
+
+  it("forwards the validated model set to both the dry run and the live run", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const forwards = text.match(
+      /WEAVE_EVAL_MODELS: \$\{\{ needs\.validate-inputs\.outputs\.models \}\}/g,
+    );
+    expect(forwards).toHaveLength(2);
+    expect(text).toContain("models: ${{ steps.check.outputs.models }}");
+  });
+
+  it("rejects the dev set combined with a model ID before any eval runs", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    expect(text).toContain(
+      'if [ "${MODELS_OUT}" = "dev" ] && [ -n "${MODEL_OUT}" ]; then',
+    );
+  });
+
+  it("never names the dev models in the workflow — they come from the matrix", async () => {
+    const [text, matrixResult] = await Promise.all([
+      Bun.file(WORKFLOW_PATH).text(),
+      loadModelMatrix(),
+    ]);
+    if (matrixResult.isErr())
+      throw new Error("model-matrix.json failed to load");
+    const devIds = matrixResult.value.models
+      .filter((m) => m.dev)
+      .map((m) => m.id);
+    expect(devIds.length).toBeGreaterThan(0);
+    for (const id of devIds) {
+      expect(text).not.toContain(id);
     }
   });
 });

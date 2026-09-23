@@ -293,13 +293,13 @@
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
   - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
-  - function loadCaseFile: (filePath, defaultModels?) => ResultAsync<EvalCase, FixtureSchemaError>
+  - function caseModelDefaults: (matrix) => CaseModelDefaults
+  - function loadCaseFile: (filePath, modelDefaults?) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
   - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
-  - const EVALS_ROOT
-  - _...2 more_
+  - _...4 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
@@ -366,10 +366,11 @@
 - `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
+  - function resolveDevModels: (matrix) => ModelMatrixEntry[]
+  - function resolveModelSet: (matrix, set) => ModelMatrixEntry[]
+  - function resolveCaseDefaultModels: (matrix) => ModelMatrixEntry[]
   - function filterMatrix: (matrix, filterId) => ModelMatrixEntry[]
-  - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
-  - const MATRIX_PATH
-  - const MIN_DEFAULT_MODELS
+  - _...6 more_
 - `packages/cli/src/evals/opencode-trajectory-runner-adapter.ts`
   - function createProductionTrajectoryRunner: (cases, env, string | undefined>) => void
   - function checkSandboxImageExists: (sandboxProfile) => ResultAsync<boolean, SandboxImageCheckError>

@@ -562,6 +562,14 @@ export const ModelMatrixEntrySchema = z.object({
    */
   default: z.boolean(),
   /**
+   * Whether this model belongs to the cheap development subset, selected with
+   * `--models dev` instead of the full default matrix. Independent of
+   * `default`: a model may be in both, either or neither. At most
+   * `MAX_DEV_MODELS` entries may set it — enforced by `model-matrix.ts` at
+   * load time, so the subset stays cheap. Omitted means `false`.
+   */
+  dev: z.boolean().default(false),
+  /**
    * Optional tags (e.g. `["fast"]`, `["expensive"]`) for future
    * tier-based filtering. All must be valid identifiers.
    */

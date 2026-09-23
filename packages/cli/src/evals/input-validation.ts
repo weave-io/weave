@@ -25,9 +25,13 @@
  *     inputs into env, and blank means no filter in that context.
  *   - Unknown `WEAVE_EVAL_*` env vars are rejected, except for known
  *     non-filter eval control vars such as `WEAVE_EVAL_PUBLISH_MODE`.
+ *   - `--models <set>` (or `WEAVE_EVAL_MODELS`) selects a named model set
+ *     from `MODEL_SET_NAMES`. `dev` names the cheap development subset and
+ *     cannot be combined with `--model`, which already names one model.
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { MODEL_SET_NAMES, type ModelSetName } from "./model-matrix.js";
 import { EVAL_AGENT_FILTERS } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +49,14 @@ export type EvalRunRequest = {
   model: string | undefined;
   /** Optional case identifier filter (validated identifier). */
   case: string | undefined;
+  /**
+   * The named model set to run when no `--model` filter is given.
+   *
+   * `"dev"` selects the `dev: true` development subset of
+   * `evals/model-matrix.json`; `"default"` or omitted selects the full
+   * default matrix. Never `"dev"` together with `model`.
+   */
+  modelSet?: ModelSetName;
   /**
    * When `true`, skip actual execution and print what would be run.
    * Always safe in any environment.
@@ -70,6 +82,8 @@ export type EvalRunInputs = {
   model?: string;
   /** Filter value from --case flag. */
   case?: string;
+  /** Model set name from --models flag. */
+  models?: string;
   /** Whether --dry-run was passed. */
   dryRun?: boolean;
   /** Whether --raw-artifacts was passed. */
@@ -113,6 +127,27 @@ export type EvalInputValidationError =
       value: string;
       /** The sorted list of permitted agent values. */
       allowedValues: string[];
+      message: string;
+    }
+  | {
+      /** The `--models` value is not a known model set name. */
+      type: "UnknownModelSet";
+      /** The unrecognised value supplied by the caller. */
+      value: string;
+      /** The permitted model set names. */
+      allowedValues: string[];
+      message: string;
+    }
+  | {
+      /**
+       * `--models dev` and `--model <id>` were both supplied. One names a
+       * set, the other a single model; running both is ambiguous.
+       */
+      type: "ConflictingModelSelection";
+      /** The `--model` value. */
+      model: string;
+      /** The `--models` value. */
+      modelSet: ModelSetName;
       message: string;
     };
 
@@ -211,6 +246,46 @@ function validateIdentifier(
   return ok(value);
 }
 
+/**
+ * Validate the `--models` value against `MODEL_SET_NAMES`.
+ */
+function validateModelSet(
+  value: string,
+): Result<ModelSetName, EvalInputValidationError> {
+  const match = MODEL_SET_NAMES.find((name) => name === value);
+  if (match !== undefined) return ok(match);
+  return err({
+    type: "UnknownModelSet",
+    value,
+    allowedValues: [...MODEL_SET_NAMES],
+    message:
+      `--models "${value}" is not a known model set. ` +
+      `Allowed values: ${MODEL_SET_NAMES.join(", ")}`,
+  });
+}
+
+/**
+ * Reject `--models dev` combined with `--model <id>`.
+ *
+ * `--models default` alongside `--model` is accepted: `default` is what a run
+ * without `--models` means, and the workflow dispatch form always sends it.
+ */
+function validateModelSelection(
+  model: string | undefined,
+  modelSet: ModelSetName | undefined,
+): Result<void, EvalInputValidationError> {
+  if (model === undefined) return ok(undefined);
+  if (modelSet !== "dev") return ok(undefined);
+  return err({
+    type: "ConflictingModelSelection",
+    model,
+    modelSet,
+    message:
+      `--models ${modelSet} and --model "${model}" cannot be combined; ` +
+      "use --models dev to run the development subset, or --model to run one model",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // CI detection
 // ---------------------------------------------------------------------------
@@ -243,6 +318,7 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
   "WEAVE_EVAL_AGENT",
   "WEAVE_EVAL_MODEL",
   "WEAVE_EVAL_CASE",
+  "WEAVE_EVAL_MODELS",
   "WEAVE_EVAL_PUBLISH_MODE",
 ]);
 
@@ -312,6 +388,7 @@ export function parseEvalRunRequest(
   const envAgent = normalizeEnvFilterValue(env.WEAVE_EVAL_AGENT);
   const envModel = normalizeEnvFilterValue(env.WEAVE_EVAL_MODEL);
   const envCase = normalizeEnvFilterValue(env.WEAVE_EVAL_CASE);
+  const envModels = normalizeEnvFilterValue(env.WEAVE_EVAL_MODELS);
 
   // Resolve agent filter: merge CLI flag + env variable
   const agentMerge = detectDuplicate("agent", inputs.agent, envAgent);
@@ -356,6 +433,28 @@ export function parseEvalRunRequest(
   if (caseValidation.isErr()) return err(caseValidation.error);
   const validatedCase = caseValidation.value;
 
+  // Resolve the named model set
+  const modelsMerge = detectDuplicate("models", inputs.models, envModels);
+  if (modelsMerge.isErr()) return err(modelsMerge.error);
+  const rawModels = modelsMerge.value;
+
+  const modelsSyntax =
+    rawModels !== undefined
+      ? validateIdentifier("models", rawModels)
+      : ok(undefined);
+  if (modelsSyntax.isErr()) return err(modelsSyntax.error);
+  const syntaxValidatedModels = modelsSyntax.value;
+
+  const modelSetValidation =
+    syntaxValidatedModels !== undefined
+      ? validateModelSet(syntaxValidatedModels)
+      : ok(undefined);
+  if (modelSetValidation.isErr()) return err(modelSetValidation.error);
+  const validatedModelSet = modelSetValidation.value;
+
+  const selection = validateModelSelection(validatedModel, validatedModelSet);
+  if (selection.isErr()) return err(selection.error);
+
   // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
   // control var, not a filter, but it is part of the eval env contract.
   const evalEnvKeys = Object.keys(env).filter((k) =>
@@ -376,11 +475,13 @@ export function parseEvalRunRequest(
     });
   }
 
-  return ok({
+  const request: EvalRunRequest = {
     agent: validatedAgent,
     model: validatedModel,
     case: validatedCase,
     dryRun: inputs.dryRun ?? false,
     rawArtifacts,
-  });
+  };
+  if (validatedModelSet !== undefined) request.modelSet = validatedModelSet;
+  return ok(request);
 }
