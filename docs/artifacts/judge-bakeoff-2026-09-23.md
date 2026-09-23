@@ -1,16 +1,16 @@
-# Judge bake-off, 23 Sep 2026 (Spec 37, task 16.3)
+# Jev judge acceptance check, 23 Sep 2026 (Spec 37, task 16.3)
 
-Non-normative artifact. It records how the eval judge is chosen for task 16.4 of [Spec 37](../specs/37-spec-repository-foundation/37-tasks-repository-foundation.md) (group 16): TypeSafe Jev or Claude Sonnet 5, measured against human pass/fail labels on the same agent outputs. No agent response, prompt, transcript or judge rationale is reproduced here; those stay in local files outside the repository (see [Raw output](#raw-output)).
+Non-normative artifact. It records whether TypeSafe Jev is accepted as the eval judge for task 16.4 of [Spec 37](../specs/37-spec-repository-foundation/37-tasks-repository-foundation.md) (group 16), measured against human pass/fail labels on real agent outputs. Claude Sonnet 5 scores the same outputs as a reference, not as a contender. No agent response, prompt, transcript or judge rationale is reproduced here; those stay in local files outside the repository (see [Raw output](#raw-output)).
 
-**Status: waiting on maintainer labels.** The outputs are collected and both judges have scored them. The labels, the results and the decision below are placeholders until the maintainer labels the 20 items.
+**Status: waiting on maintainer labels.** The outputs are collected, and Jev and the Sonnet 5 reference have scored them. The labels, the results and the outcome below are placeholders until the maintainer labels the 20 items.
 
 ## Why
 
-Today every judge call goes to `anthropic/claude-sonnet-4.5`, hard-coded as `JUDGE_MODEL_ID` in [`packages/cli/src/commands/eval.ts`](../../packages/cli/src/commands/eval.ts). Task 16.4 replaces it with the winner of this bake-off. The labels collected here double as the human calibration set for later judge changes.
+Today every judge call goes to `anthropic/claude-sonnet-4.5`, hard-coded as `JUDGE_MODEL_ID` in [`packages/cli/src/commands/eval.ts`](../../packages/cli/src/commands/eval.ts). Task 16.4 replaces it with Jev if Jev passes this check. The labels collected here double as the human calibration set for later judge changes.
 
 ## Method
 
-The method, the question design and the decision rule were fixed before either judge scored anything.
+The method and the question design were fixed before either judge scored anything. The acceptance rule replaced an earlier head-to-head rule on 23 Sep 2026, after scoring but before any item was labelled (see [7. Acceptance rule](#7-acceptance-rule)).
 
 ### 1. Outputs
 
@@ -81,7 +81,7 @@ The criteria are:
 
 A state longer than 100,000 characters is refused rather than truncated; Jev's context is 32k tokens. The longest state in this set is well under that (the longest response is about 11,000 characters).
 
-### 5. Sonnet 5
+### 5. Sonnet 5 (reference only)
 
 Sonnet 5 (`anthropic/claude-sonnet-5` on OpenRouter) judges through the production `RealLangChainJudge` and its `JUDGE_PROMPT_TEMPLATE` in [`packages/cli/src/evals/langchain-agent-evals.ts`](../../packages/cli/src/evals/langchain-agent-evals.ts), at temperature 0, with only the model id changed. The rubric goes in as `rubricDescription`, the reference as `reference_outputs` and the response as `outputs`. It passes an item when its score reaches the case's existing threshold: `PASS_THRESHOLD` (0.5) for `task_completion` cases and optional category-routing cases, and `QUALITATIVE_PASS_THRESHOLD` (0.7) for required category-routing cases.
 
@@ -89,9 +89,17 @@ Sonnet 5 (`anthropic/claude-sonnet-5` on OpenRouter) judges through the producti
 
 The maintainer labels each item pass or fail on a blind sheet: suite, case, the task given to the agent, rubric, reference and the full response, with no model id and neither judge's verdict.
 
-### 7. Decision rule
+### 7. Acceptance rule
 
-Agreement is the share of the 20 items on which a judge's verdict matches the human label; a judge error counts as a disagreement. **Adopt Jev if its agreement with the human labels is at least Sonnet 5's; otherwise adopt Sonnet 5.** Cohen's kappa, the confusion counts, the per-suite breakdown and the "all criteria" Jev variant are reported alongside, but do not change the decision.
+Fixed by the maintainer on 23 Sep 2026, before any item was labelled, and implemented as `JEV_ACCEPTANCE_RULE` in the harness.
+
+**Jev is accepted if it agrees with the maintainer's labels on at least 16 of the 20 items (80%) and wrongly passes at most 2 items the maintainer labelled fail.** A judge error counts as a disagreement, not as a false pass. False fails (Jev fails an item the maintainer passed) are reported but not limited beyond the agreement threshold.
+
+Sonnet 5's verdicts are reported alongside as a reference only; they do not affect the outcome. Cohen's kappa, the confusion counts, the per-suite breakdown and the "all criteria" Jev variant are also reported for information only.
+
+If Jev is rejected, the fallback is a chat-model judge that is deliberately kept out of the eval matrix, recorded as a known limitation.
+
+Why an acceptance check and not a head-to-head: a chat-model judge could never later be added to the eval matrix without grading its own output, whereas Jev can never be an evaluated model. The earlier rule (adopt Jev if its agreement is at least Sonnet 5's, otherwise Sonnet 5) is withdrawn.
 
 ## Reproducing
 
@@ -109,7 +117,7 @@ bun scripts/evals/judge-bakeoff.ts compare --items <dir>/items.json \
 
 ## Cost
 
-About $0.68 of OpenRouter credit in total: the 42 eval runs (with the current Sonnet 4.5 judge scoring them) and both bake-off judges over 20 items. Jev's share was $0.0012.
+About $0.72 of OpenRouter credit in total: the 42 eval runs (with the current Sonnet 4.5 judge scoring them) and both judges over 20 items. Jev's share was $0.0012.
 
 ## Labels
 
@@ -123,9 +131,9 @@ _Placeholder: filled from `labels.md` once the maintainer has labelled every ite
 
 _Placeholder: the output of `compare` (agreement, confusion counts, kappa, per suite, per item)._
 
-## Decision
+## Outcome
 
-_Placeholder: Jev or Sonnet 5, by the rule above._
+_Placeholder: Jev ACCEPTED or REJECTED, by the rule above, with the agreement count, false passes and false fails._
 
 ## Raw output
 

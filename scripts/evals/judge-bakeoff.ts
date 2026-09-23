@@ -1,16 +1,16 @@
 /**
  * Judge bake-off harness — Spec 37, task 16.3.
  *
- * Compares two candidate LLM judges against human pass/fail labels on the
- * same agent outputs, so the winner can replace the hard-coded judge in
- * `packages/cli/src/commands/eval.ts` (task 16.4):
+ * An acceptance check for TypeSafe Jev as the eval judge, against human
+ * pass/fail labels on real agent outputs. If Jev is accepted it replaces the
+ * hard-coded judge in `packages/cli/src/commands/eval.ts` (task 16.4):
  *
  *   - TypeSafe Jev (`typesafe/jev-1.13`) through OpenRouter's decisions
  *     endpoint. Jev answers typed questions (`noul`, `choice`, `score`) and
- *     returns no free text.
+ *     returns no free text. It is the candidate under test.
  *   - Claude Sonnet 5 (`anthropic/claude-sonnet-5`) through the production
  *     `RealLangChainJudge` and its `JUDGE_PROMPT_TEMPLATE`, with only the
- *     model id changed.
+ *     model id changed. Reported as a reference only, not a contender.
  *
  * Subcommands:
  *
@@ -24,8 +24,9 @@
  *
  *   compare --items <file> --verdicts <file> --labels <file> [--out <file>]
  *     Parses the maintainer's labels from `labels.md` and emits a Markdown
- *     report: per-judge agreement, confusion counts, Cohen's kappa, a
- *     per-suite breakdown, per-item verdicts, and the decision.
+ *     report: Jev ACCEPTED or REJECTED against `JEV_ACCEPTANCE_RULE`, then
+ *     per-judge agreement, confusion counts, Cohen's kappa, a per-suite
+ *     breakdown and per-item verdicts, with Sonnet 5 as a reference.
  *
  * The item, verdict and label files hold raw agent output. Keep them outside
  * the repository; they must never be committed or published (see
@@ -213,7 +214,7 @@ export interface JevVerdict {
   criteria: Record<string, number>;
   quality: number;
   pass: boolean;
-  /** Secondary rule, reported but not used by the decision. */
+  /** Secondary rule, reported but not used by the acceptance rule. */
   allCriteriaPass: boolean;
   cost: number;
 }
@@ -787,12 +788,69 @@ export interface SuiteAgreement {
   sonnetAgree: number;
 }
 
+/**
+ * The acceptance rule for Jev, fixed by the maintainer before labelling
+ * (23 Sep 2026). Jev is accepted when it agrees with the labels on at least
+ * `minAgreementShare` of the items (16 of 20) and wrongly passes at most
+ * `maxFalsePasses` items the maintainer labelled fail. A judge error counts
+ * as a disagreement but not as a false pass.
+ *
+ * Why an acceptance check and not a head-to-head: a chat-model judge could
+ * never later join the eval matrix without grading itself, while Jev can
+ * never be an evaluated model. If Jev is rejected, the fallback is a chat
+ * model deliberately kept out of the matrix.
+ */
+export const JEV_ACCEPTANCE_RULE = {
+  minAgreementShare: 0.8,
+  maxFalsePasses: 2,
+} as const;
+
+export interface Acceptance {
+  accepted: boolean;
+  n: number;
+  agree: number;
+  /** Agreements the rule requires for `n` items. */
+  requiredAgree: number;
+  /** Judge pass, human fail. */
+  falsePasses: number;
+  maxFalsePasses: number;
+  /** Judge fail, human pass. */
+  falseFails: number;
+  errors: number;
+}
+
 export interface ComparisonReport {
+  /** Jev against the acceptance rule. */
+  acceptance: Acceptance;
   jev: Agreement;
   jevAllCriteria: Agreement;
+  /** Reference only; Sonnet 5 is not a contender. */
   sonnet: Agreement;
   suites: SuiteAgreement[];
-  decision: "jev" | "sonnet";
+}
+
+/** Apply `JEV_ACCEPTANCE_RULE` to a judge's agreement with the labels. */
+export function judgeAcceptance(
+  a: Agreement,
+  rule: {
+    minAgreementShare: number;
+    maxFalsePasses: number;
+  } = JEV_ACCEPTANCE_RULE,
+): Acceptance {
+  // Round before ceil so 0.8 * 20 (16.000000000000004) needs 16, not 17.
+  const requiredAgree = Math.ceil(
+    Math.round(rule.minAgreementShare * a.n * 1e9) / 1e9,
+  );
+  return {
+    accepted: a.agree >= requiredAgree && a.failPass <= rule.maxFalsePasses,
+    n: a.n,
+    agree: a.agree,
+    requiredAgree,
+    falsePasses: a.failPass,
+    maxFalsePasses: rule.maxFalsePasses,
+    falseFails: a.passFail,
+    errors: a.errors,
+  };
 }
 
 /** Agreement between a judge's verdicts and the human labels. */
@@ -860,9 +918,8 @@ function sonnetVerdict(v: ItemVerdicts): Verdict | undefined {
 }
 
 /**
- * Compare both judges with the human labels. Decision rule, fixed before
- * scoring: adopt Jev if its agreement is at least Sonnet 5's; otherwise
- * adopt Sonnet 5.
+ * Compare Jev (and Sonnet 5, as a reference) with the human labels, and
+ * apply `JEV_ACCEPTANCE_RULE` to Jev.
  */
 export function compare(
   items: BakeoffItem[],
@@ -901,8 +958,9 @@ export function compare(
   });
 
   const jev = agreement("Jev (overall noul)", pairsFor(jevVerdict));
-  const sonnet = agreement("Sonnet 5", pairsFor(sonnetVerdict));
+  const sonnet = agreement("Sonnet 5 (reference)", pairsFor(sonnetVerdict));
   return ok({
+    acceptance: judgeAcceptance(jev),
     jev,
     jevAllCriteria: agreement(
       "Jev (all criteria, informational)",
@@ -910,7 +968,6 @@ export function compare(
     ),
     sonnet,
     suites,
-    decision: jev.agreement >= sonnet.agreement ? "jev" : "sonnet",
   });
 }
 
@@ -943,22 +1000,37 @@ export function renderComparison(
   labels: Map<string, HumanLabel>,
 ): string {
   const byId = new Map(verdicts.map((v) => [v.id, v]));
-  const winner = report.decision === "jev" ? "TypeSafe Jev" : "Sonnet 5";
-  const relation = report.jev.agreement >= report.sonnet.agreement ? "≥" : "<";
+  const a = report.acceptance;
+  const outcome = a.accepted ? "ACCEPTED" : "REJECTED";
+  const agreeMark = a.agree >= a.requiredAgree ? "met" : "not met";
+  const falsePassMark = a.falsePasses <= a.maxFalsePasses ? "met" : "not met";
   const lines = [
+    "### Jev acceptance",
+    "",
+    `**Jev: ${outcome}.**`,
+    "",
+    "| Condition | Required | Jev | Result |",
+    "| --- | --- | --- | --- |",
+    `| Agrees with the labels | at least ${a.requiredAgree}/${a.n} | ${a.agree}/${a.n} | ${agreeMark} |`,
+    `| False passes (Jev pass, human fail) | at most ${a.maxFalsePasses} | ${a.falsePasses} | ${falsePassMark} |`,
+    `| False fails (Jev fail, human pass) | not limited | ${a.falseFails} | — |`,
+    `| Judge errors (count as disagreements) | not limited | ${a.errors} | — |`,
+    "",
+    `Sonnet 5, for reference only: ${report.sonnet.agree}/${report.sonnet.n} agree, ${report.sonnet.failPass} false passes, ${report.sonnet.passFail} false fails.`,
+    "",
     "### Agreement with the human labels",
     "",
     "| Judge | Agreement | Cohen's κ | Both pass | Both fail | Judge pass, human fail | Judge fail, human pass | Judge errors |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
     agreementRow(report.jev),
-    agreementRow(report.sonnet),
     agreementRow(report.jevAllCriteria),
+    agreementRow(report.sonnet),
     "",
     "A judge error counts as a disagreement.",
     "",
     "### Per suite",
     "",
-    "| Suite | Items | Jev agrees | Sonnet 5 agrees |",
+    "| Suite | Items | Jev agrees | Sonnet 5 agrees (reference) |",
     "| --- | --- | --- | --- |",
     ...report.suites.map(
       (s) => `| ${s.suite} | ${s.n} | ${s.jevAgree} | ${s.sonnetAgree} |`,
@@ -966,7 +1038,7 @@ export function renderComparison(
     "",
     "### Per item",
     "",
-    "| Item | Suite | Case | Human | Jev (overall noul) | Sonnet 5 (score) |",
+    "| Item | Suite | Case | Human | Jev (overall noul) | Sonnet 5 (score, reference) |",
     "| --- | --- | --- | --- | --- | --- |",
     ...items.map((item) => {
       const v = byId.get(item.id) as ItemVerdicts;
@@ -979,10 +1051,6 @@ export function renderComparison(
       );
       return `| ${item.id} | ${item.suite} | ${item.caseId} | ${labels.get(item.id)?.verdict ?? "?"} | ${jev} | ${sonnet} |`;
     }),
-    "",
-    "### Decision",
-    "",
-    `Jev ${report.jev.agree}/${report.jev.n} ${relation} Sonnet 5 ${report.sonnet.agree}/${report.sonnet.n}: adopt **${winner}**.`,
     "",
   ];
   return lines.join("\n");
@@ -1309,7 +1377,7 @@ async function compareCommand(args: Args): Promise<Result<void, BakeoffError>> {
     const written = await writeText(out, markdown);
     if (written.isErr()) return err(written.error);
     log.info(
-      { out, decision: report.value.decision },
+      { out, jevAccepted: report.value.acceptance.accepted },
       "Wrote bake-off comparison",
     );
     return ok(undefined);
