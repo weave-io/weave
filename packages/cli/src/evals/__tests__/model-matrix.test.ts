@@ -581,11 +581,6 @@ describe("loadModelMatrix — the real dev subset", () => {
     expect(dev.length).toBeLessThanOrEqual(MAX_DEV_MODELS);
   });
 
-  it("is the subset chosen for Spec 37 17.1", async () => {
-    const matrix = (await loadModelMatrix())._unsafeUnwrap();
-    expect(resolveDevModels(matrix).map((m) => m.id)).toEqual([
-      "deepseek/deepseek-v4-flash-0731",
-      "openai/gpt-6-luna",
-    ]);
-  });
+  // Deliberately no hard-coded list of the dev models: moving the subset must
+  // stay a single edit to evals/model-matrix.json (#194, Spec 37 4.4).
 });
