@@ -150,6 +150,10 @@ Policy enforcement before external push. Rejects:
 
 Raw artifacts (`RawCaseResultArtifact`, `RawPromptArtifact`) contain raw transcript content, composed prompt text, and full dimension rationales. They are **never publishable**.
 
+#### The run report (stdout)
+
+After a live run `weave eval run` prints a per-case report (`packages/cli/src/evals/run-report.ts`, built from `EvalRunSummary.caseReports`). It carries only publishable `CaseResultSummary` fields — verdict, weighted total, dimension scores, the bounded `publicExplanation` — plus local paths, including each case's raw file when one was written. It never prints `rawContent`, `composedPrompt`, `transcript` or `dimensionRationales`, so the same report is safe in a CI log. See [Diagnose one case](agent-evals.md#diagnose-one-case).
+
 #### `RawArtifactsWriter`
 
 - Constructor requires `rawArtifactsEnabled: true` as explicit opt-in.

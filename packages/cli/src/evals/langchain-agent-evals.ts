@@ -97,7 +97,7 @@ export const PASS_THRESHOLD = 0.5;
  * diagnostic data. This avoids failing otherwise correct task/delegation cases
  * solely because the judge gave terse rationale a low score.
  */
-const PRIMARY_STRUCTURAL_PASS_THRESHOLD = 0.95;
+export const PRIMARY_STRUCTURAL_PASS_THRESHOLD = 0.95;
 
 // ---------------------------------------------------------------------------
 // LangChainJudge interface — the scoring edge

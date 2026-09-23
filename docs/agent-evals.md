@@ -197,6 +197,11 @@ run costs is the judge: every judge-scored case still makes its judge call on
 `anthropic/claude-sonnet-4.5` ($3 / $15), whatever model produced the answer.
 Deterministic suites (routing, structural checks) cost only the model call.
 
+> **Caveat (23 Sep 2026).** The first real single-case run on
+> `deepseek/deepseek-v4-flash-0731` came back with an empty answer; see
+> [Diagnose one case](#diagnose-one-case). Until that is explained, check a
+> dev-subset failure's raw transcript before trusting its score.
+
 ## Eval Suites
 
 Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
@@ -271,6 +276,78 @@ bun packages/cli/src/main.ts eval run --agent loom-routing --model anthropic/cla
 # Cross-suite smoke on one shared model (all suites, one model)
 bun packages/cli/src/main.ts eval run --model anthropic/claude-sonnet-4.5
 ```
+
+### Diagnose one case
+
+To find out why one case fails on one model, run just that case on just that
+model, locally, with raw artifacts on:
+
+```bash
+bun packages/cli/src/main.ts eval run \
+  --agent <suite> --case <case-id> --model <model-id> --raw-artifacts
+
+# For example, on a development-subset model:
+bun packages/cli/src/main.ts eval run --agent weft-review \
+  --case weft-review-traced-true-positive \
+  --model deepseek/deepseek-v4-flash-0731 --raw-artifacts
+```
+
+It needs `OPENROUTER_API_KEY`, and costs one model call plus the judge calls
+the case makes. Nothing is published: without `WEAVE_EVAL_PUBLISH_MODE=publish`
+the sanitized bundle is written to `eval-bundles/` and stays there. After the
+run, `weave eval run` prints a report on stdout (Spec 37, task 17.2):
+
+```text
+Eval run b42a14b-2026-09-23-001: 1 case, 0 passed, 1 failed
+  Bundle: …/eval-bundles/runs/b42a14b-2026-09-23-001 (local only; nothing was published)
+
+  FAIL  weft-review-traced-true-positive on deepseek/deepseek-v4-flash-0731  (weft-review, required)
+        Weighted total 0.00 (pass mark 0.50)
+        ✗ executionCompleteness  0.00  below 0.95
+        ✗ rationaleQuality       0.00  below 0.70
+        Why: required execution case failed; dimensions: executionCompleteness, rationaleQuality
+        Raw transcript: …/eval-bundles/runs/b42a14b-2026-09-23-001/raw/case-weft-review-traced-true-positive-deepseek_deepseek-v4-flash-0731-2026-09-23T06-01-43-182Z.json
+```
+
+- **The verdict** — `PASS` or `FAIL` for each case on each model, with the
+  weighted total against the pass mark.
+- **What fell short** — for a failed case, every scoring dimension that applies
+  to it, with its score. `✗` marks one below its bar: 0.95 for the structural
+  dimensions (routing, delegation, execution — the scorer passes a case when
+  one of them reaches it) and 0.70 for `rationaleQuality` (the qualitative gate
+  category-routing cases enforce; elsewhere it only lowers the weighted total).
+  Dimensions that do not apply to the case are left out. `Why:` is the case's
+  bounded public explanation, when the runner wrote one.
+- **Where the raw transcript is** — the `raw/case-…json` file holds the
+  composed prompt, the full transcript, the model's answer, the judge's
+  rationale for each dimension and the runner's diagnostics (for example the
+  required signals it did not detect). Open it to see *why*.
+
+The example above is a real run (23 Sep 2026). The scores alone read as "Weft
+missed the blocker"; the raw file showed the model's answer was a single
+space, so the case never reached Weft's behaviour at all. Both dev-subset
+models are reasoning models on OpenRouter, and the runner asks for at most 2048
+completion tokens (`OpenRouterClient`), so a likely cause is reasoning using
+the whole budget. That is unconfirmed and is not fixed here; check the raw
+file before reading a dev-subset failure as a prompt problem.
+
+The report prints only publishable fields and local paths, never the answer,
+the prompt or a rationale, so it is safe in a CI log too; the same report
+follows every live run, one line per passing case and a block per failing one.
+
+**Raw artifacts are not written automatically in this mode.** `--raw-artifacts`
+stays an explicit opt-in: raw files carry the composed prompt and the full
+transcript, `docs/eval-sanitization-and-publish-pipeline.md` keeps them local
+and opt-in by construction (`RawArtifactsWriter` requires
+`rawArtifactsEnabled: true`, and the flag is rejected in CI), and a run that
+switched them on by itself because its filters happened to be narrow would
+make "what does this command write to disk" depend on its other flags. Without
+the flag the report still prints the verdict and the dimensions, and ends with
+a one-line reminder to re-run with `--raw-artifacts`. The recipe above always
+includes it.
+
+Tip: a dry run of the same command (`--dry-run`) checks the suite, case and
+model names for free before you spend anything.
 
 ### CI dispatch
 
@@ -1033,6 +1110,9 @@ weave eval run --agent warp
 # Filter to a single model
 weave eval run --model anthropic/claude-sonnet-4.5
 
+# Run the cheap development subset instead of the full default matrix
+weave eval run --models dev
+
 # Filter to a single case ID
 weave eval run --case loom-route-backend-api
 weave eval run --case shuttle-execution-report-structured-evidence
@@ -1048,6 +1128,9 @@ weave eval run --dry-run
 
 # Emit raw artifacts locally (NEVER in CI)
 weave eval run --raw-artifacts
+
+# Diagnose one case on one model (see "Diagnose one case")
+weave eval run --agent weft --case weft-review-clean-approval --model deepseek/deepseek-v4-flash-0731 --raw-artifacts
 ```
 
 Filters can also be supplied via environment variables in CI workflows:
@@ -1055,6 +1138,7 @@ Filters can also be supplied via environment variables in CI workflows:
 ```bash
 WEAVE_EVAL_AGENT=loom
 WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5
+WEAVE_EVAL_MODELS=dev
 WEAVE_EVAL_CASE=loom-route-backend-api
 ```
 
@@ -1346,6 +1430,8 @@ Raw artifacts are written to `eval-bundles/runs/<runId>/raw/`:
 | Per-agent prompt | `prompt-<safeAgentName>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json` |
 
 Raw filename components are sanitized before write. Slashes, backslashes, traversal segments such as `..`, and other unsafe characters are replaced or stripped so the final path stays under the local `raw/` directory.
+
+After the run, the run report prints the path of each case's raw file next to its verdict (see [Diagnose one case](#diagnose-one-case)).
 
 `RawArtifactsWriter` requires `rawArtifactsEnabled: true` as an explicit constructor opt-in. When disabled, all write methods return `err({ type: "RawArtifactsDisabled" })` — they never throw.
 

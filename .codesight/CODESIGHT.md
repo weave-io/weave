@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 200 lib files | 26 env vars | 7 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,300 tokens. Without it, AI exploration would cost ~68,100 tokens. **Saves ~49,700 tokens per conversation.**
-> **Last scanned:** 2026-09-23 05:48 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 201 lib files | 26 env vars | 7 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~18,400 tokens. Without it, AI exploration would cost ~68,300 tokens. **Saves ~50,000 tokens per conversation.**
+> **Last scanned:** 2026-09-23 06:06 — re-run after significant changes
 
 ---
 
@@ -251,11 +251,12 @@
 - `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
+  - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - interface LangChainOpenAIModule
-  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
+  - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -357,7 +358,7 @@
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
-  - _...12 more_
+  - _...13 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
@@ -456,6 +457,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
+- `packages/cli/src/evals/run-report.ts` — class EvalRunReport
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
   - function getEvalCoveredPromptAgents: () => readonly string[]
@@ -463,7 +465,7 @@
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
-  - _...16 more_
+  - _...17 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
@@ -981,9 +983,9 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **43** files
-- `packages/cli/src/io/terminal.ts` — imported by **23** files
-- `packages/cli/src/theme/colors.ts` — imported by **22** files
+- `packages/cli/src/evals/types.ts` — imported by **44** files
+- `packages/cli/src/theme/colors.ts` — imported by **25** files
+- `packages/cli/src/io/terminal.ts` — imported by **24** files
 - `packages/cli/src/fs/file-system.ts` — imported by **21** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
@@ -1004,9 +1006,9 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts`, `packages/cli/src/evals/__tests__/loom-delegation-matrix.test.ts` +38 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +18 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +17 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts`, `packages/cli/src/evals/__tests__/loom-delegation-matrix.test.ts` +39 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +19 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +16 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
@@ -1034,7 +1036,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 195 test files found
+> 197 test files found
 
 ---
 

@@ -1,0 +1,143 @@
+/**
+ * The report `weave eval run` prints after a live run (Spec 37, task 17.2).
+ *
+ * For every case × model result it prints the verdict. A failed case also
+ * gets each applicable scoring dimension with its score, marked where it fell
+ * below its bar, the case's bounded public explanation, and the path of its
+ * raw transcript — so running one case for one model is enough to see why it
+ * failed without opening the bundle.
+ *
+ * What it prints is limited to the publishable `CaseReport` fields plus local
+ * paths. The transcript, the model's answer, the composed prompt and the
+ * judge's rationales stay in the raw artifact file, which exists only under
+ * `--raw-artifacts` (rejected in CI). The report can therefore go to a CI log
+ * without disclosing anything the published bundle does not.
+ */
+
+import type { ThemeColors } from "../theme/colors.js";
+import {
+  PASS_THRESHOLD,
+  PRIMARY_STRUCTURAL_PASS_THRESHOLD,
+} from "./langchain-agent-evals.js";
+import type { CaseReport, EvalRunSummary } from "./runner.js";
+import { QUALITATIVE_PASS_THRESHOLD } from "./tapestry-category-routing-runner.js";
+import type { ScoringDimension } from "./types.js";
+
+/**
+ * The dimensions in print order, with the score each has to reach.
+ *
+ * A structural dimension (routing, delegation, execution) is what a case
+ * passes on: the scorer passes a case outright when one reaches
+ * `PRIMARY_STRUCTURAL_PASS_THRESHOLD`. `rationaleQuality` never passes a case
+ * on its own; its bar is the qualitative gate `QUALITATIVE_PASS_THRESHOLD`
+ * that category-routing cases enforce, and elsewhere a low score only pulls
+ * the weighted total down.
+ */
+const DIMENSION_BARS: ReadonlyArray<{
+  dimension: ScoringDimension;
+  bar: number;
+}> = [
+  { dimension: "routingCorrectness", bar: PRIMARY_STRUCTURAL_PASS_THRESHOLD },
+  {
+    dimension: "delegationCorrectness",
+    bar: PRIMARY_STRUCTURAL_PASS_THRESHOLD,
+  },
+  {
+    dimension: "executionCompleteness",
+    bar: PRIMARY_STRUCTURAL_PASS_THRESHOLD,
+  },
+  { dimension: "rationaleQuality", bar: QUALITATIVE_PASS_THRESHOLD },
+];
+
+const DIMENSION_COLUMN = Math.max(
+  ...DIMENSION_BARS.map(({ dimension }) => dimension.length),
+);
+
+/** Renders an `EvalRunSummary` as the text `weave eval run` prints. */
+export class EvalRunReport {
+  constructor(private readonly theme: ThemeColors) {}
+
+  render(summary: EvalRunSummary): string {
+    const lines: string[] = ["", ...this.header(summary)];
+    for (const report of summary.caseReports) {
+      lines.push("", ...this.caseLines(report));
+    }
+    lines.push(...this.footer(summary), "");
+    return lines.join("\n");
+  }
+
+  private header(summary: EvalRunSummary): string[] {
+    const counts =
+      `${summary.totalCases} ${plural(summary.totalCases, "case")}, ` +
+      `${summary.passedCases} passed, ${summary.failedCases} failed`;
+    const title = `${this.theme.boldCyan("Eval run")} ${summary.runId ?? "(no run written)"}: ${counts}`;
+    if (summary.runId === null) return [title];
+    return [title, `  ${this.whereWritten(summary)}`];
+  }
+
+  private whereWritten(summary: EvalRunSummary): string {
+    if (summary.metadata.publishMode === "publish") {
+      return `Bundle: ${summary.bundleDir} (publish mode: sent to the results repository)`;
+    }
+    return `Bundle: ${summary.bundleDir} (local only; nothing was published)`;
+  }
+
+  private caseLines(report: CaseReport): string[] {
+    const verdict = report.passed
+      ? this.theme.boldGreen("PASS")
+      : this.theme.boldRed("FAIL");
+    const requirement = report.required ? "required" : "optional";
+    const lines = [
+      `  ${verdict}  ${report.caseId} on ${report.modelId}  ${this.theme.dim(`(${report.suite}, ${requirement})`)}`,
+      `        Weighted total ${score(report.weightedTotal)} (pass mark ${score(PASS_THRESHOLD)})`,
+    ];
+
+    if (!report.passed) {
+      lines.push(...this.dimensionLines(report));
+      if (report.publicExplanation !== null) {
+        lines.push(`        Why: ${report.publicExplanation}`);
+      }
+    }
+
+    if (report.rawArtifactPath !== null) {
+      lines.push(`        Raw transcript: ${report.rawArtifactPath}`);
+    }
+    return lines;
+  }
+
+  private dimensionLines(report: CaseReport): string[] {
+    return DIMENSION_BARS.flatMap(({ dimension, bar }) => {
+      const entry = report.dimensionScores[dimension];
+      if (!entry.applicable) return [];
+      const name = dimension.padEnd(DIMENSION_COLUMN);
+      if (entry.score < bar) {
+        return [
+          `        ${this.theme.red("✗")} ${name}  ${score(entry.score)}  below ${score(bar)}`,
+        ];
+      }
+      return [
+        `        ${this.theme.green("✓")} ${name}  ${score(entry.score)}`,
+      ];
+    });
+  }
+
+  private footer(summary: EvalRunSummary): string[] {
+    if (summary.caseReports.length === 0) return [];
+    if (summary.metadata.rawArtifactsEnabled) return [];
+    return [
+      "",
+      this.theme.dim(
+        "  Raw transcripts were not written. Re-run with --raw-artifacts to keep them locally (not available in CI).",
+      ),
+    ];
+  }
+}
+
+function score(value: number): string {
+  return value.toFixed(2);
+}
+
+function plural(count: number, noun: string): string {
+  if (count === 1) return noun;
+  return `${noun}s`;
+}

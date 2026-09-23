@@ -57,7 +57,7 @@ Added to #183 on 20 Sep 2026 after a second audit of the suite, and complete. Th
 ## 17. Cheap runs (G6, G10) — PR: #222 (17.1)
 
 - [x] 17.1 Add a development subset of one or two inexpensive models, selectable without editing the matrix (for example a `dev` marker in `evals/model-matrix.json` and a `--models dev` selector), kept separate from the full default matrix. A plain `eval run` still runs the full default matrix. _#222: `dev: true` on matrix entries (at most 2), `--models dev` / `WEAVE_EVAL_MODELS` / the `models` dispatch input. Subset: `deepseek/deepseek-v4-flash-0731` and `openai/gpt-6-luna`; see `docs/agent-evals.md`._
-- [ ] 17.2 Single-case diagnosis (moved from 6.2): running one case for one model without publishing prints the verdict, the rubric criteria that failed, and the path to the raw transcript. Fix the output where it doesn't; document the command in `docs/agent-evals.md` and in 6.1's overview when that lands.
+- [x] 17.2 Single-case diagnosis (moved from 6.2): running one case for one model without publishing prints the verdict, the rubric criteria that failed, and the path to the raw transcript. Fix the output where it doesn't; document the command in `docs/agent-evals.md` and in 6.1's overview when that lands. _#PRNUM: a live `eval run` printed nothing about its cases; it now prints a run report (`run-report.ts`): the verdict per case × model, each applicable dimension of a failed case with its score and bar, and the raw transcript path. Raw artifacts stay opt-in (`--raw-artifacts`). Recipe: "Diagnose one case" in `docs/agent-evals.md` and `evals/README.md`; 6.1's overview does not exist yet and should link it._
 
 ## 18. Repeatable and comparable runs (G10) — PR: _
 
@@ -91,7 +91,7 @@ Comes after group 20 (see [Order and dependencies](#start-here-for-a-new-session
 ## 6. Understandable and diagnosable evals (G5, G6) — PR: _
 
 - [ ] 6.1 Write `docs/evals-overview.md` (one page): the suites, where cases, rubrics and fixtures live, which runner handles which suite, how scoring works, how a run becomes a published bundle and a website page, and the three commands most people need. Link it from `docs/README.md`, `evals/README.md`, and the top of `docs/agent-evals.md`.
-- [ ] 6.2 _Moved to 17.2 on 23 Sep 2026._ Verify that a single case can be run locally for one model without publishing, and that failure output shows the verdict, the failed rubric criteria, and the path to the raw transcript. Fix the output where it doesn't; document the command in 6.1.
+- [x] 6.2 _Moved to 17.2 on 23 Sep 2026; done in #PRNUM._ Verify that a single case can be run locally for one model without publishing, and that failure output shows the verdict, the failed rubric criteria, and the path to the raw transcript. Fix the output where it doesn't; document the command in 6.1.
 - [ ] 6.3 Audit the nine runners in `packages/cli/src/evals/*-runner.ts`: list the steps each performs and which are shared. Record the result as `docs/artifacts/eval-runner-audit.md` with a recommendation (consolidate or not) for a future spec. No refactor in this group.
 - [ ] 6.4 Prune `docs/agent-evals.md` of anything now covered by 6.1 or stale since #182 (the verification feedback loops), keeping it as the detailed reference.
 
@@ -147,3 +147,4 @@ All metrics are computed over top-level sessions (`parent_id IS NULL`) and their
 | `packages/cli/src/evals/langchain-agent-evals.ts`, `packages/cli/src/commands/eval.ts` | `LangChainJudge` interface and the hard-coded judge model (group 16.4). |
 | `tests/evals/suite-runners.scenario.test.ts` | Scenarios for the empty-run guard of #205: every suite fails closed (group 16.1). |
 | `packages/cli/src/evals/model-matrix.ts`, `tests/evals/model-sets.scenario.test.ts` | The `dev` model subset and `--models` selector, and its scenarios (group 17.1). |
+| `packages/cli/src/evals/run-report.ts`, `tests/evals/diagnosis.scenario.test.ts` | The report a live run prints, and the single-case diagnosis scenarios (group 17.2). |

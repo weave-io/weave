@@ -378,6 +378,24 @@ This keeps identifiers unambiguous as `--case`, `--agent`, and `--model` filter 
 7. Run a local dry run to verify the case is picked up: `weave eval run --case <case-id> --dry-run`.
 8. Run a live local eval to confirm scoring: `weave eval run --case <case-id>` (requires `OPENROUTER_API_KEY`).
 
+### Diagnose one case
+
+To see why one case fails on one model, run only that case on only that model,
+locally, with raw artifacts on (requires `OPENROUTER_API_KEY`; nothing is
+published):
+
+```bash
+bun packages/cli/src/main.ts eval run --agent <suite> --case <case-id> --model <model-id> --raw-artifacts
+```
+
+It prints the verdict, each applicable scoring dimension of a failed case with
+its score (`✗` below its bar), and the path of the raw transcript file under
+`eval-bundles/runs/<run-id>/raw/`. That file holds the prompt, the answer and
+the judge's rationales; it is local only. Without `--raw-artifacts` you still
+get the verdict and the scores, but no transcript. See
+[Diagnose one case](../docs/agent-evals.md#diagnose-one-case) for a worked
+example and why raw artifacts stay opt-in.
+
 Dry-run is the recommended contributor preflight path. It validates suite, model, and case allowlists without making model calls or requiring `OPENROUTER_API_KEY`. Valid dry runs exit `0`. Invalid dry runs exit non-zero because input validation still runs in dry-run mode.
 
 ### Filter semantics reminder

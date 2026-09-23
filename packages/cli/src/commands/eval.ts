@@ -40,7 +40,12 @@ import {
   type ModelResponse,
   OpenRouterClient,
 } from "../evals/openrouter-client.js";
-import { buildEvalRunner, EvalOrchestrator } from "../evals/runner.js";
+import { EvalRunReport } from "../evals/run-report.js";
+import {
+  buildEvalRunner,
+  EvalOrchestrator,
+  type EvalRunSummary,
+} from "../evals/runner.js";
 import type {
   EvalCase,
   EvalRubric,
@@ -184,6 +189,19 @@ function renderDryRunSummary(
 
   lines.push("");
   return lines.join("\n");
+}
+
+/**
+ * The reporter a live `weave eval run` hands to `buildEvalRunner`: it prints
+ * each case's verdict, the dimensions that fell short and where the raw
+ * transcript was written, to stdout (Spec 37, 17.2).
+ */
+export function printRunReport(
+  terminal: TerminalIO,
+  theme: ThemeColors,
+): (summary: EvalRunSummary) => void {
+  const report = new EvalRunReport(theme);
+  return (summary) => terminal.stdout(report.render(summary));
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +362,11 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
   };
   const runnerResult = request.dryRun
     ? buildDryRunRunner(reportPartialFailure, ctx.env)
-    : await buildLiveRunner(reportPartialFailure, ctx.env);
+    : await buildLiveRunner(
+        reportPartialFailure,
+        printRunReport(terminal, theme),
+        ctx.env,
+      );
   if (runnerResult.isErr()) {
     terminal.stderr(formatCliError(runnerResult.error));
     return ok(1);
@@ -446,12 +468,14 @@ const JUDGE_MODEL_ID = "anthropic/claude-sonnet-4.5";
  * Validation errors surface as typed `CliError` values, not thrown exceptions.
  *
  * @param reportPartialFailure - Writes one partial failure to stderr.
+ * @param reportRun - Prints the run report after the run.
  * @param env - Environment variable map. Defaults to `Bun.env`.
  * @returns A `Promise<Result<runner, CliError>>` — err when the environment
  *          is invalid or the scorer cannot be constructed.
  */
 async function buildLiveRunner(
   reportPartialFailure: (failure: RunnerError) => void,
+  reportRun: (summary: EvalRunSummary) => void,
   env?: Record<string, string | undefined>,
 ): Promise<
   Result<
@@ -519,7 +543,7 @@ async function buildLiveRunner(
     publishMode,
   });
 
-  return ok(buildEvalRunner(orchestrator, reportPartialFailure));
+  return ok(buildEvalRunner(orchestrator, reportPartialFailure, reportRun));
 }
 
 /**

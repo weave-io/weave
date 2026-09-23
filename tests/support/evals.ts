@@ -15,7 +15,9 @@ import { expect } from "bun:test";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
+import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
+import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
 import {
   type JudgeInput,
   type JudgeOutput,
@@ -44,6 +46,8 @@ import type {
   ScoringDimension,
   ScoringError,
 } from "../../packages/cli/src/evals/types.js";
+import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
+import { ThemeManager } from "../../packages/cli/src/theme/colors.js";
 
 export const FIXED_GIT_SHA = "abc123def456abc123def456abc123def456abc1";
 export const FIXED_TIMESTAMP = "2026-01-15T12:00:00.000Z";
@@ -437,6 +441,14 @@ export interface SuiteRunObservation {
   judgeCalls: JudgeInput[];
   /** The concatenated text of every written file. */
   publishedText: string;
+  /**
+   * What `weave eval run` printed to stdout — the run report, uncoloured.
+   * Read before the bundle root is removed, so paths in it can be checked
+   * against `files`. `bundleRoot` is where those paths point.
+   */
+  stdout: string;
+  /** The temporary bundle root the run wrote to (removed by now). */
+  bundleRoot: string;
 }
 
 /** One row of a published `score-<suite>.json`. */
@@ -575,7 +587,7 @@ export async function runEvalSuite(
       ResultAsync.fromSafePromise(Promise.resolve([])),
   });
 
-  const request = {
+  const request: EvalRunRequest = {
     agent: options.agent,
     model:
       options.wholeMatrix === true || options.modelSet !== undefined
@@ -590,7 +602,8 @@ export async function runEvalSuite(
   const runResult = await orchestrator.run(request);
   const summary = runResult.isOk() ? runResult.value : null;
   const error = runResult.isErr() ? runResult.error : null;
-  const exitCode = await buildEvalRunnerExitCode(runResult);
+  const terminal = new BufferTerminal();
+  const exitCode = await buildEvalRunnerExitCode(runResult, request, terminal);
 
   const absolute = await filesUnder(bundleRoot);
   const files = absolute.map((path) => relative(bundleRoot, path));
@@ -624,28 +637,32 @@ export async function runEvalSuite(
     modelCalls: modelClient.calls,
     judgeCalls: judge.calls,
     publishedText,
+    stdout: terminal.out.join("\n"),
+    bundleRoot,
   };
 }
 
 /**
- * The exit code the CLI turns this run into.
+ * The exit code the CLI turns this run into, and what it prints.
  *
  * `buildEvalRunner` is the adapter `commands/eval.ts` wraps the orchestrator
  * in, and its mapping — a partial failure is a non-zero exit, a merely red
- * suite is not — is the promise a CI job depends on.
+ * suite is not — is the promise a CI job depends on. It is handed the same
+ * run reporter `commands/eval.ts` gives a live run, writing to `terminal`.
  */
 async function buildEvalRunnerExitCode(
   runResult: Awaited<ReturnType<EvalOrchestrator["run"]>>,
+  request: EvalRunRequest,
+  terminal: BufferTerminal,
 ): Promise<number> {
   const orchestrator = {
     run: () => new ResultAsync(Promise.resolve(runResult)),
   } as unknown as EvalOrchestrator;
-  const result = await buildEvalRunner(orchestrator)({
-    agent: undefined,
-    model: undefined,
-    case: undefined,
-    dryRun: false,
-    rawArtifacts: false,
-  });
+  const plain = new ThemeManager({ isTty: () => false }).getTheme(false);
+  const result = await buildEvalRunner(
+    orchestrator,
+    () => {},
+    printRunReport(terminal, plain),
+  )(request);
   return result.isOk() ? result.value : 1;
 }

@@ -240,11 +240,12 @@
 - `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
+  - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - interface LangChainOpenAIModule
-  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
+  - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -346,7 +347,7 @@
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
-  - _...12 more_
+  - _...13 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
@@ -445,6 +446,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
+- `packages/cli/src/evals/run-report.ts` — class EvalRunReport
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
   - function getEvalCoveredPromptAgents: () => readonly string[]
@@ -452,7 +454,7 @@
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
-  - _...16 more_
+  - _...17 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
