@@ -159,7 +159,7 @@ The engine never sees the observer file, the fixture, or the verifier. It consum
   One event must satisfy every condition of its entry;
 - `verifier`: `result.verifier.passed` matches `expect === "pass"`. A missing verifier result counts as unsatisfied.
 - `allowed_delegates`: one check. It is satisfied when at least one `subagent-spawned` event was observed, every one names an agent in the list, and at least one code edit (defined as for `after_last_edit`) has an `agentName` that is both in the list and among the spawned sub-agents. An agent's name on an edit comes from the observer record's session, joined to the session's spawn event.
-- `min_parallel_delegations`: one check. Each `subagent-spawned` event opens an interval that the first later `session-completed` event with the same `sessionId` closes; an interval with no completion stays open to the end of the stream. At equal times a close counts before an open. The check is satisfied when the most intervals open at once is at least the given number.
+- `min_parallel_delegations`: one check. Each `subagent-spawned` event whose child is named in `expected_spawns` (every child, when `expected_spawns` is empty) opens an interval that the first later `session-completed` or `session-errored` event with the same `sessionId` closes; an interval with no such event stays open to the end of the stream. Counting only the expected delegates keeps two unrelated sub-agents (two `explore` sessions, say) from satisfying it. At equal times a close counts before an open. The check is satisfied when the most intervals open at once is at least the given number.
 
 A case with none of the new fields scores exactly as under Spec 33. The weighted total and the other dimensions are unchanged.
 

@@ -244,20 +244,25 @@ function lastEditTime(events: TrajectoryEvent[]): number | undefined {
 
 /**
  * The most sub-agent sessions that ran at the same time. A sub-agent runs
- * from its `subagent-spawned` event to the first `session-completed` event
- * of the same session after it; one that never completed runs to the end of
- * the stream. Sub-agents dispatched in one step overlap; sub-agents
+ * from its `subagent-spawned` event to the first `session-completed` or
+ * `session-errored` event of the same session after it; one that never
+ * ended runs to the end of the stream. Sub-agents dispatched in one step overlap; sub-agents
  * dispatched one after another do not, because the parent waits for each
  * task to return before its next step.
  */
-function maxConcurrentDelegations(events: TrajectoryEvent[]): number {
+function maxConcurrentDelegations(
+  events: TrajectoryEvent[],
+  counted: ReadonlySet<string> | undefined,
+): number {
   const changes: Array<{ time: number; delta: number }> = [];
   for (const spawn of events) {
     if (spawn.kind !== "subagent-spawned") continue;
+    if (counted !== undefined && !counted.has(spawn.childAgentName)) continue;
     const start = Date.parse(spawn.timestamp);
     const completion = events.find(
       (event) =>
-        event.kind === "session-completed" &&
+        (event.kind === "session-completed" ||
+          event.kind === "session-errored") &&
         event.sessionId === spawn.sessionId &&
         Date.parse(event.timestamp) >= start,
     );
@@ -279,15 +284,25 @@ function maxConcurrentDelegations(events: TrajectoryEvent[]): number {
   return most;
 }
 
-/** The `min_parallel_delegations` check (Spec 37, 20.1). */
+/**
+ * The `min_parallel_delegations` check (Spec 37, 20.1). Only sub-agents
+ * named in `expected_spawns` count, so two unrelated sub-agents (say two
+ * `explore` sessions) running together cannot satisfy it; with no expected
+ * spawns every sub-agent counts.
+ */
 function describeParallelism(
   events: TrajectoryEvent[],
   minimum: number,
+  expectedSpawns: readonly string[],
 ): { satisfied: boolean; label: string } {
-  const most = maxConcurrentDelegations(events);
+  const counted =
+    expectedSpawns.length > 0 ? new Set(expectedSpawns) : undefined;
+  const most = maxConcurrentDelegations(events, counted);
+  const which =
+    counted === undefined ? "sub-agents" : `of [${[...counted].join(", ")}]`;
   return {
     satisfied: most >= minimum,
-    label: `at least ${minimum} sub-agents running at the same time (at most ${most} did)`,
+    label: `at least ${minimum} ${which} running at the same time (at most ${most} did)`,
   };
 }
 
@@ -403,7 +418,13 @@ function buildExecutionCompletenessDimension(
       ? [describeDelegation(events, expected.allowed_delegates)]
       : []),
     ...(expected.min_parallel_delegations !== undefined
-      ? [describeParallelism(events, expected.min_parallel_delegations)]
+      ? [
+          describeParallelism(
+            events,
+            expected.min_parallel_delegations,
+            expected.expected_spawns,
+          ),
+        ]
       : []),
   ];
 

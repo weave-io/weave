@@ -600,6 +600,41 @@ describe("scoreTrajectoryResult — verification checks", () => {
       expect(record.passed).toBe(true);
     });
 
+    it("ends a sub-agent at its error, so a later dispatch does not overlap it", () => {
+      const errored = event({
+        sessionId: "a",
+        timestamp: at(8),
+        kind: "session-errored",
+        agentName: "shuttle",
+        errorKind: "ProviderModelNotFoundError",
+      });
+      const record = score([
+        ...child("a", 1, undefined),
+        errored,
+        ...child("b", 12, 20),
+      ]);
+      expect(record.passed).toBe(false);
+    });
+
+    it("counts only the expected delegates, not other sub-agents beside them", () => {
+      const explore = (id: string, start: number, end: number) =>
+        child(id, start, end).map((e) =>
+          e.kind === "subagent-spawned"
+            ? { ...e, childAgentName: "explore" }
+            : e,
+        );
+      const record = score([
+        ...explore("x", 1, 20),
+        ...explore("y", 2, 15),
+        ...child("a", 21, 30),
+        ...child("b", 31, 40),
+      ]);
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "of [shuttle]",
+      );
+      expect(record.passed).toBe(false);
+    });
+
     it("fails a run with a single sub-agent", () => {
       const record = score(child("a", 1, 10));
       expect(record.dimensions.executionCompleteness.rationale).toContain(
