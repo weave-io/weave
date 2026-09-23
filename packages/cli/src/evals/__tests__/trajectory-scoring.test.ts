@@ -499,6 +499,27 @@ describe("scoreTrajectoryResult — verification checks", () => {
       expect(record.passed).toBe(false);
     });
 
+    it("requires the editing delegate to be one that was spawned", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [
+            LOOM_STARTS,
+            spawn(1, "shuttle-backend"),
+            codeEditBy(5, "shuttle-frontend"),
+          ],
+          expectedOutcome: makeExpectedOutcome({
+            expected_spawns: ["shuttle-backend"],
+            expected_tools: [],
+            allowed_delegates: ["shuttle-backend", "shuttle-frontend"],
+          }),
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "no delegate edited code",
+      );
+      expect(record.passed).toBe(false);
+    });
+
     it("does not count a bookkeeping edit under .weave/ as the delegate's work", () => {
       const planNote: TrajectoryEvent = {
         ...codeEditBy(5, "shuttle-backend"),

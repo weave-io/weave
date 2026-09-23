@@ -256,8 +256,13 @@ function describeDelegation(
   const allowedSet = new Set(allowed);
   const spawned = observedSpawns(events);
   const disallowed = spawned.filter((name) => !allowedSet.has(name));
+  // The editor must be a delegate that was actually spawned, not merely a
+  // name on the list.
+  const spawnedDelegates = new Set(
+    spawned.filter((name) => allowedSet.has(name)),
+  );
   const editedByDelegate = codeEdits(events).some((event) =>
-    allowedSet.has(event.agentName),
+    spawnedDelegates.has(event.agentName),
   );
   const satisfied =
     spawned.length > 0 && disallowed.length === 0 && editedByDelegate;

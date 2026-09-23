@@ -154,7 +154,7 @@ The engine never sees the observer file, the fixture, or the verifier. It consum
 
   One event must satisfy every condition of its entry;
 - `verifier`: `result.verifier.passed` matches `expect === "pass"`. A missing verifier result counts as unsatisfied.
-- `allowed_delegates`: one check. It is satisfied when at least one `subagent-spawned` event was observed, every one names an agent in the list, and at least one code edit (defined as for `after_last_edit`) has an `agentName` in the list. An agent's name on an edit comes from the observer record's session, joined to the session's spawn event.
+- `allowed_delegates`: one check. It is satisfied when at least one `subagent-spawned` event was observed, every one names an agent in the list, and at least one code edit (defined as for `after_last_edit`) has an `agentName` that is both in the list and among the spawned sub-agents. An agent's name on an edit comes from the observer record's session, joined to the session's spawn event.
 
 A case with none of the new fields scores exactly as under Spec 33. The weighted total and the other dimensions are unchanged.
 
