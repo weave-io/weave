@@ -417,6 +417,8 @@ WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
 WEAVE_EVAL_REPEAT=3 weave eval run
 ```
 
+`weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted). It refuses runs with different cases, models, repeat counts or recorded judges. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
+
 `--repeat N` (1–20) runs every selected case N times per model and reports a pass rate per case × model and per suite × model; errored attempts (no scorable answer) are left out of the rate and counted separately. Without it, a run is exactly what it was before repeats existed. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 
 CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed. Empty env filter values are treated as unset, which lets CI workflow dispatch pass blank optional inputs when you want no filter. Empty CLI flag values are still rejected.

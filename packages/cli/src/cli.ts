@@ -177,7 +177,7 @@ export async function run(
 
     case "eval": {
       const { runEval } = await import("./commands/eval.js");
-      return runEval({ terminal, theme, flags, env });
+      return runEval({ terminal, theme, flags, env, fs, rest });
     }
 
     case "compose": {

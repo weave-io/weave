@@ -35,6 +35,11 @@ weave eval run
     │   └── RawArtifactsWriter?        (--raw-artifacts only) write raw/ subdirectory
     │
     └── EvalRunSummary                 Returned to CLI handler (reporting status)
+
+weave eval compare <baseline> <candidate>
+    ├── RunBundleReader.read()         bundle-index.json, score-<suite>.json, prompt-hashes.json, judge
+    ├── compareRuns()                  Refuse a different design; Fisher's exact test per suite × model, Holm-adjusted
+    └── ComparisonReport               Print pass rates, intervals, verdicts (no raw content)
 ```
 
 All publishable output passes through the central allowlist sanitizer in `packages/cli/src/evals/sanitizer.ts` before being written. Raw artifacts are written to a separate `raw/` subdirectory that is never included in publishable bundles or external publication.
@@ -267,6 +272,135 @@ N > 1, so a reader of today's schema still reads a single run unchanged, and
 a repeated run's counts and pass rates stay correct for a reader that ignores
 the new fields (it just sees more entries per case). The versioned JSON Schema
 contract (group 5) is written after this change, so it includes them.
+
+### Measure a change
+
+To find out whether a prompt, case or rubric change helped, run the same
+evals before and after it with repeats, then compare the two runs:
+
+```bash
+# 1. Baseline, on the commit before the change
+git switch main
+bun packages/cli/src/main.ts eval run --models dev --repeat 5
+#    → Eval run 86eb974-2026-09-23-001: …
+
+# 2. Candidate, on the commit with the change — same filters, same --repeat
+git switch my-prompt-change
+bun packages/cli/src/main.ts eval run --models dev --repeat 5
+#    → Eval run 1a2b3c4-2026-09-23-001: …
+
+# 3. Compare (run IDs, or the run directories under eval-bundles/runs/)
+bun packages/cli/src/main.ts eval compare 86eb974-2026-09-23-001 1a2b3c4-2026-09-23-001
+```
+
+Narrow both runs the same way (`--agent`, `--case`) to spend less; raise
+`--repeat` to detect smaller changes. `eval compare` reads only the local
+bundles; it makes no model call and needs no API key.
+
+### Compare two runs (`eval compare`)
+
+`weave eval compare <baseline> <candidate>` (Spec 37, task 18.2) prints, per
+suite × model, both pass rates with 95% Wilson intervals, the difference in
+points and a verdict; under each row it lists the cases whose pass rate moved.
+It also names each agent whose composed-prompt hash changed (hash only) and
+the judge each run records. It exits 0 when it compared the runs, whatever it
+found, and 1 when it refused.
+
+```text
+Eval compare 86eb974-2026-09-23-001 → 1a2b3c4-2026-09-23-001
+  Commits:  86eb974 → 1a2b3c4
+  Design:   2 cases × 1 model, each case 5 times per model
+  Judge:    unknown (baseline: not recorded; candidate: not recorded). Assuming both runs were scored by the same judge.
+  Prompts:  1 agent changed
+            loom  aaaaaaaaaaaa → cccccccccccc
+  Rule:     Fisher's exact test per suite × model on scored attempts (errored ones left out), Holm-adjusted across 1 testable row; …
+
+  loom-routing
+    deepseek/deepseek-v4-flash-0731
+      baseline   1/10    10% [2–40%]
+      candidate  10/10  100% [72–100%]
+      IMPROVED (+90 points)  p < 0.001, Holm-adjusted p < 0.001
+      Cases whose pass rate moved:
+        loom-route-api  0/5 → 5/5  (p = 0.008, unadjusted)
+        loom-route-ui  1/5 → 5/5  (p = 0.048, unadjusted)
+```
+
+**The rule.** For each suite × model, the scored attempts of each run form a
+2 × 2 table: (passed, failed) × (baseline, candidate). Errored attempts are
+left out, as in every pass rate (see [Repeat cases](#repeat-cases---repeat-n)).
+
+1. **Fisher's exact test**, two-sided, gives each row's p-value. It is exact
+   at any sample size, which matters because a row is usually 5–50 attempts,
+   where the normal-approximation z-test is unreliable.
+2. Rows where *no* outcome could reach p < 0.05 — fewer than four scored
+   attempts a side, for example; 1/1 against 0/1 can never be significant —
+   are reported as **"no detectable change: too few scored attempts"** and
+   left out of the family.
+3. **Holm's step-down adjustment** is applied across the remaining rows, so
+   testing every suite × model at once keeps the chance of *any* false
+   "changed" at 5%.
+4. A row with Holm-adjusted p < 0.05 is **IMPROVED** or **REGRESSED**
+   (by the sign of the difference); otherwise **no detectable change**. A row
+   where one run has no scored attempt is **not compared**.
+
+Per-case lines show counts and an unadjusted Fisher p only, to locate where a
+suite-level change came from; they carry no verdict.
+
+**What "no detectable change" means.** The data cannot tell the runs apart;
+it does not mean they are equal. At small samples the test only detects large
+changes. With 5 cases × 5 repeats (25 attempts a side), a move from 60% to 80%
+is usually *not* detected, and one attempt a side can never show anything.
+The report says so. The fix is more repeats (`--repeat`) or more cases
+(task 19.2 sets case counts from measured flip rates).
+
+**Limits of the rule.**
+
+- Attempts of the same case are treated as independent draws. They are not:
+  a hard case fails more often on every repeat. Because both runs use the
+  same cases and the same repeat count, this makes the pooled test
+  *conservative* (a sum of Bernoulli draws with different success rates
+  varies less than a binomial with the same mean), so it errs towards "no
+  detectable change", not towards false alarms. A test stratified by case
+  (Cochran–Mantel–Haenszel) would be more powerful; it is not implemented.
+- The two runs are treated as samples of the same model service.
+  Provider-side changes between them (a silent model update, routing to a
+  different provider) show up as prompt effects. Run baseline and candidate
+  close together.
+- Holm controls false positives across the rows of **one** comparison.
+  Running many comparisons and keeping the one that shows a change
+  reintroduces the problem.
+- The judge's own variance is part of each attempt's outcome. A judge change
+  moves every score, which is why a comparison across judges is refused.
+
+**What it refuses.** Prompt hashes are expected to differ; that is what a
+comparison is for. Anything else that changes the design is refused with a
+typed `CompareError` and exit 1:
+
+| Refusal | When |
+| --- | --- |
+| `ModelSetMismatch` | the runs used different models; names them |
+| `CaseSetMismatch` | the runs ran different cases, or different case × model pairs; names up to five |
+| `RepeatCountMismatch` | the runs used different `--repeat`; says which to re-run with |
+| `JudgeMismatch` | **both** runs record a judge and they differ (id or version) |
+| `DryRunBundle` | either run is a dry run |
+| `BundleNotFound`, `BundleUnreadable`, `BundleInvalid` | a run cannot be found or read; names the path |
+
+A run that records no judge — every run before task 16.4 — has an **unknown
+judge**. Such runs are compared, and the `Judge:` line says the comparison
+assumes the same judge. `eval compare` reads the judge as
+`judge: { id, version }` from `bundle-index.json`, else `public-report.json`,
+else `provenance-manifest.json`; task 16.4 should record it in one of those.
+
+**What it reads.** Only `bundle-index.json`, the `score-<suite>.json` files it
+names (suite names must be plain identifiers, so a bundle cannot point the
+reader outside its directory), `prompt-hashes.json`, and the judge fields
+above. It never opens `raw/`, and it prints only identifiers, counts, rates,
+p-values, short hashes and the judge id, so its output is safe in a CI log.
+
+`repeatability-diagnostics.json` (below) is still written after each run as a
+descriptive log of earlier runs with the same filters. Its `drifted` and
+`mixed` labels flag any difference at all, including chance; use
+`eval compare` to decide whether a difference is real.
 
 ## Eval Suites
 
@@ -902,7 +1036,7 @@ This keeps the suite focused on observable planning shape while making local rer
 
 #### 2026-07-01 repeatability diagnostics for Pattern and Loom reruns
 
-Pattern and Loom now write one extra local-only artifact on every non-dry run: `repeatability-diagnostics.json` in the run directory root next to `run-summary.json` and `public-report.json`.
+Every non-dry run writes one extra local-only artifact: `repeatability-diagnostics.json` in the run directory root next to `run-summary.json` and `public-report.json`. (It was introduced for Pattern and Loom but covers every suite.) Since task 18.2 it is descriptive only: to decide whether two runs differ beyond chance, use [`eval compare`](#compare-two-runs-eval-compare).
 
 - It is **developer diagnostics only**. It is not part of the published dashboard surface.
 - It compares the current run only against earlier local runs with the **exact same filter tuple**: `agentFilter`, `modelFilter`, `modelSet`, `caseFilter`, `repeatCount` (absent means 1) and effective suite list.
@@ -1199,6 +1333,9 @@ weave eval run --dry-run
 
 # Emit raw artifacts locally (NEVER in CI)
 weave eval run --raw-artifacts
+
+# Compare a candidate run with a baseline (see "Compare two runs")
+weave eval compare <baseline-run-id> <candidate-run-id>
 
 # Diagnose one case on one model (see "Diagnose one case")
 weave eval run --agent weft --case weft-review-clean-approval --model deepseek/deepseek-v4-flash-0731 --raw-artifacts

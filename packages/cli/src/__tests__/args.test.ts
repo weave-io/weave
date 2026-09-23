@@ -405,3 +405,19 @@ describe("eval run --repeat", () => {
     });
   });
 });
+
+describe("eval compare", () => {
+  it("parses the subcommand and keeps the two runs in order", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "compare",
+      "run-a",
+      "eval-bundles/runs/run-b",
+    ])._unsafeUnwrap();
+
+    expect(parsed.flags.evalSubcommand).toBe("compare");
+    expect(parsed.rest).toEqual(["run-a", "eval-bundles/runs/run-b"]);
+  });
+});

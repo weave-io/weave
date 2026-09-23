@@ -22,6 +22,8 @@ import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { BundleWriteMode } from "../evals/artifact-bundle.js";
 import { loadSuiteCases } from "../evals/case-loader.js";
+import { compareRuns, RunBundleReader } from "../evals/compare.js";
+import { ComparisonReport } from "../evals/compare-report.js";
 import { readEvalEnv } from "../evals/env.js";
 import {
   type EvalRunRequest,
@@ -59,6 +61,7 @@ import {
   EVAL_SUITE_IDS,
   EVAL_SUITE_REGISTRY,
 } from "../evals/types.js";
+import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import type { ThemeColors } from "../theme/colors.js";
 
@@ -112,6 +115,16 @@ export interface EvalContext {
    */
   env?: Record<string, string | undefined>;
   /**
+   * File system `weave eval compare` reads run bundles through. Defaults to
+   * the real one; inject a `MemoryFileSystem` in tests.
+   */
+  fs?: FileSystem;
+  /**
+   * Positional arguments after the subcommand — for `eval compare`, the
+   * baseline and candidate runs, in that order.
+   */
+  rest?: string[];
+  /**
    * Optional runner injection point.
    * When provided, the handler delegates actual eval execution here.
    * When omitted, the handler reports that eval execution is not yet
@@ -150,6 +163,9 @@ const EVAL_USAGE = [
   "  weave eval run --repeat <n>           Run each case n times per model and report pass rates",
   "  weave eval run --dry-run              Print what would run without executing",
   "  weave eval run --raw-artifacts        Emit raw artifacts to disk (local-only)",
+  "  weave eval compare <baseline> <candidate>",
+  "                                        Say per suite and model whether pass rates changed beyond the noise",
+  "                                        (each run is a run directory or a run ID under eval-bundles/runs/)",
   "",
   `  Short agents: ${EVAL_SHORT_AGENT_FILTERS.join(", ")}`,
   `  Suites: ${EVAL_SUITE_IDS.join(", ")}`,
@@ -685,6 +701,70 @@ export async function buildLangChainScorer(
 }
 
 // ---------------------------------------------------------------------------
+// Subcommand: eval compare
+// ---------------------------------------------------------------------------
+
+/**
+ * `weave eval compare <baseline> <candidate>` (Spec 37, task 18.2).
+ *
+ * Reads two local run bundles and prints, per suite × model, whether the
+ * pass rate changed beyond the noise. Exits 0 when the comparison was made
+ * (whatever it found) and 1 when it was refused — runs with different case
+ * sets, models, repeat counts or judges, a dry run, or a missing bundle.
+ */
+async function runEvalCompare(
+  ctx: EvalContext,
+): Promise<Result<number, CliError>> {
+  const { terminal, theme } = ctx;
+  const refs = ctx.rest ?? [];
+  const [baselineRef, candidateRef] = refs;
+  if (
+    refs.length !== 2 ||
+    baselineRef === undefined ||
+    candidateRef === undefined
+  ) {
+    terminal.stderr(
+      formatCliError({
+        type: "InvalidArgs",
+        message:
+          "weave eval compare needs exactly two runs: weave eval compare <baseline> <candidate>. " +
+          "Each is a run directory (eval-bundles/runs/<runId>) or a run ID.",
+      }),
+    );
+    return ok(1);
+  }
+
+  const reader = new RunBundleReader(ctx.fs ?? new BunFileSystem());
+  const baseline = await reader.read(baselineRef);
+  if (baseline.isErr()) {
+    return refuse(terminal, baseline.error.message);
+  }
+  const candidate = await reader.read(candidateRef);
+  if (candidate.isErr()) {
+    return refuse(terminal, candidate.error.message);
+  }
+
+  const comparison = compareRuns(baseline.value, candidate.value);
+  if (comparison.isErr()) {
+    return refuse(
+      terminal,
+      `Cannot compare these runs: ${comparison.error.message}`,
+    );
+  }
+
+  terminal.stdout(new ComparisonReport(theme).render(comparison.value));
+  return ok(0);
+}
+
+function refuse(
+  terminal: TerminalIO,
+  message: string,
+): Result<number, CliError> {
+  terminal.stderr(formatCliError({ type: "EvalValidation", message }));
+  return ok(1);
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -703,6 +783,10 @@ export async function runEval(
 
   if (flags.evalSubcommand === "run") {
     return runEvalRun(ctx);
+  }
+
+  if (flags.evalSubcommand === "compare") {
+    return runEvalCompare(ctx);
   }
 
   // Future subcommands would be dispatched here.

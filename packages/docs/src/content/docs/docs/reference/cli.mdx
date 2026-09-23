@@ -33,6 +33,7 @@ The current `weave --help` output lists these commands:
 | `weave runtime journal` | Show recent journal entries. |
 | `weave adapter pi …` | Run bounded Pi child and doctor commands. |
 | `weave eval run` | Run configured text-only evals. |
+| `weave eval compare` | Compare the pass rates of two eval runs. |
 
 `weave compose` is also implemented for Claude Code. It is documented in
 [Claude Code](../adapters/claude-code/).
@@ -168,7 +169,18 @@ weave eval run --raw-artifacts
 
 Filters select agents, models, and cases. `--dry-run` validates selection and
 makes no model call. Live execution needs the configured model-service key.
-Raw artifacts are local-only debugging output.
+Raw artifacts are local-only debugging output. `--repeat <n>` runs each case
+n times per model and reports pass rates.
+
+## `weave eval compare`
+
+```sh
+weave eval compare <baseline> <candidate>
+```
+
+Compares two local eval runs (run IDs or run directories) and says, per suite
+and model, whether the pass rate changed beyond the noise. It refuses runs
+with different cases, models, repeat counts or judges.
 
 ## `weave compose`
 

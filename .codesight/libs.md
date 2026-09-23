@@ -293,6 +293,13 @@
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun, repeatCount) => BundleScoreFile
   - _...11 more_
+- `packages/cli/src/evals/binomial-stats.ts`
+  - function wilsonInterval: (successes, trials) => ProportionInterval | null
+  - function fisherExactTwoSided: (a, b, c, d) => number
+  - function bestPossibleP: (n1, n2) => number
+  - function holmAdjust: (pValues) => number[]
+  - interface ProportionInterval
+  - const SIGNIFICANCE_LEVEL
 - `packages/cli/src/evals/case-loader.ts`
   - function caseModelDefaults: (matrix) => CaseModelDefaults
   - function loadCaseFile: (filePath, modelDefaults?) => ResultAsync<EvalCase, FixtureSchemaError>
@@ -301,6 +308,15 @@
   - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - _...4 more_
+- `packages/cli/src/evals/compare-report.ts` — class ComparisonReport
+- `packages/cli/src/evals/compare.ts`
+  - function compareRuns: (baseline, candidate) => Result<RunComparison, CompareError>
+  - function describeJudge: (judge) => string
+  - class RunBundleReader
+  - interface JudgeRecord
+  - interface ComparedAttempt
+  - interface RunSnapshot
+  - _...8 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
