@@ -1,0 +1,8 @@
+# Trajectory eval fixture: builtin agents only.
+#
+# No categories, so both plan tasks route to the generic shuttle. Sub-agent
+# models are pinned to the model under test by the runner's generated global
+# config (Spec 35), so none are declared here.
+settings {
+  log_level INFO
+}

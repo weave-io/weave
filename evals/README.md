@@ -25,7 +25,8 @@ evals/
 │   │   ├── tapestry-delegate-to-shuttle.json
 │   │   ├── tapestry-rejects-contradicted-report.json   # judgment
 │   │   ├── tapestry-accepts-evidenced-report.json      # judgment
-│   │   └── tapestry-runs-plan-verification-trajectory.json   # harness_trajectory
+│   │   ├── tapestry-runs-plan-verification-trajectory.json   # harness_trajectory
+│   │   └── tapestry-dispatches-independent-tasks-in-parallel-trajectory.json   # harness_trajectory
 │       ├── tapestry-category-routing/      # Tapestry category-routing eval cases
 │   │   ├── tcr-01-exact-match.json
 │   │   ├── tcr-02-multiple-files.json
@@ -71,7 +72,8 @@ evals/
     │   ├── tapestry-delegate-to-shuttle.json
     │   ├── tapestry-rejects-contradicted-report.json
     │   ├── tapestry-accepts-evidenced-report.json
-    │   └── tapestry-runs-plan-verification-trajectory.json
+    │   ├── tapestry-runs-plan-verification-trajectory.json
+    │   └── tapestry-dispatches-independent-tasks-in-parallel-trajectory.json
     ├── tapestry-category-routing/      # Scoring rubrics for tapestry-category-routing cases
     │   ├── tcr-01-exact-match.json
     │   ├── tcr-02-multiple-files.json
@@ -115,6 +117,7 @@ evals/fixtures/
 ├── buggy-slugify/              # Bun project with a slug bug its tests miss
 ├── orders-api/                 # Bun project with backend and frontend categories (delegation accuracy)
 ├── plan-bash-verification/     # same project plus a plan whose Verification is a bash block
+├── plan-independent-tasks/     # plan with two independent tasks (parallel execution)
 └── slugify-edges.verifier/     # hidden verifier, mounted only in the second container
 ```
 

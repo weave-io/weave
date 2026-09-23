@@ -132,6 +132,26 @@ describe("ExpectedOutcomeSchema — harness_trajectory variant", () => {
     ).toBe(false);
   });
 
+  it("accepts min_parallel_delegations from 2 and rejects 1 or a fraction", () => {
+    const base = {
+      kind: "harness_trajectory",
+      expected_spawns: ["shuttle", "shuttle"],
+      expected_tools: ["edit"],
+      max_duration_seconds: 300,
+      sandbox_profile: "opencode-local",
+    };
+    const parse = (value: unknown) =>
+      ExpectedOutcomeSchema.safeParse({
+        ...base,
+        min_parallel_delegations: value,
+      }).success;
+
+    expect(parse(2)).toBe(true);
+    expect(parse(1)).toBe(false);
+    expect(parse(2.5)).toBe(false);
+    expect(parse(11)).toBe(false);
+  });
+
   it("rejects an invalid identifier in expected_spawns", () => {
     const parsed = ExpectedOutcomeSchema.safeParse({
       kind: "harness_trajectory",

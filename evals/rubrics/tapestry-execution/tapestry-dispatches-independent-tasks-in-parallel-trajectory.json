@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-dispatches-independent-tasks-in-parallel-trajectory",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Parallel execution (Spec 37, 20.1). Stands in for the session-audit metric Parallel dispatch (Tapestry steps that dispatch more than one task: 20 of 190 at baseline). The plan has two tasks with `Depends on: None` and disjoint `Files`, the easiest case for parallel dispatch under any rule. The case passes only if Tapestry has two Shuttle sessions running at the same time (`min_parallel_delegations: 2`, from the spawn and completion events), which is what dispatching both tasks in one step produces. Running them one after another fails, even when both fixes are correct. The fixes are not verified: this case measures dispatch, not implementation quality. It starts on Tapestry, so it does not cover the related metric Plan-task delegation by Loom, which needs the /start-work handoff."
+  }
+}

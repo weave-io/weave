@@ -535,6 +535,80 @@ describe("scoreTrajectoryResult — verification checks", () => {
     });
   });
 
+  describe("min_parallel_delegations (Spec 37, 20.1)", () => {
+    const TWO_AT_ONCE = makeExpectedOutcome({
+      expected_spawns: ["shuttle", "shuttle"],
+      expected_tools: [],
+      min_parallel_delegations: 2,
+    });
+
+    function child(
+      id: string,
+      startSecond: number,
+      endSecond: number | undefined,
+    ): TrajectoryEvent[] {
+      const spawned = event({
+        sessionId: id,
+        timestamp: at(startSecond),
+        kind: "subagent-spawned",
+        parentAgentName: "tapestry",
+        childAgentName: "shuttle",
+      });
+      if (endSecond === undefined) return [spawned];
+      return [
+        spawned,
+        event({
+          sessionId: id,
+          timestamp: at(endSecond),
+          kind: "session-completed",
+          agentName: "shuttle",
+          durationMs: (endSecond - startSecond) * 1000,
+        }),
+      ];
+    }
+
+    function score(events: TrajectoryEvent[]) {
+      return scoreTrajectoryResult(
+        buildInput({ events, expectedOutcome: TWO_AT_ONCE }),
+      );
+    }
+
+    it("passes when two sub-agents run at the same time", () => {
+      const record = score([...child("a", 1, 20), ...child("b", 2, 15)]);
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+      expect(record.passed).toBe(true);
+    });
+
+    it("fails when the sub-agents run one after another", () => {
+      const record = score([...child("a", 1, 10), ...child("b", 12, 20)]);
+      expect(record.dimensions.executionCompleteness.score).toBe(0);
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "at most 1 did",
+      );
+      // Routing matched two shuttles, but parallelism gates the pass.
+      expect(record.dimensions.routingCorrectness.score).toBe(1);
+      expect(record.passed).toBe(false);
+    });
+
+    it("does not count a sub-agent that starts the moment another ends", () => {
+      const record = score([...child("a", 1, 10), ...child("b", 10, 20)]);
+      expect(record.passed).toBe(false);
+    });
+
+    it("counts a sub-agent that never completed as still running", () => {
+      const record = score([...child("a", 1, undefined), ...child("b", 5, 9)]);
+      expect(record.passed).toBe(true);
+    });
+
+    it("fails a run with a single sub-agent", () => {
+      const record = score(child("a", 1, 10));
+      expect(record.dimensions.executionCompleteness.rationale).toContain(
+        "at most 1 did",
+      );
+      expect(record.passed).toBe(false);
+    });
+  });
+
   it("scores a case with none of the new fields exactly as before", () => {
     const record = scoreTrajectoryResult(
       buildInput({ events: happyPathEvents().slice(0, 2) }),

@@ -243,6 +243,55 @@ function lastEditTime(events: TrajectoryEvent[]): number | undefined {
 }
 
 /**
+ * The most sub-agent sessions that ran at the same time. A sub-agent runs
+ * from its `subagent-spawned` event to the first `session-completed` event
+ * of the same session after it; one that never completed runs to the end of
+ * the stream. Sub-agents dispatched in one step overlap; sub-agents
+ * dispatched one after another do not, because the parent waits for each
+ * task to return before its next step.
+ */
+function maxConcurrentDelegations(events: TrajectoryEvent[]): number {
+  const changes: Array<{ time: number; delta: number }> = [];
+  for (const spawn of events) {
+    if (spawn.kind !== "subagent-spawned") continue;
+    const start = Date.parse(spawn.timestamp);
+    const completion = events.find(
+      (event) =>
+        event.kind === "session-completed" &&
+        event.sessionId === spawn.sessionId &&
+        Date.parse(event.timestamp) >= start,
+    );
+    changes.push({ time: start, delta: 1 });
+    if (completion !== undefined) {
+      changes.push({ time: Date.parse(completion.timestamp), delta: -1 });
+    }
+  }
+  // At equal times a completion counts before a start, so a sub-agent that
+  // starts the moment another ends is not counted as running beside it.
+  changes.sort((a, b) => a.time - b.time || a.delta - b.delta);
+
+  let running = 0;
+  let most = 0;
+  for (const change of changes) {
+    running += change.delta;
+    most = Math.max(most, running);
+  }
+  return most;
+}
+
+/** The `min_parallel_delegations` check (Spec 37, 20.1). */
+function describeParallelism(
+  events: TrajectoryEvent[],
+  minimum: number,
+): { satisfied: boolean; label: string } {
+  const most = maxConcurrentDelegations(events);
+  return {
+    satisfied: most >= minimum,
+    label: `at least ${minimum} sub-agents running at the same time (at most ${most} did)`,
+  };
+}
+
+/**
  * The `allowed_delegates` check (Spec 37, 20.1): the session spawned at
  * least one sub-agent, every spawned sub-agent is allowed, and an allowed
  * sub-agent made a code edit. The last part proves the delegation reached
@@ -310,7 +359,8 @@ function hasVerificationChecks(expected: HarnessTrajectoryOutcome): boolean {
   return (
     (expected.expected_commands?.length ?? 0) > 0 ||
     expected.verifier !== undefined ||
-    expected.allowed_delegates !== undefined
+    expected.allowed_delegates !== undefined ||
+    expected.min_parallel_delegations !== undefined
   );
 }
 
@@ -319,7 +369,8 @@ function hasVerificationChecks(expected: HarnessTrajectoryOutcome): boolean {
  * `expected_tools` entry must have been observed at least once, each
  * `expected_commands` entry must be satisfied by one shell call, a
  * verifier's result must match its expected outcome (Spec 35), and an
- * `allowed_delegates` list must be respected (Spec 37, 20.1).
+ * `allowed_delegates` list and a `min_parallel_delegations` count must be
+ * respected (Spec 37, 20.1).
  */
 function buildExecutionCompletenessDimension(
   events: TrajectoryEvent[],
@@ -350,6 +401,9 @@ function buildExecutionCompletenessDimension(
       : []),
     ...(expected.allowed_delegates !== undefined
       ? [describeDelegation(events, expected.allowed_delegates)]
+      : []),
+    ...(expected.min_parallel_delegations !== undefined
+      ? [describeParallelism(events, expected.min_parallel_delegations)]
       : []),
   ];
 

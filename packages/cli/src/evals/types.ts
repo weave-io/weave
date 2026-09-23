@@ -345,6 +345,13 @@ export const ExpectedOutcomeSchema = z.discriminatedUnion("kind", [
      * Like `expected_commands`, it gates the pass.
      */
     allowed_delegates: z.array(IdentifierSchema).min(1).optional(),
+    /**
+     * Fewest sub-agents that must run at the same time (Spec 37, 20.1). One
+     * execution check: at some moment at least this many spawned sub-agent
+     * sessions had started and not yet completed, which is what dispatching
+     * independent tasks in one step produces. Gates the pass.
+     */
+    min_parallel_delegations: z.number().int().min(2).max(10).optional(),
   }),
 ]);
 

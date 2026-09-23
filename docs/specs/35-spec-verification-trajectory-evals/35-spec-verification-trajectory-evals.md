@@ -69,9 +69,13 @@ Rules:
 ```ts
   /** Sub-agents the session may delegate to. */
   allowed_delegates: z.array(IdentifierSchema).min(1).optional(),
+
+  /** Fewest sub-agents that must run at the same time. */
+  min_parallel_delegations: z.number().int().min(2).max(10).optional(),
 ```
 
 - `allowed_delegates` (delegation accuracy). `expected_spawns` checks an exact ordered sequence, but under the Spec 33 pass rule a matching sequence passes the case even when the spawned agent then failed, and a case with a verifier passes when the primary agent did the work itself. This field states the actual promise: the session delegated, it delegated only to these agents (so not to a harness built-in such as `explore` or `general`, and not to an agent that does not exist), and the delegated agent did the work.
+- `min_parallel_delegations` (parallel execution). Nothing in the Spec 33 or Spec 35 fields says *when* a sub-agent ran, so "dispatched in the same step" could not be checked. The events already carry it: a sub-agent session starts at its `subagent-spawned` event and ends at its `session-completed` event. A parent that dispatches tasks one after another waits for each to return before its next step, so its sub-agents never overlap; tasks dispatched in one step do. Overlap is therefore the observable form of "two task calls in one step", and it needs no adapter change.
 
 ---
 
@@ -155,10 +159,11 @@ The engine never sees the observer file, the fixture, or the verifier. It consum
   One event must satisfy every condition of its entry;
 - `verifier`: `result.verifier.passed` matches `expect === "pass"`. A missing verifier result counts as unsatisfied.
 - `allowed_delegates`: one check. It is satisfied when at least one `subagent-spawned` event was observed, every one names an agent in the list, and at least one code edit (defined as for `after_last_edit`) has an `agentName` that is both in the list and among the spawned sub-agents. An agent's name on an edit comes from the observer record's session, joined to the session's spawn event.
+- `min_parallel_delegations`: one check. Each `subagent-spawned` event opens an interval that the first later `session-completed` event with the same `sessionId` closes; an interval with no completion stays open to the end of the stream. At equal times a close counts before an open. The check is satisfied when the most intervals open at once is at least the given number.
 
 A case with none of the new fields scores exactly as under Spec 33. The weighted total and the other dimensions are unchanged.
 
-**Verification gates the pass.** Under Spec 33 a case passes when *any* primary dimension scores at least 0.95, so correct routing alone can pass a case whose required tool never ran. A case that declares `expected_commands`, a `verifier` or `allowed_delegates` additionally requires `executionCompleteness` of at least 0.95. Cases without these fields keep the Spec 33 rule.
+**Verification gates the pass.** Under Spec 33 a case passes when *any* primary dimension scores at least 0.95, so correct routing alone can pass a case whose required tool never ran. A case that declares `expected_commands`, a `verifier`, `allowed_delegates` or `min_parallel_delegations` additionally requires `executionCompleteness` of at least 0.95. Cases without these fields keep the Spec 33 rule.
 
 ---
 

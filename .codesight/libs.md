@@ -5,6 +5,8 @@
 - `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
 - `evals/fixtures/orders-api/src/ui/order-badge.ts` — function orderBadge: (order) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/plan-independent-tasks/src/price.ts` — function formatPrice: (cents) => string
+- `evals/fixtures/plan-independent-tasks/src/slugify.ts` — function slugify: (title) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
