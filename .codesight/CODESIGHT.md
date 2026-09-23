@@ -3,15 +3,18 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 205 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~18,700 tokens. Without it, AI exploration would cost ~69,900 tokens. **Saves ~51,200 tokens per conversation.**
-> **Last scanned:** 2026-09-23 20:29 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 209 lib files | 26 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~18,900 tokens. Without it, AI exploration would cost ~71,400 tokens. **Saves ~52,500 tokens per conversation.**
+> **Last scanned:** 2026-09-23 20:40 — re-run after significant changes
 
 ---
 
 # Libraries
 
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
+- `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
+- `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
+- `evals/fixtures/orders-api/src/ui/order-badge.ts` — function orderBadge: (order) => string
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
@@ -343,6 +346,12 @@
   - const DEFAULT_OPENROUTER_BASE_URL
   - const OPENROUTER_API_KEY_ENV_VAR
   - const OPENROUTER_BASE_URL_ENV_VAR
+- `packages/cli/src/evals/eval-track.ts`
+  - function caseTrack: (evalCase) => EvalTrack
+  - function selectCasesForTrack: (cases, track) => EvalCase[]
+  - function suiteSupportsTrack: (suite, track) => boolean
+  - type EvalTrack
+  - const EVAL_TRACKS
 - `packages/cli/src/evals/github-contents-publisher.ts`
   - function isIndexArtifactAllowed: (fileName) => boolean
   - class GitHubContentsPublisher
@@ -961,7 +970,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -992,12 +1001,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1010,7 +1021,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **44** files
+- `packages/cli/src/evals/types.ts` — imported by **46** files
 - `packages/cli/src/theme/colors.ts` — imported by **26** files
 - `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
@@ -1033,7 +1044,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts`, `packages/cli/src/evals/__tests__/loom-delegation-matrix.test.ts` +39 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +41 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
@@ -1063,7 +1074,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 202 test files found
+> 209 test files found
 
 ---
 
@@ -1089,7 +1100,7 @@
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
-- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs)
+- **trajectory-evals** on `ubuntu-latest` — 9 steps (needs: validate-inputs, run-evals)
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
