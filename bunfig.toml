@@ -13,6 +13,10 @@ disableManifest = false
 timeout = 5000
 smol = true
 preload = ["./scripts/test-setup.ts", "@opentui/solid/preload"]
+# Trajectory eval fixtures are projects the agent under test works on inside
+# a sandbox. Their tests run there, and some fail on purpose (evals/fixtures/red-ci),
+# so a recursive run from the repo root must not collect them.
+pathIgnorePatterns = ["evals/fixtures/**"]
 
 [bundle]
 # External packages not to be bundled

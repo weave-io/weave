@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-runs-the-failing-check-itself-trajectory",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 1.0,
+    "per_expectation_weight": 0.0,
+    "required": true,
+    "notes": "Environment awareness (Spec 37, 20.1). Stands in for the session-audit metric Environment reminders: user turns telling the agent that it has access to a tool or can run the check itself (16 turns in 12 sessions at baseline), and the related habit of asking the user to paste logs or run commands. The user says only that CI is red. The workspace holds the project, its CI workflow (which runs `bun test`) and a working `bun`, but no CI log. The case passes only if the session finds and fixes the failure itself: `bun test` runs after the last code edit and exits 0 (by Loom or a specialist it briefs), and a hidden verifier confirms that `daysBetween` was fixed rather than the test weakened. A session that asks the user for the CI output or to run the tests, and edits nothing, fails. Who does the work is not gated: routing to Shuttle is expected but not required."
+  }
+}

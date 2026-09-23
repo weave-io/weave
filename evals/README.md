@@ -19,7 +19,8 @@ evals/
 │   │   ├── loom-route-backend-api.json
 │   │   ├── loom-route-frontend-ui.json
 │   │   ├── loom-route-ambiguous-direct-shuttle.json
-│   │   └── loom-delegates-backend-fix-to-category-trajectory.json   # harness_trajectory
+│   │   ├── loom-delegates-backend-fix-to-category-trajectory.json   # harness_trajectory
+│   │   └── loom-runs-the-failing-check-itself-trajectory.json   # harness_trajectory
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
 │   │   ├── tapestry-delegate-to-shuttle.json
@@ -66,7 +67,8 @@ evals/
     │   ├── loom-route-backend-api.json
     │   ├── loom-route-frontend-ui.json
     │   ├── loom-route-ambiguous-direct-shuttle.json
-    │   └── loom-delegates-backend-fix-to-category-trajectory.json
+    │   ├── loom-delegates-backend-fix-to-category-trajectory.json
+    │   └── loom-runs-the-failing-check-itself-trajectory.json
     ├── tapestry-execution/             # Scoring rubrics for tapestry-execution cases
     │   ├── tapestry-execute-plan-step.json
     │   ├── tapestry-delegate-to-shuttle.json
@@ -118,6 +120,8 @@ evals/fixtures/
 ├── orders-api/                 # Bun project with backend and frontend categories (delegation accuracy)
 ├── plan-bash-verification/     # same project plus a plan whose Verification is a bash block
 ├── plan-independent-tasks/     # plan with two independent tasks (parallel execution)
+├── red-ci/                     # project whose CI (bun test) is red, no log given (environment awareness)
+├── red-ci.verifier/            # hidden verifier for red-ci
 └── slugify-edges.verifier/     # hidden verifier, mounted only in the second container
 ```
 

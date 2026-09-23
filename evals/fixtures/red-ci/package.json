@@ -1,0 +1,8 @@
+{
+  "name": "red-ci-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}

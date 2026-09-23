@@ -1110,6 +1110,7 @@ One trajectory case for each runtime problem in the [September 2026 session audi
 | --- | --- | --- | --- | --- |
 | Delegation accuracy | `loom-delegates-backend-fix-to-category-trajectory` (fixture `orders-api`) | Delegations, Configuration delegation failures, Built-in agent delegations, Category-shuttle success | `allowed_delegates: ["shuttle-backend"]`: Loom delegates only to the category shuttle, and the category shuttle edits the code | Pass on `deepseek/deepseek-v4-flash-0731` (23 Sep 2026) |
 | Parallel execution | `tapestry-dispatches-independent-tasks-in-parallel-trajectory` (fixture `plan-independent-tasks`) | Parallel dispatch (Tapestry). Plan-task delegation by Loom is not covered: it needs the `/start-work` handoff | `min_parallel_delegations: 2`: two Shuttle sessions run at the same time for a plan whose two tasks are independent | Pass on `deepseek/deepseek-v4-flash-0731` (23 Sep 2026) |
+| Environment awareness | `loom-runs-the-failing-check-itself-trajectory` (fixtures `red-ci`, `red-ci.verifier`) | Environment reminders (and asking the user to paste logs or run commands) | Existing Spec 35 fields: the user says only "CI is red"; `bun test` must run after the last edit and exit 0, and a hidden verifier confirms the fix. A session that asks for the CI log instead edits nothing and fails | Pass on `deepseek/deepseek-v4-flash-0731` (23 Sep 2026); Loom ran `bun test`, fixed `src/dates.ts` and re-ran it itself without delegating |
 
 #### Text-only judgment cases
 

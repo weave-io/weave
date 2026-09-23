@@ -7,6 +7,8 @@
 - `evals/fixtures/plan-bash-verification/src/slugify.ts` — function slugify: (input) => string
 - `evals/fixtures/plan-independent-tasks/src/price.ts` — function formatPrice: (cents) => string
 - `evals/fixtures/plan-independent-tasks/src/slugify.ts` — function slugify: (title) => string
+- `evals/fixtures/red-ci/src/dates.ts` — function daysBetween: (from, to) => number
+- `evals/fixtures/red-ci/src/greeting.ts` — function greeting: (name) => string
 - `packages/adapters/claude-code/src/adapter.ts` — class ClaudeCodeAdapter, interface ClaudeCodeAdapterOptions
 - `packages/adapters/claude-code/src/agent-translation.ts` — function translateAgentToMarkdown: (input) => string, interface AgentTranslationInput
 - `packages/adapters/claude-code/src/bootstrap.ts` — function getBootstrapDir: () => string, const BOOTSTRAP_FILES
