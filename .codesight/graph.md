@@ -16,12 +16,12 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **10** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
 - `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
-- `packages/cli/src/cli.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
