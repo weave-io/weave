@@ -415,9 +415,12 @@ export class JevJudge implements LangChainJudge {
         return err<unknown, ScoringError>(failure.error);
       }
       const wait = failure.retryAfterMs ?? JEV_RETRY_BASE_MS * 2 ** attempt;
-      return ResultAsync.fromSafePromise(this.sleep(wait)).andThen(() =>
-        this.post(dimension, body, attempt + 1),
-      );
+      // An injected wait that rejects ends the retries with the failure
+      // that prompted them, rather than escaping the Result chain.
+      return ResultAsync.fromPromise(
+        this.sleep(wait),
+        (): ScoringError => failure.error,
+      ).andThen(() => this.post(dimension, body, attempt + 1));
     });
   }
 
