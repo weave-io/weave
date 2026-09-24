@@ -1,5 +1,7 @@
 # Agent Evals
 
+> **New to the evals?** Read the one-page [Evals Overview](./evals-overview.md) first. This guide is the detailed reference behind it.
+
 This guide covers the eval architecture, fixture layout, CLI usage, filter semantics, prompt-hash provenance, artifact schema, sanitization rules, raw-artifact opt-in, and the CI artifact model. It is the contributor reference for everything related to `weave eval run`.
 
 Related docs:

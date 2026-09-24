@@ -1,8 +1,10 @@
 # Weave Eval Fixtures
 
+> **New to the evals?** Start with the one-page [Evals Overview](../docs/evals-overview.md): what the evals are for, how a case becomes a score, the judge, and the commands most people need.
+
 This directory contains the canonical fixture files for `weave eval run`. It is the **allowlist source of truth** for model matrix entries, eval cases, and rubric scoring metadata.
 
-Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Runtime-backed eval fixtures are an explicit non-goal of the current contract.
+Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Three of them (`loom-routing`, `tapestry-execution`, `shuttle-execution`) also hold `harness_trajectory` cases, which run a real harness session in a sandbox; their fixture projects live under `fixtures/`.
 
 For the full eval guide — architecture, CI model, sanitization rules, raw-artifact policy, and prompt-hash provenance — see [`docs/agent-evals.md`](../docs/agent-evals.md).
 
@@ -166,7 +168,7 @@ the dev models. The current subset and why it was chosen are recorded in
 
 Each case fixture describes a single eval scenario. Case files are named after the case `id` field.
 
-All current suites are **text-only**. A fixture may assert only what is visible in assistant or user text. Runtime-backed evals are an explicit non-goal of the current fixture contract.
+Every text-only case may assert only what is visible in assistant or user text. `harness_trajectory` cases, allowed only in `loom-routing`, `tapestry-execution` and `shuttle-execution`, are the exception: they observe a real harness session instead. See [Harness trajectory evals](../docs/agent-evals.md#harness-trajectory-evals).
 
 ### Suites
 
@@ -314,8 +316,10 @@ signals ignore negated phrasing such as "I will not mark it complete".
 
 ### Text-only assertion boundary
 
-All current suites are text-only. They may score only what is visible in the
-assistant transcript text. Runtime-only assertions are rejected fail-closed by
+Text-only cases may score only what is visible in the assistant transcript
+text. (`harness_trajectory` cases are the separate runtime track; see
+[Harness trajectory evals](../docs/agent-evals.md#harness-trajectory-evals).)
+In text-only cases, runtime-only assertions are rejected fail-closed by
 the shared contract in `packages/cli/src/evals/types.ts` and
 `packages/cli/src/evals/case-loader.ts` before any dry-run or live execution.
 
