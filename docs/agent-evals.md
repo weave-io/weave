@@ -655,11 +655,13 @@ flag `pass-rates.ts` already reads for repeated attempts) and sets
 Before 16.5 all of these were published as failed cases with zero scores.
 In `tapestry-category-routing` a judge failure errors the case too whenever
 the judge's verdict was needed (since 16.4; before it, the case was scored on
-routing alone and a correct route passed without the judge's gate). The one
-case scored without the judge is a required case whose route fails the
-deterministic routing gate: it fails whatever the judge says, so it is
-published as failed (`buildScorerUnavailableScoreRecord()`), with the judge
-failure kept in the local diagnostic. The judge's own failures have their own
+routing alone and a correct route passed without the judge's gate). A
+required case whose gates do not involve the judge is still scored, on
+routing alone (`buildScorerUnavailableScoreRecord()`), with the judge failure
+kept in the local diagnostic: one whose route fails the deterministic routing
+gate (it fails whatever the judge says), and one that declares no
+`transcript_expectations` (it has no judge gate). Every case in the corpus
+declares one. The judge's own failures have their own
 labels (`judge-http-failure`, `judge-response-invalid`, `judge-input-too-long`,
 `judge-input-invalid`); see [The judge](#the-judge).
 

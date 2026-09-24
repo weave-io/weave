@@ -980,6 +980,48 @@ describe("the production judge asks what the acceptance check asked", () => {
   });
 });
 
+describe("the production judge asks what the acceptance check asked, on a routing case with stops", () => {
+  it("names the declared stops in the question, rubric, reference and state alike", () => {
+    const withStops = evalCase({
+      id: "tcr-01-exact-match",
+      suite: "tapestry-category-routing",
+      allowed_agents: ["tapestry", "shuttle-client-frontend", "thread"],
+      expected_outcome: {
+        kind: "agent_routing",
+        target_agent: "shuttle-client-frontend",
+        via: ["thread"],
+      },
+      accepted_alternates: ["shuttle"],
+    });
+    const item = buildItem(
+      { id: "B99", raw: "unused" },
+      RAW,
+      withStops,
+      rubric(true),
+    )._unsafeUnwrap();
+    const production = rationaleJudgeInput(
+      {
+        caseId: withStops.id,
+        modelId: RAW.modelId,
+        routedAgents: [],
+        delegationChain: [],
+        transcript: RAW.transcript,
+        rawContent: RAW.rawContent,
+        completionSignalled: false,
+        producedArtifacts: [],
+      },
+      withStops,
+      rubric(true),
+    );
+
+    expect(item.criteria[0]?.question).toContain('"thread"');
+    expect(production.criteria).toEqual(item.criteria);
+    expect(production.rubricDescription).toBe(item.rubric);
+    expect(production.reference).toBe(item.reference);
+    expect(buildJevState(production)).toBe(harnessState(item));
+  });
+});
+
 /** The harness's own state, for the parity check above. */
 function harnessState(item: BakeoffItem): string {
   return buildJevRequest(item)._unsafeUnwrap().state;

@@ -44,9 +44,9 @@
  *
  * Scorer (judge) errors error the case — `errored: true` with the error's
  * classification — whenever the judge's verdict was needed to decide it. A
- * required case whose route fails the routing gate is the one exception: it
- * fails whatever the judge says, so it is scored as failed on routing alone
- * (`buildScorerUnavailableScoreRecord()`). A scorer failure never throws, and
+ * required case whose gates do not involve the judge — its route fails the
+ * routing gate, or it declares no transcript expectations — is scored on
+ * routing alone instead (`buildScorerUnavailableScoreRecord()`). A scorer failure never throws, and
  * the suite continues.
  *
  * When no scorer is injected, the runner uses local heuristic scoring for all
@@ -1425,16 +1425,22 @@ export function buildScorerUnavailableScoreRecord(
 }
 
 /**
- * Whether a case's verdict is settled without the judge: a required case
- * whose route fails the deterministic routing gate fails whatever the judge
- * says. Every other case needs the judge's verdict, so when the judge fails
- * the case is errored rather than scored on routing alone.
+ * Whether a case's verdict is settled without the judge. A required case is
+ * decided by its gates alone (`passesRequiredGates()`): a route that fails
+ * the routing gate fails whatever the judge says, and a case with no
+ * `transcript_expectations` has no judge gate, so its route decides it
+ * either way. An optional case's total includes the judge's score, so it
+ * always needs the judge; when the judge fails, such a case is errored
+ * rather than scored on routing alone.
  */
 function routeAloneDecides(
+  evalCase: EvalCase,
   rubric: EvalRubric,
   routingCorrectness: DimensionScore,
 ): boolean {
-  return rubric.scoring.required && routingCorrectness.score < 0.95;
+  if (!rubric.scoring.required) return false;
+  if (routingCorrectness.score < 0.95) return true;
+  return evalCase.transcript_expectations.length === 0;
 }
 
 /**
@@ -1990,11 +1996,12 @@ export class TapestryCategoryRoutingRunner {
         // A scorer (judge) failure errors the case — it goes to the outer
         // `.match()` error branch — whenever the judge's verdict was needed
         // to decide it (Spec 37, 16.4): a correct route on a required case
-        // still has the judge's gate to clear, and an optional case's total
-        // includes the judge's score. Only a required case with a wrong
-        // route is decided without the judge: it fails the routing gate
-        // whatever the judge would have said, so that deterministic failure
-        // is recovered here and scored (`buildScorerUnavailableScoreRecord()`).
+        // with transcript expectations still has the judge's gate to clear,
+        // and an optional case's total includes the judge's score. A
+        // required case whose gates do not involve the judge (a wrong route,
+        // or no transcript expectations) is recovered here and scored on
+        // routing alone (`buildScorerUnavailableScoreRecord()`); see
+        // `routeAloneDecides()`.
         if (this.scorer !== undefined) {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
@@ -2012,7 +2019,7 @@ export class TapestryCategoryRoutingRunner {
               scorerDegradation: undefined as ScorerDegradation | undefined,
             }))
             .orElse((scoringError) => {
-              if (!routeAloneDecides(rubric, routingCorrectness)) {
+              if (!routeAloneDecides(evalCase, rubric, routingCorrectness)) {
                 return errAsync<
                   {
                     runOutput: ModelRunOutput;

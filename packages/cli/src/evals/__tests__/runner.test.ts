@@ -2200,6 +2200,73 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     ]);
   });
 
+  it("repeatability diagnostics compare a run only with runs scored by the same judge", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-judge-${uid()}`);
+
+    function buildOrchestrator(
+      judge: { id: string; version: string } | undefined,
+    ): EvalOrchestrator {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        model: modelId,
+        content: 'I will route to the "shuttle" agent.',
+      });
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+      return new EvalOrchestrator({
+        modelClient,
+        scorer,
+        ...(judge !== undefined ? { judge } : {}),
+        promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+        snapshotProvider: new StubSnapshotProvider(),
+        gitShaProvider: makeGitShaProvider(),
+        bundleRoot,
+        evalsRoot: REAL_EVALS_ROOT,
+        loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
+        env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+      });
+    }
+    const request = {
+      agent: "loom" as const,
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    };
+    const jev = {
+      id: "typesafe/jev-1.13",
+      version: "typesafe/jev-1.13-20260917",
+    };
+
+    // A run with no recorded judge, one with Jev at one version, one with
+    // Jev at another, and a second run with the first Jev version.
+    expect((await buildOrchestrator(undefined).run(request)).isOk()).toBe(true);
+    const first = await buildOrchestrator(jev).run(request);
+    expect(first.isOk()).toBe(true);
+    expect(
+      (
+        await buildOrchestrator({
+          ...jev,
+          version: "typesafe/jev-1.13-20261101",
+        }).run(request)
+      ).isOk(),
+    ).toBe(true);
+    const last = await buildOrchestrator(jev).run(request);
+    if (!first.isOk() || !last.isOk()) return;
+
+    const diag = last.value.repeatabilityDiagnostics;
+    if (diag === null || diag.status !== "written") {
+      throw new Error("expected written repeatability diagnostics");
+    }
+    expect(first.value.runId).not.toBeNull();
+    expect(diag.comparableRunIds).toEqual([
+      first.value.runId ?? "",
+      last.value.runId ?? "",
+    ]);
+  });
+
   it("repeatability diagnostics ignore previous runs with different exact filters", async () => {
     const modelId = "anthropic/claude-sonnet-4.5";
     const caseId = "loom-route-backend-api";

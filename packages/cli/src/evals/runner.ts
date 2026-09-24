@@ -251,6 +251,13 @@ export interface RepeatabilityComparisonKey {
    */
   repeatCount?: number;
   suites: string[];
+  /**
+   * The judge that scored the run (Spec 37, 16.4). Absent in artifacts
+   * written before it and in runs no judge scored; an absent judge never
+   * matches a recorded one, because scores under different judges are not
+   * on the same scale.
+   */
+  judge?: JudgeIdentity;
 }
 
 /**
@@ -2050,6 +2057,7 @@ export class EvalOrchestrator {
         ? { repeatCount: metadata.repeatCount }
         : {}),
       suites,
+      ...(this.judge !== undefined ? { judge: { ...this.judge } } : {}),
     };
   }
 
@@ -2064,6 +2072,8 @@ export class EvalOrchestrator {
     }
     if (left.caseFilter !== right.caseFilter) return false;
     if ((left.repeatCount ?? 1) !== (right.repeatCount ?? 1)) return false;
+    if (left.judge?.id !== right.judge?.id) return false;
+    if (left.judge?.version !== right.judge?.version) return false;
     if (left.suites.length !== right.suites.length) return false;
 
     for (let index = 0; index < left.suites.length; index += 1) {

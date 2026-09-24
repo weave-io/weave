@@ -872,7 +872,16 @@ describe("the judge is unavailable", () => {
   });
 
   it("reports a correct category route as errored, because the judge's gate could not be applied", async () => {
-    const probe = only("tapestry-category-routing")[0]?.[1] as SuiteProbe;
+    const base = only("tapestry-category-routing")[0]?.[1] as SuiteProbe;
+    const probe: SuiteProbe = {
+      ...base,
+      fixture: {
+        ...base.fixture,
+        transcriptExpectations: [
+          { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
+        ],
+      },
+    };
     const run = await answer(probe, probe.goodAnswer, {
       judgeError: JUDGE_ERROR,
     });
@@ -882,6 +891,20 @@ describe("the judge is unavailable", () => {
     expect(run.firstCase?.passed).toBe(false);
     expect(run.exitCode).toBe(1);
     expect(run.publishedText).not.toContain("sk-ant-abcdef");
+  });
+
+  it("still scores a correct route on a required case with no judge gate, because the route alone decides it", async () => {
+    const probe = only("tapestry-category-routing")[0]?.[1] as SuiteProbe;
+    const run = await answer(probe, probe.goodAnswer, {
+      judgeError: JUDGE_ERROR,
+    });
+
+    expect(run.firstCase?.errored).toBeUndefined();
+    expect(run.firstCase?.passed).toBe(true);
+    expect(run.firstCase?.dimensionScores.routingCorrectness).toEqual({
+      score: 1,
+      applicable: true,
+    });
   });
 
   it("never turns a wrong route into a pass when it cannot reach the judge", async () => {

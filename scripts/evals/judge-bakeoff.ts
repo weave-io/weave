@@ -256,10 +256,16 @@ function buildCriteria(evalCase: EvalCase): BakeoffCriterion[] {
     const targets = acceptedTargets(evalCase)
       .map((t) => `"${t}"`)
       .join(", ");
+    // Same wording as production (`judge-questions.ts`); the stops clause
+    // appears only on a case that declares `via` stops.
+    const stops =
+      outcome.via.length > 0
+        ? ` (or first to one of the stops the case declares on the way: ${outcome.via.map((t) => `"${t}"`).join(", ")})`
+        : "";
     return [
       {
         key: "routes_to_accepted_target",
-        question: `Does the response make a clear routing decision to one of: ${targets}?`,
+        question: `Does the response make a clear routing decision to one of: ${targets}${stops}?`,
       },
       {
         key: "justifies_routing",
@@ -345,8 +351,14 @@ export function buildItem(
       alternates.length > 0
         ? `; accepted alternates: [${alternates.join(", ")}]`
         : "";
-    lines.push(`Expected routing: "${outcome.target_agent}"${alternatesText}`);
-    reference = `Expected: route to "${outcome.target_agent}"${alternatesText}`;
+    const viaText =
+      outcome.via.length > 0
+        ? `; accepted first stops: [${outcome.via.join(", ")}]`
+        : "";
+    lines.push(
+      `Expected routing: "${outcome.target_agent}"${alternatesText}${viaText}`,
+    );
+    reference = `Expected: route to "${outcome.target_agent}"${alternatesText}${viaText}`;
   }
   lines.push(`Criteria:\n${criteriaBlock(criteria)}`);
 
