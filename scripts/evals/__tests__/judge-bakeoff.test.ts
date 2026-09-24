@@ -320,9 +320,10 @@ describe("JevClient", () => {
     const verdict = await client.decide(taskItem());
     expect(verdict._unsafeUnwrap().pass).toBe(true);
     expect(calls[0]?.url).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(
-      (calls[0]?.init.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-key");
+    const headers = calls[0]?.init.headers as
+      | Record<string, string>
+      | undefined;
+    expect(headers?.Authorization).toBe("Bearer test-key");
     expect(JSON.parse(String(calls[0]?.init.body)).model).toBe(
       "typesafe/jev-1.13",
     );
