@@ -321,6 +321,32 @@ describe("JevJudge retries", () => {
     expect(calls.length).toBe(JEV_MAX_RETRIES + 1);
   });
 
+  it("does not ask again after a 400 whose body cannot be read", async () => {
+    let calls = 0;
+    const brokenBody: FetchLike = async () => {
+      calls += 1;
+      const body = new ReadableStream({
+        start(controller) {
+          controller.error(new Error("stream broke"));
+        },
+      });
+      return new Response(body, { status: 400 });
+    };
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: brokenBody,
+      sleep: noWait,
+    });
+
+    const result = await judge.evaluate(input());
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "JudgeHttpError",
+      status: 400,
+    });
+    expect(calls).toBe(1);
+  });
+
   it("does not ask again after a 400", async () => {
     const { fetchImpl, calls } = sequence([400]);
     const judge = new JevJudge({

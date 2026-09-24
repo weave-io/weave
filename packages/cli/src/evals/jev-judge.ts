@@ -457,7 +457,9 @@ export class JevJudge implements LangChainJudge {
             response.status,
             `judge response could not be read: ${String(cause)}`,
           ),
-          retryable: true,
+          // A 2xx whose body broke off mid-stream is worth asking again;
+          // an error status keeps the same rule as when its body was read.
+          retryable: response.ok || retryableStatus(response.status),
         }),
       ).andThen((text) => {
         if (!response.ok) {
