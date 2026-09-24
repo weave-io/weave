@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 221 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~20,100 tokens. Without it, AI exploration would cost ~74,400 tokens. **Saves ~54,300 tokens per conversation.**
-> **Last scanned:** 2026-09-24 20:12 — re-run after significant changes
+> **Last scanned:** 2026-09-24 20:44 — re-run after significant changes
 
 ---
 
@@ -401,12 +401,12 @@
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
   - function extractCodeLocations: (text) => string[]
   - function isTracedFinding: (text) => boolean
-  - function hasAffirmedMatch: (content, pattern, ignoreBefore?) => boolean
-  - const JUDGMENT_CASE_TAG
-  - _...1 more_
+  - function extractCodeMaterial: (material) => CodeMaterial
+  - function isTracedThroughDeclaredSymbol: (text, material) => boolean
+  - _...4 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function escapeTemplateBraces: (text) => string
-  - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
+  - function buildCaseExplanation: (scoreBucket, passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun, erroredCases) => string
@@ -505,12 +505,12 @@
   - function renderPublicReportBundle: (bundle) => string
 - `packages/cli/src/evals/report-schema.ts`
   - function computeScoreBucket: (weightedTotal, dryRun) => ScoreBucket
+  - function computeCaseScoreBucket: (weightedTotal, passed, dryRun) => ScoreBucket
   - type ExplanationSource
   - type ScoreBucket
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
-  - type ModelAttemptTallyEntry
-  - _...47 more_
+  - _...48 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -595,7 +595,7 @@
   - interface WarpSecurityRunnerOptions
   - _...2 more_
 - `packages/cli/src/evals/weft-review-runner.ts`
-  - function extractReviewSignals: (content) => ReviewSignals
+  - function extractReviewSignals: (content, material) => ReviewSignals
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
   - class WeftReviewRunner

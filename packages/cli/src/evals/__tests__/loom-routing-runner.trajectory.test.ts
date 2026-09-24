@@ -178,6 +178,67 @@ describe("LoomRoutingRunner - harness_trajectory dispatch", () => {
     expect(trajectoryRunner.calls).toHaveLength(1);
   });
 
+  it("explains a case that passes on execution alone as passed, not failed", async () => {
+    // Loom does the edit itself: routing and delegation score 0, execution
+    // 1.0 passes the case, and the total is 0.33. The eval baseline of
+    // 24 Sep 2026 found this published as "failed" beside `passed: true`.
+    const events: TrajectoryEvent[] = [
+      {
+        kind: "session-created",
+        sessionId: "ses_parent",
+        timestamp: nowIso(),
+        agentName: "loom",
+        model: "openai/gpt-4o-mini",
+      },
+      {
+        kind: "tool-call-after",
+        sessionId: "ses_parent",
+        timestamp: nowIso(),
+        toolName: "edit",
+        agentName: "loom",
+        succeeded: true,
+      },
+      {
+        kind: "session-completed",
+        sessionId: "ses_parent",
+        timestamp: nowIso(),
+        agentName: "loom",
+        durationMs: 5000,
+      },
+    ];
+    const trajectoryRunner = {
+      run: () =>
+        okAsync({
+          events,
+          summary: {
+            harnessDelegatedCorrectly: false,
+            observedSpawns: [],
+            observedToolCalls: 1,
+            harnessCompletedWithoutError: true,
+          },
+          rawArtifactRef: { path: `${TRAJECTORY_CASE_ID}/stderr.log` },
+        }),
+    };
+    const runner = new LoomRoutingRunner({
+      modelClient: new StubModelClient(),
+      scorer: new StubAgentEvalsScorer(),
+      promptProvider: new MockPromptProvider(),
+      // biome-ignore lint/suspicious/noExplicitAny: structural TrajectoryRunner stub
+      trajectoryRunner: trajectoryRunner as any,
+    });
+
+    const result = await runner.run({ caseFilter: TRAJECTORY_CASE_ID });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    const summary = result.value.caseResults[0]?.summary;
+    expect(summary?.passed).toBe(true);
+    expect(summary?.weightedTotal).toBeLessThan(0.5);
+    expect(summary?.publicExplanation?.text).toStartWith(
+      "required harness-trajectory case passed;",
+    );
+  });
+
   it("leaves trajectorySummary undefined for a text-only (non-trajectory) case", async () => {
     const modelClient = new StubModelClient();
     modelClient.enqueueResponse({

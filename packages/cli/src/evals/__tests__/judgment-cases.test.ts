@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 import {
   buildRequiredSignalsLine,
   extractCodeLocations,
+  extractCodeMaterial,
   isJudgmentCase,
   isTracedFinding,
+  isTracedThroughDeclaredSymbol,
   JUDGMENT_CASE_TAG,
 } from "../judgment-cases.js";
 import type { EvalCase } from "../types.js";
@@ -103,5 +105,80 @@ describe("isTracedFinding", () => {
   it("requires at least two distinct locations", () => {
     expect(isTracedFinding("`src/a.ts:3` reaches `src/b.ts:4`")).toBe(true);
     expect(isTracedFinding("`src/a.ts:3` is unsafe")).toBe(false);
+  });
+});
+
+const MATERIAL = [
+  "`src/settings/store.ts` (unchanged):",
+  "```ts",
+  "10 export function saveSettings(path: string): ResultAsync<void, E> {",
+  "```",
+  "`src/commands/settings.ts` (changed):",
+  "```ts",
+  "30 export async function runSettings(args: Args): Promise<number> {",
+  "31   const spy = 1;",
+  "32   saveSettings(args.path);",
+  "```",
+  "`src/commands/settings.test.ts` (added):",
+  "```ts",
+  '5 const spy = spyOn(store, "saveSettings");',
+  "```",
+].join("\n");
+
+describe("extractCodeMaterial", () => {
+  it("maps each function to the file whose block declares it", () => {
+    expect([...extractCodeMaterial(MATERIAL).declared]).toEqual([
+      ["saveSettings", "src/settings/store.ts"],
+      ["runSettings", "src/commands/settings.ts"],
+    ]);
+  });
+
+  it("records what each file calls, not what it declares", () => {
+    const { calls } = extractCodeMaterial(MATERIAL);
+    expect(calls.get("src/commands/settings.ts")?.has("saveSettings")).toBe(
+      true,
+    );
+    expect(calls.get("src/commands/settings.ts")?.has("runSettings")).toBe(
+      false,
+    );
+    expect(
+      calls.get("src/commands/settings.test.ts")?.has("saveSettings"),
+    ).toBe(false);
+  });
+
+  it("drops a name declared in two files", () => {
+    const twice = `${MATERIAL}\n\`src/other.ts\`:\n\`\`\`ts\nfunction saveSettings() {}\n\`\`\``;
+    expect(extractCodeMaterial(twice).declared.has("saveSettings")).toBe(false);
+  });
+});
+
+describe("isTracedThroughDeclaredSymbol", () => {
+  const code = extractCodeMaterial(MATERIAL);
+
+  it("accepts a cited call site plus the function it calls from another file", () => {
+    expect(
+      isTracedThroughDeclaredSymbol(
+        "`src/commands/settings.ts:32` drops the result of `saveSettings`",
+        code,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the enclosing function, a file that never calls it, or no path", () => {
+    expect(
+      isTracedThroughDeclaredSymbol(
+        "`src/commands/settings.ts:32` in `runSettings` drops it",
+        code,
+      ),
+    ).toBe(false);
+    expect(
+      isTracedThroughDeclaredSymbol(
+        "`src/commands/settings.test.ts:5` only spies on `saveSettings`",
+        code,
+      ),
+    ).toBe(false);
+    expect(
+      isTracedThroughDeclaredSymbol("`saveSettings` is not awaited", code),
+    ).toBe(false);
   });
 });

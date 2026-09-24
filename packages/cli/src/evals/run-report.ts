@@ -173,9 +173,14 @@ export class EvalRunReport {
       ? this.theme.boldGreen("PASS")
       : this.theme.boldRed("FAIL");
     const requirement = report.required ? "required" : "optional";
+    // A gating dimension can pass a case whose total is under the pass mark,
+    // so the mark is shown only beside a failure, never contradicting a PASS.
+    const passMark = report.passed
+      ? ""
+      : ` (pass mark ${score(PASS_THRESHOLD)})`;
     const lines = [
       `  ${verdict}  ${report.caseId} on ${report.modelId}  ${this.theme.dim(`(${report.suite}, ${requirement})`)}`,
-      `        Weighted total ${score(report.weightedTotal)} (pass mark ${score(PASS_THRESHOLD)})`,
+      `        Weighted total ${score(report.weightedTotal)}${passMark}`,
     ];
 
     if (!report.passed) {

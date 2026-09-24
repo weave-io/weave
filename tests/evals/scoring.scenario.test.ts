@@ -815,9 +815,9 @@ describe("a reader opens the score file and wants to know why a case scored what
       "required execution case passed; dimensions: executionCompleteness, rationaleQuality",
     ],
     [
-      "partially passed",
+      "failed with a partial score",
       0.6,
-      "required execution case partially passed; dimensions: executionCompleteness, rationaleQuality",
+      "required execution case failed with a partial score; dimensions: executionCompleteness, rationaleQuality",
     ],
     [
       "failed",
@@ -878,6 +878,95 @@ describe("a reader opens the score file and wants to know why a case scored what
     for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
       expect(`${name}:${pattern.test(text)}`).toBe(`${name}:false`);
     }
+  });
+});
+
+// ===========================================================================
+// The verdict, the band and the explanation agree
+// ===========================================================================
+
+describe("a reader compares a case's verdict with its band and explanation", () => {
+  /**
+   * A task case whose two halves are weighted equally, so a near-perfect
+   * execution with a disliked answer passes under the pass mark and a
+   * not-quite-perfect execution with a liked answer fails far above it. The
+   * baseline of 24 Sep 2026 found a trajectory case in the first shape
+   * published as `fail` beside `passed: true`.
+   */
+  const EVEN: FixtureSpec = {
+    ...TASK,
+    id: "scoring-verdict-agreement",
+    outcomeWeight: 0.5,
+    perExpectationWeight: 0.5,
+  };
+
+  /** `[execution score, rationale score]` across both sides of every bar. */
+  const GRID: Array<[number, number]> = [
+    [1, 0],
+    [0.95, 0],
+    [0.95, 1],
+    [0.9, 1],
+    [0.9, 0],
+    [0.5, 0.5],
+    [0.2, 0.9],
+    [0, 0],
+  ];
+
+  it.each(
+    GRID,
+  )("publishes execution %p with rationale %p as one outcome everywhere", async (execution, rationale) => {
+    const run = await score(EVEN, COMPLETED, {
+      judgeOutputs: {
+        executionCompleteness: { score: execution, rationale: "execution" },
+        rationaleQuality: { score: rationale, rationale: "prose" },
+      },
+    });
+    const passed = run.firstCase?.passed;
+    const text = run.firstCase?.publicExplanation?.text ?? "";
+    const bucket = run.publicReport?.suiteSummaries[0]?.cases[0]?.scoreBucket;
+
+    expect(typeof passed).toBe("boolean");
+    expect(bucket === "pass").toBe(passed as boolean);
+    expect(text.includes("case passed")).toBe(passed as boolean);
+    expect(text.includes("failed")).toBe(!passed);
+  });
+
+  it("calls a case that passed under the pass mark a pass", async () => {
+    const run = await score(EVEN, COMPLETED, {
+      judgeOutputs: {
+        executionCompleteness: { score: 0.95, rationale: "done" },
+        rationaleQuality: { score: 0, rationale: "unreadable" },
+      },
+    });
+
+    expect(run.firstCase?.weightedTotal).toBeLessThan(0.5);
+    expect(run.firstCase?.passed).toBe(true);
+    expect(run.publicReport?.suiteSummaries[0]?.cases[0]?.scoreBucket).toBe(
+      "pass",
+    );
+    expect(run.firstCase?.publicExplanation?.text).toBe(
+      "required execution case passed; dimensions: executionCompleteness, rationaleQuality",
+    );
+    expect(run.stdout).toContain("PASS");
+    expect(run.stdout).not.toContain("pass mark");
+  });
+
+  it("never calls a case that failed above the band's bar a pass", async () => {
+    const run = await score(EVEN, COMPLETED, {
+      judgeOutputs: {
+        executionCompleteness: { score: 0.9, rationale: "one check short" },
+        rationaleQuality: { score: 1, rationale: "reads well" },
+      },
+    });
+
+    expect(run.firstCase?.weightedTotal).toBeGreaterThanOrEqual(0.9);
+    expect(run.firstCase?.passed).toBe(false);
+    expect(run.publicReport?.suiteSummaries[0]?.cases[0]?.scoreBucket).toBe(
+      "partial",
+    );
+    expect(run.firstCase?.publicExplanation?.text).toBe(
+      "required execution case failed with a partial score; dimensions: executionCompleteness, rationaleQuality",
+    );
   });
 });
 

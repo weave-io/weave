@@ -5,13 +5,13 @@
   "allowed_agents": ["pattern"],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "Produce a structured plan in which every acceptance criterion states how it will be verified (a declared command, a named test, or a manual: check), and whose Verification section is a checklist of - [ ] items rather than a bare code block.",
+    "description": "Produce a structured plan that says how the work will be verified, in the shape the Pattern prompt asks for: every task has its own acceptance criteria, and the `## Verification` section names the declared commands to run (bun test, bun run typecheck, bun run lint) and what passing looks like, inventing no other command. A per-criterion 'verify by' clause and a checkbox Verification section are not required, because the Pattern prompt does not ask for either.",
     "required_artifacts": [
       "plan_scope_explicit",
       "plan_file_tasks",
       "plan_acceptance_coverage",
-      "plan_criteria_have_verify_by",
-      "plan_verification_checkboxes"
+      "plan_verification_uses_declared_commands",
+      "plan_no_unlisted_commands"
     ]
   },
   "accepted_alternates": [],

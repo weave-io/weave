@@ -5,7 +5,7 @@
   "allowed_agents": ["weft"],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "Reject the change: the reset path discards the ResultAsync from saveSettings, so a failed write still returns 0, and the test only checks the call happened. At least one blocker must be traced by citing both the discarding call site and the fallible function it calls.",
+    "description": "Reject the change: the reset path discards the ResultAsync from saveSettings, so a failed write still returns 0, and the test only checks the call happened. At least one blocker must be traced by citing both the discarding call site and the fallible function it calls (by its path or by its name).",
     "required_artifacts": [
       "review_verdict_present",
       "review_verdict_reject",

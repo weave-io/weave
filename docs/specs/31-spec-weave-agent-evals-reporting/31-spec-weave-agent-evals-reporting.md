@@ -122,6 +122,8 @@ Each `ModelComparisonEntry` carries `passRate` and `perSuitePassRates` (both nul
 "skip"    — dryRun === true OR weightedTotal is undefined
 ```
 
+These thresholds bucket an aggregate (a model's `overallBucket` from its pass rate). A single case's `scoreBucket` comes from `computeCaseScoreBucket()` and follows the case's verdict, because the verdict is not a threshold on `weightedTotal`: a near-perfect gating dimension can pass a case whose total is under 0.5, and a missed required signal can fail one above 0.9. A case that passed is `"pass"`; a case that failed is `"partial"` at `weightedTotal >= 0.5` and `"fail"` below it; its explanation says "passed", "failed with a partial score" or "failed" to match. (Changed 24 Sep 2026, Spec 37 task 16.7: before, a passing trajectory case scored 0.33 was published as `"fail"`. See the [baseline corrections](../../artifacts/eval-baseline-2026-09-24.md#corrections-24-sep-2026).)
+
 Raw floating-point scores are internal. All public schemas expose only `ScoreBucket` labels.
 
 ### Explanation field rules

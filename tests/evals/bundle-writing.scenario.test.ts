@@ -533,7 +533,7 @@ describe("a run mixes passing, partial, failing and skipped cases", () => {
       runnerResult({
         caseResults: [
           caseResult({ caseId: "clear-pass", weightedTotal: 0.95 }),
-          caseResult({ caseId: "partial", weightedTotal: 0.6 }),
+          caseResult({ caseId: "partial", passed: false, weightedTotal: 0.6 }),
           caseResult({
             caseId: "clear-fail",
             passed: false,
@@ -568,6 +568,48 @@ describe("a run mixes passing, partial, failing and skipped cases", () => {
         "clear-fail": "fail",
         skipped: "skip",
       });
+    });
+  });
+
+  it("publishes the band a case's verdict earned, whatever its total", async () => {
+    // A trajectory case that runs the check itself passes on execution alone
+    // with a total of 0.33; a case missing one required signal fails at 0.95.
+    await withBundleRoot(async (root) => {
+      const written = await write(root, {
+        runnerResults: [
+          runnerResult({
+            caseResults: [
+              caseResult({
+                caseId: "passed-low",
+                passed: true,
+                weightedTotal: 0.33,
+              }),
+              caseResult({
+                caseId: "failed-high",
+                passed: false,
+                weightedTotal: 0.95,
+              }),
+            ],
+          }),
+        ],
+      });
+      const report = await readRunJson(
+        root,
+        written.runId,
+        "public-report.json",
+      );
+      const entries = report.suiteSummaries[0].cases.map(
+        (c: { caseId: string; passed: boolean; scoreBucket: string }) => [
+          c.caseId,
+          c.passed,
+          c.scoreBucket,
+        ],
+      );
+
+      expect(entries).toEqual([
+        ["passed-low", true, "pass"],
+        ["failed-high", false, "partial"],
+      ]);
     });
   });
 

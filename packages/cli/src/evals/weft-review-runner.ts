@@ -14,7 +14,12 @@ import {
   validateCaseFilter,
 } from "./case-loader.js";
 import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
-import { buildRequiredSignalsLine, isTracedFinding } from "./judgment-cases.js";
+import {
+  buildRequiredSignalsLine,
+  extractCodeMaterial,
+  isTracedFinding,
+  isTracedThroughDeclaredSymbol,
+} from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -86,7 +91,15 @@ function extractFileReferences(content: string): string[] {
   return [...references];
 }
 
-export function extractReviewSignals(content: string): ReviewSignals {
+/**
+ * `material` is what the reviewer was shown (the case description). The
+ * functions it declares let a blocker name the far end of a trace by symbol
+ * (`saveSettings`) instead of by path; see `isTracedThroughDeclaredSymbol`.
+ */
+export function extractReviewSignals(
+  content: string,
+  material = "",
+): ReviewSignals {
   const hasApprove = VERDICT_APPROVE_RE.test(content);
   const hasReject = VERDICT_REJECT_RE.test(content);
 
@@ -114,7 +127,11 @@ export function extractReviewSignals(content: string): ReviewSignals {
 
     return extractFileReferences(line).length > 0;
   }).length;
-  const tracedBlockerCount = blockerLines.filter(isTracedFinding).length;
+  const code = extractCodeMaterial(material);
+  const tracedBlockerCount = blockerLines.filter(
+    (line) =>
+      isTracedFinding(line) || isTracedThroughDeclaredSymbol(line, code),
+  ).length;
 
   const approvalDisciplined = verdict === "approve" && blockerCount === 0;
   const rejectionDisciplined =
@@ -176,7 +193,7 @@ function buildModelRunOutput(
   userMessage: string,
   content: string,
 ): ModelRunOutput {
-  const signals = extractReviewSignals(content);
+  const signals = extractReviewSignals(content, evalCase.description);
   const transcript: TranscriptMessage[] = [
     { role: "user", content: userMessage },
     { role: "assistant", content },

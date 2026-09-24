@@ -1863,6 +1863,99 @@ describe("Weft reviews a synthetic change", () => {
   });
 });
 
+/**
+ * The traced true positive's own material: a call site in
+ * `src/commands/settings.ts` discards the `ResultAsync` from `saveSettings`,
+ * which the case shows in `src/settings/store.ts`. Read from the corpus, so
+ * the scenario breaks if the case stops declaring the far end of the trace.
+ */
+const TRACED_CASE = (await Bun.file(
+  new URL(
+    "../../evals/cases/weft-review/weft-review-traced-true-positive.json",
+    import.meta.url,
+  ),
+).json()) as { id: string; description: string };
+
+/** `[shape, blocker line, is it traced]`. */
+const TRACED_BLOCKERS: Array<[string, string, boolean]> = [
+  [
+    "the call site's path and the fallible function by name",
+    "BLOCKER: `src/commands/settings.ts:32` must handle the `ResultAsync` returned by `saveSettings`; the reset reports success when the write fails.",
+    true,
+  ],
+  [
+    "a line range and the function called with arguments",
+    "BLOCKER: `src/commands/settings.ts` lines 31-34: saveSettings(args.path, DEFAULT_SETTINGS) is never awaited; fix it so a failed write returns non-zero.",
+    true,
+  ],
+  [
+    "both ends as paths",
+    "BLOCKER: `src/commands/settings.ts:32` discards the result of `src/settings/store.ts:10`; handle the error.",
+    true,
+  ],
+  [
+    "the call site and only the function that contains it",
+    "BLOCKER: `src/commands/settings.ts:32` in `runSettings` ignores the write result; handle the error.",
+    false,
+  ],
+  [
+    "the call site and a library type the case never declares",
+    "BLOCKER: `src/commands/settings.ts:32` drops the `ResultAsync`; handle the error.",
+    false,
+  ],
+  [
+    "the test file and the fallible function it only spies on",
+    "BLOCKER: `src/commands/__tests__/settings.test.ts:8` only checks that `saveSettings` was called; add a failure-path test.",
+    false,
+  ],
+  [
+    "the fallible function with no path at all",
+    "BLOCKER: fix the reset path so `saveSettings` is awaited and its error handled.",
+    false,
+  ],
+];
+
+describe("Weft traces a blocker to the function the change calls", () => {
+  const probe = only("weft-review")[0]?.[1] as SuiteProbe;
+
+  it.each(
+    TRACED_BLOCKERS,
+  )("reads a blocker citing %s for what it is", async (_shape, blocker, traced) => {
+    const fixture: FixtureSpec = {
+      ...probe.fixture,
+      id: TRACED_CASE.id,
+      description: TRACED_CASE.description,
+      expectedOutcome: {
+        ...probe.fixture.expectedOutcome,
+        required_artifacts: ["review_blocker_traced"],
+      },
+      tags: ["review", "judgment"],
+    };
+    const run = await withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "weft-review",
+        answers: [`[REJECT] The reset path drops a failed write.\n${blocker}`],
+      }),
+    );
+
+    expect(run.firstCase?.dimensionScores.executionCompleteness.score).toBe(
+      traced ? 1 : 0,
+    );
+    expect(run.firstCase?.passed).toBe(traced);
+  });
+
+  it("does not count a symbol from a case that never shows where it lives", async () => {
+    const run = await produces(
+      probe,
+      ["review_blocker_traced"],
+      "[REJECT]\nBLOCKER: `src/commands/settings.ts:32` ignores the result of `saveSettings`; handle it.",
+    );
+
+    expect(run.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Warp ------------------------------------------------------------------
 
 const WARP_BLOCK_HEAD = ["[BLOCK] — command injection", "BLOCKERS: 1/3"];
@@ -2497,6 +2590,125 @@ describe("Pattern plans a change", () => {
 
     expect(checklist.firstCase?.passed).toBe(true);
     expect(codeBlock.firstCase?.passed).toBe(false);
+  });
+
+  it.each([
+    [
+      "a list of declared commands",
+      ["## Verification", "- `bun test` exits 0", "## Notes"].join("\n"),
+      true,
+    ],
+    [
+      "a code block, as the Pattern template allows",
+      ["## Verification", "```bash", "bun test", "```"].join("\n"),
+      true,
+    ],
+    [
+      "a checklist",
+      ["## Verification", "- [ ] `bun test` passes"].join("\n"),
+      true,
+    ],
+    [
+      "prose that names no command",
+      ["## Verification", "Check that everything works."].join("\n"),
+      false,
+    ],
+    [
+      "only a command the case never declared",
+      ["## Verification", "- `bun run lint` exits 0"].join("\n"),
+      false,
+    ],
+    [
+      "no Verification section, with the command under a task instead",
+      ["- **Acceptance**:", "  - `bun test` passes"].join("\n"),
+      false,
+    ],
+  ])("reads a Verification section with %s for what it is", async (_shape, text, names) => {
+    const run = await produces(
+      probe,
+      ["plan_verification_uses_declared_commands"],
+      text as string,
+    );
+
+    expect(run.firstCase?.passed).toBe(names as boolean);
+  });
+
+  it("passes the verify-by case with a plan written to the Pattern prompt's own template", async () => {
+    // The case once required a `verify by:` clause per criterion and a
+    // checkbox Verification section, which the Pattern prompt dropped in #182
+    // (it reserves `- [ ]` for top-level tasks). A plan that follows the
+    // prompt must be able to pass it.
+    const verifyByCase = (await Bun.file(
+      new URL(
+        "../../evals/cases/pattern-planning/pattern-plan-verify-by-per-criterion.json",
+        import.meta.url,
+      ),
+    ).json()) as {
+      id: string;
+      description: string;
+      expected_outcome: Record<string, unknown>;
+      tags: string[];
+    };
+    const plan = [
+      "# Add --json to weave status",
+      "",
+      "## Scope",
+      "- In scope: a `--json` flag on `weave status`.",
+      "- Out of scope: other commands.",
+      "",
+      "## Dependencies and Order",
+      "1. Implement the flag before its tests and docs, which depend on it.",
+      "",
+      "## Tasks",
+      "",
+      "- [ ] 1. Add the flag",
+      "  - **What**: Print status as JSON when `--json` is set.",
+      "  - **Files**: `packages/cli/src/commands/status.ts`",
+      "  - **Depends on**: None",
+      "  - **Acceptance**:",
+      "    - `weave status --json` prints one JSON document.",
+      "",
+      "- [ ] 2. Test it",
+      "  - **What**: Cover both output modes.",
+      "  - **Files**: `packages/cli/src/commands/__tests__/status.test.ts`",
+      "  - **Depends on**: Task 1",
+      "  - **Acceptance**:",
+      "    - The new tests cover `--json` and the default output.",
+      "",
+      "- [ ] 3. Document it",
+      "  - **What**: Describe the flag.",
+      "  - **Files**: `docs/cli.md`",
+      "  - **Depends on**: Task 1",
+      "  - **Acceptance**:",
+      "    - `docs/cli.md` shows the flag and an example.",
+      "",
+      "## Verification",
+      "Run these and confirm each exits 0:",
+      "- `bun test`",
+      "- `bun run typecheck`",
+      "- `bun run lint`",
+    ].join("\n");
+
+    const run = await withEvalFixtures(
+      [
+        {
+          ...probe.fixture,
+          id: verifyByCase.id,
+          description: verifyByCase.description,
+          expectedOutcome: verifyByCase.expected_outcome,
+          tags: verifyByCase.tags,
+        },
+      ],
+      (evalsRoot) =>
+        runEvalSuite({
+          evalsRoot,
+          agent: "pattern-planning",
+          answers: [plan],
+        }),
+    );
+
+    expect(run.firstCase?.dimensionScores.executionCompleteness.score).toBe(1);
+    expect(run.firstCase?.passed).toBe(true);
   });
 
   it("flags a command the case never declared, including inside a code fence", async () => {

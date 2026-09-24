@@ -11,7 +11,10 @@
  * This module also extracts code locations (`path/to/file.ts:12`) from
  * review text. Citing at least two distinct locations in one finding is the
  * deterministic proxy for "traced": the finding names where the data comes
- * from and where it is used, not just the line that looks suspicious.
+ * from and where it is used, not just the line that looks suspicious. A
+ * reviewer may also name the far end by the symbol the case declares there
+ * (`saveSettings`) rather than by its path; `isTracedThroughDeclaredSymbol`
+ * accepts that when the cited file calls the symbol and the case declares it.
  */
 
 import type { EvalCase } from "./types.js";
@@ -89,6 +92,120 @@ export function extractCodeLocations(text: string): string[] {
 
 export function isTracedFinding(text: string): boolean {
   return extractCodeLocations(text).length >= TRACED_FINDING_MIN_LOCATIONS;
+}
+
+// A `path` written in backticks, then (on a later line) a code fence: the
+// fence's code belongs to that file, the way a case shows each file.
+const MATERIAL_PATH_RE =
+  /`((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:ts|tsx|js|jsx|mjs|cjs|go|rs|py))`/g;
+// Functions and classes only: a trace ends at the code that fails, and a
+// local such as `const spy` is too common a word to stand for a location.
+const DECLARATION_RE = /\b(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g;
+// A call: an identifier (possibly after `obj.`) followed by `(`.
+const CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+
+/**
+ * What a case's material shows about its code: each function or class it
+ * declares, mapped to the file that declares it, and the names each file
+ * calls. A case shows each file as a backticked path followed by a fenced
+ * code block; the block belongs to that path. A name declared in two files
+ * is dropped from `declared`, since naming it does not say which is meant.
+ */
+export interface CodeMaterial {
+  declared: ReadonlyMap<string, string>;
+  calls: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+export function extractCodeMaterial(material: string): CodeMaterial {
+  const declared = new Map<string, string>();
+  const calls = new Map<string, Set<string>>();
+  const ambiguous = new Set<string>();
+  let lastPath: string | undefined;
+  let fenceFile: string | undefined;
+  let inFence = false;
+
+  for (const line of material.split("\n")) {
+    if (line.trimStart().startsWith("```")) {
+      inFence = !inFence;
+      fenceFile = inFence ? lastPath : undefined;
+      continue;
+    }
+    if (!inFence) {
+      for (const match of line.matchAll(MATERIAL_PATH_RE)) {
+        lastPath = match[1];
+      }
+      continue;
+    }
+    if (fenceFile === undefined) continue;
+    const declaredHere = new Set<string>();
+    for (const match of line.matchAll(DECLARATION_RE)) {
+      const name = match[1];
+      if (name === undefined) continue;
+      declaredHere.add(name);
+      const previous = declared.get(name);
+      if (previous !== undefined && previous !== fenceFile) {
+        ambiguous.add(name);
+      }
+      declared.set(name, fenceFile);
+    }
+    const called = calls.get(fenceFile) ?? new Set<string>();
+    for (const match of line.matchAll(CALL_RE)) {
+      const name = match[1];
+      if (name !== undefined && !declaredHere.has(name)) called.add(name);
+    }
+    calls.set(fenceFile, called);
+  }
+
+  for (const name of ambiguous) declared.delete(name);
+  return { declared, calls };
+}
+
+/** True when `a` and `b` name the same file, one possibly a suffix path. */
+function sameFile(a: string, b: string): boolean {
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+function callsIn(
+  material: CodeMaterial,
+  cited: string,
+): ReadonlySet<string> | undefined {
+  for (const [file, names] of material.calls) {
+    if (sameFile(cited, file)) return names;
+  }
+  return undefined;
+}
+
+/**
+ * True when a finding cites a call site by path and names a function that
+ * the cited file calls and the case declares: for example
+ * `src/commands/settings.ts:32` and `saveSettings`, which the case shows
+ * being called in `src/commands/settings.ts` and declared in
+ * `src/settings/store.ts`. That names both ends of the trace, even though
+ * only one is a path. It does not hold for the function that contains the
+ * cited line (declared there, not called), for a name the case never
+ * declares (a library type), or for a cited file that never calls the named
+ * function (a test that only spies on it).
+ */
+export function isTracedThroughDeclaredSymbol(
+  text: string,
+  material: CodeMaterial,
+): boolean {
+  const citedFiles = extractCodeLocations(text).map((location) =>
+    location.replace(/:\d+$/, ""),
+  );
+  if (citedFiles.length === 0) return false;
+
+  for (const name of material.declared.keys()) {
+    const named = new RegExp(
+      `(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`,
+    );
+    if (!named.test(text)) continue;
+    const citesACaller = citedFiles.some(
+      (cited) => callsIn(material, cited)?.has(name) ?? false,
+    );
+    if (citesACaller) return true;
+  }
+  return false;
 }
 
 const NEGATION_BEFORE_RE =
