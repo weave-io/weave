@@ -173,7 +173,7 @@ The two Shuttle failures both score routing and delegation 1.0 and execution 0.6
 
 ## Corrections, 24 Sep 2026
 
-Spec 37 task 16.7 (PR #TBD) resolved suspected defects 1–3 above. All three were **scoring or case defects, not model behaviour**, so none is a WS1 finding. The tables above are left as recorded; this section gives the corrected figures. Only the two affected text cases were re-run, on commit `66af7107` with the same judge (Jev `typesafe/jev-1.13-20260917`); every other case keeps its baseline result, so the corrected suite rates below combine baseline rows with the re-run rows of one case each. The trajectory case was re-scored from its recorded rows, with no new session. The re-runs and diagnosis cost **$0.65** (OpenRouter credits before and after), with no errored attempt.
+Spec 37 task 16.7 (PR #247) resolved suspected defects 1–3 above. All three were **scoring or case defects, not model behaviour**, so none is a WS1 finding. The tables above are left as recorded; this section gives the corrected figures. Only the two affected text cases were re-run, on commit `66af7107` (the fix commit before its rebase onto `main`) with the same judge (Jev `typesafe/jev-1.13-20260917`); every other case keeps its baseline result, so the corrected suite rates below combine baseline rows with the re-run rows of one case each. The trajectory case was re-scored from its recorded rows, with no new session. The re-runs and diagnosis cost **$0.65** (OpenRouter credits before and after), with no errored attempt.
 
 ### What each defect was, and the fix
 
