@@ -563,6 +563,8 @@ class RecordingJevJudge implements LangChainJudge {
       apiKey: "test-key",
       judge: JEV_TEST_JUDGE,
       fetch: fetchImpl,
+      // Retries are real; only the wait between them is skipped.
+      sleep: () => Promise.resolve(),
     });
   }
 

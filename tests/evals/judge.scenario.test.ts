@@ -250,9 +250,12 @@ describe("the judge's overall answer is the category-routing gate", () => {
 // ===========================================================================
 
 describe("the judge cannot give a verdict", () => {
-  it("reports the case as errored, not failed, when the endpoint returns an error", async () => {
-    const run = await judged(TASK, ANSWER, decisions({ status: 503 }));
+  it("reports the case as errored, not failed, when the endpoint keeps returning an error", async () => {
+    const endpoint = decisions({ status: 503 });
+    const run = await judged(TASK, ANSWER, endpoint);
 
+    // Each of the two judged dimensions was asked three times in all.
+    expect(endpoint.requests.length).toBe(6);
     expect(run.firstCase?.errored).toBe(true);
     expect(run.firstCase?.errorClassification).toBe("judge-http-failure");
     expect(run.rollups[0]?.failedCases).toBe(0);

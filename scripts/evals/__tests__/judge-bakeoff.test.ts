@@ -976,6 +976,7 @@ describe("the production judge asks what the acceptance check asked", () => {
     expect(production.rubricDescription).toBe(item.rubric);
     expect(production.reference).toBe(item.reference);
     expect(production.criteria).toEqual(item.criteria);
+    expect(buildJevState(production)).toBe(harnessState(item));
   });
 });
 

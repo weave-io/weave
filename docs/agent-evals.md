@@ -542,7 +542,10 @@ version (`judge-response-invalid`), or a rubric plus answer longer than Jev's
 `judge-input-too-long`) each make the case errored; see
 [Empty and truncated answers](#empty-and-truncated-answers-errored-cases).
 An over-long answer is refused, never truncated. The longest answer the
-acceptance check saw was about 11,000 characters.
+acceptance check saw was about 11,000 characters. A transient failure (no
+response, HTTP 429 or 5xx) is retried up to twice first (`JEV_MAX_RETRIES`),
+honouring `Retry-After` up to 30 seconds, each attempt with its own
+two-minute timeout; any other failure is not retried.
 
 **Known blind spots.** Jev passed two of the acceptance check's constructed
 failures, and the rubric-derived questions do not close them:

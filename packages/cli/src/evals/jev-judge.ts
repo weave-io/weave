@@ -319,6 +319,52 @@ export interface JevJudgeOptions {
   endpoint?: string;
   /** Replaces `JEV_REQUEST_TIMEOUT_MS`. */
   timeoutMs?: number;
+  /** Waits between attempts. Defaults to `Bun.sleep`; inject in tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * How many times a transient judge failure is retried (so at most three
+ * attempts in all): no response, HTTP 429 or HTTP 5xx. The chat judge this
+ * replaced retried the same failures twice through the OpenAI client.
+ */
+export const JEV_MAX_RETRIES = 2;
+
+/** The wait before retry `n` (0-based) when the answer names none. */
+const JEV_RETRY_BASE_MS = 1_000;
+
+/** The longest a `Retry-After` header may make the judge wait. */
+const JEV_RETRY_AFTER_MAX_MS = 30_000;
+
+/** One failed attempt, and whether and when it may be tried again. */
+interface AttemptFailure {
+  error: ScoringError;
+  retryable: boolean;
+  retryAfterMs?: number;
+}
+
+/** Whether an HTTP status is worth asking again: rate limit or server error. */
+function retryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * The wait a `Retry-After` header asks for, in milliseconds, capped at
+ * `JEV_RETRY_AFTER_MAX_MS`. Accepts delta-seconds and an HTTP date;
+ * anything else is ignored.
+ */
+export function retryAfterMs(
+  header: string | null,
+  now: number = Date.now(),
+): number | undefined {
+  if (header === null || header.trim() === "") return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, JEV_RETRY_AFTER_MAX_MS);
+  }
+  const date = Date.parse(header);
+  if (Number.isNaN(date)) return undefined;
+  return Math.min(Math.max(date - now, 0), JEV_RETRY_AFTER_MAX_MS);
 }
 
 /** The eval judge: one decisions call per judged dimension. */
@@ -326,11 +372,13 @@ export class JevJudge implements LangChainJudge {
   private readonly fetchImpl: FetchLike;
   private readonly endpoint: string;
   private readonly timeoutMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly options: JevJudgeOptions) {
     this.fetchImpl = options.fetch ?? ((url, init) => fetch(url, init));
     this.endpoint = options.endpoint ?? JEV_DECISIONS_ENDPOINT;
     this.timeoutMs = options.timeoutMs ?? JEV_REQUEST_TIMEOUT_MS;
+    this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
   }
 
   /** The judge a run scored by this instance records. */
@@ -344,7 +392,7 @@ export class JevJudge implements LangChainJudge {
     if (request.isErr()) {
       return new ResultAsync(Promise.resolve(err(request.error)));
     }
-    return this.post(input.dimension, request.value)
+    return this.post(input.dimension, JSON.stringify(request.value), 0)
       .andThen((body) => parseJevDecision(body, input, model))
       .map((decision) => ({
         score: jevScore(decision.overall),
@@ -352,10 +400,31 @@ export class JevJudge implements LangChainJudge {
       }));
   }
 
+  /**
+   * Send the request, retrying a transient failure up to `JEV_MAX_RETRIES`
+   * times. Each attempt gets its own timeout. Any other failure, or one that
+   * outlasts the retries, is returned as it is.
+   */
   private post(
     dimension: ScoringDimension,
-    request: JevRequest,
+    body: string,
+    attempt: number,
   ): ResultAsync<unknown, ScoringError> {
+    return this.attempt(dimension, body).orElse((failure) => {
+      if (!failure.retryable || attempt >= JEV_MAX_RETRIES) {
+        return err<unknown, ScoringError>(failure.error);
+      }
+      const wait = failure.retryAfterMs ?? JEV_RETRY_BASE_MS * 2 ** attempt;
+      return ResultAsync.fromSafePromise(this.sleep(wait)).andThen(() =>
+        this.post(dimension, body, attempt + 1),
+      );
+    });
+  }
+
+  private attempt(
+    dimension: ScoringDimension,
+    body: string,
+  ): ResultAsync<unknown, AttemptFailure> {
     const httpError = (status: number, message: string): ScoringError => ({
       type: "JudgeHttpError",
       dimension,
@@ -372,32 +441,44 @@ export class JevJudge implements LangChainJudge {
             Authorization: `Bearer ${this.options.apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(request),
+          body,
           signal: AbortSignal.timeout(this.timeoutMs),
         }),
-      (cause) => httpError(0, `judge request failed: ${String(cause)}`),
+      (cause): AttemptFailure => ({
+        error: httpError(0, `judge request failed: ${String(cause)}`),
+        retryable: true,
+      }),
     );
     return send().andThen((response) =>
-      ResultAsync.fromPromise(response.text(), (cause) =>
-        httpError(
-          response.status,
-          `judge response could not be read: ${String(cause)}`,
-        ),
+      ResultAsync.fromPromise(
+        response.text(),
+        (cause): AttemptFailure => ({
+          error: httpError(
+            response.status,
+            `judge response could not be read: ${String(cause)}`,
+          ),
+          retryable: true,
+        }),
       ).andThen((text) => {
         if (!response.ok) {
-          return err<unknown, ScoringError>(
-            httpError(
+          return err<unknown, AttemptFailure>({
+            error: httpError(
               response.status,
               `judge returned HTTP ${response.status}: ${text.slice(0, ERROR_BODY_MAX_CHARS)}`,
             ),
-          );
+            retryable: retryableStatus(response.status),
+            retryAfterMs: retryAfterMs(response.headers.get("Retry-After")),
+          });
         }
         return Result.fromThrowable(
           () => JSON.parse(text) as unknown,
-          (): ScoringError => ({
-            type: "JudgeResponseInvalid",
-            dimension,
-            message: "the judge's response body is not JSON",
+          (): AttemptFailure => ({
+            error: {
+              type: "JudgeResponseInvalid",
+              dimension,
+              message: "the judge's response body is not JSON",
+            },
+            retryable: false,
           }),
         )();
       }),

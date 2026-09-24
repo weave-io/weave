@@ -376,7 +376,7 @@
   - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
   - function jevScore: (overall) => number
   - function jevRationale: (decision) => string
-  - _...10 more_
+  - _...12 more_
 - `packages/cli/src/evals/judge-questions.ts`
   - function signalQuestion: (signal) => string
   - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined

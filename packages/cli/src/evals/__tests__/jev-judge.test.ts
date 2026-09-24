@@ -27,13 +27,17 @@ import { describe, expect, it } from "bun:test";
 import {
   buildJevRequest,
   type FetchLike,
+  JEV_MAX_RETRIES,
   JEV_MAX_STATE_CHARS,
   JevJudge,
   jevRationale,
   jevScore,
   parseJevDecision,
+  retryAfterMs,
 } from "../jev-judge.js";
 import type { JudgeInput } from "../langchain-agent-evals.js";
+
+const noWait = () => Promise.resolve();
 
 const JUDGE = {
   id: "typesafe/jev-1.13",
@@ -211,7 +215,12 @@ describe("JevJudge", () => {
     const throwing: FetchLike = () => {
       throw new Error("no network");
     };
-    const judge = new JevJudge({ apiKey: "k", judge: JUDGE, fetch: throwing });
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: throwing,
+      sleep: noWait,
+    });
 
     const result = await judge.evaluate(input());
     expect(result._unsafeUnwrapErr()).toMatchObject({
@@ -223,7 +232,12 @@ describe("JevJudge", () => {
 
   it("returns a typed error when fetch rejects", async () => {
     const rejecting: FetchLike = () => Promise.reject(new Error("timeout"));
-    const judge = new JevJudge({ apiKey: "k", judge: JUDGE, fetch: rejecting });
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: rejecting,
+      sleep: noWait,
+    });
 
     const result = await judge.evaluate(input());
     expect(result._unsafeUnwrapErr()).toMatchObject({
@@ -251,5 +265,98 @@ describe("JevJudge", () => {
   it("reports the judge it is pinned to", () => {
     const judge = new JevJudge({ apiKey: "k", judge: JUDGE });
     expect(judge.identity()).toEqual(JUDGE);
+  });
+});
+
+describe("JevJudge retries", () => {
+  /** A fetch that answers with each status in turn, then 200 with a verdict. */
+  function sequence(statuses: number[], headers: Record<string, string> = {}) {
+    const calls: number[] = [];
+    const fetchImpl: FetchLike = async () => {
+      const status = statuses[calls.length];
+      calls.push(status ?? 200);
+      if (status !== undefined) {
+        return new Response("busy", { status, headers });
+      }
+      return Response.json({
+        model: JUDGE.version,
+        answers: answers({ a: 1, b: 1, overall: 1 }),
+      });
+    };
+    return { fetchImpl, calls };
+  }
+
+  it("asks again after a 503 and scores the answer that comes back", async () => {
+    const { fetchImpl, calls } = sequence([503]);
+    const waits: number[] = [];
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: fetchImpl,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    const result = await judge.evaluate(input());
+    expect(result._unsafeUnwrap().score).toBe(1);
+    expect(calls).toEqual([503, 200]);
+    expect(waits).toEqual([1000]);
+  });
+
+  it("gives up after the last retry with the HTTP error", async () => {
+    const { fetchImpl, calls } = sequence([429, 429, 429, 429]);
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: fetchImpl,
+      sleep: noWait,
+    });
+
+    const result = await judge.evaluate(input());
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "JudgeHttpError",
+      status: 429,
+    });
+    expect(calls.length).toBe(JEV_MAX_RETRIES + 1);
+  });
+
+  it("does not ask again after a 400", async () => {
+    const { fetchImpl, calls } = sequence([400]);
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: fetchImpl,
+      sleep: noWait,
+    });
+
+    const result = await judge.evaluate(input());
+    expect(result._unsafeUnwrapErr()).toMatchObject({ status: 400 });
+    expect(calls).toEqual([400]);
+  });
+
+  it("waits as long as Retry-After asks", async () => {
+    const { fetchImpl } = sequence([429], { "Retry-After": "7" });
+    const waits: number[] = [];
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: fetchImpl,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    await judge.evaluate(input());
+    expect(waits).toEqual([7000]);
+  });
+
+  it.each([
+    ["2", 2000],
+    ["600", 30000],
+    ["soon", undefined],
+    ["", undefined],
+  ])("reads Retry-After %p as %p ms", (header, ms) => {
+    expect(retryAfterMs(header)).toBe(ms);
   });
 });
