@@ -37,7 +37,7 @@ proof_build_adapter \
   "${BUILD_STAGE}/adapter/dist" \
   ./src/index.ts ./src/server.ts \
   -- \
-  "@opencode-ai/plugin" "@opencode-ai/sdk" "@opencode-ai/client" \
+  "@opencode/plugin" "@opencode/sdk" "@opencode/client" \
   mustache neverthrow zod
 
 cat > "${BUILD_STAGE}/adapter/package.json" <<'JSON'

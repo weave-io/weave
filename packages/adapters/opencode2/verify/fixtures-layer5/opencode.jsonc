@@ -9,7 +9,7 @@
         "proof-model": {
           "name": "Proof Model",
           "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
-          "limit": { "context": 32768, "output": 4096 }
+          "limit": { "context": 1000000, "output": 4096 }
         }
       }
     }

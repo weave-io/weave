@@ -12,6 +12,15 @@
   instead of `catalog.updated`, applies temperature through the session
   context `options` field, and no longer expects a `workspaceID` on session
   location refs.
+- Port the Podman verify harness to the 2.0.x host: `host.plugin.awaitActivation()`
+  no longer exists, so activation is observed through `plugin.list()` state;
+  the layer-5 fixture moves to `verify/fixtures-layer5` because the host now
+  rejects the duplicate plugin ID it inherited from the ancestor config;
+  fixtures raise the proof model context limit so the run no longer trips
+  automatic compaction; the `opencode` binary check accepts the V2 host
+  (`@opencode/cli` links both `opencode` and `opencode2`); and the standalone
+  cleanup marker is reported rather than asserted because the 2.0.x CLI
+  terminates its standalone server with SIGTERM before plugin cleanup runs.
 
 - Route the native `./server` entry through the catalog-backed core integration.
   Preserve the root `OpenCode2Adapter` facade and the V1 package independently.

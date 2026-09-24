@@ -42,11 +42,24 @@ RUN bun install
 # Assert the opencode2 binary is on PATH.
 RUN test -x "$(command -v opencode2)" || (echo "FAIL: opencode2 binary not found on PATH" && exit 1)
 
-# Assert V1 `opencode` is absent and was never installed (layer 10).
+# Assert the V1 host was never installed (layer 10). Since OpenCode 2.0 the
+# `@opencode/cli` package links both `opencode` and `opencode2`, so the
+# presence of an `opencode` binary is no longer a V1 signal: require that
+# any `opencode` on PATH reports a 2.x version, and that the V1 package
+# (`opencode-ai`) is absent from node_modules.
 RUN if command -v opencode >/dev/null 2>&1; then \
-      echo "FAIL: V1 'opencode' binary is present in the image" && exit 1; \
+      version="$(opencode --version 2>/dev/null || true)"; \
+      case "${version}" in \
+        "opencode v2."*) echo "OK: 'opencode' on PATH is the V2 host (${version})" ;; \
+        *) echo "FAIL: 'opencode' on PATH is not the V2 host (${version:-no version})" && exit 1 ;; \
+      esac; \
     else \
-      echo "OK: V1 'opencode' binary is absent"; \
+      echo "OK: no 'opencode' binary on PATH"; \
+    fi
+RUN if [ -d node_modules/opencode-ai ]; then \
+      echo "FAIL: V1 'opencode-ai' package is present in node_modules" && exit 1; \
+    else \
+      echo "OK: V1 'opencode-ai' package is absent"; \
     fi
 RUN if [ -d node_modules/@weaveio/weave-adapter-opencode ] && [ ! -L node_modules/@weaveio/weave-adapter-opencode ]; then \
       echo "FAIL: V1 adapter package '@weaveio/weave-adapter-opencode' is present in node_modules" && exit 1; \
@@ -61,6 +74,7 @@ RUN if [ -d node_modules/opencode ]; then \
 # built adapter's ./server subpath export.
 COPY container-smoke.ts ./verify/container-smoke.ts
 COPY fixtures ./verify/fixtures
+COPY fixtures-layer5 ./verify/fixtures-layer5
 COPY fixtures-layer6 ./verify/fixtures-layer6
 
 ENTRYPOINT ["/bin/bash"]

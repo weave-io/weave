@@ -190,7 +190,7 @@ else
 fi
 
 echo "==> Layer 5/9: agent-materialization test — embedded (all declared agents via host.agent.list())"
-if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures/agent-materialization "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts agent-materialization'; then
+if podman run --rm -e FIXTURE_DIR=/work/verify/fixtures-layer5 "${IMAGE_TAG}" -c 'cd /work && timeout 30 bun run verify/container-smoke.ts agent-materialization'; then
   abort_on_failure "5-agent-materialization" "passed" "host.agent.list() reports every declared Weave agent as Weave-owned"
 else
   abort_on_failure "5-agent-materialization" "failed" "host.agent.list() did not report every declared Weave agent as Weave-owned"
