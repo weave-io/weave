@@ -130,7 +130,7 @@
 - `packages/adapters/opencode2/src/plugin-context.ts`
   - function fromLiveContext: (ctx) => PluginContextFacade
   - interface PluginContextAgentFacade
-  - interface PluginContextCatalogFacade
+  - interface PluginContextModelFacade
   - interface PluginContextSkillFacade
   - interface PluginContextCommandFacade
   - interface PluginContextSessionFacade
@@ -248,10 +248,10 @@
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
-  - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
-  - interface LangChainOpenAIModule
+  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
+  - const JUDGE_MODEL_ID
   - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
@@ -369,6 +369,21 @@
   - const MAX_EVAL_REPEAT
   - const KNOWN_EVAL_AGENTS
   - _...1 more_
+- `packages/cli/src/evals/jev-judge.ts`
+  - function displayResponse: (response) => string
+  - function buildJevState: (input) => string
+  - function buildJevRequest: (input, model) => Result<JevRequest, ScoringError>
+  - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
+  - function jevScore: (overall) => number
+  - function jevRationale: (decision) => string
+  - _...12 more_
+- `packages/cli/src/evals/judge-questions.ts`
+  - function signalQuestion: (signal) => string
+  - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
+  - function delegationJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
+  - function rationaleJudgeInput: (run, evalCase, rubric) => JudgeInput
+  - const SIGNAL_QUESTIONS: Readonly<Record<string, string>>
+  - const RATIONALE_CRITERIA: readonly JudgeCriterion[]
 - `packages/cli/src/evals/judgment-cases.ts`
   - function isJudgmentCase: (evalCase) => boolean
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
@@ -379,13 +394,13 @@
   - _...1 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function escapeTemplateBraces: (text) => string
-  - function buildRationaleProjection: (run) => string
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun, erroredCases) => string
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun, erroredCases) => string
-  - _...13 more_
+  - function buildJudgmentExecutionDimension: (run, evalCase) => DimensionScore
+  - _...12 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
@@ -483,7 +498,7 @@
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
   - type ModelAttemptTallyEntry
-  - _...44 more_
+  - _...47 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -930,14 +945,14 @@
   - interface DocumentStore
   - type LinkCheckError
 - `scripts/evals/judge-bakeoff.ts`
-  - function signalQuestion: (signal) => string
   - function sonnetThreshold: (evalCase, rubric) => number
   - function buildItem: (entry, raw, "caseId" | "modelId" | "transcript" | "rawContent"
   >, evalCase, rubric) => Result<BakeoffItem, BakeoffError>
   - function displayResponse: (item, "response">) => string
   - function buildJevState: (item) => string
   - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
-  - _...42 more_
+  - function parseJevResponse: (item, body, expectedVersion) => Result<JevVerdict, BakeoffError>
+  - _...40 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>

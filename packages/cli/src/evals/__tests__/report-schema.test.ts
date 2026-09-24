@@ -41,6 +41,7 @@ import {
   DashboardEntrySchema,
   DashboardManifestSchema,
   EXPLANATION_MAX_CHARS,
+  JudgeIdentitySchema,
   MODEL_COMPARISON_SCHEMA_VERSION,
   ModelAttemptTallySchema,
   ModelComparisonEntrySchema,
@@ -582,6 +583,71 @@ describe("PublicReportBundleSchema", () => {
     expect(json).not.toContain('"rawContent"');
     expect(json).not.toContain('"transcript"');
     expect(json).not.toContain('"dimensionRationales"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The recorded judge (Spec 37, task 16.4)
+// ---------------------------------------------------------------------------
+
+describe("PublicReportBundleSchema.judge", () => {
+  const JEV = {
+    id: "typesafe/jev-1.13",
+    version: "typesafe/jev-1.13-20260917",
+  };
+
+  it("accepts a report that records the judge", () => {
+    const result = PublicReportBundleSchema.safeParse(
+      makeValidPublicReportBundle({ judge: JEV }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("still accepts a report with no judge, as every run before 16.4 wrote", () => {
+    const bundle = makeValidPublicReportBundle();
+    expect("judge" in bundle).toBe(false);
+    expect(PublicReportBundleSchema.safeParse(bundle).success).toBe(true);
+  });
+
+  it("rejects a judge with no version", () => {
+    const result = PublicReportBundleSchema.safeParse(
+      makeValidPublicReportBundle({ judge: { id: JEV.id } }),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["judge", "version"]);
+  });
+
+  it("rejects any key besides id and version, so nothing else rides along", () => {
+    const result = PublicReportBundleSchema.safeParse(
+      makeValidPublicReportBundle({
+        judge: { ...JEV, rationale: "the answer looked fine" },
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("JudgeIdentitySchema", () => {
+  it.each([
+    ["typesafe/jev-1.13", "typesafe/jev-1.13-20260917"],
+    ["anthropic/claude-sonnet-4.5", "2025-09-29"],
+  ])("accepts the model slug %s at %s", (id, version) => {
+    expect(JudgeIdentitySchema.safeParse({ id, version }).success).toBe(true);
+  });
+
+  it.each([
+    ["free text", "the judge thought this was fine"],
+    ["markup", "<script>alert(1)</script>"],
+    ["a Markdown link", "[x](https://example.com)"],
+    ["an empty string", ""],
+    ["an over-long slug", `a/${"b".repeat(200)}`],
+  ])("rejects %s as a version, with a readable message", (_label, version) => {
+    const result = JudgeIdentitySchema.safeParse({
+      id: "typesafe/jev-1.13",
+      version,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/judge fields must/);
   });
 });
 

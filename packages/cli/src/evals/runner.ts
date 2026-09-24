@@ -95,6 +95,7 @@ import {
   type GitShaProvider,
 } from "./provenance.js";
 import { RawArtifactsWriter } from "./raw-artifacts.js";
+import type { JudgeIdentity } from "./report-schema.js";
 import type { ResultsRepoPublisher } from "./results-repo.js";
 import {
   SHUTTLE_EXECUTION_SUITE,
@@ -250,6 +251,13 @@ export interface RepeatabilityComparisonKey {
    */
   repeatCount?: number;
   suites: string[];
+  /**
+   * The judge that scored the run (Spec 37, 16.4). Absent in artifacts
+   * written before it and in runs no judge scored; an absent judge never
+   * matches a recorded one, because scores under different judges are not
+   * on the same scale.
+   */
+  judge?: JudgeIdentity;
 }
 
 /**
@@ -671,6 +679,14 @@ export interface EvalOrchestratorOptions {
    */
   scorer: AgentEvalsScorer;
   /**
+   * The judge behind `scorer`, as the run records it (Spec 37, task 16.4):
+   * written to `bundle-index.json`, `public-report.json` and
+   * `provenance-manifest.json`, so `weave eval compare` can refuse runs
+   * scored by different judges. Omit it when no judge scores the run (a dry
+   * run); a bundle without one reads as "unknown judge".
+   */
+  judge?: JudgeIdentity;
+  /**
    * Prompt provider for all eval-covered agents.
    *
    * When set, the provider is passed to all suite runners. When omitted, each runner constructs its
@@ -829,6 +845,7 @@ export interface EvalOrchestratorOptions {
 export class EvalOrchestrator {
   private readonly modelClient: ModelClient;
   private readonly scorer: AgentEvalsScorer;
+  private readonly judge: JudgeIdentity | undefined;
   private readonly promptProvider: PromptProvider | undefined;
   private readonly snapshotProvider: SnapshotProvider;
   private readonly gitShaProvider: GitShaProvider;
@@ -847,6 +864,7 @@ export class EvalOrchestrator {
     // answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5).
     this.modelClient = new RetryingModelClient(options.modelClient);
     this.scorer = options.scorer;
+    this.judge = options.judge;
     this.promptProvider = options.promptProvider;
     this.snapshotProvider =
       options.snapshotProvider ?? makeDefaultSnapshotProvider();
@@ -1708,6 +1726,7 @@ export class EvalOrchestrator {
             publisher,
             remoteSequenceReader,
             repeatCount: request.repeat ?? 1,
+            judge: this.judge,
             // Produce the human-readable Markdown report alongside the JSON
             // report for every non-dry-run bundle so all registered suites surface
             // through the same public reporting pipeline.
@@ -2038,6 +2057,7 @@ export class EvalOrchestrator {
         ? { repeatCount: metadata.repeatCount }
         : {}),
       suites,
+      ...(this.judge !== undefined ? { judge: { ...this.judge } } : {}),
     };
   }
 
@@ -2052,6 +2072,8 @@ export class EvalOrchestrator {
     }
     if (left.caseFilter !== right.caseFilter) return false;
     if ((left.repeatCount ?? 1) !== (right.repeatCount ?? 1)) return false;
+    if (left.judge?.id !== right.judge?.id) return false;
+    if (left.judge?.version !== right.judge?.version) return false;
     if (left.suites.length !== right.suites.length) return false;
 
     for (let index = 0; index < left.suites.length; index += 1) {

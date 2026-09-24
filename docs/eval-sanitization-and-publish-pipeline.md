@@ -115,6 +115,8 @@ Async helper that scans the `runs/` directory for existing entries matching `<pr
 
 Assembles an `EvalBundle` from runner results and provenance data. Runs all output through the sanitizer before returning. Returns `err(BundleError)` on sanitization failure.
 
+**The judge** (Spec 37, task 16.4). When the orchestrator is given the judge that scored the run, `assembleBundle` validates it against `JudgeIdentitySchema` (two model slugs, `id` and `version`; anything else is a `BundleSanitizationError` and nothing is written) and the writer records it as `judge` in `bundle-index.json`, `public-report.json`, `provenance-manifest.json` and a `**Judge**:` line of `public-report.md`. A dry run records none. It is the only judge-related value published: the judge (TypeSafe Jev) returns no free text, and the rationale built from its answers stays in local `raw/` files. See [The judge](agent-evals.md#the-judge).
+
 **Multi-model score file aggregation**: When multiple `RunnerResult` values share the same `suite` name (typical in multi-model matrix runs where one `RunnerResult` is produced per model per suite), `assembleBundle` merges them into a **single `BundleScoreFile` per suite** using `aggregateScoreFile()`. This ensures that a full 5-model × 2-suite run produces exactly 2 score files — `score-loom-routing.json` and `score-tapestry-execution.json` — each containing all model rows, rather than being overwritten by each successive model result.
 
 #### `aggregateScoreFile(suiteName, results, gitSha, assembledAt, dryRun)`
@@ -201,7 +203,7 @@ interface RawErrorSummary {
 - Blocked by `SENSITIVE_FIELD_NAMES` — any publishable JSON containing `"localDiagnostic"` is rejected.
 - Only written to `raw/` subdirectory files, never to bundle files.
 
-This gives local developers actionable failure information (e.g., `"LangChain AgentEvals judge call failed: timeout after 30s"`) without risking secret leakage in published artifacts.
+This gives local developers actionable failure information (e.g., `"judge returned HTTP 503: …"`) without risking secret leakage in published artifacts.
 
 ---
 

@@ -18,7 +18,7 @@
  *   `dimensionScores.<dim>.{score, applicable}`, `weightedTotal`, `passed`,
  *   `required`, `scoredAt`, and the `publicExplanation` a report renders.
  * - **`judgeCalls`** — every question the run put to the judge, with the
- *   rubric text, the projection of the answer, and the reference. This is what
+ *   rubric text, the answer itself, the reference and the criteria. This is what
  *   makes the scorer's *inputs* observable and not just its outputs: whether a
  *   dimension reached the judge at all, and what the judge was shown.
  * - **`rawArtifacts`** — under `--raw-artifacts`, the local-only diagnostic a
@@ -235,8 +235,9 @@ describe("a scored case decides how much of the verdict the judge gets to set", 
 
     expect(call?.reference).toBe("Expected chain: tapestry → shuttle");
     expect(call?.rubricDescription).toContain(
-      "The model should express the delegation chain: tapestry → shuttle",
+      "Expected delegation chain: tapestry → shuttle",
     );
+    expect(call?.response).toBe(DELEGATED);
   });
 
   const OTHER_AGENT = "→ pattern should plan this one first.";
@@ -294,8 +295,11 @@ describe("a scored case decides how much of the verdict the judge gets to set", 
       (c) => c.dimension === "executionCompleteness",
     );
 
-    expect(call?.reference).toContain("required artifacts: [plan_path]");
-    expect(call?.response).toContain("artifacts produced: [plan_path]");
+    expect(call?.reference).toBe(
+      "Task: Implement the feature; required signals: [plan_path]",
+    );
+    expect(call?.criteria.map((c) => c.key)).toEqual(["plan_path"]);
+    expect(call?.response).toBe(COMPLETED);
   });
 });
 
@@ -695,7 +699,13 @@ describe("the judge answers one question and fails the other", () => {
 // What the judge is shown of the answer
 // ===========================================================================
 
-describe("the judge is asked how well an answer reads", () => {
+/**
+ * Since Spec 37 task 16.4 the judge reads the agent's actual answer, with the
+ * rubric, the reference and the yes/no criteria derived from the case. Before
+ * it, the judge saw only a summary of which runner signals fired, so it could
+ * not check anything the signals did not already say.
+ */
+describe("the judge reads the answer itself", () => {
   const SECRET = "sk-secret-api-key-sentinel";
 
   /** The question a run put to the judge about the prose. */
@@ -703,73 +713,74 @@ describe("the judge is asked how well an answer reads", () => {
     return run.judgeCalls.find((call) => call.dimension === "rationaleQuality");
   }
 
-  it("shows it the shape of the answer rather than the answer itself", async () => {
-    const run = await score(
-      ROUTING,
-      `→ shuttle. My key is ${SECRET} and here is my reasoning.`,
-    );
-    const question = proseQuestion(run);
-
-    // Positive first: the case really was scored, so the absence below is
-    // about what the projection withheld and not about a run that never got
-    // as far as asking.
-    expect(run.firstCase?.dimensionScores.rationaleQuality.applicable).toBe(
-      true,
-    );
-    expect(question?.response).toContain("routed_agents: [shuttle]");
-    expect(question?.response).not.toContain(SECRET);
-    expect(question?.response).not.toContain("here is my reasoning");
-  });
-
-  it("counts the transcript rather than quoting it", async () => {
-    const run = await score(ROUTING, `→ shuttle. Contains ${SECRET}.`);
-    const question = proseQuestion(run);
-
-    expect(question?.response).toContain("transcript_message_count: 2");
-    expect(question?.response).not.toContain(SECRET);
-  });
-
-  it("says (none) for a signal the answer never gave, rather than leaving it out", async () => {
-    // A routing answer gives a route and nothing else; a task answer gives
-    // artifacts and no route. Between them every signal is seen both present
-    // and absent, so "(none)" cannot pass for a line that was simply dropped.
-    const routed = proseQuestion(await score(ROUTING, ROUTED));
-    const completed = proseQuestion(await score(TASK, COMPLETED));
-
-    expect(routed?.response).toContain("routed_agents: [shuttle]");
-    expect(routed?.response).toContain("delegation_chain: (none)");
-    expect(routed?.response).toContain("produced_artifacts: (none)");
-
-    expect(completed?.response).toContain("routed_agents: (none)");
-    expect(completed?.response).toContain("produced_artifacts: [plan_path]");
-  });
-
-  it("names the signals the answer did give", async () => {
+  it("shows it the answer word for word, on every dimension it judges", async () => {
     const run = await score(TASK, COMPLETED);
-    const question = proseQuestion(run);
 
-    expect(question?.response).toContain("produced_artifacts: [plan_path]");
-    expect(question?.response).toContain("delegation_chain: (none)");
+    expect(run.judgeCalls.length).toBe(2);
+    for (const call of run.judgeCalls) {
+      expect(call.response).toBe(COMPLETED);
+    }
   });
 
-  it.each([
-    ["an answer that signalled completion", TASK, COMPLETED, true],
-    ["an answer that did not", TASK, "Still working on it.", false],
-  ])("reports on %s whether the task was called done", async (_label, fixture, answer, signalled) => {
-    const run = await score(fixture, answer);
-
-    expect(proseQuestion(run)?.response).toContain(
-      `completion_signalled: ${signalled}`,
+  it("gives it the case's reviewer notes in the rubric it reads", async () => {
+    const run = await score(
+      {
+        ...TASK,
+        id: "scoring-task-with-notes",
+        notes: "Every command the plan names must be one the case lists.",
+      },
+      COMPLETED,
     );
+
+    for (const call of run.judgeCalls) {
+      expect(call.rubricDescription).toContain(
+        "Reviewer notes: Every command the plan names must be one the case lists.",
+      );
+      expect(call.rubricDescription).toContain(
+        "Case: Complete the remaining plan task.",
+      );
+    }
   });
 
-  it("asks about the case's own description, not about the answer", async () => {
+  it("asks a routing case whether it routed to an accepted target and justified it", async () => {
     const run = await score(ROUTING, ROUTED);
     const question = proseQuestion(run);
 
-    expect(question?.reference).toBe(
-      "Evaluate quality for: Route this backend API task.",
+    expect(question?.criteria.map((c) => c.key)).toEqual([
+      "routes_to_accepted_target",
+      "justifies_routing",
+    ]);
+    expect(question?.criteria[0]?.question).toBe(
+      'Does the response make a clear routing decision to one of: "shuttle"?',
     );
+    expect(question?.reference).toBe('Expected: route to "shuttle"');
+  });
+
+  it("asks any other case whether the answer is coherent, relevant and detailed", async () => {
+    const question = proseQuestion(await score(TASK, COMPLETED));
+
+    expect(question?.criteria.map((c) => c.key)).toEqual([
+      "rationale_coherent",
+      "rationale_relevant",
+      "rationale_detailed",
+    ]);
+    expect(question?.reference).toBe(
+      "Evaluate quality for: Complete the remaining plan task.",
+    );
+  });
+
+  it("keeps what the judge was shown out of every published file", async () => {
+    const answer = `→ shuttle. My key is ${SECRET} and here is my reasoning.`;
+    const run = await score(ROUTING, answer);
+
+    // Positive first: the judge really was shown the answer, and the case
+    // was scored and published, so the absence below is about publishing.
+    expect(proseQuestion(run)?.response).toBe(answer);
+    expect(run.firstCase?.dimensionScores.rationaleQuality.applicable).toBe(
+      true,
+    );
+    expect(run.publishedText).not.toContain(SECRET);
+    expect(run.publishedText).not.toContain("here is my reasoning");
   });
 });
 

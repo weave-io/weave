@@ -30,6 +30,10 @@ describe("classifyErrorType", () => {
     ["NetworkError", "model-network-failure"],
     ["ScorerAdapterError", "scoring-adapter-failure"],
     ["RubricNotFound", "scoring-rubric-missing"],
+    ["JudgeHttpError", "judge-http-failure"],
+    ["JudgeResponseInvalid", "judge-response-invalid"],
+    ["JudgeInputTooLong", "judge-input-too-long"],
+    ["JudgeInputInvalid", "judge-input-invalid"],
   ])("maps %s to %s", (errorType, label) => {
     expect(classifyErrorType(errorType)).toBe(label);
   });

@@ -42,10 +42,12 @@
  * heuristics in the final score record. The locally computed `routingCorrectness`
  * is preserved — it always overrides any routing score the scorer may produce.
  *
- * Scorer errors are converted to the runner's existing typed per-case error
- * result (`ScorerAdapterError`), preserving suite continuation and raw artifact
- * boundaries. A scorer failure never throws — the case receives a zero-score
- * error result and the suite continues.
+ * Scorer (judge) errors error the case — `errored: true` with the error's
+ * classification — whenever the judge's verdict was needed to decide it. A
+ * required case whose gates do not involve the judge — its route fails the
+ * routing gate, or it declares no transcript expectations — is scored on
+ * routing alone instead (`buildScorerUnavailableScoreRecord()`). A scorer failure never throws, and
+ * the suite continues.
  *
  * When no scorer is injected, the runner uses local heuristic scoring for all
  * four dimensions (useful for isolated unit tests).
@@ -112,6 +114,7 @@ import type {
   RunnerError,
   RunnerResult,
   ScoringDimension,
+  ScoringError,
   TranscriptMessage,
 } from "./types.js";
 
@@ -1204,6 +1207,18 @@ export function redactSecrets(raw: string): string {
 // Zero-score result (error paths)
 // ---------------------------------------------------------------------------
 
+/**
+ * What an errored case still knows when the model did answer and only the
+ * judge failed: the answer, the prompt, and whether the rubric requires the
+ * case. Kept so the local raw artifact holds the answer for diagnosis and
+ * the published row keeps the case's real `required` flag.
+ */
+interface AnsweredCaseContext {
+  runOutput: ModelRunOutput;
+  composedPrompt: string;
+  required: boolean;
+}
+
 function buildErrorResult(
   evalCase: EvalCase,
   modelId: string,
@@ -1211,6 +1226,7 @@ function buildErrorResult(
   rawArtifacts: boolean,
   dimension?: string,
   rawMessage?: string,
+  answered?: AnsweredCaseContext,
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
@@ -1229,7 +1245,7 @@ function buildErrorResult(
     modelId,
     suite: evalCase.suite,
     passed: false,
-    required: true,
+    required: answered?.required ?? true,
     weightedTotal: 0,
     dimensionScores,
     scoredAt,
@@ -1252,9 +1268,9 @@ function buildErrorResult(
     ? {
         caseId: evalCase.id,
         modelId,
-        composedPrompt: "",
-        transcript: [],
-        rawContent: "",
+        composedPrompt: answered?.composedPrompt ?? "",
+        transcript: answered?.runOutput.transcript ?? [],
+        rawContent: answered?.runOutput.rawContent ?? "",
         dimensionRationales: {},
         errorSummary,
       }
@@ -1419,6 +1435,25 @@ export function buildScorerUnavailableScoreRecord(
     required: rubric.scoring.required,
     scoredAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Whether a case's verdict is settled without the judge. A required case is
+ * decided by its gates alone (`passesRequiredGates()`): a route that fails
+ * the routing gate fails whatever the judge says, and a case with no
+ * `transcript_expectations` has no judge gate, so its route decides it
+ * either way. An optional case's total includes the judge's score, so it
+ * always needs the judge; when the judge fails, such a case is errored
+ * rather than scored on routing alone.
+ */
+function routeAloneDecides(
+  evalCase: EvalCase,
+  rubric: EvalRubric,
+  routingCorrectness: DimensionScore,
+): boolean {
+  if (!rubric.scoring.required) return false;
+  if (routingCorrectness.score < 0.95) return true;
+  return evalCase.transcript_expectations.length === 0;
 }
 
 /**
@@ -1948,6 +1983,7 @@ export class TapestryCategoryRoutingRunner {
               scoreRecord: NormalizedScoreRecord;
               composedPrompt: string;
               scorerDegradation: ScorerDegradation | undefined;
+              judgeFailure: ScoringError | undefined;
             },
             { type: string; message: string }
           >(
@@ -1971,13 +2007,15 @@ export class TapestryCategoryRoutingRunner {
         // When a scorer is injected, call it for qualitative dimensions and
         // merge with the locally computed deterministic routing score.
         //
-        // A scorer failure is recovered here (via `.orElse`), NOT propagated
-        // to the outer `.match()` error branch. The deterministic
-        // `routingCorrectness` was already computed above and is preserved
-        // unconditionally: judge/scorer unavailability is a distinct failure
-        // mode from a wrong deterministic route, and must never zero out or
-        // discard a correct (or incorrect) routing decision. See
-        // `buildScorerUnavailableScoreRecord()`.
+        // A scorer (judge) failure errors the case — it goes to the outer
+        // `.match()` error branch — whenever the judge's verdict was needed
+        // to decide it (Spec 37, 16.4): a correct route on a required case
+        // with transcript expectations still has the judge's gate to clear,
+        // and an optional case's total includes the judge's score. A
+        // required case whose gates do not involve the judge (a wrong route,
+        // or no transcript expectations) is recovered here and scored on
+        // routing alone (`buildScorerUnavailableScoreRecord()`); see
+        // `routeAloneDecides()`.
         if (this.scorer !== undefined) {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
@@ -1993,8 +2031,29 @@ export class TapestryCategoryRoutingRunner {
               ),
               composedPrompt: systemPrompt,
               scorerDegradation: undefined as ScorerDegradation | undefined,
+              judgeFailure: undefined as ScoringError | undefined,
             }))
             .orElse((scoringError) => {
+              if (!routeAloneDecides(evalCase, rubric, routingCorrectness)) {
+                // The judge's verdict was needed: the case is errored, and
+                // keeps its answer (locally) and its real `required` flag.
+                return ResultAsync.fromSafePromise(
+                  Promise.resolve({
+                    runOutput,
+                    scoreRecord: buildScorerUnavailableScoreRecord(
+                      evalCase,
+                      modelId,
+                      rubric,
+                      routingCorrectness,
+                    ),
+                    composedPrompt: systemPrompt,
+                    scorerDegradation: undefined as
+                      | ScorerDegradation
+                      | undefined,
+                    judgeFailure: scoringError as ScoringError | undefined,
+                  }),
+                );
+              }
               const errorType =
                 "type" in scoringError
                   ? String(scoringError.type)
@@ -2026,6 +2085,7 @@ export class TapestryCategoryRoutingRunner {
                   ),
                   composedPrompt: systemPrompt,
                   scorerDegradation,
+                  judgeFailure: undefined as ScoringError | undefined,
                 }),
               );
             });
@@ -2046,11 +2106,35 @@ export class TapestryCategoryRoutingRunner {
             scoreRecord,
             composedPrompt: systemPrompt,
             scorerDegradation: undefined as ScorerDegradation | undefined,
+            judgeFailure: undefined as ScoringError | undefined,
           }),
         );
       })
       .match<CaseResult>(
-        ({ runOutput, scoreRecord, composedPrompt, scorerDegradation }) => {
+        ({
+          runOutput,
+          scoreRecord,
+          composedPrompt,
+          scorerDegradation,
+          judgeFailure,
+        }) => {
+          if (judgeFailure !== undefined) {
+            return buildErrorResult(
+              evalCase,
+              modelId,
+              judgeFailure.type,
+              rawArtifacts,
+              "dimension" in judgeFailure
+                ? String(judgeFailure.dimension)
+                : undefined,
+              judgeFailure.message,
+              {
+                runOutput,
+                composedPrompt,
+                required: scoreRecord.required,
+              },
+            );
+          }
           const dimensionScores = buildDimensionScoreSummary(
             scoreRecord.dimensions,
           );

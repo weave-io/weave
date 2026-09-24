@@ -502,7 +502,9 @@ packages/cli/src/evals/
 ├── weft-review-runner.ts       WeftReviewRunner
 ├── warp-security-runner.ts     WarpSecurityRunner
 ├── openrouter-client.ts        OpenRouter model inference client
-├── langchain-agent-evals.ts    LangChain AgentEvals scorer (rubric judge)
+├── langchain-agent-evals.ts    Scorer and the LangChainJudge interface
+├── judge-questions.ts          What the judge is asked per dimension
+├── jev-judge.ts                JevJudge — the eval judge (TypeSafe Jev)
 └── env.ts                      readEvalEnv — OPENROUTER_API_KEY validation
 ```
 

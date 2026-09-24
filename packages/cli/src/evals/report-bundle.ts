@@ -313,6 +313,7 @@ export function assemblePublicReportBundle(
         ? { repeatCount: bundle.runSummary.repeatCount }
         : {}),
     },
+    ...(bundle.judge !== undefined ? { judge: { ...bundle.judge } } : {}),
     suiteSummaries,
   };
 

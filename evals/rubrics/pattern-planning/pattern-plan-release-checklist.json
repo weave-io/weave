@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact marker tags or one exact heading phrase when the same structure is otherwise observable. Do require task-level file ownership. Require acceptance coverage per task: every task has its own acceptance, success, or verification step that checks that task's result; a single final verification note does not count. Every command the plan names must exist in the repository; a verification step that relies on an invented command does not count as verification."
+    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact marker tags or one exact heading phrase when the same structure is otherwise observable. Do require task-level file ownership. Require acceptance coverage per task: every task has its own acceptance, success, or verification step that checks that task's result; a single final verification note does not count. Every command the plan names must be one the case lists as available, or `bun install` / `npm install`, which are always available; a verification step that relies on any other (invented) command does not count as verification."
   }
 }

@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-settings-refactor",
-  "description": "Create a text-only implementation plan for refactoring the project settings workflow. Make the scope explicit, tie each implementation task to exact files, make ordering or dependency constraints visible, and include per-task acceptance or success criteria even if the headings use harmless formatting variations.",
+  "description": "Create a text-only implementation plan for refactoring the project settings workflow. Make the scope explicit, tie each implementation task to exact files, make ordering or dependency constraints visible, and include per-task acceptance or success criteria even if the headings use harmless formatting variations. Available commands (from package.json scripts): `bun run build`, `bun run typecheck`, `bun run lint`, `bun run test`.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "expected_outcome": {

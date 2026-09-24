@@ -1,4 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { buildJevState } from "../../../packages/cli/src/evals/jev-judge.js";
+import {
+  executionJudgeInput,
+  rationaleJudgeInput,
+} from "../../../packages/cli/src/evals/judge-questions.js";
 import { StubLangChainJudge } from "../../../packages/cli/src/evals/langchain-agent-evals.js";
 import {
   type EvalCase,
@@ -387,6 +392,7 @@ describe("SonnetBakeoffJudge", () => {
       rubricDescription: item.rubric,
       response: item.response,
       reference: item.reference,
+      criteria: item.criteria,
     });
   });
 
@@ -912,5 +918,125 @@ describe("unscoredItems", () => {
       [verdicts("B01", true, true)],
     );
     expect(toScore.map((i) => i.id)).toEqual(["N01"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parity with the production judge (task 16.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The production judge was accepted on what this harness showed Jev. If the
+ * two drift apart, the acceptance result no longer describes production, so
+ * the rubric, reference, criteria and state must match exactly.
+ */
+describe("the production judge asks what the acceptance check asked", () => {
+  function runOf(evalCaseValue: EvalCase) {
+    return {
+      caseId: evalCaseValue.id,
+      modelId: RAW.modelId,
+      routedAgents: [],
+      delegationChain: [],
+      transcript: RAW.transcript,
+      rawContent: RAW.rawContent,
+      completionSignalled: false,
+      producedArtifacts: [],
+    };
+  }
+
+  it("on a task case, through executionCompleteness", () => {
+    const item = taskItem();
+    const production = executionJudgeInput(
+      runOf(evalCase({})),
+      evalCase({}),
+      rubric(true),
+    );
+
+    expect(production?.rubricDescription).toBe(item.rubric);
+    expect(production?.reference).toBe(item.reference);
+    expect(production?.criteria).toEqual(item.criteria);
+    expect(production === undefined ? "" : buildJevState(production)).toBe(
+      harnessState(item),
+    );
+  });
+
+  it("on a routing case, through rationaleQuality", () => {
+    const item = buildItem(
+      { id: "B04", raw: "unused" },
+      RAW,
+      routingCase(),
+      rubric(true),
+    )._unsafeUnwrap();
+    const production = rationaleJudgeInput(
+      runOf(routingCase()),
+      routingCase(),
+      rubric(true),
+    );
+
+    expect(production.rubricDescription).toBe(item.rubric);
+    expect(production.reference).toBe(item.reference);
+    expect(production.criteria).toEqual(item.criteria);
+    expect(buildJevState(production)).toBe(harnessState(item));
+  });
+});
+
+describe("the production judge asks what the acceptance check asked, on a routing case with stops", () => {
+  it("names the declared stops in the question, rubric, reference and state alike", () => {
+    const withStops = evalCase({
+      id: "tcr-01-exact-match",
+      suite: "tapestry-category-routing",
+      allowed_agents: ["tapestry", "shuttle-client-frontend", "thread"],
+      expected_outcome: {
+        kind: "agent_routing",
+        target_agent: "shuttle-client-frontend",
+        via: ["thread"],
+      },
+      accepted_alternates: ["shuttle"],
+    });
+    const item = buildItem(
+      { id: "B99", raw: "unused" },
+      RAW,
+      withStops,
+      rubric(true),
+    )._unsafeUnwrap();
+    const production = rationaleJudgeInput(
+      {
+        caseId: withStops.id,
+        modelId: RAW.modelId,
+        routedAgents: [],
+        delegationChain: [],
+        transcript: RAW.transcript,
+        rawContent: RAW.rawContent,
+        completionSignalled: false,
+        producedArtifacts: [],
+      },
+      withStops,
+      rubric(true),
+    );
+
+    expect(item.criteria[0]?.question).toContain('"thread"');
+    expect(production.criteria).toEqual(item.criteria);
+    expect(production.rubricDescription).toBe(item.rubric);
+    expect(production.reference).toBe(item.reference);
+    expect(buildJevState(production)).toBe(harnessState(item));
+  });
+});
+
+/** The harness's own state, for the parity check above. */
+function harnessState(item: BakeoffItem): string {
+  return buildJevRequest(item)._unsafeUnwrap().state;
+}
+
+describe("parseJevResponse — the pinned version", () => {
+  it("refuses an answer from a Jev version other than the one production is pinned to", () => {
+    const body = {
+      ...(jevBody(0.9, {
+        review_verdict_present: 0.9,
+        review_custom_signal: 0.9,
+      }) as Record<string, unknown>),
+      model: "typesafe/jev-1.14-20261201",
+    };
+    const verdict = parseJevResponse(taskItem(), body);
+    expect(verdict._unsafeUnwrapErr().type).toBe("JevResponseInvalid");
   });
 });
