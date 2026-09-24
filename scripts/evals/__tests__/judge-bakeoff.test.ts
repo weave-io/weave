@@ -16,6 +16,7 @@ import {
   type FetchLike,
   type HumanLabel,
   type ItemVerdicts,
+  itemDigest,
   JEV_MAX_STATE_CHARS,
   JevClient,
   judgeAcceptance,
@@ -25,6 +26,7 @@ import {
   renderComparison,
   renderLabelSheet,
   SonnetBakeoffJudge,
+  staleVerdictIds,
   unscoredItems,
 } from "../judge-bakeoff.js";
 
@@ -245,6 +247,18 @@ describe("buildJevRequest", () => {
     expect(buildJevRequest(item)._unsafeUnwrap().state).toContain(
       "# Agent response\n(empty response)",
     );
+  });
+
+  it("rejects a criterion that reuses a reserved question key", () => {
+    const item = {
+      ...taskItem(),
+      criteria: [{ key: "overall", question: "Is it overall fine?" }],
+    };
+    expect(buildJevRequest(item)._unsafeUnwrapErr()).toEqual({
+      type: "ReservedCriterionKey",
+      itemId: "B01",
+      key: "overall",
+    });
   });
 
   it("refuses a state longer than Jev's context rather than truncating it", () => {
@@ -531,6 +545,7 @@ function verdicts(
 ): ItemVerdicts {
   return {
     id,
+    itemDigest: itemDigest(taskItem(id)),
     jev: {
       ok: true,
       modelVersion: "v",
@@ -668,6 +683,22 @@ describe("compare", () => {
     );
     expect(unscored._unsafeUnwrapErr()).toEqual({
       type: "MissingVerdicts",
+      ids: ["B02"],
+    });
+  });
+
+  it("rejects a verdict scored on different item content", () => {
+    const edited = { ...taskItem("B02"), response: "edited after scoring" };
+    const result = compare(
+      [taskItem("B01"), edited],
+      [verdicts("B01", true, true), verdicts("B02", true, true)],
+      labels([
+        ["B01", "pass"],
+        ["B02", "pass"],
+      ]),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "StaleVerdicts",
       ids: ["B02"],
     });
   });
@@ -846,6 +877,31 @@ describe("mergeItems", () => {
       type: "DuplicateItemIds",
       ids: ["B01"],
     });
+  });
+});
+
+describe("staleVerdictIds", () => {
+  it("flags a kept verdict whose item changed, and ignores unknown ids", () => {
+    const changed = { ...taskItem("B01"), sonnetPassThreshold: 0.7 };
+    expect(
+      staleVerdictIds(
+        [changed, taskItem("B02")],
+        [
+          verdicts("B01", true, true),
+          verdicts("B02", true, true),
+          verdicts("B09", true, true),
+        ],
+      ),
+    ).toEqual(["B01"]);
+  });
+});
+
+describe("staleVerdictIds (legacy files)", () => {
+  it("takes a verdict written before digests existed as written", () => {
+    const { itemDigest: _unused, ...legacy } = verdicts("B01", true, true);
+    expect(
+      staleVerdictIds([{ ...taskItem("B01"), response: "changed" }], [legacy]),
+    ).toEqual([]);
   });
 });
 

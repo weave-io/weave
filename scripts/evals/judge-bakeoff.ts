@@ -179,6 +179,8 @@ export type BakeoffError =
   | { type: "UnknownVerdictIds"; ids: string[] }
   | { type: "DuplicateLabelIds"; ids: string[] }
   | { type: "NoItems" }
+  | { type: "StaleVerdicts"; ids: string[] }
+  | { type: "ReservedCriterionKey"; itemId: string; key: string }
   | { type: "InconsistentVerdicts"; ids: string[] }
   | { type: "JudgeModelMismatch"; path: string; message: string };
 
@@ -251,6 +253,12 @@ export interface FailedVerdict {
 
 export interface ItemVerdicts {
   id: string;
+  /**
+   * `itemDigest()` of the item as scored. A verdict is reused, and compared,
+   * only while the item still has this digest. Verdict files written before
+   * digests existed have none and are taken as written.
+   */
+  itemDigest?: string;
   jev: JevVerdict | FailedVerdict;
   sonnet: SonnetVerdict | FailedVerdict;
 }
@@ -415,6 +423,9 @@ export interface JevRequest {
   questions: Record<string, JevQuestion>;
 }
 
+/** Question keys the harness adds itself; a criterion may not reuse them. */
+const RESERVED_JEV_KEYS: ReadonlySet<string> = new Set(["overall", "quality"]);
+
 const JEV_INSTRUCTION_PREFIX =
   "Read the rubric, the reference and the agent response in the state. ";
 
@@ -449,6 +460,14 @@ export function buildJevRequest(
   item: BakeoffItem,
   model: string = JEV_MODEL,
 ): Result<JevRequest, BakeoffError> {
+  const reserved = item.criteria.find((c) => RESERVED_JEV_KEYS.has(c.key));
+  if (reserved !== undefined) {
+    return err({
+      type: "ReservedCriterionKey",
+      itemId: item.id,
+      key: reserved.key,
+    });
+  }
   const state = buildJevState(item);
   if (state.length > JEV_MAX_STATE_CHARS) {
     return err({
@@ -688,7 +707,7 @@ export class BakeoffScorer {
         { item: item.id, jevOk: jev.ok, sonnetOk: sonnet.ok },
         "Scored bake-off item",
       );
-      verdicts.push({ id: item.id, jev, sonnet });
+      verdicts.push({ id: item.id, itemDigest: itemDigest(item), jev, sonnet });
     }
     return verdicts;
   }
@@ -1095,6 +1114,8 @@ export function compare(
   if (unscored.length > 0)
     return err({ type: "MissingVerdicts", ids: unscored });
 
+  const stale = staleVerdictIds(items, verdicts);
+  if (stale.length > 0) return err({ type: "StaleVerdicts", ids: stale });
   const inconsistent = items
     .filter((item) => !verdictsConsistent(item, byId.get(item.id)))
     .map((item) => item.id);
@@ -1325,6 +1346,10 @@ const FailedVerdictSchema = z.object({
 
 const ItemVerdictsSchema = z.object({
   id: z.string(),
+  itemDigest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   jev: z.union([
     z.object({
       ok: z.literal(true),
@@ -1405,6 +1430,45 @@ export function mergeItems(
     return err({ type: "DuplicateItemIds", ids: duplicates });
   }
   return ok(all);
+}
+
+/**
+ * SHA-256 over everything a judge sees or is thresholded by: rubric,
+ * reference, response, criteria and the Sonnet threshold (plus the task,
+ * which the labeller sees). Any edit to an item changes its digest.
+ */
+export function itemDigest(item: BakeoffItem): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(
+    JSON.stringify([
+      item.id,
+      item.suite,
+      item.caseId,
+      item.outcomeKind,
+      item.task,
+      item.rubric,
+      item.reference,
+      item.response,
+      item.criteria,
+      item.sonnetPassThreshold,
+    ]),
+  );
+  return hasher.digest("hex");
+}
+
+/** Ids whose stored verdict was scored on different item content. */
+export function staleVerdictIds(
+  items: BakeoffItem[],
+  existing: ItemVerdicts[],
+): string[] {
+  const digests = new Map(items.map((item) => [item.id, itemDigest(item)]));
+  return existing
+    .filter((v) => {
+      const current = digests.get(v.id);
+      if (v.itemDigest === undefined || current === undefined) return false;
+      return current !== v.itemDigest;
+    })
+    .map((v) => v.id);
 }
 
 /**
@@ -1590,6 +1654,8 @@ async function scoreCommand(args: Args): Promise<Result<void, BakeoffError>> {
     new JevClient(apiKey, jevModel),
     sonnet.value,
   );
+  const stale = staleVerdictIds(items.value, previous?.verdicts ?? []);
+  if (stale.length > 0) return err({ type: "StaleVerdicts", ids: stale });
   const toScore = unscoredItems(items.value, previous?.verdicts ?? []);
   log.info(
     { toScore: toScore.length, kept: previous?.verdicts.length ?? 0 },
