@@ -31,7 +31,7 @@ export type PublicPackageBuildError =
       config?: string;
       diagnostics?: string;
     }
-  | { type: "CliManifest"; path: string }
+  | { type: "ManifestVersion"; path: string }
   | {
       type: "PrivateDependencyReference";
       packageName: PublicPackageName;
@@ -420,31 +420,45 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
   ): ResultAsync<Record<string, string>, PublicPackageBuildError> {
     if (packageName !== "@weaveio/weave-cli") return okAsync({});
-    const manifestPath = "packages/cli/package.json";
+    // The CLI reports its own version, and `weave init --harness opencode2`
+    // pins the adapter version released alongside it.
+    return this.readManifestVersion("packages/cli/package.json").andThen(
+      (cliVersion) =>
+        this.readManifestVersion(
+          "packages/adapters/opencode2/package.json",
+        ).map((adapterVersion) => ({
+          "process.env.WEAVE_CLI_VERSION": JSON.stringify(cliVersion),
+          "process.env.WEAVE_OPENCODE2_ADAPTER_VERSION":
+            JSON.stringify(adapterVersion),
+        })),
+    );
+  }
+
+  private readManifestVersion(
+    manifestPath: string,
+  ): ResultAsync<string, PublicPackageBuildError> {
     return this.fileSystem.readText(manifestPath).andThen((contents) => {
-      const manifest = this.parseCliManifest(contents, manifestPath);
+      const manifest = this.parseManifestVersion(contents, manifestPath);
       if (manifest.isErr()) return errAsync(manifest.error);
-      return okAsync({
-        "process.env.WEAVE_CLI_VERSION": JSON.stringify(manifest.value.version),
-      });
+      return okAsync(manifest.value.version);
     });
   }
 
-  private parseCliManifest(
+  private parseManifestVersion(
     contents: string,
     path: string,
   ): Result<{ version: string }, PublicPackageBuildError> {
     const parsed = Result.fromThrowable(
       () => JSON.parse(contents) as unknown,
-      () => ({ type: "CliManifest" as const, path }),
+      () => ({ type: "ManifestVersion" as const, path }),
     )();
     if (parsed.isErr()) return err(parsed.error);
     if (typeof parsed.value !== "object" || parsed.value === null) {
-      return err({ type: "CliManifest", path });
+      return err({ type: "ManifestVersion", path });
     }
     const version = (parsed.value as { version?: unknown }).version;
     if (typeof version !== "string" || version.length === 0) {
-      return err({ type: "CliManifest", path });
+      return err({ type: "ManifestVersion", path });
     }
     return ok({ version });
   }
