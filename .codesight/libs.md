@@ -981,7 +981,7 @@
   - const OPENCODE2_PROOF_HOST_VERSION
   - const OPENCODE2_PROOF_ROOT
 - `scripts/proof/opencode2-live/checks.ts`
-  - function parseRequest: (request) => ParsedRequest
+  - function parseRequest: (request, delegationTool) => ParsedRequest
   - class LiveChecks
   - interface LiveVerdict
   - interface HostPlugin

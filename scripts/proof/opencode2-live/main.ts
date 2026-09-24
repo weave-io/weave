@@ -27,7 +27,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getBuiltinConfig } from "@weaveio/weave-config";
 import { logger } from "@weaveio/weave-engine";
-import { err, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import { WEAVE_OWNERSHIP_MARKER } from "../../../packages/adapters/opencode2/src/translate-agent.js";
 import { OPENCODE2_DELEGATION_ACTION } from "../../../packages/adapters/opencode2/src/v2/delegation.js";
 import {
@@ -43,6 +50,7 @@ import {
   livePaths,
   mustRun,
   OpenCode2Host,
+  runProcess,
   writeText,
 } from "./host.js";
 import {
@@ -68,6 +76,7 @@ const POLL_MS = 2_000;
 
 type LiveMainError =
   | { readonly type: "InvalidArguments"; readonly detail: string }
+  | { readonly type: "BuiltinConfig"; readonly detail: string }
   | { readonly type: "Harness"; readonly error: LiveHostError };
 
 interface LiveOptions {
@@ -76,21 +85,68 @@ interface LiveOptions {
   readonly plugin: PluginSource;
   readonly root: string;
   readonly keep: boolean;
+  /** Builtin agents the default Weave config declares. */
+  readonly agents: readonly string[];
   readonly reportPath?: string;
 }
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/;
 
-async function pinnedHostVersion(): Promise<string | undefined> {
-  const manifest = (await Bun.file(
-    join(REPO_ROOT, "packages", "adapters", "opencode2", "package.json"),
-  ).json()) as { dependencies?: Record<string, string> };
-  return manifest.dependencies?.["@opencode/plugin"];
+/** Marks a root this harness created, so only such a root is deleted. */
+const ROOT_SENTINEL = ".weave-opencode2-live";
+
+function pinnedHostVersion(): ResultAsync<string, LiveMainError> {
+  const path = join(
+    REPO_ROOT,
+    "packages",
+    "adapters",
+    "opencode2",
+    "package.json",
+  );
+  const invalid: LiveMainError = {
+    type: "InvalidArguments",
+    detail: `could not read the pinned @opencode/plugin version from ${path}`,
+  };
+  return ResultAsync.fromPromise(
+    Bun.file(path).json() as Promise<{ dependencies?: Record<string, string> }>,
+    () => invalid,
+  ).andThen((manifest) => {
+    const version = manifest.dependencies?.["@opencode/plugin"];
+    if (version === undefined) return errAsync<string, LiveMainError>(invalid);
+    return okAsync<string, LiveMainError>(version);
+  });
 }
 
-async function parseArguments(
+function resolveHost(requested: string): ResultAsync<string, LiveMainError> {
+  if (requested === "pinned") return pinnedHostVersion();
+  return okAsync(requested);
+}
+
+/**
+ * The expected agent set. An unreadable builtin config is a harness error:
+ * an empty set would make `agents_registered` pass vacuously.
+ */
+function expectedAgents(): Result<string[], LiveMainError> {
+  const config = getBuiltinConfig();
+  if (config.isErr()) {
+    return err({
+      type: "BuiltinConfig",
+      detail: "builtin Weave config did not parse",
+    });
+  }
+  const agents = Object.keys(config.value.agents ?? {});
+  if (agents.length === 0) {
+    return err({
+      type: "BuiltinConfig",
+      detail: "builtin Weave config declares no agents",
+    });
+  }
+  return ok(agents);
+}
+
+function parseArguments(
   argv: readonly string[],
-): Promise<Result<LiveOptions, LiveMainError>> {
+): ResultAsync<LiveOptions, LiveMainError> {
   const values = new Map<string, string>();
   let keep = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -101,7 +157,7 @@ async function parseArguments(
     }
     const value = argv[index + 1];
     if (flag === undefined || !flag.startsWith("--") || value === undefined) {
-      return err({
+      return errAsync({
         type: "InvalidArguments",
         detail: `unexpected argument ${flag ?? ""}`,
       });
@@ -111,37 +167,71 @@ async function parseArguments(
   }
   const plugin = parsePluginSource(values.get("plugin") ?? "local");
   if (plugin.isErr()) {
-    return err({
+    return errAsync({
       type: "InvalidArguments",
       detail: `--plugin must be local, npm:<spec> or init:<cli-spec>; got ${plugin.error.value}`,
     });
   }
-  const requested = values.get("host") ?? "pinned";
-  const host = requested === "pinned" ? await pinnedHostVersion() : requested;
-  if (host === undefined) {
-    return err({
-      type: "InvalidArguments",
-      detail: "could not read the pinned @opencode/plugin version",
-    });
-  }
+  const agents = expectedAgents();
+  if (agents.isErr()) return errAsync(agents.error);
   const root =
     values.get("root") ??
     join(tmpdir(), `weave-opencode2-live-${Date.now().toString(36)}`);
-  return ok({
+  return resolveHost(values.get("host") ?? "pinned").map((host) => ({
     host,
     expectedHostVersion: EXACT_VERSION.test(host) ? host : undefined,
     plugin: plugin.value,
     root: resolve(root),
     keep,
+    agents: agents.value,
     reportPath: values.get("report"),
-  });
+  }));
 }
 
-function expectedAgents(): string[] {
-  return getBuiltinConfig().match(
-    (config) => Object.keys(config.agents ?? {}),
-    () => [],
-  );
+/**
+ * Claims `root` for this run: it must not exist yet or be empty, and it gets
+ * a sentinel file. A caller who passes `--root "$HOME"` by mistake gets an
+ * error instead of a deleted home directory.
+ */
+function claimRoot(root: string): ResultAsync<void, LiveMainError> {
+  const env = { PATH: Bun.env.PATH ?? "" };
+  const harness = (error: LiveHostError): LiveMainError => ({
+    type: "Harness",
+    error,
+  });
+  return runProcess(
+    "inspect root",
+    ["find", root, "-mindepth", "1", "-maxdepth", "1"],
+    {
+      cwd: REPO_ROOT,
+      env,
+      timeoutMs: 30_000,
+    },
+  )
+    .mapErr(harness)
+    .andThen((listing) => {
+      if (listing.exitCode === 0 && listing.output.trim().length > 0) {
+        return errAsync<void, LiveMainError>({
+          type: "InvalidArguments",
+          detail: `--root ${root} is not empty; pass a new or empty directory`,
+        });
+      }
+      return writeText(join(root, ROOT_SENTINEL), "").mapErr(harness);
+    });
+}
+
+/** Deletes `root` only when it carries this harness's sentinel. */
+function releaseRoot(root: string): ResultAsync<void, LiveHostError> {
+  return ResultAsync.fromSafePromise(
+    Bun.file(join(root, ROOT_SENTINEL)).exists(),
+  ).andThen((claimed) => {
+    if (!claimed) return okAsync<void, LiveHostError>(undefined);
+    return mustRun("remove root", ["rm", "-rf", root], {
+      cwd: REPO_ROOT,
+      env: { PATH: Bun.env.PATH ?? "" },
+      timeoutMs: 120_000,
+    }).map(() => undefined);
+  });
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -163,10 +253,11 @@ class LiveCheckRun {
     delegate: DELEGATE,
   });
   private readonly checks: LiveChecks;
-  private readonly agents = expectedAgents();
+  private readonly agents: readonly string[];
 
   constructor(private readonly options: LiveOptions) {
     this.paths = livePaths(options.root);
+    this.agents = options.agents;
     this.host = new OpenCode2Host(this.paths, options.host);
     this.checks = new LiveChecks({
       expectedAgents: this.agents,
@@ -197,18 +288,30 @@ class LiveCheckRun {
   private prepare(port: number): ResultAsync<void, LiveHostError> {
     const installer = new PluginInstaller(this.paths, this.host, REPO_ROOT);
     const hostEnv = { cwd: this.paths.root, env: this.host.env() };
-    return writeText(
-      this.host.globalConfigPath(),
-      `${JSON.stringify(scriptedProviderConfig(port), null, 2)}\n`,
+    const runtimeDir =
+      hostEnv.env.XDG_RUNTIME_DIR ?? join(this.paths.home, ".run");
+    return mustRun(
+      "create directories",
+      ["mkdir", "-p", this.paths.home, this.paths.hostDir],
+      {
+        ...hostEnv,
+        timeoutMs: 10_000,
+      },
     )
       .andThen(() =>
         mustRun(
-          "prepare runtime dir",
-          ["mkdir", "-p", "-m", "700", hostEnv.env.XDG_RUNTIME_DIR ?? ""],
+          "create runtime dir",
+          ["mkdir", "-p", "-m", "700", runtimeDir],
           {
             ...hostEnv,
             timeoutMs: 10_000,
           },
+        ),
+      )
+      .andThen(() =>
+        writeText(
+          this.host.globalConfigPath(),
+          `${JSON.stringify(scriptedProviderConfig(port), null, 2)}\n`,
         ),
       )
       .andThen(() => {
@@ -400,10 +503,15 @@ async function report(
 async function main(): Promise<number> {
   const parsed = await parseArguments(Bun.argv.slice(2));
   if (parsed.isErr()) {
-    log.error({ error: parsed.error }, "Invalid arguments");
+    log.error({ error: parsed.error }, "The live check could not start");
     return 2;
   }
   const options = parsed.value;
+  const claimed = await claimRoot(options.root);
+  if (claimed.isErr()) {
+    log.error({ error: claimed.error }, "The live check could not start");
+    return 2;
+  }
   log.info(
     {
       host: options.host,
@@ -414,11 +522,10 @@ async function main(): Promise<number> {
   );
   const result = await new LiveCheckRun(options).execute();
   if (!options.keep) {
-    await mustRun("remove root", ["rm", "-rf", options.root], {
-      cwd: REPO_ROOT,
-      env: { PATH: Bun.env.PATH ?? "" },
-      timeoutMs: 120_000,
-    });
+    await releaseRoot(options.root).match(
+      () => undefined,
+      (error) => log.warn({ error }, "Could not remove the live-check root"),
+    );
   }
   if (result.isErr()) {
     log.error({ error: result.error }, "The live check could not run");

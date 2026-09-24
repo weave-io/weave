@@ -44,18 +44,32 @@ function tool(name: string, description = ""): object {
 function request(
   system: string,
   tools: readonly object[],
-  roles: readonly string[] = ["user"],
+  history: readonly object[] = [],
 ): CapturedRequest {
   return {
     body: {
       messages: [
         // The host appends environment details after the agent's prompt.
         { role: "system", content: `${system}\n\n<env>cwd: /project</env>` },
-        ...roles.map((role) => ({ role, content: "x" })),
+        { role: "user", content: "Delegate one small task to shuttle." },
+        ...history,
       ],
       tools,
     },
   };
+}
+
+/** An assistant turn that called `name`, and the tool result for `resultId`. */
+function toolRound(name: string, callId: string, resultId = callId): object[] {
+  return [
+    {
+      role: "assistant",
+      tool_calls: [
+        { id: callId, type: "function", function: { name, arguments: "{}" } },
+      ],
+    },
+    { role: "tool", tool_call_id: resultId, content: "OK" },
+  ];
 }
 
 const delegatingRun: CapturedRequest[] = [
@@ -65,7 +79,7 @@ const delegatingRun: CapturedRequest[] = [
   request(
     LOOM_SYSTEM,
     [tool("read"), tool("subagent", "- shuttle: worker")],
-    ["user", "assistant", "tool"],
+    toolRound("subagent", "call_1"),
   ),
 ];
 
@@ -181,6 +195,14 @@ describe("a plugin the host failed to load", () => {
 });
 
 describe("a host other than the requested version", () => {
+  it("fails even when the requested version is a prefix of the reported one", () => {
+    const version = verdict(
+      checks.evaluate(observation({ hostVersion: "opencode v2.0.160" })),
+      "host_version",
+    );
+    expect(version.status).toBe("failed");
+  });
+
   it("fails the host version check", () => {
     const version = verdict(
       checks.evaluate(observation({ hostVersion: "opencode v2.0.17" })),
@@ -239,6 +261,24 @@ describe("a run where the delegation never reached Shuttle", () => {
 describe("a run where Shuttle's result never came back to Loom", () => {
   it("fails the return check", () => {
     const requests = delegatingRun.slice(0, 3);
+    const returned = verdict(
+      checks.evaluate(observation({ run: { exitCode: 0, requests } })),
+      "delegation_returned",
+    );
+    expect(returned.status).toBe("failed");
+  });
+});
+
+describe("a run where Loom's only tool result belongs to another tool", () => {
+  it("fails the return check", () => {
+    const requests = [
+      ...delegatingRun.slice(0, 3),
+      request(
+        LOOM_SYSTEM,
+        [tool("subagent", "- shuttle: worker")],
+        toolRound("read", "call_2"),
+      ),
+    ];
     const returned = verdict(
       checks.evaluate(observation({ run: { exitCode: 0, requests } })),
       "delegation_returned",

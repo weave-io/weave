@@ -23,6 +23,7 @@ on:
       - 'packages/config/**'
       - 'packages/engine/**'
       - 'scripts/build-public-packages.ts'
+      - 'scripts/constants.ts'
       - 'scripts/proof/opencode2-live/**'
       - '.github/workflows/opencode2-live.yml'
   pull_request:
@@ -33,6 +34,7 @@ on:
       - 'packages/config/**'
       - 'packages/engine/**'
       - 'scripts/build-public-packages.ts'
+      - 'scripts/constants.ts'
       - 'scripts/proof/opencode2-live/**'
       - '.github/workflows/opencode2-live.yml'
   schedule:

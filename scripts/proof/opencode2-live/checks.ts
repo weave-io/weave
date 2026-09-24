@@ -86,8 +86,11 @@ export interface LiveCheckOptions {
 
 interface ParsedRequest {
   readonly system: string;
-  readonly roles: readonly string[];
   readonly tools: ReadonlyMap<string, string>;
+  /** Ids of earlier assistant calls to the delegation tool. */
+  readonly delegationCalls: ReadonlySet<string>;
+  /** `tool_call_id`s of the tool results the request carries. */
+  readonly toolResults: ReadonlySet<string>;
 }
 
 const MAX_EVIDENCE = 300;
@@ -113,17 +116,39 @@ function contentText(content: unknown): string {
     .join("");
 }
 
+function delegationCallIds(
+  message: Record<string, unknown>,
+  tool: string,
+): string[] {
+  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  return calls.flatMap((call) => {
+    const record = asRecord(call);
+    const name = asRecord(record?.function)?.name;
+    return name === tool && typeof record?.id === "string" ? [record.id] : [];
+  });
+}
+
 /** Reads the parts of an OpenAI-compatible request the checks rely on. */
-export function parseRequest(request: CapturedRequest): ParsedRequest {
+export function parseRequest(
+  request: CapturedRequest,
+  delegationTool: string,
+): ParsedRequest {
   const body = asRecord(request.body);
   const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const roles: string[] = [];
   const system: string[] = [];
+  const delegationCalls = new Set<string>();
+  const toolResults = new Set<string>();
   for (const message of messages) {
     const record = asRecord(message);
-    const role = typeof record?.role === "string" ? record.role : "";
-    roles.push(role);
-    if (role === "system") system.push(contentText(record?.content));
+    if (record === undefined) continue;
+    if (record.role === "system") system.push(contentText(record.content));
+    if (record.role === "assistant") {
+      for (const id of delegationCallIds(record, delegationTool))
+        delegationCalls.add(id);
+    }
+    if (record.role === "tool" && typeof record.tool_call_id === "string") {
+      toolResults.add(record.tool_call_id);
+    }
   }
   const tools = new Map<string, string>();
   const rawTools = Array.isArray(body?.tools) ? body.tools : [];
@@ -135,7 +160,7 @@ export function parseRequest(request: CapturedRequest): ParsedRequest {
       typeof fn.description === "string" ? fn.description : "",
     );
   }
-  return { system: system.join("\n"), roles, tools };
+  return { system: system.join("\n"), tools, delegationCalls, toolResults };
 }
 
 export class LiveChecks {
@@ -164,13 +189,14 @@ export class LiveChecks {
   private hostVersion(observation: LiveObservation): LiveVerdict {
     const reported = observation.hostVersion.trim();
     const expected = observation.expectedHostVersion;
-    if (expected !== undefined && !reported.includes(expected)) {
+    const version = /\bv?(\d+\.\d+\.\d+(?:-[\w.]+)?)\b/.exec(reported)?.[1];
+    if (expected !== undefined && version !== expected) {
       return this.failed(
         "host_version",
         `expected ${expected}, host reported "${reported}"`,
       );
     }
-    if (!/\bv?2\.\d+\.\d+/.test(reported)) {
+    if (version === undefined || !version.startsWith("2.")) {
       return this.failed(
         "host_version",
         `host did not report a 2.x version: "${reported}"`,
@@ -237,7 +263,9 @@ export class LiveChecks {
     }
     const primary = systemOf(observation.agents, this.options.primary);
     const delegate = systemOf(observation.agents, this.options.delegate);
-    const requests = observation.run.requests.map(parseRequest);
+    const requests = observation.run.requests.map((request) =>
+      parseRequest(request, this.options.delegationTool),
+    );
     const primaryRequests =
       primary === undefined
         ? []
@@ -334,12 +362,12 @@ export class LiveChecks {
     primaryRequests: readonly ParsedRequest[],
   ): LiveVerdict {
     const returned = primaryRequests.some((request) =>
-      request.roles.includes("tool"),
+      [...request.delegationCalls].some((id) => request.toolResults.has(id)),
     );
     if (!returned) {
       return this.failed(
         "delegation_returned",
-        `no ${this.options.primary} request carried a tool result`,
+        `no ${this.options.primary} request carried the result of its ${this.options.delegationTool} call`,
       );
     }
     return this.passed(

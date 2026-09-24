@@ -74,8 +74,9 @@ bun scripts/proof/opencode2-live/main.ts --host pinned --plugin local \
 ```
 
 The host and its plugin cache need about 2 GB under `--root`. Pass a root
-outside a small `/tmp`. The script deletes the root when it finishes unless you
-pass `--keep`.
+outside a small `/tmp`. The root must not exist yet or must be empty. The
+script marks the root with a `.weave-opencode2-live` file and deletes only a
+marked root when it finishes, unless you pass `--keep`.
 
 `--host` accepts `pinned` (the `@opencode/plugin` version the adapter
 depends on), `latest`, or an exact version. `--plugin` says how Weave is
