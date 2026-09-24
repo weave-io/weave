@@ -1,8 +1,10 @@
 # Weave Eval Fixtures
 
+> **New to the evals?** Start with the one-page [Evals Overview](../docs/evals-overview.md): what the evals are for, how a case becomes a score, the judge, and the commands most people need.
+
 This directory contains the canonical fixture files for `weave eval run`. It is the **allowlist source of truth** for model matrix entries, eval cases, and rubric scoring metadata.
 
-Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Runtime-backed eval fixtures are an explicit non-goal of the current contract.
+Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Three of them (`loom-routing`, `tapestry-execution`, `shuttle-execution`) also hold `harness_trajectory` cases, which run a real harness session in a sandbox; their fixture projects live under `fixtures/`.
 
 For the full eval guide — architecture, CI model, sanitization rules, raw-artifact policy, and prompt-hash provenance — see [`docs/agent-evals.md`](../docs/agent-evals.md).
 
