@@ -62,7 +62,83 @@ If global Weave config can affect `validate-config`, give that command an
 isolated `HOME` and XDG environment. Do not edit the global config to make the
 check pass.
 
+## Run the live host check
+
+This check answers one question: does Weave work on a real OpenCode 2 host? CI
+runs it through [`opencode2-live.yml`](../../.github/workflows/opencode2-live.yml).
+Run it locally the same way:
+
+```bash
+bun scripts/proof/opencode2-live/main.ts --host pinned --plugin local \
+  --root ~/weave-opencode2-live
+```
+
+The host and its plugin cache need about 2 GB under `--root`. Pass a root
+outside a small `/tmp`. The script deletes the root when it finishes unless you
+pass `--keep`.
+
+`--host` accepts `pinned` (the `@opencode/plugin` version the adapter
+depends on), `latest`, or an exact version. `--plugin` says how Weave is
+installed:
+
+| `--plugin` | What is installed |
+| --- | --- |
+| `local` | This checkout's adapter, built with `bun run build`, packed with `bun pm pack`, unpacked, and given its production dependencies. This is the package this revision would publish. |
+| `npm:<spec>` | A registry package named in the project `plugins` field, for example `npm:@weaveio/weave-adapter-opencode2@next`. The host installs it. |
+| `init:<cli-spec>` | The documented install, `<cli-spec> init --harness opencode2 --scope local --yes`, for example `init:@weaveio/weave-cli@next`. |
+
+The script installs the host under an isolated HOME, XDG and runtime directory.
+It names a scripted local model provider in the host's global config and
+starts an isolated background service. It then uses only the `opencode2` CLI,
+never `@opencode/client`, so a host release that changes the client API cannot
+break the check itself. `scripts/opencode2/verify-runtime.ts` below broke that
+way.
+
+The script reports these checks:
+
+| Check | Passes when |
+| --- | --- |
+| `host_version` | The host reports 2.x and, for an exact `--host`, that version. |
+| `plugin_active` | `opencode2 api plugin.list` shows the Weave plugin as `active`. |
+| `agents_registered` | `opencode2 api agent.list` shows every builtin agent with the `[weave-managed]` ownership marker. |
+| `start_command` | `opencode2 api command.list` includes `weave:start`. |
+| `loom_prompt` | After `opencode2 run --agent loom`, the model received Loom's host-reported system prompt. |
+| `delegation_offered` | Loom was offered the native `subagent` tool with Shuttle as a target. |
+| `delegation_ran` | The scripted model called `subagent` for Shuttle, and the model then received Shuttle's system prompt from a child session. |
+| `delegation_returned` | Loom's next request carried Shuttle's tool result. |
+| `subagent_policy` | Shuttle was not offered `subagent` or `question`. |
+
+Exit code 0 means every check passed. Exit code 1 means a check failed or was
+skipped. Exit code 2 means the harness could not run, for example because the
+host install failed.
+
+The Podman layers in `verify:opencode2` assert agent materialization with
+fixtures that give every agent `proof/proof-model`. This check uses the
+builtin defaults instead, so it covers the configuration a new user has. The
+`api` operations are also the outside-the-host view that
+[#165](https://github.com/weave-io/weave/issues/165) asked for.
+
+### CI legs
+
+- **Pinned** runs on pull requests and pushes that touch the adapter or its
+  engine dependencies. It checks this revision on the pinned host.
+- **Canary** runs daily and on manual dispatch against
+  `@opencode/cli@latest`. It checks this revision, the `next` package, and the
+  documented `weave init` install. The host changes without any change in
+  this repository, so a path-filtered workflow cannot detect a host release
+  that breaks Weave. OpenCode 2.0.4 removed `ctx.catalog` on 2026-09-16, and
+  the pinned checks stayed green until
+  [#236](https://github.com/weave-io/weave/pull/236).
+
+A red `published next package` or `documented weave init` leg while
+`this revision` is green means a fix exists but has not been released.
+
 ## Run the packaged runtime proof
+
+> **Stale.** `verify-runtime.ts` still targets `0.0.0-beta-19151` and calls
+> client APIs that 2.0.16 removed, such as `plugin.awaitActivation`. CI does
+> not run it. Use the [live host check](#run-the-live-host-check) for current
+> hosts.
 
 ```bash
 bun scripts/opencode2/verify-runtime.ts

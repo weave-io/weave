@@ -370,4 +370,8 @@ guide](https://opencode.ai/v2/docs/build/plugins).
 Use the isolated procedure in [OpenCode 2
 verification](../testing/opencode2-verification.md). Unit tests use mocked host
 boundaries. Packaged runtime and interactive UI checks use a separate exact
-host under an isolated HOME and XDG root.
+host under an isolated HOME and XDG root. The [live host
+check](../testing/opencode2-verification.md#run-the-live-host-check) runs a
+real host in CI. It runs on the pinned version for adapter changes, and daily
+against `@opencode/cli@latest` for this revision and for the published
+install.

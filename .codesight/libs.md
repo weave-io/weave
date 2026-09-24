@@ -980,6 +980,33 @@
   - type ProofEnvironmentError
   - const OPENCODE2_PROOF_HOST_VERSION
   - const OPENCODE2_PROOF_ROOT
+- `scripts/proof/opencode2-live/checks.ts`
+  - function parseRequest: (request) => ParsedRequest
+  - class LiveChecks
+  - interface LiveVerdict
+  - interface HostPlugin
+  - interface HostAgent
+  - interface CapturedRequest
+  - _...4 more_
+- `scripts/proof/opencode2-live/host.ts`
+  - function livePaths: (root) => LivePaths
+  - function runProcess: (step, command, options, string>;
+    readonly timeoutMs) => void
+  - function mustRun: (step, command, options) => ResultAsync<CommandOutcome, LiveHostError>
+  - function writeText: (path, text) => ResultAsync<void, LiveHostError>
+  - class OpenCode2Host
+  - interface CommandOutcome
+  - _...2 more_
+- `scripts/proof/opencode2-live/plugin-source.ts`
+  - function parsePluginSource: (raw) => Result<PluginSource, PluginSourceError>
+  - function describePluginSource: (source) => string
+  - class PluginInstaller
+  - type PluginSource
+  - type PluginSourceError
+- `scripts/proof/opencode2-live/scripted-provider.ts`
+  - function scriptedProviderConfig: (port) => object
+  - class ScriptedProvider
+  - interface ScriptedProviderOptions
 - `scripts/validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<

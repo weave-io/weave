@@ -13,7 +13,7 @@ The public user documentation at [tryweave.io/docs](https://tryweave.io/docs/) i
 | [Product Vision](product-vision.md) | Harness-agnostic architecture, core mental model, boundary rules |
 | [Adapter Boundary](adapter-boundary.md) | Engine/adapter ownership matrix, correct data-flow examples, anti-patterns |
 | [OpenCode 2 Core Integration](adapters/opencode2-core.md) | Native OpenCode 2 installation, mappings, commands, RPC, TUI, and limits; V1 remains separate |
-| [OpenCode 2 Verification](testing/opencode2-verification.md) | Isolated package, runtime, and interactive proof procedure |
+| [OpenCode 2 Verification](testing/opencode2-verification.md) | Live host check (CI and daily canary), isolated package, runtime, and interactive proof procedure |
 | [Adapter Bootstrap Guide](adapter-bootstrap.md) | `loadConfig` → `materializeAgents` → adapter loop pattern |
 | [Config Loading](config-loading.md) | Three-layer merge, builtin agents, config discovery, prompt file resolution |
 | [Model Resolution](model-resolution.md) | Model intent, adapter responsibility, category shuttle model preferences |
