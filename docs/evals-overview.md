@@ -132,7 +132,7 @@ The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`
 
 ## Adding a case or a model
 
-- **A model** takes one edit: add an entry to `evals/model-matrix.json`. Cases and the CI allowlist follow the matrix automatically. See [Adding a model](agent-evals.md#adding-a-model).
+- **A model** takes one edit: add an entry to `evals/model-matrix.json`. Every case that omits `allowed_models`, and the CI dispatch allowlist, follow the matrix automatically. The trajectory cases are the exception: they pin their own `allowed_models`, so a new model runs on them only if you add it to each case that should run it. The trajectory job's allowlist follows those lists. See [Adding a model](agent-evals.md#adding-a-model).
 - **A text case** needs a case JSON and a rubric JSON with the same id in one of the eight suites. It should assert only what is visible in the answer. Then run `bun test ./packages/cli/src/evals/__tests__` and `eval run --case <id> --dry-run`. The CI dispatch allowlist lists every case id, and `workflow-sync.test.ts` fails until you add the new one. See [Adding a New Case](../evals/README.md#adding-a-new-case).
 - **A trajectory case** also needs a fixture under `evals/fixtures/`, and optionally a verifier. See [Verification-aware trajectory cases](agent-evals.md#verification-aware-trajectory-cases-spec-35) and [Spec 35](specs/35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md).
 
