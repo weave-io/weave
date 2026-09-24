@@ -179,6 +179,7 @@ export type BakeoffError =
   | { type: "UnknownVerdictIds"; ids: string[] }
   | { type: "DuplicateLabelIds"; ids: string[] }
   | { type: "NoItems" }
+  | { type: "InconsistentVerdicts"; ids: string[] }
   | { type: "JudgeModelMismatch"; path: string; message: string };
 
 export type Verdict = "pass" | "fail";
@@ -879,10 +880,21 @@ export interface SuiteAgreement {
 export const JEV_ACCEPTANCE_RULE = {
   minAgreementShare: 0.8,
   maxMissedFails: 2,
+  /** The rule is fixed to the full corpus: 20 real items and 10 negatives. */
+  minItems: 30,
+  minFailLabelled: 12,
 } as const;
 
 export interface Acceptance {
   accepted: boolean;
+  /**
+   * Whether the corpus has the items and fail labels the rule is fixed to.
+   * A partial corpus (for example, the real items without the negatives)
+   * is never accepted.
+   */
+  corpusComplete: boolean;
+  requiredItems: number;
+  requiredFailLabelled: number;
   n: number;
   agree: number;
   /** Agreements the rule requires for `n` items. */
@@ -916,6 +928,8 @@ export function judgeAcceptance(
   rule: {
     minAgreementShare: number;
     maxMissedFails: number;
+    minItems: number;
+    minFailLabelled: number;
   } = JEV_ACCEPTANCE_RULE,
 ): Acceptance {
   // Round before ceil so 0.8 * 30 (24.000000000000004) needs 24, not 25.
@@ -923,8 +937,16 @@ export function judgeAcceptance(
     Math.round(rule.minAgreementShare * a.n * 1e9) / 1e9,
   );
   const requiredFailsCaught = Math.max(0, a.humanFails - rule.maxMissedFails);
+  const corpusComplete =
+    a.n >= rule.minItems && a.humanFails >= rule.minFailLabelled;
   return {
-    accepted: a.agree >= requiredAgree && a.failFail >= requiredFailsCaught,
+    accepted:
+      corpusComplete &&
+      a.agree >= requiredAgree &&
+      a.failFail >= requiredFailsCaught,
+    corpusComplete,
+    requiredItems: rule.minItems,
+    requiredFailLabelled: rule.minFailLabelled,
     n: a.n,
     agree: a.agree,
     requiredAgree,
@@ -1003,6 +1025,31 @@ function sonnetVerdict(v: ItemVerdicts): Verdict | undefined {
   return v.sonnet.ok ? toVerdict(v.sonnet.pass) : undefined;
 }
 
+/**
+ * A stored verdict's `pass` flags must follow from its numbers under the
+ * thresholds fixed before scoring, so an edited or stale verdict file cannot
+ * change the outcome.
+ */
+export function verdictsConsistent(
+  item: BakeoffItem,
+  v: ItemVerdicts | undefined,
+): boolean {
+  if (v === undefined) return true;
+  if (v.jev.ok) {
+    if (v.jev.pass !== v.jev.overall >= JEV_PASS_THRESHOLD) return false;
+    const allCriteria = Object.values(v.jev.criteria).every(
+      (c) => c >= JEV_PASS_THRESHOLD,
+    );
+    if (v.jev.allCriteriaPass !== allCriteria) return false;
+  }
+  if (v.sonnet.ok) {
+    if (v.sonnet.pass !== v.sonnet.score >= item.sonnetPassThreshold) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function duplicateIds(ids: string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -1047,6 +1094,13 @@ export function compare(
   const unscored = items.filter((i) => !byId.has(i.id)).map((i) => i.id);
   if (unscored.length > 0)
     return err({ type: "MissingVerdicts", ids: unscored });
+
+  const inconsistent = items
+    .filter((item) => !verdictsConsistent(item, byId.get(item.id)))
+    .map((item) => item.id);
+  if (inconsistent.length > 0) {
+    return err({ type: "InconsistentVerdicts", ids: inconsistent });
+  }
 
   const rows = items.map((item) => ({
     item,
@@ -1121,6 +1175,7 @@ export function renderComparison(
     "",
     "| Condition | Required | Jev | Result |",
     "| --- | --- | --- | --- |",
+    `| Corpus | at least ${a.requiredItems} items, ${a.requiredFailLabelled} labelled fail | ${a.n} items, ${a.failLabelled} labelled fail | ${mark(a.corpusComplete)} |`,
     `| Agrees with the labels | at least ${a.requiredAgree}/${a.n} | ${a.agree}/${a.n} | ${mark(a.agree >= a.requiredAgree)} |`,
     `| Fails caught (Jev fail, human fail) | at least ${a.requiredFailsCaught}/${a.failLabelled} | ${a.failsCaught}/${a.failLabelled} | ${mark(a.failsCaught >= a.requiredFailsCaught)} |`,
     `| False passes (Jev pass, human fail) | — | ${a.falsePasses} | — |`,

@@ -534,7 +534,7 @@ function verdicts(
       ok: true,
       modelVersion: "v",
       overall: jevPass ? 0.9 : 0.1,
-      criteria: {},
+      criteria: jevPass ? {} : { c: 0.1 },
       quality: 2,
       pass: jevPass,
       allCriteriaPass: jevPass,
@@ -599,6 +599,9 @@ describe("compare", () => {
     const report = compare(allItems, allVerdicts, allLabels)._unsafeUnwrap();
     expect(report.acceptance).toEqual({
       accepted: true,
+      corpusComplete: true,
+      requiredItems: 30,
+      requiredFailLabelled: 12,
       n: 30,
       agree: 24,
       requiredAgree: 24,
@@ -611,6 +614,9 @@ describe("compare", () => {
     });
     const markdown = renderComparison(report, allItems, allVerdicts, allLabels);
     expect(markdown).toContain("**Jev: ACCEPTED.**");
+    expect(markdown).toContain(
+      "| Corpus | at least 30 items, 12 labelled fail | 30 items, 12 labelled fail | met |",
+    );
     expect(markdown).toContain(
       "| Agrees with the labels | at least 24/30 | 24/30 | met |",
     );
@@ -661,6 +667,23 @@ describe("compare", () => {
     );
     expect(unscored._unsafeUnwrapErr()).toEqual({
       type: "MissingVerdicts",
+      ids: ["B02"],
+    });
+  });
+
+  it("rejects a stored verdict whose pass flag contradicts its numbers", () => {
+    const edited = verdicts("B02", true, true);
+    if (edited.jev.ok) edited.jev.overall = 0;
+    const result = compare(
+      items,
+      [verdicts("B01", true, true), edited],
+      labels([
+        ["B01", "pass"],
+        ["B02", "pass"],
+      ]),
+    );
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "InconsistentVerdicts",
       ids: ["B02"],
     });
   });
@@ -771,6 +794,20 @@ describe("judgeAcceptance", () => {
       agree: 23,
       requiredAgree: 24,
       failsCaught: 10,
+    });
+  });
+
+  it("never accepts a partial corpus, even with perfect agreement", () => {
+    const a = agreement(
+      "jev",
+      pairs({ passPass: 18, failFail: 2, falsePass: 0, falseFail: 0 }),
+    );
+    expect(judgeAcceptance(a)).toMatchObject({
+      accepted: false,
+      corpusComplete: false,
+      n: 20,
+      agree: 20,
+      failLabelled: 2,
     });
   });
 

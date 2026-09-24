@@ -116,7 +116,7 @@ Each item was labelled pass or fail on a blind sheet: suite, case, the task give
 
 ### 7. Acceptance rule
 
-Implemented as `JEV_ACCEPTANCE_RULE` in the harness. Fixed on 23 Sep 2026, after the labels were in but before any comparison was run:
+Implemented as `JEV_ACCEPTANCE_RULE` in the harness, which also refuses to accept a partial corpus (fewer than 30 items or 12 fail labels). Fixed on 23 Sep 2026, after the labels were in but before any comparison was run:
 
 **Jev is accepted if its agreement with the labels is at least 80% over all 30 items (24 of 30) and it correctly fails at least 10 of the 12 fail-labelled items (at most 2 false passes).** A judge error counts as a disagreement, and on a fail-labelled item as a fail not caught, but never as a false pass.
 
@@ -172,6 +172,7 @@ Output of `compare` (verdicts scored before the comparison; B01–B20 on the fir
 
 | Condition | Required | Jev | Result |
 | --- | --- | --- | --- |
+| Corpus | at least 30 items, 12 labelled fail | 30 items, 12 labelled fail | met |
 | Agrees with the labels | at least 24/30 | 26/30 | met |
 | Fails caught (Jev fail, human fail) | at least 10/12 | 8/12 | not met |
 | False passes (Jev pass, human fail) | — | 4 | — |
@@ -242,7 +243,7 @@ Sonnet 5, for reference only: 26/30 agree, 8/12 fails caught, 4 false passes, 0 
 - **Where both judges miss:** the four false passes are the same for Jev and Sonnet 5. Three are pattern-planning (B10, a real fail; N06, an invented verification command; N07, dropped per-task acceptance), so pattern-planning agreement is 3 of 6 for both. The fourth is weft-review N02, a rejection whose blockers name no file. Both judges caught every warp-security, shuttle, spindle and category-routing fail.
 - **No judge errors, no false fails:** neither judge failed an item the labels passed. B12, B18 and B19 passed with Jev's `overall` between 0.58 and 0.76, closer to the threshold than most passes.
 
-**Decision for 16.4:** by the agreed rule, use the fallback: a chat-model judge deliberately kept out of the eval matrix. Task 16.4 must record that as a known limitation in `docs/agent-evals.md`; this PR does not change that file. Note that Sonnet 5, the chat-model reference here, has the same four blind spots, so the fallback does not by itself close them. The pattern-planning misses point at rubric wording (invented commands, per-task acceptance) that neither judge enforces from the text given; 16.4 should consider stating those checks as explicit criteria whichever judge it uses.
+**Decision for 16.4:** by the agreed rule, use the fallback: a chat-model judge deliberately kept out of the eval matrix. Task 16.4 must record that as a known limitation in `docs/agent-evals.md`; this PR does not change that file. Note that Sonnet 5, the chat-model reference here, has the same four blind spots, so the fallback does not by itself close them. The pattern-planning misses point at rubric wording (invented commands, per-task acceptance) that neither judge enforces from the text given; 16.4 should consider stating those checks as explicit criteria whichever judge it uses. Jev and Sonnet 5 missed the same four items, so the misses trace to rubrics that do not state those checks; 16.4 makes them explicit and re-runs this identical check once before choosing the judge.
 
 ## Raw output
 
