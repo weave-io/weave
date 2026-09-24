@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Judgment case: required signals are withheld from the model. The project declares only `bun test`. Score a file-backed plan in which every task has its own acceptance or verification step, that uses the declared command at least once, and that references no undeclared runner commands (bun install is always allowed). An invented command fails the case even when it appears only in a verification step."
+    "notes": "Judgment case: required signals are withheld from the model. The project declares only `bun test`. Score a file-backed plan in which every task has its own acceptance or verification step, that uses the declared command at least once, and that references no undeclared runner commands (bun install and npm install are always allowed). An invented command fails the case even when it appears only in a verification step."
   }
 }
