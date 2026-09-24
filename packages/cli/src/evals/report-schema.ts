@@ -272,7 +272,9 @@ export type ExplanationSource = z.infer<typeof ExplanationSourceSchema>;
  * Score buckets replace raw floating-point scores in public-facing summaries,
  * making the report human-interpretable without exposing implementation details.
  *
- * Bucket thresholds (applied in order):
+ * A single case's bucket comes from `computeCaseScoreBucket()`, which follows
+ * the case's verdict. An aggregate score (a model's pass rate) uses these
+ * thresholds, applied in order:
  *   - `"pass"`    — weightedTotal >= 0.9
  *   - `"partial"` — weightedTotal >= 0.5
  *   - `"fail"`    — weightedTotal < 0.5
@@ -297,6 +299,33 @@ export function computeScoreBucket(
 ): ScoreBucket {
   if (dryRun || weightedTotal === undefined) return "skip";
   if (weightedTotal >= 0.9) return "pass";
+  if (weightedTotal >= 0.5) return "partial";
+  return "fail";
+}
+
+/**
+ * The score bucket for one scored case, which always agrees with its verdict.
+ *
+ * A case's verdict is not a threshold on `weightedTotal`: a near-perfect
+ * gating dimension passes a case whose total is low (a trajectory case that
+ * runs the check itself instead of delegating scores 0.33 and passes), and a
+ * missed required signal fails a case whose total is high. So the verdict
+ * decides the bucket and the total only grades a failure:
+ *
+ *   - `"pass"`    — the case passed, whatever its total
+ *   - `"partial"` — the case failed with `weightedTotal >= 0.5`
+ *   - `"fail"`    — the case failed with `weightedTotal < 0.5`
+ *   - `"skip"`    — a dry run, or a case with no score (errored)
+ *
+ * Aggregates such as a model's overall pass rate keep `computeScoreBucket()`.
+ */
+export function computeCaseScoreBucket(
+  weightedTotal: number | undefined,
+  passed: boolean,
+  dryRun: boolean,
+): ScoreBucket {
+  if (dryRun || weightedTotal === undefined) return "skip";
+  if (passed) return "pass";
   if (weightedTotal >= 0.5) return "partial";
   return "fail";
 }

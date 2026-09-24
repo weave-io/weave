@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Judgment case: required signals are withheld from the model. Score structural coverage plus two verification signals: every task has its own acceptance criteria and every acceptance criterion names its check (a 'verify by' clause, a backticked command, or 'manual:'), and the Verification section uses - [ ] items with no code block. Every command the plan names must be one of the declared commands (bun install and npm install are always allowed); an invented command does not count as a check."
+    "notes": "Judgment case: required signals are withheld from the model. Score structural coverage plus verification in the shape the Pattern prompt defines: every task has its own acceptance criteria, and the `## Verification` section names at least one of the declared commands to run to confirm the plan is complete, and what passing looks like. Do not require a 'verify by' clause on each criterion or `- [ ]` items in the Verification section; the Pattern prompt reserves `- [ ]` for top-level tasks and no longer asks for either (the case id predates that change). Every command the plan names must be one of the declared commands (bun install and npm install are always allowed); an invented command does not count as a check."
   }
 }

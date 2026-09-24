@@ -73,7 +73,7 @@ import {
 } from "./judge-questions.js";
 import { isJudgmentCase } from "./judgment-cases.js";
 import {
-  computeScoreBucket,
+  computeCaseScoreBucket,
   EXPLANATION_MAX_CHARS,
   type ScoreBucket,
 } from "./report-schema.js";
@@ -804,8 +804,8 @@ function outcomeKindLabel(kind: OutcomeKind): string {
  * The resulting text is deterministic: the same structured inputs always
  * produce the same explanation string.
  *
- * @param scoreBucket - The `ScoreBucket` computed from `weightedTotal`.
- * @param passed - Whether the case passed.
+ * @param scoreBucket - The case's `ScoreBucket` (`computeCaseScoreBucket()`); grades a failure.
+ * @param passed - Whether the case passed; decides "passed" or "failed" in the text.
  * @param required - Whether this case was required in the rubric.
  * @param outcomeKind - The case outcome kind (closed `OutcomeKind` union literal).
  * @param applicableDimensions - Names of applicable scoring dimensions.
@@ -814,7 +814,7 @@ function outcomeKindLabel(kind: OutcomeKind): string {
  */
 export function buildCaseExplanation(
   scoreBucket: ScoreBucket,
-  _passed: boolean,
+  passed: boolean,
   required: boolean,
   outcomeKind: OutcomeKind,
   applicableDimensions: string[],
@@ -826,12 +826,14 @@ export function buildCaseExplanation(
   }
 
   // Build a deterministic, template-driven explanation from structured signals only.
+  // The verdict names the outcome, so the text agrees with `passed` even if a
+  // caller hands in a bucket that does not; the bucket only grades a failure.
   let bucketLabel = "failed";
-  if (scoreBucket === "pass") {
+  if (passed) {
     bucketLabel = "passed";
   }
-  if (scoreBucket === "partial") {
-    bucketLabel = "partially passed";
+  if (!passed && scoreBucket === "partial") {
+    bucketLabel = "failed with a partial score";
   }
 
   // Outcome kind label — maps the closed OutcomeKind union to safe readable labels.
@@ -881,7 +883,13 @@ export function buildPublicExplanation(
   evalCase: Pick<EvalCase, "expected_outcome">,
   dryRun: boolean,
 ): CaseResultSummary["publicExplanation"] {
-  const scoreBucket = computeScoreBucket(scoreRecord.weightedTotal, dryRun);
+  // The bucket follows the verdict, so the explanation can never say
+  // "failed" about a case that passed (or the reverse).
+  const scoreBucket = computeCaseScoreBucket(
+    scoreRecord.weightedTotal,
+    scoreRecord.passed,
+    dryRun,
+  );
 
   // Collect applicable dimension names (identifiers only — no rationale text)
   const applicableDimensions = (

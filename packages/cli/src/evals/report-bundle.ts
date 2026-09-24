@@ -10,7 +10,8 @@
  *
  * All public report fields are derived from allowlisted structured inputs only:
  *   - Pass/fail booleans from `SanitizedCaseResultSummary`
- *   - Score buckets computed from `weightedTotal` via `computeScoreBucket()`
+ *   - Case score buckets from the verdict and `weightedTotal` via
+ *     `computeCaseScoreBucket()`; aggregate buckets via `computeScoreBucket()`
  *   - Bounded explanation text from `publicExplanation` (pre-validated by runner)
  *   - Aggregate counts computed from case-result arrays
  *
@@ -47,6 +48,7 @@ import {
 import { tallyByModelAndCase } from "./pass-rates.js";
 import {
   BoundedExplanationSchema,
+  computeCaseScoreBucket,
   computeScoreBucket,
   DASHBOARD_MANIFEST_SCHEMA_VERSION,
   type DashboardEntry,
@@ -109,9 +111,11 @@ export function assembleCaseEntry(
   suite: string,
 ): PublicCaseEntry {
   // An errored case was never scored: it is bucketed "skip", like a dry run,
-  // so no reader counts its zero as a result.
-  const scoreBucket = computeScoreBucket(
+  // so no reader counts its zero as a result. A scored case's bucket follows
+  // its verdict, so `passed` and `scoreBucket` never disagree.
+  const scoreBucket = computeCaseScoreBucket(
     row.errored === true ? undefined : row.weightedTotal,
+    row.passed,
     row.dryRun,
   );
 

@@ -11,7 +11,10 @@
  * This module also extracts code locations (`path/to/file.ts:12`) from
  * review text. Citing at least two distinct locations in one finding is the
  * deterministic proxy for "traced": the finding names where the data comes
- * from and where it is used, not just the line that looks suspicious.
+ * from and where it is used, not just the line that looks suspicious. A
+ * reviewer may also name the far end by the symbol the case declares there
+ * (`saveSettings`) rather than by its path; `isTracedThroughDeclaredSymbol`
+ * accepts that when the symbol lives in a different file from the cited one.
  */
 
 import type { EvalCase } from "./types.js";
@@ -89,6 +92,91 @@ export function extractCodeLocations(text: string): string[] {
 
 export function isTracedFinding(text: string): boolean {
   return extractCodeLocations(text).length >= TRACED_FINDING_MIN_LOCATIONS;
+}
+
+// A `path` written in backticks, then (on a later line) a code fence: the
+// fence's code belongs to that file, the way a case shows each file.
+const MATERIAL_PATH_RE =
+  /`((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:ts|tsx|js|jsx|mjs|cjs|go|rs|py))`/g;
+// Functions and classes only: a trace ends at the code that fails, and a
+// local such as `const spy` is too common a word to stand for a location.
+const DECLARATION_RE = /\b(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g;
+
+/**
+ * The functions and classes a case's material declares, each mapped to the
+ * file it is declared in. A case shows each file as a backticked path
+ * followed by a fenced code block; declarations inside that block belong to
+ * that path. A name declared in two files is dropped, since naming it does
+ * not say which file is meant.
+ */
+export function extractDeclaredSymbols(
+  material: string,
+): ReadonlyMap<string, string> {
+  const declared = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  let lastPath: string | undefined;
+  let fenceFile: string | undefined;
+  let inFence = false;
+
+  for (const line of material.split("\n")) {
+    if (line.trimStart().startsWith("```")) {
+      inFence = !inFence;
+      fenceFile = inFence ? lastPath : undefined;
+      continue;
+    }
+    if (!inFence) {
+      for (const match of line.matchAll(MATERIAL_PATH_RE)) {
+        lastPath = match[1];
+      }
+      continue;
+    }
+    if (fenceFile === undefined) continue;
+    for (const match of line.matchAll(DECLARATION_RE)) {
+      const name = match[1];
+      if (name === undefined) continue;
+      const previous = declared.get(name);
+      if (previous !== undefined && previous !== fenceFile) {
+        ambiguous.add(name);
+      }
+      declared.set(name, fenceFile);
+    }
+  }
+
+  for (const name of ambiguous) declared.delete(name);
+  return declared;
+}
+
+/** True when `a` and `b` name the same file, one possibly a suffix path. */
+function sameFile(a: string, b: string): boolean {
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+/**
+ * True when a finding cites a code location and also names, as a whole
+ * identifier, a symbol that `declared` places in a different file: for
+ * example the call site `src/commands/settings.ts:32` and the fallible
+ * function `saveSettings` that the case shows in `src/settings/store.ts`.
+ * That names both ends of the trace, even though only one is a path.
+ * Naming a symbol from the cited file itself (the enclosing function) does
+ * not, and neither does a symbol the case never declares (a library type).
+ */
+export function isTracedThroughDeclaredSymbol(
+  text: string,
+  declared: ReadonlyMap<string, string>,
+): boolean {
+  const citedFiles = extractCodeLocations(text).map((location) =>
+    location.replace(/:\d+$/, ""),
+  );
+  if (citedFiles.length === 0) return false;
+
+  for (const [name, file] of declared) {
+    const named = new RegExp(
+      `(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`,
+    );
+    if (!named.test(text)) continue;
+    if (citedFiles.some((cited) => !sameFile(cited, file))) return true;
+  }
+  return false;
 }
 
 const NEGATION_BEFORE_RE =

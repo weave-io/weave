@@ -37,6 +37,7 @@ import { describe, expect, it } from "bun:test";
 import {
   BoundedExplanationSchema,
   CaseAttemptTallySchema,
+  computeCaseScoreBucket,
   DASHBOARD_MANIFEST_SCHEMA_VERSION,
   DashboardEntrySchema,
   DashboardManifestSchema,
@@ -1988,5 +1989,22 @@ describe("errored cases in public schemas", () => {
           .success,
       ).toBe(false);
     });
+  });
+});
+
+describe("computeCaseScoreBucket — a case's band follows its verdict", () => {
+  it.each([
+    [0.33, true, "pass"],
+    [0.95, true, "pass"],
+    [0.95, false, "partial"],
+    [0.6, false, "partial"],
+    [0.2, false, "fail"],
+  ] as const)("total %p with passed=%p is %p", (total, passed, bucket) => {
+    expect(computeCaseScoreBucket(total, passed, false)).toBe(bucket);
+  });
+
+  it("skips a dry run and a case with no score", () => {
+    expect(computeCaseScoreBucket(0.95, true, true)).toBe("skip");
+    expect(computeCaseScoreBucket(undefined, false, false)).toBe("skip");
   });
 });

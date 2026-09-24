@@ -229,6 +229,7 @@ export interface VerificationSignals {
   verificationSectionPresent: boolean;
   verificationCheckboxCount: number;
   verificationSectionHasCodeBlock: boolean;
+  verificationUsesDeclaredCommand: boolean;
   declaredCommands: string[];
   unlistedCommands: string[];
   producedArtifacts: string[];
@@ -269,6 +270,15 @@ export function extractVerificationSignals(
     ),
   ];
 
+  // The Pattern prompt's own contract for `## Verification`: the commands to
+  // run to confirm the plan is complete. Any form counts (a list, a code
+  // block, a checklist), as long as one of them is a declared command.
+  const verificationCommands =
+    section === undefined ? [] : extractPlanCommands(section.join("\n"));
+  const verificationUsesDeclaredCommand = verificationCommands.some((command) =>
+    declaredCommands.some((declared) => commandMatches(command, declared)),
+  );
+
   const producedArtifacts: string[] = [];
   if (
     criteria.length > 0 &&
@@ -285,6 +295,9 @@ export function extractVerificationSignals(
   if (declaredCommands.length > 0 && unlistedCommands.length === 0) {
     producedArtifacts.push("plan_no_unlisted_commands");
   }
+  if (verificationUsesDeclaredCommand) {
+    producedArtifacts.push("plan_verification_uses_declared_commands");
+  }
 
   return {
     criteriaCount: criteria.length,
@@ -292,6 +305,7 @@ export function extractVerificationSignals(
     verificationSectionPresent: section !== undefined,
     verificationCheckboxCount,
     verificationSectionHasCodeBlock,
+    verificationUsesDeclaredCommand,
     declaredCommands,
     unlistedCommands,
     producedArtifacts,
