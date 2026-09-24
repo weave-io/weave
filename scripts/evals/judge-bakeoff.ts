@@ -41,6 +41,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
+import { JUDGE_MODEL_VERSION } from "../../packages/cli/src/commands/eval.js";
 import {
   EVALS_ROOT,
   loadCaseFile,
@@ -468,10 +469,17 @@ const JevResponseSchema = z.object({
   usage: z.object({ cost: z.number() }).partial().optional(),
 });
 
-/** Validate a Jev response and turn it into a verdict. */
+/**
+ * Validate a Jev response and turn it into a verdict. The answer must come
+ * from `expectedVersion`, the dated version production is pinned to
+ * (`JUDGE_MODEL_VERSION` in `commands/eval.ts`), so a calibration run is
+ * scored by the same Jev version as production, whichever model id the
+ * request named.
+ */
 export function parseJevResponse(
   item: BakeoffItem,
   body: unknown,
+  expectedVersion: string = JUDGE_MODEL_VERSION,
 ): Result<JevVerdict, BakeoffError> {
   const parsed = JevResponseSchema.safeParse(body);
   if (!parsed.success) {
@@ -479,6 +487,13 @@ export function parseJevResponse(
       type: "JevResponseInvalid",
       itemId: item.id,
       message: parsed.error.message,
+    });
+  }
+  if (parsed.data.model !== expectedVersion) {
+    return err({
+      type: "JevResponseInvalid",
+      itemId: item.id,
+      message: `answered as ${parsed.data.model}, not the pinned ${expectedVersion}`,
     });
   }
   const { answers } = parsed.data;

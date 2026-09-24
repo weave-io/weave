@@ -983,3 +983,17 @@ describe("the production judge asks what the acceptance check asked", () => {
 function harnessState(item: BakeoffItem): string {
   return buildJevRequest(item)._unsafeUnwrap().state;
 }
+
+describe("parseJevResponse — the pinned version", () => {
+  it("refuses an answer from a Jev version other than the one production is pinned to", () => {
+    const body = {
+      ...(jevBody(0.9, {
+        review_verdict_present: 0.9,
+        review_custom_signal: 0.9,
+      }) as Record<string, unknown>),
+      model: "typesafe/jev-1.14-20261201",
+    };
+    const verdict = parseJevResponse(taskItem(), body);
+    expect(verdict._unsafeUnwrapErr().type).toBe("JevResponseInvalid");
+  });
+});

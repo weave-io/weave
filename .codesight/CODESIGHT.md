@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 217 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~19,500 tokens. Without it, AI exploration would cost ~73,000 tokens. **Saves ~53,500 tokens per conversation.**
-> **Last scanned:** 2026-09-24 05:44 — re-run after significant changes
+> **Last scanned:** 2026-09-24 05:59 — re-run after significant changes
 
 ---
 
@@ -262,6 +262,8 @@
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
+  - const JUDGE_MODEL_ID
+  - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -960,7 +962,7 @@
   - function displayResponse: (item, "response">) => string
   - function buildJevState: (item) => string
   - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
-  - function parseJevResponse: (item, body) => Result<JevVerdict, BakeoffError>
+  - function parseJevResponse: (item, body, expectedVersion) => Result<JevVerdict, BakeoffError>
   - _...40 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<

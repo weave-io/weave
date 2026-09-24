@@ -478,8 +478,8 @@ function buildDryRunRunner(
  * `scripts/evals/verify-agent-eval-run.ts` reads `JUDGE_MODEL_ID` from this
  * file's source as a string literal; keep it one.
  */
-const JUDGE_MODEL_ID = "typesafe/jev-1.13";
-const JUDGE_MODEL_VERSION = "typesafe/jev-1.13-20260917";
+export const JUDGE_MODEL_ID = "typesafe/jev-1.13";
+export const JUDGE_MODEL_VERSION = "typesafe/jev-1.13-20260917";
 
 /**
  * Build the live production runner from real external dependencies.

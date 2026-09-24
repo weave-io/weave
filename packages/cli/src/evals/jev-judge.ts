@@ -141,13 +141,25 @@ export function buildJevState(input: JudgeInput): string {
   ].join("\n");
 }
 
+/**
+ * Keys a question may not use: the judge's own `overall`, and the names that
+ * reach `Object.prototype` instead of creating a property (`__proto__` would
+ * be dropped from the request by `JSON.stringify`).
+ */
+const RESERVED_QUESTION_KEYS: ReadonlySet<string> = new Set([
+  JEV_OVERALL_KEY,
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
 function questionKeysValid(
   criteria: readonly JudgeCriterion[],
   dimension: ScoringDimension,
 ): Result<void, ScoringError> {
   const seen = new Set<string>();
   for (const criterion of criteria) {
-    if (criterion.key === JEV_OVERALL_KEY || seen.has(criterion.key)) {
+    if (RESERVED_QUESTION_KEYS.has(criterion.key) || seen.has(criterion.key)) {
       return err({
         type: "JudgeInputInvalid",
         dimension,
@@ -181,7 +193,8 @@ export function buildJevRequest(
         `${JEV_MAX_STATE_CHARS}. It was not truncated, so the case is not judged.`,
     });
   }
-  const questions: Record<string, JevNoulQuestion> = {};
+  // Null prototype: every key is an own property, whatever its name.
+  const questions: Record<string, JevNoulQuestion> = Object.create(null);
   for (const criterion of input.criteria) {
     questions[criterion.key] = {
       type: "noul",
@@ -228,11 +241,12 @@ export function parseJevDecision(
   }
   const answers = parsed.data.answers;
   const noul = (key: string): number | undefined => {
+    if (!Object.hasOwn(answers, key)) return undefined;
     const answer = JevNoulSchema.safeParse(answers[key]);
     return answer.success ? answer.data.noul : undefined;
   };
 
-  const criteria: Record<string, number> = {};
+  const criteria: Record<string, number> = Object.create(null);
   for (const criterion of input.criteria) {
     const value = noul(criterion.key);
     if (value === undefined) {

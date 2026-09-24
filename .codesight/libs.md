@@ -251,6 +251,8 @@
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
+  - const JUDGE_MODEL_ID
+  - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -949,7 +951,7 @@
   - function displayResponse: (item, "response">) => string
   - function buildJevState: (item) => string
   - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
-  - function parseJevResponse: (item, body) => Result<JevVerdict, BakeoffError>
+  - function parseJevResponse: (item, body, expectedVersion) => Result<JevVerdict, BakeoffError>
   - _...40 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<

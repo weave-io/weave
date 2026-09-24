@@ -1413,6 +1413,26 @@ describe("a maintainer asks which judge scored a run", () => {
     });
   });
 
+  it("never writes a judge the provenance manifest carried in by itself", async () => {
+    await withBundleRoot(async (root) => {
+      const written = await write(root, {
+        provenanceManifest: {
+          ...provenanceManifest(),
+          judge: { id: "typesafe/jev-1.13", version: "<script>x</script>" },
+        },
+      });
+      const manifest = await readRunJson(
+        root,
+        written.runId,
+        "provenance-manifest.json",
+      );
+
+      // Positive first: the manifest was written, with its records.
+      expect(manifest.records.length).toBeGreaterThan(0);
+      expect(manifest.judge).toBeUndefined();
+    });
+  });
+
   it("refuses to write a judge that is not a plain model slug, rather than publish it", async () => {
     await withBundleRoot(async (root) => {
       const result = await new ArtifactBundleWriter(root).writeBundle({

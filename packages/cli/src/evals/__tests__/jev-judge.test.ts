@@ -89,6 +89,17 @@ describe("buildJevRequest", () => {
     expect(result._unsafeUnwrapErr().type).toBe("JudgeInputInvalid");
   });
 
+  it.each([
+    "__proto__",
+    "constructor",
+  ])("refuses a criterion keyed %s, which would not survive as a question", (key) => {
+    const result = buildJevRequest(
+      input({ criteria: [{ key, question: "?" }] }),
+      JUDGE.version,
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("JudgeInputInvalid");
+  });
+
   it("refuses two criteria with the same key", () => {
     const result = buildJevRequest(
       input({

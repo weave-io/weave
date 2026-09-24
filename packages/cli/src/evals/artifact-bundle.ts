@@ -1125,13 +1125,14 @@ export class ArtifactBundleWriter {
             Promise.resolve(),
           );
         }
-        // Sanitize the manifest before writing. The judge is added here, at
+        // Sanitize the manifest before writing. The judge is set here, at
         // write time, because the manifest is derived before any case runs.
-        const sanitized = sanitizeProvenanceManifest(
-          bundle.judge !== undefined
-            ? { ...provenanceManifest, judge: bundle.judge }
-            : provenanceManifest,
-        );
+        // It is always the bundle's validated judge (or none): a judge the
+        // caller put on the manifest itself is never written.
+        const sanitized = sanitizeProvenanceManifest({
+          ...provenanceManifest,
+          judge: bundle.judge,
+        });
         return writeJson(
           sanitized,
           "provenance-manifest.json",
