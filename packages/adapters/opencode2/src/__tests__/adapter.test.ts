@@ -43,18 +43,14 @@ async function seedCatalog(
   providerID = "anthropic",
   modelID = "claude-sonnet-4-5",
 ): Promise<void> {
-  await ctx.catalog.transform((editor) => {
-    editor.provider.update(providerID, (provider) => {
-      (provider as unknown as { id: string }).id = providerID;
-      (provider as unknown as { name: string }).name = providerID;
-    });
-    editor.model.update(providerID, modelID, (model) => {
+  await ctx.model.transform((editor) => {
+    editor.update(providerID, modelID, (model) => {
       (model as unknown as { id: string }).id = modelID;
       (model as unknown as { modelID: string }).modelID = modelID;
       (model as unknown as { providerID: string }).providerID = providerID;
       (model as unknown as { name: string }).name = modelID;
     });
-    editor.model.default.set(providerID, modelID);
+    editor.default.set(providerID, modelID);
   });
 }
 

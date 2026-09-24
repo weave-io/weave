@@ -2,8 +2,8 @@
  * Sealed V2 SDK boundary.
  *
  * This is the server SDK boundary in `@weaveio/weave-adapter-opencode2`, permitted to
- * import from `@opencode-ai/plugin`, `@opencode-ai/sdk`, or
- * `@opencode-ai/client`. All other adapter modules MUST import the
+ * import from `@opencode/plugin`, `@opencode/sdk`, or
+ * `@opencode/client`. All other adapter modules MUST import the
  * Weave-local `V2*` aliases re-exported from this module instead of reaching
  * into the SDK directly. This insulates the rest of the adapter from V2 SDK
  * version churn and keeps the harness boundary auditable at a glance (one
@@ -24,31 +24,31 @@ import type {
   Command as CommandNamespace,
   Plugin as PluginModule,
   Skill as SkillNamespace,
-} from "@opencode-ai/plugin";
+} from "@opencode/plugin";
 
 export type {
   OpenCodeEvent as V2OpenCodeEvent,
   SkillInfo as V2NativeSkillInfo,
-} from "@opencode-ai/client";
+} from "@opencode/client";
 export {
   Agent as V2Agent,
   Model as V2Model,
   /**
    * Namespace-style export of the `Plugin` module (`Plugin.define`,
    * `Plugin.Context`, `Plugin.Plugin`, `Plugin.Cleanup`) — re-exported under
-   * a Weave-local name so call sites never import `@opencode-ai/plugin`
+   * a Weave-local name so call sites never import `@opencode/plugin`
    * directly.
    */
   Plugin as V2PluginModule,
   Provider as V2Provider,
   Skill as V2Skill,
-} from "@opencode-ai/plugin";
+} from "@opencode/plugin";
 export type {
   RpcHandlers as V2RpcHandlers,
   RpcRegistration as V2RpcRegistration,
-} from "@opencode-ai/plugin/promise/rpc";
-export { Rpc as V2Rpc } from "@opencode-ai/plugin/rpc";
-export type { Context as V2TuiContext } from "@opencode-ai/plugin/tui/context";
+} from "@opencode/plugin/promise/rpc";
+export { Rpc as V2Rpc } from "@opencode/plugin/rpc";
+export type { Context as V2TuiContext } from "@opencode/plugin/tui/context";
 
 /**
  * The plugin definition shape passed to `Plugin.define()` — used when the
@@ -90,7 +90,7 @@ export type V2SkillInfo = SkillNamespace.Info;
 export type {
   /** Output of the model-default RPC. */
   ModelDefaultOutput as V2CatalogModelDefaultOutput,
-  /** Model descriptor as read from `ctx.catalog.model.get()`. */
+  /** Model descriptor as read from `ctx.model.list()`. */
   ModelInfo as V2CatalogModelInfo,
   /** Output of the model-list RPC. */
   ModelListOutput as V2CatalogModelListOutput,
@@ -105,7 +105,7 @@ export type {
   PermissionRule as V2Rule,
   /** An ordered list of `V2Rule` entries. */
   PermissionRuleset as V2Ruleset,
-  /** Provider descriptor as read from `ctx.catalog.provider.list()`. */
+  /** Provider descriptor as read from `ctx.provider.list()`. */
   ProviderInfo as V2CatalogProviderInfo,
   /** Output of the provider-list RPC. */
   ProviderListOutput as V2CatalogProviderListOutput,
@@ -124,21 +124,13 @@ export type {
    * `ctx.event.subscribe()` / `event.subscribe()`.
    */
   V2Event,
-} from "@opencode-ai/client";
+} from "@opencode/client";
 export type {
   /** The `ctx.agent` sub-API surface. */
   AgentDomain as V2AgentDomain,
   /** Agent-list/get editor exposed inside `ctx.agent.transform()`. */
   AgentEditor as V2AgentEditor,
-} from "@opencode-ai/plugin/promise/agent";
-export type {
-  /** The `ctx.catalog` sub-API surface. */
-  CatalogDomain as V2CatalogDomain,
-  /** Catalog editor exposed inside `ctx.catalog.transform()`. */
-  CatalogEditor as V2CatalogEditor,
-  /** A single provider + its models as seen inside `CatalogEditor`. */
-  CatalogProviderRecord as V2CatalogProviderRecord,
-} from "@opencode-ai/plugin/promise/catalog";
+} from "@opencode/plugin/promise/agent";
 export type {
   /** A command definition added via `CommandEditor.add()`. */
   CommandDefinition as V2CommandDefinition,
@@ -148,17 +140,29 @@ export type {
   CommandEditor as V2CommandEditor,
   /** Input passed to a `CommandDefinition.execute()` callback. */
   CommandInvocation as V2CommandInvocation,
-} from "@opencode-ai/plugin/promise/command";
+} from "@opencode/plugin/promise/command";
 export type {
   /** The `ctx.event` sub-API surface (`event.subscribe()`). */
   EventDomain as V2EventDomain,
-} from "@opencode-ai/plugin/promise/event";
+} from "@opencode/plugin/promise/event";
+export type {
+  /** The `ctx.model` sub-API surface (replaces the beta-era `ctx.catalog`). */
+  ModelDomain as V2ModelDomain,
+  /** Model editor exposed inside `ctx.model.transform()`. */
+  ModelEditor as V2ModelEditor,
+} from "@opencode/plugin/promise/model";
 export type {
   /** The `ctx.permission` sub-API surface. */
   PermissionDomain as V2PermissionDomain,
   /** Permission evaluation payload delivered to `ctx.permission.hook("evaluate", ...)`. */
   PermissionEvaluation as V2PermissionEvaluation,
-} from "@opencode-ai/plugin/promise/permission";
+} from "@opencode/plugin/promise/permission";
+export type {
+  /** The `ctx.provider` sub-API surface. */
+  ProviderDomain as V2ProviderDomain,
+  /** A single provider + its models as seen inside `ModelEditor.provider`. */
+  ProviderRecord as V2ProviderRecord,
+} from "@opencode/plugin/promise/provider";
 export type {
   /**
    * A registration handle returned by hook/transform registration calls
@@ -166,7 +170,7 @@ export type {
    * `dispose()` removes only the effect owned by that registration.
    */
   Registration as V2Registration,
-} from "@opencode-ai/plugin/promise/registration";
+} from "@opencode/plugin/promise/registration";
 export type {
   /** Hook payload delivered to a `ctx.session.hook("context", ...)` callback. */
   SessionContext as V2SessionContext,
@@ -186,13 +190,13 @@ export type {
   SessionRetry as V2SessionRetry,
   /** Retry decision produced by `ctx.session.hook("retry", ...)`. */
   SessionRetryDecision as V2SessionRetryDecision,
-} from "@opencode-ai/plugin/promise/session";
+} from "@opencode/plugin/promise/session";
 export type {
   /** The `ctx.skill` sub-API surface. */
   SkillDomain as V2SkillDomain,
   /** Skill editor exposed inside `ctx.skill.transform()`. */
   SkillEditor as V2SkillEditor,
-} from "@opencode-ai/plugin/promise/skill";
+} from "@opencode/plugin/promise/skill";
 export type {
   /** Tool call identifier. */
   CallID as V2ToolCallID,
@@ -210,15 +214,15 @@ export type {
   ToolDomain as V2ToolDomain,
   /** Tool editor exposed inside `ctx.tool.transform()`. */
   ToolEditor as V2ToolEditor,
-} from "@opencode-ai/plugin/promise/tool";
-export { Error as V2ToolError } from "@opencode-ai/plugin/promise/tool";
+} from "@opencode/plugin/promise/tool";
+export { Error as V2ToolError } from "@opencode/plugin/promise/tool";
 
-import type { OpenCode } from "@opencode-ai/client";
+import type { OpenCode } from "@opencode/client";
 
 export type {
   /** The generated V2 SDK client factory return type. */
   OpenCodeClient as V2OpenCodeClient,
-} from "@opencode-ai/client";
+} from "@opencode/client";
 
 /**
  * Client configuration options — used when constructing a standalone V2

@@ -46,18 +46,14 @@ function makeDescriptor(name: string): AgentDescriptor {
  * for any descriptor that requests a specific model.
  */
 async function seedCatalog(ctx: MockPluginContext): Promise<void> {
-  await ctx.catalog.transform((editor) => {
-    editor.provider.update("anthropic", (provider) => {
-      (provider as unknown as { id: string }).id = "anthropic";
-      (provider as unknown as { name: string }).name = "anthropic";
-    });
-    editor.model.update("anthropic", "claude-sonnet-4-5", (model) => {
+  await ctx.model.transform((editor) => {
+    editor.update("anthropic", "claude-sonnet-4-5", (model) => {
       (model as unknown as { id: string }).id = "claude-sonnet-4-5";
       (model as unknown as { modelID: string }).modelID = "claude-sonnet-4-5";
       (model as unknown as { providerID: string }).providerID = "anthropic";
       (model as unknown as { name: string }).name = "claude-sonnet-4-5";
     });
-    editor.model.default.set("anthropic", "claude-sonnet-4-5");
+    editor.default.set("anthropic", "claude-sonnet-4-5");
   });
 }
 

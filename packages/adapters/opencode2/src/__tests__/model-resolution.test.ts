@@ -18,12 +18,8 @@ async function seedModel(
   providerID: string,
   modelID: string,
 ): Promise<void> {
-  await ctx.catalog.transform((editor) => {
-    editor.provider.update(providerID, (provider) => {
-      (provider as unknown as { id: string }).id = providerID;
-      (provider as unknown as { name: string }).name = providerID;
-    });
-    editor.model.update(providerID, modelID, (model) => {
+  await ctx.model.transform((editor) => {
+    editor.update(providerID, modelID, (model) => {
       (model as unknown as { id: string }).id = modelID;
       (model as unknown as { modelID: string }).modelID = modelID;
       (model as unknown as { providerID: string }).providerID = providerID;
@@ -37,8 +33,8 @@ async function setDefault(
   providerID: string,
   modelID: string,
 ): Promise<void> {
-  await ctx.catalog.transform((editor) => {
-    editor.model.default.set(providerID, modelID);
+  await ctx.model.transform((editor) => {
+    editor.default.set(providerID, modelID);
   });
 }
 

@@ -233,7 +233,7 @@ export class OpenCode2Host {
   }
 
   /** Tells the plugin the host's inventory changed, as the real host does. */
-  emitInventoryChange(type: "catalog.updated" | "skill.updated"): void {
+  emitInventoryChange(type: "model.updated" | "skill.updated"): void {
     this.events.emit({
       type,
       location: {
@@ -320,9 +320,9 @@ export class OpenCode2Host {
   /** Builds a model request through the host's `context` hook. */
   async contextForAgent(agent: string): Promise<Record<string, unknown>> {
     const hook = this.hooks.get("context");
-    const payload = { sessionID: "session", agent, generation: {} };
+    const payload = { sessionID: "session", agent, options: {} };
     if (hook !== undefined) await hook(payload as never);
-    return payload.generation;
+    return payload.options;
   }
 
   /** Calls one of the plugin's RPC methods the way the TUI panel does. */
@@ -421,10 +421,8 @@ export class OpenCode2Host {
         directory: this.root,
         workspaceID: this.options.workspaceID ?? "workspace",
       },
-      catalog: {
-        model: {
-          list: async () => ({ data: this.models.map(modelRecord) }),
-        },
+      model: {
+        list: async () => ({ data: this.models.map(modelRecord) }),
       },
       skill: {
         list: async () => ({

@@ -32,4 +32,22 @@ describe("validateSessionScope", () => {
       validateSessionScope("session", session, "/other", "one").isErr(),
     ).toBe(true);
   });
+
+  it("accepts a session that reports no workspace id (OpenCode 2.0.x public location refs)", () => {
+    const session = {
+      location: { directory: "/project/app" },
+      agent: "helper",
+    };
+    expect(
+      validateSessionScope(
+        "session",
+        session,
+        "/project/app",
+        "one",
+      )._unsafeUnwrap(),
+    ).toMatchObject({ agent: "helper", workspaceID: "one" });
+    expect(
+      validateSessionScope("session", session, "/project/app")._unsafeUnwrap(),
+    ).toMatchObject({ agent: "helper" });
+  });
 });

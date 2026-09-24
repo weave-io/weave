@@ -119,9 +119,9 @@ fi
 
 echo "==> Layer 9/9: version-drift check"
 if (cd "${PKG_DIR}" && bun run verify/checks/version-drift.ts); then
-  abort_on_failure "9-version-drift" "passed" "all V2 SDK pins match 0.0.0-beta-19151"
+  abort_on_failure "9-version-drift" "passed" "all V2 SDK pins match 2.0.16"
 else
-  abort_on_failure "9-version-drift" "failed" "a V2 SDK pin has drifted from 0.0.0-beta-19151"
+  abort_on_failure "9-version-drift" "failed" "a V2 SDK pin has drifted from 2.0.16"
 fi
 
 if ! command -v podman >/dev/null 2>&1; then
@@ -139,16 +139,16 @@ echo "==> Building adapter bundle (bun build) for the container"
 if ! (cd "${PKG_DIR}" && bun build ./src/index.ts \
   --outdir "${BUILD_STAGE}/adapter/dist" \
   --target bun \
-  --external @opencode-ai/plugin --external @opencode-ai/sdk \
-  --external @opencode-ai/client --external mustache \
+  --external @opencode/plugin --external @opencode/sdk \
+  --external @opencode/client --external mustache \
   --external neverthrow --external zod); then
   abort_on_failure "3-6-build" "failed" "bun build of src/index.ts failed"
 fi
 if ! (cd "${PKG_DIR}" && bun build ./src/server.ts \
   --outdir "${BUILD_STAGE}/adapter/dist" \
   --target bun \
-  --external @opencode-ai/plugin --external @opencode-ai/sdk \
-  --external @opencode-ai/client --external mustache \
+  --external @opencode/plugin --external @opencode/sdk \
+  --external @opencode/client --external mustache \
   --external neverthrow --external zod); then
   abort_on_failure "3-6-build" "failed" "bun build of src/server.ts failed"
 fi

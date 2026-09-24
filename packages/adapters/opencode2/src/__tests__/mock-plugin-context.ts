@@ -22,10 +22,10 @@
 
 import type {
   PluginContextAgentFacade,
-  PluginContextCatalogFacade,
   PluginContextCommandFacade,
   PluginContextEventFacade,
   PluginContextFacade,
+  PluginContextModelFacade,
   PluginContextSessionFacade,
   PluginContextSkillFacade,
   PluginContextToolFacade,
@@ -33,12 +33,12 @@ import type {
 import type {
   V2AgentEditor,
   V2AgentInfo,
-  V2CatalogEditor,
   V2CatalogModelInfo,
   V2CatalogProviderInfo,
-  V2CatalogProviderRecord,
   V2CommandEditor,
   V2Event,
+  V2ModelEditor,
+  V2ProviderRecord,
   V2Registration,
   V2SessionInfo,
   V2SkillEditor,
@@ -84,7 +84,7 @@ function makeSkillFixture(id: string): V2SkillInfo {
   } as unknown as V2SkillInfo;
 }
 
-function makeProviderRecord(providerID: string): V2CatalogProviderRecord {
+function makeProviderRecord(providerID: string): V2ProviderRecord {
   return {
     provider: {
       id: providerID,
@@ -93,7 +93,7 @@ function makeProviderRecord(providerID: string): V2CatalogProviderRecord {
       package: providerID,
     },
     models: new Map(),
-  } as unknown as V2CatalogProviderRecord;
+  } as unknown as V2ProviderRecord;
 }
 
 /**
@@ -106,8 +106,8 @@ export class MockPluginContext implements PluginContextFacade {
 
   private readonly agents = new Map<string, V2AgentInfo>();
   private readonly skills = new Map<string, V2SkillInfo>();
-  private readonly providers = new Map<string, V2CatalogProviderRecord>();
-  private catalogDefault: { providerID: string; modelID: string } | undefined;
+  private readonly providers = new Map<string, V2ProviderRecord>();
+  private modelDefault: { providerID: string; modelID: string } | undefined;
   private readonly sessions = new Map<string, V2SessionInfo>();
   private sessionSeq = 0;
   private readonly eventQueue: V2Event[] = [];
@@ -173,52 +173,49 @@ export class MockPluginContext implements PluginContextFacade {
     } satisfies V2SkillEditor;
   }
 
-  private buildCatalogEditor(): V2CatalogEditor {
+  private buildModelEditor(): V2ModelEditor {
     const providers = this.providers;
+    const models = (providerID?: string) => {
+      const records =
+        providerID === undefined
+          ? Array.from(providers.values())
+          : [providers.get(providerID)].filter(
+              (record): record is V2ProviderRecord => record !== undefined,
+            );
+      return records.flatMap((record) => Array.from(record.models.values()));
+    };
     return {
+      list: (providerID) => models(providerID) as never,
+      get: (providerID, modelID) =>
+        providers.get(providerID)?.models.get(modelID) as never,
+      update: (providerID, modelID, update) => {
+        const record =
+          providers.get(providerID) ?? makeProviderRecord(providerID);
+        const existing = (record.models.get(modelID) ?? {
+          id: modelID,
+          modelID,
+          providerID,
+        }) as unknown as Parameters<typeof update>[0];
+        update(existing);
+        (record.models as Map<string, unknown>).set(modelID, existing);
+        providers.set(providerID, record);
+      },
+      remove: (providerID, modelID) => {
+        (
+          providers.get(providerID)?.models as Map<string, unknown> | undefined
+        )?.delete(modelID);
+      },
+      default: {
+        get: () => this.modelDefault,
+        set: (providerID, modelID) => {
+          this.modelDefault = { providerID, modelID };
+        },
+      },
       provider: {
         list: () => Array.from(providers.values()),
         get: (providerID) => providers.get(providerID),
-        update: (providerID, update) => {
-          const existing =
-            providers.get(providerID) ?? makeProviderRecord(providerID);
-          update(existing.provider as Parameters<typeof update>[0]);
-          providers.set(providerID, existing);
-        },
-        remove: (providerID) => {
-          providers.delete(providerID);
-        },
       },
-      model: {
-        get: (providerID, modelID) =>
-          providers.get(providerID)?.models.get(modelID) as never,
-        update: (providerID, modelID, update) => {
-          const record =
-            providers.get(providerID) ?? makeProviderRecord(providerID);
-          const existing = (record.models.get(modelID) ?? {
-            id: modelID,
-            modelID,
-            providerID,
-          }) as unknown as Parameters<typeof update>[0];
-          update(existing);
-          (record.models as Map<string, unknown>).set(modelID, existing);
-          providers.set(providerID, record);
-        },
-        remove: (providerID, modelID) => {
-          (
-            providers.get(providerID)?.models as
-              | Map<string, unknown>
-              | undefined
-          )?.delete(modelID);
-        },
-        default: {
-          get: () => this.catalogDefault,
-          set: (providerID, modelID) => {
-            this.catalogDefault = { providerID, modelID };
-          },
-        },
-      },
-    } satisfies V2CatalogEditor;
+    } satisfies V2ModelEditor;
   }
 
   private buildCommandEditor(): V2CommandEditor {
@@ -252,37 +249,35 @@ export class MockPluginContext implements PluginContextFacade {
     },
   };
 
-  readonly catalog: PluginContextCatalogFacade = {
+  readonly model: PluginContextModelFacade = {
     provider: {
       list: async () => {
-        this.record("catalog.provider.list", []);
+        this.record("provider.list", []);
         return Array.from(this.providers.values()).map(
           (record) => record.provider,
         ) as unknown as V2CatalogProviderInfo[];
       },
     },
-    model: {
-      list: async () => {
-        this.record("catalog.model.list", []);
-        const models: V2CatalogModelInfo[] = [];
-        for (const record of this.providers.values()) {
-          for (const model of record.models.values()) {
-            models.push(model as unknown as V2CatalogModelInfo);
-          }
+    list: async () => {
+      this.record("model.list", []);
+      const models: V2CatalogModelInfo[] = [];
+      for (const record of this.providers.values()) {
+        for (const model of record.models.values()) {
+          models.push(model as unknown as V2CatalogModelInfo);
         }
-        return models;
-      },
-      default: async () => {
-        this.record("catalog.model.default", []);
-        if (!this.catalogDefault) return null;
-        const record = this.providers.get(this.catalogDefault.providerID);
-        const model = record?.models.get(this.catalogDefault.modelID);
-        return (model as unknown as V2CatalogModelInfo) ?? null;
-      },
+      }
+      return models;
+    },
+    default: async () => {
+      this.record("model.default", []);
+      if (!this.modelDefault) return null;
+      const record = this.providers.get(this.modelDefault.providerID);
+      const model = record?.models.get(this.modelDefault.modelID);
+      return (model as unknown as V2CatalogModelInfo) ?? null;
     },
     transform: async (callback) => {
-      this.record("catalog.transform", [callback]);
-      const editor = this.buildCatalogEditor();
+      this.record("model.transform", [callback]);
+      const editor = this.buildModelEditor();
       callback(editor);
       return makeRegistration(() => {});
     },
@@ -383,11 +378,12 @@ export class MockPluginContext implements PluginContextFacade {
       this.record("session.interrupt", [input]);
       return { interrupted: true };
     }) as PluginContextSessionFacade["interrupt"],
-    rename: (async (input: { sessionID: string; title: string }) => {
-      this.record("session.rename", [input]);
+    update: (async (input: { sessionID: string; title?: string }) => {
+      this.record("session.update", [input]);
       const info = this.sessions.get(input.sessionID);
-      if (info) (info as unknown as { title: string }).title = input.title;
-    }) as PluginContextSessionFacade["rename"],
+      if (info && input.title !== undefined)
+        (info as unknown as { title: string }).title = input.title;
+    }) as PluginContextSessionFacade["update"],
   };
 
   readonly event: PluginContextEventFacade = {

@@ -4,20 +4,20 @@
 
 ```ts
 
-import type { Agent } from '@opencode-ai/plugin';
-import { AgentDomain } from '@opencode-ai/plugin/promise/agent';
-import { AgentEditor } from '@opencode-ai/plugin/promise/agent';
-import { CatalogEditor } from '@opencode-ai/plugin/promise/catalog';
-import { CommandEditor } from '@opencode-ai/plugin/promise/command';
-import { EventDomain } from '@opencode-ai/plugin/promise/event';
-import { ModelInfo } from '@opencode-ai/client';
-import { Plugin as Plugin_2 } from '@opencode-ai/plugin';
-import { ProviderInfo } from '@opencode-ai/client';
-import { Registration } from '@opencode-ai/plugin/promise/registration';
+import type { Agent } from '@opencode/plugin';
+import { AgentDomain } from '@opencode/plugin/promise/agent';
+import { AgentEditor } from '@opencode/plugin/promise/agent';
+import { CommandEditor } from '@opencode/plugin/promise/command';
+import { EventDomain } from '@opencode/plugin/promise/event';
+import { ModelEditor } from '@opencode/plugin/promise/model';
+import { ModelInfo } from '@opencode/client';
+import { Plugin as Plugin_2 } from '@opencode/plugin';
+import { ProviderInfo } from '@opencode/client';
+import { Registration } from '@opencode/plugin/promise/registration';
 import { ResultAsync } from 'neverthrow';
-import { SessionDomain } from '@opencode-ai/plugin/promise/session';
-import type { Skill } from '@opencode-ai/plugin';
-import { SkillEditor } from '@opencode-ai/plugin/promise/skill';
+import { SessionDomain } from '@opencode/plugin/promise/session';
+import type { Skill } from '@opencode/plugin';
+import { SkillEditor } from '@opencode/plugin/promise/skill';
 import { z } from 'zod';
 
 // Warning: (ae-forgotten-export) The symbol "HarnessAdapter" needs to be exported by the entry point server.d.ts

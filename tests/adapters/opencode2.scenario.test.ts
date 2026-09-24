@@ -1090,7 +1090,7 @@ describe("the host changes its model or skill inventory while a session is open"
 
   it("re-registers the plan command so it stays reachable after the host reloads", async () => {
     const result = await live({ host: ANTHROPIC_HOST }, async (host) => {
-      host.emitInventoryChange("catalog.updated");
+      host.emitInventoryChange("model.updated");
       await Bun.sleep(50);
       return { commands: host.commandNames(), disposed: [...host.disposed] };
     });

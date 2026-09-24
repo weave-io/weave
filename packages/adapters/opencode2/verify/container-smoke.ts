@@ -10,7 +10,7 @@
  * Two sub-checks, selected by `argv[2]`:
  *
  *   embedded   — layer 3: `OpenCode.create({ plugins: [weavePlugin] })`
- *                using the exact pinned `@opencode-ai/sdk`. Forces plugin
+ *                using the exact pinned `@opencode/sdk`. Forces plugin
  *                activation via the LLM-free `host.plugin.awaitActivation()`
  *                call (see `.weave/learnings/opencode2-adapter.md`, A3),
  *                then tears the host down with `host.close()`. Passes if
@@ -81,7 +81,7 @@ function unownedOrMissing(
 }
 
 async function runEmbedded(): Promise<number> {
-  const { OpenCode } = await import("@opencode-ai/sdk");
+  const { OpenCode } = await import("@opencode/sdk");
   // Resolves through the package's own `exports` map ("./server" ->
   // dist/server.js), the same subpath a real config would reference.
   const weavePluginModule = await import(
@@ -230,7 +230,7 @@ async function runAgentMaterialization(): Promise<number> {
   // `OpenCode.create` time. Change into the fixture before creating.
   process.chdir(fixtureDir);
 
-  const { OpenCode } = await import("@opencode-ai/sdk");
+  const { OpenCode } = await import("@opencode/sdk");
   const weavePluginModule = await import(
     "@weaveio/weave-adapter-opencode2/server"
   );

@@ -2,7 +2,7 @@
 
 `@weaveio/weave-adapter-opencode2` provides native server, RPC, and CLI plugins
 for OpenCode 2. The supported host for this release is exactly
-`0.0.0-beta-19151`.
+`2.0.16` (`@opencode/cli`).
 
 V1 remains available as the independent `@weaveio/weave-adapter-opencode`
 package. This release does not replace it. See the

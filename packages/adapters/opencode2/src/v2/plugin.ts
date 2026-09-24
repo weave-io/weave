@@ -23,7 +23,7 @@ function inventoryEventMatches(
   context: OpenCode2Context,
   event: OpenCodeEvent,
 ): boolean {
-  if (event.type !== "catalog.updated" && event.type !== "skill.updated")
+  if (event.type !== "model.updated" && event.type !== "skill.updated")
     return false;
   if (event.location?.directory !== context.location.directory) return false;
   return event.location.workspaceID === context.location.workspaceID;
@@ -44,7 +44,7 @@ function observeInventory(
         if (refreshed.isErr() && refreshed.error.code !== "disposed") {
           log.warn({ code: refreshed.error.code }, refreshed.error.message);
         }
-        if (event.type === "catalog.updated") await afterCatalogUpdate();
+        if (event.type === "model.updated") await afterCatalogUpdate();
       }
     },
     "host_unavailable",
@@ -77,7 +77,7 @@ export async function setupOpenCode2(
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
   const build = () =>
     fromOpenCode2Promise(
-      () => Promise.all([context.catalog.model.list(), context.skill.list()]),
+      () => Promise.all([context.model.list(), context.skill.list()]),
       "catalog_unavailable",
       "OpenCode model or skill inventory could not be read",
     ).andThen(([models, skills]) =>

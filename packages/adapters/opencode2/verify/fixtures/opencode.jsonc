@@ -16,7 +16,7 @@
   "providers": {
     "proof": {
       "name": "Local proof provider",
-      "package": "@opencode-ai/ai/providers/openai-compatible",
+      "package": "@opencode/ai/providers/openai-compatible",
       "settings": { "baseURL": "{env:WEAVE_VERIFY_BASE_URL}", "apiKey": "fixture-only" },
       "models": {
         "proof-model": {

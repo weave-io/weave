@@ -112,8 +112,8 @@ function fetchCatalog(
 ): ResultAsync<CatalogSnapshot, OpenCode2AdapterError> {
   return ResultAsync.fromPromise(
     (async () => {
-      const models = await facade.catalog.model.list();
-      const defaultModel = await facade.catalog.model.default();
+      const models = await facade.model.list();
+      const defaultModel = await facade.model.default();
       return { models, defaultModel };
     })(),
     (cause) => catalogUnavailable("model.list", cause),

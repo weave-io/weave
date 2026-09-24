@@ -32,6 +32,8 @@ describe("OpenCode 2 package build", () => {
     for (const dependency of [
       "@opencode-ai/client",
       "@opencode-ai/plugin",
+      "@opencode/client",
+      "@opencode/plugin",
       "@opentui/core",
       "@opentui/solid",
       "solid-js",

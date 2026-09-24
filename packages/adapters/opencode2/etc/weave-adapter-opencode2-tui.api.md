@@ -4,7 +4,7 @@
 
 ```ts
 
-import { Plugin as Plugin_2 } from '@opencode-ai/plugin/tui';
+import { Plugin as Plugin_2 } from '@opencode/plugin/tui';
 
 // @public (undocumented)
 const WeaveTuiPlugin: Plugin_2.Definition;

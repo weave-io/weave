@@ -3,7 +3,7 @@
  *
  * Declares the built-in `/weave:*` commands for the `opencode2` V2 adapter as
  * plain data: `{ name, description, promptTemplate }`. This module has no
- * dependency on `@opencode-ai/*` or the V2 plugin `Context` — it is pure data
+ * dependency on `@opencode/*` or the V2 plugin `Context` — it is pure data
  * consumed by `./runtime-command-projection.ts`, which projects each template
  * into a `V2Command.Info` and registers it via `facade.command.transform`.
  *

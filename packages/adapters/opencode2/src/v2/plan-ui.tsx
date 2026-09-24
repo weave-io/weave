@@ -1,11 +1,11 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
 import { ResultAsync } from "neverthrow";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { WeaveRpc } from "../rpc.js";
 import type { V2TuiContext as Context } from "../sdk-types.js";
 import {
   INVALID_PLAN_NAME_MESSAGE,
-  parsePlanName,
   PLAN_CATALOG_UNREADABLE_MESSAGE,
+  parsePlanName,
 } from "./plan-name.js";
 import {
   PlanUiController,
@@ -30,7 +30,6 @@ function sessionScope(
   return {
     sessionID,
     directory: session.location.directory,
-    workspaceID: session.location.workspaceID,
   };
 }
 
@@ -105,7 +104,7 @@ export function PlanPanel(props: PlanPanelProps) {
       };
       const options = {
         signal,
-        location: { directory: scope.directory, workspace: scope.workspaceID },
+        location: { directory: scope.directory },
       };
       const [status, plan] = await Promise.all([
         rpc.status(input, options),
@@ -131,10 +130,7 @@ export function PlanPanel(props: PlanPanelProps) {
           },
           {
             signal,
-            location: {
-              directory: scope.directory,
-              workspace: scope.workspaceID,
-            },
+            location: { directory: scope.directory },
           },
         ),
       (): StartCommandError => ({ type: "CommandFailed" }),
@@ -231,10 +227,7 @@ export function PlanPanel(props: PlanPanelProps) {
             },
             {
               signal: request.signal,
-              location: {
-                directory: scope.directory,
-                workspace: scope.workspaceID,
-              },
+              location: { directory: scope.directory },
             },
           ),
         (): StartCommandError => ({ type: "CommandFailed" }),

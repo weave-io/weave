@@ -10,8 +10,8 @@
  *
  * ## Envelope unwrap (A4 finding)
  *
- * The underlying V2 RPC list APIs (`ctx.agent.list`, `ctx.catalog.provider.list`,
- * `ctx.catalog.model.list`, `ctx.catalog.model.default`, `ctx.skill.list`) do
+ * The underlying V2 RPC list APIs (`ctx.agent.list`, `ctx.provider.list`,
+ * `ctx.model.list`, `ctx.model.default`, `ctx.skill.list`) do
  * not return a bare array/value — they return an envelope shaped
  * `{ location, data }`. This facade unwraps `.data` for ergonomics so every
  * downstream module works with plain arrays (or, for `model.default`, a
@@ -20,11 +20,11 @@
  *
  * ## Lazy `transform` effects (A4/A5 finding)
  *
- * `agent.transform` and `catalog.transform` editor callbacks are **not**
+ * `agent.transform` and `model.transform` editor callbacks are **not**
  * guaranteed to have applied their effect synchronously by the time the
  * transform's own returned `Promise<V2Registration>` resolves. Callers that
  * need to observe the effect must re-query via `agent.list()` /
- * `catalog.*` accessors afterward — this facade does not, and must not,
+ * `model.*` accessors afterward — this facade does not, and must not,
  * attempt to force synchronous visibility.
  *
  * `command.transform` is the one domain observed (A4) to apply its effect
@@ -44,13 +44,13 @@ import type {
   V2AgentDomain,
   V2AgentEditor,
   V2AgentInfo,
-  V2CatalogEditor,
   V2CatalogModelInfo,
   V2CatalogProviderInfo,
   V2CommandEditor,
   V2Context,
   V2Event,
   V2EventDomain,
+  V2ModelEditor,
   V2Registration,
   V2SessionDomain,
   V2SkillEditor,
@@ -72,20 +72,19 @@ export interface PluginContextAgentFacade {
 }
 
 /**
- * `ctx.catalog` sub-domain, narrowed to what the adapter uses. `provider.list`,
- * `model.list`, and `model.default` are unwrapped to plain values (see
- * header).
+ * `ctx.model` (+ `ctx.provider.list`) sub-domain, narrowed to what the
+ * adapter uses. OpenCode 2.0.4+ replaced the beta-era `ctx.catalog` domain
+ * with `ctx.model` and `ctx.provider`. `provider.list`, `list`, and `default`
+ * are unwrapped to plain values (see header).
  */
-export interface PluginContextCatalogFacade {
+export interface PluginContextModelFacade {
   readonly provider: {
     readonly list: () => Promise<readonly V2CatalogProviderInfo[]>;
   };
-  readonly model: {
-    readonly list: () => Promise<readonly V2CatalogModelInfo[]>;
-    readonly default: () => Promise<V2CatalogModelInfo | null>;
-  };
+  readonly list: () => Promise<readonly V2CatalogModelInfo[]>;
+  readonly default: () => Promise<V2CatalogModelInfo | null>;
   readonly transform: (
-    callback: (editor: V2CatalogEditor) => void,
+    callback: (editor: V2ModelEditor) => void,
   ) => Promise<V2Registration>;
 }
 
@@ -118,7 +117,7 @@ export interface PluginContextSessionFacade {
   readonly switchAgent: V2SessionDomain["switchAgent"];
   readonly switchModel: V2SessionDomain["switchModel"];
   readonly interrupt: V2SessionDomain["interrupt"];
-  readonly rename: V2SessionDomain["rename"];
+  readonly update: V2SessionDomain["update"];
 }
 
 /**
@@ -143,7 +142,7 @@ export type PluginContextToolFacade = Record<string, never>;
  */
 export interface PluginContextFacade {
   readonly agent: PluginContextAgentFacade;
-  readonly catalog: PluginContextCatalogFacade;
+  readonly model: PluginContextModelFacade;
   readonly skill: PluginContextSkillFacade;
   readonly command: PluginContextCommandFacade;
   readonly session: PluginContextSessionFacade;
@@ -167,15 +166,13 @@ export function fromLiveContext(ctx: V2Context): PluginContextFacade {
       list: async () =>
         (await ctx.agent.list()).data as unknown as readonly V2AgentInfo[],
     },
-    catalog: {
+    model: {
       provider: {
-        list: async () => (await ctx.catalog.provider.list()).data,
+        list: async () => (await ctx.provider.list()).data,
       },
-      model: {
-        list: async () => (await ctx.catalog.model.list()).data,
-        default: async () => (await ctx.catalog.model.default()).data,
-      },
-      transform: (callback) => ctx.catalog.transform(callback),
+      list: async () => (await ctx.model.list()).data,
+      default: async () => (await ctx.model.default()).data,
+      transform: (callback) => ctx.model.transform(callback),
     },
     skill: {
       // Same brand-only mismatch as `agent.list` above (`Skill.ID`).
@@ -201,8 +198,8 @@ export function fromLiveContext(ctx: V2Context): PluginContextFacade {
         ctx.session.switchModel(input, requestOptions),
       interrupt: (input, requestOptions) =>
         ctx.session.interrupt(input, requestOptions),
-      rename: (input, requestOptions) =>
-        ctx.session.rename(input, requestOptions),
+      update: (input, requestOptions) =>
+        ctx.session.update(input, requestOptions),
     },
     event: {
       subscribe: (options) => ctx.event.subscribe(options),

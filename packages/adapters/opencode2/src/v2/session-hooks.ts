@@ -76,7 +76,7 @@ export class OpenCode2SessionHooks {
       if (scope.isErr()) return undefined;
       const agent = this.dependencies.catalog()?.runtime.get(input.agent);
       if (agent?.projection.temperature === undefined) return undefined;
-      input.generation.temperature = agent.projection.temperature;
+      input.options.temperature = agent.projection.temperature;
       return undefined;
     });
   }

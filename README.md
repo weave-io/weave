@@ -206,8 +206,8 @@ build. Put the published entry back to return to a release.
 The adapter targets exactly one OpenCode 2 host. Install that version:
 
 ```bash
-bun add --global --trust @opencode-ai/cli@0.0.0-beta-19151
-opencode2 --version
+bun add --global --trust @opencode/cli@2.0.16
+opencode --version
 ```
 
 OpenCode 2 reads the plural `plugins` field, which OpenCode 1 ignores, so it

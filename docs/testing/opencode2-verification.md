@@ -38,7 +38,7 @@ host from completing the activation that the check needs to observe.
 
 - Run from a clean Weave worktree.
 - Use Bun.
-- Keep the exact supported host at `0.0.0-beta-19151`.
+- Keep the exact supported host at `2.0.16` (`@opencode/cli`).
 - Do not stop or upgrade the user's shared OpenCode service.
 - Put all live proof data under the approved temporary root used by
   `scripts/opencode2/proof-environment.ts`.

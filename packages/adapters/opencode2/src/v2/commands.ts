@@ -11,8 +11,8 @@ import type {
 import { choosePlanMessage, listPlanNames } from "./plan-catalog.js";
 import {
   INVALID_PLAN_NAME_MESSAGE,
-  parsePlanName,
   PLAN_CATALOG_UNREADABLE_MESSAGE,
+  parsePlanName,
 } from "./plan-name.js";
 import {
   type OpenCode2PlanSessionState,
@@ -191,7 +191,7 @@ export class OpenCode2Commands {
       selectionFromSnapshot(
         input.sessionID,
         session.value.location.directory,
-        session.value.location.workspaceID,
+        this.dependencies.workspaceID,
         snapshot.value,
       ),
     );

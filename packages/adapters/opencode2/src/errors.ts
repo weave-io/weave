@@ -9,7 +9,7 @@
  * is required by Spec 33's reconciliation policy.
  *
  * This module MUST NOT import from `packages/adapters/opencode/` (the V1
- * adapter) or from `@opencode-ai/*` directly — only plain types are defined
+ * adapter) or from `@opencode/*` directly — only plain types are defined
  * here, with any SDK-shaped context fields typed via `./sdk-types` aliases.
  *
  * Every fallible V2 adapter module (Phase C) should return

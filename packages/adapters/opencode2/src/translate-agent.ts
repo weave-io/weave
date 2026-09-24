@@ -19,7 +19,7 @@
  * independently for the V2 package. See Spec 34 and the module header in
  * `./sdk-types.ts` for the sealed-SDK-boundary rule this module respects
  * (it imports only `./sdk-types` and `./tool-policy-mapping`, never
- * `@opencode-ai/*` directly).
+ * `@opencode/*` directly).
  */
 
 import type { V2AgentInfo } from "./sdk-types.js";

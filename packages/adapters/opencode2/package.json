@@ -45,9 +45,9 @@
     "verify:opencode2": "bash verify/run.sh"
   },
   "dependencies": {
-    "@opencode-ai/client": "0.0.0-beta-19151",
-    "@opencode-ai/plugin": "0.0.0-beta-19151",
-    "@opencode-ai/sdk": "0.0.0-beta-19151",
+    "@opencode/client": "2.0.16",
+    "@opencode/plugin": "2.0.16",
+    "@opencode/sdk": "2.0.16",
     "mustache": "^4.2.0",
     "neverthrow": "^8.2.0",
     "zod": "^4.4.3"
@@ -64,11 +64,16 @@
     "solid-js": ">=1.9.0"
   },
   "peerDependenciesMeta": {
-    "@opentui/core": { "optional": true },
-    "@opentui/solid": { "optional": true },
-    "solid-js": { "optional": true }
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
   },
-
   "repository": {
     "type": "git",
     "url": "https://github.com/weave-io/weave"

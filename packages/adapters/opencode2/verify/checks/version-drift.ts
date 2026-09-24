@@ -6,12 +6,12 @@
  * Reads `packages/adapters/opencode2/package.json` and asserts that each of
  * the four pinned V2 SDK packages resolves to the exact approved version:
  *
- *   @opencode-ai/cli, @opencode-ai/plugin, @opencode-ai/sdk, @opencode-ai/client
- *   == 0.0.0-beta-19151
+ *   @opencode/cli, @opencode/plugin, @opencode/sdk, @opencode/client
+ *   == 2.0.16
  *
  * Fails loudly (non-zero exit, explicit diff of expected vs actual) if any
  * pin has drifted, is missing, or uses a range specifier instead of an exact
- * version. `@opencode-ai/cli` is optional in `package.json` (it may only be
+ * version. `@opencode/cli` is optional in `package.json` (it may only be
  * present in the verify harness's own manifest) — if absent from the
  * adapter's `package.json`, this check does not fail on that account, but
  * DOES fail if present with a mismatched version.
@@ -20,19 +20,19 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const PINNED_VERSION = "0.0.0-beta-19151";
+const PINNED_VERSION = "2.0.16";
 
 const TRACKED_PACKAGES = [
-  "@opencode-ai/cli",
-  "@opencode-ai/plugin",
-  "@opencode-ai/sdk",
-  "@opencode-ai/client",
+  "@opencode/cli",
+  "@opencode/plugin",
+  "@opencode/sdk",
+  "@opencode/client",
 ] as const;
 
 const REQUIRED_PACKAGES = new Set<string>([
-  "@opencode-ai/plugin",
-  "@opencode-ai/sdk",
-  "@opencode-ai/client",
+  "@opencode/plugin",
+  "@opencode/sdk",
+  "@opencode/client",
 ]);
 
 const ADAPTER_PACKAGE_JSON = join(import.meta.dir, "..", "..", "package.json");
