@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 221 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~20,100 tokens. Without it, AI exploration would cost ~74,400 tokens. **Saves ~54,300 tokens per conversation.**
-> **Last scanned:** 2026-09-24 19:48 — re-run after significant changes
+> **Last scanned:** 2026-09-24 20:12 — re-run after significant changes
 
 ---
 
@@ -240,6 +240,7 @@
 - `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
 - `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
 - `packages/adapters/opencode2/src/v2/session-scope.ts`
+  - function normalizeScopeDirectory: (directory) => string
   - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
   - interface OpenCode2SessionScope
   - type SessionScopeError
@@ -1141,7 +1142,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 217 test files found
+> 216 test files found
 
 ---
 

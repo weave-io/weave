@@ -1789,7 +1789,7 @@ eval-bundles/
 
 ### `public-report.json` — primary dashboard artifact
 
-`public-report.json` is the `PublicReportBundle`-schema artifact consumed by the `/weave-agent-evals/` dashboard. It contains:
+`public-report.json` is the `PublicReportBundle`-schema artifact consumed by the [tryweave.io/evals](https://tryweave.io/evals) dashboard. It contains:
 
 - `schemaVersion` — mandatory version field; consumers must reject unrecognised versions
 - Per-suite `cases` arrays with `PublicCaseEntry` records

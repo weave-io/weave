@@ -510,7 +510,8 @@ function makeRun2Results(): RunnerResult[] {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: isSafeId (mirrors dashboard-data.js website implementation)
+// Helper: isSafeId (the id rule a dashboard consumer applies before building a
+// URL; first written against the old website's dashboard-data.js)
 // ---------------------------------------------------------------------------
 
 function isSafeId(id: unknown): boolean {
@@ -522,9 +523,14 @@ function isSafeId(id: unknown): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Given a dashboard manifest, returns the list of URLs the website would
- * fetch when loading the full dashboard. Mirrors the URL-construction logic
- * in dashboard-data.js ENDPOINTS.
+ * Given a dashboard manifest, returns every URL a dashboard consumer could
+ * build from it: the fixed indexes, the per-suite and per-run indexes, and the
+ * latest run's reports. This is a superset of what tryweave.io/evals fetches
+ * today (`src/lib/evals-data.ts` in pgermishuys/weave-website reads only
+ * `dashboard-manifest.json`, `latest.json` and one run's `public-report.json`;
+ * see "Website data flow" in docs/eval-sanitization-and-publish-pipeline.md),
+ * so the checks below cover any consumer, not only the current page. It was
+ * first written against the old website's dashboard-data.js ENDPOINTS.
  *
  * Used to verify:
  *   - All URLs start with the expected GITHUB_RAW_BASE.

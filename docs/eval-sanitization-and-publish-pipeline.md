@@ -388,27 +388,39 @@ Use the typed validators in `dashboard-indexes.ts` for these checks:
 
 ### Website data flow
 
-The `/weave-agent-evals/` dashboard fetches data through a strict, ordered fetch chain:
+The public dashboard is [tryweave.io/evals](https://tryweave.io/evals), the
+`/evals/` page of the website (`src/pages/evals.astro` and
+`src/lib/evals-data.ts` in `pgermishuys/weave-website`). It reads from
+`https://raw.githubusercontent.com/weave-io/weave-agent-evals/main/` through a
+strict, ordered fetch chain:
 
 ```
-1. GET indexes/v1/dashboard-manifest.json   ← entry point; mutable; short TTL
+1. GET indexes/v1/dashboard-manifest.json   ← entry point; mutable; no-cache
+2. GET indexes/v1/latest.json               ← fetched beside 1; mutable; no-cache
         │
-        ├── schemaVersion check → reject if mismatch
-        ├── updatedAt check → re-fetch if stale
+        ├── structure checks → reject if invalid
+        ├── select the run: the manifest entry matching latest.runId,
+        │   else the newest non-dry-run entry
         │
-        ├── 2. GET indexes/v1/latest.json               ← mutable; short TTL
-        ├── 3. GET indexes/v1/last-N-runs.json           ← mutable; short TTL
-        ├── 4. GET indexes/v1/suite-history-<suite>.json  ← per suite from manifest
-        │
-        └── for each run listed in manifest.runs:
-              5. GET runs/v1/<runId>/public-report.json  ← IMMUTABLE; forever-cacheable
+        └── 3. GET <selected run's bundleReportPath>
+               = runs/v1/<runId>/public-report.json  ← IMMUTABLE; forever-cacheable
+                  └── gitSha, assembledAt, dryRun, counts and suites must
+                      match the manifest entry (and latest.json) → else reject
 ```
+
+If any step fails, the page shows its built-in snapshot instead. The page does
+not read `last-N-runs.json`, `suite-history-<suite>.json` or the other derived
+indexes today; they are published for consumers that want history.
 
 **No directory enumeration**: consumers MUST NOT enumerate `runs/v1/` or `indexes/v1/` directories. Only exact paths declared in the manifest (or in `bundle-index.json`'s `publicFiles` field) are fetched. The `dashboard-manifest.json` entry point is always the starting URL.
 
 **Publish-before-index ordering**: `GitHubContentsPublisher` always uploads all immutable run artifacts before updating any index. When `dashboard-manifest.json` lists a run, that run's `public-report.json` is guaranteed to exist.
 
-**`/evals/` is a legacy surface**: the original `/evals/` dashboard remains online for existing bookmarks and is not redirected. It uses the old family-specific JSONL data format. All new development targets `/weave-agent-evals/` and the `runs/v1/` + `indexes/v1/` layout. Do not add new features to `/evals/` — new eval capabilities belong in `/weave-agent-evals/`.
+Earlier versions of this page named the dashboard `/weave-agent-evals/` and
+described `/evals/` as a legacy surface fed by an older JSONL format. Neither
+is true of the current website: `/evals/` is the only dashboard, and it reads
+the `runs/v1/` + `indexes/v1/` layout above. `weave-agent-evals` is the name of
+the results repository, not a page.
 
 ---
 
