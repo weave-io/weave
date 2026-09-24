@@ -112,7 +112,7 @@ describe("trajectory dispatch in execution runners", () => {
 
     const result = await runner.run({
       caseFilter: "shuttle-verify-tests-after-edit-trajectory",
-      modelFilter: "qwen/qwen3.8-max",
+      modelFilter: "qwen/qwen3.8-max-0902",
     });
 
     expect(result.isOk()).toBe(true);

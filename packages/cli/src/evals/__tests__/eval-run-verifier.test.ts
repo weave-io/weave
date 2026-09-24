@@ -765,7 +765,7 @@ describe("EvalRunVerifier", () => {
               // Extra unexpected row makes actual (5) != expected (4).
               buildCaseEntry({
                 caseId: "tcr-10-disabled-category",
-                modelId: "qwen/qwen3.8-max",
+                modelId: "qwen/qwen3.8-max-0902",
               }),
             ],
           }),
