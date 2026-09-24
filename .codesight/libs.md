@@ -229,6 +229,7 @@
 - `packages/adapters/opencode2/src/v2/rpc-handlers.ts` — function createOpenCode2RpcHandlers: (dependencies) => RpcHandlers<typeof WeaveRpc>, interface OpenCode2RpcDependencies
 - `packages/adapters/opencode2/src/v2/session-hooks.ts` — class OpenCode2SessionHooks, interface OpenCode2SessionHookDependencies
 - `packages/adapters/opencode2/src/v2/session-scope.ts`
+  - function normalizeScopeDirectory: (directory) => string
   - function validateSessionScope: (sessionID, session, expectedDirectory, expectedWorkspaceID?) => Result<OpenCode2SessionScope, SessionScopeError>
   - interface OpenCode2SessionScope
   - type SessionScopeError

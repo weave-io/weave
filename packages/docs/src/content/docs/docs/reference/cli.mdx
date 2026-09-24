@@ -53,8 +53,10 @@ The current `weave --help` output lists these commands:
 | `--yes`, `-y` | Accept safe non-interactive defaults. |
 | `--agent <name>` | Filter evals to one agent. |
 | `--model <id>` | Filter evals to one model. |
+| `--models default\|dev` | Run evals on the full default matrix or the development subset. |
 | `--case <id>` | Filter evals to one case. |
 | `--repeat <n>` | Run each eval case n times per model and report pass rates. |
+| `--track text\|trajectory` | Run only the text cases or only the harness trajectory cases. |
 | `--dry-run` | Preview an eval without a model call. |
 | `--raw-artifacts` | Write raw eval artifacts locally for debugging. |
 
@@ -163,14 +165,17 @@ path. These commands do not start, resume, or execute workflow work.
 ```sh
 weave eval run
 weave eval run --agent <name> --model <id> --case <id>
+weave eval run --models dev --repeat 3
 weave eval run --dry-run
 weave eval run --raw-artifacts
 ```
 
 Filters select agents, models, and cases. `--dry-run` validates selection and
 makes no model call. Live execution needs the configured model-service key.
-Raw artifacts are local-only debugging output. `--repeat <n>` runs each case
-n times per model and reports pass rates.
+Raw artifacts are local-only debugging output. `--models dev` runs the cheap
+development subset instead of the full default matrix, and cannot be combined
+with `--model`. `--repeat <n>` runs each case n times per model and reports
+pass rates. `--track text|trajectory` runs one track only.
 
 ## `weave eval compare`
 

@@ -152,6 +152,25 @@ describe("banner and help rendering", () => {
     expect(text).toContain("prompt self-modify");
   });
 
+  it("renderHelp lists every eval run flag, including --models", () => {
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
+    const text = help.join("\n");
+    for (const flag of [
+      "--agent",
+      "--model <id>",
+      "--models default|dev",
+      "--case",
+      "--repeat",
+      "--track",
+      "--dry-run",
+      "--raw-artifacts",
+    ]) {
+      expect(text).toContain(flag);
+    }
+    expect(text).toContain("eval compare");
+  });
+
   it("renderHelp with NO_COLOR produces no ANSI escapes", () => {
     const theme = themeManager.getTheme(false);
     const help = themeRenderer.renderHelp(theme);
