@@ -8,44 +8,24 @@ export function starterConfig(scope: "global" | "local"): string {
 # ${scopeDescription}
 # Edit this file to describe agents, categories, workflows, and settings.
 
-agent loom {
-  description "Primary orchestration agent"
-  prompt "Coordinate the user's work, delegate when useful, and keep progress clear."
-  models ["claude-sonnet-4-5", "gpt-4o"]
-  mode primary
-  temperature 0.1
-
-  tool_policy {
-    read allow
-    write allow
-    execute ask
-    delegate allow
-    network ask
-  }
-
-  triggers [
-    "Break complex work into safe steps"
-    "Coordinate specialist review"
-  ]
-
-  skills ["code-review"]
-}
-
-agent shuttle {
-  description "Focused implementation specialist"
-  prompt "Implement focused changes carefully and report proof of work."
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.2
-
-  tool_policy {
-    read allow
-    write allow
-    execute ask
-    delegate deny
-    network ask
-  }
-}
+# The builtin agents (loom, tapestry, shuttle, pattern, thread, spindle, weft,
+# warp) are already configured with full prompts and tool policies. Declaring
+# one here merges into the builtin, and a value you set replaces the
+# builtin's: setting \`prompt\` replaces Loom's whole orchestration prompt.
+# To add guidance without losing the builtin prompt, use \`prompt_append\`:
+#
+# agent loom {
+#   prompt_append "Prefer small, reviewable changes."
+# }
+#
+# Declare a new agent under its own name:
+#
+# agent docs-writer {
+#   description "Writes and updates project documentation"
+#   prompt "Keep documentation accurate, short, and linked to the code."
+#   mode subagent
+#   triggers ["Use for README and docs/ changes"]
+# }
 
 category backend {
   description "Backend APIs, services, persistence, and data integrity"
