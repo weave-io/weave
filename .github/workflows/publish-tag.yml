@@ -121,11 +121,16 @@ jobs:
 
           echo "✓ Version validated: $TAG_VERSION"
 
-      - name: Test
-        run: bun test
-
       - name: Build
+        # Before Test, in the same order as ci.yml.
         run: bun run build
+
+      - name: Test
+        # Same command as ci.yml. A bare `bun test` from the root also collects
+        # the trajectory eval fixtures, which fail on purpose
+        # (evals/fixtures/red-ci); bunfig's pathIgnorePatterns excludes them
+        # on newer Bun, but not on the pinned 1.3.10.
+        run: bun run test
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
