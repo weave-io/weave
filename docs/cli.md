@@ -156,6 +156,16 @@ See [Config Loading — Config Discovery](./config-loading.md#config-discovery) 
 
 `weave init` creates a starter Weave config directory containing `config.weave` and `prompts/`.
 
+The starter `config.weave` does not redefine any builtin agent. A project
+value merges over the builtin, so a starter `agent loom { prompt "..." }`
+would replace Loom's full orchestration prompt and tool policy for every user
+who ran `weave init`. Earlier releases did that. The starter instead shows
+`prompt_append` and a new-agent example as comments, and keeps the example
+categories, workflow and settings active.
+[`starter-config.test.ts`](../packages/cli/src/config/__tests__/starter-config.test.ts)
+checks that merging the starter over the builtins leaves every builtin agent
+unchanged.
+
 ```bash
 weave init --scope local --yes
 weave init --scope global --yes
