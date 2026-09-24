@@ -256,11 +256,13 @@ const NEGATION_SUFFIX_RE =
 /**
  * Return true when the shuttle name at `matchIndex` within `line` is
  * preceded by a negation prefix (within its clause, up to a 40-character
- * window) or followed by a negation suffix (within a 40-character window).
+ * window) or followed by a negation suffix (within its clause, up to a
+ * 40-character window).
  *
- * Clause boundaries (`; ` and `, `) are respected: the look-behind window
- * starts at the most recent clause boundary before `matchIndex`, preventing
- * negation phrases in an earlier clause from bleeding into a later clause.
+ * Clause boundaries are respected both ways: the look-behind window starts at
+ * the most recent `; ` or `, ` before `matchIndex`, and the look-ahead window
+ * ends at the next clause or sentence boundary (`clauseSuffixWindow()`), so
+ * a negation in a neighbouring clause never negates this mention.
  */
 function isNegatedMention(
   line: string,
@@ -277,14 +279,30 @@ function isNegatedMention(
   const clauseWindow =
     clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
 
-  const windowAfter = line.slice(
-    matchIndex + matchLength,
-    matchIndex + matchLength + 40,
+  const windowAfter = clauseSuffixWindow(
+    line.slice(matchIndex + matchLength, matchIndex + matchLength + 40),
   );
   return (
     NEGATION_PREFIXES_RE.test(clauseWindow) ||
     NEGATION_SUFFIX_RE.test(windowAfter)
   );
+}
+
+/**
+ * Clamp the text after a mention to the end of its clause or sentence
+ * (`. `, `; `, `, ` or a newline), so a negation suffix in a LATER,
+ * unrelated clause never negates the mention before it: in "Route to
+ * `shuttle`; thread is not needed." the "is not needed" belongs to thread.
+ */
+function clauseSuffixWindow(windowAfterRaw: string): string {
+  const candidates = [
+    windowAfterRaw.indexOf(". "),
+    windowAfterRaw.indexOf("; "),
+    windowAfterRaw.indexOf(", "),
+    windowAfterRaw.indexOf("\n"),
+  ].filter((idx) => idx >= 0);
+  if (candidates.length === 0) return windowAfterRaw;
+  return windowAfterRaw.slice(0, Math.min(...candidates));
 }
 
 function isSecondaryLine(line: string): boolean {
@@ -323,7 +341,8 @@ function isRoutingLine(line: string): boolean {
  *   - verb + "to": "route to X", "routing to X", "delegate to X",
  *     "assign to X", "send to X", "route the task to X" (small word gap
  *     allowed between the verb and "to").
- *   - label form: "Route: X", "Primary route: X".
+ *   - label form: "Route: X", "Primary route: X", "Primary route: generic X"
+ *     (an optional `the`/`generic`/`default` qualifier before X).
  *   - arrow form: "→ X".
  *   - labelled-answer form: "Answer: X", "Decision: X", "Result: X",
  *     "Conclusion: X", "Final: X", "Final answer: X", "Verdict: X",
@@ -343,7 +362,7 @@ function isRoutingLine(line: string): boolean {
 const AFFIRMATIVE_VERB_TO_RE =
   /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 const AFFIRMATIVE_LABEL_RE =
-  /\b(?:primary\s+route|route)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
+  /\b(?:primary\s+route|route)\s*:\s*(?:the\s+)?(?:(?:generic|default)\s+)?(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 // Labelled-answer forms: "Answer: X", "Decision: X", "Final answer: X", etc.
 // (see module docs above the pattern list for the full recognized lead-word
@@ -353,7 +372,7 @@ const AFFIRMATIVE_ARROW_RE = /→\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 // shuttle`. "final answer" is listed before "final" so the longer lead
 // phrase wins the alternation.
 const AFFIRMATIVE_LABELLED_ANSWER_RE =
-  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
+  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(?:the\s+)?(?:(?:generic|default)\s+)?(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b/gi;
 
 // "Fallback verb" forms: "Fall back to X", "Falls back to X", "Falling back
 // to X", "Fallback to X", "Fallback: X", "Fall back: X", "Default fallback:
@@ -426,28 +445,13 @@ function isNegatedAffirmativeMatch(
   const clauseWindow =
     clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
 
-  const windowAfterRaw = text.slice(
-    targetIndex + targetLength,
-    targetIndex + targetLength + 40,
-  );
   // Clamp the suffix window to the end of the current clause/sentence so a
   // negation suffix in a LATER, unrelated clause (e.g. "Route to X. Fallback
   // to Y is not required.") never bleeds back to negate an earlier,
-  // non-negated affirmative match. Mirrors the clause clamping already
-  // applied to the prefix window above. See task 9b-follow-up-5.
-  const suffixBoundaryIdx = (() => {
-    const candidates = [
-      windowAfterRaw.indexOf(". "),
-      windowAfterRaw.indexOf("; "),
-      windowAfterRaw.indexOf(", "),
-      windowAfterRaw.indexOf("\n"),
-    ].filter((idx) => idx >= 0);
-    return candidates.length > 0 ? Math.min(...candidates) : -1;
-  })();
-  const windowAfter =
-    suffixBoundaryIdx >= 0
-      ? windowAfterRaw.slice(0, suffixBoundaryIdx)
-      : windowAfterRaw;
+  // non-negated affirmative match. See task 9b-follow-up-5.
+  const windowAfter = clauseSuffixWindow(
+    text.slice(targetIndex + targetLength, targetIndex + targetLength + 40),
+  );
   return (
     NEGATION_PREFIXES_RE.test(clauseWindow) ||
     NEGATION_SUFFIX_RE.test(windowAfter)

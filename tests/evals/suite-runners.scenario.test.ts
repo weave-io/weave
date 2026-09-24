@@ -1231,6 +1231,57 @@ const LOOM_ANSWERS: Array<[string, string, string[], string[]]> = [
     ["pattern"],
     ["pattern"],
   ],
+  // gpt-6-luna on loom-route-backend-api (#235): a label with a qualifier
+  // before the agent, then a later clause that rules out something else.
+  // Neither may hide the route, and neither may manufacture one.
+  [
+    "a qualified label before a clause ruling out something else (gpt-6-luna)",
+    "Primary route: **generic `shuttle`** to implement the endpoint; no backend-specific category shuttle is listed.",
+    ["shuttle"],
+    ["shuttle"],
+  ],
+  [
+    "a route with no verb before a clause ruling out something else",
+    "The endpoint goes to `shuttle`; no backend-specific category shuttle is listed.",
+    ["shuttle"],
+    ["shuttle"],
+  ],
+  [
+    "a qualified label after another agent was discussed",
+    "A `pattern` plan is overkill for one endpoint.\n\nPrimary route: **generic `shuttle`**.",
+    ["shuttle", "pattern"],
+    ["shuttle", "pattern"],
+  ],
+  [
+    "a route whose sentence ends by ruling out another agent (gpt-6-astra)",
+    "Primary implementation handoff: **shuttle** to improve usability in the project settings experience. **thread** may first inspect the existing settings flow if needed, but implementation stays with Shuttle; no Pattern plan is needed for this bounded request.",
+    ["shuttle", "thread"],
+    ["shuttle"],
+  ],
+  [
+    "a qualified label naming the wrong agent",
+    "Primary route: **generic `pattern`** to plan it; no backend-specific category shuttle is listed.",
+    ["pattern"],
+    ["pattern"],
+  ],
+  [
+    "a qualified label naming a placeholder",
+    "Primary route: **generic `shuttle-{category}`**; no category is listed.",
+    [],
+    [],
+  ],
+  [
+    "a qualified label naming an agent that does not exist",
+    "Primary route: **generic `weaver`**; no backend-specific category shuttle is listed.",
+    [],
+    [],
+  ],
+  [
+    "a qualified label beside a shuttle negated in its own clause",
+    "Primary route: **generic `pattern`** to plan it; `shuttle` is not needed yet.",
+    ["pattern"],
+    ["pattern"],
+  ],
   ["no answer at all", "I have no idea what to do here.", [], []],
 ];
 
@@ -1421,6 +1472,33 @@ const CATEGORY_ANSWERS: Array<[string, string, number]> = [
     "the category named beside a negated fallback",
     "Route to **`shuttle-client-frontend`**.\n\nNo fallback to generic `shuttle` is needed.",
     1,
+  ],
+  // The loom-routing answer shape from #235: a qualified label, then a later
+  // clause negating something other than the named shuttle.
+  [
+    "a qualified label naming the generic shuttle",
+    "Primary route: **generic `shuttle`** to build it; no frontend category shuttle is listed.",
+    0.4,
+  ],
+  [
+    "a qualified label naming the category",
+    "Primary route: the `shuttle-client-frontend` agent; thread is not needed.",
+    1,
+  ],
+  [
+    "an arrow to the category before a clause ruling out another agent",
+    "UI change → the `shuttle-client-frontend` agent; thread is unnecessary.",
+    1,
+  ],
+  [
+    "a qualified label naming a placeholder",
+    "Primary route: generic `shuttle-{category}`; no category is listed.",
+    0,
+  ],
+  [
+    "the category negated in its own clause",
+    "UI change → the `shuttle-client-frontend` agent is not needed; thread first.",
+    0,
   ],
 ];
 
