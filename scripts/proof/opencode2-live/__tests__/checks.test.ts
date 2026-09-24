@@ -212,6 +212,17 @@ describe("a host other than the requested version", () => {
   });
 });
 
+describe("a run that exits non-zero after the model saw every request", () => {
+  it("fails the run check even though the request checks pass", () => {
+    const verdicts = checks.evaluate(
+      observation({ run: { exitCode: 1, requests: delegatingRun } }),
+    );
+    expect(verdict(verdicts, "run_completed").status).toBe("failed");
+    expect(verdict(verdicts, "loom_prompt").status).toBe("passed");
+    expect(LiveChecks.outcome(verdicts).isErr()).toBe(true);
+  });
+});
+
 describe("a run where Loom's prompt never reached the model", () => {
   it("fails the prompt check", () => {
     const requests = delegatingRun.map((entry) =>

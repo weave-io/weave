@@ -16,6 +16,7 @@ export const LIVE_CHECK_IDS = [
   "plugin_active",
   "agents_registered",
   "start_command",
+  "run_completed",
   "loom_prompt",
   "delegation_offered",
   "delegation_ran",
@@ -250,6 +251,7 @@ export class LiveChecks {
 
   private runChecks(observation: LiveObservation): LiveVerdict[] {
     const runIds: LiveCheckId[] = [
+      "run_completed",
       "loom_prompt",
       "delegation_offered",
       "delegation_ran",
@@ -275,12 +277,26 @@ export class LiveChecks {
         ? []
         : requests.filter((request) => request.system.includes(delegate));
     return [
+      this.runCompleted(observation.run.exitCode),
       this.primaryPrompt(observation.run, primary, requests, primaryRequests),
       this.delegationOffered(primaryRequests),
       this.delegationRan(delegate, delegateRequests),
       this.delegationReturned(primaryRequests),
       this.subagentPolicy(delegateRequests),
     ];
+  }
+
+  private runCompleted(exitCode: number): LiveVerdict {
+    if (exitCode !== 0) {
+      return this.failed(
+        "run_completed",
+        `opencode2 run --agent ${this.options.primary} exited ${exitCode}`,
+      );
+    }
+    return this.passed(
+      "run_completed",
+      `opencode2 run --agent ${this.options.primary} exited 0`,
+    );
   }
 
   private primaryPrompt(

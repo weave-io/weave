@@ -103,10 +103,11 @@ The script reports these checks:
 | `plugin_active` | `opencode2 api plugin.list` shows the Weave plugin as `active`. |
 | `agents_registered` | `opencode2 api agent.list` shows every builtin agent with the `[weave-managed]` ownership marker. |
 | `start_command` | `opencode2 api command.list` includes `weave:start`. |
-| `loom_prompt` | After `opencode2 run --agent loom`, the model received Loom's host-reported system prompt. |
+| `run_completed` | `opencode2 run --agent loom` exited 0. |
+| `loom_prompt` | During that run, the model received Loom's host-reported system prompt. |
 | `delegation_offered` | Loom was offered the native `subagent` tool with Shuttle as a target. |
 | `delegation_ran` | The scripted model called `subagent` for Shuttle, and the model then received Shuttle's system prompt from a child session. |
-| `delegation_returned` | Loom's next request carried Shuttle's tool result. |
+| `delegation_returned` | Loom's next request carried the tool result whose `tool_call_id` matches its `subagent` call. |
 | `subagent_policy` | Shuttle was not offered `subagent` or `question`. |
 
 Exit code 0 means every check passed. Exit code 1 means a check failed or was
