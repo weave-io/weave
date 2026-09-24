@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 214 lib files | 26 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~19,100 tokens. Without it, AI exploration would cost ~72,700 tokens. **Saves ~53,600 tokens per conversation.**
-> **Last scanned:** 2026-09-24 02:39 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 215 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~19,200 tokens. Without it, AI exploration would cost ~72,500 tokens. **Saves ~53,300 tokens per conversation.**
+> **Last scanned:** 2026-09-24 03:35 — re-run after significant changes
 
 ---
 
@@ -940,6 +940,15 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/evals/judge-bakeoff.ts`
+  - function signalQuestion: (signal) => string
+  - function sonnetThreshold: (evalCase, rubric) => number
+  - function buildItem: (entry, raw, "caseId" | "modelId" | "transcript" | "rawContent"
+  >, evalCase, rubric) => Result<BakeoffItem, BakeoffError>
+  - function displayResponse: (item, "response">) => string
+  - function buildJevState: (item) => string
+  - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
+  - _...40 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
@@ -982,7 +991,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1013,14 +1022,12 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
-- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1047,12 +1054,12 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **10** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
 - `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
-- `packages/cli/src/cli.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -1086,7 +1093,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 214 test files found
+> 211 test files found
 
 ---
 

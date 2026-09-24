@@ -4,6 +4,8 @@ Non-normative artifact. It records whether TypeSafe Jev is accepted as the eval 
 
 **Outcome: Jev REJECTED.** Jev agreed with the labels on 26 of 30 items (87%, above the 24 required) but correctly failed only 8 of the 12 fail-labelled items (10 required). Sonnet 5, the reference, scored exactly the same. Task 16.4 therefore takes the fallback: a chat-model judge deliberately kept out of the eval matrix, recorded as a known limitation. See [Outcome](#outcome).
 
+**Update, 24 Sep 2026: Jev ACCEPTED on the re-run.** The three checks both judges missed were written into the pattern-planning and weft-review rubrics and the identical check was re-run once: Jev agreed on 28 of 30 and caught 10 of 12 fails, so the judge for 16.4 is Jev. The first result below is left as it was recorded. See [Re-run with explicit rubric criteria, 24 Sep 2026](#re-run-with-explicit-rubric-criteria-24-sep-2026).
+
 ## Why
 
 Today every judge call goes to `anthropic/claude-sonnet-4.5`, hard-coded as `JUDGE_MODEL_ID` in [`packages/cli/src/commands/eval.ts`](../../packages/cli/src/commands/eval.ts). Task 16.4 replaces it with Jev if Jev passes this check, and otherwise with a chat model kept out of the matrix. The labels collected here double as the human calibration set for later judge changes.
@@ -246,6 +248,77 @@ Sonnet 5, for reference only: 26/30 agree, 8/12 fails caught, 4 false passes, 0 
 **Decision for 16.4:** Jev is rejected under the original rubrics, so the recorded decision is the fallback: a chat-model judge deliberately kept out of the eval matrix. Task 16.4 must record that as a known limitation in `docs/agent-evals.md`; this PR does not change that file. Sonnet 5, the chat-model reference here, has the same four blind spots, so the fallback does not by itself close them.
 
 **Planned follow-up (not done in this PR):** Jev and Sonnet 5 missed the same four items, so the misses trace to rubrics that do not state those checks; 16.4 makes them explicit and re-runs this identical check once before choosing the judge. The checks in question are the pattern-planning ones (no invented verification commands, acceptance criteria per task) and weft-review's file-located blockers. Until that re-run is recorded here, the outcome above stands.
+
+## Re-run with explicit rubric criteria, 24 Sep 2026
+
+Task 16.4a. The first result above is unchanged; this section records the one re-run it planned.
+
+### What changed
+
+Only the rubrics' reviewer notes (`scoring.notes`) changed; no case, runner signal, label, response, question or threshold did. Each check was written as the case's existing intent, in every case of the suite where that intent applies, not only in the cases the missed items came from:
+
+| Suite | Rubrics | Criterion made explicit |
+| --- | --- | --- |
+| pattern-planning | all four | Every task has its own acceptance, success or verification step; a single final verification note does not count. |
+| pattern-planning | all four | Every command the plan names exists in the repository (or, where the case declares its commands, is one of them); a verification step that relies on an invented command does not count. |
+| weft-review | `weft-review-reject-blocker-citation`, `weft-review-traced-true-positive` | A rejection passes only when every BLOCKER line names the file it applies to. The two approval cases raise no blockers, so they are unchanged. |
+
+In [`evals/rubrics/pattern-planning/`](../../evals/rubrics/pattern-planning/) the release-checklist rubric also drops its allowance to "match the current runner behavior" on acceptance coverage, which let a loose final note count; its case asks for each task to be tied to acceptance "rather than a loose final note". The deterministic runner signals are unchanged.
+
+### How it was re-run
+
+Same 30 items, same labels, same questions and thresholds, same two judges. `collect` was re-run on the same selection into a separate directory so the labels were untouched, and each negative took its source item's regenerated rubric. The rubric text changed for 10 items (pattern-planning B02, B06, B10, B15, N06, N07; weft-review B01, B09, N01, N02); nothing else about any item changed. The per-criterion Jev questions come from each case's required runner signals, which did not change, so the questions came out identical; what changed is the rubric text both judges read. Only those 10 items were re-scored, once; the other 20 verdicts were kept. The first verdicts are kept locally as `verdicts-v1.json`.
+
+### Result
+
+**Jev: ACCEPTED.**
+
+| Condition | Required | Jev | Result |
+| --- | --- | --- | --- |
+| Corpus | at least 30 items, 12 labelled fail | 30 items, 12 labelled fail | met |
+| Agrees with the labels | at least 24/30 | 28/30 | met |
+| Fails caught (Jev fail, human fail) | at least 10/12 | 10/12 | met |
+| False passes (Jev pass, human fail) | — | 2 (N02, N06) | — |
+| False fails (Jev fail, human pass) | — | 0 | — |
+| Judge errors (count as disagreements) | — | 0 | — |
+
+| Judge | Agreement | Cohen's κ | Fails caught | False passes | False fails |
+| --- | --- | --- | --- | --- | --- |
+| Jev (overall noul) | 28/30 (93%) | 0.86 | 10/12 | 2 | 0 |
+| Jev (all criteria, informational) | 27/30 (90%) | 0.79 | 10/12 | 2 | 1 |
+| Sonnet 5 (reference) | 27/30 (90%) | 0.78 | 9/12 | 3 (B10, N06, N07) | 0 |
+
+Per suite, pattern-planning agreement rose from 3/6 to 5/6 for Jev and stayed 3/6 for Sonnet 5; weft-review stayed 6/7 for Jev and rose to 7/7 for Sonnet 5. The other suites were not re-scored.
+
+The re-scored items, first run → re-run:
+
+| Item | Case | Label | Jev (overall noul) | Sonnet 5 (score vs threshold) |
+| --- | --- | --- | --- | --- |
+| B01 | weft-review-reject-blocker-citation | pass | pass 0.94 → pass 0.95 | pass 1.00 → pass 1.00 |
+| B02 | pattern-plan-release-checklist | pass | pass 0.90 → pass 0.67 | pass 1.00 → pass 1.00 |
+| B06 | pattern-plan-settings-refactor | pass | pass 0.94 → pass 0.83 | pass 1.00 → pass 0.95 |
+| B09 | weft-review-reject-blocker-citation | pass | pass 0.95 → pass 0.95 | pass 1.00 → pass 1.00 |
+| B10 | pattern-plan-release-checklist | fail | pass 0.65 → **fail 0.40** | pass 1.00 → pass 0.85 |
+| B15 | pattern-plan-settings-refactor | pass | pass 0.92 → pass 0.75 | pass 1.00 → pass 0.97 |
+| N01 | weft-review-reject-blocker-citation | fail | fail 0.03 → fail 0.02 | fail 0.00 → fail 0.05 |
+| N02 | weft-review-reject-blocker-citation | fail | pass 0.85 → pass 0.66 | pass 0.75 → **fail 0.40** |
+| N06 | pattern-plan-release-checklist | fail | pass 0.89 → pass 0.61 | pass 1.00 → pass 0.80 |
+| N07 | pattern-plan-settings-refactor | fail | pass 0.64 → **fail 0.12** | pass 0.72 → pass 0.65 |
+
+### Reading it
+
+- **Jev meets the rule, at the margin.** It catches exactly the 10 fails required. It now fails B10 (a real fail) and N07 (per-task acceptance dropped), and still passes N02 (blockers that name no file) and N06 (an invented verification command), both with lower `overall` than before (0.66 and 0.61). No item the labels pass was failed.
+- **The stricter rubrics narrow some passes.** B02 fell from 0.90 to 0.67 and B15 from 0.92 to 0.75, still passing. 16.4b should expect Jev's pattern-planning margins to be smaller than they were.
+- **Sonnet 5 improved less.** It now fails N02 but still passes B10, N06 and N07, so under the same rule it would not be accepted (9/12). It stays a reference.
+- **Not a blind test.** The criteria were written after seeing which items both judges missed. They were phrased as each case's stated intent and applied to every case in the two suites, not to the missed items' text, but the re-run cannot rule out that they fit this corpus better than fresh outputs. The labels remain the calibration set for later judge changes.
+
+### Decision for 16.4
+
+**The judge is Jev (`typesafe/jev-1.13`).** Task 16.4b wires it in behind `LangChainJudge` in place of the hard-coded `JUDGE_MODEL_ID`; the chat-model fallback is not needed. The two remaining misses (file-located blockers, invented commands) are the checks 16.4b's rubric-derived questions should ask directly.
+
+### Cost
+
+About $0.12 of OpenRouter credit (account usage before and after the re-scoring; it may include other concurrent use). Jev's share was about $0.001.
 
 ## Raw output
 

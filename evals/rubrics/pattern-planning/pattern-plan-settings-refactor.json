@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Accept harmless heading variation such as `## Scope`, `### Scope`, `## Order of Operations`, `**Files**`, or `Success Criteria` when the same task-level structure is observable. Treat a loose file list or a final testing note without task-level structure as missing planning structure, not as a formatting win."
+    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Accept harmless heading variation such as `## Scope`, `### Scope`, `## Order of Operations`, `**Files**`, or `Success Criteria` when the same task-level structure is observable. Treat a loose file list or a final testing note without task-level structure as missing planning structure, not as a formatting win. Require every implementation task to have its own acceptance, success, or verification step; a single final verification note does not give per-task acceptance. Every command the plan names must exist in the repository; a verification step that relies on an invented command does not count as verification."
   }
 }
