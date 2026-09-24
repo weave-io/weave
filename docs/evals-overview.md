@@ -71,6 +71,8 @@ bun packages/cli/src/main.ts eval run --models dev --repeat 3
 
 Add `--agent <suite>` to narrow it down. A plain `eval run` with no `--models` runs the full default matrix, which is the setting for a baseline and not for a quick check. See [The development subset](agent-evals.md#the-development-subset---models-dev).
 
+The [baseline of 24 Sep 2026](artifacts/eval-baseline-2026-09-24.md) measured this command: 276 attempts, no errored attempt, about $0.18, and about 1 h 40 min as one process. It also records per-suite pass rates with their noise bands and the cases that flip between repeats. Compare later runs against it.
+
 **2. Diagnose one case on one model.**
 
 ```bash
