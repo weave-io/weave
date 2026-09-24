@@ -35,6 +35,18 @@ Global installation uses
 Installation stops if more than one candidate exists. It preserves comments,
 options, and unrelated keys. A second run does not change the file bytes.
 
+The entry pins the adapter version released with the CLI, for example
+`@weaveio/weave-adapter-opencode2@0.2.0-next.2`. The build replaces
+`process.env.WEAVE_OPENCODE2_ADAPTER_VERSION` in
+[`opencode2.ts`](../../packages/cli/src/installers/opencode2.ts) with the
+adapter's `package.json` version (see
+[`build-public-packages.ts`](../../scripts/build-public-packages.ts)). A bare
+package name would make OpenCode install the npm `latest` dist-tag. That tag is
+`0.1.0`, which registers no agents on OpenCode 2.0.x. Running the CLI from a
+source checkout writes the bare name. An existing Weave entry is left
+unchanged, whatever its version, so upgrading an older unpinned entry is a
+manual edit.
+
 Manual configuration uses the plural `plugins` field:
 
 ```jsonc

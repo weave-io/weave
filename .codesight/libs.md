@@ -607,7 +607,10 @@
   - type InstallResult
   - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
-- `packages/cli/src/installers/opencode2.ts` — class OpenCode2Installer, const OPENCODE2_PLUGIN_PACKAGE
+- `packages/cli/src/installers/opencode2.ts`
+  - function opencode2PluginSpecifier: (version) => string
+  - class OpenCode2Installer
+  - const OPENCODE2_PLUGIN_PACKAGE
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal

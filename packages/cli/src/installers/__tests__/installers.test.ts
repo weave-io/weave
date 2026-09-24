@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { installAllSupported, installerRegistry } from "../index.js";
+import { OpenCode2Installer } from "../opencode2.js";
 
 function opencodeConfig() {
   return "/home/user/.config/opencode/config.json";
@@ -125,6 +126,53 @@ describe("harness installers", () => {
       false,
     );
     expect(fs.snapshot()[path]).toBe(once);
+  });
+
+  it("pins the OpenCode 2 adapter version released with the CLI", async () => {
+    const path = "/project/opencode.jsonc";
+    const fs = new MemoryFileSystem({});
+    const result = await new OpenCode2Installer(fs, "0.2.0-next.2").install({
+      harness: "opencode2",
+      configPath: path,
+      selectedModules: [],
+      force: false,
+      scope: "local",
+    });
+    expect(result._unsafeUnwrap().changed).toBe(true);
+    expect(JSON.parse(fs.snapshot()[path] ?? "{}").plugins).toEqual([
+      "@weaveio/weave-adapter-opencode2@0.2.0-next.2",
+    ]);
+  });
+
+  it("writes the unpinned OpenCode 2 adapter name from a source checkout", async () => {
+    const path = "/project/opencode.jsonc";
+    const fs = new MemoryFileSystem({});
+    await new OpenCode2Installer(fs, undefined).install({
+      harness: "opencode2",
+      configPath: path,
+      selectedModules: [],
+      force: false,
+      scope: "local",
+    });
+    expect(JSON.parse(fs.snapshot()[path] ?? "{}").plugins).toEqual([
+      "@weaveio/weave-adapter-opencode2",
+    ]);
+  });
+
+  it("leaves an existing OpenCode 2 adapter entry at the version the user chose", async () => {
+    const path = "/project/opencode.json";
+    const source =
+      '{ "plugins": ["@weaveio/weave-adapter-opencode2@0.1.0"] }\n';
+    const fs = new MemoryFileSystem({ [path]: source });
+    const result = await new OpenCode2Installer(fs, "0.2.0-next.2").install({
+      harness: "opencode2",
+      configPath: path,
+      selectedModules: [],
+      force: false,
+      scope: "local",
+    });
+    expect(result._unsafeUnwrap().changed).toBe(false);
+    expect(fs.snapshot()[path]).toBe(source);
   });
 
   it("appends to the OpenCode 2 plugin array without replacing its comments or options", async () => {

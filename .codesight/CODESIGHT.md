@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 217 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~19,500 tokens. Without it, AI exploration would cost ~73,000 tokens. **Saves ~53,500 tokens per conversation.**
-> **Last scanned:** 2026-09-24 18:12 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 217 lib files | 27 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~19,600 tokens. Without it, AI exploration would cost ~73,600 tokens. **Saves ~54,000 tokens per conversation.**
+> **Last scanned:** 2026-09-24 19:04 — re-run after significant changes
 
 ---
 
@@ -618,7 +618,10 @@
   - type InstallResult
   - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
-- `packages/cli/src/installers/opencode2.ts` — class OpenCode2Installer, const OPENCODE2_PLUGIN_PACKAGE
+- `packages/cli/src/installers/opencode2.ts`
+  - function opencode2PluginSpecifier: (version) => string
+  - class OpenCode2Installer
+  - const OPENCODE2_PLUGIN_PACKAGE
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
@@ -1006,7 +1009,7 @@
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1017,6 +1020,7 @@
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_GLOBAL_CONFIG_DIR` **required** — packages/config/src/__tests__/load_config.test.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_OPENCODE2_ADAPTER_VERSION` **required** — packages/cli/src/installers/opencode2.ts
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_TRAJECTORY_MODEL` **required** — sandboxes/opencode/entrypoint.ts
@@ -1037,12 +1041,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1108,7 +1114,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 213 test files found
+> 217 test files found
 
 ---
 

@@ -19,6 +19,26 @@ import type {
 
 export const OPENCODE2_PLUGIN_PACKAGE = "@weaveio/weave-adapter-opencode2";
 
+/**
+ * The adapter version released with this CLI. `scripts/build-public-packages.ts`
+ * replaces this expression with the adapter's `package.json` version when it
+ * builds the published CLI; a source checkout leaves it unset.
+ */
+const RELEASED_ADAPTER_VERSION: string | undefined =
+  process.env.WEAVE_OPENCODE2_ADAPTER_VERSION;
+
+/**
+ * The `plugins` entry `weave init` writes. The published CLI pins the exact
+ * adapter version it was released with: an unpinned name makes OpenCode
+ * install the npm `latest` dist-tag, which can be an adapter that does not
+ * support the host at all (issue #209's silent empty install).
+ */
+export function opencode2PluginSpecifier(version: string | undefined): string {
+  if (version === undefined || version.length === 0)
+    return OPENCODE2_PLUGIN_PACKAGE;
+  return `${OPENCODE2_PLUGIN_PACKAGE}@${version}`;
+}
+
 function configCandidates(fs: FileSystem, scope: "global" | "local"): string[] {
   if (scope === "global") {
     const root = fs.xdgConfigHome() ?? resolve(fs.home(), ".config");
@@ -58,6 +78,7 @@ function hasEquivalentPlugin(value: unknown): boolean {
 function editConfig(
   source: string,
   path: string,
+  specifier: string,
 ): Result<{ contents: string; changed: boolean }, InstallError> {
   const inspected = inspectLegacyJsonc(source);
   if (inspected.isErr())
@@ -103,9 +124,7 @@ function editConfig(
   const target = Array.isArray(plugins)
     ? ["plugins", plugins.length]
     : ["plugins"];
-  const value = Array.isArray(plugins)
-    ? OPENCODE2_PLUGIN_PACKAGE
-    : [OPENCODE2_PLUGIN_PACKAGE];
+  const value = Array.isArray(plugins) ? specifier : [specifier];
   const edits = modify(source, target, value, {
     formattingOptions: {
       insertSpaces: true,
@@ -121,7 +140,12 @@ export class OpenCode2Installer implements HarnessInstaller {
   readonly supported = true;
   readonly optionalModules = [];
 
-  constructor(private readonly fs: FileSystem) {}
+  constructor(
+    private readonly fs: FileSystem,
+    private readonly adapterVersion:
+      | string
+      | undefined = RELEASED_ADAPTER_VERSION,
+  ) {}
 
   install(request: InstallRequest): ResultAsync<InstallResult, InstallError> {
     const scope = request.scope ?? "global";
@@ -152,7 +176,11 @@ export class OpenCode2Installer implements HarnessInstaller {
                 .readText(path)
                 .mapErr((error) => installFailure(path, error));
         return read.andThen((source) => {
-          const edited = editConfig(source, path);
+          const edited = editConfig(
+            source,
+            path,
+            opencode2PluginSpecifier(this.adapterVersion),
+          );
           if (edited.isErr()) return errAsync(edited.error);
           if (!edited.value.changed) {
             return okAsync({
