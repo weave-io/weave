@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 217 lib files | 27 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~19,600 tokens. Without it, AI exploration would cost ~73,100 tokens. **Saves ~53,600 tokens per conversation.**
-> **Last scanned:** 2026-09-24 19:37 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 221 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,100 tokens. Without it, AI exploration would cost ~74,400 tokens. **Saves ~54,300 tokens per conversation.**
+> **Last scanned:** 2026-09-24 19:48 — re-run after significant changes
 
 ---
 
@@ -991,6 +991,33 @@
   - type ProofEnvironmentError
   - const OPENCODE2_PROOF_HOST_VERSION
   - const OPENCODE2_PROOF_ROOT
+- `scripts/proof/opencode2-live/checks.ts`
+  - function parseRequest: (request, delegationTool) => ParsedRequest
+  - class LiveChecks
+  - interface LiveVerdict
+  - interface HostPlugin
+  - interface HostAgent
+  - interface CapturedRequest
+  - _...4 more_
+- `scripts/proof/opencode2-live/host.ts`
+  - function livePaths: (root) => LivePaths
+  - function runProcess: (step, command, options, string>;
+    readonly timeoutMs) => void
+  - function mustRun: (step, command, options) => ResultAsync<CommandOutcome, LiveHostError>
+  - function writeText: (path, text) => ResultAsync<void, LiveHostError>
+  - class OpenCode2Host
+  - interface CommandOutcome
+  - _...2 more_
+- `scripts/proof/opencode2-live/plugin-source.ts`
+  - function parsePluginSource: (raw) => Result<PluginSource, PluginSourceError>
+  - function describePluginSource: (source) => string
+  - class PluginInstaller
+  - type PluginSource
+  - type PluginSourceError
+- `scripts/proof/opencode2-live/scripted-provider.ts`
+  - function scriptedProviderConfig: (port) => object
+  - class ScriptedProvider
+  - interface ScriptedProviderOptions
 - `scripts/validate-api-extractor-configs.ts`
   - function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>
   - function validateApiExtractorConfigs: () => Result<
@@ -1006,9 +1033,11 @@
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
 - `CI` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
+- `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `PATH` (has default) — scripts/proof/opencode2-live/host.ts
 - `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
@@ -1112,18 +1141,19 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 214 test files found
+> 217 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (5 workflows)
+## GitHub Actions (6 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 3 | — | — |
 | CI | push, pull_request | 1 | — | — |
+| OpenCode 2 live check | push, pull_request, schedule, workflow_dispatch | 2 | — | — |
 | Proof — Active agent is Loom | push, pull_request | 4 | — | — |
 | Publish Package | push | 1 | — | — |
 | Verify OpenCode2 Adapter | push, pull_request | 1 | — | — |
@@ -1142,6 +1172,19 @@
   - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+
+### OpenCode 2 live check
+
+> `.github/workflows/opencode2-live.yml`
+
+> Concurrency: `${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}`
+
+- **pinned** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **canary** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 
 ### Proof — Active agent is Loom
 
@@ -1169,7 +1212,7 @@
 - `WEAVEIO_NPM_TOKEN`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/proof-active-agent.yml, .github/workflows/publish-tag.yml, .github/workflows/verify-opencode2.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/opencode2-live.yml, .github/workflows/proof-active-agent.yml, .github/workflows/publish-tag.yml, .github/workflows/verify-opencode2.yml_
 _Generated by codesight-cicd-plugin_
 
 ---

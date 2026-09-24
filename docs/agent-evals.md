@@ -327,7 +327,15 @@ bun packages/cli/src/main.ts eval compare 86eb974-2026-09-23-001 1a2b3c4-2026-09
 ```
 
 Narrow both runs the same way (`--agent`, `--case`) to spend less; raise
-`--repeat` to detect smaller changes. `eval compare` reads only the local
+`--repeat` to detect smaller changes.
+
+The current baseline on `main` is
+[`eval-baseline-2026-09-24.md`](artifacts/eval-baseline-2026-09-24.md)
+(Spec 37, 7.4): the dev subset with `--repeat 3`, split into one bundle per
+suite (per model for loom-routing and tapestry-category-routing), plus the dev
+trajectory cases and the full matrix once. Its bundles are local, so compare a
+candidate unit by unit with the same filters; the artifact says where they
+live. `eval compare` reads only the local
 bundles; it makes no model call and needs no API key.
 
 ### Compare two runs (`eval compare`)
@@ -583,7 +591,8 @@ a judge change starts a new baseline. To change it:
 2. Change `JUDGE_MODEL_ID` / `JUDGE_MODEL_VERSION` (and, for a judge that is
    not Jev, the `LangChainJudge` behind the scorer in `buildLiveRunner()`).
    A newer dated Jev version is a judge change too.
-3. Record a new baseline (task 7.4) under the new judge.
+3. Record a new baseline (task 7.4) under the new judge. The current one is
+   [`eval-baseline-2026-09-24.md`](artifacts/eval-baseline-2026-09-24.md).
 
 `RealLangChainJudge`, the chat-model judge `weave eval run` used before 16.4,
 is kept in `langchain-agent-evals.ts` only because the acceptance harness

@@ -71,6 +71,8 @@ bun packages/cli/src/main.ts eval run --models dev --repeat 3
 
 Add `--agent <suite>` to narrow it down. A plain `eval run` with no `--models` runs the full default matrix, which is the setting for a baseline and not for a quick check. See [The development subset](agent-evals.md#the-development-subset---models-dev).
 
+The [baseline of 24 Sep 2026](artifacts/eval-baseline-2026-09-24.md) measured this command's text track (`--track text`): 276 attempts, no errored attempt, about $0.18, and about 1 h 40 min as one process. Without `--track`, the command also runs the five trajectory cases DeepSeek V4 Flash may run, which the baseline measured separately (5 min, $0.04). It also records per-suite pass rates with their noise bands and the cases that flip between repeats. Compare later runs against it.
+
 **2. Diagnose one case on one model.**
 
 ```bash
@@ -117,8 +119,8 @@ The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`
 
 **Cost and time.**
 - A live run of 16 answers on the dev subset, one case per judged suite with Jev judging, cost about $0.012 on 24 Sep 2026.
-- The full default matrix took about 65 minutes on the 5 Sep 2026 run.
-- The time and cost of `--models dev --repeat 3` have not been measured yet. [Spec 37](specs/37-spec-repository-foundation/37-tasks-repository-foundation.md) task 7.2 records them.
+- `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases add about 5 min and $0.04.
+- The full default matrix, once: about $6.92 for the text track and $3.41 more for the trajectory cases on the models they allow. Run one process per suite and model in parallel, it took about 30 min (24 Sep 2026). See the [baseline](artifacts/eval-baseline-2026-09-24.md).
 - Check your OpenRouter credits before a large run.
 
 ## Reading results

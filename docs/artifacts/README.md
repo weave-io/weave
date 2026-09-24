@@ -14,6 +14,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 - [`cli-evals-migration-handoff.md`](cli-evals-migration-handoff.md) — working note for migrating `cli/evals` to scenario tests: method, the area's observable promises, and cautions.
 - [`session-audit-2026-09.md`](session-audit-2026-09.md) — audit of 790 real OpenCode sessions (4–18 Sep 2026): baseline scorecard, decisions, and the WS0–WS4 remediation roadmap that Spec 37 starts.
 - [`judge-bakeoff-2026-09-23.md`](judge-bakeoff-2026-09-23.md) — Spec 37 task 16.3: acceptance check for TypeSafe Jev as the eval judge against pass/fail labels on 20 real outputs and 10 constructed negatives, with Sonnet 5 as a reference. Outcome: Jev rejected (26/30 agreement, 8/12 fails caught); on the 24 Sep 2026 re-run (task 16.4a), with the missed checks stated in the rubrics, Jev accepted (28/30, 10/12).
+- [`eval-baseline-2026-09-24.md`](eval-baseline-2026-09-24.md) — Spec 37 tasks 7.2–7.4: the pre-WS1 eval baseline on `main` (`d4d1bf17`, judge Jev): dev subset with three repeats and per-case flip rates, dev trajectory cases, and the full default matrix once, with time, cost, noise bands and suspected scoring defects. Local only; nothing published.
 
 ---
 
