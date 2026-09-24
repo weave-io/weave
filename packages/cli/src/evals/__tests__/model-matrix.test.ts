@@ -124,6 +124,19 @@ describe("loadModelMatrix — real fixture", () => {
     }
   });
 
+  it("has unique model ids", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const ids = matrix.models.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("names each model's provider as its id prefix", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    for (const model of matrix.models) {
+      expect(model.id.startsWith(`${model.provider}/`)).toBe(true);
+    }
+  });
+
   it("has version 1", async () => {
     const result = await loadModelMatrix();
     expect(result._unsafeUnwrap().version).toBe(1);
