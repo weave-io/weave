@@ -26,7 +26,8 @@
  *   (`jevScore`): a pass lands in [0.95, 1], so it clears every gate the
  *   scorer and the runners apply (the near-perfect primary gate at 0.95, the
  *   category-routing gate at 0.7); a fail keeps its probability, below 0.5,
- *   so it clears none of them.
+ *   so it clears none of them. An optional case has no judge gate: its
+ *   `weightedTotal` mixes the judge's score with the deterministic ones.
  * - **The rationale** is built here, from the question keys that fell below
  *   the threshold and their probabilities. The keys are the case's own
  *   criterion ids, so no judge text exists to leak into any file.
@@ -270,9 +271,12 @@ export function parseJevDecision(
  *
  * A pass (`overall ≥ 0.5`) maps linearly onto [0.95, 1]; a fail keeps its
  * probability, which is below 0.5. The order of scores is preserved, and
- * the verdict decides every gate: a pass clears the scorer's near-perfect
- * primary gate (`PRIMARY_STRUCTURAL_PASS_THRESHOLD`, 0.95) and the
- * category-routing gate (0.7); a fail clears neither, nor `PASS_THRESHOLD`.
+ * the verdict decides every judge gate: a pass clears the scorer's
+ * near-perfect primary gate (`PRIMARY_STRUCTURAL_PASS_THRESHOLD`, 0.95) and
+ * the category-routing gate (0.7); a fail clears neither. An optional case
+ * has no judge gate: its pass mark is on `weightedTotal`, which mixes this
+ * score with the deterministic dimensions, so a judge fail can still leave
+ * an optional case passing on its route (as it could before 16.4).
  */
 export function jevScore(overall: number): number {
   if (overall < JEV_PASS_THRESHOLD) return overall;
@@ -415,12 +419,15 @@ export class JevJudge implements LangChainJudge {
         return err<unknown, ScoringError>(failure.error);
       }
       const wait = failure.retryAfterMs ?? JEV_RETRY_BASE_MS * 2 ** attempt;
-      // An injected wait that rejects ends the retries with the failure
-      // that prompted them, rather than escaping the Result chain.
-      return ResultAsync.fromPromise(
-        this.sleep(wait),
+      // An injected wait that throws or rejects ends the retries with the
+      // failure that prompted them, rather than escaping the Result chain.
+      const waitThenRetry = ResultAsync.fromThrowable(
+        (ms: number) => this.sleep(ms),
         (): ScoringError => failure.error,
-      ).andThen(() => this.post(dimension, body, attempt + 1));
+      );
+      return waitThenRetry(wait).andThen(() =>
+        this.post(dimension, body, attempt + 1),
+      );
     });
   }
 

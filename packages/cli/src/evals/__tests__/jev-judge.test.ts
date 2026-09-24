@@ -321,6 +321,24 @@ describe("JevJudge retries", () => {
     expect(calls).toEqual([503]);
   });
 
+  it("returns the HTTP error, never a throw, when the wait before a retry throws synchronously", async () => {
+    const { fetchImpl } = sequence([503]);
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: fetchImpl,
+      sleep: () => {
+        throw new Error("no timers");
+      },
+    });
+
+    const result = await judge.evaluate(input());
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "JudgeHttpError",
+      status: 503,
+    });
+  });
+
   it("gives up after the last retry with the HTTP error", async () => {
     const { fetchImpl, calls } = sequence([429, 429, 429, 429]);
     const judge = new JevJudge({

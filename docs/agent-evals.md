@@ -522,7 +522,8 @@ pass at 0.5, the acceptance check's fixed threshold; the per-criterion answers
 never change it. `jevScore()` maps it onto the scorer's scale so it decides
 every gate: a pass lands in [0.95, 1] (clearing the near-perfect primary gate
 and the category-routing gate at 0.7), a fail keeps its probability, below
-0.5. The dimension's rationale — local only, in `--raw-artifacts` files — is
+0.5. An optional case has no judge gate: it passes on `weightedTotal`, which
+mixes the judge's score with the deterministic dimensions, as before. The dimension's rationale — local only, in `--raw-artifacts` files — is
 built from the criteria that fell below 0.5, by key: `Judge verdict: fail
 (overall 0.43 < 0.50). Criteria below 0.50: plan_file_tasks (0.44).`
 
