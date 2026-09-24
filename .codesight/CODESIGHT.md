@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 217 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~19,500 tokens. Without it, AI exploration would cost ~73,000 tokens. **Saves ~53,500 tokens per conversation.**
-> **Last scanned:** 2026-09-24 05:42 — re-run after significant changes
+> **Last scanned:** 2026-09-24 05:44 — re-run after significant changes
 
 ---
 
@@ -1053,7 +1053,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **48** files
+- `packages/cli/src/evals/types.ts` — imported by **49** files
 - `packages/cli/src/theme/colors.ts` — imported by **26** files
 - `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
@@ -1076,7 +1076,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +43 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +44 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
