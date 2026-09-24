@@ -69,13 +69,13 @@ function summary(state: PlanUiState, narrow: boolean): readonly string[] {
 
 function stateColor(context: Context, state: PlanUiState) {
   if (state.type === "completed")
-    return context.theme.text.feedback.success.default;
+    return context.theme.text.feedback.success.base;
   if (state.type === "disconnected")
-    return context.theme.text.feedback.error.default;
+    return context.theme.text.feedback.error.base;
   if (state.type === "unsupported_host" || state.type === "unavailable")
-    return context.theme.text.feedback.warning.default;
-  if (state.type === "ready") return context.theme.text.status.running;
-  return context.theme.text.subdued;
+    return context.theme.text.feedback.warning.base;
+  if (state.type === "ready") return context.theme.text.feedback.info.base;
+  return context.theme.text.muted;
 }
 
 export interface PlanPanelProps {

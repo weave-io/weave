@@ -77,6 +77,7 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
+        "@opencode/theme": "2.0.16",
         "@weaveio/weave-config": "workspace:*",
         "@weaveio/weave-core": "workspace:*",
         "@weaveio/weave-engine": "workspace:*",
@@ -721,6 +722,8 @@
     "@opencode/server": ["@opencode/server@2.0.16", "", { "dependencies": { "@effect/platform-node": "4.0.0-rc.112", "@effect/platform-node-shared": "4.0.0-rc.112", "@opencode/core": "2.0.16", "@opencode/protocol": "2.0.16", "@opencode/schema": "2.0.16", "@opencode/simulation": "2.0.16", "@opencode/util": "2.0.16", "drizzle-orm": "1.0.0-rc.5-169397b", "effect": "4.0.0-rc.112" } }, "sha512-zLuw5yC+xcPu07YBmfFanJsrqvZvlN681EgMEU1z92CfT7UydrFeDTR2ZS/jpcn8BPLp6xGSIXX8Xb/rcpFGUw=="],
 
     "@opencode/simulation": ["@opencode/simulation@2.0.16", "", { "dependencies": { "@opencode/ai": "2.0.16", "@opencode/core": "2.0.16", "@opencode/plugin": "2.0.16", "@opencode/protocol": "2.0.16", "@opencode/util": "2.0.16", "@opentui/core": "0.5.10", "effect": "4.0.0-rc.112", "ws": "8.21.0" } }, "sha512-1kqxFl39UzC28MpqLSGXqieuy7ncRjJe0RKbiLGiq9lcXlATtPjnvzJ4mcqZffPbNixgEH3LCJTYdcSuooMcNg=="],
+
+    "@opencode/theme": ["@opencode/theme@2.0.16", "", { "dependencies": { "@opentui/core": "0.5.10", "effect": "4.0.0-rc.112" } }, "sha512-hjhKkx3tV1NscNDsRRMZD002dl5eXMiQYI6Qg+RiUPRUxHjGUERZ/v2cvtfI70g6KlZbtsLIYuptSxXHaWkfmQ=="],
 
     "@opencode/util": ["@opencode/util@2.0.16", "", { "dependencies": { "@effect/opentelemetry": "4.0.0-rc.112", "@effect/platform-node": "4.0.0-rc.112", "@effect/platform-node-shared": "4.0.0-rc.112", "@npmcli/arborist": "9.4.0", "@npmcli/config": "10.8.1", "@opentelemetry/api": "1.9.0", "@opentelemetry/api-logs": "0.219.0", "@opentelemetry/context-async-hooks": "2.8.0", "@opentelemetry/exporter-trace-otlp-http": "0.219.0", "@opentelemetry/resources": "2.8.0", "@opentelemetry/sdk-logs": "0.219.0", "@opentelemetry/sdk-metrics": "2.8.0", "@opentelemetry/sdk-trace-base": "2.8.0", "@opentelemetry/sdk-trace-node": "2.8.0", "cross-spawn": "7.0.6", "effect": "4.0.0-rc.112", "glob": "13.0.5", "mime-types": "3.0.2", "minimatch": "10.2.5", "npm-package-arg": "13.0.2", "pacote": "21.5.1" } }, "sha512-VfY65xppJgSQSXT3x5hH3jM6e5Z08pYEaRA3sKv1K7I8jIFNma8IGZXSoYWaSXPnDt1svxd1sZ9b7tA1RRhOGw=="],
 
@@ -2432,6 +2435,8 @@
 
     "@opencode/simulation/ws": ["ws@8.21.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g=="],
 
+    "@opencode/theme/effect": ["effect@4.0.0-rc.112", "", { "dependencies": { "fast-check": "^4.9.0", "msgpackr": "^2.0.5" } }, "sha512-wXxwuh1Ywnv4cPRM3Wfa0vDwuOHnZ1TsTgHJkG9XgzND6inhBH9n1vBxhg3iIXOia/OrpmvVmd3lrD4vq6bF3A=="],
+
     "@opencode/util/effect": ["effect@4.0.0-rc.112", "", { "dependencies": { "fast-check": "^4.9.0", "msgpackr": "^2.0.5" } }, "sha512-wXxwuh1Ywnv4cPRM3Wfa0vDwuOHnZ1TsTgHJkG9XgzND6inhBH9n1vBxhg3iIXOia/OrpmvVmd3lrD4vq6bF3A=="],
 
     "@opencode/util/glob": ["glob@13.0.5", "", { "dependencies": { "minimatch": "^10.2.1", "minipass": "^7.1.2", "path-scurry": "^2.0.0" } }, "sha512-BzXxZg24Ibra1pbQ/zE7Kys4Ua1ks7Bn6pKLkVPZ9FZe4JQS6/Q7ef3LG1H+k7lUf5l4T3PLSyYyYJVYUvfgTw=="],
@@ -2653,6 +2658,8 @@
     "@opencode/server/effect/msgpackr": ["msgpackr@2.1.0", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-p/pBCVO63CsvvpkomUnNNag6+n38rULuDA6HHe70o2gtC8ODI52foF/4ko2qQcp6OiErJXTmrZeXmsGGHsIQNQ=="],
 
     "@opencode/simulation/effect/msgpackr": ["msgpackr@2.1.0", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-p/pBCVO63CsvvpkomUnNNag6+n38rULuDA6HHe70o2gtC8ODI52foF/4ko2qQcp6OiErJXTmrZeXmsGGHsIQNQ=="],
+
+    "@opencode/theme/effect/msgpackr": ["msgpackr@2.1.0", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-p/pBCVO63CsvvpkomUnNNag6+n38rULuDA6HHe70o2gtC8ODI52foF/4ko2qQcp6OiErJXTmrZeXmsGGHsIQNQ=="],
 
     "@opencode/util/effect/msgpackr": ["msgpackr@2.1.0", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-p/pBCVO63CsvvpkomUnNNag6+n38rULuDA6HHe70o2gtC8ODI52foF/4ko2qQcp6OiErJXTmrZeXmsGGHsIQNQ=="],
 

@@ -53,6 +53,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@opencode/theme": "2.0.16",
     "@weaveio/weave-config": "workspace:*",
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",

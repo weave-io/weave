@@ -1,6 +1,7 @@
+import { lstat, realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
 import { normalizePath } from "@weaveio/weave-config";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ResultAsync } from "neverthrow";
 import { SAFE_PLAN_NAME } from "./plan-name.js";
 
 const MAX_PLAN_NAMES = 256;
@@ -9,53 +10,41 @@ export type PlanCatalogError =
   | { readonly type: "MissingDirectory" }
   | { readonly type: "Unreadable" };
 
-function runPathCommand(
-  command: string[],
-): ResultAsync<{ code: number; stdout: string }, PlanCatalogError> {
+function isMissing(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    cause.code === "ENOENT"
+  );
+}
+
+/**
+ * Link and directory checks go through `node:fs` rather than the POSIX
+ * `test`/`realpath` binaries: a host launched outside a POSIX shell (Windows
+ * TUI, OpenChamber's managed server) has neither on PATH, which made every
+ * plan catalog read fail as `Unreadable`.
+ */
+function readDirectory(path: string): ResultAsync<void, PlanCatalogError> {
   return ResultAsync.fromThrowable(
     async () => {
-      const process = Bun.spawn(command, {
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const [code, stdout] = await Promise.all([
-        process.exited,
-        new Response(process.stdout).text(),
-      ]);
-      return { code, stdout };
+      // Inspect the link before following it: `stat` follows links, including
+      // dangling ones, so a link would otherwise pass as its target.
+      const entry = await lstat(path);
+      if (entry.isSymbolicLink()) throw new Error("symbolic link");
+      const info = await stat(path);
+      if (!info.isDirectory()) throw new Error("not a directory");
     },
-    (): PlanCatalogError => ({ type: "Unreadable" }),
+    (cause): PlanCatalogError =>
+      isMissing(cause) ? { type: "MissingDirectory" } : { type: "Unreadable" },
   )();
 }
 
-function readDirectory(path: string): ResultAsync<void, PlanCatalogError> {
-  // Check links before stat: stat follows links, including dangling ones.
-  return runPathCommand(["test", "-L", path]).andThen(({ code }) => {
-    if (code !== 1) return err({ type: "Unreadable" as const });
-    return ResultAsync.fromThrowable(
-      () => Bun.file(path).stat(),
-      (cause): PlanCatalogError => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "code" in cause &&
-          cause.code === "ENOENT"
-        ) {
-          return { type: "MissingDirectory" };
-        }
-        return { type: "Unreadable" };
-      },
-    )().andThen((info) =>
-      info.isDirectory() ? ok(undefined) : err({ type: "Unreadable" as const }),
-    );
-  });
-}
-
 function canonicalPath(path: string): ResultAsync<string, PlanCatalogError> {
-  return runPathCommand(["realpath", path]).andThen(({ code, stdout }) => {
-    if (code !== 0) return err({ type: "Unreadable" as const });
-    return ok(normalizePath(stdout.trim()));
-  });
+  return ResultAsync.fromThrowable(
+    () => realpath(path),
+    (): PlanCatalogError => ({ type: "Unreadable" }),
+  )().map((resolved) => normalizePath(resolved));
 }
 
 function readPlanBasenames(

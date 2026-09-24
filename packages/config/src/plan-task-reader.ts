@@ -1,3 +1,4 @@
+import { lstat as fsLstat, realpath as fsRealpath } from "node:fs/promises";
 import { posix } from "node:path";
 import type {
   PlanTaskSnapshot,
@@ -37,19 +38,22 @@ export interface PlanTaskFileReader {
   lstat(path: string): ResultAsync<PlanTaskPathInfo, PlanTaskFileIoError>;
 }
 
-const runProcess = ResultAsync.fromThrowable(
-  async (command: string[]): Promise<{ exitCode: number; stdout: string }> => {
-    const process = Bun.spawn(command, { stdout: "pipe", stderr: "ignore" });
-    const [exitCode, stdout] = await Promise.all([
-      process.exited,
-      new Response(process.stdout).text(),
-    ]);
-    return { exitCode, stdout };
-  },
-  (): PlanTaskFileIoError => ({ type: "Unreadable", path: "<process>" }),
-);
+function isMissing(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    cause.code === "ENOENT"
+  );
+}
 
-/** Bun-only default I/O. Tests and adapters can inject a stricter host reader. */
+/**
+ * Bun-only default I/O. Tests and adapters can inject a stricter host reader.
+ *
+ * Path inspection uses `node:fs` rather than the POSIX `realpath`/`test`
+ * binaries: a host launched outside a POSIX shell (Windows TUI, a managed
+ * server) has neither on PATH, which made every plan read fail as unreadable.
+ */
 export class BunPlanTaskFileReader implements PlanTaskFileReader {
   readBytes(path: string): ResultAsync<Uint8Array, PlanTaskFileIoError> {
     return ResultAsync.fromThrowable(
@@ -81,24 +85,31 @@ export class BunPlanTaskFileReader implements PlanTaskFileReader {
   }
 
   realpath(path: string): ResultAsync<string, PlanTaskFileIoError> {
-    return runProcess(["realpath", path]).andThen(({ exitCode, stdout }) => {
-      if (exitCode !== 0) return err({ type: "Missing" as const, path });
-      return ok(normalizePath(stdout.trim()));
-    });
+    return ResultAsync.fromThrowable(
+      () => fsRealpath(path),
+      (cause): PlanTaskFileIoError =>
+        isMissing(cause)
+          ? { type: "Missing", path }
+          : { type: "Unreadable", path },
+    )().map((resolved) => normalizePath(resolved));
   }
 
   lstat(path: string): ResultAsync<PlanTaskPathInfo, PlanTaskFileIoError> {
-    return runProcess(["test", "-L", path]).andThen(
-      ({ exitCode: symlinkCode }) => {
-        if (symlinkCode === 0) return ok({ isFile: false, isSymlink: true });
-        return runProcess(["test", "-f", path]).map(
-          ({ exitCode: fileCode }) => ({
-            isFile: fileCode === 0,
-            isSymlink: false,
-          }),
-        );
+    return ResultAsync.fromThrowable(
+      async (): Promise<PlanTaskPathInfo> => {
+        try {
+          const info = await fsLstat(path);
+          if (info.isSymbolicLink()) return { isFile: false, isSymlink: true };
+          return { isFile: info.isFile(), isSymlink: false };
+        } catch (cause) {
+          // A missing path is not an I/O failure: it reports as neither a
+          // file nor a link, matching the former `test -L` / `test -f` probes.
+          if (isMissing(cause)) return { isFile: false, isSymlink: false };
+          throw cause;
+        }
       },
-    );
+      (): PlanTaskFileIoError => ({ type: "Unreadable", path }),
+    )();
   }
 }
 

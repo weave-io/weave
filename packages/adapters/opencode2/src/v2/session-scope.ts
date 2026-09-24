@@ -11,6 +11,16 @@ export interface OpenCode2SessionScope {
 
 export type SessionScopeError = { readonly type: "LocationMismatch" };
 
+/**
+ * The one directory spelling every scope comparison uses. Session location
+ * refs arrive in the host's native form (`C:\project` on Windows); anything
+ * stored or compared against `OpenCode2SessionScope.directory` must go
+ * through this first.
+ */
+export function normalizeScopeDirectory(directory: string): string {
+  return posix.normalize(normalizePath(directory));
+}
+
 export function validateSessionScope(
   sessionID: string,
   session: {
@@ -23,8 +33,8 @@ export function validateSessionScope(
   expectedDirectory: string,
   expectedWorkspaceID?: string,
 ): Result<OpenCode2SessionScope, SessionScopeError> {
-  const directory = posix.normalize(normalizePath(session.location.directory));
-  if (directory !== posix.normalize(normalizePath(expectedDirectory)))
+  const directory = normalizeScopeDirectory(session.location.directory);
+  if (directory !== normalizeScopeDirectory(expectedDirectory))
     return err({ type: "LocationMismatch" });
   // OpenCode 2.0.x session descriptors carry a public location ref
   // (`{ directory }`) without a workspace ID. Only compare the workspace when

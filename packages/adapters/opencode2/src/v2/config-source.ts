@@ -1,5 +1,9 @@
 import { posix } from "node:path";
-import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
+import {
+  type ConfigLoadError,
+  type FileReader,
+  normalizePath,
+} from "@weaveio/weave-config";
 import type {
   PromptFileReader,
   PromptFileReadFailure,
@@ -142,7 +146,13 @@ export class CatalogSourceCache {
     private readonly projectConfig: boolean,
     private readonly io: CatalogSourceIo = new BunCatalogSourceIo(),
   ) {
-    this.projectConfigPath = posix.join(location, ".weave", "config.weave");
+    // Match the spelling `loadConfig` probes with: it normalizes the location
+    // first, so a native Windows path here would never equal the probe.
+    this.projectConfigPath = posix.join(
+      normalizePath(location),
+      ".weave",
+      "config.weave",
+    );
     this.configReader = {
       exists: (path) => this.exists(path),
       read: (path) =>

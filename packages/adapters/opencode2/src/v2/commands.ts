@@ -18,7 +18,10 @@ import {
   type OpenCode2PlanSessionState,
   selectionFromSnapshot,
 } from "./plan-session-state.js";
-import { validateSessionScope } from "./session-scope.js";
+import {
+  normalizeScopeDirectory,
+  validateSessionScope,
+} from "./session-scope.js";
 
 export const WEAVE_START_COMMAND = "weave:start";
 
@@ -190,7 +193,9 @@ export class OpenCode2Commands {
     const stored = await this.dependencies.plans.set(
       selectionFromSnapshot(
         input.sessionID,
-        session.value.location.directory,
+        // Stored in the scope spelling so the plan RPC's Location comparison
+        // holds on hosts that report native paths (Windows `C:\...`).
+        normalizeScopeDirectory(session.value.location.directory),
         this.dependencies.workspaceID,
         snapshot.value,
       ),
