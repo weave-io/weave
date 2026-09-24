@@ -81,6 +81,13 @@
       "tags": ["cheap", "trajectory-only"]
     },
     {
+      "id": "anthropic/claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "provider": "anthropic",
+      "default": true,
+      "tags": ["fast", "balanced"]
+    },
+    {
       "id": "anthropic/claude-haiku-4.5",
       "display_name": "Claude Haiku 4.5",
       "provider": "anthropic",
