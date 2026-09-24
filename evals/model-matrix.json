@@ -37,7 +37,7 @@
       "tags": ["high-quality", "reasoning"]
     },
     {
-      "id": "qwen/qwen3.8-max",
+      "id": "qwen/qwen3.8-max-0902",
       "display_name": "Qwen3.8 Max",
       "provider": "qwen",
       "default": true,

@@ -94,7 +94,7 @@ describe("loadModelMatrix — real fixture", () => {
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
       "openai/gpt-6-astra",
-      "qwen/qwen3.8-max",
+      "qwen/qwen3.8-max-0902",
     ]);
   });
 
@@ -112,7 +112,7 @@ describe("loadModelMatrix — real fixture", () => {
       "openai/gpt-5.5",
       "openai/gpt-5.6-sol",
       "openai/gpt-6-astra",
-      "qwen/qwen3.8-max",
+      "qwen/qwen3.8-max-0902",
     ]);
   });
 
