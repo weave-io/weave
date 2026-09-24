@@ -527,8 +527,13 @@ function isNegatedMentionLine(line: string, agent: string): boolean {
       `\\bnot\\s+(?:use|using|needed|need|route|routing|delegate|delegating)[^\\n]*${agentPattern}`,
       "i",
     ),
+    // The negation must follow the agent inside the same clause: a `;` or
+    // `.` ends the window, so a later clause that negates something else
+    // ("route to `shuttle`; no backend category shuttle is listed") never
+    // negates the route itself. A comma does not end it, so "`pattern` is
+    // warranted, and no ..." keeps its old reading.
     new RegExp(
-      `\\b${agentPattern}\\b[^\\n]{0,32}\\b(?:no|not needed|not required|not warranted|unnecessary)\\b`,
+      `\\b${agentPattern}\\b[^\\n;.]{0,32}\\b(?:no|not needed|not required|not warranted|unnecessary)\\b`,
       "i",
     ),
     new RegExp(`\\bwithout\\s+${agentPattern}\\b`, "i"),
@@ -588,7 +593,9 @@ function collectRoutingAgentCandidates(content: string): string[] {
  * Recognizes the same forms as the Tapestry category-routing runner:
  *   - verb + "to": "route to X", "delegate to X", "assign to X", "send to X"
  *     (small word gap allowed between verb and "to", e.g. "route the task to X").
- *   - label form: "Route: X", "Primary route: X".
+ *   - label form: "Route: X", "Primary route: X", "Primary route: generic X"
+ *     (an optional `the`/`generic`/`default` qualifier before X; observed
+ *     live as "Primary route: **generic `shuttle`**").
  *   - arrow form: "→ X".
  *   - labelled-answer form: "Answer: X", "Decision: X", "Result: X",
  *     "Conclusion: X", "Final: X", "Final answer: X", "Verdict: X",
@@ -605,7 +612,7 @@ function collectRoutingAgentCandidates(content: string): string[] {
 const AFFIRMATIVE_VERB_TO_RE =
   /\b(?:rout(?:e|ing)|delegat(?:e|ing)|assign(?:ing)?|send(?:ing)?)(?:\s+\w+){0,3}?\s+to\b\s*:?\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 const AFFIRMATIVE_LABEL_RE =
-  /\b(?:primary\s+route|route)\s*:\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
+  /\b(?:primary\s+route|route)\s*:\s*(?:the\s+)?(?:(?:generic|default)\s+)?([a-z][a-z0-9_-]*)(?!-)\b/gi;
 const AFFIRMATIVE_ARROW_RE = /→\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 // Labelled-answer forms: same lead-word set as the Tapestry category-routing
 // runner. Markdown emphasis around the label or target is stripped by
@@ -615,7 +622,7 @@ const AFFIRMATIVE_ARROW_RE = /→\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
 // other affirmative patterns), so unrelated words before a stray colon never
 // falsely match a real agent name.
 const AFFIRMATIVE_LABELLED_ANSWER_RE =
-  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*([a-z][a-z0-9_-]*)(?!-)\b/gi;
+  /\b(?:final\s+answer|answer|decision|result|conclusion|final|verdict|chosen|choice|recommendation|recommended|selected|selection)\s*:\s*(?:the\s+)?(?:(?:generic|default)\s+)?([a-z][a-z0-9_-]*)(?!-)\b/gi;
 
 // "Fallback verb" forms: "Fall back to X", "Falls back to X", "Falling back
 // to X", "Fallback to X", "Fallback: X", "Fall back: X", "Default fallback:
