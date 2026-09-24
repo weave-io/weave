@@ -130,7 +130,7 @@
 - `packages/adapters/opencode2/src/plugin-context.ts`
   - function fromLiveContext: (ctx) => PluginContextFacade
   - interface PluginContextAgentFacade
-  - interface PluginContextCatalogFacade
+  - interface PluginContextModelFacade
   - interface PluginContextSkillFacade
   - interface PluginContextCommandFacade
   - interface PluginContextSessionFacade

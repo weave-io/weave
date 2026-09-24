@@ -456,8 +456,21 @@ describe("TapestryCategoryRoutingRunner — tcr-04/tcr-10 real fixtures with sco
       expect(errorSummary?.errorType).toBe("JudgeHttpError");
       expect(errorSummary?.classification).toBe("judge-http-failure");
       expect(errorSummary?.dimension).toBe("rationaleQuality");
+      // The answer stays in the local artifact, so the case can be diagnosed.
+      expect(caseResult?.rawArtifact?.rawContent).toBe(modelContent);
+      expect(caseResult?.rawArtifact?.composedPrompt).toBe("You are Tapestry.");
     });
   }
+
+  it("keeps an optional case optional when the judge fails and it is errored", async () => {
+    const { caseResult } = await runWithFailingScorer(
+      "tcr-05-cross-category",
+      "→ shuttle-client-frontend for the settings panel.",
+    );
+
+    expect(caseResult?.summary.errored).toBe(true);
+    expect(caseResult?.summary.required).toBe(false);
+  });
 
   it("still fails a wrong route on a required case, with a public explanation, because the judge could not have saved it", async () => {
     const { runnerResult, caseResult } = await runWithFailingScorer(

@@ -87,7 +87,7 @@
  *     raw model content, and a bounded `RawErrorSummary`.
  */
 
-import { err, errAsync, ok, ResultAsync } from "neverthrow";
+import { err, ok, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
@@ -1207,6 +1207,18 @@ export function redactSecrets(raw: string): string {
 // Zero-score result (error paths)
 // ---------------------------------------------------------------------------
 
+/**
+ * What an errored case still knows when the model did answer and only the
+ * judge failed: the answer, the prompt, and whether the rubric requires the
+ * case. Kept so the local raw artifact holds the answer for diagnosis and
+ * the published row keeps the case's real `required` flag.
+ */
+interface AnsweredCaseContext {
+  runOutput: ModelRunOutput;
+  composedPrompt: string;
+  required: boolean;
+}
+
 function buildErrorResult(
   evalCase: EvalCase,
   modelId: string,
@@ -1214,6 +1226,7 @@ function buildErrorResult(
   rawArtifacts: boolean,
   dimension?: string,
   rawMessage?: string,
+  answered?: AnsweredCaseContext,
 ): CaseResult {
   const scoredAt = new Date().toISOString();
 
@@ -1232,7 +1245,7 @@ function buildErrorResult(
     modelId,
     suite: evalCase.suite,
     passed: false,
-    required: true,
+    required: answered?.required ?? true,
     weightedTotal: 0,
     dimensionScores,
     scoredAt,
@@ -1255,9 +1268,9 @@ function buildErrorResult(
     ? {
         caseId: evalCase.id,
         modelId,
-        composedPrompt: "",
-        transcript: [],
-        rawContent: "",
+        composedPrompt: answered?.composedPrompt ?? "",
+        transcript: answered?.runOutput.transcript ?? [],
+        rawContent: answered?.runOutput.rawContent ?? "",
         dimensionRationales: {},
         errorSummary,
       }
@@ -1970,6 +1983,7 @@ export class TapestryCategoryRoutingRunner {
               scoreRecord: NormalizedScoreRecord;
               composedPrompt: string;
               scorerDegradation: ScorerDegradation | undefined;
+              judgeFailure: ScoringError | undefined;
             },
             { type: string; message: string }
           >(
@@ -2017,18 +2031,28 @@ export class TapestryCategoryRoutingRunner {
               ),
               composedPrompt: systemPrompt,
               scorerDegradation: undefined as ScorerDegradation | undefined,
+              judgeFailure: undefined as ScoringError | undefined,
             }))
             .orElse((scoringError) => {
               if (!routeAloneDecides(evalCase, rubric, routingCorrectness)) {
-                return errAsync<
-                  {
-                    runOutput: ModelRunOutput;
-                    scoreRecord: NormalizedScoreRecord;
-                    composedPrompt: string;
-                    scorerDegradation: ScorerDegradation | undefined;
-                  },
-                  ScoringError
-                >(scoringError);
+                // The judge's verdict was needed: the case is errored, and
+                // keeps its answer (locally) and its real `required` flag.
+                return ResultAsync.fromSafePromise(
+                  Promise.resolve({
+                    runOutput,
+                    scoreRecord: buildScorerUnavailableScoreRecord(
+                      evalCase,
+                      modelId,
+                      rubric,
+                      routingCorrectness,
+                    ),
+                    composedPrompt: systemPrompt,
+                    scorerDegradation: undefined as
+                      | ScorerDegradation
+                      | undefined,
+                    judgeFailure: scoringError as ScoringError | undefined,
+                  }),
+                );
               }
               const errorType =
                 "type" in scoringError
@@ -2061,6 +2085,7 @@ export class TapestryCategoryRoutingRunner {
                   ),
                   composedPrompt: systemPrompt,
                   scorerDegradation,
+                  judgeFailure: undefined as ScoringError | undefined,
                 }),
               );
             });
@@ -2081,11 +2106,35 @@ export class TapestryCategoryRoutingRunner {
             scoreRecord,
             composedPrompt: systemPrompt,
             scorerDegradation: undefined as ScorerDegradation | undefined,
+            judgeFailure: undefined as ScoringError | undefined,
           }),
         );
       })
       .match<CaseResult>(
-        ({ runOutput, scoreRecord, composedPrompt, scorerDegradation }) => {
+        ({
+          runOutput,
+          scoreRecord,
+          composedPrompt,
+          scorerDegradation,
+          judgeFailure,
+        }) => {
+          if (judgeFailure !== undefined) {
+            return buildErrorResult(
+              evalCase,
+              modelId,
+              judgeFailure.type,
+              rawArtifacts,
+              "dimension" in judgeFailure
+                ? String(judgeFailure.dimension)
+                : undefined,
+              judgeFailure.message,
+              {
+                runOutput,
+                composedPrompt,
+                required: scoreRecord.required,
+              },
+            );
+          }
           const dimensionScores = buildDimensionScoreSummary(
             scoreRecord.dimensions,
           );
