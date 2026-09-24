@@ -26,6 +26,7 @@ import { resolve } from "node:path";
 import {
   filterMatrix,
   loadModelMatrix,
+  MATRIX_PATH,
   MAX_DEV_MODELS,
   MIN_DEFAULT_MODELS,
   MODEL_SET_NAMES,
@@ -48,6 +49,21 @@ async function writeTempJson(name: string, content: unknown): Promise<string> {
   const filePath = resolve(TEMP_DIR, `model-matrix-test-${name}.json`);
   await Bun.write(filePath, JSON.stringify(content));
   return filePath;
+}
+
+/**
+ * The `default: true` ids read straight from `evals/model-matrix.json`, sorted.
+ * Derived from the file rather than listed here, so adding a model stays a
+ * one-file edit (see docs/agent-evals.md#adding-a-model).
+ */
+async function rawDefaultIds(): Promise<string[]> {
+  const raw = (await Bun.file(MATRIX_PATH).json()) as {
+    models: { id: string; default: boolean }[];
+  };
+  return raw.models
+    .filter((m) => m.default)
+    .map((m) => m.id)
+    .sort();
 }
 
 /** Minimal valid model matrix with N default models. */
@@ -79,41 +95,23 @@ describe("loadModelMatrix — real fixture", () => {
     expect(defaultModels.length).toBeGreaterThanOrEqual(MIN_DEFAULT_MODELS);
   });
 
-  it("returns exactly the canonical default seven-model matrix", async () => {
+  it("returns exactly the default: true entries of the matrix file", async () => {
     const result = await loadModelMatrix();
     const matrix = result._unsafeUnwrap();
     const defaultIds = matrix.models
       .filter((m) => m.default)
       .map((m) => m.id)
       .sort();
-    expect(defaultIds).toEqual([
-      "anthropic/claude-opus-4.5",
-      "anthropic/claude-opus-5",
-      "anthropic/claude-sonnet-4.5",
-      "deepseek/deepseek-v4-flash-0731",
-      "openai/gpt-5.5",
-      "openai/gpt-5.6-sol",
-      "openai/gpt-6-astra",
-      "qwen/qwen3.8-max-0902",
-    ]);
+    expect(defaultIds).toEqual(await rawDefaultIds());
   });
 
-  it("resolveDefaultModels returns all canonical defaults", async () => {
+  it("resolveDefaultModels returns every default: true entry of the matrix file", async () => {
     const result = await loadModelMatrix();
     const matrix = result._unsafeUnwrap();
     const defaults = resolveDefaultModels(matrix);
     expect(defaults.length).toBeGreaterThanOrEqual(MIN_DEFAULT_MODELS);
     const ids = defaults.map((m) => m.id).sort();
-    expect(ids).toEqual([
-      "anthropic/claude-opus-4.5",
-      "anthropic/claude-opus-5",
-      "anthropic/claude-sonnet-4.5",
-      "deepseek/deepseek-v4-flash-0731",
-      "openai/gpt-5.5",
-      "openai/gpt-5.6-sol",
-      "openai/gpt-6-astra",
-      "qwen/qwen3.8-max-0902",
-    ]);
+    expect(ids).toEqual(await rawDefaultIds());
   });
 
   it("returns models with valid ids, display_names, and providers", async () => {
@@ -123,6 +121,19 @@ describe("loadModelMatrix — real fixture", () => {
       expect(model.id.length).toBeGreaterThan(0);
       expect(model.display_name.length).toBeGreaterThan(0);
       expect(model.provider.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("has unique model ids", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const ids = matrix.models.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("names each model's provider as its id prefix", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    for (const model of matrix.models) {
+      expect(model.id.startsWith(`${model.provider}/`)).toBe(true);
     }
   });
 
