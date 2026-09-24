@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildRequiredSignalsLine,
   extractCodeLocations,
-  extractDeclaredSymbols,
+  extractCodeMaterial,
   isJudgmentCase,
   isTracedFinding,
   isTracedThroughDeclaredSymbol,
@@ -117,50 +117,68 @@ const MATERIAL = [
   "```ts",
   "30 export async function runSettings(args: Args): Promise<number> {",
   "31   const spy = 1;",
+  "32   saveSettings(args.path);",
+  "```",
+  "`src/commands/settings.test.ts` (added):",
+  "```ts",
+  '5 const spy = spyOn(store, "saveSettings");',
   "```",
 ].join("\n");
 
-describe("extractDeclaredSymbols", () => {
+describe("extractCodeMaterial", () => {
   it("maps each function to the file whose block declares it", () => {
-    expect([...extractDeclaredSymbols(MATERIAL)]).toEqual([
+    expect([...extractCodeMaterial(MATERIAL).declared]).toEqual([
       ["saveSettings", "src/settings/store.ts"],
       ["runSettings", "src/commands/settings.ts"],
     ]);
   });
 
+  it("records what each file calls, not what it declares", () => {
+    const { calls } = extractCodeMaterial(MATERIAL);
+    expect(calls.get("src/commands/settings.ts")?.has("saveSettings")).toBe(
+      true,
+    );
+    expect(calls.get("src/commands/settings.ts")?.has("runSettings")).toBe(
+      false,
+    );
+    expect(
+      calls.get("src/commands/settings.test.ts")?.has("saveSettings"),
+    ).toBe(false);
+  });
+
   it("drops a name declared in two files", () => {
     const twice = `${MATERIAL}\n\`src/other.ts\`:\n\`\`\`ts\nfunction saveSettings() {}\n\`\`\``;
-    expect(extractDeclaredSymbols(twice).has("saveSettings")).toBe(false);
+    expect(extractCodeMaterial(twice).declared.has("saveSettings")).toBe(false);
   });
 });
 
 describe("isTracedThroughDeclaredSymbol", () => {
-  const declared = extractDeclaredSymbols(MATERIAL);
+  const code = extractCodeMaterial(MATERIAL);
 
-  it("accepts a cited path plus a function declared in another file", () => {
+  it("accepts a cited call site plus the function it calls from another file", () => {
     expect(
       isTracedThroughDeclaredSymbol(
         "`src/commands/settings.ts:32` drops the result of `saveSettings`",
-        declared,
+        code,
       ),
     ).toBe(true);
   });
 
-  it("rejects a function from the cited file, a local, or no path", () => {
+  it("rejects the enclosing function, a file that never calls it, or no path", () => {
     expect(
       isTracedThroughDeclaredSymbol(
         "`src/commands/settings.ts:32` in `runSettings` drops it",
-        declared,
+        code,
       ),
     ).toBe(false);
     expect(
       isTracedThroughDeclaredSymbol(
-        "`src/settings/store.ts:10` and the spy",
-        declared,
+        "`src/commands/settings.test.ts:5` only spies on `saveSettings`",
+        code,
       ),
     ).toBe(false);
     expect(
-      isTracedThroughDeclaredSymbol("`saveSettings` is not awaited", declared),
+      isTracedThroughDeclaredSymbol("`saveSettings` is not awaited", code),
     ).toBe(false);
   });
 });

@@ -16,7 +16,7 @@ import {
 import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import {
   buildRequiredSignalsLine,
-  extractDeclaredSymbols,
+  extractCodeMaterial,
   isTracedFinding,
   isTracedThroughDeclaredSymbol,
 } from "./judgment-cases.js";
@@ -127,10 +127,10 @@ export function extractReviewSignals(
 
     return extractFileReferences(line).length > 0;
   }).length;
-  const declared = extractDeclaredSymbols(material);
+  const code = extractCodeMaterial(material);
   const tracedBlockerCount = blockerLines.filter(
     (line) =>
-      isTracedFinding(line) || isTracedThroughDeclaredSymbol(line, declared),
+      isTracedFinding(line) || isTracedThroughDeclaredSymbol(line, code),
   ).length;
 
   const approvalDisciplined = verdict === "approve" && blockerCount === 0;

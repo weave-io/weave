@@ -1904,6 +1904,11 @@ const TRACED_BLOCKERS: Array<[string, string, boolean]> = [
     false,
   ],
   [
+    "the test file and the fallible function it only spies on",
+    "BLOCKER: `src/commands/__tests__/settings.test.ts:8` only checks that `saveSettings` was called; add a failure-path test.",
+    false,
+  ],
+  [
     "the fallible function with no path at all",
     "BLOCKER: fix the reset path so `saveSettings` is awaited and its error handled.",
     false,

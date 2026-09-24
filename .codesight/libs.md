@@ -390,9 +390,9 @@
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
   - function extractCodeLocations: (text) => string[]
   - function isTracedFinding: (text) => boolean
-  - function extractDeclaredSymbols: (material) => ReadonlyMap<string, string>
-  - function isTracedThroughDeclaredSymbol: (text, declared, string>) => boolean
-  - _...3 more_
+  - function extractCodeMaterial: (material) => CodeMaterial
+  - function isTracedThroughDeclaredSymbol: (text, material) => boolean
+  - _...4 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function escapeTemplateBraces: (text) => string
   - function buildCaseExplanation: (scoreBucket, passed, required, outcomeKind, applicableDimensions, dryRun) => string

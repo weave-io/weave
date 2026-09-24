@@ -14,7 +14,7 @@
  * from and where it is used, not just the line that looks suspicious. A
  * reviewer may also name the far end by the symbol the case declares there
  * (`saveSettings`) rather than by its path; `isTracedThroughDeclaredSymbol`
- * accepts that when the symbol lives in a different file from the cited one.
+ * accepts that when the cited file calls the symbol and the case declares it.
  */
 
 import type { EvalCase } from "./types.js";
@@ -101,18 +101,24 @@ const MATERIAL_PATH_RE =
 // Functions and classes only: a trace ends at the code that fails, and a
 // local such as `const spy` is too common a word to stand for a location.
 const DECLARATION_RE = /\b(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g;
+// A call: an identifier (possibly after `obj.`) followed by `(`.
+const CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\(/g;
 
 /**
- * The functions and classes a case's material declares, each mapped to the
- * file it is declared in. A case shows each file as a backticked path
- * followed by a fenced code block; declarations inside that block belong to
- * that path. A name declared in two files is dropped, since naming it does
- * not say which file is meant.
+ * What a case's material shows about its code: each function or class it
+ * declares, mapped to the file that declares it, and the names each file
+ * calls. A case shows each file as a backticked path followed by a fenced
+ * code block; the block belongs to that path. A name declared in two files
+ * is dropped from `declared`, since naming it does not say which is meant.
  */
-export function extractDeclaredSymbols(
-  material: string,
-): ReadonlyMap<string, string> {
+export interface CodeMaterial {
+  declared: ReadonlyMap<string, string>;
+  calls: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+export function extractCodeMaterial(material: string): CodeMaterial {
   const declared = new Map<string, string>();
+  const calls = new Map<string, Set<string>>();
   const ambiguous = new Set<string>();
   let lastPath: string | undefined;
   let fenceFile: string | undefined;
@@ -131,19 +137,27 @@ export function extractDeclaredSymbols(
       continue;
     }
     if (fenceFile === undefined) continue;
+    const declaredHere = new Set<string>();
     for (const match of line.matchAll(DECLARATION_RE)) {
       const name = match[1];
       if (name === undefined) continue;
+      declaredHere.add(name);
       const previous = declared.get(name);
       if (previous !== undefined && previous !== fenceFile) {
         ambiguous.add(name);
       }
       declared.set(name, fenceFile);
     }
+    const called = calls.get(fenceFile) ?? new Set<string>();
+    for (const match of line.matchAll(CALL_RE)) {
+      const name = match[1];
+      if (name !== undefined && !declaredHere.has(name)) called.add(name);
+    }
+    calls.set(fenceFile, called);
   }
 
   for (const name of ambiguous) declared.delete(name);
-  return declared;
+  return { declared, calls };
 }
 
 /** True when `a` and `b` name the same file, one possibly a suffix path. */
@@ -151,30 +165,45 @@ function sameFile(a: string, b: string): boolean {
   return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
 }
 
+function callsIn(
+  material: CodeMaterial,
+  cited: string,
+): ReadonlySet<string> | undefined {
+  for (const [file, names] of material.calls) {
+    if (sameFile(cited, file)) return names;
+  }
+  return undefined;
+}
+
 /**
- * True when a finding cites a code location and also names, as a whole
- * identifier, a symbol that `declared` places in a different file: for
- * example the call site `src/commands/settings.ts:32` and the fallible
- * function `saveSettings` that the case shows in `src/settings/store.ts`.
- * That names both ends of the trace, even though only one is a path.
- * Naming a symbol from the cited file itself (the enclosing function) does
- * not, and neither does a symbol the case never declares (a library type).
+ * True when a finding cites a call site by path and names a function that
+ * the cited file calls and the case declares: for example
+ * `src/commands/settings.ts:32` and `saveSettings`, which the case shows
+ * being called in `src/commands/settings.ts` and declared in
+ * `src/settings/store.ts`. That names both ends of the trace, even though
+ * only one is a path. It does not hold for the function that contains the
+ * cited line (declared there, not called), for a name the case never
+ * declares (a library type), or for a cited file that never calls the named
+ * function (a test that only spies on it).
  */
 export function isTracedThroughDeclaredSymbol(
   text: string,
-  declared: ReadonlyMap<string, string>,
+  material: CodeMaterial,
 ): boolean {
   const citedFiles = extractCodeLocations(text).map((location) =>
     location.replace(/:\d+$/, ""),
   );
   if (citedFiles.length === 0) return false;
 
-  for (const [name, file] of declared) {
+  for (const name of material.declared.keys()) {
     const named = new RegExp(
       `(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`,
     );
     if (!named.test(text)) continue;
-    if (citedFiles.some((cited) => !sameFile(cited, file))) return true;
+    const citesACaller = citedFiles.some(
+      (cited) => callsIn(material, cited)?.has(name) ?? false,
+    );
+    if (citesACaller) return true;
   }
   return false;
 }

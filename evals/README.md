@@ -312,10 +312,11 @@ The signals stay deterministic. A traced review (`review_blocker_traced`,
 `security_finding_traced`) has at least one blocker or finding that cites two
 distinct code locations, meaning where the data comes from and where it is
 used. For a Weft blocker, one end may be named by symbol instead of by path:
-a blocker that cites the call site's path and names a function the case's
-material declares in another file (`src/commands/settings.ts:32` and
-`saveSettings`) is traced, while one that names only the function containing
-the cited line is not. Other findings, such as a missing test, may sit at one location. Tapestry and Shuttle decision
+a blocker that cites the call site's path and names a function that, in the
+case's code, the cited file calls and the case declares
+(`src/commands/settings.ts:32` and `saveSettings`) is traced, while one that
+names only the function containing the cited line, or cites a file that never
+calls the function, is not. Other findings, such as a missing test, may sit at one location. Tapestry and Shuttle decision
 signals ignore negated phrasing such as "I will not mark it complete".
 
 ### Text-only assertion boundary
