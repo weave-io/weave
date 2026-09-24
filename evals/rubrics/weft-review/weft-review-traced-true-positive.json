@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Judgment case: the verdict is withheld from the model. Score the [REJECT] verdict and whether at least one BLOCKER line is traced, i.e. cites two distinct code locations (the discarding call site and the fallible function it calls). A review whose blockers cite only the suspicious line is not traced."
+    "notes": "Judgment case: the verdict is withheld from the model. Score the [REJECT] verdict and whether at least one BLOCKER line is traced, i.e. cites two distinct code locations (the discarding call site and the fallible function it calls). A review whose blockers cite only the suspicious line is not traced. As in every rejection, each BLOCKER line must name the file it applies to; a BLOCKER line that names no file fails the case."
   }
 }

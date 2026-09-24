@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Judgment case: required signals are withheld from the model. Score structural coverage plus two verification signals: every acceptance criterion names its check (a 'verify by' clause, a backticked command, or 'manual:'), and the Verification section uses - [ ] items with no code block."
+    "notes": "Judgment case: required signals are withheld from the model. Score structural coverage plus two verification signals: every task has its own acceptance criteria and every acceptance criterion names its check (a 'verify by' clause, a backticked command, or 'manual:'), and the Verification section uses - [ ] items with no code block. Every command the plan names must be one of the declared commands; an invented command does not count as a check."
   }
 }
