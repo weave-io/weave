@@ -1369,3 +1369,63 @@ describe("a maintainer asks which prompt produced a published score", () => {
     });
   });
 });
+
+describe("a maintainer asks which judge scored a run", () => {
+  const JEV = {
+    id: "typesafe/jev-1.13",
+    version: "typesafe/jev-1.13-20260917",
+  };
+
+  it("records the judge in bundle-index.json, public-report.json and provenance-manifest.json", async () => {
+    await withBundleRoot(async (root) => {
+      const written = await write(root, { judge: JEV });
+
+      for (const file of [
+        "bundle-index.json",
+        "public-report.json",
+        "provenance-manifest.json",
+      ]) {
+        expect((await readRunJson(root, written.runId, file)).judge).toEqual(
+          JEV,
+        );
+      }
+    });
+  });
+
+  it("records no judge on a dry run, which no judge scored", async () => {
+    await withBundleRoot(async (root) => {
+      const written = await write(root, {
+        judge: JEV,
+        dryRun: true,
+        runnerResults: [
+          runnerResult({ caseResults: [caseResult({ dryRun: true })] }),
+        ],
+      });
+      const index = await readRunJson(root, written.runId, "bundle-index.json");
+
+      // Positive first: the dry run was written and says so.
+      expect(index.dryRun).toBe(true);
+      expect(index.judge).toBeUndefined();
+      expect(
+        (await readRunJson(root, written.runId, "provenance-manifest.json"))
+          .judge,
+      ).toBeUndefined();
+    });
+  });
+
+  it("refuses to write a judge that is not a plain model slug, rather than publish it", async () => {
+    await withBundleRoot(async (root) => {
+      const result = await new ArtifactBundleWriter(root).writeBundle({
+        runnerResults: [runnerResult()],
+        provenanceManifest: provenanceManifest(),
+        gitSha: FIXED_GIT_SHA,
+        assembledAt: FIXED_TIMESTAMP,
+        judge: { id: "typesafe/jev-1.13", version: "<img src=x onerror=1>" },
+      });
+
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().type).toBe("BundleSanitizationError");
+      expect(await tree(root)).toEqual([]);
+    });
+  });
+});

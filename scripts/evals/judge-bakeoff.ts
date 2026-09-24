@@ -8,7 +8,7 @@
  *   - TypeSafe Jev (`typesafe/jev-1.13`) through OpenRouter's decisions
  *     endpoint. Jev answers typed questions (`noul`, `choice`, `score`) and
  *     returns no free text. It is the candidate under test.
- *   - Claude Sonnet 5 (`anthropic/claude-sonnet-5`) through the production
+ *   - Claude Sonnet 5 (`anthropic/claude-sonnet-5`) through
  *     `RealLangChainJudge` and its `JUDGE_PROMPT_TEMPLATE`, with only the
  *     model id changed. Reported as a reference only, not a contender.
  *
@@ -41,12 +41,15 @@ import { basename, dirname, join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
-import type { LangChainOpenAIModule } from "../../packages/cli/src/commands/eval.js";
 import {
   EVALS_ROOT,
   loadCaseFile,
   loadRubricFile,
 } from "../../packages/cli/src/evals/case-loader.js";
+import {
+  SIGNAL_QUESTIONS,
+  signalQuestion,
+} from "../../packages/cli/src/evals/judge-questions.js";
 import {
   type LangChainJudge,
   PASS_THRESHOLD,
@@ -91,67 +94,26 @@ export const QUALITY_ANCHORS = [
 ] as const;
 
 /**
- * One yes/no question per runner signal. The signal ids are the
- * `required_artifacts` of the judge-scored `task_completion` cases; each
- * question restates in plain words what the deterministic runner checks.
+ * One yes/no question per runner signal. Since task 16.4 the production
+ * judge asks these same questions, so the wording lives in
+ * `packages/cli/src/evals/judge-questions.ts` and is re-exported here: a
+ * re-run of this check asks what production asks.
  */
-export const SIGNAL_QUESTIONS: Readonly<Record<string, string>> = {
-  plan_scope_explicit:
-    "Does the plan state its scope explicitly, including what is out of scope?",
-  plan_file_tasks:
-    "Does every task in the plan name the files it creates or changes?",
-  plan_sequence_explicit: "Does the plan give an explicit order for its tasks?",
-  plan_acceptance_coverage:
-    "Does the plan give acceptance or success criteria for its tasks?",
-  review_verdict_present:
-    "Does the review give an explicit verdict tag such as [APPROVE] or [REJECT]?",
-  review_verdict_approve: "Is the review's verdict an approval?",
-  review_verdict_reject: "Is the review's verdict a rejection?",
-  review_blockers_zero: "Does the review raise no blocking issues?",
-  review_blockers_present: "Does the review raise at least one blocking issue?",
-  review_file_refs_present: "Does the review cite the files it reviewed?",
-  review_blocker_file_refs:
-    "Does each blocking issue point to a specific file?",
-  review_approval_disciplined:
-    "Is the approval consistent, with no blocking issue raised alongside it?",
-  review_rejection_disciplined:
-    "Is the rejection consistent, with every blocking issue concrete and actionable?",
-  review_blockers_cited:
-    "Is each blocking issue traced to the evidence in the change that causes it?",
-  security_verdict_present:
-    "Does the security review give an explicit verdict, approve or block?",
-  security_verdict_approve: "Is the security verdict an approval?",
-  security_verdict_block: "Is the security verdict a block?",
-  security_blocker_count_capped:
-    "Does the review state a cap on its blocking findings and stay within it?",
-  security_findings_present: "Does the review list specific security findings?",
-  security_severity_present: "Does each finding carry a severity?",
-  security_findings_evidence_backed:
-    "Is every finding backed by concrete evidence from the change?",
-  security_file_refs_present: "Does the review cite the affected files?",
-  security_blocking_format_disciplined:
-    "Is the block consistent: blocking findings present, within the cap, each with a severity and evidence?",
-  security_fast_exit_approve:
-    "Does the review approve briefly, with no findings and no blockers, as a low-risk change warrants?",
-  spindle_inline_citations_present:
-    "Does the answer cite its sources inline, next to the claims they support?",
-  spindle_source_facts_separated:
-    "Does the answer present source facts first, separately from its own interpretation?",
-  spindle_confidence_reported: "Does the answer state its confidence?",
-  spindle_sources_list_present: "Does the answer include a list of sources?",
-  shuttle_task_intake_structured:
-    "Does the report restate the task it was given in a structured way?",
-  shuttle_files_acknowledged:
-    "Does the report name the files it changed or inspected?",
-  shuttle_acceptance_confirmed:
-    "Does the report confirm each acceptance criterion?",
-  shuttle_evidence_reported:
-    "Does the report give evidence, such as the commands run and their results?",
-  shuttle_unverified_disclosed:
-    "Does the report say plainly what it could not verify?",
-  shuttle_no_unobserved_pass_claim:
-    "Does the report avoid claiming that tests or checks passed when it did not observe them?",
-};
+export { SIGNAL_QUESTIONS, signalQuestion };
+
+/**
+ * The shape of the `@langchain/openai` module the Sonnet reference judge is
+ * built from. Typed narrowly so the dynamic import needs no type graph.
+ */
+interface LangChainOpenAIModule {
+  ChatOpenAI: new (fields: {
+    model?: string;
+    temperature?: number;
+    /** `@langchain/openai` v1 reads `apiKey`, never `openAIApiKey`. */
+    apiKey?: string;
+    configuration?: { baseURL?: string; [key: string]: unknown };
+  }) => unknown;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -278,13 +240,6 @@ export interface HumanLabel {
 // ---------------------------------------------------------------------------
 // Item construction (pure)
 // ---------------------------------------------------------------------------
-
-/** The yes/no question for one runner signal. */
-export function signalQuestion(signal: string): string {
-  const known = SIGNAL_QUESTIONS[signal];
-  if (known !== undefined) return known;
-  return `Does the response satisfy the criterion "${signal.replaceAll("_", " ")}"?`;
-}
 
 function acceptedTargets(evalCase: EvalCase): string[] {
   if (evalCase.expected_outcome.kind !== "agent_routing") return [];
@@ -663,6 +618,7 @@ export class SonnetBakeoffJudge {
         rubricDescription: item.rubric,
         response: displayResponse(item),
         reference: item.reference,
+        criteria: item.criteria,
       })
       .mapErr(
         (e): BakeoffError => ({
@@ -1588,7 +1544,7 @@ function buildSonnetJudge(
   model: string,
 ): ResultAsync<SonnetBakeoffJudge, BakeoffError> {
   // `@langchain/openai` is a dependency of the CLI package, not the root, so
-  // resolve it from there — the same module production uses.
+  // resolve it from there.
   const cliDir = resolve(import.meta.dir, "../../packages/cli");
   return ResultAsync.fromPromise(
     (async () => {

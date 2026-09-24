@@ -32,22 +32,15 @@ import { describe, expect, it } from "bun:test";
 import { ResultAsync } from "neverthrow";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
-import { assembleSuiteSummary } from "../report-bundle.js";
 import { EXPLANATION_MAX_CHARS } from "../report-schema.js";
 import {
   analyzeCategoryRouting,
   QUALITATIVE_PASS_THRESHOLD,
   scoreExecutionCompleteness,
-  TAPESTRY_CATEGORY_ROUTING_SUITE,
   TapestryCategoryRoutingRunner,
   type TapestryCategoryRoutingRunnerOptions,
 } from "../tapestry-category-routing-runner.js";
-import type {
-  BundleScoreFile,
-  EvalCase,
-  EvalRubric,
-  NormalizedScoreRecord,
-} from "../types.js";
+import type { EvalCase, EvalRubric, NormalizedScoreRecord } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -383,8 +376,10 @@ describe("TapestryCategoryRoutingRunner — scorer integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Production-shaped E2E: real tcr-04/tcr-10 fixtures, injected scorer failure,
-// bundle assembly, non-empty public explanation.
+// Production-shaped E2E: real tcr-04/tcr-10 fixtures, injected scorer failure.
+// Since Spec 37 task 16.4 a judge failure errors the case whenever the judge's
+// verdict was needed; only a wrong route on a required case is decided
+// without it.
 // ---------------------------------------------------------------------------
 
 describe("TapestryCategoryRoutingRunner — tcr-04/tcr-10 real fixtures with scorer failure (production-shaped E2E)", () => {
@@ -407,121 +402,84 @@ describe("TapestryCategoryRoutingRunner — tcr-04/tcr-10 real fixtures with sco
     },
   ];
 
+  /** Runs one real case with a scorer that fails every call. */
+  async function runWithFailingScorer(caseId: string, modelContent: string) {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: modelContent,
+    });
+
+    // Scorer fails for every case — simulates a live judge failure
+    // without a network dependency.
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultError({
+      type: "JudgeHttpError",
+      dimension: "rationaleQuality",
+      status: 503,
+      message: "judge returned HTTP 503: upstream unavailable",
+    });
+
+    const runner = new TapestryCategoryRoutingRunner({
+      modelClient,
+      scorer,
+      tapestrySystemPrompt: "You are Tapestry.",
+    });
+
+    const result = await runner.run({ caseFilter: caseId, rawArtifacts: true });
+    expect(result.isOk()).toBe(true);
+    const runnerResult = result._unsafeUnwrap();
+    expect(runnerResult.caseResults).toHaveLength(1);
+    return { runnerResult, caseResult: runnerResult.caseResults[0] };
+  }
+
   for (const { caseId, modelContent } of productionCases) {
-    it(`loads the real "${caseId}" fixture/rubric from disk, preserves deterministic routing correctness through an injected scorer failure, and produces a non-empty publicExplanation`, async () => {
-      const modelClient = new StubModelClient();
-      modelClient.setDefaultResponse({
-        model: "anthropic/claude-sonnet-4.5",
-        content: modelContent,
-      });
-
-      // Scorer fails for every case — simulates a live judge failure
-      // (e.g. missing OPENROUTER_API_KEY) without a network dependency.
-      const scorer = new StubAgentEvalsScorer();
-      scorer.setDefaultError({
-        type: "ScorerAdapterError",
+    it(`loads the real "${caseId}" fixture/rubric from disk and reports a correct route the judge could not gate as errored, not passed`, async () => {
+      const { runnerResult, caseResult } = await runWithFailingScorer(
         caseId,
-        dimension: "rationaleQuality",
-        message:
-          "judge unavailable: OPENROUTER_API_KEY is required to run evals but was not set.",
-      });
-
-      const runner = new TapestryCategoryRoutingRunner({
-        modelClient,
-        scorer,
-        tapestrySystemPrompt: "You are Tapestry.",
-      });
-
-      const result = await runner.run({
-        caseFilter: caseId,
-        rawArtifacts: true,
-      });
-
-      expect(result.isOk()).toBe(true);
-      const runnerResult = result._unsafeUnwrap();
-      expect(runnerResult.caseResults).toHaveLength(1);
-
-      const caseResult = runnerResult.caseResults[0];
+        modelContent,
+      );
       const summary = caseResult?.summary;
 
-      // Deterministic gate: both tcr-04 and tcr-10 expect target_agent "shuttle",
-      // so a correct generic-shuttle fallback scores 1.0, not the 0.4 partial
-      // credit reserved for genuinely wrong fallbacks.
-      expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
-      expect(summary?.dimensionScores.routingCorrectness.applicable).toBe(true);
-      // Judge/scorer unavailability must not mask the correct deterministic
-      // route: the case passes on the deterministic gate alone.
-      expect(summary?.passed).toBe(true);
-      expect(summary?.required).toBe(true);
+      // The route is right, but the judge's gate still had to be cleared, so
+      // the case was not measured: errored, with the judge failure named.
+      expect(summary?.errored).toBe(true);
+      expect(summary?.errorClassification).toBe("judge-http-failure");
+      expect(summary?.passed).toBe(false);
+      expect(runnerResult.erroredCases).toBe(1);
+      expect(runnerResult.failedCases).toBe(0);
+      expect(runnerResult.suiteGreen).toBe(false);
 
-      // Qualitative dimensions are explicitly not-applicable (unavailable),
-      // never silently defaulted to a passing or failing score.
-      expect(summary?.dimensionScores.delegationCorrectness.applicable).toBe(
-        false,
-      );
-      expect(summary?.dimensionScores.executionCompleteness.applicable).toBe(
-        false,
-      );
-      expect(summary?.dimensionScores.rationaleQuality.applicable).toBe(false);
-
-      // Reports are not blank: a bounded, non-empty public explanation is
-      // always produced, even on scorer failure.
-      expect(summary?.publicExplanation).toBeDefined();
-      expect(summary?.publicExplanation?.text.length).toBeGreaterThan(0);
-      expect(summary?.publicExplanation?.text.length).toBeLessThanOrEqual(
-        EXPLANATION_MAX_CHARS,
-      );
-
-      // The raw (local-only) artifact records the scorer failure as a typed,
-      // classified error. `classification` is the safe, allowlisted label —
-      // never raw scorer message text.
+      // The raw (local-only) artifact records the failure as a typed,
+      // classified error.
       const errorSummary = caseResult?.rawArtifact?.errorSummary;
-      expect(errorSummary?.errorType).toBe("ScorerAdapterError");
-      expect(errorSummary?.classification).toBe("scoring-adapter-failure");
-
-      // Bundle assembly: the same summary flows into the publishable
-      // suite-summary boundary with its publicExplanation intact.
-      const scoreFile: BundleScoreFile = {
-        suite: TAPESTRY_CATEGORY_ROUTING_SUITE,
-        assembledAt: new Date().toISOString(),
-        gitSha: "unknown",
-        dryRun: false,
-        results: [
-          {
-            caseId: summary?.caseId,
-            modelId: summary?.modelId,
-            passed: summary?.passed,
-            required: summary?.required,
-            weightedTotal: summary?.weightedTotal,
-            dimensionScores: summary?.dimensionScores,
-            scoredAt: summary?.scoredAt,
-            dryRun: summary?.dryRun,
-            publicExplanation: summary?.publicExplanation,
-          },
-        ],
-        totals: {
-          totalCases: 1,
-          passedCases: 1,
-          failedCases: 0,
-          suiteGreen: true,
-        },
-      };
-
-      const suiteSummaryResult = assembleSuiteSummary(
-        scoreFile,
-        "unknown",
-        new Date().toISOString(),
-      );
-      expect(suiteSummaryResult.isOk()).toBe(true);
-      const suiteSummary = suiteSummaryResult._unsafeUnwrap();
-      expect(suiteSummary.cases).toHaveLength(1);
-      expect(suiteSummary.cases[0]?.passed).toBe(true);
-      // publicExplanation survives BoundedExplanationSchema validation and
-      // is present (non-blank) in the assembled public bundle entry.
-      expect(suiteSummary.cases[0]?.explanation).toBeDefined();
-      expect(suiteSummary.cases[0]?.explanation?.text.length).toBeGreaterThan(
-        0,
-      );
+      expect(errorSummary?.errorType).toBe("JudgeHttpError");
+      expect(errorSummary?.classification).toBe("judge-http-failure");
+      expect(errorSummary?.dimension).toBe("rationaleQuality");
     });
   }
+
+  it("still fails a wrong route on a required case, with a public explanation, because the judge could not have saved it", async () => {
+    const { runnerResult, caseResult } = await runWithFailingScorer(
+      "tcr-04-no-match",
+      "→ shuttle-client-frontend. This looks like frontend work.",
+    );
+    const summary = caseResult?.summary;
+
+    expect(summary?.errored).toBeUndefined();
+    expect(summary?.passed).toBe(false);
+    expect(summary?.dimensionScores.routingCorrectness.applicable).toBe(true);
+    expect(summary?.dimensionScores.routingCorrectness.score).toBeLessThan(
+      0.95,
+    );
+    expect(runnerResult.failedCases).toBe(1);
+    expect(summary?.publicExplanation?.text.length).toBeGreaterThan(0);
+    expect(summary?.publicExplanation?.text.length).toBeLessThanOrEqual(
+      EXPLANATION_MAX_CHARS,
+    );
+    // The judge failure is still on record, locally.
+    expect(caseResult?.rawArtifact?.errorSummary?.errorType).toBe(
+      "JudgeHttpError",
+    );
+  });
 });

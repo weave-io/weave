@@ -7,7 +7,7 @@
  * which dimensions a case kind is graded on, the neutral 1.0 for the ones it is
  * not, the clamping of an out-of-range judge verdict, the rubric's weights, the
  * pass gate and its near-perfect primary rule, the missing-rubric failure, the
- * projection the judge is shown instead of the answer, and the explanation
+ * answer, rubric and criteria the judge is shown, and the explanation
  * published beside the case. The aggregate explanations are asserted against
  * `public-report.json` and the model-comparison index in
  * [`tests/evals/reporting.scenario.test.ts`](../../../../../tests/evals/reporting.scenario.test.ts).
@@ -54,10 +54,6 @@
  *   - **An injected `scoredAt`** — the `AgentEvalsScorer` interface takes one,
  *     and no runner passes it; every production call takes the `new Date()`
  *     default. The default is a scenario; the parameter is only exercised here.
- *   - **`RATIONALE_PROJECTION_MAX_CHARS` truncation** — the projection is built
- *     from agent and artifact identifiers, and a case's `allowed_agents` is
- *     checked against `KNOWN_AGENTS` at load, so no fixture can push it past
- *     2000 characters. The cap guards a future unbounded list.
  *   - **The dry-run and `skip` branches of `buildCaseExplanation()` /
  *     `buildPublicExplanation()`** — every production caller passes
  *     `dryRun: false`; a dry run takes `buildDryRunResult()`, which builds no
@@ -87,7 +83,8 @@
  *     them. `StubLangChainJudge` backs `tests/support/evals.ts`, so a
  *     regression in it would misreport every eval scenario.
  *   - **`RealLangChainJudge`** — the adapter boundary to `openevals/llm`. It is
- *     the production judge, which scenarios replace by definition, so its
+ *     the judge acceptance harness's chat-model reference (not the judge
+ *     `weave eval run` uses since task 16.4), which scenarios never run, so its
  *     laziness, its dynamic-import failure path, its per-rubric evaluator cache
  *     and the exact `{reference_outputs}` placeholder names it must use are
  *     only testable with an injected module loader. Every case that claims to
@@ -99,11 +96,9 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildJudgmentExecutionDimension,
-  buildRationaleProjection,
   escapeTemplateBraces,
   type JudgeInput,
   LangChainAgentEvalsScorer,
-  RATIONALE_PROJECTION_MAX_CHARS,
   RealLangChainJudge,
   StubAgentEvalsScorer,
   StubLangChainJudge,
@@ -309,12 +304,14 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "Route to shuttle",
       response: "Routed to shuttle",
       reference: "Expected: shuttle",
+      criteria: [],
     };
     const input2: JudgeInput = {
       dimension: "rationaleQuality",
       rubricDescription: "Quality check",
       response: "Good reasoning.",
       reference: "Evaluate quality",
+      criteria: [],
     };
 
     await judge.evaluate(input1);
@@ -335,6 +332,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     const r1 = await judge.evaluate(input);
@@ -354,6 +352,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     const r1 = await judge.evaluate(input);
@@ -379,6 +378,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     const result = await judge.evaluate(input);
@@ -393,6 +393,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     const result = await judge.evaluate(input);
@@ -408,6 +409,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     // First unconfigured call: index 0
@@ -440,6 +442,7 @@ describe("StubLangChainJudge — basic behaviour", () => {
       rubricDescription: "x",
       response: "y",
       reference: "z",
+      criteria: [],
     };
 
     const r1 = await judge.evaluate(input);
@@ -709,6 +712,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "Evaluate the prose.",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
 
     expect(moduleLoadCount.value).toBe(1);
@@ -732,6 +736,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: rubric,
       response: "r",
       reference: "ref",
+      criteria: [],
     });
 
     const prompt = factoryCallPrompts[0] ?? "";
@@ -768,6 +773,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: rubric1,
       response: "Routed to shuttle",
       reference: "Expected: shuttle",
+      criteria: [],
     });
 
     await judge.evaluate({
@@ -775,6 +781,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: rubric2,
       response: "tapestry → shuttle",
       reference: "Expected chain: tapestry → shuttle",
+      criteria: [],
     });
 
     // createLLMAsJudge must have been called twice — once per distinct rubric
@@ -806,6 +813,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: rubric1,
       response: "response1",
       reference: "ref1",
+      criteria: [],
     });
 
     // Second evaluate with rubric2 — must NOT reuse rubric1's evaluator
@@ -814,6 +822,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: rubric2,
       response: "response2",
       reference: "ref2",
+      criteria: [],
     });
 
     expect(r1.isOk()).toBe(true);
@@ -850,18 +859,21 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: sameRubric,
       response: "r1",
       reference: "ref",
+      criteria: [],
     });
     await judge.evaluate({
       dimension: "routingCorrectness",
       rubricDescription: sameRubric,
       response: "r2",
       reference: "ref",
+      criteria: [],
     });
     await judge.evaluate({
       dimension: "routingCorrectness",
       rubricDescription: sameRubric,
       response: "r3",
       reference: "ref",
+      criteria: [],
     });
 
     // createLLMAsJudge should be called exactly once (cache hit on calls 2 and 3)
@@ -886,18 +898,21 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "rubric-A",
       response: "rA",
       reference: "refA",
+      criteria: [],
     });
     await judge.evaluate({
       dimension: "delegationCorrectness",
       rubricDescription: "rubric-B",
       response: "rB",
       reference: "refB",
+      criteria: [],
     });
     await judge.evaluate({
       dimension: "executionCompleteness",
       rubricDescription: "rubric-C",
       response: "rC",
       reference: "refC",
+      criteria: [],
     });
 
     // Module should have been loaded exactly once
@@ -920,12 +935,14 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "rubric-X",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
     await judge.evaluate({
       dimension: "delegationCorrectness",
       rubricDescription: "rubric-Y",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
     // Same rubric as first call — must not add a new cache entry
     await judge.evaluate({
@@ -933,6 +950,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "rubric-X",
       response: "r2",
       reference: "ref2",
+      criteria: [],
     });
 
     // Cache should have exactly 2 entries: rubric-X and rubric-Y
@@ -958,6 +976,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "any rubric",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
 
     expect(result.isErr()).toBe(true);
@@ -995,6 +1014,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "Route to shuttle",
       response: "Routed to shuttle",
       reference: "Expected: shuttle directly",
+      criteria: [],
     });
 
     expect(evaluatorCalls).toHaveLength(1);
@@ -1025,6 +1045,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "Delegation chain check",
       response: "tapestry → shuttle",
       reference: "Expected chain: tapestry → shuttle",
+      criteria: [],
     });
 
     expect(evaluatorCalls).toHaveLength(1);
@@ -1049,6 +1070,7 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "any-rubric",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
 
     expect(factoryCallPrompts).toHaveLength(1);
@@ -1079,32 +1101,13 @@ describe("RealLangChainJudge — per-rubric evaluator isolation", () => {
       rubricDescription: "any-rubric",
       response: "r",
       reference: "ref",
+      criteria: [],
     });
 
     const prompt = factoryCallPrompts[0];
     if (!prompt) throw new Error("factoryCallPrompts[0] not found");
     // Camelcase is the wrong variant — would cause LangChain template error
     expect(prompt).not.toContain("{referenceOutputs}");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildRationaleProjection — the cap on an unbounded identifier list
-// ---------------------------------------------------------------------------
-
-describe("buildRationaleProjection — structured safe projection for judge", () => {
-  it("truncates to RATIONALE_PROJECTION_MAX_CHARS when projection is very long", () => {
-    // Create a run with many agents to push the projection over the limit
-    const manyAgents = Array.from({ length: 200 }, (_, i) => `agent-${i}`);
-    const run = makeRun({
-      routedAgents: manyAgents,
-      delegationChain: manyAgents,
-    });
-    const projection = buildRationaleProjection(run);
-    expect(projection.length).toBeLessThanOrEqual(
-      RATIONALE_PROJECTION_MAX_CHARS + 20,
-    );
-    expect(projection).toContain("[truncated]");
   });
 });
 

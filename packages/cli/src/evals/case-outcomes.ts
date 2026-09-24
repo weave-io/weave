@@ -31,6 +31,10 @@ const ERROR_CLASSIFICATIONS: Readonly<Record<string, string>> = {
   RubricNotFound: "scoring-rubric-missing",
   RubricCaseMismatch: "scoring-rubric-mismatch",
   ScorerAdapterError: "scoring-adapter-failure",
+  JudgeHttpError: "judge-http-failure",
+  JudgeResponseInvalid: "judge-response-invalid",
+  JudgeInputTooLong: "judge-input-too-long",
+  JudgeInputInvalid: "judge-input-invalid",
 };
 
 /**

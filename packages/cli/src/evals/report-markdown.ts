@@ -450,6 +450,11 @@ export function renderPublicReportBundle(bundle: PublicReportBundle): string {
   lines.push(
     `**Suites**: ${bundle.runSummary.suites.map(escapeMdCell).join(", ")}`,
   );
+  if (bundle.judge !== undefined) {
+    lines.push(
+      `**Judge**: \`${escapeMdCell(bundle.judge.id)}\` (version \`${escapeMdCell(bundle.judge.version)}\`)`,
+    );
+  }
   lines.push("");
 
   for (const suiteSummary of bundle.suiteSummaries) {

@@ -116,7 +116,9 @@ packages/cli/src/evals/
 ├── weft-review-runner.ts         WeftReviewRunner
 ├── warp-security-runner.ts       WarpSecurityRunner
 ├── openrouter-client.ts      OpenRouterClient for model inference
-├── langchain-agent-evals.ts  LangChainAgentEvalsScorer (rubric scoring judge)
+├── langchain-agent-evals.ts  LangChainAgentEvalsScorer — the scorer, and the LangChainJudge interface
+├── judge-questions.ts        What the judge is asked per dimension: rubric, reference, answer, criteria
+├── jev-judge.ts              JevJudge — the eval judge (TypeSafe Jev on OpenRouter's decisions endpoint)
 ├── dashboard-indexes.ts      DashboardIndexWriter — derived mutable dashboard indexes
 └── env.ts                    readEvalEnv — OPENROUTER_API_KEY validation
 ```
@@ -197,10 +199,10 @@ tokens in/out):**
 | `openai/gpt-6-luna` | $0.10 / $0.50 | The inexpensive tier of the GPT-6 generation the default matrix tests through `openai/gpt-6-astra` ($10 / $50), and a second vendor so one provider's quirks do not dominate what a dev run shows. `default: false`, so it never enters a baseline. |
 
 For comparison the default matrix's Claude and GPT entries cost $2–10 per
-million input tokens and $10–50 per million output tokens. Most of what a dev
-run costs is the judge: every judge-scored case still makes its judge call on
-`anthropic/claude-sonnet-4.5` ($3 / $15), whatever model produced the answer.
-Deterministic suites (routing, structural checks) cost only the model call.
+million input tokens and $10–50 per million output tokens. The judge costs
+almost nothing next to the model: a Jev call costs about $0.00001 (see
+[The judge](#the-judge)). A live run of one case per judged suite on the dev
+subset (16 answers, 24 September 2026) cost about $0.012 in all.
 
 Both dev-subset models are reasoning models. Their hidden reasoning shares the
 completion-token budget with the answer, which is why the eval client asks for
@@ -414,11 +416,15 @@ typed `CompareError` and exit 1:
 | `DryRunBundle` | either run is a dry run |
 | `BundleNotFound`, `BundleUnreadable`, `BundleInvalid` | a run cannot be found or read; names the path |
 
-A run that records no judge — every run before task 16.4 — has an **unknown
-judge**. Such runs are compared, and the `Judge:` line says the comparison
-assumes the same judge. `eval compare` reads the judge as
-`judge: { id, version }` from `bundle-index.json`, else `public-report.json`,
-else `provenance-manifest.json`; task 16.4 should record it in one of those.
+Every run since task 16.4 records its judge as `judge: { id, version }` in
+`bundle-index.json`, `public-report.json` and `provenance-manifest.json`
+(`typesafe/jev-1.13` at `typesafe/jev-1.13-20260917`; see
+[The judge](#the-judge)); `eval compare` reads it from the first of those that
+has one. A run that records no judge — every run before task 16.4 — has an
+**unknown judge**. Such runs are compared, and the `Judge:` line says the
+comparison assumes the same judge. It does not hold across 16.4: those runs
+were scored by `anthropic/claude-sonnet-4.5` on a summary of the answer, so
+compare a post-16.4 run only with another post-16.4 run.
 
 **What it reads.** Only `bundle-index.json`, the `score-<suite>.json` files it
 names (suite names must be plain identifiers, so a bundle cannot point the
@@ -464,6 +470,119 @@ This is the composition-derived proof the acceptance criteria refers to: eligibi
 
 **Text-only proof, explicitly bounded.** All of the above is a *routing-signal* proof, not a runtime-trajectory proof. The scorer reads assistant text and extracts a routing target; it never inspects which tool the harness actually invoked or whether a delegated subagent process really started. When you see "Loom routes correctly" in an eval report, read it as "Loom's text output named the composition-derived correct agent," not as "the harness delegated end to end." That distinction matters when someone asks why a green `loom-routing` suite doesn't also prove Tapestry's fan-out worked (see Deferred Scope below).
 
+### The judge
+
+**The judge is TypeSafe Jev** (`typesafe/jev-1.13`), called through
+OpenRouter's decisions endpoint (`POST https://openrouter.ai/api/alpha/decisions`)
+by `JevJudge` in
+[`jev-judge.ts`](../packages/cli/src/evals/jev-judge.ts) (Spec 37, task
+16.4). Why Jev:
+
+- **It never grades itself.** Jev is a judging model, not a chat model, so it
+  can never be one of the models the matrix evaluates. A chat-model judge
+  could not join the matrix later without grading its own answers.
+- **It passed the acceptance check.** Against 30 labelled items (20 real
+  answers, 10 constructed failures) it agreed with the labels on 28 and
+  caught 10 of the 12 failures, the minimum required; see
+  [the bake-off record](artifacts/judge-bakeoff-2026-09-23.md).
+- **It returns no free text.** It answers typed questions with
+  probabilities, so there is no judge prose to sanitize, and nothing the
+  judge says can reach a published file.
+
+**What it is shown.** For each dimension it judges, the judge reads one
+`state` made of the case's rubric, its reference and **the agent's actual
+answer**, unaltered (`buildJevState()`). Before 16.4 the judge (then
+`anthropic/claude-sonnet-4.5`) never saw the answer: it was given a summary
+of which runner signals had fired, so it could only restate what the
+signals already said. The rubric is the case description, what the case
+expects, the criteria as a list, and the rubric's reviewer notes
+(`scoring.notes`); [`judge-questions.ts`](../packages/cli/src/evals/judge-questions.ts)
+builds it.
+
+**How the questions are derived.** One `noul` (a yes/no question answered
+as a probability) per criterion, plus one `overall` noul: *"Would a careful
+reviewer applying the rubric accept the agent response as passing this
+case?"* The criteria come from the case:
+
+| Dimension | When | Criteria |
+| --- | --- | --- |
+| `executionCompleteness` | a `task_completion` case without the `judgment` tag | one question per required runner signal (`SIGNAL_QUESTIONS`, restating what the runner checks), or "does it achieve the expected outcome" when the case requires none |
+| `rationaleQuality` | an `agent_routing` case | does it route clearly to an accepted target (or a declared stop on the way), and does it justify the choice |
+| `rationaleQuality` | any other case | is it coherent, directly relevant to the task, and detailed enough to act on |
+| `delegationCorrectness` | a `delegation_chain` case | does it delegate along the expected chain, in order (naming the case's accepted alternates) |
+
+The first two rows are exactly what the acceptance check asked;
+`scripts/evals/judge-bakeoff.ts` imports the same `SIGNAL_QUESTIONS`, and a
+parity test fails if production and the check drift apart. `routingCorrectness`
+and the `executionCompleteness` of a `judgment` case are still deterministic;
+the judge is not asked about them.
+
+**What its answer decides.** The verdict is the `overall` answer alone,
+pass at 0.5, the acceptance check's fixed threshold; the per-criterion answers
+never change it. `jevScore()` maps it onto the scorer's scale so it decides
+every gate: a pass lands in [0.95, 1] (clearing the near-perfect primary gate
+and the category-routing gate at 0.7), a fail keeps its probability, below
+0.5. The dimension's rationale — local only, in `--raw-artifacts` files — is
+built from the criteria that fell below 0.5, by key: `Judge verdict: fail
+(overall 0.43 < 0.50). Criteria below 0.50: plan_file_tasks (0.44).`
+
+**Pinning and recording.** `JUDGE_MODEL_ID` and `JUDGE_MODEL_VERSION` in
+[`commands/eval.ts`](../packages/cli/src/commands/eval.ts) name the judge.
+Every call asks for the dated version (`typesafe/jev-1.13-20260917`), and an
+answer from any other version is refused. Each run records
+`judge: { id, version }` in `bundle-index.json`, `public-report.json`,
+`provenance-manifest.json` and a `**Judge**:` line of `public-report.md`
+(both fields must be plain model slugs, `JudgeIdentitySchema`, or the bundle
+is not written). A dry run records none.
+
+**When it cannot judge, the case is errored, not failed.** An HTTP error or
+timeout (`judge-http-failure`), an unreadable answer or one from another
+version (`judge-response-invalid`), or a rubric plus answer longer than Jev's
+32k-token context can take (`JEV_MAX_STATE_CHARS`, 100,000 characters;
+`judge-input-too-long`) each make the case errored; see
+[Empty and truncated answers](#empty-and-truncated-answers-errored-cases).
+An over-long answer is refused, never truncated. The longest answer the
+acceptance check saw was about 11,000 characters.
+
+**Known blind spots.** Jev passed two of the acceptance check's constructed
+failures, and the rubric-derived questions do not close them:
+
+- **A weft-review rejection whose BLOCKER lines name no file** (item N02).
+  The rubric says such a rejection fails, and the `review_blocker_file_refs`
+  question asks it, but Jev still passed it (overall 0.66). Weft's
+  deterministic file-reference signals partly cover it: the runner emits
+  `review_rejection_disciplined` only when every BLOCKER line names a file
+  (and `review_blocker_file_refs` only when at least one does), so on the
+  `weft-review-traced-true-positive` judgment case, where the signals decide,
+  a blocker without a file fails whatever the judge says. On
+  `weft-review-reject-blocker-citation` the verdict is the judge's; the
+  missing signals still show in its `--raw-artifacts` diagnostics.
+- **A plan that invents a command** (item N06). Jev passed a plan whose only
+  verification step was a command the repository does not have (overall
+  0.61). For the check to be possible at all, every pattern-planning case now
+  lists the commands it has (`Available commands (from package.json
+  scripts): …` in its description, which the agent sees too), and each rubric
+  says any other command, apart from `bun install` / `npm install`, counts as
+  invented. The `pattern-plan-no-invented-commands` judgment case checks it
+  deterministically.
+
+**Changing the judge.** Baselines are comparable only under the same judge:
+`eval compare` refuses runs whose recorded judges differ in id or version, so
+a judge change starts a new baseline. To change it:
+
+1. Re-run the acceptance check with the candidate against the labelled
+   calibration set (`scripts/evals/judge-bakeoff.ts`; method and labels in
+   [the bake-off record](artifacts/judge-bakeoff-2026-09-23.md)), and record
+   the result as a new artifact.
+2. Change `JUDGE_MODEL_ID` / `JUDGE_MODEL_VERSION` (and, for a judge that is
+   not Jev, the `LangChainJudge` behind the scorer in `buildLiveRunner()`).
+   A newer dated Jev version is a judge change too.
+3. Record a new baseline (task 7.4) under the new judge.
+
+`RealLangChainJudge`, the chat-model judge `weave eval run` used before 16.4,
+is kept in `langchain-agent-evals.ts` only because the acceptance harness
+scores its Sonnet 5 reference through it.
+
 ### Scoring semantics
 
 Every case produces a `NormalizedScoreRecord` (`packages/cli/src/evals/types.ts`) with four dimensions, each scored `0`-`1`: `routingCorrectness`, `delegationCorrectness`, `executionCompleteness`, `rationaleQuality`. A dimension that doesn't apply to a case's `expected_outcome.kind` is marked `applicable: false` and scored `1.0` so it never drags down cases it wasn't meant to grade. The rubric's `outcome_weight` (for whichever of routing/delegation/execution is the primary dimension) and `per_expectation_weight` (for `rationaleQuality` and any transcript expectations) combine into `weightedTotal`. A case is `passed` when `weightedTotal` clears the pass threshold and, if the rubric marks it `required`, only `required` cases count toward a suite's green/red gate. Non-required cases can fail without turning a suite red; they still show up in per-case history.
@@ -479,7 +598,7 @@ This suite scores `routingCorrectness` itself, in `tapestry-category-routing-run
 
 #### `pattern-planning` and `weft-review` rubric criteria
 
-> **Score change, 24 Sep 2026 (Spec 37, task 16.4a).** The reviewer notes (`scoring.notes`) of these rubrics now state three checks explicitly. Every `pattern-planning` rubric requires each task to have its own acceptance, success or verification step (a single final verification note does not count) and every command the plan names to exist in the repository, or to be one the case declares (no invented commands). The two `weft-review` rejection rubrics (`weft-review-reject-blocker-citation`, `weft-review-traced-true-positive`) require every BLOCKER line to name the file it applies to. The judge reads these notes when it scores `rationaleQuality` (`buildRationaleRubric()` in `langchain-agent-evals.ts`), so published `weightedTotal` values, and pass rates near the threshold, for these two suites may move between runs scored before and after this change; compare only runs scored on the same side of it. The deterministic runner signals are unchanged. The production judge does not see the response text (only the extracted signals and a structural projection of the answer), so it can apply these checks only as far as that projection shows them. The judge acceptance check, which gives the judge the full response, is where they were measured. The change came from the judge acceptance check, where both judges missed exactly these checks; see [the bake-off record](artifacts/judge-bakeoff-2026-09-23.md#re-run-with-explicit-rubric-criteria-24-sep-2026).
+> **Score change, 24 Sep 2026 (Spec 37, task 16.4a).** The reviewer notes (`scoring.notes`) of these rubrics now state three checks explicitly. Every `pattern-planning` rubric requires each task to have its own acceptance, success or verification step (a single final verification note does not count) and every command the plan names to exist in the repository, or to be one the case declares (no invented commands). The two `weft-review` rejection rubrics (`weft-review-reject-blocker-citation`, `weft-review-traced-true-positive`) require every BLOCKER line to name the file it applies to. The judge reads these notes when it scores `rationaleQuality`, so published `weightedTotal` values, and pass rates near the threshold, for these two suites may move between runs scored before and after this change; compare only runs scored on the same side of it. The deterministic runner signals are unchanged. When this landed the production judge did not see the response text (only the extracted signals and a structural projection of the answer); since 16.4b it does, and it reads these notes on every dimension it judges (see [The judge](#the-judge)). The judge acceptance check, which gives the judge the full response, is where they were measured. The change came from the judge acceptance check, where both judges missed exactly these checks; see [the bake-off record](artifacts/judge-bakeoff-2026-09-23.md#re-run-with-explicit-rubric-criteria-24-sep-2026).
 
 ### Empty and truncated answers (errored cases)
 
@@ -531,11 +650,15 @@ flag `pass-rates.ts` already reads for repeated attempts) and sets
 (`model-empty-response`, `model-truncated-response`, `model-network-failure`,
 `scoring-adapter-failure`, `scoring-rubric-missing`, `trajectory-<type>`, …).
 Before 16.5 all of these were published as failed cases with zero scores.
-One exception is deliberate: in `tapestry-category-routing` a judge failure
-does not error the case, because the suite scores routing itself without the
-judge. The case is still scored, on routing alone
-(`buildScorerUnavailableScoreRecord()`), so a correct route still passes and
-a wrong one still fails.
+In `tapestry-category-routing` a judge failure errors the case too whenever
+the judge's verdict was needed (since 16.4; before it, the case was scored on
+routing alone and a correct route passed without the judge's gate). The one
+case scored without the judge is a required case whose route fails the
+deterministic routing gate: it fails whatever the judge says, so it is
+published as failed (`buildScorerUnavailableScoreRecord()`), with the judge
+failure kept in the local diagnostic. The judge's own failures have their own
+labels (`judge-http-failure`, `judge-response-invalid`, `judge-input-too-long`,
+`judge-input-invalid`); see [The judge](#the-judge).
 
 **How errored cases are counted.** `countCaseOutcomes()` in
 `case-outcomes.ts` is the one place every runner, the bundle writer and the

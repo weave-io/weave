@@ -1,7 +1,13 @@
 /**
- * LangChain AgentEvals scoring adapter for `weave eval`.
+ * The scorer for `weave eval`, and the judge interface it calls.
  *
- * Wraps LangChain AgentEvals in a small scorer module that consumes model
+ * (The file keeps its historical name. Since Spec 37 task 16.4 the judge
+ * `weave eval run` uses is TypeSafe Jev, `JevJudge` in `jev-judge.ts`; the
+ * LangChain chat judge left here, `RealLangChainJudge`, is used only by the
+ * judge acceptance harness, `scripts/evals/judge-bakeoff.ts`, as its Sonnet
+ * reference.)
+ *
+ * A small scorer module that consumes model
  * run output (from `ModelRunOutput`) and repo rubrics (from `EvalRubric` /
  * `EvalCase`), then produces normalized `NormalizedScoreRecord` values for
  * four dimensions:
@@ -16,15 +22,15 @@
  *
  * # Architecture
  *
- * The LangChain dependency is isolated at the scoring edge via the
- * `LangChainJudge` interface. The rest of the pipeline only sees Weave-owned
- * types: `ModelRunOutput`, `NormalizedScoreRecord`, and `ScoringError`.
+ * The judge is isolated at the scoring edge via the `LangChainJudge`
+ * interface. The rest of the pipeline only sees Weave-owned types:
+ * `ModelRunOutput`, `NormalizedScoreRecord`, and `ScoringError`.
  *
- * Production code should construct a `LangChainAgentEvalsScorer` with a real
- * `LangChainJudge` implementation (`RealLangChainJudge`) that calls the
- * LangChain AgentEvals evaluate API via `openevals/llm`'s `createLLMAsJudge`.
- * Tests substitute `StubAgentEvalsScorer` or a `StubLangChainJudge` to
- * exercise scorer logic without real LangChain or provider calls.
+ * Production code constructs a `LangChainAgentEvalsScorer` with a
+ * `JevJudge`. What each judged dimension asks — the rubric, the reference,
+ * the agent's actual response and the yes/no criteria — is built by
+ * `judge-questions.ts`. Tests substitute `StubAgentEvalsScorer`, a
+ * `StubLangChainJudge`, or a `JevJudge` over a stubbed `fetch`.
  *
  * # Design decisions
  *
@@ -53,13 +59,18 @@
  * # Dependency note
  *
  * `langchain-agent-evals.ts` is the only file in the eval pipeline that may
- * import from `@langchain/*` or `agentevals` / `openevals` packages. All
- * other files in `evals/` must depend only on Weave-owned types and the
- * `LangChainJudge` interface.
+ * import from `@langchain/*` or `agentevals` / `openevals` packages, and
+ * only for `RealLangChainJudge`. All other files in `evals/` must depend
+ * only on Weave-owned types and the `LangChainJudge` interface.
  */
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { err, ok, ResultAsync } from "neverthrow";
+import {
+  delegationJudgeInput,
+  executionJudgeInput,
+  rationaleJudgeInput,
+} from "./judge-questions.js";
 import { isJudgmentCase } from "./judgment-cases.js";
 import {
   computeScoreBucket,
@@ -104,10 +115,28 @@ export const PRIMARY_STRUCTURAL_PASS_THRESHOLD = 0.95;
 // ---------------------------------------------------------------------------
 
 /**
- * Input to a single LangChain judge call for one dimension.
+ * One yes/no check the judge is asked about a response, derived from the
+ * case (see `judge-questions.ts`).
+ */
+export interface JudgeCriterion {
+  /**
+   * Stable key for the check: a runner signal id such as
+   * `plan_acceptance_coverage`, or a fixed key such as
+   * `routes_to_accepted_target`. The judge's rationale names failed checks
+   * by this key.
+   */
+  key: string;
+  /** The question, in plain words. */
+  question: string;
+}
+
+/**
+ * Input to a single judge call for one dimension (built by
+ * `judge-questions.ts`).
  *
- * The judge evaluates `response` against `reference` for the given
- * `dimension` and returns a numeric score in `[0, 1]` with a rationale.
+ * The judge evaluates `response` against `rubricDescription` and
+ * `reference` for the given `dimension` and returns a numeric score in
+ * `[0, 1]` with a rationale.
  *
  * All fields are plain text / structured data — no LangChain types bleed
  * through this interface into the caller.
@@ -116,24 +145,19 @@ export interface JudgeInput {
   /** The scoring dimension being evaluated. */
   dimension: ScoringDimension;
   /**
-   * A human-readable description of what correctness means for this
-   * dimension and case. Injected into the judge prompt as the rubric.
+   * The rubric: the case, what it expects, the criteria below as a list,
+   * and the rubric's reviewer notes.
    */
   rubricDescription: string;
-  /**
-   * The model's response / action sequence to evaluate.
-   * For routing/delegation, this is the serialised agent sequence.
-   * For execution, this is a summary of artifacts and completion signal.
-   * For rationale quality, this is the raw response text.
-   */
+  /** The agent's actual response, unaltered. */
   response: string;
   /**
-   * The reference (gold standard) for correctness.
-   * For routing/delegation, this is the expected agent sequence.
-   * For execution, this is a description of required artifacts.
-   * For rationale quality, this is a quality description rubric.
+   * The reference (gold standard): the expected outcome and its required
+   * signals, the expected routing target, or the expected chain.
    */
   reference: string;
+  /** The yes/no checks the judge answers besides its overall verdict. */
+  criteria: JudgeCriterion[];
 }
 
 /**
@@ -154,12 +178,12 @@ export interface JudgeOutput {
 }
 
 /**
- * Narrow interface for calling the LangChain AgentEvals judge.
+ * Narrow interface for calling the eval judge.
  *
- * Production implementations call a LangChain `ChatModel` with an
- * evaluation prompt and parse the structured output. Tests substitute
- * `StubLangChainJudge` to exercise scorer logic without LangChain or
- * provider calls.
+ * The production implementation is `JevJudge` (`jev-judge.ts`), which asks
+ * TypeSafe Jev typed questions. `RealLangChainJudge` below is a chat-model
+ * implementation kept for the judge acceptance harness. Tests substitute
+ * `StubLangChainJudge` to exercise scorer logic without provider calls.
  *
  * The interface is intentionally minimal — one method, typed I/O —
  * so implementations stay focused and test doubles stay simple.
@@ -298,8 +322,15 @@ interface OpenEvalsLlmModule {
 }
 
 /**
- * Production `LangChainJudge` implementation that uses LangChain AgentEvals
+ * A chat-model `LangChainJudge` that uses LangChain AgentEvals
  * (`openevals/llm`'s `createLLMAsJudge`) to evaluate model outputs.
+ *
+ * **Not used by `weave eval run`** since Spec 37 task 16.4: the eval judge
+ * is `JevJudge`. It is kept because the judge acceptance harness
+ * (`scripts/evals/judge-bakeoff.ts`) scores its Sonnet 5 reference through
+ * it, and that harness is how a later judge change is re-checked against
+ * the labelled calibration set. It ignores `JudgeInput.criteria`: the
+ * criteria are already listed in the rubric text it is given.
  *
  * ## Why `openevals/llm`?
  *
@@ -520,82 +551,8 @@ export class RealLangChainJudge implements LangChainJudge {
 }
 
 // ---------------------------------------------------------------------------
-// Rationale projection — sanitized input for the judge
+// Score clamping
 // ---------------------------------------------------------------------------
-
-/**
- * Maximum character length of the rationale projection sent to the judge.
- *
- * The projection is a strictly structured summary of safe `ModelRunOutput`
- * fields only — it never contains `rawContent`, prompt text, transcript
- * content, tool arguments, or any substring of model output. The limit
- * caps the combined length of all safe structural fields.
- */
-export const RATIONALE_PROJECTION_MAX_CHARS = 2000;
-
-/**
- * Produce a strictly structured, allowlisted projection of a model run output
- * suitable for submission to the LLM judge for `rationaleQuality` scoring.
- *
- * **Security contract**: This function MUST NOT include any of the following:
- *   - `run.rawContent` (raw model output text)
- *   - `run.transcript` content (message bodies, tool arguments)
- *   - Any prompt text or system prompt snippets
- *   - Any substring of model-generated content
- *
- * The projection is derived exclusively from the safe structural fields of
- * `ModelRunOutput`:
- *   - `routedAgents`       — ordered list of agent names the model nominated
- *   - `delegationChain`    — ordered delegation chain expressed by the model
- *   - `completionSignalled` — boolean completion flag
- *   - `producedArtifacts`  — list of artifact names (identifiers only)
- *   - Derived counts/lengths for context (never content)
- *
- * Raw prompt text, full transcripts, tool arguments, and `rawContent` are
- * NEVER included — those live in local-only `RawCaseResultArtifact` records.
- *
- * @param run - The model run output to project.
- * @returns A structured, safe string for judge input (never contains rawContent).
- */
-export function buildRationaleProjection(run: ModelRunOutput): string {
-  const parts: string[] = [];
-
-  // Routing signal — agent names only (identifiers, not content)
-  if (run.routedAgents.length > 0) {
-    parts.push(`routed_agents: [${run.routedAgents.join(", ")}]`);
-  } else {
-    parts.push("routed_agents: (none)");
-  }
-
-  // Delegation chain — agent names only (identifiers, not content)
-  if (run.delegationChain.length > 0) {
-    parts.push(`delegation_chain: ${run.delegationChain.join(" → ")}`);
-  } else {
-    parts.push("delegation_chain: (none)");
-  }
-
-  // Completion signal — boolean only
-  parts.push(`completion_signalled: ${run.completionSignalled}`);
-
-  // Produced artifacts — artifact names only (identifiers, not content)
-  if (run.producedArtifacts.length > 0) {
-    parts.push(`produced_artifacts: [${run.producedArtifacts.join(", ")}]`);
-  } else {
-    parts.push("produced_artifacts: (none)");
-  }
-
-  // Transcript message count — count only, never content
-  parts.push(`transcript_message_count: ${run.transcript.length}`);
-
-  const projection = parts.join("; ");
-
-  // Cap to maximum to guard against unbounded identifier lists
-  if (projection.length > RATIONALE_PROJECTION_MAX_CHARS) {
-    return `${projection.slice(0, RATIONALE_PROJECTION_MAX_CHARS)}… [truncated]`;
-  }
-
-  return projection;
-}
 
 /**
  * Clamp a score value to the closed interval `[0, 1]`.
@@ -608,141 +565,6 @@ function clampScore(score: number): number {
   if (score < 0) return 0;
   if (score > 1) return 1;
   return score;
-}
-
-/**
- * Build the rubric description string for the routing correctness dimension.
- *
- * The description is injected into the judge prompt as context for what
- * "correct routing" means for this specific case.
- */
-function buildRoutingRubric(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "agent_routing") {
-    return `Not applicable for case kind "${evalCase.expected_outcome.kind}". Routing is not assessed.`;
-  }
-  const via =
-    evalCase.expected_outcome.via.length > 0
-      ? ` via [${evalCase.expected_outcome.via.join(" → ")}]`
-      : " directly";
-  const alternates =
-    evalCase.accepted_alternates.length > 0
-      ? ` Accepted alternates: [${evalCase.accepted_alternates.join(", ")}].`
-      : "";
-  return (
-    `The model should route to agent "${evalCase.expected_outcome.target_agent}"${via}.` +
-    alternates
-  );
-}
-
-/**
- * Build the rubric description for the delegation correctness dimension.
- */
-function buildDelegationRubric(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "delegation_chain") {
-    return `Not applicable for case kind "${evalCase.expected_outcome.kind}". Delegation chain is not assessed.`;
-  }
-  const chain = evalCase.expected_outcome.chain.join(" → ");
-  return `The model should express the delegation chain: ${chain}.`;
-}
-
-/**
- * Build the rubric description for the execution completeness dimension.
- */
-function buildExecutionRubric(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "task_completion") {
-    return `Not applicable for case kind "${evalCase.expected_outcome.kind}". Execution completeness is not assessed.`;
-  }
-  const artifacts =
-    evalCase.expected_outcome.required_artifacts.length > 0
-      ? ` Required artifacts: [${evalCase.expected_outcome.required_artifacts.join(", ")}].`
-      : " No specific artifacts required.";
-  return `The model should complete the task: ${evalCase.expected_outcome.description}.${artifacts}`;
-}
-
-/**
- * Build the rubric description for the rationale quality dimension.
- */
-function buildRationaleRubric(evalCase: EvalCase, rubric: EvalRubric): string {
-  const notes =
-    rubric.scoring.notes !== undefined && rubric.scoring.notes.trim() !== ""
-      ? ` Reviewer notes: ${rubric.scoring.notes}`
-      : "";
-  return (
-    `Evaluate the quality of the model's rationale for case: ${evalCase.description}.` +
-    ` A high-quality rationale is coherent, directly relevant to the task, and sufficiently detailed.${notes}`
-  );
-}
-
-/**
- * Serialise a model run output's routing signal as a string for the judge.
- */
-function serialiseRoutingSignal(run: ModelRunOutput): string {
-  if (run.routedAgents.length === 0) {
-    return "(no agent routing expressed)";
-  }
-  return `Routed to: [${run.routedAgents.join(", ")}]`;
-}
-
-/**
- * Serialise the routing reference (expected outcome) as a string.
- */
-function serialiseRoutingReference(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "agent_routing") {
-    return "(routing not applicable)";
-  }
-  const via =
-    evalCase.expected_outcome.via.length > 0
-      ? ` via [${evalCase.expected_outcome.via.join(" → ")}]`
-      : " directly";
-  return `Expected: "${evalCase.expected_outcome.target_agent}"${via}`;
-}
-
-/**
- * Serialise the delegation chain signal from a model run.
- */
-function serialiseDelegationSignal(run: ModelRunOutput): string {
-  if (run.delegationChain.length === 0) {
-    return "(no delegation chain expressed)";
-  }
-  return `Delegation chain: ${run.delegationChain.join(" → ")}`;
-}
-
-/**
- * Serialise the delegation reference (expected outcome) as a string.
- */
-function serialiseDelegationReference(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "delegation_chain") {
-    return "(delegation chain not applicable)";
-  }
-  return `Expected chain: ${evalCase.expected_outcome.chain.join(" → ")}`;
-}
-
-/**
- * Serialise the execution completeness signal from a model run.
- */
-function serialiseExecutionSignal(run: ModelRunOutput): string {
-  const completion = run.completionSignalled
-    ? "completion signalled"
-    : "no completion signal";
-  const artifacts =
-    run.producedArtifacts.length > 0
-      ? `artifacts produced: [${run.producedArtifacts.join(", ")}]`
-      : "no artifacts produced";
-  return `${completion}; ${artifacts}`;
-}
-
-/**
- * Serialise the execution reference (expected outcome) as a string.
- */
-function serialiseExecutionReference(evalCase: EvalCase): string {
-  if (evalCase.expected_outcome.kind !== "task_completion") {
-    return "(execution completeness not applicable)";
-  }
-  const artifacts =
-    evalCase.expected_outcome.required_artifacts.length > 0
-      ? `; required artifacts: [${evalCase.expected_outcome.required_artifacts.join(", ")}]`
-      : "; no specific artifacts required";
-  return `Task: ${evalCase.expected_outcome.description}${artifacts}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,13 +1127,14 @@ export function buildJudgmentExecutionDimension(
  * in a `DimensionScore`. Non-applicable dimensions are short-circuited
  * without calling the judge.
  *
- * The `LangChainJudge` is the only place where real LangChain or provider
- * API calls should occur. All other logic in this class is pure.
+ * The `LangChainJudge` is the only place where provider API calls should
+ * occur. All other logic in this class is pure. Every judged dimension is
+ * shown the agent's actual response (`judge-questions.ts`).
  *
  * ## Usage
  *
  * ```ts
- * const judge = new RealLangChainJudge(model); // from @langchain/*
+ * const judge = new JevJudge({ apiKey, judge: { id, version } });
  * const scorer = new LangChainAgentEvalsScorer(judge);
  * const result = await scorer.score(run, evalCase, rubrics);
  * ```
@@ -1327,9 +1150,10 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
   private scoreExecution(
     run: ModelRunOutput,
     evalCase: EvalCase,
-    applicable: boolean,
+    rubric: EvalRubric,
   ): ResultAsync<DimensionScore, ScoringError> {
-    if (!applicable) {
+    const input = executionJudgeInput(run, evalCase, rubric);
+    if (input === undefined) {
       return new ResultAsync(
         Promise.resolve(
           ok<DimensionScore, ScoringError>(
@@ -1349,18 +1173,18 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
         ),
       );
     }
-    return this.judge
-      .evaluate({
-        dimension: "executionCompleteness",
-        rubricDescription: buildExecutionRubric(evalCase),
-        response: serialiseExecutionSignal(run),
-        reference: serialiseExecutionReference(evalCase),
-      })
-      .map((output) => ({
-        score: clampScore(output.score),
-        rationale: output.rationale || "(no rationale provided)",
-        applicable: true,
-      }));
+    return this.judgeDimension(input);
+  }
+
+  /** Ask the judge about one dimension and clamp what it returns. */
+  private judgeDimension(
+    input: JudgeInput,
+  ): ResultAsync<DimensionScore, ScoringError> {
+    return this.judge.evaluate(input).map((output) => ({
+      score: clampScore(output.score),
+      rationale: output.rationale || "(no rationale provided)",
+      applicable: true,
+    }));
   }
 
   score(
@@ -1409,8 +1233,7 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
 
     // --- Determine applicability per dimension ---
     const routingApplicable = outcomeKind === "agent_routing";
-    const delegationApplicable = outcomeKind === "delegation_chain";
-    const executionApplicable = outcomeKind === "task_completion";
+    const delegationInput = delegationJudgeInput(run, evalCase, rubric);
     // rationaleQuality is always applicable (quality of text is universal)
 
     // --- Build judge calls for applicable dimensions ---
@@ -1430,19 +1253,8 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
           );
 
     const judgeDelegationAsync: ResultAsync<DimensionScore, ScoringError> =
-      delegationApplicable
-        ? this.judge
-            .evaluate({
-              dimension: "delegationCorrectness",
-              rubricDescription: buildDelegationRubric(evalCase),
-              response: serialiseDelegationSignal(run),
-              reference: serialiseDelegationReference(evalCase),
-            })
-            .map((output) => ({
-              score: clampScore(output.score),
-              rationale: output.rationale || "(no rationale provided)",
-              applicable: true,
-            }))
+      delegationInput !== undefined
+        ? this.judgeDimension(delegationInput)
         : new ResultAsync(
             Promise.resolve(
               ok<DimensionScore, ScoringError>(
@@ -1453,25 +1265,11 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
             ),
           );
 
-    const judgeExecutionAsync = this.scoreExecution(
-      run,
-      evalCase,
-      executionApplicable,
-    );
+    const judgeExecutionAsync = this.scoreExecution(run, evalCase, rubric);
 
-    const judgeRationaleAsync: ResultAsync<DimensionScore, ScoringError> =
-      this.judge
-        .evaluate({
-          dimension: "rationaleQuality",
-          rubricDescription: buildRationaleRubric(evalCase, rubric),
-          response: buildRationaleProjection(run),
-          reference: `Evaluate quality for: ${evalCase.description}`,
-        })
-        .map((output) => ({
-          score: clampScore(output.score),
-          rationale: output.rationale || "(no rationale provided)",
-          applicable: true,
-        }));
+    const judgeRationaleAsync = this.judgeDimension(
+      rationaleJudgeInput(run, evalCase, rubric),
+    );
 
     // --- Settle all four dimension calls in parallel ---
     return new ResultAsync(

@@ -29,10 +29,10 @@ import {
   type EvalRunRequest,
   parseEvalRunRequest,
 } from "../evals/input-validation.js";
+import { JevJudge } from "../evals/jev-judge.js";
 import {
   type AgentEvalsScorer,
   LangChainAgentEvalsScorer,
-  RealLangChainJudge,
 } from "../evals/langchain-agent-evals.js";
 import { filterMatrix, loadModelMatrix } from "../evals/model-matrix.js";
 import {
@@ -465,32 +465,34 @@ function buildDryRunRunner(
 }
 
 /**
- * Default judge model ID for LangChain AgentEvals scoring via OpenRouter.
+ * The eval judge: TypeSafe Jev (Spec 37, task 16.4), accepted by the judge
+ * acceptance check (`docs/artifacts/judge-bakeoff-2026-09-23.md`). Jev can
+ * never be one of the evaluated models, so it never grades itself.
  *
- * Uses a capable, cost-effective model for rubric evaluation. The judge model
- * is separate from the eval runner models — it scores the outputs of those
- * models against the eval rubrics.
+ * `JUDGE_MODEL_ID` is the model; `JUDGE_MODEL_VERSION` the dated version
+ * every judge call names and every answer must come from. Both are recorded
+ * in each run's bundle, and `weave eval compare` refuses runs whose judges
+ * differ, so changing either starts a new baseline. See "The judge" in
+ * `docs/agent-evals.md` before changing them.
  *
- * Requirements:
- *   - Must be available on OpenRouter.
- *   - Must support structured JSON output (for score + rationale parsing).
- *   - Lower temperature is preferred for consistent, deterministic scoring.
+ * `scripts/evals/verify-agent-eval-run.ts` reads `JUDGE_MODEL_ID` from this
+ * file's source as a string literal; keep it one.
  */
-const JUDGE_MODEL_ID = "anthropic/claude-sonnet-4.5";
+const JUDGE_MODEL_ID = "typesafe/jev-1.13";
+const JUDGE_MODEL_VERSION = "typesafe/jev-1.13-20260917";
 
 /**
  * Build the live production runner from real external dependencies.
  *
  * Constructs an `EvalOrchestrator` with:
  *   - `OpenRouterClient` for model inference
- *   - `LangChainAgentEvalsScorer(RealLangChainJudge)` for scoring via OpenRouter
+ *   - `LangChainAgentEvalsScorer(JevJudge)` for scoring via OpenRouter
  *   - The real `env` map for API key and token reads
  *
- * The scorer uses `@langchain/openai`'s `ChatOpenAI` configured to call
- * OpenRouter (via `apiKey` + `configuration.baseURL`). If the
- * `@langchain/openai` package cannot be imported or the environment is
- * invalid, this function returns `err(CliError)` — it never silently falls
- * back to a stub scorer.
+ * The scorer's judge is `JevJudge`, which calls OpenRouter's decisions
+ * endpoint with the same API key. If the environment is invalid, this
+ * function returns `err(CliError)` — it never silently falls back to a stub
+ * scorer.
  *
  * The API key is validated eagerly here before constructing any clients.
  * Validation errors surface as typed `CliError` values, not thrown exceptions.
@@ -499,7 +501,7 @@ const JUDGE_MODEL_ID = "anthropic/claude-sonnet-4.5";
  * @param reportRun - Prints the run report after the run.
  * @param env - Environment variable map. Defaults to `Bun.env`.
  * @returns A `Promise<Result<runner, CliError>>` — err when the environment
- *          is invalid or the scorer cannot be constructed.
+ *          is invalid.
  */
 async function buildLiveRunner(
   reportPartialFailure: (failure: RunnerError) => void,
@@ -531,24 +533,14 @@ async function buildLiveRunner(
   const evalEnv = envResult.value;
   const modelClient = new OpenRouterClient(evalEnv);
 
-  // Build the LangChain judge model targeting OpenRouter.
-  //
-  // @langchain/openai's ChatOpenAI accepts `apiKey` and a custom
-  // `configuration.baseURL` so it can target any OpenAI-compatible provider
-  // including OpenRouter. The judge model is a separate, dedicated model for
-  // rubric scoring — distinct from the eval runner models.
-  //
-  // NOTE: `apiKey` (not the deprecated `openAIApiKey` alias) must be used
-  // here. In v1, the `BaseChatOpenAI` constructor reads only `fields.apiKey`.
-  //
-  // If the import or construction fails for any reason, we fail closed with
-  // a typed `EvalValidation` error — we never silently use a stub scorer.
-  const scorerResult = await buildLangChainScorer(evalEnv);
-  if (scorerResult.isErr()) {
-    return err(scorerResult.error);
-  }
-
-  const scorer = scorerResult.value;
+  // The judge: TypeSafe Jev on OpenRouter's decisions endpoint, pinned to
+  // one dated version. It sees each judged case's rubric, reference and the
+  // agent's actual response (`judge-questions.ts`).
+  const judge = new JevJudge({
+    apiKey: evalEnv.apiKey,
+    judge: { id: JUDGE_MODEL_ID, version: JUDGE_MODEL_VERSION },
+  });
+  const scorer = new LangChainAgentEvalsScorer(judge);
 
   // Read the publish mode from the environment.
   //
@@ -567,142 +559,12 @@ async function buildLiveRunner(
   const orchestrator = new EvalOrchestrator({
     modelClient,
     scorer,
+    judge: judge.identity(),
     env: effectiveEnv,
     publishMode,
   });
 
   return ok(buildEvalRunner(orchestrator, reportPartialFailure, reportRun));
-}
-
-/**
- * The shape of the `@langchain/openai` module that `buildLangChainScorer`
- * dynamically imports.
- *
- * Typed narrowly so tests can inject a fake module via
- * `langchainModuleLoader` without importing the full `@langchain/openai`
- * package. The real dynamic import resolves to (a superset of) this shape.
- */
-export interface LangChainOpenAIModule {
-  ChatOpenAI: new (fields: {
-    model?: string;
-    /** @deprecated alias — use `apiKey` in @langchain/openai v1 */
-    modelName?: string;
-    temperature?: number;
-    /**
-     * API key passed directly to the underlying OpenAI client.
-     *
-     * In `@langchain/openai` v1, `BaseChatOpenAI` constructor reads
-     * `fields.apiKey` (NOT `fields.openAIApiKey`). Passing
-     * `openAIApiKey` is silently ignored by the runtime even though
-     * the TypeScript alias still exists on `OpenAIBaseInput`. Always
-     * use `apiKey` when targeting OpenRouter or any non-standard endpoint.
-     */
-    apiKey?: string;
-    configuration?: { baseURL?: string; [key: string]: unknown };
-  }) => import("@langchain/core/language_models/chat_models").BaseChatModel;
-}
-
-/**
- * Construct a `LangChainAgentEvalsScorer` backed by a `RealLangChainJudge`
- * that calls OpenRouter for scoring.
- *
- * Returns `ok(scorer)` when the judge model can be constructed, or
- * `err(CliError)` when the required packages are not available or the env
- * is insufficient for judge model construction.
- *
- * Uses `@langchain/openai`'s `ChatOpenAI` configured for OpenRouter via:
- *   - `apiKey`: the OpenRouter API key from `EvalEnv`
- *     (NOTE: in @langchain/openai v1, `apiKey` is the canonical field name
- *     read by the `BaseChatOpenAI` constructor; the `openAIApiKey` alias
- *     exists only in the TypeScript type — the runtime ignores it, causing
- *     a silent 401. Always use `apiKey`.)
- *   - `configuration.baseURL`: the OpenRouter base URL (typically
- *     `https://openrouter.ai/api/v1`)
- *   - `model`: `JUDGE_MODEL_ID` — a capable model for rubric evaluation
- *   - `temperature`: 0 — deterministic scoring for consistent results
- *
- * Uses ESM dynamic `import()` to load `@langchain/openai` at call time.
- * This is the correct Bun/ESM approach — `require()` is not used.
- *
- * The optional `langchainModuleLoader` parameter lets tests inject a fake
- * module without performing a real dynamic import. Production code always
- * omits this parameter.
- *
- * Failure modes (all returned as typed errors, never thrown):
- *   - `@langchain/openai` is not installed → `EvalValidation` with setup hint
- *   - Any other construction error → `EvalValidation` with description
- *
- * @param evalEnv - The validated eval environment (contains API key + base URL).
- * @param langchainModuleLoader - Optional factory that resolves the
- *   `@langchain/openai` module. Defaults to `import("@langchain/openai")`.
- *   Pass a custom loader in tests to inject a fake module.
- * @returns `Promise<Result<LangChainAgentEvalsScorer, CliError>>`.
- */
-export async function buildLangChainScorer(
-  evalEnv: { apiKey: string; baseUrl: string },
-  langchainModuleLoader?: () => Promise<LangChainOpenAIModule>,
-): Promise<Result<LangChainAgentEvalsScorer, CliError>> {
-  const loader =
-    langchainModuleLoader ??
-    (() => import("@langchain/openai") as Promise<LangChainOpenAIModule>);
-
-  return ResultAsync.fromPromise(
-    (async () => {
-      // ESM dynamic import — the correct Bun-compatible approach.
-      // Never use require() in this codebase.
-      const { ChatOpenAI } = await loader();
-
-      // IMPORTANT: use `apiKey`, NOT `openAIApiKey`.
-      //
-      // In @langchain/openai v1, `BaseChatOpenAI` constructor reads only
-      // `fields.apiKey` (and `fields.configuration.apiKey`). The
-      // `openAIApiKey` TypeScript alias on `OpenAIBaseInput` is NOT read
-      // by the runtime constructor — passing it is silently ignored, which
-      // causes the client to fall through to OPENAI_API_KEY env var (likely
-      // undefined) and receive a 401 "Missing Authentication header" from
-      // OpenRouter.
-      //
-      // Ref: dist/chat_models/base.js constructor line:
-      //   this.apiKey = fields?.apiKey ?? configApiKey ?? getEnvironmentVariable("OPENAI_API_KEY")
-      const judgeModel = new ChatOpenAI({
-        model: JUDGE_MODEL_ID,
-        temperature: 0,
-        apiKey: evalEnv.apiKey,
-        configuration: {
-          baseURL: evalEnv.baseUrl,
-        },
-      });
-
-      const judge = new RealLangChainJudge(judgeModel);
-      return new LangChainAgentEvalsScorer(judge);
-    })(),
-    (cause): CliError => {
-      const causeMsg = cause instanceof Error ? cause.message : String(cause);
-
-      // Distinguish between module-not-found and other construction errors
-      const isModuleNotFound =
-        causeMsg.includes("Cannot find module") ||
-        causeMsg.includes("MODULE_NOT_FOUND") ||
-        causeMsg.includes("Cannot find package");
-
-      if (isModuleNotFound) {
-        return {
-          type: "EvalValidation" as const,
-          message:
-            `The @langchain/openai package is required for LangChain scoring but was not found. ` +
-            `Run "bun add @langchain/openai" in the @weaveio/weave-cli package directory and retry. ` +
-            `Judge model: ${JUDGE_MODEL_ID}`,
-        };
-      }
-
-      return {
-        type: "EvalValidation" as const,
-        message:
-          `Failed to construct the LangChain judge model (${JUDGE_MODEL_ID}): ${causeMsg}. ` +
-          `Ensure @langchain/openai is installed and OPENROUTER_API_KEY is set correctly.`,
-      };
-    },
-  );
 }
 
 // ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 215 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~19,200 tokens. Without it, AI exploration would cost ~72,500 tokens. **Saves ~53,300 tokens per conversation.**
-> **Last scanned:** 2026-09-24 04:56 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 217 lib files | 26 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~19,500 tokens. Without it, AI exploration would cost ~73,000 tokens. **Saves ~53,500 tokens per conversation.**
+> **Last scanned:** 2026-09-24 05:42 — re-run after significant changes
 
 ---
 
@@ -259,11 +259,9 @@
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
-  - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
-  - interface LangChainOpenAIModule
-  - _...1 more_
+  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -380,6 +378,21 @@
   - const MAX_EVAL_REPEAT
   - const KNOWN_EVAL_AGENTS
   - _...1 more_
+- `packages/cli/src/evals/jev-judge.ts`
+  - function displayResponse: (response) => string
+  - function buildJevState: (input) => string
+  - function buildJevRequest: (input, model) => Result<JevRequest, ScoringError>
+  - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
+  - function jevScore: (overall) => number
+  - function jevRationale: (decision) => string
+  - _...10 more_
+- `packages/cli/src/evals/judge-questions.ts`
+  - function signalQuestion: (signal) => string
+  - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
+  - function delegationJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
+  - function rationaleJudgeInput: (run, evalCase, rubric) => JudgeInput
+  - const SIGNAL_QUESTIONS: Readonly<Record<string, string>>
+  - const RATIONALE_CRITERIA: readonly JudgeCriterion[]
 - `packages/cli/src/evals/judgment-cases.ts`
   - function isJudgmentCase: (evalCase) => boolean
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
@@ -390,13 +403,13 @@
   - _...1 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function escapeTemplateBraces: (text) => string
-  - function buildRationaleProjection: (run) => string
   - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
   - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
   >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
   - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun, erroredCases) => string
   - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun, erroredCases) => string
-  - _...13 more_
+  - function buildJudgmentExecutionDimension: (run, evalCase) => DimensionScore
+  - _...12 more_
 - `packages/cli/src/evals/loom-delegation-matrix.ts`
   - function resolveLoomDelegationTargets: (options) => ResultAsync<DelegationTarget[], LoomDelegationMatrixError>
   - function validateLoomDelegationMatrixCoverage: (composedTargetNames, cases) => Result<true, LoomDelegationMatrixCoverageIssue[]>
@@ -494,7 +507,7 @@
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
   - type ModelAttemptTallyEntry
-  - _...44 more_
+  - _...47 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -941,14 +954,14 @@
   - interface DocumentStore
   - type LinkCheckError
 - `scripts/evals/judge-bakeoff.ts`
-  - function signalQuestion: (signal) => string
   - function sonnetThreshold: (evalCase, rubric) => number
   - function buildItem: (entry, raw, "caseId" | "modelId" | "transcript" | "rawContent"
   >, evalCase, rubric) => Result<BakeoffItem, BakeoffError>
   - function displayResponse: (item, "response">) => string
   - function buildJevState: (item) => string
   - function buildJevRequest: (item, model) => Result<JevRequest, BakeoffError>
-  - _...42 more_
+  - function parseJevResponse: (item, body) => Result<JevVerdict, BakeoffError>
+  - _...40 more_
 - `scripts/evals/verify-agent-eval-run.ts`
   - function buildProductionSuiteExpectationsProvider: () => ResultAsync<
   - function parseJudgeModelId: (sourceText) => Result<string, VerifyEvalRunError>
@@ -1040,7 +1053,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **46** files
+- `packages/cli/src/evals/types.ts` — imported by **48** files
 - `packages/cli/src/theme/colors.ts` — imported by **26** files
 - `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
@@ -1048,13 +1061,13 @@
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **15** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **14** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/cli/src/errors.ts` — imported by **11** files
-- `packages/cli/src/evals/report-schema.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **10** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
 - `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
@@ -1063,7 +1076,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +41 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +43 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
@@ -1071,8 +1084,8 @@
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/trajectory-dispatch.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
-- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/e2e-fixture-flow.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts` +9 more
+- `packages/cli/src/evals/langchain-agent-evals.ts` ← `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts` +8 more
 
 ---
 
@@ -1093,7 +1106,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 211 test files found
+> 213 test files found
 
 ---
 

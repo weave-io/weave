@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-release-checklist",
-  "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files for each task, makes the work order or dependency chain explicit, and ties each task to acceptance, success, or completion verification rather than a loose final note.",
+  "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files for each task, makes the work order or dependency chain explicit, and ties each task to acceptance, success, or completion verification rather than a loose final note. Available commands (from package.json scripts): `bun run build`, `bun run typecheck`, `bun run lint`, `bun run test`, `bun run verify:test-coverage`, `bun run docs:check-links`.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "expected_outcome": {

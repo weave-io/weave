@@ -401,7 +401,13 @@ bun packages/cli/src/main.ts eval run --agent <suite> --case <case-id> --model <
 It prints the verdict, each applicable scoring dimension of a failed case with
 its score (`✗` below its bar), and the path of the raw transcript file under
 `eval-bundles/runs/<run-id>/raw/`. That file holds the prompt, the answer and
-the judge's rationales; it is local only. Without `--raw-artifacts` you still
+the judge's rationales; it is local only. The judge is TypeSafe Jev: it reads
+the case's rubric (including the rubric's `scoring.notes`), its reference and
+the answer itself, and its rationale names the criteria it answered "no" to
+(see [The judge](../docs/agent-evals.md#the-judge)). A rubric note that asks
+the judge to check something, such as "no invented commands", needs the case
+to state what it checks against; the pattern-planning cases list their
+commands in their description for that reason. Without `--raw-artifacts` you still
 get the verdict and the scores, but no transcript. See
 [Diagnose one case](../docs/agent-evals.md#diagnose-one-case) for a worked
 example and why raw artifacts stay opt-in.

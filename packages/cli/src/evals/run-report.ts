@@ -277,6 +277,11 @@ const CLASSIFICATION_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "model-http-failure": "the model provider returned an error",
   "model-parse-failure": "the model provider's response could not be read",
   "scoring-adapter-failure": "the judge could not score the answer",
+  "judge-http-failure": "the request to the judge failed",
+  "judge-response-invalid": "the judge's answer could not be read",
+  "judge-input-too-long":
+    "the answer is too long for the judge to read whole, so it was not judged",
+  "judge-input-invalid": "the case's judge questions could not be sent",
   "scoring-rubric-missing": "the case has no rubric",
   "scoring-rubric-mismatch": "the case's rubric names a different case",
 };

@@ -134,6 +134,7 @@ async function writeRun(root: string, spec: RunSpec): Promise<string> {
       dryRun: spec.dryRun ?? false,
       repeatCount: repeatCountOf(spec),
       writeMarkdown: true,
+      ...(spec.judge !== undefined ? { judge: spec.judge } : {}),
     })
   )._unsafeUnwrap();
   // A raw transcript sits next to the bundle, as `--raw-artifacts` leaves it.
@@ -141,14 +142,6 @@ async function writeRun(root: string, spec: RunSpec): Promise<string> {
     `${written.bundleDir}/raw/case-leak.json`,
     JSON.stringify({ rawContent: LEAK, composedPrompt: LEAK }),
   );
-  if (spec.judge !== undefined) {
-    const indexPath = `${written.bundleDir}/bundle-index.json`;
-    const index = await Bun.file(indexPath).json();
-    await Bun.write(
-      indexPath,
-      JSON.stringify({ ...index, judge: spec.judge }, null, 2),
-    );
-  }
   return written.runId;
 }
 
@@ -398,6 +391,31 @@ describe("a maintainer compares runs of different designs", () => {
     expect(result.stderr).toContain("scored by different judges");
     expect(result.stderr).toContain("anthropic/claude-sonnet-4.5@2025-09-29");
     expect(result.stderr).toContain("typesafe/jev-1.13@1.13.0");
+  });
+
+  it("refuses runs scored by the same judge pinned to different versions", async () => {
+    const result = await compare(
+      {
+        ...runOf(BASELINE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        judge: {
+          id: "typesafe/jev-1.13",
+          version: "typesafe/jev-1.13-20260917",
+        },
+      },
+      {
+        ...runOf(CANDIDATE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        judge: {
+          id: "typesafe/jev-1.13",
+          version: "typesafe/jev-1.13-20261101",
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("scored by different judges");
+    expect(result.stderr).toContain(
+      "typesafe/jev-1.13@typesafe/jev-1.13-20261101",
+    );
   });
 
   it("names the judge when both runs record the same one", async () => {

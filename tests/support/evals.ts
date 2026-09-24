@@ -20,6 +20,10 @@ import type { CliError } from "../../packages/cli/src/errors.js";
 import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
 import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
 import {
+  type FetchLike,
+  JevJudge,
+} from "../../packages/cli/src/evals/jev-judge.js";
+import {
   type JudgeInput,
   type JudgeOutput,
   LangChainAgentEvalsScorer,
@@ -31,7 +35,10 @@ import type {
   ModelRequest,
 } from "../../packages/cli/src/evals/openrouter-client.js";
 import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
-import type { PublicReportBundle } from "../../packages/cli/src/evals/report-schema.js";
+import type {
+  JudgeIdentity,
+  PublicReportBundle,
+} from "../../packages/cli/src/evals/report-schema.js";
 import type { PublishBundleRequest } from "../../packages/cli/src/evals/results-repo.js";
 import {
   buildEvalRunner,
@@ -287,6 +294,8 @@ export interface FixtureSpec {
   rubricCaseId?: string;
   /** Writes the case fixture with no rubric file beside it. */
   withoutRubric?: boolean;
+  /** The rubric's `scoring.notes` (reviewer notes the judge reads). */
+  notes?: string;
 }
 
 /**
@@ -340,6 +349,7 @@ export async function withEvalFixtures<T>(
               outcome_weight: spec.outcomeWeight ?? 0.7,
               per_expectation_weight: spec.perExpectationWeight ?? 0.3,
               required: spec.required ?? true,
+              ...(spec.notes !== undefined ? { notes: spec.notes } : {}),
             },
           },
           null,
@@ -377,6 +387,13 @@ export interface SuiteRunOptions {
    * only records what it receives (see `SuiteRunObservation.published`).
    */
   publish?: boolean;
+  /**
+   * Put the production judge, `JevJudge`, behind the scorer, with this
+   * `fetch` standing in for OpenRouter's decisions endpoint. The run then
+   * records `JEV_TEST_JUDGE` as its judge. Takes precedence over every
+   * other judge option.
+   */
+  decisionsEndpoint?: FetchLike;
   /** The judge's verdict on every dimension it is asked to score. */
   judgeOutput?: JudgeOutput;
   /**
@@ -460,6 +477,10 @@ export interface SuiteRunObservation {
   firstCase: PublishedCaseRow | null;
   /** The parsed `public-report.json`, or `null` when none was written. */
   publicReport: PublicReportBundle | null;
+  /** The parsed `bundle-index.json`, or `null` when none was written. */
+  bundleIndex: Record<string, unknown> | null;
+  /** The parsed `provenance-manifest.json`, or `null` when none was written. */
+  provenanceManifest: Record<string, unknown> | null;
   /** How many runs a publish-mode run handed to the results repository. */
   published: number;
   /** The text of `public-report.md`, or `null` when none was written. */
@@ -522,10 +543,42 @@ class PerDimensionJudge implements LangChainJudge {
   }
 }
 
+/** The judge a scenario's run records when it runs `JevJudge`. */
+export const JEV_TEST_JUDGE: JudgeIdentity = {
+  id: "typesafe/jev-1.13",
+  version: "typesafe/jev-1.13-20260917",
+};
+
+/**
+ * Records what the scorer asked, then asks `JevJudge` — the production
+ * judge — so a scenario sees both the judge's inputs and the HTTP requests
+ * it made to the stubbed decisions endpoint.
+ */
+class RecordingJevJudge implements LangChainJudge {
+  readonly calls: JudgeInput[] = [];
+  private readonly inner: JevJudge;
+
+  constructor(fetchImpl: FetchLike) {
+    this.inner = new JevJudge({
+      apiKey: "test-key",
+      judge: JEV_TEST_JUDGE,
+      fetch: fetchImpl,
+    });
+  }
+
+  evaluate(input: JudgeInput): ResultAsync<JudgeOutput, ScoringError> {
+    this.calls.push(input);
+    return this.inner.evaluate(input);
+  }
+}
+
 /** The judge a run puts behind the real scorer. */
 function buildJudge(
   options: SuiteRunOptions,
 ): LangChainJudge & { readonly calls: JudgeInput[] } {
+  if (options.decisionsEndpoint !== undefined) {
+    return new RecordingJevJudge(options.decisionsEndpoint);
+  }
   const fallback = options.judgeOutput ?? {
     score: 1,
     rationale: "judge rationale",
@@ -633,6 +686,9 @@ export async function runEvalSuite(
   const orchestrator = new EvalOrchestrator({
     modelClient,
     scorer: new LangChainAgentEvalsScorer(judge),
+    ...(options.decisionsEndpoint !== undefined
+      ? { judge: JEV_TEST_JUDGE }
+      : {}),
     promptProvider,
     snapshotProvider: { getSnapshots: () => Promise.resolve([]) },
     gitShaProvider: { resolveGitSha: () => ok(FIXED_GIT_SHA) },
@@ -695,6 +751,20 @@ export async function runEvalSuite(
     reportPath !== undefined
       ? ((await Bun.file(reportPath).json()) as PublicReportBundle)
       : null;
+  const indexPath = absolute.find((path) =>
+    path.endsWith("/bundle-index.json"),
+  );
+  const bundleIndex =
+    indexPath !== undefined
+      ? ((await Bun.file(indexPath).json()) as Record<string, unknown>)
+      : null;
+  const manifestPath = absolute.find((path) =>
+    path.endsWith("/provenance-manifest.json"),
+  );
+  const provenanceManifestFile =
+    manifestPath !== undefined
+      ? ((await Bun.file(manifestPath).json()) as Record<string, unknown>)
+      : null;
   const markdown =
     markdownPath !== undefined ? await Bun.file(markdownPath).text() : null;
   const indexes: Record<string, unknown> = {};
@@ -719,6 +789,8 @@ export async function runEvalSuite(
     cases,
     firstCase: cases[0] ?? null,
     publicReport,
+    bundleIndex,
+    provenanceManifest: provenanceManifestFile,
     published: published.length,
     markdown,
     indexes,

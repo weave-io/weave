@@ -21,6 +21,7 @@
 
 import type { TrajectorySummary } from "@weaveio/weave-core";
 import { z } from "zod";
+import type { JudgeIdentity } from "./report-schema.js";
 
 // ---------------------------------------------------------------------------
 // Shared identifier primitive
@@ -807,6 +808,11 @@ export interface PromptProvenanceManifest {
   gitSha: string;
   /** Ordered list of provenance records, one per agent. */
   records: PromptProvenanceRecord[];
+  /**
+   * The judge that scored the run (Spec 37, task 16.4), added when the
+   * bundle is written. Absent when no judge scored it.
+   */
+  judge?: JudgeIdentity;
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,6 +1052,55 @@ export type ScoringError =
       /** The scoring dimension that encountered the error. */
       dimension: ScoringDimension;
       /** Human-readable description forwarded from the adapter. */
+      message: string;
+    }
+  | {
+      /**
+       * The judge endpoint could not be reached, or answered with a non-2xx
+       * status. `status` is 0 when no HTTP response arrived (network error,
+       * timeout). A judge failure: the case is errored, never failed.
+       */
+      type: "JudgeHttpError";
+      /** The dimension whose judge call failed. */
+      dimension: ScoringDimension;
+      /** HTTP status, or 0 when there was no response. */
+      status: number;
+      /** Human-readable description; local diagnostics only. */
+      message: string;
+    }
+  | {
+      /**
+       * The judge answered, but not with what was asked: the body is not
+       * JSON, an answer is missing or out of range, or it answered as a
+       * model version other than the pinned one.
+       */
+      type: "JudgeResponseInvalid";
+      dimension: ScoringDimension;
+      message: string;
+    }
+  | {
+      /**
+       * The text the judge would have to read (rubric, reference and
+       * response) is longer than it can take. It is refused, never
+       * truncated, so no verdict is given on a response the judge only
+       * partly saw.
+       */
+      type: "JudgeInputTooLong";
+      dimension: ScoringDimension;
+      /** Characters in the judge's input. */
+      length: number;
+      /** The most characters the judge is given. */
+      limit: number;
+      message: string;
+    }
+  | {
+      /**
+       * The questions derived for the judge cannot be sent: two criteria
+       * share a key, or a criterion uses a key the judge reserves for its
+       * own question (`overall`). A fixture problem, not a model failure.
+       */
+      type: "JudgeInputInvalid";
+      dimension: ScoringDimension;
       message: string;
     }
   | {
@@ -1708,6 +1763,11 @@ export interface EvalBundle {
   promptHashRecords: BundlePromptHashRecord[];
   /** Reference to the full provenance manifest. */
   provenanceRef: BundleProvenanceRef | null;
+  /**
+   * The judge that scored the run (Spec 37, task 16.4). Absent on a dry run
+   * and on a run assembled without one.
+   */
+  judge?: JudgeIdentity;
 }
 
 /**

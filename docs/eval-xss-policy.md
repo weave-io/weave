@@ -82,7 +82,8 @@ All strings placed into the Markdown document go through one of:
 3. **Boolean labels** — `"yes"` / `"no"` and `"🟢 green"` / `"🔴 red"`. Fixed literals.
 4. **ISO 8601 timestamps** — schema-validated. Cannot contain `<`, `>`, or `"`.
 5. **Git SHA hex strings** — schema-validated (`/^[A-Za-z0-9._-]+$/`). Cannot contain HTML.
-6. **`sanitizeMdValue(text)`** — applied to all `caseId`, `modelId`, `suite`, and `explanation.text` values. This function:
+6. **The judge line** (Spec 37, task 16.4) — `judge.id` and `judge.version` are fixed strings from the eval command, never judge output, and `JudgeIdentitySchema` admits only model slugs (letters, digits and `. _ : / -`); a bundle whose judge fails it is not written. Both also go through `sanitizeMdValue()`.
+7. **`sanitizeMdValue(text)`** — applied to all `caseId`, `modelId`, `suite`, and `explanation.text` values. This function:
    - Checks the input against `MARKDOWN_INJECTION_PATTERNS` (see below)
    - Returns an empty string for any match (injection attempt is discarded)
    - Escapes `|` to `&#124;` for surviving strings (prevents Markdown table breakage)

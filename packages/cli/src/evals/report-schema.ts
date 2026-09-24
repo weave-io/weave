@@ -503,6 +503,39 @@ export const ErrorClassificationSchema = z
     "errorClassification must be a label of letters, digits and hyphens",
   );
 
+/** Longest judge `id` or `version` a published record accepts. */
+export const JUDGE_FIELD_MAX_CHARS = 120;
+
+const JudgeFieldSchema = z
+  .string()
+  .min(1, "judge fields must be non-empty")
+  .max(
+    JUDGE_FIELD_MAX_CHARS,
+    `judge fields must be at most ${JUDGE_FIELD_MAX_CHARS} characters`,
+  )
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/,
+    "judge fields must be a model slug of letters, digits and . _ : / -",
+  );
+
+/**
+ * The judge that scored a run (Spec 37, task 16.4): `id` is the judge model
+ * (`typesafe/jev-1.13`), `version` the dated version it is pinned to and
+ * answered as (`typesafe/jev-1.13-20260917`).
+ *
+ * Both are fixed strings from the eval command, never judge output: the
+ * pattern admits a model slug only. `eval compare` refuses to compare runs
+ * whose judges differ in either field.
+ */
+export const JudgeIdentitySchema = z
+  .object({
+    id: JudgeFieldSchema,
+    version: JudgeFieldSchema,
+  })
+  .strict();
+
+export type JudgeIdentity = z.infer<typeof JudgeIdentitySchema>;
+
 /**
  * Optional count of errored cases on an aggregate record. Omitted when no
  * case errored, so a run without errored cases publishes exactly what it
@@ -795,6 +828,11 @@ export const PublicReportBundleSchema = z
         repeatCount: RepeatCountSchema.optional(),
       })
       .strict(),
+    /**
+     * The judge that scored the run. Absent on runs made before task 16.4
+     * and on runs no judge scored (a dry run).
+     */
+    judge: JudgeIdentitySchema.optional(),
     /** Per-suite public summaries. */
     suiteSummaries: z.array(SuiteSummaryEntrySchema),
   })

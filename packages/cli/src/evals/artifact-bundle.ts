@@ -91,6 +91,7 @@ import { countCaseOutcomes, erroredCasesField } from "./case-outcomes.js";
 import { DashboardIndexWriter } from "./dashboard-indexes.js";
 import { assemblePublicReportBundle } from "./report-bundle.js";
 import { renderPublicReportBundle } from "./report-markdown.js";
+import { type JudgeIdentity, JudgeIdentitySchema } from "./report-schema.js";
 import type { ResultsRepoPublisher } from "./results-repo.js";
 import {
   assertJsonPublishSafe,
@@ -286,6 +287,14 @@ export interface WriteBundleOptions {
    * wrote before repeats existed.
    */
   repeatCount?: number;
+  /**
+   * The judge that scored the run (Spec 37, task 16.4). Recorded in
+   * `bundle-index.json`, `public-report.json` and `provenance-manifest.json`
+   * so `weave eval compare` can refuse runs scored by different judges.
+   * Never recorded on a dry run, which no judge scored. Validated against
+   * `JudgeIdentitySchema` before anything is written.
+   */
+  judge?: JudgeIdentity;
 }
 
 /**
@@ -582,9 +591,25 @@ export function assembleBundle(options: {
   dryRun: boolean;
   /** How many times each case ran per model. Defaults to 1. */
   repeatCount?: number;
+  /** The judge that scored the run; ignored on a dry run. */
+  judge?: JudgeIdentity;
 }): Result<EvalBundle, BundleError> {
   const { runnerResults, provenanceManifest, gitSha, assembledAt, dryRun } =
     options;
+
+  // The judge is published, so it must be the slug-only shape the public
+  // schema accepts; anything else is refused rather than written.
+  const judge = dryRun ? undefined : options.judge;
+  if (judge !== undefined) {
+    const judgeCheck = JudgeIdentitySchema.safeParse(judge);
+    if (!judgeCheck.success) {
+      return err({
+        type: "BundleSanitizationError",
+        message: `The recorded judge is not publishable: ${judgeCheck.error.issues.map((i) => i.message).join("; ")}`,
+        field: "judge",
+      });
+    }
+  }
   const repeatCount = options.repeatCount ?? 1;
 
   // Group runner results by suite name so multi-model runs (one RunnerResult
@@ -653,6 +678,7 @@ export function assembleBundle(options: {
     scoreFiles,
     promptHashRecords,
     provenanceRef,
+    ...(judge !== undefined ? { judge: { ...judge } } : {}),
   };
 
   // Validate the assembled bundle passes publish-safety checks
@@ -836,6 +862,7 @@ export class ArtifactBundleWriter {
       assembledAt,
       dryRun,
       repeatCount: options.repeatCount,
+      judge: options.judge,
     });
 
     if (bundleResult.isErr()) {
@@ -1098,8 +1125,13 @@ export class ArtifactBundleWriter {
             Promise.resolve(),
           );
         }
-        // Sanitize the manifest before writing
-        const sanitized = sanitizeProvenanceManifest(provenanceManifest);
+        // Sanitize the manifest before writing. The judge is added here, at
+        // write time, because the manifest is derived before any case runs.
+        const sanitized = sanitizeProvenanceManifest(
+          bundle.judge !== undefined
+            ? { ...provenanceManifest, judge: bundle.judge }
+            : provenanceManifest,
+        );
         return writeJson(
           sanitized,
           "provenance-manifest.json",
@@ -1174,6 +1206,8 @@ export class ArtifactBundleWriter {
           dryRun: bundle.dryRun,
           runId,
           runSummary: bundle.runSummary,
+          // The judge that scored the run — read first by `eval compare`.
+          ...(bundle.judge !== undefined ? { judge: bundle.judge } : {}),
           // publicFiles: closed list of allowlisted public artifacts for this run.
           // Website loaders MUST only fetch files listed here — no directory walking.
           publicFiles,

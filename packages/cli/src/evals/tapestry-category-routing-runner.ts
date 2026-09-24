@@ -42,10 +42,12 @@
  * heuristics in the final score record. The locally computed `routingCorrectness`
  * is preserved — it always overrides any routing score the scorer may produce.
  *
- * Scorer errors are converted to the runner's existing typed per-case error
- * result (`ScorerAdapterError`), preserving suite continuation and raw artifact
- * boundaries. A scorer failure never throws — the case receives a zero-score
- * error result and the suite continues.
+ * Scorer (judge) errors error the case — `errored: true` with the error's
+ * classification — whenever the judge's verdict was needed to decide it. A
+ * required case whose route fails the routing gate is the one exception: it
+ * fails whatever the judge says, so it is scored as failed on routing alone
+ * (`buildScorerUnavailableScoreRecord()`). A scorer failure never throws, and
+ * the suite continues.
  *
  * When no scorer is injected, the runner uses local heuristic scoring for all
  * four dimensions (useful for isolated unit tests).
@@ -85,7 +87,7 @@
  *     raw model content, and a bounded `RawErrorSummary`.
  */
 
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, ResultAsync } from "neverthrow";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
@@ -112,6 +114,7 @@ import type {
   RunnerError,
   RunnerResult,
   ScoringDimension,
+  ScoringError,
   TranscriptMessage,
 } from "./types.js";
 
@@ -1422,6 +1425,19 @@ export function buildScorerUnavailableScoreRecord(
 }
 
 /**
+ * Whether a case's verdict is settled without the judge: a required case
+ * whose route fails the deterministic routing gate fails whatever the judge
+ * says. Every other case needs the judge's verdict, so when the judge fails
+ * the case is errored rather than scored on routing alone.
+ */
+function routeAloneDecides(
+  rubric: EvalRubric,
+  routingCorrectness: DimensionScore,
+): boolean {
+  return rubric.scoring.required && routingCorrectness.score < 0.95;
+}
+
+/**
  * Average of the qualitative dimensions (`delegationCorrectness`,
  * `executionCompleteness`, `rationaleQuality`) that actually apply to the case,
  * or `undefined` when none of them does.
@@ -1971,13 +1987,14 @@ export class TapestryCategoryRoutingRunner {
         // When a scorer is injected, call it for qualitative dimensions and
         // merge with the locally computed deterministic routing score.
         //
-        // A scorer failure is recovered here (via `.orElse`), NOT propagated
-        // to the outer `.match()` error branch. The deterministic
-        // `routingCorrectness` was already computed above and is preserved
-        // unconditionally: judge/scorer unavailability is a distinct failure
-        // mode from a wrong deterministic route, and must never zero out or
-        // discard a correct (or incorrect) routing decision. See
-        // `buildScorerUnavailableScoreRecord()`.
+        // A scorer (judge) failure errors the case — it goes to the outer
+        // `.match()` error branch — whenever the judge's verdict was needed
+        // to decide it (Spec 37, 16.4): a correct route on a required case
+        // still has the judge's gate to clear, and an optional case's total
+        // includes the judge's score. Only a required case with a wrong
+        // route is decided without the judge: it fails the routing gate
+        // whatever the judge would have said, so that deterministic failure
+        // is recovered here and scored (`buildScorerUnavailableScoreRecord()`).
         if (this.scorer !== undefined) {
           const routingCorrectness = scoreRoutingCorrectness(analysis);
           return this.scorer
@@ -1995,6 +2012,17 @@ export class TapestryCategoryRoutingRunner {
               scorerDegradation: undefined as ScorerDegradation | undefined,
             }))
             .orElse((scoringError) => {
+              if (!routeAloneDecides(rubric, routingCorrectness)) {
+                return errAsync<
+                  {
+                    runOutput: ModelRunOutput;
+                    scoreRecord: NormalizedScoreRecord;
+                    composedPrompt: string;
+                    scorerDegradation: ScorerDegradation | undefined;
+                  },
+                  ScoringError
+                >(scoringError);
+              }
               const errorType =
                 "type" in scoringError
                   ? String(scoringError.type)

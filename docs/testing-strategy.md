@@ -540,13 +540,18 @@ seam, so `judgeCalls` carries that projection verbatim. Thirteen of the fourteen
 migrated. The same applies to the rubric text and reference the scorer builds
 for each dimension, which no unit test had covered at all.
 
+(Since Spec 37 task 16.4 the projection is gone: the judge is shown the
+answer itself, and `tests/evals/scoring.scenario.test.ts` and
+`tests/evals/judge.scenario.test.ts` assert what it is shown, including every
+request `JevJudge` makes to a stubbed decisions endpoint.)
+
 What stayed, in
 [`langchain-agent-evals.test.ts`](../packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts):
 
 | Kept | Why |
 | --- | --- |
 | `StubLangChainJudge`, `StubAgentEvalsScorer` | Test infrastructure that ships in `src`. FIFO order, default fallback, the `NotConfigured` call index and `.calls` are a contract for test authors, not users. `StubLangChainJudge` backs `tests/support/evals.ts`, so a regression in it would misreport every eval scenario |
-| `RealLangChainJudge` | The production judge, which every scenario replaces by definition. Its dynamic-import failure path, per-rubric evaluator cache and the exact `{reference_outputs}` placeholder names need an injected module loader |
+| `RealLangChainJudge` | The production judge until task 16.4 (now only the acceptance harness's reference judge), which every scenario replaces by definition. Its dynamic-import failure path, per-rubric evaluator cache and the exact `{reference_outputs}` placeholder names need an injected module loader |
 | `buildJudgmentExecutionDimension()` outside `task_completion` | The scorer calls it only once `scoreExecution()` has established the kind, so the guard is unreachable from a run |
 | `RubricCaseMismatch` | A runner builds its `ModelRunOutput` with `evalCase.id` as the `caseId`; the scorer looks the rubric up by `run.caseId` and compares it to `evalCase.id`. Same string by construction — the branch cannot fire. The reachable half, *no rubric at all*, is a scenario |
 | A non-applicable dimension's `rationale` | `buildDimensionRationales()` copies a reason only for the dimensions that counted, so "Not applicable: …" reaches no file, not even a `--raw-artifacts` one |

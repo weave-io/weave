@@ -55,6 +55,7 @@ import {
   EXPLANATION_MAX_CHARS,
   type ExplanationSource,
   FORBIDDEN_EXPLANATION_PATTERNS,
+  type JudgeIdentity,
   type ReportSchemaError,
 } from "./report-schema.js";
 import type {
@@ -435,12 +436,17 @@ export function sanitizeProvenanceManifest(
   producedAt: string;
   gitSha: string;
   records: SanitizedProvenanceRecord[];
+  judge?: JudgeIdentity;
 } {
   return {
     version: manifest.version,
     producedAt: manifest.producedAt,
     gitSha: manifest.gitSha,
     records: manifest.records.map(sanitizeProvenanceRecord),
+    // The judge's two slug fields, copied by name: nothing else rides along.
+    ...(manifest.judge !== undefined
+      ? { judge: { id: manifest.judge.id, version: manifest.judge.version } }
+      : {}),
   };
 }
 

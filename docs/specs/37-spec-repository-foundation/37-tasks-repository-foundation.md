@@ -163,7 +163,7 @@ All metrics are computed over top-level sessions (`parent_id IS NULL`) and their
 | `packages/cli/src/evals/runner.ts` | `EvalOrchestrator` and repeatability diagnostics (groups 16, 18). |
 | `packages/cli/src/evals/artifact-bundle.ts` | Bundle writer and publisher hand-off (groups 16.1, 5.7). |
 | `packages/cli/src/evals/tapestry-category-routing-runner.ts` | Category-routing gate and generic-fallback detector (group 16.2). |
-| `packages/cli/src/evals/langchain-agent-evals.ts`, `packages/cli/src/commands/eval.ts` | `LangChainJudge` interface and the hard-coded judge model (group 16.4). |
+| `packages/cli/src/evals/jev-judge.ts`, `packages/cli/src/evals/judge-questions.ts`, `packages/cli/src/evals/langchain-agent-evals.ts`, `packages/cli/src/commands/eval.ts`, `tests/evals/judge.scenario.test.ts` | The judge (TypeSafe Jev, pinned in `eval.ts`), what it is asked per dimension, the `LangChainJudge` interface and scorer, and the judge scenarios (group 16.4). |
 | `tests/evals/suite-runners.scenario.test.ts` | Scenarios for the empty-run guard of #205: every suite fails closed (group 16.1). |
 | `packages/cli/src/evals/model-matrix.ts`, `tests/evals/model-sets.scenario.test.ts` | The `dev` model subset and `--models` selector, and its scenarios (group 17.1). |
 | `packages/cli/src/evals/run-report.ts`, `tests/evals/diagnosis.scenario.test.ts` | The report a live run prints, and the single-case diagnosis scenarios (group 17.2). |

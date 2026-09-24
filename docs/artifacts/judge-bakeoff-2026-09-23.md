@@ -314,6 +314,8 @@ The re-scored items, first run → re-run:
 
 ### Decision for 16.4
 
+> **Note, 24 Sep 2026 (task 16.4b).** Jev is now the production judge; see "The judge" in [`docs/agent-evals.md`](../agent-evals.md#the-judge). Two rubrics this re-run scored against have changed since: `pattern-plan-release-checklist` and `pattern-plan-settings-refactor` now list the commands their case has (in the case description) and say any other command is invented, because without an inventory "no invented commands" could not be checked. The re-run above used the earlier text. The production judge asks the same criterion and overall questions as this check, from the same `SIGNAL_QUESTIONS`, and does not ask the `quality` score question.
+
 **The judge is Jev (`typesafe/jev-1.13`).** Task 16.4b wires it in behind `LangChainJudge` in place of the hard-coded `JUDGE_MODEL_ID`; the chat-model fallback is not needed. The two remaining misses (file-located blockers, invented commands) are the checks 16.4b's rubric-derived questions should ask directly.
 
 ### Cost
