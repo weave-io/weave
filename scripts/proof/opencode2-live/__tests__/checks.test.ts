@@ -103,7 +103,13 @@ const LOOM_TOOLS = [tool("read"), tool("subagent", "- shuttle: worker")];
 /** The host refused Loom's call to its built-in `explore`. */
 const exploreRefused = toolRound("subagent", "call_0", {
   agent: "explore",
-  result: "Permission denied: subagent",
+  result: JSON.stringify({
+    error: {
+      type: "permission.rejected",
+      message: "Permission denied: subagent",
+    },
+    content: [],
+  }),
 });
 
 const delegatingRun: CapturedRequest[] = [
@@ -385,6 +391,28 @@ describe("a run where the host let Loom spawn explore", () => {
     expect(refused.status).toBe("failed");
     expect(refused.evidence).toContain("explore ran");
   });
+});
+
+describe("a run where Loom's explore call failed for a reason other than its permissions", () => {
+  for (const result of ['{"error":{"type":"agent.not_found"}}', "OK"]) {
+    it(`fails the refusal check when the result is ${result}`, () => {
+      const other = toolRound("subagent", "call_0", {
+        agent: "explore",
+        result,
+      });
+      const requests = [
+        request("You are a title generator.", []),
+        request(LOOM_SYSTEM, LOOM_TOOLS),
+        request(LOOM_SYSTEM, LOOM_TOOLS, other),
+      ];
+      const refused = verdict(
+        checks.evaluate(observation({ run: { exitCode: 0, requests } })),
+        "builtin_refused",
+      );
+      expect(refused.status).toBe("failed");
+      expect(refused.evidence).toContain("not refused by a permission rule");
+    });
+  }
 });
 
 describe("a run where Loom never got an answer for its explore call", () => {

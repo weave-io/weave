@@ -104,6 +104,13 @@ interface ParsedRequest {
 
 const MAX_EVIDENCE = 300;
 
+/**
+ * The error type OpenCode 2 puts in a tool result when a permission rule
+ * denies the call (host 2.0.16:
+ * `{"error":{"type":"permission.rejected","message":"Permission denied: subagent"}}`).
+ */
+const PERMISSION_REJECTED = "permission.rejected";
+
 function bounded(text: string): string {
   if (text.length <= MAX_EVIDENCE) return text;
   return `${text.slice(0, MAX_EVIDENCE - 1)}…`;
@@ -396,6 +403,14 @@ export class LiveChecks {
       return this.failed(
         "builtin_refused",
         `no result came back for ${primary}'s call to ${builtin}`,
+      );
+    }
+    // Any other outcome ("agent not found", a plain answer) would not show
+    // that the host refused the call because of the caller's permissions.
+    if (!result.includes(PERMISSION_REJECTED)) {
+      return this.failed(
+        "builtin_refused",
+        `${primary}'s call to ${builtin} was not refused by a permission rule: ${result}`,
       );
     }
     return this.passed(

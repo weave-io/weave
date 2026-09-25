@@ -110,7 +110,7 @@ The script reports these checks:
 | `delegation_returned` | A later Loom request carried the tool result whose `tool_call_id` matches its `subagent` call for Shuttle. |
 | `subagent_policy` | Shuttle was not offered `subagent` or `question`. |
 | `builtins_hidden` | The host holds built-in subagents (agents without the ownership marker in `subagent` mode: `explore`, `general`), and the `subagent` tool Loom was offered lists none of them. |
-| `builtin_refused` | Before delegating to Shuttle, the scripted model called `subagent` for the host's `explore`. The result came back to Loom, and no request carried `explore`'s system prompt, so it never ran. See [OpenCode 2's built-in subagents](../opencode2-adapter.md#opencode-2s-built-in-subagents). |
+| `builtin_refused` | Before delegating to Shuttle, the scripted model called `subagent` for the host's `explore`. The result came back to Loom as a `permission.rejected` error, and no request carried `explore`'s system prompt, so it never ran. See [OpenCode 2's built-in subagents](../opencode2-adapter.md#opencode-2s-built-in-subagents). |
 
 Exit code 0 means every check passed. Exit code 1 means a check failed or was
 skipped. Exit code 2 means the harness could not run, for example because the
