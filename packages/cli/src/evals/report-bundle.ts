@@ -316,6 +316,9 @@ export function assemblePublicReportBundle(
       bundle.runSummary.repeatCount > 1
         ? { repeatCount: bundle.runSummary.repeatCount }
         : {}),
+      ...(bundle.runSummary.track !== undefined
+        ? { track: bundle.runSummary.track }
+        : {}),
     },
     ...(bundle.judge !== undefined ? { judge: { ...bundle.judge } } : {}),
     suiteSummaries,

@@ -646,9 +646,12 @@ jobs:
     name: Run trajectory evals (harness track)
     runs-on: ubuntu-latest
     # Runs after run-evals, never beside it: both jobs publish, and a run ID
-    # (`<sha7>-<date>-<NNN>`) is allocated by reading the published manifest,
-    # so two concurrent publications could pick the same ID and the second
-    # immutable upload would be rejected. `always()` keeps a skipped or
+    # (`<sha7>-<date>-<NNN>`) is allocated by reading the published manifests
+    # (dashboard-manifest.json and trajectory-manifest.json), so two
+    # concurrent publications could pick the same ID and the second immutable
+    # upload would be rejected. The indexes are track-aware (#183): this job
+    # writes only trajectory-manifest.json, latest-trajectory.json and its
+    # model comparison, never the text run's latest.json. `always()` keeps a skipped or
     # failed text job from suppressing the trajectory job; validate-inputs
     # must still have succeeded.
     needs: [validate-inputs, run-evals]

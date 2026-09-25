@@ -51,6 +51,7 @@
 
 import { TrajectorySummarySchema } from "@weaveio/weave-core";
 import { z } from "zod";
+import { EVAL_TRACKS } from "./eval-track.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -405,6 +406,16 @@ export const RepeatCountSchema = z
   .number()
   .int()
   .min(2, "repeatCount is written only when each case ran more than once");
+
+/**
+ * The eval track a run was restricted to (`weave eval run --track`).
+ *
+ * Written only when the run was restricted to one track; a run of both tracks
+ * (no `--track`) omits it. The dashboard indexes read it to keep a trajectory
+ * run from replacing the text run that `latest.json` points at (see
+ * `docs/eval-sanitization-and-publish-pipeline.md`, "Track-aware indexes").
+ */
+export const RunTrackSchema = z.enum(EVAL_TRACKS);
 
 /** Pass rates are compared with this tolerance (floating-point division). */
 const PASS_RATE_EPSILON = 1e-9;
@@ -855,6 +866,11 @@ export const PublicReportBundleSchema = z
          * than 1; the counts above are then attempts.
          */
         repeatCount: RepeatCountSchema.optional(),
+        /**
+         * The track the run was restricted to (`--track`). Absent on a run of
+         * both tracks and on runs published before tracks were recorded.
+         */
+        track: RunTrackSchema.optional(),
       })
       .strict(),
     /**

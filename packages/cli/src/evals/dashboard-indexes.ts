@@ -23,6 +23,17 @@
  *     (models sorted alphabetically), enabling model-comparison views.
  *   - `latest.json` — snapshot of the latest run's aggregate metrics,
  *     enabling fast "current status" badges.
+ *   - `trajectory-manifest.json` / `latest-trajectory.json` — the same two
+ *     shapes for runs of the harness trajectory track only.
+ *
+ * # Tracks
+ *
+ * `DashboardIndexWriter` splits runs with `indexTrackOf()`: text runs and runs
+ * of both tracks feed the main files above (manifest, `latest.json`,
+ * `last-N-runs.json`, suite and scenario histories); trajectory runs feed
+ * `trajectory-manifest.json` and `latest-trajectory.json`. A track with no run
+ * gets no files, so a CI job publishing one track's run never rewrites the
+ * other track's pointer (weave-io/weave#183).
  *
  * # Freshness and stale-detection
  *
@@ -68,7 +79,6 @@ import { erroredCasesField, scoredPassRate } from "./case-outcomes.js";
 import { TARGET_RUNS_PREFIX } from "./github-contents-publisher.js";
 import {
   appendSuiteHistoryPoint,
-  assembleDashboardManifest,
   assembleModelComparisonManifest,
   buildDashboardEntry,
 } from "./report-bundle.js";
@@ -140,6 +150,39 @@ export const LAST_N_RUNS_FILE = "last-N-runs.json";
  * File name prefix for per-suite scenario history indexes.
  */
 export const SCENARIO_HISTORY_FILE_PREFIX = "scenario-history-";
+
+/**
+ * File name for the latest trajectory-run snapshot.
+ *
+ * Same shape as `latest.json` (`LatestRunSnapshot`), but it points at the
+ * newest run of the harness trajectory track (`--track trajectory`). Kept in
+ * its own file so the trajectory job, which publishes after the text job,
+ * never moves the `latest.json` pointer the dashboard reads for its main
+ * results.
+ */
+export const LATEST_TRAJECTORY_SNAPSHOT_FILE = "latest-trajectory.json";
+
+/**
+ * File name for the trajectory-run manifest.
+ *
+ * Same shape as `dashboard-manifest.json` (`DashboardManifest`), listing only
+ * trajectory-track runs, newest-first.
+ */
+export const TRAJECTORY_MANIFEST_FILE = "trajectory-manifest.json";
+
+/**
+ * The set of index files a run belongs in.
+ *
+ * - `"main"` — `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`
+ *   and the suite and scenario histories. Text-track runs and runs of both
+ *   tracks.
+ * - `"trajectory"` — `trajectory-manifest.json` and `latest-trajectory.json`.
+ *   Runs restricted to the harness trajectory track.
+ *
+ * Every run, whichever set it belongs in, gets its own
+ * `model-comparison-<runId>.json`.
+ */
+export type IndexTrack = "main" | "trajectory";
 
 // ---------------------------------------------------------------------------
 // Freshness metadata helpers
@@ -592,6 +635,198 @@ export function buildScenarioHistories(
 }
 
 /**
+ * True when a published case entry came from a harness trajectory case.
+ *
+ * A trajectory case that ran carries a `trajectorySummary`; one that errored
+ * carries an `errorClassification` of the form `trajectory-<ErrorType>`
+ * (`trajectory-case-executor.ts`). No text-only case carries either.
+ */
+export function isTrajectoryCaseEntry(entry: PublicCaseEntry): boolean {
+  if (entry.trajectorySummary !== undefined) return true;
+  return entry.errorClassification?.startsWith("trajectory-") === true;
+}
+
+/**
+ * Decide which set of index files a run belongs in.
+ *
+ * The run's recorded `runSummary.track` decides when present. A run published
+ * before tracks were recorded has none, so it is classified by its cases: a
+ * run in which every case entry is a trajectory case is a trajectory run, and
+ * anything else — a text run or a run of both tracks — is a main run.
+ *
+ * @param bundle - The run's validated public report.
+ * @returns `"trajectory"` or `"main"`.
+ */
+export function indexTrackOf(bundle: PublicReportBundle): IndexTrack {
+  const recorded = bundle.runSummary.track;
+  if (recorded === "trajectory") return "trajectory";
+  if (recorded === "text") return "main";
+
+  const entries = bundle.suiteSummaries.flatMap((suite) => suite.cases);
+  if (entries.length === 0) return "main";
+  if (entries.every(isTrajectoryCaseEntry)) return "trajectory";
+  return "main";
+}
+
+/**
+ * Build a `DashboardManifest` listing `runs` in the order given.
+ *
+ * @param runs - Run descriptors, newest-first.
+ * @param updatedAt - ISO 8601 timestamp for the manifest.
+ * @returns `ok(DashboardManifest)` or `err(DashboardIndexError)`.
+ */
+export function buildDashboardManifest(
+  runs: RunDescriptor[],
+  updatedAt: string,
+): Result<DashboardManifest, DashboardIndexError> {
+  const entries = runs.map(({ runId, bundle }) =>
+    buildDashboardEntry(
+      bundle,
+      runId,
+      `${TARGET_RUNS_PREFIX}/${runId}/public-report.json`,
+    ),
+  );
+
+  const parsed = DashboardManifestSchema.safeParse({
+    schemaVersion: DASHBOARD_MANIFEST_SCHEMA_VERSION,
+    updatedAt,
+    totalRuns: entries.length,
+    runs: entries,
+  });
+  if (!parsed.success) {
+    return err({
+      type: "IndexGenerationError",
+      message: `Dashboard manifest schema validation failed: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+    });
+  }
+  return ok(parsed.data);
+}
+
+/**
+ * Build one `ModelComparisonManifest` per run, keyed by run ID.
+ *
+ * @param runs - Run descriptors in any order.
+ * @returns `ok(Map)` or `err(DashboardIndexError)` naming the run that failed.
+ */
+export function buildModelComparisons(
+  runs: RunDescriptor[],
+): Result<Map<string, ModelComparisonManifest>, DashboardIndexError> {
+  const modelComparisons = new Map<string, ModelComparisonManifest>();
+  for (const { runId, bundle } of runs) {
+    const compResult = assembleModelComparisonManifest(bundle, runId);
+    if (compResult.isErr()) {
+      return err({
+        type: "ReportAssemblyError",
+        runId,
+        message: `Failed to assemble model comparison manifest for run "${runId}": ${compResult.error.message}`,
+      });
+    }
+    modelComparisons.set(runId, compResult.value);
+  }
+  return ok(modelComparisons);
+}
+
+/**
+ * The index files of the trajectory track.
+ */
+export interface GeneratedTrajectoryIndexes {
+  /** `trajectory-manifest.json` — trajectory runs, newest-first. */
+  manifest: DashboardManifest;
+  /** `latest-trajectory.json` — the newest trajectory run. */
+  latestSnapshot: LatestRunSnapshot;
+  /** Per-run model comparison manifests, keyed by run ID. */
+  modelComparisons: Map<string, ModelComparisonManifest>;
+}
+
+/**
+ * The index files of both tracks. A track with no runs is `null`, and none
+ * of its files are written — so a publish of one track's run never touches
+ * the other track's pointer.
+ */
+export interface GeneratedTrackIndexes {
+  /** Main indexes (text runs and runs of both tracks), or `null` when none. */
+  main: GeneratedIndexes | null;
+  /** Trajectory indexes, or `null` when there is no trajectory run. */
+  trajectory: GeneratedTrajectoryIndexes | null;
+}
+
+/**
+ * Generate the trajectory-track index files.
+ *
+ * @param runs - Trajectory run descriptors, newest-first. Must be non-empty.
+ * @param updatedAt - ISO 8601 timestamp for all index files.
+ * @returns `ok(GeneratedTrajectoryIndexes)` or `err(DashboardIndexError)`.
+ */
+export function generateTrajectoryIndexes(
+  runs: RunDescriptor[],
+  updatedAt: string,
+): Result<GeneratedTrajectoryIndexes, DashboardIndexError> {
+  const newest = runs.at(0);
+  if (newest === undefined) {
+    return err({
+      type: "IndexGenerationError",
+      message: "Cannot generate trajectory indexes from an empty run list.",
+    });
+  }
+  const manifest = buildDashboardManifest(runs, updatedAt);
+  if (manifest.isErr()) return err(manifest.error);
+  const modelComparisons = buildModelComparisons(runs);
+  if (modelComparisons.isErr()) return err(modelComparisons.error);
+
+  return ok({
+    manifest: manifest.value,
+    latestSnapshot: buildLatestSnapshot(newest, updatedAt),
+    modelComparisons: modelComparisons.value,
+  });
+}
+
+/**
+ * Generate every index file, keeping the two tracks apart.
+ *
+ * Runs are split with `indexTrackOf()`. Main runs feed
+ * `generateDashboardIndexes()` (so `latest.json` keeps meaning "the latest
+ * text run"); trajectory runs feed `generateTrajectoryIndexes()`. A track with
+ * no runs yields `null`, so its files are neither regenerated nor published.
+ *
+ * @param runs - All run descriptors, newest-first. Must be non-empty.
+ * @param updatedAt - ISO 8601 timestamp for all index files.
+ * @param lastN - Maximum runs in `last-N-runs.json` (default 10).
+ * @returns `ok(GeneratedTrackIndexes)` or `err(DashboardIndexError)`.
+ */
+export function generateTrackAwareIndexes(
+  runs: RunDescriptor[],
+  updatedAt: string,
+  lastN: number = DEFAULT_LAST_N,
+): Result<GeneratedTrackIndexes, DashboardIndexError> {
+  if (runs.length === 0) {
+    return err({
+      type: "IndexGenerationError",
+      message: "Cannot generate dashboard indexes from an empty run list.",
+    });
+  }
+  const mainRuns = runs.filter((r) => indexTrackOf(r.bundle) === "main");
+  const trajectoryRuns = runs.filter(
+    (r) => indexTrackOf(r.bundle) === "trajectory",
+  );
+
+  let main: GeneratedIndexes | null = null;
+  if (mainRuns.length > 0) {
+    const generated = generateDashboardIndexes(mainRuns, updatedAt, lastN);
+    if (generated.isErr()) return err(generated.error);
+    main = generated.value;
+  }
+
+  let trajectory: GeneratedTrajectoryIndexes | null = null;
+  if (trajectoryRuns.length > 0) {
+    const generated = generateTrajectoryIndexes(trajectoryRuns, updatedAt);
+    if (generated.isErr()) return err(generated.error);
+    trajectory = generated.value;
+  }
+
+  return ok({ main, trajectory });
+}
+
+/**
  * Generate all dashboard indexes from an ordered set of run descriptors.
  *
  * This is the primary pure-function entry point for index generation.
@@ -625,77 +860,10 @@ export function generateDashboardIndexes(
     });
   }
 
-  // --- Dashboard manifest: newest-first using report-bundle assembly helpers ---
-
-  // Build entries newest-first using report-bundle helpers
-  let dashboardManifest: DashboardManifest | null = null;
-  for (const { runId, bundle } of runs) {
-    const bundleReportPath = `${TARGET_RUNS_PREFIX}/${runId}/public-report.json`;
-    const entry = buildDashboardEntry(bundle, runId, bundleReportPath);
-
-    if (dashboardManifest === null) {
-      // First entry: initialise manifest with this single entry
-      const result = assembleDashboardManifest([], entry, updatedAt);
-      if (result.isErr()) {
-        return err({
-          type: "ReportAssemblyError",
-          runId,
-          message: `Failed to assemble dashboard manifest entry for run "${runId}": ${result.error.message}`,
-        });
-      }
-      dashboardManifest = result.value;
-    } else {
-      // Subsequent entries: append (they are already oldest-first in the tail)
-      const result = assembleDashboardManifest(
-        dashboardManifest.runs,
-        entry,
-        updatedAt,
-      );
-      if (result.isErr()) {
-        return err({
-          type: "ReportAssemblyError",
-          runId,
-          message: `Failed to append dashboard manifest entry for run "${runId}": ${result.error.message}`,
-        });
-      }
-      // assembleDashboardManifest prepends the new entry — but we're iterating
-      // newest-to-oldest, so we need the newest entry always at the front.
-      // We reconstruct: take the existing manifest tail (older entries) and
-      // prepend the current entry on each iteration. Since runs[] is newest-first,
-      // after we process all runs, runs[0] (newest) will have been prepended last.
-      dashboardManifest = result.value;
-    }
-  }
-
-  if (dashboardManifest === null) {
-    return err({
-      type: "IndexGenerationError",
-      message: "Dashboard manifest assembly produced no result.",
-    });
-  }
-
-  // The manifest was built by prepending runs in newest-first order.
-  // assembleDashboardManifest([existingEntries], newEntry) = [newEntry, ...existingEntries]
-  // Since we iterate runs[0], runs[1], runs[2]... (newest-first), and each
-  // prepends, the final order is: runs[last], ..., runs[1], runs[0] (i.e. oldest-first).
-  // We need newest-first, so reverse the runs array in the manifest.
-  const reversedRuns = [...dashboardManifest.runs].reverse();
-
-  // Rebuild manifest with corrected ordering
-  const finalManifestResult = DashboardManifestSchema.safeParse({
-    schemaVersion: DASHBOARD_MANIFEST_SCHEMA_VERSION,
-    updatedAt,
-    totalRuns: reversedRuns.length,
-    runs: reversedRuns,
-  });
-
-  if (!finalManifestResult.success) {
-    return err({
-      type: "IndexGenerationError",
-      message: `Dashboard manifest schema validation failed: ${finalManifestResult.error.issues.map((i) => i.message).join("; ")}`,
-    });
-  }
-  dashboardManifest = finalManifestResult.data;
+  // --- Dashboard manifest: newest-first ---
+  const manifestResult = buildDashboardManifest(runs, updatedAt);
+  if (manifestResult.isErr()) return err(manifestResult.error);
+  const dashboardManifest = manifestResult.value;
 
   // --- Suite history manifests: oldest-first per suite ---
 
@@ -745,20 +913,9 @@ export function generateDashboardIndexes(
   }
 
   // --- Model comparison manifests: one per run ---
-
-  const modelComparisons = new Map<string, ModelComparisonManifest>();
-
-  for (const { runId, bundle } of runs) {
-    const compResult = assembleModelComparisonManifest(bundle, runId);
-    if (compResult.isErr()) {
-      return err({
-        type: "ReportAssemblyError",
-        runId,
-        message: `Failed to assemble model comparison manifest for run "${runId}": ${compResult.error.message}`,
-      });
-    }
-    modelComparisons.set(runId, compResult.value);
-  }
+  const modelComparisonsResult = buildModelComparisons(runs);
+  if (modelComparisonsResult.isErr()) return err(modelComparisonsResult.error);
+  const modelComparisons = modelComparisonsResult.value;
 
   // --- Latest snapshot: from runs[0] (newest) ---
   const latestRun = runs.at(0);
@@ -1010,7 +1167,7 @@ export function validatePublicReportBundleCompatibility(
     return err({
       type: "IndexParseError",
       path: filePath,
-      message: `public-report.json for run "${runId}" failed schema validation: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+      message: `public-report.json for run "${runId}" failed schema validation: ${[...new Set(parsed.error.issues.map((i) => i.message))].join("; ")}`,
     });
   }
 
@@ -1148,7 +1305,7 @@ export class DashboardIndexWriter {
         );
       }
 
-      const generateResult = generateDashboardIndexes(runs, updatedAt, lastN);
+      const generateResult = generateTrackAwareIndexes(runs, updatedAt, lastN);
       if (generateResult.isErr()) {
         return new ResultAsync(
           Promise.resolve(
@@ -1159,7 +1316,7 @@ export class DashboardIndexWriter {
         );
       }
 
-      return this.writeIndexFiles(generateResult.value, updatedAt);
+      return this.writeTrackIndexFiles(generateResult.value);
     });
   }
 
@@ -1246,9 +1403,8 @@ export class DashboardIndexWriter {
   // Private: write index files
   // ---------------------------------------------------------------------------
 
-  private writeIndexFiles(
-    indexes: GeneratedIndexes,
-    _updatedAt: string,
+  private writeTrackIndexFiles(
+    indexes: GeneratedTrackIndexes,
   ): ResultAsync<{ filesWritten: string[] }, DashboardIndexError> {
     const filesWritten: string[] = [];
 
@@ -1270,52 +1426,70 @@ export class DashboardIndexWriter {
       );
     };
 
-    // Chain all writes sequentially
-    return writeJson(indexes.dashboardManifest, DASHBOARD_MANIFEST_FILE)
-      .andThen(() => {
-        // Write all suite history manifests
-        return [...indexes.suiteHistories.entries()].reduce(
-          (acc, [suite, history]) =>
-            acc.andThen(() =>
-              writeJson(history, `${SUITE_HISTORY_FILE_PREFIX}${suite}.json`),
-            ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
-        );
-      })
-      .andThen(() => {
-        // Write all model comparison manifests
-        return [...indexes.modelComparisons.entries()].reduce(
-          (acc, [runId, comparison]) =>
-            acc.andThen(() =>
-              writeJson(
-                comparison,
-                `${MODEL_COMPARISON_FILE_PREFIX}${runId}.json`,
-              ),
-            ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
-        );
-      })
-      .andThen(() => writeJson(indexes.latestSnapshot, LATEST_SNAPSHOT_FILE))
-      .andThen(() => writeJson(indexes.lastNRuns, LAST_N_RUNS_FILE))
-      .andThen(() => {
-        // Write all scenario history indexes
-        return [...indexes.scenarioHistories.entries()].reduce(
-          (acc, [suite, scenarioHistory]) =>
-            acc.andThen(() =>
-              writeJson(
-                scenarioHistory,
-                `${SCENARIO_HISTORY_FILE_PREFIX}${suite}.json`,
-              ),
-            ),
-          ResultAsync.fromSafePromise<void, DashboardIndexError>(
-            Promise.resolve(),
-          ),
-        );
-      })
+    /** Writes `files` one after another, stopping at the first failure. */
+    const writeAll = (
+      files: ReadonlyArray<readonly [fileName: string, content: unknown]>,
+    ): ResultAsync<void, DashboardIndexError> =>
+      files.reduce(
+        (acc, [fileName, content]) =>
+          acc.andThen(() => writeJson(content, fileName)),
+        ResultAsync.fromSafePromise<void, DashboardIndexError>(
+          Promise.resolve(),
+        ),
+      );
+
+    return writeAll(mainIndexFiles(indexes.main))
+      .andThen(() => writeAll(trajectoryIndexFiles(indexes.trajectory)))
       .map(() => ({ filesWritten }));
   }
+}
+
+/**
+ * The main-track index files, in write order: manifest, suite histories,
+ * model comparisons, `latest.json`, `last-N-runs.json`, scenario histories.
+ * Empty when there is no main run.
+ */
+function mainIndexFiles(
+  indexes: GeneratedIndexes | null,
+): Array<readonly [string, unknown]> {
+  if (indexes === null) return [];
+  return [
+    [DASHBOARD_MANIFEST_FILE, indexes.dashboardManifest],
+    ...[...indexes.suiteHistories.entries()].map(
+      ([suite, history]) =>
+        [`${SUITE_HISTORY_FILE_PREFIX}${suite}.json`, history] as const,
+    ),
+    ...[...indexes.modelComparisons.entries()].map(
+      ([runId, comparison]) =>
+        [`${MODEL_COMPARISON_FILE_PREFIX}${runId}.json`, comparison] as const,
+    ),
+    [LATEST_SNAPSHOT_FILE, indexes.latestSnapshot],
+    [LAST_N_RUNS_FILE, indexes.lastNRuns],
+    ...[...indexes.scenarioHistories.entries()].map(
+      ([suite, scenarioHistory]) =>
+        [
+          `${SCENARIO_HISTORY_FILE_PREFIX}${suite}.json`,
+          scenarioHistory,
+        ] as const,
+    ),
+  ];
+}
+
+/**
+ * The trajectory-track index files, in write order: model comparisons,
+ * `trajectory-manifest.json`, `latest-trajectory.json`. Empty when there is
+ * no trajectory run.
+ */
+function trajectoryIndexFiles(
+  indexes: GeneratedTrajectoryIndexes | null,
+): Array<readonly [string, unknown]> {
+  if (indexes === null) return [];
+  return [
+    ...[...indexes.modelComparisons.entries()].map(
+      ([runId, comparison]) =>
+        [`${MODEL_COMPARISON_FILE_PREFIX}${runId}.json`, comparison] as const,
+    ),
+    [TRAJECTORY_MANIFEST_FILE, indexes.manifest],
+    [LATEST_TRAJECTORY_SNAPSHOT_FILE, indexes.latestSnapshot],
+  ];
 }

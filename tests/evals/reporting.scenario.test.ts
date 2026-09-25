@@ -1442,6 +1442,8 @@ const ALLOWED_INDEX_NAMES = [
   "dashboard-manifest.json",
   "latest.json",
   "last-N-runs.json",
+  "latest-trajectory.json",
+  "trajectory-manifest.json",
   "suite-history-loom-routing.json",
   "suite-history-tapestry.execution.json",
   "scenario-history-loom-routing.json",
@@ -1670,12 +1672,17 @@ function manifestResponse(manifest: unknown): Response {
 }
 
 describe("a rerun asks the results repository which runs it already holds", () => {
-  it("reports the runs sharing this commit and day, and ignores every other prefix", async () => {
+  it("reports the runs of both tracks sharing this commit and day, and ignores every other prefix", async () => {
     const calls: string[] = [];
     const publisher = new GitHubContentsPublisher(async (request) => {
       calls.push(
         `${request.method} ${request.url} auth=${request.headers.get("Authorization")}`,
       );
+      if (request.url.endsWith("trajectory-manifest.json")) {
+        return manifestResponse({
+          runs: [{ runId: "abc123d-2026-01-15-003" }],
+        });
+      }
       return manifestResponse({
         runs: [
           { runId: "abc123d-2026-01-15-001" },
@@ -1692,9 +1699,11 @@ describe("a rerun asks the results repository which runs it already holds", () =
     expect(ids._unsafeUnwrap()).toEqual([
       "abc123d-2026-01-15-001",
       "abc123d-2026-01-15-002",
+      "abc123d-2026-01-15-003",
     ]);
     expect(calls).toEqual([
       `GET ${API_PREFIX}indexes/v1/dashboard-manifest.json auth=Bearer ${TOKEN}`,
+      `GET ${API_PREFIX}indexes/v1/trajectory-manifest.json auth=Bearer ${TOKEN}`,
     ]);
   });
 

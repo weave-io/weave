@@ -55,6 +55,7 @@ import {
   assembleModelComparisonManifest,
   assemblePublicReportBundle,
 } from "../report-bundle.js";
+import { PublicReportBundleSchema } from "../report-schema.js";
 import { StubResultsRepoPublisher } from "../results-repo.js";
 import { assertJsonPublishSafe } from "../sanitizer.js";
 import type {
@@ -849,3 +850,47 @@ function makeRsrStubPublisher(): StubResultsRepoPublisher {
   });
   return stub;
 }
+
+// ---------------------------------------------------------------------------
+// ArtifactBundleWriter — the run's track
+// ---------------------------------------------------------------------------
+
+describe("ArtifactBundleWriter — track option", () => {
+  async function writeWithTrack(track?: "text" | "trajectory") {
+    const bundleRoot = resolve(TEMP_DIR, `track-${uid()}`);
+    const result = await new ArtifactBundleWriter(bundleRoot).writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "local",
+      dryRun: false,
+      ...(track === undefined ? {} : { track }),
+    });
+    const { bundleDir } = result._unsafeUnwrap();
+    return {
+      report: await Bun.file(resolve(bundleDir, "public-report.json")).json(),
+      index: await Bun.file(resolve(bundleDir, "bundle-index.json")).json(),
+    };
+  }
+
+  it("records the track in public-report.json and bundle-index.json", async () => {
+    const { report, index } = await writeWithTrack("text");
+
+    expect(report.runSummary.track).toBe("text");
+    expect(index.runSummary.track).toBe("text");
+  });
+
+  it("writes a public report the schema accepts with the track on it", async () => {
+    const { report } = await writeWithTrack("trajectory");
+
+    expect(PublicReportBundleSchema.safeParse(report).success).toBe(true);
+  });
+
+  it("records no track when the run was not restricted to one", async () => {
+    const { report, index } = await writeWithTrack();
+
+    expect(report.runSummary).not.toHaveProperty("track");
+    expect(index.runSummary).not.toHaveProperty("track");
+  });
+});

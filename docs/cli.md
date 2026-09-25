@@ -429,6 +429,8 @@ WEAVE_EVAL_REPEAT=3 weave eval run
 
 `weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted). It refuses runs with different cases, models, repeat counts or recorded judges. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
 
+`weave eval reindex [--dry-run]` rebuilds every dashboard index in `weave-io/weave-agent-evals` from the runs published there, keeping the text run (`latest.json`) and the trajectory run (`latest-trajectory.json`) apart, and uploads the index files. It never writes a run artifact. It needs `EVAL_RESULTS_REPO_TOKEN`; `--dry-run` rebuilds locally under `eval-bundles/reindex/` and uploads nothing. See [Track-aware indexes](./eval-sanitization-and-publish-pipeline.md#track-aware-indexes).
+
 `--repeat N` (1–20) runs every selected case N times per model and reports a pass rate per case × model and per suite × model; errored attempts (no scorable answer) are left out of the rate and counted separately. Without it, a run is exactly what it was before repeats existed. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 
 CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed. Empty env filter values are treated as unset, which lets CI workflow dispatch pass blank optional inputs when you want no filter. Empty CLI flag values are still rejected.

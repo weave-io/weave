@@ -136,3 +136,40 @@ describe("a maintainer runs one eval track", () => {
     expect(terminal.err.join("\n")).toContain("--track <name>");
   });
 });
+
+describe("a maintainer rebuilds the published dashboard indexes (weave eval reindex)", () => {
+  async function weave(argv: string[]) {
+    const terminal = new BufferTerminal();
+    const result = await run({
+      argv: ["bun", "weave", ...argv],
+      terminal,
+      colorEnabled: false,
+      fs: new MemoryFileSystem({}, "/project", "/home/user"),
+      env: {},
+    });
+    return {
+      exitCode: result._unsafeUnwrap(),
+      stdout: terminal.out.join("\n"),
+      stderr: terminal.err.join("\n"),
+    };
+  }
+
+  it("refuses without a results-repo token, naming the variable to set", async () => {
+    const { exitCode, stderr } = await weave(["eval", "reindex"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("EVAL_RESULTS_REPO_TOKEN");
+  });
+
+  it("lists reindex in the eval usage text", async () => {
+    const { stderr } = await weave(["eval"]);
+
+    expect(stderr).toContain("weave eval reindex [--dry-run]");
+  });
+
+  it("lists eval reindex in weave --help", async () => {
+    const { stdout } = await weave(["--help"]);
+
+    expect(stdout).toContain("eval reindex");
+  });
+});

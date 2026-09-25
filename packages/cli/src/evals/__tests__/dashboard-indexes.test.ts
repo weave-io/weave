@@ -19,6 +19,7 @@
  * | `validateLatestSnapshotCompatibility` | As above. |
  * | `validateScenarioHistoryCompatibility` | As above. |
  * | `generateDashboardIndexes([])` | `rebuildFromRuns()` returns early on an empty run set, so this error branch is unreachable from outside; it guards a future caller. |
+ * | `generateTrackAwareIndexes([])`, `generateTrajectoryIndexes([])` | As above. How runs are split between the two tracks is asserted on the index files in `tests/evals/track-indexes.scenario.test.ts`. |
  *
  * `validatePublicReportBundleCompatibility` is the one validator with a
  * production caller — `loadPublicReport()` — and its whole user-visible effect
@@ -32,6 +33,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   generateDashboardIndexes,
+  generateTrackAwareIndexes,
+  generateTrajectoryIndexes,
   LATEST_SNAPSHOT_SCHEMA_VERSION,
   validateDashboardManifestCompatibility,
   validateLatestSnapshotCompatibility,
@@ -54,6 +57,16 @@ describe("generateDashboardIndexes — empty input", () => {
   it("returns IndexGenerationError when runs is empty", () => {
     const result = generateDashboardIndexes([], FIXED_UPDATED_AT);
     expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("IndexGenerationError");
+  });
+
+  it("returns IndexGenerationError from the track-aware entry point too", () => {
+    const result = generateTrackAwareIndexes([], FIXED_UPDATED_AT);
+    expect(result._unsafeUnwrapErr().type).toBe("IndexGenerationError");
+  });
+
+  it("returns IndexGenerationError for an empty trajectory run list", () => {
+    const result = generateTrajectoryIndexes([], FIXED_UPDATED_AT);
     expect(result._unsafeUnwrapErr().type).toBe("IndexGenerationError");
   });
 });

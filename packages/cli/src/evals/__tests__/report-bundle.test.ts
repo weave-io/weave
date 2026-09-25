@@ -508,3 +508,24 @@ describe("assemblePublicReportBundle — repeated run", () => {
     );
   });
 });
+
+describe("assemblePublicReportBundle — the run's track", () => {
+  it("carries the track the run was restricted to into the public run summary", () => {
+    const base = makeEvalBundle();
+    const report = assemblePublicReportBundle(
+      { ...base, runSummary: { ...base.runSummary, track: "trajectory" } },
+      "run-1",
+    )._unsafeUnwrap();
+
+    expect(report.runSummary.track).toBe("trajectory");
+  });
+
+  it("records no track for a run of both tracks", () => {
+    const report = assemblePublicReportBundle(
+      makeEvalBundle(),
+      "run-1",
+    )._unsafeUnwrap();
+
+    expect(report.runSummary).not.toHaveProperty("track");
+  });
+});
