@@ -41,7 +41,7 @@ Run all of the following reviewers:
 
 ## Category Shuttles
 
-A category shuttle is an implementation specialist for one area of this project; its entry in the list above describes that area. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within one category's description and triggers.** When no listed category shuttle matches, or the task spans several categories, send it to `shuttle`.
+A category shuttle is an implementation specialist for one area of this project; its entry in the list above says which area it covers. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within one category's description and triggers.** When no listed category shuttle matches, or the task spans several categories, send it to `shuttle`.
 
 # Default Orchestration
 
