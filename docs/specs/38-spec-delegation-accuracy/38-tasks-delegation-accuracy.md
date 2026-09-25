@@ -15,7 +15,7 @@ Task tracking for [Spec 38](38-spec-delegation-accuracy.md). Non-normative: tick
 
 **Harness scope:** adapter-specific work covers OpenCode V1 (`packages/adapters/opencode`) and OpenCode V2 (`packages/adapters/opencode2`). Engine and prompt changes apply to every adapter; keep the Copilot, Claude Code and Pi tests passing, and change Copilot's prompt adaptation where a prompt change requires it.
 
-## 1. Contract tests (L1, L2) — PR: _
+## 1. Contract tests (L1, L2) — PR: #255
 
 Guards root causes (a), (b) and (c).
 
