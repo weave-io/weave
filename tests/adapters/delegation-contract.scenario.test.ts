@@ -17,6 +17,10 @@
  *   prompt — a delegation-list entry, a backticked name, a `shuttle-*` token,
  *   or a name after "delegate/route/send … to" — is a registered agent.
  *
+ * The same scenarios check the permissions behind a delegation: Loom and
+ * Tapestry cannot spawn the harness's built-in `explore` and `general`
+ * subagents (Spec 38 item 5), and can spawn every agent their list offers.
+ *
  * "Registered" means what Weave put into the harness: every agent in
  * OpenCode V1's config, and the Weave-managed agents in the OpenCode 2 host.
  * A foreign agent that happens to hold a name Weave wanted does not count —
@@ -204,6 +208,25 @@ interface Registered {
   readonly models: ReadonlyMap<string, string | undefined>;
   /** The prompt the harness gives one registered agent. */
   prompt(agent: string): string;
+  /**
+   * Whether the harness lets `agent` spawn `target` as a subagent, from the
+   * permission rules Weave gave `agent`. A target no rule names gets the
+   * harness default, which on both harnesses is to allow it.
+   */
+  delegation(agent: string, target: string): string;
+}
+
+/** Last-match-wins over `[pattern, effect]` pairs, as both harnesses do. */
+function lastMatch(
+  rules: ReadonlyArray<readonly [string, string]>,
+  target: string,
+): string | undefined {
+  const matching = rules.filter(([pattern]) =>
+    new RegExp(
+      `^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`,
+    ).test(target),
+  );
+  return matching.at(-1)?.[1];
 }
 
 interface Harness {
@@ -240,6 +263,21 @@ const OPENCODE_V1: Harness = {
         agents.map((name) => [name, entry(name).model as string | undefined]),
       ),
       prompt: (name) => String(entry(name).prompt ?? ""),
+      // OpenCode's `task` permission: one action for every subagent, or a map
+      // of subagent-name patterns to actions.
+      delegation: (name, target) => {
+        const permission = (entry(name).permission ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const task = permission.task;
+        if (typeof task === "string") return task;
+        if (typeof task !== "object" || task === null) return "allow";
+        return (
+          lastMatch(Object.entries(task as Record<string, string>), target) ??
+          "allow"
+        );
+      },
     };
   },
 };
@@ -269,6 +307,15 @@ const OPENCODE_V2: Harness = {
         }),
       ),
       prompt: (name) => String(host.agent(name).system ?? ""),
+      // OpenCode 2's `subagent` rules, resource = the subagent's id.
+      delegation: (name, target) =>
+        lastMatch(
+          host
+            .agent(name)
+            .permissions.filter((rule) => rule.action === "subagent")
+            .map((rule) => [rule.resource, rule.effect] as const),
+          target,
+        ) ?? "allow",
     };
   },
 };
@@ -276,6 +323,13 @@ const OPENCODE_V2: Harness = {
 const HARNESSES: readonly Harness[] = [OPENCODE_V1, OPENCODE_V2];
 
 const ORCHESTRATORS = ["loom", "tapestry"] as const;
+
+/**
+ * The subagents OpenCode V1 and V2 ship themselves (`opencode agent list`,
+ * `opencode2 api agent.list`). The session audit found Loom sending work to
+ * them instead of Thread or Shuttle; Spec 38 item 5 keeps them out of reach.
+ */
+const HARNESS_BUILTIN_SUBAGENTS = ["explore", "general"] as const;
 
 type Orchestrator = (typeof ORCHESTRATORS)[number];
 
@@ -400,6 +454,27 @@ for (const harness of HARNESSES) {
 
           expect(list).toContain("shuttle");
           expect(unregistered(list, current)).toEqual([]);
+        });
+
+        // Spec 38 item 5 (root cause d): the harness's own `explore` and
+        // `general` stay registered for sessions without a Weave agent, but
+        // the orchestrator's permissions keep it from spawning them.
+        it(`keeps ${orchestrator} from spawning the harness's built-in subagents`, async () => {
+          const current = await registered();
+          const reachable = HARNESS_BUILTIN_SUBAGENTS.filter(
+            (builtin) => current.delegation(orchestrator, builtin) !== "deny",
+          );
+
+          expect(reachable).toEqual([]);
+        });
+
+        it(`still lets ${orchestrator} spawn every agent it is offered`, async () => {
+          const current = await registered();
+          const blocked = delegationList(current.prompt(orchestrator)).filter(
+            (name) => current.delegation(orchestrator, name) === "deny",
+          );
+
+          expect(blocked).toEqual([]);
         });
 
         // --- L2: what the orchestrator's prompt names --------------------

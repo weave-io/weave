@@ -13,7 +13,10 @@
  * with a scripted local model, and checks that Loom's composed prompt reached
  * the model, that Loom delegated to Shuttle through the host's own subagent
  * tool, that Shuttle ran with its prompt and tool policy, and that the result
- * came back. No credentials and no remote model are used.
+ * came back. Before delegating to Shuttle, the scripted model asks for the
+ * host's built-in `explore`: the check confirms Loom's subagent tool lists no
+ * host built-in and the host refuses the call (Spec 38 item 5). No
+ * credentials and no remote model are used.
  *
  * Exit codes: 0 every check passed; 1 a check failed or was skipped; 2 the
  * harness itself could not run (install, service or API failure).
@@ -69,6 +72,8 @@ const log = logger.child({ module: "opencode2-live" });
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const PRIMARY = "loom";
 const DELEGATE = "shuttle";
+/** A host built-in subagent Loom must not be able to spawn (Spec 38 item 5). */
+const REFUSED_BUILTIN = "explore";
 const START_COMMAND = "weave:start";
 const PLUGIN_ACTIVATION_TIMEOUT_MS = 240_000;
 const AGENT_SETTLE_TIMEOUT_MS = 60_000;
@@ -250,7 +255,7 @@ class LiveCheckRun {
   private readonly host: OpenCode2Host;
   private readonly provider = new ScriptedProvider({
     delegationTool: OPENCODE2_DELEGATION_ACTION,
-    delegate: DELEGATE,
+    delegates: [REFUSED_BUILTIN, DELEGATE],
   });
   private readonly checks: LiveChecks;
   private readonly agents: readonly string[];
@@ -267,6 +272,7 @@ class LiveCheckRun {
       startCommand: START_COMMAND,
       delegationTool: OPENCODE2_DELEGATION_ACTION,
       subagentForbiddenTools: [OPENCODE2_DELEGATION_ACTION, "question"],
+      refusedBuiltin: REFUSED_BUILTIN,
     });
   }
 
@@ -358,7 +364,10 @@ class LiveCheckRun {
             "Running one message through the real host",
           );
           return this.host
-            .run(PRIMARY, "Delegate one small task to shuttle, then reply.")
+            .run(
+              PRIMARY,
+              "Use the explore agent, then delegate one small task to shuttle, then reply.",
+            )
             .map((outcome): LiveObservation => {
               log.info(
                 {

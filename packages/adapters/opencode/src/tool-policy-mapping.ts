@@ -13,6 +13,8 @@
  * - `network`  → `permission.webfetch`
  * - `delegate` → `permission.doom_loop`
  * - agent `mode` → `permission.question` (see `buildQuestionPermission`)
+ * - Loom and Tapestry → `permission.task` denying OpenCode's built-in
+ *   subagents (see `buildBuiltinSubagentTaskPermission`)
  *
  * The `read` capability has no dedicated `permission` field in OpenCode; it is
  * enforced by toggling the boolean presence of read-class tool names in the
@@ -39,13 +41,18 @@ import type { OpenCodeAgentConfig } from "./sdk-types.js";
 export type OpenCodePermissionValue = "allow" | "deny" | "ask";
 
 /**
- * The resolved OpenCode permission block produced by `mapToolPolicy` and
- * `buildQuestionPermission`. Matches the shape of `AgentConfig.permission`,
- * plus `question`: OpenCode accepts it, but the pinned SDK type predates it.
+ * The resolved OpenCode permission block produced by `mapToolPolicy`,
+ * `buildQuestionPermission` and `buildBuiltinSubagentTaskPermission`. Matches
+ * the shape of `AgentConfig.permission`, plus `question` and `task`: OpenCode
+ * accepts both, but the pinned SDK type predates them. `task` maps a subagent
+ * name pattern to the permission for delegating to it.
  */
 export type OpenCodeToolPermissions = NonNullable<
   OpenCodeAgentConfig["permission"]
-> & { question?: OpenCodePermissionValue };
+> & {
+  question?: OpenCodePermissionValue;
+  task?: Record<string, OpenCodePermissionValue>;
+};
 
 // ---------------------------------------------------------------------------
 // Read-class tool names
@@ -156,4 +163,64 @@ export function buildQuestionPermission(
   mode: AgentDescriptor["mode"],
 ): Pick<OpenCodeToolPermissions, "question"> {
   return { question: mode === "subagent" ? "deny" : "allow" };
+}
+
+// ---------------------------------------------------------------------------
+// OpenCode's built-in subagents
+// ---------------------------------------------------------------------------
+
+/**
+ * The subagents OpenCode itself ships (`opencode agent list` on OpenCode
+ * 1.18.31, 25 Sep 2026: `explore` and `general`). Its other built-ins
+ * (`build`, `plan`, `compaction`, `summary`, `title`) are primary agents,
+ * which the `task` tool does not spawn. Update this list when OpenCode adds or
+ * removes a built-in subagent.
+ */
+export const OPENCODE_BUILTIN_SUBAGENTS: readonly string[] = [
+  "explore",
+  "general",
+] as const;
+
+/**
+ * The Weave agents kept away from OpenCode's built-in subagents: the two
+ * orchestrators, whose prompts route work to Weave's own specialists. This is
+ * the scope Copilot's delegation-prompt adaptation uses too.
+ */
+export const BUILTIN_SUBAGENT_DENIED_AGENTS: ReadonlySet<string> = new Set([
+  "loom",
+  "tapestry",
+]);
+
+/**
+ * Builds the `AgentConfig.permission.task` entry that stops Loom and
+ * Tapestry from spawning OpenCode's built-in subagents.
+ *
+ * OpenCode evaluates `task` per subagent name. A denied subagent is left out
+ * of the `task` tool's list of agents for that caller, and a call naming it
+ * is refused. Only the built-ins are named, so every other subagent — Weave's
+ * own and any the user defines outside Weave — keeps what the global config
+ * grants. The entry sits on Loom's and Tapestry's own agent config, so a
+ * session whose active agent is anything else is unchanged.
+ *
+ * A built-in name that is also one of the agent's delegation targets is not
+ * denied: a Weave agent registered under that name (a user's own `explore`
+ * agent, say) replaced the built-in, and the prompt offers it.
+ *
+ * Returns `{}` for every other agent.
+ */
+export function buildBuiltinSubagentTaskPermission(
+  descriptor: Pick<AgentDescriptor, "name" | "delegationTargets">,
+): Pick<OpenCodeToolPermissions, "task"> {
+  if (!BUILTIN_SUBAGENT_DENIED_AGENTS.has(descriptor.name)) return {};
+
+  const offered = new Set(
+    descriptor.delegationTargets.map((target) => target.name),
+  );
+  const task: Record<string, OpenCodePermissionValue> = {};
+  for (const builtin of OPENCODE_BUILTIN_SUBAGENTS) {
+    if (offered.has(builtin)) continue;
+    task[builtin] = "deny";
+  }
+  if (Object.keys(task).length === 0) return {};
+  return { task };
 }

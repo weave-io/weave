@@ -89,9 +89,9 @@
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
   - function mapToolPolicy: (policy) => void
   - function buildQuestionPermission: (mode) => Pick<OpenCodeToolPermissions, "question">
+  - function buildBuiltinSubagentTaskPermission: (descriptor, "name" | "delegationTargets">) => Pick<OpenCodeToolPermissions, "task">
   - type OpenCodePermissionValue
-  - type OpenCodeToolPermissions
-  - _...1 more_
+  - _...4 more_
 - `packages/adapters/opencode/src/trajectory/log-parser.ts` — function parseTrajectoryEvents: (stderr) => Result<TrajectoryEvent[], TrajectoryParseError[]>, type TrajectoryParseError
 - `packages/adapters/opencode/src/trajectory/observer.ts`
   - function parseObserverRecords: (jsonl) => ParsedObserverRecords
@@ -1048,6 +1048,7 @@
   - type PluginSource
   - type PluginSourceError
 - `scripts/proof/opencode2-live/scripted-provider.ts`
+  - function scriptedCallId: (index) => string
   - function scriptedProviderConfig: (port) => object
   - class ScriptedProvider
   - interface ScriptedProviderOptions

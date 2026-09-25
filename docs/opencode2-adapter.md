@@ -86,6 +86,26 @@ The host keeps an agent that another plugin (or a built-in) registered first: We
 
 An agent whose own prompt fails to compose is left out of every delegation list by the engine and reported as `materialization_failed`.
 
+## OpenCode 2's built-in subagents
+
+OpenCode 2 ships its own subagents, `explore` and `general` (`opencode2 api agent.list` on 2.0.16), next to its primary `build`, `plan`, `compaction`, `title` and `summary`. The [September 2026 session audit](artifacts/session-audit-2026-09.md) found Loom sending work to OpenCode's built-ins instead of Thread or Shuttle ([Spec 38](specs/38-spec-delegation-accuracy/38-spec-delegation-accuracy.md), root cause d).
+
+**Mechanism.** No extra code: the delegation rules every Weave agent already gets keep them out. [`mapOpenCode2ToolPolicy`](../packages/adapters/opencode2/src/v2/tool-policy-mapping.ts) emits `{action: "subagent", resource: "*", effect: "deny"}` and then one rule per delegation target with the agent's `delegate` effect. Rules are last-match-wins, so a Weave agent can spawn its delegation targets and nothing else. The host builds each caller's `subagent` tool from those rules: the tool lists only the subagents the caller may spawn, and a call naming another one is refused with `permission.rejected`.
+
+**Scope rule.** The rules sit on Weave's own agent records. The built-ins stay registered, and the host's `build` and `plan` agents, and agents other plugins register, still spawn them.
+
+**Trade-off.** This is an allowlist, so Loom and Tapestry also cannot spawn an agent another plugin or the user's host config registers outside Weave. The [OpenCode V1 adapter](adapter-readiness-status.md#opencodes-built-in-subagents-spec-38-item-5) denies only the two built-ins, because V1 has no delegation rules of its own to build on.
+
+**Evidence** (host 2.0.16, `--plugin local`, scripted model, 25 Sep 2026):
+
+- `opencode2 api agent.list`: Loom's permissions end with `subagent * deny`, then `subagent` `allow` for `shuttle`, `pattern`, `thread`, `spindle`, `weft` and `warp`.
+- Loom's `subagent` tool lists `pattern`, `shuttle`, `spindle`, `thread`, `warp` and `weft` under "Available subagents"; `explore` and `general` are absent.
+- Loom asked to "use the explore agent", with the model calling `subagent` for `explore`: the tool result is `{"error":{"type":"permission.rejected","message":"Permission denied: subagent"}}` and no child session starts.
+- The same call from `build` lists `explore` and `general` and runs `explore`.
+- With `subagent * deny` flipped to `allow`, the [live host check](testing/opencode2-verification.md#run-the-live-host-check) fails `builtins_hidden` ("lists host built-ins: general, explore") and `builtin_refused` ("explore ran in a child session").
+
+The live host check asserts both on every pinned run, and `tests/adapters/delegation-contract.scenario.test.ts` asserts the rules for every fixture config.
+
 ## Verification
 
 To confirm the plugin loaded correctly in live-plugin mode:

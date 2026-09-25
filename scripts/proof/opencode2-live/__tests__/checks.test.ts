@@ -19,10 +19,25 @@ const checks = new LiveChecks({
   startCommand: "weave:start",
   delegationTool: "subagent",
   subagentForbiddenTools: ["subagent", "question"],
+  refusedBuiltin: "explore",
 });
+
+const EXPLORE_SYSTEM = "You are a file search specialist.";
 
 const weaveAgents: HostAgent[] = [
   { id: "build", mode: "primary", description: "The default agent." },
+  {
+    id: "explore",
+    mode: "subagent",
+    description: "Fast agent specialized for exploring codebases.",
+    system: EXPLORE_SYSTEM,
+  },
+  {
+    id: "general",
+    mode: "subagent",
+    description: "General-purpose agent.",
+    system: "You are a general-purpose agent.",
+  },
   {
     id: "loom",
     mode: "primary",
@@ -59,28 +74,47 @@ function request(
   };
 }
 
-/** An assistant turn that called `name`, and the tool result for `resultId`. */
-function toolRound(name: string, callId: string, resultId = callId): object[] {
+/**
+ * An assistant turn that called `name` (with `agent` as its argument), and
+ * the tool result for `resultId`.
+ */
+function toolRound(
+  name: string,
+  callId: string,
+  { agent = "", result = "OK", resultId = callId } = {},
+): object[] {
   return [
     {
       role: "assistant",
       tool_calls: [
-        { id: callId, type: "function", function: { name, arguments: "{}" } },
+        {
+          id: callId,
+          type: "function",
+          function: { name, arguments: JSON.stringify({ agent }) },
+        },
       ],
     },
-    { role: "tool", tool_call_id: resultId, content: "OK" },
+    { role: "tool", tool_call_id: resultId, content: result },
   ];
 }
 
+const LOOM_TOOLS = [tool("read"), tool("subagent", "- shuttle: worker")];
+
+/** The host refused Loom's call to its built-in `explore`. */
+const exploreRefused = toolRound("subagent", "call_0", {
+  agent: "explore",
+  result: "Permission denied: subagent",
+});
+
 const delegatingRun: CapturedRequest[] = [
   request("You are a title generator.", []),
-  request(LOOM_SYSTEM, [tool("read"), tool("subagent", "- shuttle: worker")]),
+  request(LOOM_SYSTEM, LOOM_TOOLS),
+  request(LOOM_SYSTEM, LOOM_TOOLS, exploreRefused),
   request(SHUTTLE_SYSTEM, [tool("read"), tool("write")]),
-  request(
-    LOOM_SYSTEM,
-    [tool("read"), tool("subagent", "- shuttle: worker")],
-    toolRound("subagent", "call_1"),
-  ),
+  request(LOOM_SYSTEM, LOOM_TOOLS, [
+    ...exploreRefused,
+    ...toolRound("subagent", "call_1", { agent: "shuttle" }),
+  ]),
 ];
 
 function observation(
@@ -270,8 +304,8 @@ describe("a run where the delegation never reached Shuttle", () => {
 });
 
 describe("a run where Shuttle's result never came back to Loom", () => {
-  it("fails the return check", () => {
-    const requests = delegatingRun.slice(0, 3);
+  it("fails the return check, though the refused explore call's result did", () => {
+    const requests = delegatingRun.slice(0, 4);
     const returned = verdict(
       checks.evaluate(observation({ run: { exitCode: 0, requests } })),
       "delegation_returned",
@@ -283,7 +317,7 @@ describe("a run where Shuttle's result never came back to Loom", () => {
 describe("a run where Loom's only tool result belongs to another tool", () => {
   it("fails the return check", () => {
     const requests = [
-      ...delegatingRun.slice(0, 3),
+      ...delegatingRun.slice(0, 4),
       request(
         LOOM_SYSTEM,
         [tool("subagent", "- shuttle: worker")],
@@ -315,5 +349,67 @@ describe("a delegated Shuttle that is offered the question or subagent tool", ()
     );
     expect(policy.status).toBe("failed");
     expect(policy.evidence).toContain("subagent, question");
+  });
+});
+
+describe("a run where Loom's subagent tool lists the host's built-ins", () => {
+  it("fails the hidden-builtins check and names them", () => {
+    const listing = [
+      tool("subagent", "- explore: Fast agent\n- shuttle: worker"),
+    ];
+    const requests = delegatingRun.map((entry) =>
+      JSON.stringify(entry.body).includes("You are loom.")
+        ? request(LOOM_SYSTEM, listing)
+        : entry,
+    );
+    const hidden = verdict(
+      checks.evaluate(observation({ run: { exitCode: 0, requests } })),
+      "builtins_hidden",
+    );
+    expect(hidden.status).toBe("failed");
+    expect(hidden.evidence).toContain("explore");
+    expect(hidden.evidence).not.toContain("general");
+  });
+});
+
+describe("a run where the host let Loom spawn explore", () => {
+  it("fails the refusal check", () => {
+    const requests = [
+      ...delegatingRun,
+      request(EXPLORE_SYSTEM, [tool("read"), tool("grep")]),
+    ];
+    const refused = verdict(
+      checks.evaluate(observation({ run: { exitCode: 0, requests } })),
+      "builtin_refused",
+    );
+    expect(refused.status).toBe("failed");
+    expect(refused.evidence).toContain("explore ran");
+  });
+});
+
+describe("a run where Loom never got an answer for its explore call", () => {
+  it("fails the refusal check", () => {
+    const requests = delegatingRun.filter(
+      (entry) => !JSON.stringify(entry.body).includes("call_0"),
+    );
+    const refused = verdict(
+      checks.evaluate(observation({ run: { exitCode: 0, requests } })),
+      "builtin_refused",
+    );
+    expect(refused.status).toBe("failed");
+  });
+});
+
+describe("a host that ships no built-in subagents", () => {
+  it("fails both built-in checks rather than passing them vacuously", () => {
+    const verdicts = checks.evaluate(
+      observation({
+        agents: weaveAgents.filter(
+          (agent) => agent.id !== "explore" && agent.id !== "general",
+        ),
+      }),
+    );
+    expect(verdict(verdicts, "builtins_hidden").status).toBe("failed");
+    expect(verdict(verdicts, "builtin_refused").status).toBe("failed");
   });
 });

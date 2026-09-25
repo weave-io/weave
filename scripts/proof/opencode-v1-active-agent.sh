@@ -35,6 +35,13 @@
 #   8. The custom user agent `proof-scout` was materialized
 #      with its inline prompt                                (custom agent
 #                                                             merge)
+#   9. Loom and Tapestry are denied OpenCode's built-in
+#      `explore` and `general` subagents through their
+#      `task` permission, and OpenCode's own agents are
+#      not overwritten                                       (built-ins
+#                                                             hidden,
+#                                                             Spec 38
+#                                                             item 5)
 #
 # Success: exit 0. Failure: exit non-zero identifying which claim broke.
 
@@ -111,8 +118,13 @@ proof_ok "wrote non-empty .weave/config.weave (override + disable + custom agent
 
 # --- Probe: opencode debug config (introspection, no LLM, no session) -------
 proof_log "Running: opencode debug config (hermetic XDG_*_HOME)"
-CONFIG_JSON="$(cd "${PROOF_DIR}" && opencode debug config 2>/dev/null)" \
+# Stdout goes to a file: opencode can exit before a pipe drains, which cut
+# the resolved config off at 64 KiB once a developer's global skills made it
+# larger than that.
+CONFIG_FILE="${PROOF_DIR}/debug-config.json"
+(cd "${PROOF_DIR}" && opencode debug config >"${CONFIG_FILE}" 2>/dev/null) \
   || proof_fail "opencode debug config exited non-zero"
+CONFIG_JSON="$(cat "${CONFIG_FILE}")"
 
 # ---------------------------------------------------------------------------
 # Assertions. Each `proof_assert_json` is one atomic claim; a failure
@@ -182,4 +194,16 @@ proof_assert_json "${CONFIG_JSON}" \
    and ($s.prompt | contains("proof-scout"))' \
   'custom user agent proof-scout materialized with inline prompt'
 
-proof_done "V1: default agent + full builtin surface + prompt + commands + user overrides all check out"
+# 9. Loom and Tapestry cannot spawn OpenCode's built-in subagents, and the
+#    built-ins themselves are left to OpenCode (sessions without a Weave
+#    agent are unchanged).
+proof_assert_json "${CONFIG_JSON}" \
+  '([.agent.loom.permission.task.explore,
+         .agent.loom.permission.task.general,
+         .agent.tapestry.permission.task.explore,
+         .agent.tapestry.permission.task.general]
+        | all(. == "deny"))
+   and (.agent.explore == null) and (.agent.general == null)' \
+  'loom and tapestry deny task:explore and task:general; built-ins not overwritten'
+
+proof_done "V1: default agent + full builtin surface + prompt + commands + user overrides + built-ins hidden all check out"

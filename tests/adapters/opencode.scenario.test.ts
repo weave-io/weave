@@ -364,3 +364,71 @@ describe("a user denies the capabilities OpenCode encodes outside its permission
     expect(permission.doom_loop).toBe("deny");
   });
 });
+
+describe("a user runs Weave's orchestrators next to OpenCode's built-in subagents", () => {
+  /** The `task` permission OpenCode holds for one agent, as a pattern map. */
+  function taskPermission(
+    cfg: RegisteredConfig,
+    name: string,
+  ): Record<string, string> | undefined {
+    const permission = registeredAgent(cfg, name).permission as Record<
+      string,
+      unknown
+    >;
+    return permission.task as Record<string, string> | undefined;
+  }
+
+  it("keeps Loom and Tapestry from spawning explore and general", async () => {
+    const cfg = await load("# builtins only");
+
+    // OpenCode's `task` tool leaves a denied subagent out of the caller's
+    // list and refuses a call that names it anyway.
+    for (const orchestrator of ["loom", "tapestry"]) {
+      expect(taskPermission(cfg, orchestrator)).toEqual({
+        explore: "deny",
+        general: "deny",
+      });
+    }
+  });
+
+  it("leaves OpenCode's own agents alone, for sessions without a Weave agent", async () => {
+    const cfg = await load("# builtins only");
+
+    // Nothing is written over or disabled: OpenCode keeps its own entries.
+    for (const builtin of ["build", "plan", "explore", "general"]) {
+      expect(registeredAgentNames(cfg)).not.toContain(builtin);
+    }
+  });
+
+  it("leaves the user's other Weave agents free to use the built-ins", async () => {
+    const cfg = await load(`
+      agent scout {
+        prompt "You are a scout who uses OpenCode's explore agent."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode primary
+      }
+    `);
+
+    expect(taskPermission(cfg, "scout")).toBeUndefined();
+    expect(taskPermission(cfg, "shuttle")).toBeUndefined();
+  });
+
+  it("does not deny a Weave agent the user registered under a built-in's name", async () => {
+    const cfg = await load(`
+      agent explore {
+        description "The team's own explorer"
+        prompt "You are the team's explorer."
+        models ["anthropic/claude-sonnet-4-5"]
+        mode subagent
+        triggers ["Use for exploring the codebase"]
+      }
+    `);
+
+    // Weave's `explore` replaced OpenCode's in the config, and Loom's
+    // delegation list offers it, so only `general` is still denied.
+    expect(String(registeredAgent(cfg, "loom").prompt)).toContain(
+      "**explore**",
+    );
+    expect(taskPermission(cfg, "loom")).toEqual({ general: "deny" });
+  });
+});

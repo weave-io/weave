@@ -26,7 +26,7 @@ describe("the first request that offers the delegation tool", () => {
   it("is answered with one delegation to the configured subagent", async () => {
     const provider = new ScriptedProvider({
       delegationTool: "subagent",
-      delegate: "shuttle",
+      delegates: ["shuttle"],
     });
     const calls = toolCalls(
       await provider.reply(body(["read", "subagent"])).text(),
@@ -43,7 +43,7 @@ describe("requests after the delegation", () => {
   it("are answered with text, so a subagent wrongly offered the tool cannot loop", async () => {
     const provider = new ScriptedProvider({
       delegationTool: "subagent",
-      delegate: "shuttle",
+      delegates: ["shuttle"],
     });
     await provider.reply(body(["subagent"]));
     const again = await provider.reply(body(["subagent"])).text();
@@ -52,11 +52,39 @@ describe("requests after the delegation", () => {
   });
 });
 
-describe("a request that already carries a tool result", () => {
+describe("several configured subagents", () => {
+  const RESULT = ["system", "user", "assistant", "tool"];
+
+  it("are called one per turn, in order, each after the previous result came back", async () => {
+    const provider = new ScriptedProvider({
+      delegationTool: "subagent",
+      delegates: ["explore", "shuttle"],
+    });
+    const agentOf = async (reply: Response) =>
+      toolCalls(await reply.text()).map(
+        (call) => JSON.parse(call.function.arguments).agent,
+      );
+
+    expect(await agentOf(provider.reply(body(["subagent"])))).toEqual([
+      "explore",
+    ]);
+    // A turn that has not seen the first result yet (a subagent wrongly
+    // offered the tool) gets text, not the next call.
+    expect(await agentOf(provider.reply(body(["subagent"])))).toEqual([]);
+    expect(await agentOf(provider.reply(body(["subagent"], RESULT)))).toEqual([
+      "shuttle",
+    ]);
+    expect(
+      await agentOf(provider.reply(body(["subagent"], [...RESULT, ...RESULT]))),
+    ).toEqual([]);
+  });
+});
+
+describe("a request that carries a tool result before any call was made", () => {
   it("is answered with text", async () => {
     const provider = new ScriptedProvider({
       delegationTool: "subagent",
-      delegate: "shuttle",
+      delegates: ["shuttle"],
     });
     const reply = await provider
       .reply(body(["subagent"], ["system", "user", "assistant", "tool"]))
@@ -69,7 +97,7 @@ describe("every request", () => {
   it("is recorded in arrival order", () => {
     const provider = new ScriptedProvider({
       delegationTool: "subagent",
-      delegate: "shuttle",
+      delegates: ["shuttle"],
     });
     const first = body([]);
     const second = body(["subagent"]);
