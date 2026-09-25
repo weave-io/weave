@@ -62,6 +62,11 @@ interface Fixture {
    * not hold — root cause (b), which Spec 38 item 2 fixes.
    */
   readonly offersUnregisteredAgent?: true;
+  /**
+   * Orchestrators whose prompt is known to name an unregistered agent outside
+   * the `shuttle-*` names — root cause (c), which Spec 38 item 3 fixes.
+   */
+  readonly namesUnregisteredAgentIn?: readonly Orchestrator[];
 }
 
 const FIXTURES: readonly Fixture[] = [
@@ -124,6 +129,9 @@ const FIXTURES: readonly Fixture[] = [
       disable agents ["warp", "shuttle-web"]
     `,
     shuttles: ["shuttle-api"],
+    // tapestry.md's <Routing> says "Do not route plan execution tasks to
+    // Pattern, Thread, Spindle, Weft, or Warp", naming Warp though it is off.
+    namesUnregisteredAgentIn: ["tapestry"],
   },
   {
     situation: "with a category that declares no models",
@@ -274,6 +282,8 @@ const HARNESSES: readonly Harness[] = [OPENCODE_V1, OPENCODE_V2];
 
 const ORCHESTRATORS = ["loom", "tapestry"] as const;
 
+type Orchestrator = (typeof ORCHESTRATORS)[number];
+
 // ---------------------------------------------------------------------------
 // Reading names out of a rendered prompt
 // ---------------------------------------------------------------------------
@@ -326,10 +336,15 @@ function agentLikeNames(prompt: string): string[] {
     names.add(token);
   }
 
+  // "delegate to Pattern", "route plan execution tasks to Pattern, Thread,
+  // Spindle, Weft, or Warp": up to four lowercase words between the verb and
+  // "to", then one capitalised name or a list of them.
   const afterVerb =
-    /\b(?:[Dd]elegate|[Rr]oute|[Ss]end)(?: it| the task| directly)? to (?:the )?([A-Z][a-z]+)\b/g;
-  for (const [, name = ""] of prompt.matchAll(afterVerb)) {
-    names.add(name.toLowerCase());
+    /\b(?:[Dd]elegate|[Rr]oute|[Ss]end)(?: [a-z]+){0,4} to (?:the )?([A-Z][a-z]+(?:(?:,? (?:or|and) |, |\/)[A-Z][a-z]+)*)/g;
+  for (const [, list = ""] of prompt.matchAll(afterVerb)) {
+    for (const name of list.split(/,? (?:or|and) |, |\//)) {
+      names.add(name.toLowerCase());
+    }
   }
 
   return [...names].sort();
@@ -401,15 +416,26 @@ for (const harness of HARNESSES) {
 
         // --- L2: what the orchestrator's prompt names --------------------
 
-        it(`names only registered agents in ${orchestrator}'s prompt, outside shuttle-* names`, async () => {
-          const current = await registered();
-          const names = agentLikeNames(current.prompt(orchestrator)).filter(
-            (name) => !name.startsWith("shuttle-"),
-          );
+        // Spec 38 item 3 (root cause c): a prompt that names a disabled agent
+        // in a prohibition, as tapestry.md's <Routing> does, is known to
+        // fail. Item 3 makes these pass.
+        const namesOnlyRegistered =
+          fixture.namesUnregisteredAgentIn?.includes(orchestrator) === true
+            ? it.failing
+            : it;
 
-          expect(names).toContain("shuttle");
-          expect(unregistered(names, current)).toEqual([]);
-        });
+        namesOnlyRegistered(
+          `names only registered agents in ${orchestrator}'s prompt, outside shuttle-* names`,
+          async () => {
+            const current = await registered();
+            const names = agentLikeNames(current.prompt(orchestrator)).filter(
+              (name) => !name.startsWith("shuttle-"),
+            );
+
+            expect(names).toContain("shuttle");
+            expect(unregistered(names, current)).toEqual([]);
+          },
+        );
 
         // Spec 38 item 3 (root cause c): loom.md names `shuttle-backend`,
         // `shuttle-frontend` and `shuttle-core` (its todo-list example) and

@@ -1240,8 +1240,8 @@ holds that agent.**
 - **L2, prompt.** Every agent-like name in Loom's and Tapestry's rendered
   prompt is a registered agent. "Agent-like" is a delegation-list entry, a
   backticked lowercase identifier, a `shuttle-*` token anywhere (placeholders
-  such as `shuttle-{category}` included), or a capitalised name after
-  "delegate to", "route to" or "send it to". A small allowlist in the test
+  such as `shuttle-{category}` included), or capitalised names after
+  "delegate", "route" or "send" … "to", including a list such as "to Pattern, Thread, or Warp". A small allowlist in the test
   names the backticked identifiers that are not agents (todo states, a DSL
   field, a workflow name), each with its reason.
 
