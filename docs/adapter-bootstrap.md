@@ -133,7 +133,7 @@ bootstrap(process.cwd()).catch((err) => {
   refuse an agent, call it again with that report so Loom and Tapestry are
   offered only what the harness holds
   ([ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md)).
-- `MaterializationPlan` has two fields:
+- `MaterializationPlan` has three fields:
   - `agents: MaterializedAgent[]` — ordered, disabled-filtered descriptors ready
     for adapter translation.
   - `errors: readonly MaterializationError[]` — per-agent failures accumulated

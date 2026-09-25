@@ -4,6 +4,7 @@ import {
   type V2OpenCodeEvent as OpenCodeEvent,
   V2PluginModule as Plugin,
 } from "../sdk-types.js";
+import { WEAVE_OWNERSHIP_MARKER } from "../translate-agent.js";
 import { registerOpenCode2Agents } from "./agent-registration.js";
 import { buildOpenCode2Catalog } from "./catalog.js";
 import { OpenCode2Commands } from "./commands.js";
@@ -76,8 +77,10 @@ export async function setupOpenCode2(
 
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
   // Agents this plugin inserted on the host's latest replay. Anything else the
-  // host lists is a built-in's or another plugin's, and Weave's agent of that
-  // name is never inserted, so the catalog is told not to offer it.
+  // host lists — unless it carries Weave's ownership marker, which a host that
+  // keeps records across replays still shows on Weave's own agents — is a
+  // built-in's or another plugin's. Weave's agent of that name is never
+  // inserted, so the catalog is told not to offer it.
   const inserted = new Set<string>();
   const build = () =>
     fromOpenCode2Promise(
@@ -96,8 +99,14 @@ export async function setupOpenCode2(
         models: models.data,
         skills: skills.data,
         heldAgents: agents.data
-          .map((agent) => String(agent.id))
-          .filter((id) => !inserted.has(id)),
+          .filter(
+            (agent) =>
+              !inserted.has(String(agent.id)) &&
+              !String(agent.description ?? "").startsWith(
+                WEAVE_OWNERSHIP_MARKER,
+              ),
+          )
+          .map((agent) => String(agent.id)),
       }),
     );
 
