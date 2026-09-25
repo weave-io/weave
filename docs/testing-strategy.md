@@ -1304,3 +1304,4 @@ the documented behaviour is the cheapest guard against it.
 - [Adapter Boundary](adapter-boundary.md) — what engine tests may and may not assume
 - [DSL Reference](dsl-reference.md) — normative `.weave` syntax used by DSL scenarios
 - [CLI](cli.md) — the commands the CLI bucket drives
+- [Session audit](../scripts/audit/README.md) — Spec 38's L5 layer: WS1 delegation metrics from real OpenCode V1 and V2 sessions, read-only

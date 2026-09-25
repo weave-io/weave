@@ -81,7 +81,7 @@ One pull request per item, tests first, in this order. Each item's tasks are in 
 | 6 | **Loom never executes plans** | plan follow-ups | The adapter passes plan state (active plan, tasks remaining) as template context; the path is in `ALLOWED_TEMPLATE_PATHS` and documented. While a plan is active, Loom answers and points to `/weave:start`. |
 | 7 | **New eval cases (L4)** | wrong-agent choice | Three cases: with an active plan, Loom makes zero plan-task delegations (trajectory); delegation prompts cite only paths that exist; a two-file change inside one category goes to that category's shuttle (the size rule's boundary). |
 | 8 | **Live delegation proof in CI (L3)** | a, b, d at runtime | A CI job runs the delegation trajectory case on a cheap model for PRs that touch adapters, config or prompts, and is a required check. |
-| 9 | **Real-session audit script (L5)** | anything the other layers miss | `scripts/audit/` reads OpenCode V1 and V2 session stores read-only and prints the WS1 metrics as Markdown and JSON. |
+| 9 | **Real-session audit script (L5)** | anything the other layers miss | [`scripts/audit/`](../../../scripts/audit/README.md) reads OpenCode V1 and V2 session stores read-only and prints the WS1 metrics as Markdown and JSON. |
 
 ### Item notes
 
