@@ -190,8 +190,10 @@ describe("a maintainer compares two category-routing runs by their recorded prom
     ]);
 
     const beforeHash = recordedHash(before, "tapestry@same-case");
+    const afterHash = recordedHash(after, "tapestry@same-case");
     expect(beforeHash).toBeDefined();
-    expect(recordedHash(after, "tapestry@same-case")).not.toBe(beforeHash);
+    expect(afterHash).toBeDefined();
+    expect(afterHash).not.toBe(beforeHash);
   });
 });
 

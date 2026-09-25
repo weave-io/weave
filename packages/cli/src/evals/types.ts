@@ -19,7 +19,11 @@
  *     validated separately so runners can load them independently.
  */
 
-import type { TrajectorySummary } from "@weaveio/weave-core";
+import {
+  CategoryConfigSchema,
+  DelegationTriggerSchema,
+  type TrajectorySummary,
+} from "@weaveio/weave-core";
 import { z } from "zod";
 import type { EvalTrack } from "./eval-track.js";
 import type { JudgeIdentity } from "./report-schema.js";
@@ -439,17 +443,6 @@ export type ScoringMetadata = z.infer<typeof ScoringMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * A string with at least one non-whitespace character — the rule the Weave
- * config schema applies to a category's description and triggers, applied at
- * the loader so a blank one is rejected there, not at prompt composition.
- */
-function nonBlankString(label: string) {
-  return z.string().refine((value) => value.trim().length > 0, {
-    message: `${label} must contain non-whitespace text`,
-  });
-}
-
-/**
  * A category a case declares in the Weave config it is judged under.
  *
  * The `tapestry-category-routing` runner composes Tapestry's prompt from the
@@ -472,11 +465,15 @@ export const EvalCaseCategorySchema = z
         /^[A-Za-z_][A-Za-z0-9_-]*$/,
         "category name must be a .weave identifier: a letter or _ followed by letters, digits, _ or -",
       ),
-    /** The category `description` — what Tapestry reads in its list. */
-    description: nonBlankString("category description"),
+    /**
+     * The category `description` — what Tapestry reads in its list. Validated
+     * by the Weave schema's own rule, so a case the loader accepts is one the
+     * composer accepts.
+     */
+    description: CategoryConfigSchema.shape.description,
     /** The category `triggers`, when the case declares any. */
     triggers: z
-      .array(nonBlankString("category trigger"))
+      .array(DelegationTriggerSchema)
       .min(1, "category triggers must have at least one entry")
       .optional(),
     /** Declare the category but disable its generated shuttle. */
