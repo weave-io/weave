@@ -212,10 +212,10 @@ describe("recoveredFailures", () => {
     );
     expect(recoveredFailures(dataset)).toEqual({
       recovered: 1,
-      total: 2,
+      total: 3,
       transient: { count: 0, total: 1 },
       configuration: { count: 1, total: 1 },
-      allFailed: 3,
+      other: 1,
     });
   });
 });

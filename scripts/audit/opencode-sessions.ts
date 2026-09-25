@@ -42,10 +42,14 @@
  * - Configuration failures: a failed call without a target counts only when
  *   the user did not abort it (`Task cancelled`, `Tool execution aborted`).
  *   The 4–18 Sep baseline (11 of 597) excludes those aborts.
- * - Recovered failures: the denominator is transient plus configuration
- *   failures, not every failed call; user aborts are reported separately.
- *   "The same assistant turn, or the next" is later in the same assistant
- *   message, or the session's next assistant message.
+ * - Recovered failures: divided by every failed call, as Spec 38 says, with
+ *   transient and configuration failures also reported on their own and the
+ *   rest (mostly user aborts, which nothing should resend) as "other".
+ *   A recovery is a completed resend (the caller's "retried successfully";
+ *   Spec 38 only asks that one is sent). "The same assistant turn, or the
+ *   next" is the assistant messages answering the same user message, or the
+ *   next user message. The same rule gives "transient failures not
+ *   recovered", which the audit reported as "not retried".
  * - Plan-task delegation by Loom: the plan marker is the text the current
  *   commands write — V1's `/start-work` and `/weave:start` share "activated
  *   by the /start-work command"; V2 writes "activated by /weave:start" or
@@ -65,11 +69,12 @@
 import { Database } from "bun:sqlite";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { loadConfig } from "@weaveio/weave-config";
+import { type ConfigLoadError, loadConfig } from "@weaveio/weave-config";
 import { logDestination, logger } from "@weaveio/weave-engine";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import { buildScorecard, renderJson, renderMarkdown } from "./scorecard.js";
 import {
+  type AuditDataset,
   type AuditError,
   type Harness,
   type SessionStore,
@@ -201,7 +206,7 @@ export function parseAuditArgs(
 /** Counts a project's declared categories; injected so tests need no files. */
 export type CategoryCounter = (
   projectDir: string,
-) => ResultAsync<number, unknown>;
+) => ResultAsync<number, ConfigLoadError[]>;
 
 /**
  * Decides which projects define categories, from each project's effective
@@ -211,17 +216,20 @@ export type CategoryCounter = (
 export class CategoryProjects {
   constructor(private readonly countCategories: CategoryCounter) {}
 
-  async resolve(projectDirs: Iterable<string>): Promise<Set<string>> {
-    const withCategories = new Set<string>();
-    for (const dir of new Set(projectDirs)) {
-      const count = await this.countCategories(dir);
-      if (count.isErr()) {
-        log.debug({ projectDir: dir }, "Could not load Weave config");
-        continue;
-      }
-      if (count.value > 0) withCategories.add(dir);
-    }
-    return withCategories;
+  resolve(projectDirs: Iterable<string>): ResultAsync<Set<string>, never> {
+    const dirs = [...new Set(projectDirs)];
+    const counts = dirs.map((dir) =>
+      this.countCategories(dir).orElse((errors) => {
+        log.debug(
+          { projectDir: dir, errors: errors.map((e) => e.type) },
+          "Could not load Weave config",
+        );
+        return ok(0);
+      }),
+    );
+    return ResultAsync.combine(counts).map(
+      (values) => new Set(dirs.filter((_, i) => (values[i] ?? 0) > 0)),
+    );
   }
 }
 
@@ -265,39 +273,53 @@ export function openReadOnlyStore(
 export class SessionAuditCommand {
   constructor(private readonly deps: AuditDependencies) {}
 
-  async run(argv: readonly string[]): Promise<Result<void, AuditError>> {
-    const options = parseAuditArgs(argv, this.deps.now(), this.deps.home);
-    if (options.isErr()) return err(options.error);
-    const { harness, db, since, until, project, format } = options.value;
+  run(argv: readonly string[]): ResultAsync<void, AuditError> {
+    return parseAuditArgs(argv, this.deps.now(), this.deps.home)
+      .andThen((options) =>
+        this.deps
+          .openStore(options.harness, options.db)
+          .andThen((store) => store.read(options))
+          .map((dataset) => ({ options, dataset })),
+      )
+      .asyncAndThen(({ options, dataset }) =>
+        new CategoryProjects(this.deps.countCategories)
+          .resolve(dataset.sessions.map((s) => s.projectDir))
+          .map((categoryProjects) =>
+            this.render(options, dataset, categoryProjects),
+          ),
+      )
+      .andThen((text) => this.deps.write(text));
+  }
 
-    const store = this.deps.openStore(harness, db);
-    if (store.isErr()) return err(store.error);
-    const dataset = store.value.read({ since, until, project });
-    if (dataset.isErr()) return err(dataset.error);
-
-    const categoryProjects = await new CategoryProjects(
-      this.deps.countCategories,
-    ).resolve(dataset.value.sessions.map((s) => s.projectDir));
+  private render(
+    options: AuditOptions,
+    dataset: AuditDataset,
+    categoryProjects: Set<string>,
+  ): string {
     const card = buildScorecard({
-      dataset: dataset.value,
-      since,
-      until,
-      projectFilter: project !== undefined,
+      dataset,
+      since: options.since,
+      until: options.until,
+      projectFilter: options.project !== undefined,
       definesCategories: (dir) => categoryProjects.has(dir),
     });
-    const text = format === "json" ? renderJson(card) : renderMarkdown(card);
-    return this.deps.write(text);
+    if (options.format === "json") return renderJson(card);
+    return renderMarkdown(card);
   }
 }
 
+/** Writes to stdout, capturing synchronous and asynchronous failures. */
 export function writeStdout(text: string): ResultAsync<void, AuditError> {
-  return ResultAsync.fromPromise(
-    Bun.write(Bun.stdout, text).then(() => undefined),
+  const write = ResultAsync.fromThrowable(
+    async (chunk: string): Promise<void> => {
+      await Bun.write(Bun.stdout, chunk);
+    },
     (cause): AuditError => ({
       type: "OutputError",
       message: cause instanceof Error ? cause.message : String(cause),
     }),
   );
+  return write(text);
 }
 
 /**

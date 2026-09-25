@@ -53,12 +53,12 @@ export interface TransientFailures {
 
 export interface RecoveredFailures {
   readonly recovered: number;
-  /** Transient plus configuration failures. */
+  /** Every failed delegation (Spec 38's denominator). */
   readonly total: number;
   readonly transient: Fraction;
   readonly configuration: Fraction;
-  /** Every failed delegation, user aborts included. */
-  readonly allFailed: number;
+  /** Failed delegations that are neither, mostly user aborts; none can recover. */
+  readonly other: number;
 }
 
 export interface PlanTaskDelegation {
@@ -244,10 +244,10 @@ export function transientFailures(dataset: AuditDataset): TransientFailures {
 }
 
 /**
- * Recovered failures ÷ transient plus configuration failures. Spec 38 divides
- * by all failed delegations; user aborts (`Task cancelled`, `Tool execution
- * aborted`) are left out of the denominator here because nothing should
- * retry them, and reported separately as `allFailed`.
+ * Recovered failures ÷ all failed delegations, as Spec 38 defines it. Only
+ * transient and configuration failures can be recovered, so both are also
+ * reported on their own; `other` is the rest, mostly user aborts
+ * (`Task cancelled`, `Tool execution aborted`).
  */
 export function recoveredFailures(dataset: AuditDataset): RecoveredFailures {
   const index = new RecoveryIndex(dataset);
@@ -259,12 +259,13 @@ export function recoveredFailures(dataset: AuditDataset): RecoveredFailures {
   const configuration = fraction(
     dataset.delegations.filter(isConfigurationFailure),
   );
+  const total = dataset.delegations.filter(isFailed).length;
   return {
     recovered: transient.count + configuration.count,
-    total: transient.total + configuration.total,
+    total,
     transient,
     configuration,
-    allFailed: dataset.delegations.filter(isFailed).length,
+    other: total - transient.total - configuration.total,
   };
 }
 

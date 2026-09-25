@@ -134,6 +134,7 @@ interface DelegationRow {
 }
 
 function isUnder(directory: string, root: string): boolean {
+  if (root === "/") return directory.startsWith("/");
   const trimmed = root.endsWith("/") ? root.slice(0, -1) : root;
   return directory === trimmed || directory.startsWith(`${trimmed}/`);
 }

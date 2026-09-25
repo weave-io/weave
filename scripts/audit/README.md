@@ -44,7 +44,9 @@ one function in [`delegation-metrics.ts`](delegation-metrics.ts). The script
 header in [`opencode-sessions.ts`](opencode-sessions.ts) lists where the
 script narrows a definition and why (user aborts are not configuration
 failures; recovery needs a completed resend in the same user turn or the
-next; plan-task delegation counts Loom only after the plan command).
+next, and recovered failures are divided by every failed delegation with
+transient and configuration failures also shown on their own; plan-task
+delegation counts Loom only after the plan command).
 
 | Store | Schema | A delegation is |
 | --- | --- | --- |

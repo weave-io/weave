@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, ok, okAsync, type ResultAsync } from "neverthrow";
 import {
   type AuditDependencies,
+  type CategoryCounter,
   CategoryProjects,
   parseAuditArgs,
   SessionAuditCommand,
@@ -77,10 +78,24 @@ describe("parseAuditArgs", () => {
 describe("CategoryProjects", () => {
   it("keeps projects whose config declares at least one category", async () => {
     const counts: Record<string, number> = { "/a": 2, "/b": 0 };
-    const projects = await new CategoryProjects((dir) =>
-      dir in counts ? okAsync(counts[dir] ?? 0) : errAsync("unreadable"),
-    ).resolve(["/a", "/b", "/c", "/a"]);
-    expect([...projects]).toEqual(["/a"]);
+    const counter: CategoryCounter = (dir) => {
+      const count = counts[dir];
+      if (count !== undefined) return okAsync(count);
+      return errAsync([
+        {
+          type: "FileReadError",
+          path: `${dir}/.weave/config.weave`,
+          cause: "EACCES",
+        },
+      ]);
+    };
+    const projects = await new CategoryProjects(counter).resolve([
+      "/a",
+      "/b",
+      "/c",
+      "/a",
+    ]);
+    expect([...projects._unsafeUnwrap()]).toEqual(["/a"]);
   });
 });
 

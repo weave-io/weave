@@ -79,6 +79,16 @@ describe("OpenCode V1 session store", () => {
     expect(dataset.sessions.map((s) => s.id).sort()).toEqual(["root", "sub"]);
   });
 
+  it("keeps every session when --project is the filesystem root", () => {
+    const store = new V1Store()
+      .session({ id: "a", directory: "/home/dev/app" })
+      .session({ id: "b", directory: "/srv/other" });
+    const dataset = new OpenCodeV1SessionStore(store.db)
+      .read({ ...WINDOW, project: "/" })
+      ._unsafeUnwrap();
+    expect(dataset.sessions.map((s) => s.id).sort()).toEqual(["a", "b"]);
+  });
+
   it("uses the project worktree as the project directory, except the global '/'", () => {
     const store = new V1Store()
       .project("p1", "/home/dev/app")

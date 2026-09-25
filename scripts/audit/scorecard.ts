@@ -121,7 +121,7 @@ export function renderMarkdown(card: Scorecard): string {
     ],
     [
       "Recovered failures",
-      `${recovered.recovered} of ${recovered.total} (transient ${recovered.transient.count}/${recovered.transient.total}, configuration ${recovered.configuration.count}/${recovered.configuration.total}) · ${recovered.allFailed} failed delegations in all`,
+      `${recovered.recovered} of ${recovered.total} failed delegations (transient ${recovered.transient.count}/${recovered.transient.total}, configuration ${recovered.configuration.count}/${recovered.configuration.total}, other ${recovered.other})`,
     ],
     [
       "Plan-task delegation by Loom",
