@@ -392,12 +392,41 @@ describe("a user runs Weave's orchestrators next to OpenCode's built-in subagent
   });
 
   it("leaves OpenCode's own agents alone, for sessions without a Weave agent", async () => {
-    const cfg = await load("# builtins only");
+    // What a user's opencode.json might already say about the built-ins.
+    const hostEntries = {
+      build: { model: "anthropic/claude-sonnet-4-5" },
+      plan: { temperature: 0.1 },
+      explore: { model: "anthropic/claude-haiku-4-5" },
+      general: { permission: { bash: "ask" } },
+    };
+    const existing: RegisteredConfig = {
+      agent: structuredClone(hostEntries),
+    };
+
+    const cfg = await withWeaveProject("# builtins only", (root) =>
+      registeredConfig(
+        root,
+        async (dir, reader, client) => {
+          const plugin = createWeavePlugin({ fileReader: reader });
+          return (await plugin({
+            client,
+            directory: dir,
+            project: {} as never,
+            worktree: dir,
+            experimental_workspace: { register: () => {} },
+            serverUrl: new URL("http://localhost:1234"),
+            $: {} as never,
+          } as never)) as never;
+        },
+        existing,
+      ),
+    );
 
     // Nothing is written over or disabled: OpenCode keeps its own entries.
-    for (const builtin of ["build", "plan", "explore", "general"]) {
-      expect(registeredAgentNames(cfg)).not.toContain(builtin);
+    for (const [builtin, entry] of Object.entries(hostEntries)) {
+      expect(cfg.agent?.[builtin]).toEqual(entry);
     }
+    expect(registeredAgentNames(cfg)).toContain("loom");
   });
 
   it("leaves the user's other Weave agents free to use the built-ins", async () => {

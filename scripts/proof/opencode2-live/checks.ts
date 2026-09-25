@@ -407,7 +407,7 @@ export class LiveChecks {
     }
     // Any other outcome ("agent not found", a plain answer) would not show
     // that the host refused the call because of the caller's permissions.
-    if (!result.includes(PERMISSION_REJECTED)) {
+    if (resultErrorType(result) !== PERMISSION_REJECTED) {
       return this.failed(
         "builtin_refused",
         `${primary}'s call to ${builtin} was not refused by a permission rule: ${result}`,
@@ -603,6 +603,20 @@ function callResult(
     }
   }
   return undefined;
+}
+
+/**
+ * `error.type` of a tool result the host reported as JSON, or `undefined`
+ * when the result is not JSON or carries no error type.
+ */
+function resultErrorType(result: string): string | undefined {
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(result) as unknown,
+    () => undefined,
+  )();
+  if (parsed.isErr()) return undefined;
+  const type = asRecord(asRecord(parsed.value)?.error)?.type;
+  return typeof type === "string" ? type : undefined;
 }
 
 function escapeRegExp(text: string): string {

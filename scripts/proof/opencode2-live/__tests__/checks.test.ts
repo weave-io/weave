@@ -394,7 +394,12 @@ describe("a run where the host let Loom spawn explore", () => {
 });
 
 describe("a run where Loom's explore call failed for a reason other than its permissions", () => {
-  for (const result of ['{"error":{"type":"agent.not_found"}}', "OK"]) {
+  for (const result of [
+    '{"error":{"type":"agent.not_found"}}',
+    '{"error":{"type":"agent.not_found","message":"permission.rejected"}}',
+    "permission.rejected",
+    "OK",
+  ]) {
     it(`fails the refusal check when the result is ${result}`, () => {
       const other = toolRound("subagent", "call_0", {
         agent: "explore",
