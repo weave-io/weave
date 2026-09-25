@@ -79,6 +79,8 @@ The eval work is done when:
 
 After that, WS1 starts. Evals change only when a WS change needs it.
 
+**Next:** [Spec 38 — Delegation Accuracy](../38-spec-delegation-accuracy/38-spec-delegation-accuracy.md) (WS1).
+
 This narrows some goals. The baseline (G8) stays a local artifact and is not published to the website. The runner audit (G5), suite growth (G10) and the website contract (G4) are deferred. G2 and G7 are deferred too. The [tasks file](37-tasks-repository-foundation.md) lists what remains and what is deferred.
 
 ## Non-goals
