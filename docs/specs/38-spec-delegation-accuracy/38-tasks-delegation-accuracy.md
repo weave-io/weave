@@ -105,7 +105,7 @@ Record each result in that group's PR.
 - [ ] 8.2 The job always registers: it decides inside the job whether the changed paths need the live run and succeeds without running otherwise, and fork PRs (no secrets) skip the same way. Update `workflow-sync.test.ts` if it covers the new job.
 - [ ] 8.3 Record the per-run cost (cents) and time in the PR. Ask the maintainer to make L1/L2 (the test check) and L3 required checks.
 
-## 9. Real-session audit script (L5) — PR: #PRNUM
+## 9. Real-session audit script (L5) — PR: #256
 
 Spec 37 group 3, narrowed to WS1 and widened to OpenCode V2.
 
