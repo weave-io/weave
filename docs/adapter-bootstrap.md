@@ -127,14 +127,21 @@ bootstrap(process.cwd()).catch((err) => {
 - `loadConfig` is from `@weaveio/weave-config`. It merges builtins, global
   (`~/.weave/config.weave`), and project (`.weave/config.weave`) layers and
   returns `ResultAsync<WeaveConfig, ConfigLoadError[]>`.
-- `materializeAgents` is from `@weaveio/weave-engine`. It accepts only
-  `{ config: WeaveConfig }` — no `HarnessAdapter` required.
+- `materializeAgents` is from `@weaveio/weave-engine`. It accepts
+  `{ config: WeaveConfig }` — no `HarnessAdapter` required — plus an optional
+  `harness` report of which agents the harness holds. When your harness can
+  refuse an agent, call it again with that report so Loom and Tapestry are
+  offered only what the harness holds
+  ([ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md)).
 - `MaterializationPlan` has two fields:
   - `agents: MaterializedAgent[]` — ordered, disabled-filtered descriptors ready
     for adapter translation.
   - `errors: readonly MaterializationError[]` — per-agent failures accumulated
     during composition. The `ResultAsync` itself never rejects; always read
     `plan.errors` to detect partial failures.
+  - `unavailableAgents: readonly UnavailableAgent[]` — agents left out of every
+    delegation target list, each with a reason: those that failed to compose,
+    plus any the `harness` report says the harness does not hold.
 - Disabled agents are filtered before descriptors are returned — they do not
   appear in `plan.agents` as disabled entries.
 

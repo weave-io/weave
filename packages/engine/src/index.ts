@@ -124,10 +124,13 @@ export {
 } from "./execution-lifecycle.js";
 export { logDestination, logger, redirectLogsToFile } from "./logger.js";
 export type {
+  AgentUnavailableReason,
+  HarnessMaterializationReport,
   MaterializationError,
   MaterializationInput,
   MaterializationPlan,
   MaterializedAgent,
+  UnavailableAgent,
 } from "./materialization.js";
 export { materializeAgents } from "./materialization.js";
 export type {

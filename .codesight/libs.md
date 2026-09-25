@@ -34,6 +34,10 @@
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/materialize-agents.ts`
+  - class OpenCodeAgentMaterializer
+  - interface OpenCodeMaterialization
+  - interface OpenCodeMaterializerDependencies
 - `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string | undefined, ModelResolutionError>
   - function isProviderQualifiedModel: (model) => boolean
@@ -758,7 +762,7 @@
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader, delegationCandidates?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
   - _...10 more_
@@ -816,9 +820,11 @@
 - `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
+  - interface UnavailableAgent
+  - interface HarnessMaterializationReport
   - interface MaterializedAgent
   - interface MaterializationPlan
-  - type MaterializationError
+  - _...2 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

@@ -75,17 +75,29 @@ export async function setupOpenCode2(
   }
 
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
+  // Agents this plugin inserted on the host's latest replay. Anything else the
+  // host lists is a built-in's or another plugin's, and Weave's agent of that
+  // name is never inserted, so the catalog is told not to offer it.
+  const inserted = new Set<string>();
   const build = () =>
     fromOpenCode2Promise(
-      () => Promise.all([context.model.list(), context.skill.list()]),
+      () =>
+        Promise.all([
+          context.model.list(),
+          context.skill.list(),
+          context.agent.list(),
+        ]),
       "catalog_unavailable",
-      "OpenCode model or skill inventory could not be read",
-    ).andThen(([models, skills]) =>
+      "OpenCode model, skill or agent inventory could not be read",
+    ).andThen(([models, skills, agents]) =>
       catalogBuilder({
         location: context.location.directory,
         projectConfig: options.value.projectConfig,
         models: models.data,
         skills: skills.data,
+        heldAgents: agents.data
+          .map((agent) => String(agent.id))
+          .filter((id) => !inserted.has(id)),
       }),
     );
 
@@ -124,7 +136,6 @@ export async function setupOpenCode2(
   });
 
   const registrations: Registration[] = [];
-  const inserted = new Set<string>();
   const readiness = {
     prompt: false,
     context: false,

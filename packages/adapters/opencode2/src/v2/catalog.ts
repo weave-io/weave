@@ -1,6 +1,8 @@
 import { loadConfig } from "@weaveio/weave-config";
 import {
+  type HarnessMaterializationReport,
   type MaterializationError,
+  type MaterializationPlan,
   materializeAgents,
   resolveAvailableSkillsForAgent,
   type SkillInfo,
@@ -9,6 +11,7 @@ import {
   err,
   type Result as NeverthrowResult,
   ok,
+  okAsync,
   Result,
   type ResultAsync,
 } from "neverthrow";
@@ -63,6 +66,13 @@ export interface BuildOpenCode2CatalogInput {
   readonly projectConfig: boolean;
   readonly models: readonly ModelInfo[];
   readonly skills: readonly NativeSkillInfo[];
+  /**
+   * Agent ids the host already holds that Weave did not put there — built-in
+   * agents and other plugins'. Weave's agent of the same name is never
+   * inserted (`registerOpenCode2Agents` skips it), so no Weave router is
+   * offered it (ADR 0013).
+   */
+  readonly heldAgents?: readonly string[];
   readonly sourceIo?: CatalogSourceIo;
 }
 
@@ -75,15 +85,39 @@ function materializationIssue(
   return { code: "materialization_failed" };
 }
 
+/**
+ * The report the engine is given about what the host will hold: every plan
+ * agent except those whose name the host already holds. `undefined` when
+ * nothing collides, so the first plan's delegation lists already stand.
+ */
+function hostReport(
+  plan: MaterializationPlan,
+  heldAgents: ReadonlySet<string>,
+): HarnessMaterializationReport | undefined {
+  const names = plan.agents.map(({ agentName }) => agentName);
+  const taken = names.filter((name) => heldAgents.has(name));
+  if (taken.length === 0) return undefined;
+  return {
+    materialized: names.filter((name) => !heldAgents.has(name)),
+    failed: taken.map((agentName) => ({
+      agentName,
+      reason: "name_taken" as const,
+      message: "the OpenCode host already holds an agent with this id",
+    })),
+  };
+}
+
 function candidateRevision(
   sources: readonly CatalogSourceEntry[],
   models: readonly ModelInfo[],
   skills: readonly NativeSkillInfo[],
+  heldAgents: readonly string[],
 ): NeverthrowResult<string, OpenCode2Error> {
   return Result.fromThrowable(
     () => {
       const identity = JSON.stringify({
         sources,
+        heldAgents,
         models: models.map((model) => [
           model.providerID,
           model.id,
@@ -118,109 +152,123 @@ function buildCandidate(
           message: "a Weave source could not be inspected",
         });
       }
+      const heldAgents = new Set(input.heldAgents ?? []);
       return materializeAgents({
         config,
         promptFileReader: sources.promptReader,
-      }).andThen((plan) => {
-        const sourceLimit = sources.limitError();
-        if (sourceLimit !== undefined)
-          return err<OpenCode2CatalogCandidate, OpenCode2Error>({
-            code: "catalog_unavailable",
-            message: sourceLimit,
+      })
+        .andThen((first) => {
+          // Compose again only when the host already holds one of Weave's
+          // names; the prompt reader is cached, so this reads nothing twice.
+          const harness = hostReport(first, heldAgents);
+          if (harness === undefined) return okAsync(first);
+          return materializeAgents({
+            config,
+            promptFileReader: sources.promptReader,
+            harness,
           });
-        const fatalPromptRead = plan.errors.some(
-          (error) =>
-            error.type === "DescriptorCompositionFailure" &&
-            error.cause.type === "PromptFileReadError",
-        );
-        if (fatalPromptRead)
-          return err<OpenCode2CatalogCandidate, OpenCode2Error>({
-            code: "config_unavailable",
-            message: "a configured prompt source could not be read",
-          });
+        })
+        .andThen((plan) => {
+          const sourceLimit = sources.limitError();
+          if (sourceLimit !== undefined)
+            return err<OpenCode2CatalogCandidate, OpenCode2Error>({
+              code: "catalog_unavailable",
+              message: sourceLimit,
+            });
+          const fatalPromptRead = plan.errors.some(
+            (error) =>
+              error.type === "DescriptorCompositionFailure" &&
+              error.cause.type === "PromptFileReadError",
+          );
+          if (fatalPromptRead)
+            return err<OpenCode2CatalogCandidate, OpenCode2Error>({
+              code: "config_unavailable",
+              message: "a configured prompt source could not be read",
+            });
 
-        const projections = new Map<string, OpenCode2AgentProjection>();
-        const runtime = new Map<string, OpenCode2CatalogAgent>();
-        const issues: OpenCode2CatalogIssue[] =
-          plan.errors.map(materializationIssue);
-        const availableSkills: SkillInfo[] = input.skills.map((skill) => ({
-          name: skill.name,
-          metadata: skill,
-        }));
-        const nativeSkillByName = new Map<string, NativeSkillInfo>(
-          input.skills.map((skill) => [skill.name, skill]),
-        );
+          const projections = new Map<string, OpenCode2AgentProjection>();
+          const runtime = new Map<string, OpenCode2CatalogAgent>();
+          const issues: OpenCode2CatalogIssue[] =
+            plan.errors.map(materializationIssue);
+          const availableSkills: SkillInfo[] = input.skills.map((skill) => ({
+            name: skill.name,
+            metadata: skill,
+          }));
+          const nativeSkillByName = new Map<string, NativeSkillInfo>(
+            input.skills.map((skill) => [skill.name, skill]),
+          );
 
-        for (const materialized of plan.agents) {
-          const resolvedModel = resolveOpenCode2Model(
-            materialized.descriptor.models,
-            materialized.descriptor.variant,
+          for (const materialized of plan.agents) {
+            const resolvedModel = resolveOpenCode2Model(
+              materialized.descriptor.models,
+              materialized.descriptor.variant,
+              input.models,
+            );
+            // An unresolvable declared model costs the agent its model, not its
+            // existence: the agent is registered without a model ref, which is
+            // the same `inherit` shape an agent that declares no model produces,
+            // so OpenCode applies its own native model selection. Dropping the
+            // agent instead removed every builtin on a host whose catalog does
+            // not carry the builtins' declared model, taking `/weave:start`
+            // with it and leaving an install that looked inert.
+            //
+            // The issue is still recorded, so `status` names each agent whose
+            // declared model did not resolve. A fallback is not a silent
+            // success: the agent runs on a model the user did not name.
+            if (resolvedModel.isErr()) {
+              issues.push({
+                code: "model_unavailable",
+                agentName: materialized.agentName,
+                details: resolvedModel.error,
+              });
+            }
+            const modelRef = resolvedModel.isOk()
+              ? resolvedModel.value.ref
+              : undefined;
+            const skillResolution = resolveAvailableSkillsForAgent({
+              agentName: materialized.agentName,
+              agentSkills: materialized.descriptor.skills,
+              availableSkills,
+              disabledSkills: config.disabled.skills,
+            }).match(
+              (value) => value,
+              (impossible) => impossible,
+            );
+            if (skillResolution.warnings.length > 0) {
+              issues.push({
+                code: "skill_unavailable",
+                agentName: materialized.agentName,
+                count: skillResolution.warnings.length,
+              });
+            }
+            const projection = translateOpenCode2Agent(
+              materialized.descriptor,
+              modelRef,
+            );
+            const skillIDs = skillResolution.resolved.flatMap((skill) => {
+              const native = nativeSkillByName.get(skill.name);
+              return native === undefined ? [] : [Skill.ID.make(native.id)];
+            });
+            projections.set(materialized.agentName, projection);
+            runtime.set(materialized.agentName, { projection, skillIDs });
+          }
+
+          const manifest = sources.manifest();
+          const revision = candidateRevision(
+            manifest,
             input.models,
+            input.skills,
+            [...heldAgents].sort(),
           );
-          // An unresolvable declared model costs the agent its model, not its
-          // existence: the agent is registered without a model ref, which is
-          // the same `inherit` shape an agent that declares no model produces,
-          // so OpenCode applies its own native model selection. Dropping the
-          // agent instead removed every builtin on a host whose catalog does
-          // not carry the builtins' declared model, taking `/weave:start`
-          // with it and leaving an install that looked inert.
-          //
-          // The issue is still recorded, so `status` names each agent whose
-          // declared model did not resolve. A fallback is not a silent
-          // success: the agent runs on a model the user did not name.
-          if (resolvedModel.isErr()) {
-            issues.push({
-              code: "model_unavailable",
-              agentName: materialized.agentName,
-              details: resolvedModel.error,
-            });
-          }
-          const modelRef = resolvedModel.isOk()
-            ? resolvedModel.value.ref
-            : undefined;
-          const skillResolution = resolveAvailableSkillsForAgent({
-            agentName: materialized.agentName,
-            agentSkills: materialized.descriptor.skills,
-            availableSkills,
-            disabledSkills: config.disabled.skills,
-          }).match(
-            (value) => value,
-            (impossible) => impossible,
-          );
-          if (skillResolution.warnings.length > 0) {
-            issues.push({
-              code: "skill_unavailable",
-              agentName: materialized.agentName,
-              count: skillResolution.warnings.length,
-            });
-          }
-          const projection = translateOpenCode2Agent(
-            materialized.descriptor,
-            modelRef,
-          );
-          const skillIDs = skillResolution.resolved.flatMap((skill) => {
-            const native = nativeSkillByName.get(skill.name);
-            return native === undefined ? [] : [Skill.ID.make(native.id)];
+          if (revision.isErr()) return err(revision.error);
+          return ok({
+            revision: revision.value,
+            agents: projections,
+            runtime,
+            issues,
+            sources: manifest,
           });
-          projections.set(materialized.agentName, projection);
-          runtime.set(materialized.agentName, { projection, skillIDs });
-        }
-
-        const manifest = sources.manifest();
-        const revision = candidateRevision(
-          manifest,
-          input.models,
-          input.skills,
-        );
-        if (revision.isErr()) return err(revision.error);
-        return ok({
-          revision: revision.value,
-          agents: projections,
-          runtime,
-          issues,
-          sources: manifest,
         });
-      });
     });
 }
 

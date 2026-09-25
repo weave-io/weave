@@ -589,10 +589,33 @@ WeaveConfig → materializeAgents → MaterializationPlan → Adapter translates
 
 ### Data Contract
 
-- Input: `MaterializationInput { config: WeaveConfig }`. No `HarnessAdapter` is required; the engine receives only Weave-owned configuration.
-- Output: `MaterializationPlan { agents: MaterializedAgent[] }`, where each `MaterializedAgent` pairs `agentName` with an engine-composed `AgentDescriptor`.
+- Input: `MaterializationInput { config: WeaveConfig; promptFileReader?; harness?: HarnessMaterializationReport }`. No `HarnessAdapter` is required; the engine receives only Weave-owned configuration plus, optionally, the adapter's report of which agents the harness holds.
+- Output: `MaterializationPlan { agents: MaterializedAgent[]; errors; unavailableAgents: UnavailableAgent[] }`, where each `MaterializedAgent` pairs `agentName` with an engine-composed `AgentDescriptor`, and `unavailableAgents` lists every agent left out of the delegation targets, with its reason.
 - Output order is deterministic: declared agents preserve resolved config order, followed by generated category shuttle agents in category declaration order, after disabled-agent filtering.
 - Failures are typed as `MaterializationError` values (`CategoryShuttleConflict` or `DescriptorCompositionFailure`) rather than harness-specific exceptions.
+
+### Delegation Targets Come from Materialized Agents
+
+> **Decision:** [ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md)
+
+Which agents a harness accepted is harness knowledge, so the adapter reports it and the engine filters by it:
+
+```ts
+const first = (await materializeAgents({ config }))._unsafeUnwrap();
+const report = registerWithHarness(first); // adapter-owned
+// { materialized: ["loom", "shuttle", "shuttle-api"],
+//   failed: [{ agentName: "shuttle-web", reason: "name_taken" }] }
+if (report.failed.length > 0) {
+  const plan = (await materializeAgents({ config, harness: report }))._unsafeUnwrap();
+  // Loom's and Tapestry's delegation lists now name only report.materialized.
+}
+```
+
+- The engine never offers an agent whose descriptor failed to compose; it needs no report for that.
+- With a report, an agent is a delegation candidate only if it is in `materialized` and not in `failed`. Reasons are `composition_failed`, `model_unresolved`, `translation_failed`, `name_taken` and `not_reported`.
+- The engine logs each exclusion at `warn` and returns it in `plan.unavailableAgents`.
+- Adapters that pass no report keep the config-based list, minus composition failures.
+- OpenCode V1 re-composes only when resolution or translation refused an agent; OpenCode V2 reads the host's agent list before building its catalog and re-composes only when one of Weave's names is already held.
 
 ### Engine Responsibilities
 
@@ -612,6 +635,7 @@ Adapters own everything after descriptors are returned:
 - Spawning or emulating agents in the harness.
 - Mapping abstract descriptor fields (models, prompts, tool policy, skills, mode) onto harness-specific capabilities and fallback behavior.
 - Applying harness-specific materialization side effects and reporting any harness-specific failures outside the pure engine API.
+- Reporting which agents the harness holds, and why it refused any, as a `HarnessMaterializationReport`, so routers are offered only those agents.
 
 The engine must not write harness config files, spawn harness agents, discover harness resource locations, or register concrete harness callbacks as part of `materializeAgents()`.
 

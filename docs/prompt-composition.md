@@ -179,8 +179,22 @@ Current filtering rules:
    - This prevents the shared shuttle agent and generated category shuttles from
      advertising one another as delegation targets.
 
-These rules are engine-owned because they define normalized delegation topology,
-not harness behavior.
+5. **Exclude agents that were not materialized**
+   - An agent whose own descriptor failed to compose (for example a category
+     whose `prompt_append` names an unknown path) is offered to no agent. The
+     engine re-composes only the prompts that had offered it.
+   - When the adapter passes a `HarnessMaterializationReport`
+     (`materializeAgents({ config, harness })`), only agents the report lists
+     as `materialized` — and not as `failed` — are offered. The adapter reports
+     harness-side refusals such as an unresolvable model, a failed
+     translation, or a name another plugin already holds.
+   - Each exclusion is returned in `MaterializationPlan.unavailableAgents` and
+     logged at `warn` with its `agent`, `reason` and `message`.
+   - See [ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md).
+
+Rules 1–4 are engine-owned because they define normalized delegation topology,
+not harness behavior. Rule 5 is engine-owned too, but the set it filters by is
+harness knowledge the adapter supplies ([Adapter Boundary](adapter-boundary.md#agent-materialization-api)).
 
 ---
 

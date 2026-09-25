@@ -29,22 +29,24 @@ Guards root causes (a), (b) and (c).
 
 | Assertion | Where it fails | Found on `main` | Flipped by |
 | --- | --- | --- | --- |
-| "offers loom / tapestry only agents the harness holds" (L1) | V1 and V2, "a category whose prompt cannot be composed" | `shuttle-broken` is offered; its prompt failed to render, so it was never registered. | Group 2 |
-| same (L1) | V2 only, "after another plugin registered an agent under a category shuttle's name" | `shuttle-web` is offered; the host holds a foreign agent of that name and Weave's was never inserted. | Group 2 |
-| "names only registered shuttles in loom's prompt" (L2) | V1 and V2, every fixture | `shuttle-backend`, `shuttle-frontend` (the prohibition line), `shuttle-core` (the todo-list example) and `shuttle-{category}` (the category paragraph). | Group 3 (3.1); in the two fixtures above, group 2 as well |
+| "offers loom / tapestry only agents the harness holds" (L1) | V1 and V2, "a category whose prompt cannot be composed" | `shuttle-broken` is offered; its prompt failed to render, so it was never registered. | Group 2 — flipped |
+| same (L1) | V2 only, "after another plugin registered an agent under a category shuttle's name" | `shuttle-web` is offered; the host holds a foreign agent of that name and Weave's was never inserted. | Group 2 — flipped |
+| "names only registered shuttles in loom's prompt" (L2) | V1 and V2, every fixture | `shuttle-backend`, `shuttle-frontend` (the prohibition line), `shuttle-core` (the todo-list example) and `shuttle-{category}` (the category paragraph). | Group 3 (3.1); group 2's part landed |
 | "names only registered agents in tapestry's prompt, outside shuttle-* names" (L2) | V1 and V2, "a builtin and a category shuttle disabled" | `warp`: `<Routing>` says "Do not route plan execution tasks to Pattern, Thread, Spindle, Weft, or Warp" with `warp` disabled. | Group 3 |
-| "names only registered shuttles in tapestry's prompt" (L2) | V1 and V2, every fixture | `shuttle-{category}` in `<Delegation>` and `<Routing>`. | Group 3 (3.4); in the two fixtures above, group 2 as well |
+| "names only registered shuttles in tapestry's prompt" (L2) | V1 and V2, every fixture | `shuttle-{category}` in `<Delegation>` and `<Routing>`. | Group 3 (3.4); group 2's part landed |
 
 Everything else passes on `main` for both adapters, including the fixtures the audit suspected: a category whose model the harness does not offer is still registered (V1 passes `provider/model` through, V2 registers it without a model since #215) and is correctly offered, and a disabled agent or category shuttle is neither registered nor offered. Not covered by L2: plain-prose mentions, for example "Warp is mandatory" in Loom's prompt when `warp` is disabled.
 
-## 2. Offer only materialized agents — PR: _
+## 2. Offer only materialized agents — PR: #PRNUM
 
-Fixes (b).
+Fixes (b). Decision: [ADR 0013](../../adr/0013-delegation-targets-from-materialized-agents.md).
 
-- [ ] 2.1 ADR (next free number in [`docs/adr/`](../../adr/)): the adapter reports what it materialized and why any agent failed; the engine builds `delegation.targets` from that set alone and logs each exclusion. It settles when Loom's and Tapestry's prompts are composed relative to materialization (see the item notes in the spec) and how an adapter with no report behaves (today's config-based list, logged once).
-- [ ] 2.2 Engine: accept the materialized set as explicit adapter context and filter delegation targets by it; log each exclusion with the agent and reason (`logger.child({ module: … })`, structured fields). Pure function tests with fixture context.
-- [ ] 2.3 OpenCode V1 and V2: report the materialized set, including agents dropped by translation, model resolution or a V2 foreign-name collision, each with a typed reason.
-- [ ] 2.4 Flip group 1's (b) known failure. Update [`prompt-composition.md`](../../prompt-composition.md#delegation-filtering-rules) (a new filtering rule), [`adapter-boundary.md`](../../adapter-boundary.md) and the adapter docs.
+- [x] 2.1 ADR (next free number in [`docs/adr/`](../../adr/)): the adapter reports what it materialized and why any agent failed; the engine builds `delegation.targets` from that set alone and logs each exclusion. It settles when Loom's and Tapestry's prompts are composed relative to materialization (see the item notes in the spec) and how an adapter with no report behaves (today's config-based list, logged once).
+- [x] 2.2 Engine: accept the materialized set as explicit adapter context and filter delegation targets by it; log each exclusion with the agent and reason (`logger.child({ module: … })`, structured fields). Pure function tests with fixture context.
+- [x] 2.3 OpenCode V1 and V2: report the materialized set, including agents dropped by translation, model resolution or a V2 foreign-name collision, each with a typed reason.
+- [x] 2.4 Flip group 1's (b) known failure. Update [`prompt-composition.md`](../../prompt-composition.md#delegation-filtering-rules) (a new filtering rule), [`adapter-boundary.md`](../../adapter-boundary.md) and the adapter docs.
+
+**How it landed.** The engine drops an agent whose own prompt failed to compose from every delegation list by itself, re-composing only the prompts that had offered it; no adapter needs to report that. For harness-side refusals, `materializeAgents({ config, harness })` takes a `HarnessMaterializationReport` (`materialized` names plus `failed` entries with a reason: `model_unresolved`, `translation_failed`, `name_taken`; `not_reported` for anything the report omits) and returns every exclusion in `plan.unavailableAgents`, each also logged at `warn`. Order: compose → register → re-compose only when something was refused. OpenCode V1 ([`materialize-agents.ts`](../../../packages/adapters/opencode/src/materialize-agents.ts)) re-composes after resolution or translation refuses an agent (neither can fail on today's config-hook path, so unit tests inject the failure). OpenCode V2 reads the host's agent list before building its catalog and passes the ids Weave did not insert as `heldAgents`; a Weave agent with one of those names is reported `name_taken`, and the held set is part of the catalog revision. The exclusion log is not observable at the adapter seam (tests run with `LOG_LEVEL=silent`); `plan.unavailableAgents` carries the same entries and is asserted in [`materialization-availability.test.ts`](../../../packages/engine/src/__tests__/materialization-availability.test.ts). A new OpenCode 2 scenario checks that Loom neither lists nor may spawn an agent whose name another plugin holds.
 
 ## 3. Loom and Tapestry prompt rules — PR: _
 

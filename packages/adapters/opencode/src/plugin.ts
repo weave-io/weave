@@ -16,7 +16,10 @@
  * 3. It calls `materializeAgents()` to compose all agent descriptors from the
  *    resolved config.
  * 4. It translates each descriptor into an `OpenCodeAgentConfig` via
- *    `translateAgent()` and collects the results into a `translatedMap`.
+ *    `translateAgent()` and collects the results into a `translatedMap`. If
+ *    any agent is refused, it composes again with a report of what OpenCode
+ *    will hold, so Loom and Tapestry are offered only those agents
+ *    (`OpenCodeAgentMaterializer`, ADR 0013).
  * 5. It returns a `Hooks` object **immediately** with two hooks:
  *    a. **`config` hook** — injects the translated agent configs into
  *       `cfg.agent` so that `opencode debug config` reflects all Weave-managed
@@ -89,22 +92,15 @@
 import { join } from "node:path";
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weaveio/weave-config";
-import {
-  env,
-  logger,
-  materializeAgents,
-  redirectLogsToFile,
-} from "@weaveio/weave-engine";
+import { env, logger, redirectLogsToFile } from "@weaveio/weave-engine";
 
 import {
   START_WORK_COMMAND_TEMPLATE,
   WEAVE_START_COMMAND_TEMPLATE,
 } from "./command-templates.js";
-import { resolveModelForAgent } from "./model-resolution.js";
+import { OpenCodeAgentMaterializer } from "./materialize-agents.js";
 import type { OpenCodeClientFacade } from "./opencode-client.js";
 import { tagWithOwnership } from "./reconcile-agent.js";
-import type { OpenCodeAgentConfig } from "./sdk-types.js";
-import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/plugin" });
 
@@ -235,67 +231,13 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
 
     const config = configResult.value;
 
-    // Compose all agent descriptors from the resolved config.
-    const planResult = await materializeAgents({ config });
-
-    // materializeAgents returns ResultAsync<MaterializationPlan, never> — it
-    // always resolves to ok(). The never error type means we can safely unwrap.
-    const plan = planResult._unsafeUnwrap();
-
-    if (plan.errors.length > 0) {
-      log.warn(
-        { errors: plan.errors.map((e: { type: string }) => e.type) },
-        "Materialization plan has partial errors — some agents may not be registered",
-      );
-    }
-
-    // Translate each descriptor into an OpenCodeAgentConfig and collect into a
-    // map. This map is used by the config hook to inject agents into cfg.agent.
-    // Translation is performed here (before the config hook is returned) so that
-    // any translation errors are surfaced at startup, not deferred to hook time.
-    const translatedMap = new Map<string, OpenCodeAgentConfig>();
-
-    for (const { agentName, descriptor } of plan.agents) {
-      // Resolve model using an empty context (no harness model context available
-      // at config-hook time — the hook runs before the harness is fully started).
-      const modelResult = resolveModelForAgent(descriptor, {});
-
-      if (modelResult.isErr()) {
-        log.warn(
-          {
-            agent: agentName,
-            errorType: modelResult.error.type,
-            message: modelResult.error.message,
-          },
-          "Model resolution failed for agent — skipping config hook injection for this agent",
-        );
-        continue;
-      }
-
-      if (modelResult.value === undefined && descriptor.models.length > 0) {
-        log.debug(
-          { agent: agentName, models: descriptor.models },
-          "No provider-qualified model preference — omitting model so OpenCode uses its default",
-        );
-      }
-
-      const translateResult = translateAgent(descriptor, modelResult.value);
-
-      if (translateResult.isErr()) {
-        log.warn(
-          {
-            agent: agentName,
-            error: translateResult.error.type,
-            message: translateResult.error.message,
-          },
-          "Translation failed for agent — skipping config hook injection for this agent",
-        );
-        continue;
-      }
-
-      translatedMap.set(agentName, translateResult.value);
-      log.debug({ agent: agentName }, "Agent translated for config hook");
-    }
+    // Compose, translate and report every agent. The materializer tells the
+    // engine which agents OpenCode will hold, so Loom and Tapestry are offered
+    // only those (ADR 0013). Translation is performed here (before the config
+    // hook is returned) so that any translation errors are surfaced at
+    // startup, not deferred to hook time.
+    const { translated: translatedMap } =
+      await new OpenCodeAgentMaterializer().materialize(config);
 
     log.info(
       { agentCount: translatedMap.size },
