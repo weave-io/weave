@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 226 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,500 tokens. Without it, AI exploration would cost ~75,700 tokens. **Saves ~55,200 tokens per conversation.**
-> **Last scanned:** 2026-09-25 07:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 227 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,600 tokens. Without it, AI exploration would cost ~76,000 tokens. **Saves ~55,400 tokens per conversation.**
+> **Last scanned:** 2026-09-25 07:58 — re-run after significant changes
 
 ---
 
@@ -45,6 +45,10 @@
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/materialize-agents.ts`
+  - class OpenCodeAgentMaterializer
+  - interface OpenCodeMaterialization
+  - interface OpenCodeMaterializerDependencies
 - `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string | undefined, ModelResolutionError>
   - function isProviderQualifiedModel: (model) => boolean
@@ -769,7 +773,7 @@
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext, promptFileReader) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?, categoryShuttleMap?, {...}, promptFileReader, delegationCandidates?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
   - _...10 more_
@@ -827,9 +831,11 @@
 - `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
+  - interface UnavailableAgent
+  - interface HarnessMaterializationReport
   - interface MaterializedAgent
   - interface MaterializationPlan
-  - type MaterializationError
+  - _...2 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
@@ -1137,12 +1143,12 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
 - `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
-- `packages/engine/src/logger.ts` — imported by **12** files
+- `packages/engine/src/logger.ts` — imported by **13** files
 - `packages/cli/src/errors.ts` — imported by **11** files
+- `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
-- `packages/engine/src/compose.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
@@ -1179,7 +1185,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 222 test files found
+> 224 test files found
 
 ---
 
