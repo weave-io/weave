@@ -922,6 +922,36 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
+- `scripts/audit/delegation-metrics.ts`
+  - function delegations: (dataset) => DelegationCounts
+  - function isConfigurationFailure: (delegation) => boolean
+  - function isTransientFailure: (delegation) => boolean
+  - function configurationFailures: (dataset) => Fraction
+  - function categoryShuttleSuccess: (dataset) => Fraction
+  - function categoryShuttleShare: (dataset, definesCategories) => void
+  - _...13 more_
+- `scripts/audit/opencode-sessions.ts`
+  - function defaultDbPath: (harness, home) => string
+  - function parseAuditArgs: (argv, now, home) => Result<AuditOptions, AuditError>
+  - function openReadOnlyStore: (harness, path) => Result<SessionStore, AuditError>
+  - function writeStdout: (text) => ResultAsync<void, AuditError>
+  - function weaveConfigCategoryCounter
+  - class CategoryProjects
+  - _...7 more_
+- `scripts/audit/scorecard.ts`
+  - function buildScorecard: (input) => Scorecard
+  - function renderMarkdown: (card) => string
+  - function renderJson: (card) => string
+  - interface Scorecard
+  - interface ScorecardInput
+- `scripts/audit/session-store.ts`
+  - function sessionStoreFor: (harness, db) => SessionStore
+  - class OpenCodeV1SessionStore
+  - class OpenCodeV2SessionStore
+  - interface AuditFilter
+  - interface AuditSession
+  - interface AuditMessage
+  - _...8 more_
 - `scripts/build-public-packages.ts`
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean

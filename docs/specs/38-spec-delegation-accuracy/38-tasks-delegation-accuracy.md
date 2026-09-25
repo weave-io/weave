@@ -105,15 +105,15 @@ Record each result in that group's PR.
 - [ ] 8.2 The job always registers: it decides inside the job whether the changed paths need the live run and succeeds without running otherwise, and fork PRs (no secrets) skip the same way. Update `workflow-sync.test.ts` if it covers the new job.
 - [ ] 8.3 Record the per-run cost (cents) and time in the PR. Ask the maintainer to make L1/L2 (the test check) and L3 required checks.
 
-## 9. Real-session audit script (L5) — PR: _
+## 9. Real-session audit script (L5) — PR: #256
 
 Spec 37 group 3, narrowed to WS1 and widened to OpenCode V2.
 
-- [ ] 9.1 `scripts/audit/` (Bun, `bun:sqlite` with `readonly: true`): flags `--db`, `--harness opencode|opencode2`, `--since`, `--until`, `--project <dir>`, `--format md|json`; excludes directories under `/tmp/`. Default V1 store `~/.local/share/opencode/opencode.db`; find the V2 store and schema and record them in the script's header.
-- [ ] 9.2 The WS1 metrics from [Spec 38 Metrics](38-spec-delegation-accuracy.md#metrics), each a small named function.
-- [ ] 9.3 Fixture tests on tiny in-memory databases for each store's schema.
-- [ ] 9.4 Run it for 4–18 Sep 2026 on the V1 store and check it reproduces the audit's WS1 baseline within rounding; note definitional differences in the header.
-- [ ] 9.5 Usage in a short `scripts/audit/README.md`, linked from [`docs/testing-strategy.md`](../../testing-strategy.md).
+- [x] 9.1 `scripts/audit/` (Bun, `bun:sqlite` with `readonly: true`): flags `--db`, `--harness opencode|opencode2`, `--since`, `--until`, `--project <dir>`, `--format md|json`; excludes directories under `/tmp/`. Default V1 store `~/.local/share/opencode/opencode.db`; find the V2 store and schema and record them in the script's header.
+- [x] 9.2 The WS1 metrics from [Spec 38 Metrics](38-spec-delegation-accuracy.md#metrics), each a small named function.
+- [x] 9.3 Fixture tests on tiny in-memory databases for each store's schema.
+- [x] 9.4 Run it for 4–18 Sep 2026 on the V1 store and check it reproduces the audit's WS1 baseline within rounding; note definitional differences in the header.
+- [x] 9.5 Usage in a short [`scripts/audit/README.md`](../../../scripts/audit/README.md), linked from [`docs/testing-strategy.md`](../../testing-strategy.md).
 
 ## 10. Close WS1 — PR: _
 

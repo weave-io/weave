@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 222 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,200 tokens. Without it, AI exploration would cost ~74,700 tokens. **Saves ~54,500 tokens per conversation.**
-> **Last scanned:** 2026-09-25 06:37 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 226 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,500 tokens. Without it, AI exploration would cost ~75,700 tokens. **Saves ~55,200 tokens per conversation.**
+> **Last scanned:** 2026-09-25 07:25 — re-run after significant changes
 
 ---
 
@@ -933,6 +933,36 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
+- `scripts/audit/delegation-metrics.ts`
+  - function delegations: (dataset) => DelegationCounts
+  - function isConfigurationFailure: (delegation) => boolean
+  - function isTransientFailure: (delegation) => boolean
+  - function configurationFailures: (dataset) => Fraction
+  - function categoryShuttleSuccess: (dataset) => Fraction
+  - function categoryShuttleShare: (dataset, definesCategories) => void
+  - _...13 more_
+- `scripts/audit/opencode-sessions.ts`
+  - function defaultDbPath: (harness, home) => string
+  - function parseAuditArgs: (argv, now, home) => Result<AuditOptions, AuditError>
+  - function openReadOnlyStore: (harness, path) => Result<SessionStore, AuditError>
+  - function writeStdout: (text) => ResultAsync<void, AuditError>
+  - function weaveConfigCategoryCounter
+  - class CategoryProjects
+  - _...7 more_
+- `scripts/audit/scorecard.ts`
+  - function buildScorecard: (input) => Scorecard
+  - function renderMarkdown: (card) => string
+  - function renderJson: (card) => string
+  - interface Scorecard
+  - interface ScorecardInput
+- `scripts/audit/session-store.ts`
+  - function sessionStoreFor: (harness, db) => SessionStore
+  - class OpenCodeV1SessionStore
+  - class OpenCodeV2SessionStore
+  - interface AuditFilter
+  - interface AuditSession
+  - interface AuditMessage
+  - _...8 more_
 - `scripts/build-public-packages.ts`
   - function hasPrivateDependencyReference: (contents, packageName) => boolean
   - function hasPrivateDeclarationReference: (contents, packageName) => boolean
@@ -1149,7 +1179,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 218 test files found
+> 222 test files found
 
 ---
 
