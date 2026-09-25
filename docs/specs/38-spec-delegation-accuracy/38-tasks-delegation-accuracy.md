@@ -70,7 +70,7 @@ Fixes (f).
 - [ ] 4.3 Check the description OpenCode V1 and V2 show in their own agent list (V2 prepends its ownership marker) and fit the harness's limits, if any.
 - [ ] 4.4 Update [`prompt-composition.md`](../../prompt-composition.md) and the DSL reference's category section.
 
-## 5. Hide harness built-in subagents — PR: _
+## 5. Hide harness built-in subagents — PR: #260
 
 Fixes (d). OpenCode V1 and V2 only; Copilot already steers its orchestrators away from built-ins.
 
