@@ -37,7 +37,7 @@ Guards root causes (a), (b) and (c).
 
 Everything else passes on `main` for both adapters, including the fixtures the audit suspected: a category whose model the harness does not offer is still registered (V1 passes `provider/model` through, V2 registers it without a model since #215) and is correctly offered, and a disabled agent or category shuttle is neither registered nor offered. Not covered by L2: plain-prose mentions, for example "Warp is mandatory" in Loom's prompt when `warp` is disabled.
 
-## 2. Offer only materialized agents — PR: #PRNUM
+## 2. Offer only materialized agents — PR: #258
 
 Fixes (b). Decision: [ADR 0013](../../adr/0013-delegation-targets-from-materialized-agents.md).
 
