@@ -511,6 +511,39 @@ describe("a maintainer reindexes a results repository whose pointers a trajector
     expect(summary.indexFiles).toContain("latest-trajectory.json");
   });
 
+  it("fails, uploading nothing, when one run's report cannot be fetched, rather than indexing without it", async () => {
+    const repo = await overwrittenRepo();
+    const broken = "runs/v1/abc123d-2026-01-15-001/public-report.json";
+    const flaky = {
+      ...repo,
+      fetchImpl: async (request: Request) =>
+        request.url.includes(broken)
+          ? new Response("Server Error", { status: 502 })
+          : repo.fetchImpl(request),
+    };
+    const result = await reindex(flaky);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({ type: "ReindexFailed" });
+    expect(result._unsafeUnwrapErr().message).toContain(
+      "abc123d-2026-01-15-001",
+    );
+    expect(repo.putsSince(0)).toEqual([]);
+  });
+
+  it("refuses a run listing that reaches the Contents API's 1,000-entry limit, since it may be truncated", async () => {
+    const seed: Record<string, string> = {};
+    for (let i = 0; i < 1000; i++) {
+      seed[
+        `runs/v1/abc123d-2026-01-15-${String(i).padStart(4, "0")}/public-report.json`
+      ] = "{}";
+    }
+    const repo = fakeResultsRepo(seed);
+    const result = await reindex(repo);
+
+    expect(result._unsafeUnwrapErr().message).toContain("1000 entries");
+    expect(repo.putsSince(0)).toEqual([]);
+  });
+
   it("refuses without a results-repo token and reaches the repository not at all", async () => {
     const repo = await overwrittenRepo();
     const result = await reindex(repo, false, {});

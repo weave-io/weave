@@ -336,7 +336,7 @@ Run IDs are shared by the two tracks (`<sha7>-<date>-<NNN>` counts both), so `re
 
 `weave eval reindex [--dry-run]` ([`reindex.ts`](../packages/cli/src/evals/reindex.ts)) rebuilds every index file from the runs already published, and is the way to repair indexes a bad publish left wrong:
 
-1. It lists `runs/v1/` through the Contents API and reads each run's `public-report.json`.
+1. It lists `runs/v1/` through the Contents API and reads each run's `public-report.json`. The Contents API lists at most 1,000 entries without saying it stopped, so a listing that reaches that limit is refused rather than treated as complete. A report that cannot be fetched (network or HTTP error) fails the command before anything is uploaded, so a transient error never publishes indexes that leave a run out.
 2. Each report is validated with `validatePublicReportBundleCompatibility()`; a run the current schema cannot read (for example one whose suite summaries are an older `schemaVersion`) is skipped and named in the output, never guessed at.
 3. The readable reports are written into a local work directory (`eval-bundles/reindex/<timestamp>/`) and `DashboardIndexWriter` rebuilds the indexes there, split by track as above.
 4. Without `--dry-run`, `GitHubContentsPublisher.publishIndexes()` uploads the index files. It writes only allowlisted index names under `indexes/v1/`, replacing each in place; it never writes a run artifact, so the immutability of `runs/v1/` is untouched. Unlike the index phase of a run publish, a failed upload fails the command.

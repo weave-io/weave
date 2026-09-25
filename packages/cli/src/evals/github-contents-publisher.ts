@@ -315,6 +315,11 @@ export function publishedRunIdsFromListing(listing: unknown): string[] {
 }
 
 /**
+ * The most entries the Contents API returns for one directory listing.
+ */
+export const CONTENTS_API_LISTING_LIMIT = 1000;
+
+/**
  * GitHub REST API base URL.
  */
 const GITHUB_API_BASE = "https://api.github.com";
@@ -489,7 +494,9 @@ export class GitHubContentsPublisher
    *
    * Reads the directory listing through the Contents API (fresh, unlike the
    * raw CDN). Only entries that are directories with a safe run-ID name are
-   * returned, sorted. The Contents API lists at most 1,000 entries.
+   * returned, sorted. The Contents API lists at most 1,000 entries and does
+   * not say when it truncated, so a listing that reaches the limit is refused
+   * rather than treated as complete.
    *
    * @param token - GitHub token, sent only in the `Authorization` header.
    */
@@ -517,7 +524,22 @@ export class GitHubContentsPublisher
           type: "PublishFailed",
           message: `The listing of published runs in ${TARGET_REPO} was not JSON.`,
         }),
-      ).map(publishedRunIdsFromListing);
+      ).andThen((listing) => {
+        // The Contents API returns at most 1,000 entries per directory and
+        // says nothing when it stops there, so a full page may be truncated.
+        if (
+          Array.isArray(listing) &&
+          listing.length >= CONTENTS_API_LISTING_LIMIT
+        ) {
+          return err<string[], ResultsRepoError>({
+            type: "PublishFailed",
+            message: `The listing of ${TARGET_RUNS_PREFIX} reached the Contents API limit of ${CONTENTS_API_LISTING_LIMIT} entries; refusing to rebuild from a possibly truncated run list.`,
+          });
+        }
+        return ok<string[], ResultsRepoError>(
+          publishedRunIdsFromListing(listing),
+        );
+      });
     });
   }
 

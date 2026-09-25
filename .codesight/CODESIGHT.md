@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 222 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~20,200 tokens. Without it, AI exploration would cost ~74,700 tokens. **Saves ~54,500 tokens per conversation.**
-> **Last scanned:** 2026-09-25 02:31 — re-run after significant changes
+> **Last scanned:** 2026-09-25 02:44 — re-run after significant changes
 
 ---
 
@@ -372,7 +372,7 @@
   - interface PublishIndexesRequest
   - type FetchImpl
   - type FileReader
-  - _...12 more_
+  - _...13 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest

@@ -124,24 +124,35 @@ export class ResultsRepoReindexer {
       .listPublishedRunIds(token)
       .mapErr(fromRepoError)
       .andThen((runsFound) =>
-        ResultAsync.fromSafePromise(this.loadRuns(runsFound, token)).andThen(
-          (loaded) => this.rebuild(runsFound, loaded, options),
-        ),
+        ResultAsync.fromSafePromise(this.loadRuns(runsFound, token))
+          .andThen((loaded) => loaded)
+          .andThen((loaded) => this.rebuild(runsFound, loaded, options)),
       );
   }
 
-  /** Reads and validates every listed run; unreadable runs are recorded. */
+  /**
+   * Reads and validates every listed run. A report the current schema cannot
+   * read is skipped and recorded; a report that cannot be fetched (network,
+   * HTTP error) fails the whole reindex, so a transient error can never
+   * publish indexes that silently leave out a run.
+   */
   private async loadRuns(
     runIds: string[],
     token: string,
-  ): Promise<{ runs: RunDescriptor[]; skipped: SkippedRun[] }> {
+  ): Promise<
+    Result<{ runs: RunDescriptor[]; skipped: SkippedRun[] }, ReindexError>
+  > {
     const runs: RunDescriptor[] = [];
     const skipped: SkippedRun[] = [];
     for (const runId of runIds) {
-      const loaded = await this.repository
-        .readPublishedRunReport(runId, token)
-        .mapErr((e) => e.message)
-        .andThen((text) => parseReport(text, runId));
+      const read = await this.repository.readPublishedRunReport(runId, token);
+      if (read.isErr()) {
+        return err({
+          type: "ReindexFailed",
+          message: `Could not read run ${runId}: ${read.error.message} Nothing was uploaded; try again.`,
+        });
+      }
+      const loaded = parseReport(read.value, runId);
       if (loaded.isErr()) {
         skipped.push({ runId, reason: loaded.error });
         continue;
@@ -151,7 +162,7 @@ export class ResultsRepoReindexer {
     runs.sort((a, b) =>
       b.bundle.assembledAt.localeCompare(a.bundle.assembledAt),
     );
-    return { runs, skipped };
+    return ok({ runs, skipped });
   }
 
   private rebuild(
