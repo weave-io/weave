@@ -15,15 +15,27 @@ Task tracking for [Spec 38](38-spec-delegation-accuracy.md). Non-normative: tick
 
 **Harness scope:** adapter-specific work covers OpenCode V1 (`packages/adapters/opencode`) and OpenCode V2 (`packages/adapters/opencode2`). Engine and prompt changes apply to every adapter; keep the Copilot, Claude Code and Pi tests passing, and change Copilot's prompt adaptation where a prompt change requires it.
 
-## 1. Contract tests (L1, L2) — PR: _
+## 1. Contract tests (L1, L2) — PR: #255
 
 Guards root causes (a), (b) and (c).
 
-- [ ] 1.1 Fixture configs, shared by L1 and L2: builtins only; two categories; four categories; a `disable agents` block that removes one builtin and one category shuttle; a category that declares no `models`.
-- [ ] 1.2 **L1 materialization contract**, as adapter scenarios in `tests/adapters/` (see [`tests/README.md`](../../../tests/README.md)), for OpenCode V1 and V2 over every fixture: every agent in Loom's and Tapestry's delegation list is in the adapter's materialized set; every materialized agent has a provider-qualified model (`provider/model`) or none; each category produces exactly one `shuttle-{category}` and a disabled one produces none.
-- [ ] 1.3 **L2 prompt contract**, alongside [`prompt-snapshots.test.ts`](../../../packages/cli/src/evals/__tests__/prompt-snapshots.test.ts): render Loom's and Tapestry's composed prompts for each fixture; collect every agent-like name in the rendered text (bold or backticked names, `shuttle-*` tokens, names after "delegate to"); assert each is a materialized agent. A small allowlist covers non-agent tokens (for example command names), with a comment per entry.
-- [ ] 1.4 Assertions that fail on today's `main` (expected: L1's delegation list against a failed materialization for (b), L2 against the `shuttle-backend` / `shuttle-frontend` line for (c)) are committed as known failures (`test.failing`) naming the group that fixes them.
-- [ ] 1.5 Confirm both run in `bun run test`, so CI's existing test check covers them. Document L1 and L2 in [`docs/testing-strategy.md`](../../testing-strategy.md).
+- [x] 1.1 Fixture configs, shared by L1 and L2: builtins only; two categories; four categories; a `disable agents` block that removes one builtin and one category shuttle; a category that declares no `models`. Also: a category whose model the harness does not offer; a category whose prompt fails to compose; on OpenCode 2, a category shuttle whose name another plugin already holds.
+- [x] 1.2 **L1 materialization contract**, as adapter scenarios in `tests/adapters/` (see [`tests/README.md`](../../../tests/README.md)), for OpenCode V1 and V2 over every fixture: every agent in Loom's and Tapestry's delegation list is in the adapter's materialized set; every materialized agent has a provider-qualified model (`provider/model`) or none; each category produces exactly one `shuttle-{category}` and a disabled one produces none.
+- [x] 1.3 **L2 prompt contract**: render Loom's and Tapestry's composed prompts for each fixture; collect every agent-like name in the rendered text (bold or backticked names, `shuttle-*` tokens, names after "delegate to"); assert each is a materialized agent. A small allowlist covers non-agent tokens (for example command names), with a comment per entry. Landed next to L1 in [`delegation-contract.scenario.test.ts`](../../../tests/adapters/delegation-contract.scenario.test.ts) rather than beside `prompt-snapshots.test.ts`: the prompt a harness gives Loom is observable at the adapter seam, so L2 reads the prompt each adapter registered, on both adapters, instead of an engine-composed one.
+- [x] 1.4 Assertions that fail on today's `main` (expected: L1's delegation list against a failed materialization for (b), L2 against the `shuttle-backend` / `shuttle-frontend` line for (c)) are committed as known failures (`test.failing`) naming the group that fixes them. See the hand-off below.
+- [x] 1.5 Confirm both run in `bun run test`, so CI's existing test check covers them. Document L1 and L2 in [`docs/testing-strategy.md`](../../testing-strategy.md#delegation-contract-tests-l1-l2).
+
+**Hand-off to groups 2 and 3.** The `it.failing` assertions in [`delegation-contract.scenario.test.ts`](../../../tests/adapters/delegation-contract.scenario.test.ts), as found on `main`. When a group's fix lands, `bun test` reports the assertion passing as a failure; change it to `it` in that PR.
+
+| Assertion | Where it fails | Found on `main` | Flipped by |
+| --- | --- | --- | --- |
+| "offers loom / tapestry only agents the harness holds" (L1) | V1 and V2, "a category whose prompt cannot be composed" | `shuttle-broken` is offered; its prompt failed to render, so it was never registered. | Group 2 |
+| same (L1) | V2 only, "after another plugin registered an agent under a category shuttle's name" | `shuttle-web` is offered; the host holds a foreign agent of that name and Weave's was never inserted. | Group 2 |
+| "names only registered shuttles in loom's prompt" (L2) | V1 and V2, every fixture | `shuttle-backend`, `shuttle-frontend` (the prohibition line), `shuttle-core` (the todo-list example) and `shuttle-{category}` (the category paragraph). | Group 3 (3.1); in the two fixtures above, group 2 as well |
+| "names only registered agents in tapestry's prompt, outside shuttle-* names" (L2) | V1 and V2, "a builtin and a category shuttle disabled" | `warp`: `<Routing>` says "Do not route plan execution tasks to Pattern, Thread, Spindle, Weft, or Warp" with `warp` disabled. | Group 3 |
+| "names only registered shuttles in tapestry's prompt" (L2) | V1 and V2, every fixture | `shuttle-{category}` in `<Delegation>` and `<Routing>`. | Group 3 (3.4); in the two fixtures above, group 2 as well |
+
+Everything else passes on `main` for both adapters, including the fixtures the audit suspected: a category whose model the harness does not offer is still registered (V1 passes `provider/model` through, V2 registers it without a model since #215) and is correctly offered, and a disabled agent or category shuttle is neither registered nor offered. Not covered by L2: plain-prose mentions, for example "Warp is mandatory" in Loom's prompt when `warp` is disabled.
 
 ## 2. Offer only materialized agents — PR: _
 

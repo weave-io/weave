@@ -1222,6 +1222,58 @@ The reporting migration turned up three more:
   here; the website is the intended caller. Kept and flagged, like the
   sanitizer surfaces above.
 
+## Delegation contract tests (L1, L2)
+
+[Spec 38](specs/38-spec-delegation-accuracy/38-spec-delegation-accuracy.md)
+proves delegation accuracy at five layers. The first two are adapter scenarios
+in
+[`tests/adapters/delegation-contract.scenario.test.ts`](../tests/adapters/delegation-contract.scenario.test.ts),
+run by `bun run test` like every other scenario. They drive OpenCode V1 and
+OpenCode 2 through the same seams as their own scenario files and assert one
+contract: **when Loom or Tapestry sends work to an agent by name, the harness
+holds that agent.**
+
+- **L1, materialization.** Every agent in Loom's and Tapestry's rendered
+  delegation list is registered with the harness; every registered agent has a
+  provider-qualified model (`provider/model`) or none; the `shuttle-*` agents
+  are exactly one per category that can run, none for a disabled or failed one.
+- **L2, prompt.** Every agent-like name in Loom's and Tapestry's rendered
+  prompt is a registered agent. "Agent-like" is a delegation-list entry, a
+  backticked lowercase identifier, a `shuttle-*` token anywhere (placeholders
+  such as `shuttle-{category}` included), or capitalised names after
+  "delegate", "route" or "send" … "to", including a list such as "to Pattern, Thread, or Warp". A small allowlist in the test
+  names the backticked identifiers that are not agents (todo states, a DSL
+  field, a workflow name), each with its reason.
+
+"Registered" is what Weave put into the harness: every agent in V1's config,
+and the `[weave-managed]` agents in the OpenCode 2 host. A foreign agent holding
+a name Weave wanted does not count, because Weave's prompt describes Weave's
+agent.
+
+Both run over the same fixtures: builtins only; two categories; four
+categories with models declared every way (qualified, bare, none, and one the
+host does not offer); a `disable agents` block removing `warp` and one category
+shuttle; a category with no models; a category whose model the harness does
+not offer; a category whose prompt fails to compose; and, on OpenCode 2 only, a
+category shuttle whose name another plugin already holds.
+
+**Known failures.** What fails on `main` is committed as `it.failing`, naming
+the Spec 38 item that fixes it, so the check is green now and turns red the day
+the fix lands — at which point that item changes `it.failing` to `it`. The list
+is kept in the [Spec 38 tasks file](specs/38-spec-delegation-accuracy/38-tasks-delegation-accuracy.md), under item 1.
+
+**Mutation check.** Each passing assertion was watched going red: dropping
+`thread` from V1's registration fails the delegation-list and prompt-name
+assertions on every V1 fixture; adding "delegate to `explore`" to `loom.md`
+fails the prompt-name assertion on all 15 fixture runs; passing V1 the bare
+declared model fails the model assertion on all 7 V1 fixtures; renaming the
+generated category shuttles fails the shuttle assertion on the 13 fixtures
+with categories.
+
+**Outside the contract.** L2 reads names in the positions above, not every
+mention in prose: with `warp` disabled, Loom's prompt still says "Warp is
+mandatory" in plain text, and L2 does not flag it.
+
 ## What the buckets found
 
 Writing scenarios against real behaviour surfaced documentation that described
