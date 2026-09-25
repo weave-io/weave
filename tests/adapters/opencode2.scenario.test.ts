@@ -730,6 +730,38 @@ describe("another plugin already registered an agent under a name Weave wants", 
     expect(subagents(collided)).not.toContain("scribe");
   });
 
+  it("rebuilds its catalog when another plugin takes a name after setup", async () => {
+    const result = await live(
+      {
+        config: INPUT.config,
+        host: { options: { refreshIntervalMs: 250 } },
+      },
+      async (host) => {
+        const before = (await host.rpc("status")) as {
+          catalogRevision: string;
+        };
+        // Another plugin replaces Weave's scribe with its own record.
+        host.agents.set("scribe", {
+          id: "scribe",
+          name: "scribe",
+          description: "a plugin that came later",
+          permissions: [],
+        });
+        await Bun.sleep(300);
+        await host.promptSession();
+        const after = (await host.rpc("status")) as { catalogRevision: string };
+        return { before, after, reloads: [...host.reloads] };
+      },
+    );
+
+    // The held-agent set is part of the catalog's identity, so the change is
+    // picked up on the next due refresh and the host is asked to reload.
+    expect(result.after.catalogRevision).not.toBe(
+      result.before.catalogRevision,
+    );
+    expect(result.reloads).toContain("agent");
+  });
+
   it("tells the user a name collided instead of pretending the agent is theirs", async () => {
     const report = await statusOf(INPUT);
 

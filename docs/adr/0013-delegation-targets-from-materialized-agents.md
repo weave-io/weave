@@ -81,7 +81,7 @@ An adapter that passes no report gets the config-based list, filtered only by wh
 **Negative / costs**
 
 - A refused agent costs one extra composition pass. The V2 catalog's prompt reader is cached, so no file is read twice there; V1 reads prompt files again through the default reader.
-- A report describes the harness at one moment. On V2 the held-agent set is captured when the catalog is built; a plugin that registers a colliding agent later is not reflected until the next catalog refresh. The held set is part of the catalog revision, so a refresh after it changes does rebuild.
+- A report describes the harness at one moment. On V2 the held-agent set is captured when the catalog is built. Each due refresh re-reads the host's agent list next to the config-source probe, and the held set is part of the catalog revision, so a collision that appears or clears after setup is picked up within one refresh interval rather than immediately.
 - `composeAgentDescriptor()` gains a trailing optional `delegationCandidates` parameter.
 
 **Neutral**

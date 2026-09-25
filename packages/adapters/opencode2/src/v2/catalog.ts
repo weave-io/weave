@@ -59,6 +59,8 @@ export interface OpenCode2CatalogCandidate {
   readonly runtime: ReadonlyMap<string, OpenCode2CatalogAgent>;
   readonly issues: readonly OpenCode2CatalogIssue[];
   readonly sources: readonly CatalogSourceEntry[];
+  /** The `heldAgents` this candidate was built against, sorted. */
+  readonly heldAgents: readonly string[];
 }
 
 export interface BuildOpenCode2CatalogInput {
@@ -254,11 +256,12 @@ function buildCandidate(
           }
 
           const manifest = sources.manifest();
+          const sortedHeld = [...heldAgents].sort();
           const revision = candidateRevision(
             manifest,
             input.models,
             input.skills,
-            [...heldAgents].sort(),
+            sortedHeld,
           );
           if (revision.isErr()) return err(revision.error);
           return ok({
@@ -267,6 +270,7 @@ function buildCandidate(
             runtime,
             issues,
             sources: manifest,
+            heldAgents: sortedHeld,
           });
         });
     });
