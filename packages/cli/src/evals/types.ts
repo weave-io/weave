@@ -439,6 +439,17 @@ export type ScoringMetadata = z.infer<typeof ScoringMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * A string with at least one non-whitespace character — the rule the Weave
+ * config schema applies to a category's description and triggers, applied at
+ * the loader so a blank one is rejected there, not at prompt composition.
+ */
+function nonBlankString(label: string) {
+  return z.string().refine((value) => value.trim().length > 0, {
+    message: `${label} must contain non-whitespace text`,
+  });
+}
+
+/**
  * A category a case declares in the Weave config it is judged under.
  *
  * The `tapestry-category-routing` runner composes Tapestry's prompt from the
@@ -453,10 +464,10 @@ export const EvalCaseCategorySchema = z
     /** Category name; the generated agent is `shuttle-{name}`. */
     name: IdentifierSchema,
     /** The category `description` — what Tapestry reads in its list. */
-    description: z.string().min(1, "category description must be non-empty"),
+    description: nonBlankString("category description"),
     /** The category `triggers`, when the case declares any. */
     triggers: z
-      .array(z.string().min(1, "category trigger must be non-empty"))
+      .array(nonBlankString("category trigger"))
       .min(1, "category triggers must have at least one entry")
       .optional(),
     /** Declare the category but disable its generated shuttle. */
@@ -1645,6 +1656,14 @@ export interface RunnerResult {
   erroredCases: number;
   /** ISO 8601 timestamp when the runner completed. */
   completedAt: string;
+  /**
+   * Hashes of prompts the runner composed itself, one per distinct prompt it
+   * sent, recorded in the run's provenance next to the shared agent
+   * snapshots. `tapestry-category-routing` composes Tapestry per case and
+   * records each as `tapestry@<caseId>`. Absent for runners that send the
+   * shared composed prompt.
+   */
+  promptSnapshots?: PromptSnapshot[];
 }
 
 // ---------------------------------------------------------------------------

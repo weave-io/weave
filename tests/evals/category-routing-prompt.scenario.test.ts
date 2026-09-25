@@ -140,6 +140,62 @@ describe("a maintainer runs the category-routing suite on cases that declare the
 });
 
 // ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+
+/** The hash the run's provenance records for `agentName`, if any. */
+function recordedHash(
+  run: SuiteRunObservation,
+  agentName: string,
+): string | undefined {
+  const records = (run.provenanceManifest?.records ?? []) as Array<{
+    agentName: string;
+    hash: string;
+  }>;
+  return records.find((r) => r.agentName === agentName)?.hash;
+}
+
+function sha256(text: string): string {
+  return new Bun.CryptoHasher("sha256").update(text).digest("hex");
+}
+
+describe("a maintainer compares two category-routing runs by their recorded prompts", () => {
+  it("records the hash of each case's prompt as it was sent, as tapestry@<case>", async () => {
+    const run = await runComposed([
+      routingCase("frontend-only", [
+        { name: "frontend", description: "Web pages" },
+      ]),
+      routingCase("backend-only", [
+        { name: "backend", description: "API controllers" },
+      ]),
+    ]);
+
+    for (const id of ["frontend-only", "backend-only"]) {
+      expect(recordedHash(run, `tapestry@${id}`)).toBe(
+        sha256(promptFor(run, id)),
+      );
+    }
+  });
+
+  it("records a different hash when only a case's categories change, so eval compare names the prompt change", async () => {
+    const before = await runComposed([
+      routingCase("same-case", [
+        { name: "frontend", description: "Web pages" },
+      ]),
+    ]);
+    const after = await runComposed([
+      routingCase("same-case", [
+        { name: "frontend", description: "Web pages", disabled: true },
+      ]),
+    ]);
+
+    const beforeHash = recordedHash(before, "tapestry@same-case");
+    expect(beforeHash).toBeDefined();
+    expect(recordedHash(after, "tapestry@same-case")).not.toBe(beforeHash);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The shipped corpus
 // ---------------------------------------------------------------------------
 
@@ -203,6 +259,18 @@ describe("a maintainer runs the shipped category-routing corpus", () => {
     expect(listedShuttles(promptFor(run, corpusCase.description))).toEqual(
       ["shuttle", ...enabled].sort(),
     );
+  });
+
+  it.each(
+    CORPUS.map((c) => [c.id, c] as const),
+  )("%s: every category shuttle Tapestry is shown is one the case allows", async (_id, corpusCase) => {
+    const run = await runComposed([fromCorpus(corpusCase)]);
+
+    for (const shuttle of listedShuttles(
+      promptFor(run, corpusCase.description),
+    )) {
+      expect(corpusCase.allowed_agents).toContain(shuttle);
+    }
   });
 
   it.each(

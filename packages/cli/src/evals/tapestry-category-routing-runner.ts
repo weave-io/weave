@@ -106,7 +106,11 @@ import {
   buildPublicExplanation,
 } from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
-import { TapestryCasePromptComposer } from "./tapestry-category-config.js";
+import { snapshotComposedPrompt } from "./prompt-snapshots.js";
+import {
+  TAPESTRY_AGENT_NAME,
+  TapestryCasePromptComposer,
+} from "./tapestry-category-config.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -117,6 +121,7 @@ import type {
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  PromptSnapshot,
   ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
@@ -1710,6 +1715,29 @@ export interface TapestryCasePromptSource {
   compose(evalCase: EvalCase): ResultAsync<string, ProvenanceError>;
 }
 
+/** Every case's Tapestry prompt, and the hashes the run records for them. */
+interface ResolvedCasePrompts {
+  byCase: Map<string, string>;
+  snapshots: PromptSnapshot[];
+}
+
+/**
+ * Why a case's prompt could not be composed: the case (when composed per
+ * case) and the error's type — never the error's text, which may carry raw
+ * provider or exception output.
+ */
+interface CasePromptFailure {
+  caseId?: string;
+  errorType: ProvenanceError["type"];
+}
+
+function describePromptFailure(failure: CasePromptFailure): string {
+  if (failure.caseId === undefined) {
+    return "Tapestry prompt provider failed: prompt composition could not complete.";
+  }
+  return `Tapestry prompt composition failed for case "${failure.caseId}" (${failure.errorType}).`;
+}
+
 /** Where the runner gets each case's Tapestry prompt. */
 type CasePromptSource =
   | { kind: "uniform"; provider: PromptProvider }
@@ -1903,26 +1931,29 @@ export class TapestryCategoryRoutingRunner {
 
       return this.resolveCasePrompts(workItems.map((item) => item.evalCase))
         .mapErr(
-          (): RunnerError => ({
+          (failure): RunnerError => ({
             type: "PromptProviderFailed",
             agentName: "tapestry",
-            message: `Tapestry prompt provider failed: prompt composition could not complete.`,
+            message: describePromptFailure(failure),
           }),
         )
-        .andThen((systemPrompts) =>
+        .andThen((resolved) =>
           this.executeWorkItems(
             workItems,
             rubrics,
             rawArtifacts,
-            systemPrompts,
+            resolved.byCase,
           ).andThen((caseResults) =>
             ResultAsync.fromSafePromise(
-              Promise.resolve(
-                this.assembleResult(
+              Promise.resolve({
+                ...this.assembleResult(
                   TAPESTRY_CATEGORY_ROUTING_SUITE,
                   caseResults,
                 ),
-              ),
+                ...(resolved.snapshots.length > 0
+                  ? { promptSnapshots: resolved.snapshots }
+                  : {}),
+              }),
             ),
           ),
         );
@@ -1931,25 +1962,47 @@ export class TapestryCategoryRoutingRunner {
 
   /**
    * Resolve Tapestry's prompt for every case about to run, keyed by case ID.
-   * A uniform provider is asked once; the per-case composer once per case.
+   * A uniform provider is asked once and records no snapshot (the run's
+   * shared `tapestry` snapshot covers it); the per-case composer is asked
+   * once per case, and each prompt is hashed as `tapestry@<caseId>` so the
+   * run's provenance records what was actually sent.
    */
   private resolveCasePrompts(
     cases: EvalCase[],
-  ): ResultAsync<Map<string, string>, ProvenanceError> {
+  ): ResultAsync<ResolvedCasePrompts, CasePromptFailure> {
     const source = this.promptSource;
     if (source.kind === "uniform") {
       return source.provider
         .getPrompt("tapestry")
-        .map((prompt) => new Map(cases.map((c) => [c.id, prompt])));
+        .mapErr((error): CasePromptFailure => ({ errorType: error.type }))
+        .map((prompt) => ({
+          byCase: new Map(cases.map((c) => [c.id, prompt])),
+          snapshots: [],
+        }));
     }
     const distinct = [...new Map(cases.map((c) => [c.id, c])).values()];
     return ResultAsync.combine(
       distinct.map((evalCase) =>
         source.composer
           .compose(evalCase)
-          .map((prompt): [string, string] => [evalCase.id, prompt]),
+          .andThen((prompt) =>
+            snapshotComposedPrompt(
+              `${TAPESTRY_AGENT_NAME}@${evalCase.id}`,
+              prompt,
+              [{ kind: "generated", layer: "primary" }],
+            ).map((snapshot) => ({ caseId: evalCase.id, prompt, snapshot })),
+          )
+          .mapErr(
+            (error): CasePromptFailure => ({
+              caseId: evalCase.id,
+              errorType: error.type,
+            }),
+          ),
       ),
-    ).map((entries) => new Map(entries));
+    ).map((entries) => ({
+      byCase: new Map(entries.map((e) => [e.caseId, e.prompt])),
+      snapshots: entries.map((e) => e.snapshot),
+    }));
   }
 
   private buildWorkItems(

@@ -459,13 +459,13 @@
   - function redactSecrets: (raw) => string
   - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
+  - function snapshotComposedPrompt: (agentName, composedPrompt, sources) => ResultAsync<PromptSnapshot, ProvenanceError>
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
   - interface ComposeSnapshotResult
   - interface ComposeAgentSnapshotsOptions
-  - interface ComposeAgentSnapshotsResult
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void

@@ -1370,7 +1370,9 @@ describe("loadCaseFile — declared categories", () => {
   it.each([
     ["a duplicated category name", [frontend, frontend]],
     ["an empty description", [{ ...frontend, description: "" }]],
+    ["a whitespace-only description", [{ ...frontend, description: "   " }]],
     ["an empty triggers list", [{ ...frontend, triggers: [] }]],
+    ["a whitespace-only trigger", [{ ...frontend, triggers: ["  "] }]],
     ["an unknown category key", [{ ...frontend, patterns: ["src/**"] }]],
     ["a name that is not an identifier", [{ ...frontend, name: "client ui" }]],
   ])("rejects %s", async (_label, categories) => {

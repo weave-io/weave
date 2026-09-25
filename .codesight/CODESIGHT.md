@@ -4,7 +4,7 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
 > 0 routes | 0 models | 0 components | 228 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,600 tokens. Without it, AI exploration would cost ~76,200 tokens. **Saves ~55,600 tokens per conversation.**
+> **Token savings:** this file is ~20,700 tokens. Without it, AI exploration would cost ~76,200 tokens. **Saves ~55,600 tokens per conversation.**
 > **Last scanned:** 2026-09-25 11:36 — re-run after significant changes
 
 ---
@@ -470,13 +470,13 @@
   - function redactSecrets: (raw) => string
   - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
+  - function snapshotComposedPrompt: (agentName, composedPrompt, sources) => ResultAsync<PromptSnapshot, ProvenanceError>
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
   - interface ComposeSnapshotResult
   - interface ComposeAgentSnapshotsOptions
-  - interface ComposeAgentSnapshotsResult
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void

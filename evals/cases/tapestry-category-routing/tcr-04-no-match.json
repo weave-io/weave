@@ -2,7 +2,7 @@
   "id": "tcr-04-no-match",
   "description": "Route this task to the correct category shuttle or fallback agent. The user wants to add structured logging to `src/Infrastructure/Logging/Logger.cs`. Which agent should handle this work?",
   "suite": "tapestry-category-routing",
-  "allowed_agents": ["tapestry", "shuttle", "loom"],
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
   "categories": [
     {
       "name": "client-frontend",

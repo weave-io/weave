@@ -2,7 +2,7 @@
   "id": "tcr-06-overlap",
   "description": "Route this task to the correct category shuttle when category scopes overlap. The file being changed is `src/4.Presentation/DST.Client/Pages/Login.tsx`, which falls under both the client-frontend and the presentation categories. Which category shuttle should be selected as the primary match, and why?",
   "suite": "tapestry-category-routing",
-  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "shuttle-presentation", "loom"],
   "categories": [
     {
       "name": "client-frontend",
