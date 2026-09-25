@@ -32,7 +32,10 @@ import {
   type WriteBundleOptions,
 } from "../../packages/cli/src/evals/artifact-bundle.js";
 import { DashboardIndexWriter } from "../../packages/cli/src/evals/dashboard-indexes.js";
-import { GitHubContentsPublisher } from "../../packages/cli/src/evals/github-contents-publisher.js";
+import {
+  GitHubContentsPublisher,
+  gitBlobSha,
+} from "../../packages/cli/src/evals/github-contents-publisher.js";
 import { ResultsRepoReindexer } from "../../packages/cli/src/evals/reindex.js";
 import type { CaseResult } from "../../packages/cli/src/evals/types.js";
 import {
@@ -80,7 +83,7 @@ function fakeResultsRepo(seed: Record<string, string> = {}) {
       }
       return new Response(
         JSON.stringify({
-          sha: `blob-of-${path}`,
+          sha: gitBlobSha(text),
           content: Buffer.from(text).toString("base64"),
         }),
         { status: 200 },
@@ -500,6 +503,17 @@ describe("a maintainer reindexes a results repository whose pointers a trajector
       if (!path.startsWith("runs/")) continue;
       expect(repo.files.get(path)).toBe(content);
     }
+  });
+
+  it("re-uploads nothing on a second reindex, since every index already holds the same bytes", async () => {
+    const repo = await overwrittenRepo();
+    await reindex(repo);
+    const mark = repo.requests.length;
+    const again = (await reindex(repo))._unsafeUnwrap();
+
+    expect(repo.putsSince(mark)).toEqual([]);
+    expect(again.filesPublished).toBe(0);
+    expect(again.latestRunId).toBe("abc123d-2026-01-15-001");
   });
 
   it("uploads nothing on a dry run, but still says where the pointers would go", async () => {

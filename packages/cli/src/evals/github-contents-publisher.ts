@@ -315,6 +315,18 @@ export function publishedRunIdsFromListing(listing: unknown): string[] {
 }
 
 /**
+ * The Git blob SHA of `content` — what the Contents API reports as a file's
+ * `sha` — so an upload can tell that the remote file already holds it.
+ */
+export function gitBlobSha(content: string): string {
+  const bytes = new TextEncoder().encode(content);
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(`blob ${bytes.byteLength}\0`);
+  hasher.update(bytes);
+  return hasher.digest("hex");
+}
+
+/**
  * The most entries the Contents API returns for one directory listing.
  */
 export const CONTENTS_API_LISTING_LIMIT = 1000;
@@ -466,7 +478,10 @@ export class GitHubContentsPublisher
    * Used by `weave eval reindex`, which rebuilds every index from the runs
    * already published. Index files are mutable, so each upload replaces the
    * remote file in place (quoting its blob SHA). Names outside the index
-   * allowlist are dropped before any request. Unlike the index phase of
+   * allowlist are dropped before any request. A file whose remote copy
+   * already holds the same bytes (same Git blob SHA) is not re-uploaded, so a
+   * repeated reindex creates no commits and stays well inside GitHub's
+   * content-creation rate limits. Unlike the index phase of
    * `publish()`, a failed upload fails the call: a reindex that left some
    * indexes stale must say so. Every file is still attempted.
    *
@@ -649,6 +664,7 @@ export class GitHubContentsPublisher
         remotePath,
         token,
         "mutable",
+        true,
       );
       if (result.isErr()) {
         this.log.error(
@@ -656,6 +672,11 @@ export class GitHubContentsPublisher
           "Index artifact upload failed",
         );
         failed.push(indexFileName);
+        continue;
+      }
+      if (result.value.unchanged) {
+        // Same bytes as the remote file: no commit, and no content-creation
+        // request against GitHub's secondary rate limit.
         continue;
       }
       if (result.value.commitSha !== null) lastSha = result.value.commitSha;
@@ -897,7 +918,14 @@ export class GitHubContentsPublisher
     remotePath: string,
     token: string,
     mode: "immutable" | "mutable",
-  ): Promise<Result<{ commitSha: string | null }, ResultsRepoError>> {
+    /**
+     * Mutable files only: skip the PUT when the remote file already holds
+     * exactly these bytes (same Git blob SHA). Used by `publishIndexes()`.
+     */
+    skipIfUnchanged = false,
+  ): Promise<
+    Result<{ commitSha: string | null; unchanged?: boolean }, ResultsRepoError>
+  > {
     // Read local file content
     const fileResult = await this.readLocalFile(localPath);
     if (fileResult.isErr()) {
@@ -921,6 +949,15 @@ export class GitHubContentsPublisher
     // For mutable index files: resolve the existing SHA to include in the PUT body
     // so the GitHub Contents API can atomically update the file in place.
     const existingResult = await this.checkExistingFile(remotePath, token);
+
+    if (
+      skipIfUnchanged &&
+      mode === "mutable" &&
+      existingResult.sha !== null &&
+      existingResult.sha === gitBlobSha(fileContent)
+    ) {
+      return ok({ commitSha: null, unchanged: true });
+    }
 
     if (mode === "immutable" && existingResult.exists) {
       // Run artifact already committed — re-publish of same run ID is rejected.

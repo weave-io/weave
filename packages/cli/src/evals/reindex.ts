@@ -23,6 +23,12 @@
  *
  * The token is read from `EVAL_RESULTS_REPO_TOKEN` and handed to the results
  * repo client, which sends it only in the `Authorization` header.
+ *
+ * Run it only while no eval publish is in flight: wait for any running
+ * `agent-evals` workflow to finish, and dispatch none until the reindex has
+ * uploaded its indexes. A run published between the listing in step 1 and the
+ * uploads in step 4 would be missing from the indexes the reindex writes
+ * (running the reindex again afterwards puts it back).
  */
 
 import { join } from "node:path";

@@ -341,6 +341,8 @@ Run IDs are shared by the two tracks (`<sha7>-<date>-<NNN>` counts both), so `re
 3. The readable reports are written into a local work directory (`eval-bundles/reindex/<timestamp>/`) and `DashboardIndexWriter` rebuilds the indexes there, split by track as above.
 4. Without `--dry-run`, `GitHubContentsPublisher.publishIndexes()` uploads the index files. It writes only allowlisted index names under `indexes/v1/`, replacing each in place; it never writes a run artifact, so the immutability of `runs/v1/` is untouched. Unlike the index phase of a run publish, a failed upload fails the command.
 
+Index files whose remote copy already holds the same bytes (same Git blob SHA) are not re-uploaded, so a repeated reindex makes no commits and stays inside GitHub's content-creation rate limits. Run it only while no eval publish is in flight — wait for any running `agent-evals` workflow to finish and dispatch none until it is done — because a run published between its listing and its uploads would be left out of the indexes it writes (running it again puts the run back).
+
 It needs `EVAL_RESULTS_REPO_TOKEN` (read and write access to `weave-io/weave-agent-evals`), which, as for a publish, is sent only in the `Authorization` header. Because a rebuild sees every published run, its manifests and histories list all readable runs, where a CI publish lists only the run it made.
 
 #### Website loader restriction

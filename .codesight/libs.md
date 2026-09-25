@@ -357,11 +357,11 @@
 - `packages/cli/src/evals/github-contents-publisher.ts`
   - function isIndexArtifactAllowed: (fileName) => boolean
   - function publishedRunIdsFromListing: (listing) => string[]
+  - function gitBlobSha: (content) => string
   - class GitHubContentsPublisher
   - interface PublishIndexesRequest
   - type FetchImpl
-  - type FileReader
-  - _...13 more_
+  - _...14 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
