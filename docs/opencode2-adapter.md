@@ -82,7 +82,7 @@ Rules are emitted in a stable, documented order (`read`, `write`, `execute`, `de
 
 ## Name collisions and delegation targets
 
-The host keeps an agent that another plugin (or a built-in) registered first: Weave never overwrites it, and never inserts its own agent of that name. Before building its catalog, the adapter reads the host's agent list and passes the ids Weave did not insert to the catalog as `heldAgents`. If one of Weave's agents has such a name, the catalog composes again with a report marking it `name_taken`, so Loom and Tapestry neither list it nor get a `subagent` permission for it. `status` still counts the collision (`agent_collision`). The held set is part of the catalog revision, so a later refresh picks up a collision that appears or disappears. See [ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md).
+The host keeps an agent that another plugin (or a built-in) registered first: Weave never overwrites it, and never inserts its own agent of that name. Before building its catalog, the adapter reads the host's agent list and passes the ids of agents without Weave's ownership marker to the catalog as `heldAgents`. If one of Weave's agents has such a name, the catalog composes again with a report marking it `name_taken`, so Loom and Tapestry neither list it nor get a `subagent` permission for it. `status` still counts the collision (`agent_collision`). The held set is part of the catalog revision, so a later refresh picks up a collision that appears or disappears. See [ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md).
 
 An agent whose own prompt fails to compose is left out of every delegation list by the engine and reported as `materialization_failed`.
 

@@ -76,12 +76,10 @@ export async function setupOpenCode2(
   }
 
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
-  // Agents this plugin inserted on the host's latest replay. Anything else the
-  // host lists — unless it carries Weave's ownership marker, which a host that
-  // keeps records across replays still shows on Weave's own agents — is a
-  // built-in's or another plugin's. Weave's agent of that name is never
-  // inserted, so the catalog is told not to offer it.
-  const inserted = new Set<string>();
+  // An agent the host lists without Weave's ownership marker is a built-in's
+  // or another plugin's, whatever Weave inserted earlier: the current record
+  // decides. Weave's agent of that name is never inserted, so the catalog is
+  // told not to offer it (ADR 0013).
   const build = () =>
     fromOpenCode2Promise(
       () =>
@@ -101,7 +99,6 @@ export async function setupOpenCode2(
         heldAgents: agents.data
           .filter(
             (agent) =>
-              !inserted.has(String(agent.id)) &&
               !String(agent.description ?? "").startsWith(
                 WEAVE_OWNERSHIP_MARKER,
               ),
@@ -145,6 +142,7 @@ export async function setupOpenCode2(
   });
 
   const registrations: Registration[] = [];
+  const inserted = new Set<string>();
   const readiness = {
     prompt: false,
     context: false,
