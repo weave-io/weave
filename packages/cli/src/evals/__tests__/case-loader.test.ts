@@ -1373,6 +1373,8 @@ describe("loadCaseFile — declared categories", () => {
     ["a whitespace-only description", [{ ...frontend, description: "   " }]],
     ["an empty triggers list", [{ ...frontend, triggers: [] }]],
     ["a whitespace-only trigger", [{ ...frontend, triggers: ["  "] }]],
+    ["a name with a slash", [{ ...frontend, name: "client/ui" }]],
+    ["a name that starts with a digit", [{ ...frontend, name: "4client" }]],
     ["an unknown category key", [{ ...frontend, patterns: ["src/**"] }]],
     ["a name that is not an identifier", [{ ...frontend, name: "client ui" }]],
   ])("rejects %s", async (_label, categories) => {

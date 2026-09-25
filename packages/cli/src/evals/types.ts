@@ -461,8 +461,17 @@ function nonBlankString(label: string) {
  */
 export const EvalCaseCategorySchema = z
   .object({
-    /** Category name; the generated agent is `shuttle-{name}`. */
-    name: IdentifierSchema,
+    /**
+     * Category name; the generated agent is `shuttle-{name}`. Limited to what
+     * the `.weave` lexer accepts as a block name, so a case cannot declare a
+     * category no user could.
+     */
+    name: z
+      .string()
+      .regex(
+        /^[A-Za-z_][A-Za-z0-9_-]*$/,
+        "category name must be a .weave identifier: a letter or _ followed by letters, digits, _ or -",
+      ),
     /** The category `description` — what Tapestry reads in its list. */
     description: nonBlankString("category description"),
     /** The category `triggers`, when the case declares any. */
