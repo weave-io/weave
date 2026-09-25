@@ -21,7 +21,7 @@
 
 Attempts passed, out of cases × 3 repeats. The bracket is the 95% Wilson interval.
 
-| Agent | Suite | Candidate | Candidate | Sonnet 4.5 |
+| Agent | Suite | Candidate model | Candidate score | Sonnet 4.5 score |
 | --- | --- | --- | --- | --- |
 | Loom | loom-routing | Opus 5.5 | 44/45 98% [88–100] | 44/45 98% [88–100] |
 | Tapestry | tapestry-category-routing | Opus 5.5 | 30/30 100% [89–100] | 27/30 90% [74–97] |
