@@ -196,7 +196,7 @@ agent spindle {
 agent weft {
   description "Code reviewer: checks correctness, quality, and maintainability and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select after non-trivial changes"
   prompt_file "weft.md"
-  models ["gpt-6-sol", "claude-opus-5-5"]
+  models ["claude-opus-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {
@@ -217,7 +217,7 @@ agent weft {
 agent warp {
   description "Security auditor: checks vulnerabilities, unsafe patterns, and specification compliance and returns an approve or block verdict; read-only, cannot execute or delegate; select when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
-  models ["gpt-6-sol", "claude-opus-5-5"]
+  models ["claude-opus-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {

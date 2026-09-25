@@ -5,7 +5,7 @@
 > how adapters use them is in [Model Resolution](../model-resolution.md#builtin-default-models).
 > Method and noise bands follow the [pre-WS1 baseline](eval-baseline-2026-09-24.md).
 
-**In one paragraph.** Every builtin agent used to declare `claude-sonnet-4-5`. Each candidate default was run on the suite that measures its agent, against Sonnet 4.5 on the same commit, with the same judge and three repeats. GPT 6 Sol clearly beat Sonnet 4.5 on Weft (9/12 against 6/12) and Warp (11/12 against 6/12). Sonnet 5 clearly beat it on Shuttle (8/9 against 3/9). Opus 5.5 matched Sonnet 4.5 on Loom, Tapestry and Pattern, within one attempt per suite: these suites are close to saturated and cannot show a gain. It was chosen for those agents as the stronger model for open-ended orchestration and planning, which the suites do not measure. GPT 6 Luna tied on Spindle (6/6 each) at a fraction of the cost. Thread has no suite of its own, so Haiku 4.5 for Thread is **unmeasured**. The runs cost **$6.80** and no attempt errored.
+**In one paragraph.** Every builtin agent used to declare `claude-sonnet-4-5`. Each candidate default was run on the suite that measures its agent, against Sonnet 4.5 on the same commit, with the same judge and three repeats. GPT 6 Sol clearly beat Sonnet 4.5 on Weft (9/12 against 6/12) and Warp (11/12 against 6/12). Sonnet 5 clearly beat it on Shuttle (8/9 against 3/9). Opus 5.5 matched Sonnet 4.5 on Loom, Tapestry and Pattern, within one attempt per suite: these suites are close to saturated and cannot show a gain. It was chosen for those agents as the stronger model for open-ended orchestration and planning, which the suites do not measure. GPT 6 Luna tied on Spindle (6/6 each) at a fraction of the cost. Thread has no suite of its own, so Haiku 4.5 for Thread is **unmeasured**. The runs cost **$6.80** and no attempt errored. A follow-up run then moved Weft and Warp to Opus 5.5 (see [Weft and Warp on strong models](#weft-and-warp-on-strong-models-25-sep-2026)).
 
 ## Setup
 
@@ -61,6 +61,19 @@ Cases that did not pass 3/3:
 - **Thread is unmeasured.** No suite scores Thread's own exploration; `loom-routing` only checks that Loom sends work to Thread. A thread-exploration suite is a follow-up.
 - **Only the text track ran.** The trajectory cases were not re-run on the candidates.
 
+## Weft and Warp on strong models (25 Sep 2026)
+
+The first pass gave Weft and Warp `gpt-6-sol` first. Because review is where a weak model costs the most, the strongest candidates then ran against Sol on the same commit (`83c09e6d`, `main` after #250), with five repeats, the same judge, and the same text track. The run cost **$2.09**, and no attempt errored.
+
+| Suite | Opus 5.5 | GPT 6 Sol | GPT 6 Astra |
+| --- | --- | --- | --- |
+| weft-review | **19/20** 95% [76–99] | 18/20 90% [70–97] | 15/20 75% [53–89] |
+| warp-security | **20/20** 100% [84–100] | **20/20** 100% [84–100] | 15/20 75% [53–89] |
+
+Cases that did not pass 5/5: `weft-review-clean-approval` (Opus 5.5 4/5, Sol 3/5, Astra 0/5), and on Astra `warp-security-guarded-false-positive` 3/5 and `warp-security-traced-injection` 2/5.
+
+**Outcome.** Weft and Warp now default to `["claude-opus-5-5", "gpt-6-sol"]`, the same as Loom, Tapestry and Pattern. Opus 5.5 is the strongest on both suites. GPT 6 Astra is the most expensive model in the matrix ($10/$50 per million tokens), but it came last: it flagged the clean change on every attempt, so it is not the OpenAI fallback. Sol is.
+
 ## Bundles
 
-The bundles are local and are not in the repository. They were copied, without `raw/`, to `~/source/weave-worktrees/eval-default-models-2026-09-25/<unit>/` on the maintainer's machine, one directory per unit (`c-<suite>` for a candidate, `s-<suite>` for Sonnet 4.5), with each unit's `run.log`.
+The bundles are local and are not in the repository. They were copied, without `raw/`, to `~/source/weave-worktrees/eval-default-models-2026-09-25/<unit>/` on the maintainer's machine, one directory per unit (`c-<suite>` for a candidate, `s-<suite>` for Sonnet 4.5), with each unit's `run.log`. The strong-model reviewer units are in `review-<suite>-<model>/`.

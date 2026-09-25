@@ -32,8 +32,8 @@ import { dedent } from "../support/scenario.js";
 
 /**
  * An Anthropic-only host whose catalog offers the Anthropic models Weave's
- * builtin agents ask for. Weft, Warp and Spindle prefer an OpenAI model, so on
- * this host they take their Anthropic fallback.
+ * builtin agents ask for. Spindle prefers an OpenAI model, so on this host it
+ * takes its Anthropic fallback.
  */
 const ANTHROPIC_HOST: HostOptions = {
   models: [
@@ -154,15 +154,17 @@ describe("a user installs Weave on an OpenCode 2 host that can run the models it
     expect(host.agent("pattern").model).toEqual(model("claude-opus-5-5"));
     expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5"));
     expect(host.agent("thread").model).toEqual(model("claude-haiku-4-5"));
-  });
-
-  it("gives the OpenAI-first agents their Anthropic fallback on an Anthropic-only host", async () => {
-    const host = await load({ host: ANTHROPIC_HOST });
-    const model = (id: string) => ({ providerID: "anthropic", id });
-
     expect(host.agent("weft").model).toEqual(model("claude-opus-5-5"));
     expect(host.agent("warp").model).toEqual(model("claude-opus-5-5"));
-    expect(host.agent("spindle").model).toEqual(model("claude-haiku-4-5"));
+  });
+
+  it("gives the OpenAI-first agent its Anthropic fallback on an Anthropic-only host", async () => {
+    const host = await load({ host: ANTHROPIC_HOST });
+
+    expect(host.agent("spindle").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-haiku-4-5",
+    });
   });
 
   it("gives the Anthropic-first agents their OpenAI fallback on an OpenAI-only host", async () => {

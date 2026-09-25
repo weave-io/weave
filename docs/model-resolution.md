@@ -32,11 +32,10 @@ The builtin agents in [`builtins.ts`](../packages/config/src/builtins.ts) each n
 
 | Agent | `models` |
 | --- | --- |
-| loom, tapestry, pattern | `["claude-opus-5-5", "gpt-6-sol"]` |
+| loom, tapestry, pattern, weft, warp | `["claude-opus-5-5", "gpt-6-sol"]` |
 | shuttle | `["claude-sonnet-5", "gpt-6-sol"]` |
 | thread | `["claude-haiku-4-5", "gpt-6-luna"]` |
 | spindle | `["gpt-6-luna", "claude-haiku-4-5"]` |
-| weft, warp | `["gpt-6-sol", "claude-opus-5-5"]` |
 
 The [eval record of 25 Sep 2026](artifacts/eval-default-models-2026-09-25.md) gives the reasons and the scores. Haiku for Thread is unmeasured, because no suite scores Thread's own work yet.
 
@@ -48,7 +47,7 @@ What each harness does with the defaults:
 | --- | --- |
 | OpenCode 2 | Uses the first entry with exactly one live catalog match. An Anthropic-only host gets the Anthropic entry and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. |
 | OpenCode (V1) | Uses only `provider/model` entries, so the bare defaults leave the agent on the user's selected or default model. |
-| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. The OpenAI entries are skipped, so Weft, Warp and Spindle get their Anthropic fallback. |
+| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. The OpenAI entries are skipped, so Spindle gets its Anthropic fallback, `haiku`. |
 | Copilot CLI | Writes no model, so the CLI's own model is used. |
 
 ---
