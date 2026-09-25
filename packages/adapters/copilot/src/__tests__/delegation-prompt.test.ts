@@ -13,8 +13,9 @@ const LOOM_PROMPT = [
   "- **thread** — Thread (Codebase Explorer)",
   "- **shuttle-core** — DSL lexer",
   "",
-  "They appear with names like `shuttle-{category}`. Prefer a category shuttle over the generic shuttle.",
-  "If nothing matches, use the generic `shuttle`. Do not invent `shuttle-backend`.",
+  "Prefer a category shuttle over the generic shuttle.",
+  "If nothing matches, use the generic `shuttle`. Delegate only to the agents listed above.",
+  "Add `shuttle-backend` to your config to get a backend shuttle.",
 ].join("\n");
 
 describe("adaptCopilotDelegationPrompt", () => {
@@ -79,8 +80,7 @@ describe("adaptCopilotDelegationPrompt", () => {
 
     expect(result).toContain("You are **loom**");
     expect(result).toContain("over the generic shuttle.");
-    expect(result).toContain("`shuttle-{category}`");
-    expect(result).toContain("Do not invent `shuttle-backend`.");
+    expect(result).toContain("Add `shuttle-backend` to your config");
     expect(result).not.toContain("weave:weave:");
   });
 
@@ -125,29 +125,8 @@ describe("adaptCopilotDelegationPrompt", () => {
     });
 
     expect(result).toContain(
-      "→ `weave:shuttle` or the matching category shuttle (`weave:shuttle-{category}`) (instead of `task` / `general-purpose`)",
+      "→ `weave:shuttle` or the matching category shuttle listed above (instead of `task` / `general-purpose`)",
     );
-  });
-
-  it("qualifies the `shuttle-{category}` placeholder only when category shuttles exist", () => {
-    const withCategories = adaptCopilotDelegationPrompt({
-      agentName: "loom",
-      prompt: LOOM_PROMPT,
-      delegationTargets: [
-        ...targets("shuttle"),
-        { name: "shuttle-core", triggers: [], isCategory: true },
-      ],
-      taskAgentIdQualifier: "weave",
-    });
-    const withoutCategories = adaptCopilotDelegationPrompt({
-      agentName: "loom",
-      prompt: LOOM_PROMPT,
-      delegationTargets: targets("shuttle"),
-      taskAgentIdQualifier: "weave",
-    });
-
-    expect(withCategories).toContain("names like `weave:shuttle-{category}`");
-    expect(withoutCategories).toContain("names like `shuttle-{category}`");
   });
 
   it("only forbids built-ins whose Weave replacement is a delegation target", () => {

@@ -73,18 +73,15 @@ export interface CopilotDelegationPromptInput {
   taskAgentIdQualifier?: string;
 }
 
-/** The category-shuttle placeholder used by the shared prompt templates. */
-const CATEGORY_SHUTTLE_PLACEHOLDER = "shuttle-{category}";
-
 /**
  * Adapts Loom's and Tapestry's composed prompts so they address Weave agents
  * by their Copilot id and prefer them over Copilot's built-in subagents.
  *
  * - Only `**name**` and `` `name` `` references whose name is one of the
- *   agent's own delegation targets are qualified, plus the
- *   `` `shuttle-{category}` `` placeholder when category shuttles exist.
- *   Plain prose, the agent's own name, and names that are not targets (such
- *   as the "do not invent `shuttle-backend`" examples) are left alone.
+ *   agent's own delegation targets are qualified. Plain prose, the agent's
+ *   own name, and names that are not targets are left alone. The shared
+ *   templates name category shuttles only through the rendered delegation
+ *   list (Spec 38 item 3), so there is no placeholder to rewrite.
  * - A "Delegation targets (GitHub Copilot)" section is appended.
  * - Any other agent, and Loom/Tapestry without delegation targets, are
  *   returned unchanged.
@@ -108,12 +105,6 @@ export function adaptCopilotDelegationPrompt(
       adapted = adapted
         .replace(new RegExp(`\\*\\*${escaped}\\*\\*`, "g"), `**${toId(name)}**`)
         .replace(new RegExp(`\`${escaped}\``, "g"), `\`${toId(name)}\``);
-    }
-    if (hasCategoryShuttles) {
-      adapted = adapted.replaceAll(
-        `\`${CATEGORY_SHUTTLE_PLACEHOLDER}\``,
-        `\`${toId(CATEGORY_SHUTTLE_PLACEHOLDER)}\``,
-      );
     }
   }
 
@@ -158,7 +149,7 @@ function buildDelegationSection(
       const instead = r.builtins.map((b) => `\`${b}\``).join(" / ");
       const alternatives =
         r.weaveAgent === "shuttle" && hasCategoryShuttles
-          ? ` or the matching category shuttle (\`${toId(CATEGORY_SHUTTLE_PLACEHOLDER)}\`)`
+          ? " or the matching category shuttle listed above"
           : "";
       lines.push(
         `- ${r.purpose} → \`${toId(r.weaveAgent)}\`${alternatives} (instead of ${instead})`,

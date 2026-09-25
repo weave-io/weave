@@ -195,7 +195,7 @@ describe("shipped builtin Loom and Tapestry prompts with project categories", ()
 
     // Verify the shipped prompt contains routing guidance for category shuttles
     expect(desc.composedPrompt).toContain(
-      "Route implementation tasks to `shuttle-{category}` agents",
+      "Route each implementation task to the matching category shuttle listed above",
     );
   });
 });
