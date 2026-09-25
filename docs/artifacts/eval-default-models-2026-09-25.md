@@ -72,7 +72,7 @@ The first pass gave Weft and Warp `gpt-6-sol` first. Because review is where a w
 
 Cases that did not pass 5/5: `weft-review-clean-approval` (Opus 5.5 4/5, Sol 3/5, Astra 0/5), and on Astra `warp-security-guarded-false-positive` 3/5 and `warp-security-traced-injection` 2/5.
 
-**Outcome.** Weft and Warp now default to `["claude-opus-5-5", "gpt-6-sol"]`, the same as Loom, Tapestry and Pattern. Opus 5.5 is the strongest on both suites. GPT 6 Astra is the most expensive model in the matrix ($10/$50 per million tokens), but it came last: it flagged the clean change on every attempt, so it is not the OpenAI fallback. Sol is.
+**Outcome.** Weft and Warp now default to `["claude-opus-5-5", "gpt-6-sol"]`, the same as Loom, Tapestry and Pattern. Opus 5.5 scored highest on Weft and tied with Sol for highest on Warp. GPT 6 Astra is the most expensive model in the matrix ($10/$50 per million tokens), but it came last: it flagged the clean change on every attempt, so it is not the OpenAI fallback. Sol is.
 
 ## Bundles
 
