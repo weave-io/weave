@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Delegation: Loom and Tapestry are offered only agents that reached the host.
+  The catalog build reads OpenCode's agent list and reports Weave agents whose
+  id another plugin already holds (for example `shuttle-web`) as `name_taken`;
+  those, and categories whose prompt failed to compose, are left out of the
+  delegation targets and logged at warn. The held set is part of the catalog
+  revision. See [ADR 0013](../../../docs/adr/0013-delegation-targets-from-materialized-agents.md).
+
 - Target OpenCode `2.0.16` (`@opencode/cli`) instead of the `0.0.0-beta-19151` pin.
   The host renamed its packages to the `@opencode/*` scope and, from 2.0.4,
   removed the `ctx.catalog` plugin domain in favour of `ctx.model` and
