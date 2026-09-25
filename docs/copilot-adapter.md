@@ -254,10 +254,12 @@ translation time, in
 [`delegation-prompt.ts`](../packages/adapters/copilot/src/delegation-prompt.ts):
 
 - `**name**` and `` `name` `` references to the agent's own delegation
-  targets are rewritten to the qualified id (`**weave:thread**`), as is the
-  `` `shuttle-{category}` `` placeholder when category shuttles exist. Plain
-  prose, the agent's own name, and names that are not targets (such as the
-  "do not invent `shuttle-backend`" examples) are left alone. The qualifier
+  targets are rewritten to the qualified id (`**weave:thread**`). Plain
+  prose, the agent's own name, and names that are not targets are left
+  alone. Since [Spec 38](specs/38-spec-delegation-accuracy/38-spec-delegation-accuracy.md)
+  item 3 the shared templates name category shuttles only through the
+  rendered delegation list, so there is no `shuttle-{category}` placeholder
+  left to rewrite. The qualifier
   is always the plugin manifest name and does **not** follow
   `qualifyPluginAgentNames`: Copilot assigns `weave:<name>` task ids even when
   the frontmatter `name:` is bare (live-verified by probing

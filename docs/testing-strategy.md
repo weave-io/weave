@@ -1271,8 +1271,10 @@ generated category shuttles fails the shuttle assertion on the 13 fixtures
 with categories.
 
 **Outside the contract.** L2 reads names in the positions above, not every
-mention in prose: with `warp` disabled, Loom's prompt still says "Warp is
-mandatory" in plain text, and L2 does not flag it.
+mention in prose. Since Spec 38 item 3, Loom's and Tapestry's prompts refer to
+specialists by role ("the strategic planner", "the security auditor") or
+through the rendered delegation list, so a disabled agent is not named in
+prose either; a plain-prose mention added later would still pass L2.
 
 ## What the buckets found
 

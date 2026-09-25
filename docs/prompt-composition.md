@@ -321,6 +321,18 @@ the same Template Context as the primary source.
 There is no automatic fallback delegation block. Delegation guidance must be
 explicitly placed in the prompt source using `{{#delegation.targets}}` loops.
 
+**Name only listed agents.** A router prompt names agents only through the
+rendered `{{#delegation.targets}}` list, plus `shuttle` as the fallback, and
+refers to other specialists by role ("the strategic planner", "the security
+auditor") rather than by a fixed name. A fixed or example name (a
+`shuttle-{category}` placeholder, `shuttle-backend` in a prohibition, a
+disabled agent) primes the model to delegate to an agent that may not exist.
+The builtin Loom and Tapestry prompts follow this rule and say "Delegate only
+to the agents listed above." since
+[Spec 38](specs/38-spec-delegation-accuracy/38-spec-delegation-accuracy.md)
+item 3; the [L2 contract test](testing-strategy.md#delegation-contract-tests-l1-l2)
+checks it.
+
 ### Workflow step prompt composition
 
 `composeWorkflowStepPrompt()` assembles the final prompt for a single workflow
