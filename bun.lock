@@ -67,7 +67,7 @@
     },
     "packages/adapters/opencode2": {
       "name": "@weaveio/weave-adapter-opencode2",
-      "version": "0.2.0-next.2",
+      "version": "0.2.0-next.3",
       "dependencies": {
         "@opencode/client": "2.0.16",
         "@opencode/plugin": "2.0.16",
