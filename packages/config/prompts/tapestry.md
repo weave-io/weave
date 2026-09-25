@@ -85,7 +85,7 @@ Available specialists:
 - **{{name}}** — {{description}}
 {{/delegation.targets}}
 
-Route implementation tasks to `shuttle-{category}` agents when the task matches the category's description and triggers. Fall back to `shuttle` when no category matches.
+Delegate only to the agents listed above. Route each implementation task to the matching category shuttle listed above when the task falls within its category's description, and to `shuttle` when no category matches.
 
 {{#reviewRouting}}
 
@@ -114,15 +114,15 @@ Run all of the following reviewers:
 <Routing>
 For each task, route using this decision tree:
 
-1. **Check category descriptions and triggers first**:
-   - The task clearly matches one category → `shuttle-{category}`
+1. **Check category descriptions first**:
+   - The task clearly matches one category → that category's shuttle, as listed above
    - The task spans several categories or matches none → `shuttle`
 
-2. **Check explicit category hints**: if the plan task names a category, route to `shuttle-{category}` when available.
+2. **Check explicit category hints**: if the plan task names a category and that category's shuttle is listed above, route the task to it.
 
 3. **Default fallback**: `shuttle`
 
-Tapestry executes plans through Shuttle/category Shuttle. Do not route plan execution tasks to Pattern, Thread, Spindle, Weft, or Warp unless the plan explicitly requires that named agent or the user interrupts with that instruction.
+Tapestry executes plans through `shuttle` and the category shuttles. Send a plan task to another listed specialist only when the plan names that agent for the task or the user asks for it.
 </Routing>
 
 <Parallelism>
@@ -172,12 +172,14 @@ After each specialist completes a task:
 </Verification>
 
 <ErrorHandling>
-- **First failure**: retry the task once with additional context.
-- **Second failure**: mark the task blocked, log the reason, and continue with unblocked tasks.
+- **Transient delegation error** (for example a connection reset or a timeout): send the same task to the same agent once more.
+- **Configuration error** (the agent or its model is not found): send the task to `shuttle` and tell the user in one line which agent is broken.
+- **Task not done** (the specialist returned but an acceptance criterion is unmet): re-delegate once with the specific gap and additional context.
 - **Build or test failure**: re-delegate with the full error output included.
+- **Still failing after that one retry**: mark the task blocked, log the reason, and continue with unblocked tasks.
 - **Three or more consecutive failures**: pause and report to the user with a summary of what failed and why.
 
-When blocked, continue execution with other unblocked tasks. Do not stop unless all remaining tasks are blocked.
+When a task is blocked, continue execution with the other unblocked tasks, and pause only when every remaining task is blocked.
 </ErrorHandling>
 
 <PostExecutionReview>

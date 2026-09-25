@@ -1,6 +1,6 @@
 {
   "id": "loom-delegates-backend-fix-to-category-trajectory",
-  "description": "`GET /orders/:id` returns 200 with a `null` body when the order doesn't exist. It should return 404 with `{ \"error\": \"order not found\" }`. Please fix it.",
+  "description": "Two order-lookup bugs: `GET /orders/:id` returns 200 with a `null` body when the order doesn't exist, and it should return 404 with `{ \"error\": \"order not found\" }`. Also, clients send order ids in upper case (`ORD_1`), so the data layer should find orders by id case-insensitively. Please fix both, in the handler (`src/api/orders.ts`) and the data layer (`src/db/orders.ts`).",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "shuttle-backend"],
   "allowed_models": [

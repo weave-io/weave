@@ -165,15 +165,42 @@ describe("builtin compose smoke", () => {
     );
   });
 
-  it("loom composedPrompt contains delegate aggressively guidance", () => {
+  // Spec 38 item 3: the delegation, size and recovery rules, written as the
+  // behaviour wanted rather than the behaviour to avoid.
+  it("loom composedPrompt delegates only to the listed agents", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("Delegate aggressively");
+    expect(descriptor.composedPrompt).toContain(
+      "Delegate only to the agents listed above.",
+    );
+  });
+
+  it("loom composedPrompt contains the size rule", () => {
+    const { composedPrompt } = getDescriptor("loom");
+    expect(composedPrompt).toContain(
+      "Do small, self-contained work yourself: a change in one place, whose cause is already clear from what you have read, that one command can verify.",
+    );
+    expect(composedPrompt).toContain(
+      "send it to the matching category shuttle listed above, or to `shuttle` when none matches",
+    );
+    expect(composedPrompt).toContain(
+      "When the size is unclear, delegate if the job would take more than a few steps, so you stay responsive to the user.",
+    );
+  });
+
+  it("loom composedPrompt contains the recovery rule", () => {
+    const { composedPrompt } = getDescriptor("loom");
+    expect(composedPrompt).toContain(
+      "After a transient error (for example a connection reset or a timeout), send the same task to the same agent once more.",
+    );
+    expect(composedPrompt).toContain(
+      "After a configuration error (the agent or its model is not found), send the task to `shuttle` and tell the user in one line which agent is broken.",
+    );
   });
 
   it("loom composedPrompt contains slow agents warning", () => {
     const descriptor = getDescriptor("loom");
     expect(descriptor.composedPrompt).toContain(
-      "Pattern, Spindle, Weft, and Warp can take longer",
+      "the strategic planner, the external researcher, the code reviewer and the security auditor can take longer",
     );
   });
 
@@ -201,9 +228,11 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("# Routing Decision");
   });
 
-  it("loom composedPrompt contains guidance to delegate to Pattern for large work", () => {
+  it("loom composedPrompt contains guidance to send large work to the strategic planner", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("Delegate to Pattern");
+    expect(descriptor.composedPrompt).toContain(
+      "Send it to the strategic planner",
+    );
   });
 
   it("loom composedPrompt contains guidance to stop and tell the user after plan creation", () => {
@@ -421,6 +450,23 @@ describe("builtin compose smoke", () => {
   it("tapestry composedPrompt does NOT contain subgraph blocks (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
     expect(descriptor.composedPrompt).not.toContain("subgraph");
+  });
+
+  it("tapestry composedPrompt delegates only to the listed agents", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain(
+      "Delegate only to the agents listed above.",
+    );
+  });
+
+  it("tapestry composedPrompt contains the recovery rule", () => {
+    const { composedPrompt } = getDescriptor("tapestry");
+    expect(composedPrompt).toContain(
+      "**Transient delegation error** (for example a connection reset or a timeout): send the same task to the same agent once more.",
+    );
+    expect(composedPrompt).toContain(
+      "**Configuration error** (the agent or its model is not found): send the task to `shuttle` and tell the user in one line which agent is broken.",
+    );
   });
 
   it("tapestry composedPrompt contains the Available specialists section from delegation.targets", () => {

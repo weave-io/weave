@@ -22,9 +22,9 @@
  * A foreign agent that happens to hold a name Weave wanted does not count —
  * Weave's prompt describes Weave's agent, not the one that is there.
  *
- * Assertions that fail on `main` today are `it.failing`, each naming the
- * Spec 38 item that fixes it. When that item lands the assertion starts to
- * pass, `it.failing` reports it, and the item turns it into a plain `it`.
+ * The assertions that failed when this file landed were `it.failing`, each
+ * naming the Spec 38 item that fixed it; items 2 and 3 turned them into plain
+ * `it`. A future known failure follows the same pattern.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -57,11 +57,6 @@ interface Fixture {
   readonly harnesses?: readonly HarnessId[];
   /** Agents another OpenCode 2 plugin registered before Weave ran. */
   readonly foreignAgents?: readonly string[];
-  /**
-   * Orchestrators whose prompt is known to name an unregistered agent outside
-   * the `shuttle-*` names — root cause (c), which Spec 38 item 3 fixes.
-   */
-  readonly namesUnregisteredAgentIn?: readonly Orchestrator[];
 }
 
 const FIXTURES: readonly Fixture[] = [
@@ -124,9 +119,6 @@ const FIXTURES: readonly Fixture[] = [
       disable agents ["warp", "shuttle-web"]
     `,
     shuttles: ["shuttle-api"],
-    // tapestry.md's <Routing> says "Do not route plan execution tasks to
-    // Pattern, Thread, Spindle, Weft, or Warp", naming Warp though it is off.
-    namesUnregisteredAgentIn: ["tapestry"],
   },
   {
     situation: "with a category that declares no models",
@@ -277,8 +269,6 @@ const HARNESSES: readonly Harness[] = [OPENCODE_V1, OPENCODE_V2];
 
 const ORCHESTRATORS = ["loom", "tapestry"] as const;
 
-type Orchestrator = (typeof ORCHESTRATORS)[number];
-
 // ---------------------------------------------------------------------------
 // Reading names out of a rendered prompt
 // ---------------------------------------------------------------------------
@@ -404,40 +394,34 @@ for (const harness of HARNESSES) {
 
         // --- L2: what the orchestrator's prompt names --------------------
 
-        // Spec 38 item 3 (root cause c): a prompt that names a disabled agent
-        // in a prohibition, as tapestry.md's <Routing> does, is known to
-        // fail. Item 3 makes these pass.
-        const namesOnlyRegistered =
-          fixture.namesUnregisteredAgentIn?.includes(orchestrator) === true
-            ? it.failing
-            : it;
-
-        namesOnlyRegistered(
-          `names only registered agents in ${orchestrator}'s prompt, outside shuttle-* names`,
-          async () => {
-            const current = await registered();
-            const names = agentLikeNames(current.prompt(orchestrator)).filter(
-              (name) => !name.startsWith("shuttle-"),
-            );
-
-            expect(names).toContain("shuttle");
-            expect(unregistered(names, current)).toEqual([]);
-          },
-        );
-
-        // Spec 38 item 3 (root cause c): loom.md names `shuttle-backend`,
-        // `shuttle-frontend` and `shuttle-core` (its todo-list example) and
-        // the `shuttle-{category}` placeholder; tapestry.md names
-        // `shuttle-{category}` in <Delegation> and <Routing>. None is a
-        // registered agent in any fixture. Item 3 makes these pass.
-        it.failing(`names only registered shuttles in ${orchestrator}'s prompt`, async () => {
+        // Spec 38 item 3 (root cause c) made this pass: the prompts refer to
+        // specialists by role or through the rendered list, so a disabled
+        // agent such as `warp` is no longer named.
+        it(`names only registered agents in ${orchestrator}'s prompt, outside shuttle-* names`, async () => {
           const current = await registered();
-          const shuttles = agentLikeNames(current.prompt(orchestrator)).filter(
-            (name) => name.startsWith("shuttle-"),
+          const names = agentLikeNames(current.prompt(orchestrator)).filter(
+            (name) => !name.startsWith("shuttle-"),
           );
 
-          expect(unregistered(shuttles, current)).toEqual([]);
+          expect(names).toContain("shuttle");
+          expect(unregistered(names, current)).toEqual([]);
         });
+
+        // Spec 38 item 3 (root cause c) removed the example and placeholder
+        // shuttle names (`shuttle-backend`, `shuttle-frontend`,
+        // `shuttle-core`, `shuttle-{category}`) from loom.md and tapestry.md;
+        // item 2 keeps unregistered shuttles out of the delegation list.
+        it(
+          `names only registered shuttles in ${orchestrator}'s prompt`,
+          async () => {
+            const current = await registered();
+            const shuttles = agentLikeNames(
+              current.prompt(orchestrator),
+            ).filter((name) => name.startsWith("shuttle-"));
+
+            expect(unregistered(shuttles, current)).toEqual([]);
+          },
+        );
       }
     });
   }
