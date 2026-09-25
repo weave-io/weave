@@ -1,6 +1,6 @@
 # Spec 38 — Delegation Accuracy
 
-**Status:** Not started — agreed with the maintainer on 25 Sep 2026; see [38 tasks](38-tasks-delegation-accuracy.md) · **Workstream:** WS1 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md) · **Tracking issue:** #253
+**Status:** In progress (item 1 landed) — agreed with the maintainer on 25 Sep 2026; see [38 tasks](38-tasks-delegation-accuracy.md) · **Workstream:** WS1 of the [September 2026 session audit](../../artifacts/session-audit-2026-09.md) · **Tracking issue:** #253
 
 **Related:** [38 tasks](38-tasks-delegation-accuracy.md) · [Spec 37 — Repository Foundation](../37-spec-repository-foundation/37-spec-repository-foundation.md) (WS0) · [Adapter Boundary](../../adapter-boundary.md) · [Prompt Composition](../../prompt-composition.md) · [Evals Overview](../../evals-overview.md) · [Eval baseline, 24 Sep 2026](../../artifacts/eval-baseline-2026-09-24.md) · [Spec 15 — Adapter-Facing Materialization API](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 18 — Delegation Exclusion](../18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](../19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Copilot Adapter — built-in agents](../../copilot-adapter.md#delegation-targets-and-copilot-built-in-agents)
 
