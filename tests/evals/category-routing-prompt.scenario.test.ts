@@ -27,7 +27,9 @@ const SUITE = "tapestry-category-routing";
 
 /** Every `shuttle` / `shuttle-{category}` entry in Tapestry's delegation list. */
 function listedShuttles(systemPrompt: string): string[] {
-  return [...systemPrompt.matchAll(/^- \*\*(shuttle(?:-[a-z0-9-]+)?)\*\*/gm)]
+  return [
+    ...systemPrompt.matchAll(/^- \*\*(shuttle(?:-[A-Za-z0-9_-]+)?)\*\*/gm),
+  ]
     .map((match) => match[1] ?? "")
     .sort();
 }
@@ -107,6 +109,19 @@ describe("a maintainer runs the category-routing suite on cases that declare the
     expect(listedShuttles(promptFor(run, "one-disabled"))).toEqual([
       "shuttle",
       "shuttle-backend",
+    ]);
+  });
+
+  it("lists a category whose name has capitals and an underscore under that exact name", async () => {
+    const run = await runComposed([
+      routingCase("mixed-case-name", [
+        { name: "Front_End", description: "Web frontend pages" },
+      ]),
+    ]);
+
+    expect(listedShuttles(promptFor(run, "mixed-case-name"))).toEqual([
+      "shuttle",
+      "shuttle-Front_End",
     ]);
   });
 
