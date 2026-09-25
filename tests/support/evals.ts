@@ -296,6 +296,11 @@ export interface FixtureSpec {
   withoutRubric?: boolean;
   /** The rubric's `scoring.notes` (reviewer notes the judge reads). */
   notes?: string;
+  /**
+   * The case's declared `categories`, exactly as a fixture file carries
+   * them. `tapestry-category-routing` composes them into Tapestry's prompt.
+   */
+  categories?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -331,6 +336,9 @@ export async function withEvalFixtures<T>(
             accepted_alternates: spec.acceptedAlternates ?? [],
             transcript_expectations: spec.transcriptExpectations ?? [],
             tags: spec.tags ?? [],
+            ...(spec.categories !== undefined
+              ? { categories: spec.categories }
+              : {}),
           },
           null,
           2,
@@ -418,6 +426,13 @@ export interface SuiteRunOptions {
   systemPrompt?: string;
   /** When set, prompt composition fails and no model is ever called. */
   promptProviderFails?: string;
+  /**
+   * Compose each prompt the way a real run does instead of sending
+   * `systemPrompt`. No prompt provider is injected, so a suite that composes
+   * per case (`tapestry-category-routing`) composes from the builtin config
+   * and the case's declared categories. Takes precedence over `systemPrompt`.
+   */
+  composePrompts?: boolean;
   /** `--case`. */
   caseFilter?: string;
   /** `--model`. Defaults to `EVAL_MODEL`. */
@@ -601,6 +616,25 @@ function buildJudge(
   return judge;
 }
 
+/**
+ * The prompt provider a run is given: none when it composes for real, so each
+ * runner falls back to its own composition; otherwise a stub.
+ */
+function selectPromptProvider(
+  options: SuiteRunOptions,
+): PromptProvider | undefined {
+  if (options.composePrompts === true) return undefined;
+  if (options.promptProviderFails !== undefined) {
+    return failingPromptProvider(options.promptProviderFails);
+  }
+  return {
+    getPrompt: (agentName: string) =>
+      ResultAsync.fromSafePromise<string, ProvenanceError>(
+        Promise.resolve(options.systemPrompt ?? `You are ${agentName}.`),
+      ),
+  };
+}
+
 /** A prompt provider whose composition always fails, carrying `marker`. */
 function failingPromptProvider(marker: string): PromptProvider {
   return {
@@ -653,15 +687,7 @@ export async function runEvalSuite(
 
   const judge = buildJudge(options);
 
-  const promptProvider: PromptProvider =
-    options.promptProviderFails !== undefined
-      ? failingPromptProvider(options.promptProviderFails)
-      : {
-          getPrompt: (agentName: string) =>
-            ResultAsync.fromSafePromise<string, ProvenanceError>(
-              Promise.resolve(options.systemPrompt ?? `You are ${agentName}.`),
-            ),
-        };
+  const promptProvider = selectPromptProvider(options);
 
   // Publish mode hands the run to a stub results repository that only
   // records what it was given; nothing leaves the machine.

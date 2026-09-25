@@ -439,6 +439,34 @@ export type ScoringMetadata = z.infer<typeof ScoringMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * A category a case declares in the Weave config it is judged under.
+ *
+ * The `tapestry-category-routing` runner composes Tapestry's prompt from the
+ * builtin config plus exactly these categories, so each enabled category is
+ * materialized as `shuttle-{name}` and listed among Tapestry's delegation
+ * targets — as it would be for a user who declared it in `.weave`. A category
+ * with `disabled: true` is declared but its generated shuttle is disabled
+ * (`disable agents ["shuttle-{name}"]`), so Tapestry never sees it.
+ */
+export const EvalCaseCategorySchema = z
+  .object({
+    /** Category name; the generated agent is `shuttle-{name}`. */
+    name: IdentifierSchema,
+    /** The category `description` — what Tapestry reads in its list. */
+    description: z.string().min(1, "category description must be non-empty"),
+    /** The category `triggers`, when the case declares any. */
+    triggers: z
+      .array(z.string().min(1, "category trigger must be non-empty"))
+      .min(1, "category triggers must have at least one entry")
+      .optional(),
+    /** Declare the category but disable its generated shuttle. */
+    disabled: z.boolean().default(false),
+  })
+  .strict();
+
+export type EvalCaseCategory = z.infer<typeof EvalCaseCategorySchema>;
+
+/**
  * A single eval case fixture.
  *
  * Lives at `evals/cases/<suite>/<case-id>.json`.
@@ -506,6 +534,19 @@ export const EvalCaseSchema = z.object({
    * identifiers so they can be used as filter keys without escaping).
    */
   tags: z.array(IdentifierSchema).default([]),
+  /**
+   * Categories the case's Weave config declares. Read by the
+   * `tapestry-category-routing` runner, which composes them into Tapestry's
+   * delegation list (see `EvalCaseCategorySchema`). Other suites ignore it.
+   */
+  categories: z
+    .array(EvalCaseCategorySchema)
+    .refine(
+      (categories) =>
+        new Set(categories.map((c) => c.name)).size === categories.length,
+      { message: "category names must be unique" },
+    )
+    .optional(),
 });
 
 /**

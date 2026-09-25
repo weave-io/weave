@@ -36,7 +36,7 @@ There are eight suites. Each has text cases, and three of them also have traject
 | --- | --- | --- | --- |
 | `loom-routing` (`loom`) | 15 text, 3 trajectory | Loom picks the right agent or category shuttle for a request | Routing is deterministic. The judge scores rationale, which only adds weight |
 | `tapestry-execution` (`tapestry`) | 4 text, 2 trajectory | Tapestry executes a plan step, delegates, and accepts or rejects a specialist's report | 1 case judged, 1 delegation chain judged, 2 `judgment` cases deterministic |
-| `tapestry-category-routing` (`tapestry`) | 10 text | Tapestry routes work to the right `shuttle-<category>` | Routing is deterministic and graded. Required cases must also clear the judge's rationale gate (0.7) |
+| `tapestry-category-routing` (`tapestry`) | 10 text | Tapestry routes work to the right `shuttle-<category>`, with each case's declared categories composed into its delegation list ([details](agent-evals.md#tapestry-category-routing-case-composition)) | Routing is deterministic and graded. Required cases must also clear the judge's rationale gate (0.7) |
 | `shuttle-execution` (`shuttle`) | 3 text, 1 trajectory | Shuttle's completion report is honest: task intake, files, commands, what it could not verify | 2 judged, 1 `judgment` case deterministic |
 | `spindle-tools` (`spindle`) | 2 text | Spindle's research answer cites sources, separates facts from interpretation, and states confidence | Judged |
 | `pattern-planning` (`pattern`) | 4 text | Pattern's plan has scope, file-backed tasks, order, per-task acceptance, and no invented commands | 2 judged, 2 `judgment` cases deterministic |
