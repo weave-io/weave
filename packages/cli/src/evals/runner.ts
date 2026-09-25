@@ -1727,6 +1727,9 @@ export class EvalOrchestrator {
             remoteSequenceReader,
             repeatCount: request.repeat ?? 1,
             judge: this.judge,
+            // Recorded so the dashboard indexes keep a trajectory run from
+            // replacing the text run `latest.json` points at.
+            track: request.track,
             // Produce the human-readable Markdown report alongside the JSON
             // report for every non-dry-run bundle so all registered suites surface
             // through the same public reporting pipeline.

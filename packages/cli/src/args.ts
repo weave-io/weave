@@ -67,9 +67,9 @@ export interface ParsedArgs {
     /**
      * eval subcommand: `"run"` for `weave eval run`, `"compare"` for
      * `weave eval compare <baseline> <candidate>` (the two runs are left in
-     * `rest`, in order).
+     * `rest`, in order), `"reindex"` for `weave eval reindex`.
      */
-    evalSubcommand?: "run" | "compare";
+    evalSubcommand?: "run" | "compare" | "reindex";
     /** --agent <name> filter for `weave eval run` */
     evalAgent?: string;
     /** --model <id> filter for `weave eval run` */
@@ -456,9 +456,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       continue;
     }
 
-    // eval subcommands: "run", "compare"
+    // eval subcommands: "run", "compare", "reindex"
     if (command === "eval" && flags.evalSubcommand === undefined) {
-      if (arg === "run" || arg === "compare") {
+      if (arg === "run" || arg === "compare" || arg === "reindex") {
         flags.evalSubcommand = arg;
         continue;
       }

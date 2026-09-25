@@ -43,6 +43,7 @@ export class ThemeRenderer {
       `    ${theme.cyan("runtime journal")}             ${theme.dim("Show recent journal entries (--limit <n>)")}`,
       `    ${theme.cyan("eval run")}                    ${theme.dim("Run configured evals (--agent --model --models --case --repeat --track --dry-run)")}`,
       `    ${theme.cyan("eval compare")} <a> <b>        ${theme.dim("Compare two eval runs' pass rates beyond the noise")}`,
+      `    ${theme.cyan("eval reindex")}                ${theme.dim("Rebuild the published eval dashboard indexes (--dry-run)")}`,
       "",
       `  ${theme.boldCyan("OPTIONS")}`,
       "",

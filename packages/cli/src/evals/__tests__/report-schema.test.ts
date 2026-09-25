@@ -2008,3 +2008,34 @@ describe("computeCaseScoreBucket — a case's band follows its verdict", () => {
     expect(computeCaseScoreBucket(undefined, false, false)).toBe("skip");
   });
 });
+
+describe("track on the run summary", () => {
+  it.each([
+    "text",
+    "trajectory",
+  ] as const)("accepts track %s on the run summary", (track) => {
+    const bundle = makeValidPublicReportBundle();
+    const result = PublicReportBundleSchema.safeParse({
+      ...bundle,
+      runSummary: { ...bundle.runSummary, track },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a run summary without a track, as every run published before tracks were recorded has", () => {
+    const bundle = makeValidPublicReportBundle();
+    expect(bundle.runSummary).not.toHaveProperty("track");
+    expect(PublicReportBundleSchema.safeParse(bundle).success).toBe(true);
+  });
+
+  it("rejects a track the CLI does not have, naming the field", () => {
+    const bundle = makeValidPublicReportBundle();
+    const result = PublicReportBundleSchema.safeParse({
+      ...bundle,
+      runSummary: { ...bundle.runSummary, track: "both" },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path).toEqual(["runSummary", "track"]);
+  });
+});

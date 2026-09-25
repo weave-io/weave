@@ -17,6 +17,7 @@
  *     This is the live production path.
  */
 
+import { join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
@@ -42,6 +43,11 @@ import {
   type ModelResponse,
   OpenRouterClient,
 } from "../evals/openrouter-client.js";
+import {
+  type ReindexRepository,
+  type ReindexSummary,
+  ResultsRepoReindexer,
+} from "../evals/reindex.js";
 import { EvalRunReport } from "../evals/run-report.js";
 import {
   buildEvalRunner,
@@ -146,6 +152,17 @@ export interface EvalContext {
   validateFilters?: (
     request: EvalRunRequest,
   ) => Promise<Result<undefined, CliError>>;
+  /**
+   * Results-repository client for `weave eval reindex`. Defaults to a
+   * `GitHubContentsPublisher` over the real `fetch`; inject one over a stub
+   * `fetch` in tests.
+   */
+  reindexRepository?: ReindexRepository;
+  /**
+   * Local directory `weave eval reindex` rebuilds the indexes in. Defaults to
+   * a fresh `eval-bundles/reindex/<timestamp>/` in the working directory.
+   */
+  reindexWorkDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +184,8 @@ const EVAL_USAGE = [
   "  weave eval compare <baseline> <candidate>",
   "                                        Say per suite and model whether pass rates changed beyond the noise",
   "                                        (each run is a run directory or a run ID under eval-bundles/runs/)",
+  "  weave eval reindex [--dry-run]        Rebuild the dashboard indexes of weave-io/weave-agent-evals",
+  "                                        from its published runs (needs EVAL_RESULTS_REPO_TOKEN)",
   "",
   `  Short agents: ${EVAL_SHORT_AGENT_FILTERS.join(", ")}`,
   `  Suites: ${EVAL_SUITE_IDS.join(", ")}`,
@@ -623,6 +642,76 @@ async function runEvalCompare(
   return ok(0);
 }
 
+// ---------------------------------------------------------------------------
+// Subcommand: eval reindex
+// ---------------------------------------------------------------------------
+
+/**
+ * `weave eval reindex [--dry-run]`.
+ *
+ * Rebuilds every dashboard index in `weave-io/weave-agent-evals` from the runs
+ * published there (see `evals/reindex.ts`), keeping the text and trajectory
+ * tracks apart, and uploads the index files. `--dry-run` rebuilds locally and
+ * prints what would be uploaded. Exits 0 on success, 1 when refused or when
+ * any step failed.
+ */
+async function runEvalReindex(
+  ctx: EvalContext,
+): Promise<Result<number, CliError>> {
+  const { terminal, theme } = ctx;
+  const env = ctx.env ?? Bun.env;
+  const dryRun = ctx.flags.dryRun === true;
+
+  const repository =
+    ctx.reindexRepository ??
+    new (
+      await import("../evals/github-contents-publisher.js")
+    ).GitHubContentsPublisher();
+  const workDir =
+    ctx.reindexWorkDir ??
+    join(
+      process.cwd(),
+      "eval-bundles",
+      "reindex",
+      new Date().toISOString().replace(/[:.]/g, "-"),
+    );
+
+  const result = await new ResultsRepoReindexer(repository, workDir).reindex({
+    env,
+    dryRun,
+  });
+  if (result.isErr()) {
+    return refuse(terminal, `eval reindex failed: ${result.error.message}`);
+  }
+
+  terminal.stdout(renderReindexSummary(result.value, theme));
+  return ok(0);
+}
+
+function renderReindexSummary(
+  summary: ReindexSummary,
+  theme: ThemeColors,
+): string {
+  const lines = [
+    "",
+    `${theme.boldCyan("Eval reindex")}${summary.dryRun ? theme.dim(" — dry run, nothing uploaded") : ""}`,
+    "",
+    `  ${theme.cyan("Runs found:")}      ${summary.runsFound.length}`,
+    `  ${theme.cyan("Runs indexed:")}    ${summary.runsIndexed.length}`,
+    `  ${theme.cyan("Latest run:")}      ${summary.latestRunId ?? "none"}`,
+    `  ${theme.cyan("Latest trajectory run:")} ${summary.latestTrajectoryRunId ?? "none"}`,
+  ];
+  for (const skipped of summary.runsSkipped) {
+    lines.push(`  ${theme.dim(`Skipped ${skipped.runId}: ${skipped.reason}`)}`);
+  }
+  lines.push(
+    `  ${theme.cyan("Index files:")}     ${summary.indexFiles.length}${summary.dryRun ? "" : ` (${summary.filesPublished} uploaded)`}`,
+    `  ${theme.cyan("Rebuilt in:")}      ${summary.workDir}`,
+    "",
+  );
+  return lines.join("\n");
+}
+
 function refuse(
   terminal: TerminalIO,
   message: string,
@@ -654,6 +743,10 @@ export async function runEval(
 
   if (flags.evalSubcommand === "compare") {
     return runEvalCompare(ctx);
+  }
+
+  if (flags.evalSubcommand === "reindex") {
+    return runEvalReindex(ctx);
   }
 
   // Future subcommands would be dispatched here.

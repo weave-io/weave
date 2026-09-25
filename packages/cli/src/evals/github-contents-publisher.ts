@@ -45,7 +45,8 @@
  *
  * where `<fileName>` must be permitted by `isIndexArtifactAllowed()`.
  * The function accepts:
- *   - Exact names: `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`.
+ *   - Exact names: `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`,
+ *     `trajectory-manifest.json`, `latest-trajectory.json`.
  *   - Pattern: `suite-history-<suiteName>.json` (per-suite history).
  *   - Pattern: `model-comparison-<runId>.json` (per-run model comparison).
  *   - Pattern: `scenario-history-<suiteName>.json` (per-suite scenario history).
@@ -188,7 +189,27 @@ export const INDEX_ARTIFACT_EXACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "dashboard-manifest.json",
   "latest.json",
   "last-N-runs.json",
+  // Trajectory-track pointer and manifest: written only by a trajectory run,
+  // so the trajectory job never moves the text run's `latest.json`.
+  "trajectory-manifest.json",
+  "latest-trajectory.json",
 ]);
+
+/**
+ * The index manifests that list published run IDs, one per track. Read by
+ * `readRemoteRunIds()` so a run ID is never reused across tracks.
+ */
+export const RUN_LISTING_MANIFESTS: readonly string[] = [
+  "dashboard-manifest.json",
+  "trajectory-manifest.json",
+];
+
+/**
+ * A published run ID as it appears as a directory under `runs/v1/`: the same
+ * character set `DashboardEntrySchema` enforces, so it is always a single
+ * safe path segment.
+ */
+const PUBLISHED_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
  * Pattern for per-suite history index files.
@@ -262,6 +283,36 @@ export function isIndexArtifactAllowed(fileName: string): boolean {
  */
 export const INDEX_ARTIFACT_ALLOWLIST: ReadonlySet<string> =
   INDEX_ARTIFACT_EXACT_ALLOWLIST;
+
+/**
+ * A request to publish index files only (`GitHubContentsPublisher.publishIndexes`).
+ */
+export interface PublishIndexesRequest {
+  /** Local directory holding the index files. */
+  localBundleRoot: string;
+  /** Index file names relative to `localBundleRoot`; filtered by the allowlist. */
+  indexFileNames: string[];
+  /** Environment override for the token lookup. Defaults to `Bun.env`. */
+  env?: Record<string, string | undefined>;
+}
+
+/**
+ * The run IDs in a Contents API directory listing of `runs/v1/`: directory
+ * entries whose name is a plain run ID, sorted. Anything that is not the
+ * listing shape yields `[]`.
+ */
+export function publishedRunIdsFromListing(listing: unknown): string[] {
+  if (!Array.isArray(listing)) return [];
+  const ids: string[] = [];
+  for (const entry of listing) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, type } = entry as Record<string, unknown>;
+    if (type !== "dir" || typeof name !== "string") continue;
+    if (!PUBLISHED_RUN_ID_PATTERN.test(name)) continue;
+    ids.push(name);
+  }
+  return ids.sort();
+}
 
 /**
  * GitHub REST API base URL.
@@ -398,6 +449,213 @@ export class GitHubContentsPublisher
         },
       ).andThen((r) => r),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public: index-only publication and published-run reads (`eval reindex`)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload index files only — no run artifacts — under `indexes/v1/`.
+   *
+   * Used by `weave eval reindex`, which rebuilds every index from the runs
+   * already published. Index files are mutable, so each upload replaces the
+   * remote file in place (quoting its blob SHA). Names outside the index
+   * allowlist are dropped before any request. Unlike the index phase of
+   * `publish()`, a failed upload fails the call: a reindex that left some
+   * indexes stale must say so. Every file is still attempted.
+   *
+   * @param request - Local index directory, file names and token env.
+   * @returns `ok(PublishBundleResult)` or `err(ResultsRepoError)`.
+   */
+  publishIndexes(
+    request: PublishIndexesRequest,
+  ): ResultAsync<PublishBundleResult, ResultsRepoError> {
+    const token = this.readToken(request.env ?? Bun.env);
+    if (token.isErr())
+      return new ResultAsync(Promise.resolve(err(token.error)));
+
+    return ResultAsync.fromPromise(
+      this.uploadIndexFiles(request, token.value),
+      (): ResultsRepoError => ({
+        type: "PublishFailed",
+        message: "Unexpected index publish error.",
+      }),
+    ).andThen((r) => r);
+  }
+
+  /**
+   * List the run IDs published under `runs/v1/` in the results repository.
+   *
+   * Reads the directory listing through the Contents API (fresh, unlike the
+   * raw CDN). Only entries that are directories with a safe run-ID name are
+   * returned, sorted. The Contents API lists at most 1,000 entries.
+   *
+   * @param token - GitHub token, sent only in the `Authorization` header.
+   */
+  listPublishedRunIds(token: string): ResultAsync<string[], ResultsRepoError> {
+    return ResultAsync.fromPromise(
+      this.getContents(
+        TARGET_RUNS_PREFIX,
+        token,
+        "application/vnd.github+json",
+      ),
+      (): ResultsRepoError => ({
+        type: "PublishFailed",
+        message: `Could not list published runs in ${TARGET_REPO}.`,
+      }),
+    ).andThen((response) => {
+      if (!response.ok) {
+        return err<string[], ResultsRepoError>({
+          type: "PublishFailed",
+          message: `Listing published runs in ${TARGET_REPO} returned HTTP ${response.status}.`,
+        });
+      }
+      return ResultAsync.fromPromise(
+        response.json() as Promise<unknown>,
+        (): ResultsRepoError => ({
+          type: "PublishFailed",
+          message: `The listing of published runs in ${TARGET_REPO} was not JSON.`,
+        }),
+      ).map(publishedRunIdsFromListing);
+    });
+  }
+
+  /**
+   * Read the published `public-report.json` of one run, as text.
+   *
+   * @param runId - A run ID from `listPublishedRunIds()`; refused unless it
+   *   is a single safe path segment.
+   * @param token - GitHub token, sent only in the `Authorization` header.
+   */
+  readPublishedRunReport(
+    runId: string,
+    token: string,
+  ): ResultAsync<string, ResultsRepoError> {
+    if (!PUBLISHED_RUN_ID_PATTERN.test(runId)) {
+      return new ResultAsync(
+        Promise.resolve(
+          err<string, ResultsRepoError>({
+            type: "PublishFailed",
+            message: "Refusing to read a run whose ID is not a plain run ID.",
+          }),
+        ),
+      );
+    }
+    const path = `${TARGET_RUNS_PREFIX}/${runId}/public-report.json`;
+    return ResultAsync.fromPromise(
+      this.getContents(path, token, "application/vnd.github.raw"),
+      (): ResultsRepoError => ({
+        type: "PublishFailed",
+        message: `Could not read ${path} from ${TARGET_REPO}.`,
+      }),
+    ).andThen((response) => {
+      if (!response.ok) {
+        return err<string, ResultsRepoError>({
+          type: "PublishFailed",
+          message: `Reading ${path} from ${TARGET_REPO} returned HTTP ${response.status}.`,
+        });
+      }
+      return ResultAsync.fromPromise(
+        response.text(),
+        (): ResultsRepoError => ({
+          type: "PublishFailed",
+          message: `Could not read the body of ${path}.`,
+        }),
+      );
+    });
+  }
+
+  /** A GET on the Contents API; the token rides only in `Authorization`. */
+  private getContents(
+    remotePath: string,
+    token: string,
+    accept: string,
+  ): Promise<Response> {
+    const apiUrl = `${GITHUB_API_BASE}/repos/${TARGET_REPO}/contents/${remotePath}?ref=${TARGET_BRANCH}`;
+    return this.fetchImpl(
+      new Request(apiUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: accept,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "weave-eval-publisher/1.0",
+        },
+      }),
+    );
+  }
+
+  /** The trimmed results-repo token from `env`, or `TokenMissing`. */
+  private readToken(
+    env: Record<string, string | undefined>,
+  ): Result<string, ResultsRepoError> {
+    const rawToken = env[EVAL_RESULTS_REPO_TOKEN_ENV_VAR];
+    if (rawToken === undefined || rawToken.trim() === "") {
+      return err({
+        type: "TokenMissing",
+        envVar: EVAL_RESULTS_REPO_TOKEN_ENV_VAR,
+        message:
+          `${EVAL_RESULTS_REPO_TOKEN_ENV_VAR} is required to publish to ${TARGET_REPO} but was not set. ` +
+          `Set this environment variable to a valid repository token before publishing.`,
+      });
+    }
+    return ok(rawToken.trim());
+  }
+
+  private async uploadIndexFiles(
+    request: PublishIndexesRequest,
+    token: string,
+  ): Promise<Result<PublishBundleResult, ResultsRepoError>> {
+    const names = request.indexFileNames.filter((f) =>
+      isIndexArtifactAllowed(f),
+    );
+    if (names.length === 0) {
+      return err({
+        type: "PublishFailed",
+        message: "No allowlisted index files to publish.",
+      });
+    }
+
+    let filesPublished = 0;
+    let lastSha: string | null = null;
+    const failed: string[] = [];
+    for (const indexFileName of names) {
+      const remotePath = `${TARGET_INDEXES_PREFIX}/${indexFileName}`;
+      const result = await this.uploadFile(
+        join(request.localBundleRoot, indexFileName),
+        remotePath,
+        token,
+        "mutable",
+      );
+      if (result.isErr()) {
+        this.log.error(
+          { remotePath, errorType: result.error.type },
+          "Index artifact upload failed",
+        );
+        failed.push(indexFileName);
+        continue;
+      }
+      if (result.value.commitSha !== null) lastSha = result.value.commitSha;
+      filesPublished++;
+      this.log.info(
+        { remotePath, filesPublished },
+        "Index artifact published successfully",
+      );
+    }
+
+    if (failed.length > 0) {
+      return err({
+        type: "PublishFailed",
+        message: `${failed.length} of ${names.length} index file(s) failed to upload: ${failed.join(", ")}.`,
+      });
+    }
+    return ok({
+      commitSha: lastSha,
+      branch: TARGET_BRANCH,
+      filesPublished,
+      simulated: false,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -780,8 +1038,12 @@ export class GitHubContentsPublisher
   // ---------------------------------------------------------------------------
 
   /**
-   * Fetch all run IDs from `indexes/v1/dashboard-manifest.json` in the remote
-   * results repository that share the given prefix.
+   * Fetch all run IDs from `indexes/v1/dashboard-manifest.json` and
+   * `indexes/v1/trajectory-manifest.json` in the remote results repository
+   * that share the given prefix. Both are read because the text and
+   * trajectory runs of one commit and day share a sequence: a trajectory run
+   * is listed only in the trajectory manifest, and the next text run must
+   * still number itself after it.
    *
    * Implements the `RemoteSequenceReader` interface so that `writeBundle()` can
    * use this publisher directly as the reader without a separate adapter object.
@@ -818,7 +1080,23 @@ export class GitHubContentsPublisher
     prefix: string,
     token: string,
   ): Promise<string[]> {
-    const manifestPath = `${TARGET_INDEXES_PREFIX}/dashboard-manifest.json`;
+    const ids: string[] = [];
+    for (const manifest of RUN_LISTING_MANIFESTS) {
+      ids.push(...(await this.fetchManifestRunIds(manifest, prefix, token)));
+    }
+    return ids;
+  }
+
+  /**
+   * Run IDs starting with `${prefix}-` in one index manifest. Always resolves;
+   * any failure yields `[]`.
+   */
+  private async fetchManifestRunIds(
+    manifestFile: string,
+    prefix: string,
+    token: string,
+  ): Promise<string[]> {
+    const manifestPath = `${TARGET_INDEXES_PREFIX}/${manifestFile}`;
     const apiUrl = `${GITHUB_API_BASE}/repos/${TARGET_REPO}/contents/${manifestPath}`;
 
     let response: Response;

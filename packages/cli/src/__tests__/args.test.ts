@@ -445,3 +445,18 @@ describe("eval compare", () => {
     expect(parsed.rest).toEqual(["run-a", "eval-bundles/runs/run-b"]);
   });
 });
+
+describe("eval reindex", () => {
+  it("parses the subcommand and --dry-run", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "reindex",
+      "--dry-run",
+    ])._unsafeUnwrap();
+
+    expect(parsed.flags.evalSubcommand).toBe("reindex");
+    expect(parsed.flags.dryRun).toBe(true);
+  });
+});

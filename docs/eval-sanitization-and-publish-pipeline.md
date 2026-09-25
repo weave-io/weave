@@ -292,9 +292,11 @@ It accepts:
 
 | Name / Pattern | Example | Description |
 |---|---|---|
-| `dashboard-manifest.json` | exact | All runs index (mutable — updated after each run) |
-| `latest.json` | exact | Most-recent run snapshot (mutable) |
-| `last-N-runs.json` | exact | Last N runs index (mutable) |
+| `dashboard-manifest.json` | exact | Main-track runs index (mutable — updated after each text run) |
+| `latest.json` | exact | Most-recent main-track (text) run snapshot (mutable) |
+| `last-N-runs.json` | exact | Last N main-track runs index (mutable) |
+| `trajectory-manifest.json` | exact | Trajectory-track runs index (mutable — updated after each trajectory run) |
+| `latest-trajectory.json` | exact | Most-recent trajectory run snapshot (mutable) |
 | `suite-history-<suiteName>.json` | `suite-history-loom-routing.json` | Per-suite pass-rate history (mutable) |
 | `model-comparison-<runId>.json` | `model-comparison-abc1234-2026-06-11-001.json` | Per-run model comparison table (mutable) |
 
@@ -308,6 +310,38 @@ Any file name NOT accepted by `isIndexArtifactAllowed()` is filtered out before 
 2. Only after ALL run artifacts are committed are index files uploaded under `indexes/v1/`.
 
 This guarantees that any consumer fetching `indexes/v1/dashboard-manifest.json` will always find complete run artifact directories for every run listed.
+
+#### Track-aware indexes
+
+CI publishes two runs per dispatch, one after the other: the text job (`weave eval run --track text`) and then the trajectory job (`--track trajectory`). Each job starts from an empty `eval-bundles/` and regenerates the indexes from the one run it holds. Before weave-io/weave#183 was fixed, the trajectory job — publishing last — rewrote `latest.json`, `dashboard-manifest.json`, `last-N-runs.json` and the histories of the three suites it ran, and tryweave.io/evals showed a 20-case, 4-model trajectory run as the main results ([workflow run 36075064977](https://github.com/weave-io/weave/actions/runs/36075064977)).
+
+The indexes are now split by track, so one job can never move the other's pointer:
+
+| Index files | Runs they cover | Written by |
+|---|---|---|
+| `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-*.json`, `scenario-history-*.json` | **Main track**: text runs, and runs of both tracks (a local `weave eval run` without `--track`) | a publish holding a main-track run |
+| `trajectory-manifest.json`, `latest-trajectory.json` | **Trajectory track**: runs restricted to `--track trajectory` | a publish holding a trajectory run |
+| `model-comparison-<runId>.json` | every run | the publish of that run |
+
+The existing files keep their meaning, and the trajectory files have the same shapes (`DashboardManifest` and `LatestRunSnapshot`), so existing consumers keep working and a consumer that knows about trajectory runs reads two more files. A track with no run on the publishing machine has none of its files regenerated or uploaded.
+
+How a run is placed (`indexTrackOf()` in [`dashboard-indexes.ts`](../packages/cli/src/evals/dashboard-indexes.ts)):
+
+1. `runSummary.track` in `public-report.json` decides when present. The writer records it (`"text"` or `"trajectory"`) whenever the run was restricted with `--track`, and omits it for a run of both tracks.
+2. A run published before the track was recorded is placed by its cases: when every case entry is a trajectory case (it carries a `trajectorySummary`, or errored with a `trajectory-<ErrorType>` classification) it is a trajectory run; anything else is a main run.
+
+Run IDs are shared by the two tracks (`<sha7>-<date>-<NNN>` counts both), so `readRemoteRunIds()` reads both `dashboard-manifest.json` and `trajectory-manifest.json` before numbering a run.
+
+#### Rebuilding the indexes (`weave eval reindex`)
+
+`weave eval reindex [--dry-run]` ([`reindex.ts`](../packages/cli/src/evals/reindex.ts)) rebuilds every index file from the runs already published, and is the way to repair indexes a bad publish left wrong:
+
+1. It lists `runs/v1/` through the Contents API and reads each run's `public-report.json`.
+2. Each report is validated with `validatePublicReportBundleCompatibility()`; a run the current schema cannot read (for example one whose suite summaries are an older `schemaVersion`) is skipped and named in the output, never guessed at.
+3. The readable reports are written into a local work directory (`eval-bundles/reindex/<timestamp>/`) and `DashboardIndexWriter` rebuilds the indexes there, split by track as above.
+4. Without `--dry-run`, `GitHubContentsPublisher.publishIndexes()` uploads the index files. It writes only allowlisted index names under `indexes/v1/`, replacing each in place; it never writes a run artifact, so the immutability of `runs/v1/` is untouched. Unlike the index phase of a run publish, a failed upload fails the command.
+
+It needs `EVAL_RESULTS_REPO_TOKEN` (read and write access to `weave-io/weave-agent-evals`), which, as for a publish, is sent only in the `Authorization` header. Because a rebuild sees every published run, its manifests and histories list all readable runs, where a CI publish lists only the run it made.
 
 #### Website loader restriction
 
@@ -367,6 +401,8 @@ Immutable run artifacts under `runs/v1/<runId>/` are written **once and never ov
 | `dashboard-manifest.json` (`DashboardManifest`) | `DASHBOARD_MANIFEST_SCHEMA_VERSION` | `updatedAt` |
 | `latest.json` | `LATEST_SNAPSHOT_SCHEMA_VERSION` | `updatedAt` |
 | `last-N-runs.json` | `LAST_N_RUNS_SCHEMA_VERSION` | `updatedAt` |
+| `trajectory-manifest.json` (`DashboardManifest`) | `DASHBOARD_MANIFEST_SCHEMA_VERSION` | `updatedAt` |
+| `latest-trajectory.json` | `LATEST_SNAPSHOT_SCHEMA_VERSION` | `updatedAt` |
 | `suite-history-<suite>.json` (`SuiteHistoryManifest`) | `SUITE_HISTORY_SCHEMA_VERSION` | `updatedAt` |
 | `model-comparison-<runId>.json` (`ModelComparisonManifest`) | `MODEL_COMPARISON_SCHEMA_VERSION` | `runId` (no `updatedAt`) |
 

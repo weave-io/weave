@@ -38,6 +38,11 @@ weave eval run
     │
     └── EvalRunSummary                 Returned to CLI handler (reporting status)
 
+weave eval reindex [--dry-run]
+    ├── GitHubContentsPublisher        List runs/v1/, read each public-report.json
+    ├── DashboardIndexWriter           Rebuild every index, split by track
+    └── publishIndexes()               Upload indexes/v1/ files only (skipped with --dry-run)
+
 weave eval compare <baseline> <candidate>
     ├── RunBundleReader.read()         bundle-index.json, score-<suite>.json, prompt-hashes.json, judge
     ├── compareRuns()                  Refuse a different design; Fisher's exact test per suite × model, Holm-adjusted
@@ -1750,7 +1755,7 @@ The `hash` is deterministic: the same composed prompt always yields the same has
 
 Each run writes an immutable bundle to a unique, sequenced directory under `eval-bundles/runs/`. The run ID has the form `<sha7>-<YYYY-MM-DD>-<NNN>` where `NNN` is a zero-padded three-digit sequence number that auto-increments by scanning existing `runs/` siblings. This guarantees no prior run's artifacts are ever overwritten even when the same commit is evaluated twice on the same calendar day.
 
-In **`"publish"` mode** the sequence allocator is also **remote-aware**: before choosing the next `NNN`, `ArtifactBundleWriter` reads `indexes/v1/dashboard-manifest.json` from `weave-io/weave-agent-evals` (via `GitHubContentsPublisher.readRemoteRunIds`) to find the highest sequence already published for the same `<sha7>-<YYYY-MM-DD>` prefix. The next sequence is then `max(local_max, remote_max) + 1`. This prevents a CI rerun on the same commit+date from attempting to re-publish an already-taken run ID (e.g. `-001`) and instead allocates `-002`, `-003`, and so on.
+In **`"publish"` mode** the sequence allocator is also **remote-aware**: before choosing the next `NNN`, `ArtifactBundleWriter` reads `indexes/v1/dashboard-manifest.json` and `indexes/v1/trajectory-manifest.json` from `weave-io/weave-agent-evals` (via `GitHubContentsPublisher.readRemoteRunIds`; the text and trajectory runs of one commit and day share the sequence) to find the highest sequence already published for the same `<sha7>-<YYYY-MM-DD>` prefix. The next sequence is then `max(local_max, remote_max) + 1`. This prevents a CI rerun on the same commit+date from attempting to re-publish an already-taken run ID (e.g. `-001`) and instead allocates `-002`, `-003`, and so on.
 
 If the remote manifest is absent (404), unavailable (network error), or unparseable (malformed JSON), the allocator falls back to local-only sequencing safely — it never hard-fails on a remote read error.
 
@@ -1824,7 +1829,18 @@ The local run directory contains all bundle files. However, only the files in `R
 
 After each bundle write, `DashboardIndexWriter` (`dashboard-indexes.ts`) scans all existing `runs/<runId>/public-report.json` artifacts and regenerates derived index files at the bundle root. The complete local layout (run artifacts + derived indexes) is shown in the tree above.
 
-When published to the external results repository, only the files in `INDEX_ARTIFACT_ALLOWLIST` are uploaded to `indexes/v1/`. The current allowlist includes `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-<suite>.json`, `model-comparison-<runId>.json`, and `scenario-history-<suite>.json`.
+When published to the external results repository, only the files in `INDEX_ARTIFACT_ALLOWLIST` are uploaded to `indexes/v1/`. The current allowlist includes `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `trajectory-manifest.json`, `latest-trajectory.json`, `suite-history-<suite>.json`, `model-comparison-<runId>.json`, and `scenario-history-<suite>.json`.
+
+**The indexes are split by track** (weave-io/weave#183). `latest.json`, `dashboard-manifest.json`, `last-N-runs.json` and the suite and scenario histories cover the main track: text runs and runs of both tracks. Runs restricted to `--track trajectory` go to `trajectory-manifest.json` and `latest-trajectory.json` instead, which have the same shapes. A publish rewrites only the files of the track it holds a run of, so the CI trajectory job, which publishes after the text job, can no longer move `latest.json`. A run records its track as `runSummary.track` in `public-report.json`; older runs are placed by their cases. See [Track-aware indexes](eval-sanitization-and-publish-pipeline.md#track-aware-indexes).
+
+**Repairing the published indexes.** `weave eval reindex` rebuilds every index file in `weave-io/weave-agent-evals` from the runs published there and uploads them (index files only; run artifacts are never touched). `--dry-run` rebuilds locally under `eval-bundles/reindex/<timestamp>/` and uploads nothing. It needs `EVAL_RESULTS_REPO_TOKEN`:
+
+```bash
+EVAL_RESULTS_REPO_TOKEN=$(gh auth token) bun packages/cli/src/main.ts eval reindex --dry-run
+EVAL_RESULTS_REPO_TOKEN=$(gh auth token) bun packages/cli/src/main.ts eval reindex
+```
+
+A run whose `public-report.json` the current schema cannot read is skipped and named in the output. See [Rebuilding the indexes](eval-sanitization-and-publish-pipeline.md#rebuilding-the-indexes-weave-eval-reindex).
 
 **Immutable vs. mutable artifacts:**
 
@@ -1834,6 +1850,8 @@ When published to the external results repository, only the files in `INDEX_ARTI
 | `dashboard-manifest.json` | Mutable (updated after each run) | Short TTL; check `updatedAt` |
 | `latest.json` | Mutable | Short TTL; check `updatedAt` |
 | `last-N-runs.json` | Mutable | Short TTL; check `updatedAt` |
+| `trajectory-manifest.json` | Mutable (updated after each trajectory run) | Short TTL; check `updatedAt` |
+| `latest-trajectory.json` | Mutable | Short TTL; check `updatedAt` |
 | `suite-history-*.json` | Mutable | Short TTL; check `updatedAt` |
 | `model-comparison-*.json` | Mutable | Short TTL; check `updatedAt` |
 | `scenario-history-*.json` | Mutable | Short TTL; check `updatedAt` |
@@ -1995,9 +2013,11 @@ All paths in the results repository are versioned under a `v1/` segment to allow
 
 ```
 indexes/v1/                                   Derived mutable index artifacts
-├── dashboard-manifest.json                   All runs index (mutable — updated after each run)
-├── latest.json                               Most-recent run snapshot (mutable)
-├── last-N-runs.json                          Last N runs index (mutable)
+├── dashboard-manifest.json                   Main-track (text) runs index (mutable — updated after each text run)
+├── latest.json                               Most-recent main-track (text) run snapshot (mutable)
+├── last-N-runs.json                          Last N main-track runs index (mutable)
+├── trajectory-manifest.json                  Trajectory runs index (mutable — updated after each trajectory run)
+├── latest-trajectory.json                    Most-recent trajectory run snapshot (mutable)
 ├── suite-history-<suite>.json                Per-suite pass-rate history (mutable)
 ├── model-comparison-<runId>.json             Per-run model comparison table (mutable)
 └── scenario-history-<suite>.json             Per-suite per-case run history (mutable)
@@ -2023,9 +2043,11 @@ runs/v1/                                      Immutable run artifact directories
 
 | Index artifact allowlist (`indexes/v1/`) | Description |
 |---|---|
-| `dashboard-manifest.json` | All-runs manifest (mutable) |
-| `latest.json` | Most-recent run snapshot (mutable) |
-| `last-N-runs.json` | Last N runs (mutable) |
+| `dashboard-manifest.json` | Main-track runs manifest (mutable) |
+| `latest.json` | Most-recent main-track (text) run snapshot (mutable) |
+| `last-N-runs.json` | Last N main-track runs (mutable) |
+| `trajectory-manifest.json` | Trajectory runs manifest (mutable) |
+| `latest-trajectory.json` | Most-recent trajectory run snapshot (mutable) |
 | `suite-history-<suite>.json` | Per-suite pass-rate history (mutable) |
 | `model-comparison-<runId>.json` | Per-run model comparison (mutable) |
 | `scenario-history-<suite>.json` | Per-suite per-case run history (mutable) |

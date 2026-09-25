@@ -337,10 +337,10 @@
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
   - function buildScenarioHistories: (runsOldestFirst, updatedAt) => Map<string, ScenarioHistoryIndex>
-  - function generateDashboardIndexes: (runs, updatedAt, lastN) => Result<GeneratedIndexes, DashboardIndexError>
-  - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
-  - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
-  - _...19 more_
+  - function isTrajectoryCaseEntry: (entry) => boolean
+  - function indexTrackOf: (bundle) => IndexTrack
+  - function buildDashboardManifest: (runs, updatedAt) => Result<DashboardManifest, DashboardIndexError>
+  - _...30 more_
 - `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
@@ -356,12 +356,12 @@
   - const EVAL_TRACKS
 - `packages/cli/src/evals/github-contents-publisher.ts`
   - function isIndexArtifactAllowed: (fileName) => boolean
+  - function publishedRunIdsFromListing: (listing) => string[]
   - class GitHubContentsPublisher
+  - interface PublishIndexesRequest
   - type FetchImpl
   - type FileReader
-  - const TARGET_REPO
-  - const TARGET_BRANCH
-  - _...9 more_
+  - _...12 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
@@ -478,6 +478,13 @@
   - class RawArtifactsWriter
   - class MemoryFileWriter
   - _...3 more_
+- `packages/cli/src/evals/reindex.ts`
+  - class ResultsRepoReindexer
+  - interface ReindexRepository
+  - interface SkippedRun
+  - interface ReindexSummary
+  - interface ReindexOptions
+  - type ReindexError
 - `packages/cli/src/evals/report-bundle.ts`
   - function assembleCaseEntry: (row, suite) => PublicCaseEntry
   - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
@@ -499,7 +506,7 @@
   - type ScoreBucket
   - type BoundedExplanation
   - type CaseAttemptTallyEntry
-  - _...48 more_
+  - _...49 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>

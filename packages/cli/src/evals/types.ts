@@ -21,6 +21,7 @@
 
 import type { TrajectorySummary } from "@weaveio/weave-core";
 import { z } from "zod";
+import type { EvalTrack } from "./eval-track.js";
 import type { JudgeIdentity } from "./report-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -1756,6 +1757,11 @@ export interface EvalBundle {
      * than 1; the counts above are then attempts, not cases.
      */
     repeatCount?: number;
+    /**
+     * The track the run was restricted to (`--track`). Absent when the run
+     * covered both tracks.
+     */
+    track?: EvalTrack;
   };
   /** Per-suite sanitized score files. */
   scoreFiles: BundleScoreFile[];

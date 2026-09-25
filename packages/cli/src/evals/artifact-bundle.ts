@@ -89,6 +89,7 @@ import { basename, join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { countCaseOutcomes, erroredCasesField } from "./case-outcomes.js";
 import { DashboardIndexWriter } from "./dashboard-indexes.js";
+import type { EvalTrack } from "./eval-track.js";
 import { assemblePublicReportBundle } from "./report-bundle.js";
 import { renderPublicReportBundle } from "./report-markdown.js";
 import { type JudgeIdentity, JudgeIdentitySchema } from "./report-schema.js";
@@ -295,6 +296,14 @@ export interface WriteBundleOptions {
    * `JudgeIdentitySchema` before anything is written.
    */
   judge?: JudgeIdentity;
+  /**
+   * The track the run was restricted to (`weave eval run --track`). Recorded
+   * in the run summary, `bundle-index.json` and `public-report.json` so the
+   * dashboard indexes can keep a trajectory run apart from the text run
+   * (`latest-trajectory.json` versus `latest.json`). Omit for a run of both
+   * tracks; nothing is then recorded.
+   */
+  track?: EvalTrack;
 }
 
 /**
@@ -593,6 +602,8 @@ export function assembleBundle(options: {
   repeatCount?: number;
   /** The judge that scored the run; ignored on a dry run. */
   judge?: JudgeIdentity;
+  /** The track the run was restricted to; omitted for a run of both. */
+  track?: EvalTrack;
 }): Result<EvalBundle, BundleError> {
   const { runnerResults, provenanceManifest, gitSha, assembledAt, dryRun } =
     options;
@@ -674,6 +685,7 @@ export function assembleBundle(options: {
       allSuitesGreen,
       suites: [...bySuite.keys()],
       ...(repeatCount > 1 ? { repeatCount } : {}),
+      ...(options.track !== undefined ? { track: options.track } : {}),
     },
     scoreFiles,
     promptHashRecords,
@@ -863,6 +875,7 @@ export class ArtifactBundleWriter {
       dryRun,
       repeatCount: options.repeatCount,
       judge: options.judge,
+      track: options.track,
     });
 
     if (bundleResult.isErr()) {
