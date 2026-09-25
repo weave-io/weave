@@ -233,14 +233,13 @@ export class CategoryProjects {
   }
 }
 
-/** Counts categories in the project's effective Weave config. */
+/**
+ * Counts categories declared in the project's effective Weave config. A
+ * category whose shuttle is disabled still counts: the project declares it,
+ * and whether its shuttle is used is what the numerator measures.
+ */
 export const weaveConfigCategoryCounter: CategoryCounter = (projectDir) =>
-  loadConfig(projectDir).map(
-    (config) =>
-      Object.keys(config.categories).filter(
-        (name) => !config.disabled.agents.includes(`shuttle-${name}`),
-      ).length,
-  );
+  loadConfig(projectDir).map((config) => Object.keys(config.categories).length);
 
 export interface AuditDependencies {
   readonly openStore: (
