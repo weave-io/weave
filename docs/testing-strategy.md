@@ -831,8 +831,9 @@ the publisher's `raw/` filter and `computeRunIdPrefix()`'s `"unknown"` branch.
   empty issue list, so nothing names the file. The per-agent
   `materialization_failed` issue exists but this path never reaches it.
 - **A user whose host lacks the builtins' model gets a silently empty
-  install.** Every builtin declares `claude-sonnet-4-5`; on a host with no such
-  model each one is dropped with a `model_unavailable` issue, the
+  install.** At the time, every builtin declared only `claude-sonnet-4-5`; on a host with no such
+  model each one was dropped with a `model_unavailable` issue (since #215 the agent registers
+  without a model instead, and the builtins now name an Anthropic and an OpenAI model), the
   `/weave:start` command disappears with them, and nothing else marks the
   install as failed. The issues are only visible through the plan panel's
   `status` RPC.
