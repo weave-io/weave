@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 221 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,100 tokens. Without it, AI exploration would cost ~74,400 tokens. **Saves ~54,300 tokens per conversation.**
-> **Last scanned:** 2026-09-24 23:41 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 221 lib files | 29 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,200 tokens. Without it, AI exploration would cost ~74,900 tokens. **Saves ~54,800 tokens per conversation.**
+> **Last scanned:** 2026-09-25 00:22 — re-run after significant changes
 
 ---
 
@@ -1039,7 +1039,7 @@
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1071,12 +1071,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1142,7 +1144,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 216 test files found
+> 220 test files found
 
 ---
 

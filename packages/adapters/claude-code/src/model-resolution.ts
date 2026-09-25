@@ -5,8 +5,10 @@
  * for the engine's `resolveAdapterModelIntent()`.
  */
 
-import type { AgentDescriptor } from "@weaveio/weave-engine";
-import type { ModelResolutionInput } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  ModelResolutionInput,
+} from "@weaveio/weave-engine";
 
 /**
  * Static set of models known to be available through Claude Code.
@@ -16,6 +18,10 @@ import type { ModelResolutionInput } from "@weaveio/weave-engine";
  * a runtime API call.
  */
 export const CLAUDE_CODE_AVAILABLE_MODELS: Set<string> = new Set([
+  "claude-opus-5-5",
+  "claude-sonnet-5",
+  "claude-haiku-4-5",
+  "claude-haiku-4-5-20251001",
   "claude-sonnet-4-5",
   "claude-opus-4",
   "claude-haiku-3-5",

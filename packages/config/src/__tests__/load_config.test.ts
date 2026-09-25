@@ -162,7 +162,7 @@ describe("loadConfig", () => {
     expect(config.settings.log_level).toBe("DEBUG");
     expect(config.agents.loom?.temperature).toBe(0.9);
     // builtin models still present (not overridden)
-    expect(config.agents.loom?.models).toContain("claude-sonnet-4-5");
+    expect(config.agents.loom?.models).toContain("claude-opus-5-5");
   });
 
   it("(e) parse error: project config has invalid DSL → returns err with ParseError", async () => {

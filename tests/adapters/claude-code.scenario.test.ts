@@ -14,6 +14,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
+import { getBuiltinConfig } from "@weaveio/weave-config";
 import { ClaudeCodeAdapter } from "../../packages/adapters/claude-code/src/adapter.js";
 import {
   bundleFile,
@@ -159,6 +160,46 @@ describe("a user generates a Claude Code plugin from their config", () => {
       "model: sonnet",
     );
   });
+});
+
+describe("Weave's builtin agents on Claude Code", () => {
+  // Claude Code runs Anthropic models only. Each builtin's `models` list names
+  // an Anthropic model, first or as the fallback behind an OpenAI one, so every
+  // agent gets its intended Claude model instead of the constant fallback.
+  const builtinModels = getBuiltinConfig()._unsafeUnwrap().agents ?? {};
+  const expected: Record<string, string> = {
+    loom: "opus",
+    tapestry: "opus",
+    pattern: "opus",
+    shuttle: "sonnet",
+    thread: "haiku",
+    spindle: "haiku",
+    weft: "opus",
+    warp: "opus",
+  };
+
+  it("covers every builtin agent", () => {
+    expect(Object.keys(builtinModels).sort()).toEqual(
+      Object.keys(expected).sort(),
+    );
+  });
+
+  for (const [name, alias] of Object.entries(expected)) {
+    it(`runs ${name} on ${alias}`, async () => {
+      const models = JSON.stringify(builtinModels[name]?.models ?? []);
+      const files = await build(`
+        agent ${name} {
+          prompt "You are ${name}."
+          models ${models}
+          mode subagent
+        }
+      `);
+
+      expect(frontmatter(bundleFile(files, `${AGENTS}/${name}.md`))).toContain(
+        `model: ${alias}`,
+      );
+    });
+  }
 });
 
 describe("a user writes only the minimum for an agent", () => {

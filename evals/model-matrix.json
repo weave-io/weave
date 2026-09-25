@@ -69,7 +69,7 @@
       "id": "openai/gpt-6-luna",
       "display_name": "GPT 6 Luna",
       "provider": "openai",
-      "default": false,
+      "default": true,
       "dev": true,
       "tags": ["fast", "cheap"]
     },
@@ -79,6 +79,27 @@
       "provider": "openai",
       "default": false,
       "tags": ["cheap", "trajectory-only"]
+    },
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "provider": "anthropic",
+      "default": true,
+      "tags": ["fast", "balanced"]
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "display_name": "Claude Haiku 4.5",
+      "provider": "anthropic",
+      "default": true,
+      "tags": ["fast", "cheap"]
+    },
+    {
+      "id": "openai/gpt-6-sol",
+      "display_name": "GPT 6 Sol",
+      "provider": "openai",
+      "default": true,
+      "tags": ["high-quality"]
     }
   ]
 }

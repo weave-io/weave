@@ -30,14 +30,29 @@ import {
 } from "../support/opencode2.js";
 import { dedent } from "../support/scenario.js";
 
-/** A host whose catalog offers the model Weave's builtin agents ask for. */
+/**
+ * An Anthropic-only host whose catalog offers the Anthropic models Weave's
+ * builtin agents ask for. Weft, Warp and Spindle prefer an OpenAI model, so on
+ * this host they take their Anthropic fallback.
+ */
 const ANTHROPIC_HOST: HostOptions = {
   models: [
+    { providerID: "anthropic", id: "claude-opus-5-5" },
+    { providerID: "anthropic", id: "claude-sonnet-5" },
+    { providerID: "anthropic", id: "claude-haiku-4-5" },
     {
       providerID: "anthropic",
       id: "claude-sonnet-4-5",
       variants: ["thinking"],
     },
+  ],
+};
+
+/** An OpenAI-only host, where the Anthropic-first agents take their fallback. */
+const OPENAI_HOST: HostOptions = {
+  models: [
+    { providerID: "openai", id: "gpt-6-sol" },
+    { providerID: "openai", id: "gpt-6-luna" },
   ],
 };
 
@@ -132,11 +147,35 @@ describe("a user installs Weave on an OpenCode 2 host that can run the models it
 
   it("points every agent at the configured model on the provider that offers it", async () => {
     const host = await load({ host: ANTHROPIC_HOST });
+    const model = (id: string) => ({ providerID: "anthropic", id });
 
-    expect(host.agent("loom").model).toEqual({
-      providerID: "anthropic",
-      id: "claude-sonnet-4-5",
-    });
+    expect(host.agent("loom").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("tapestry").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("pattern").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5"));
+    expect(host.agent("thread").model).toEqual(model("claude-haiku-4-5"));
+  });
+
+  it("gives the OpenAI-first agents their Anthropic fallback on an Anthropic-only host", async () => {
+    const host = await load({ host: ANTHROPIC_HOST });
+    const model = (id: string) => ({ providerID: "anthropic", id });
+
+    expect(host.agent("weft").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("warp").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("spindle").model).toEqual(model("claude-haiku-4-5"));
+  });
+
+  it("gives the Anthropic-first agents their OpenAI fallback on an OpenAI-only host", async () => {
+    const report = await statusOf({ host: OPENAI_HOST });
+    const host = await load({ host: OPENAI_HOST });
+    const model = (id: string) => ({ providerID: "openai", id });
+
+    expect(report.issues).toEqual([]);
+    expect(host.agent("loom").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("shuttle").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("thread").model).toEqual(model("gpt-6-luna"));
+    expect(host.agent("weft").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("spindle").model).toEqual(model("gpt-6-luna"));
   });
 
   it("offers the plan command, because Tapestry is one of the agents it owns", async () => {
@@ -786,7 +825,7 @@ describe("a user runs the plan command on a plan they wrote", () => {
     expect(calls.order).toEqual(["switchAgent", "switchModel", "prompt"]);
     expect(calls.agent).toMatchObject({ agent: "tapestry" });
     expect(calls.model).toMatchObject({
-      model: { providerID: "anthropic", id: "claude-sonnet-4-5" },
+      model: { providerID: "anthropic", id: "claude-opus-5-5" },
     });
   });
 
