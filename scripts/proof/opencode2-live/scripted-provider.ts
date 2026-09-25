@@ -5,28 +5,37 @@
  * script, so the check never needs credentials or a remote model and never
  * depends on what a model decides to say:
  *
- * - The first request that offers the delegation tool, and does not yet carry
- *   a tool result, is answered with one call to that tool, targeting the
- *   configured subagent. That is how the check makes Loom delegate.
+ * - The configured subagents are called one at a time, in order. A request
+ *   that offers the delegation tool and carries exactly as many tool results
+ *   as calls made so far is answered with one call to that tool, targeting
+ *   the next subagent. That is how the check makes Loom delegate: first to a
+ *   host built-in it must not reach, then to Shuttle.
  * - Every other request (title generation, the subagent's own turn, Loom's
- *   turn after the result comes back) is answered with "OK".
+ *   turn after the last result comes back) is answered with "OK".
  *
- * Delegating once only keeps a subagent that is wrongly offered the tool from
- * looping; the `subagent_policy` check reports that case instead.
+ * Each call is made once only, and only from a turn that has seen every
+ * earlier result, which keeps a subagent that is wrongly offered the tool
+ * from looping; the `subagent_policy` check reports that case instead.
  */
 
 import type { CapturedRequest } from "./checks.js";
 
 export interface ScriptedProviderOptions {
   readonly delegationTool: string;
-  readonly delegate: string;
+  /** Subagents to delegate to, one call each, in this order. */
+  readonly delegates: readonly string[];
 }
 
 const MODEL = "proof-model";
 
+/** The id of the scripted model's `index`th delegation call. */
+export function scriptedCallId(index: number): string {
+  return `call_weave_live_check_${index}`;
+}
+
 export class ScriptedProvider {
   private readonly requests: CapturedRequest[] = [];
-  private delegated = false;
+  private calls = 0;
   private server: ReturnType<typeof Bun.serve> | undefined;
 
   constructor(private readonly options: ScriptedProviderOptions) {}
@@ -52,8 +61,10 @@ export class ScriptedProvider {
   /** Visible for tests: the reply the script gives to one request body. */
   reply(body: unknown): Response {
     this.requests.push({ body });
-    if (!this.delegated && this.offersDelegation(body)) {
-      this.delegated = true;
+    const next = this.options.delegates[this.calls];
+    if (next !== undefined && this.awaitsDelegation(body)) {
+      const id = scriptedCallId(this.calls);
+      this.calls += 1;
       return this.stream([
         this.chunk(
           {
@@ -61,12 +72,12 @@ export class ScriptedProvider {
             tool_calls: [
               {
                 index: 0,
-                id: "call_weave_live_check",
+                id,
                 type: "function",
                 function: {
                   name: this.options.delegationTool,
                   arguments: JSON.stringify({
-                    agent: this.options.delegate,
+                    agent: next,
                     description: "live check delegation",
                     prompt: "Reply with OK.",
                   }),
@@ -89,7 +100,11 @@ export class ScriptedProvider {
     return this.reply(body);
   }
 
-  private offersDelegation(body: unknown): boolean {
+  /**
+   * True for a turn that is offered the delegation tool and has seen the
+   * result of every call made so far: the delegating agent's next turn.
+   */
+  private awaitsDelegation(body: unknown): boolean {
     if (typeof body !== "object" || body === null) return false;
     const { tools, messages } = body as {
       tools?: unknown;
@@ -103,12 +118,12 @@ export class ScriptedProvider {
           this.options.delegationTool,
       );
     if (!offered) return false;
-    const answered =
-      Array.isArray(messages) &&
-      messages.some(
-        (message) => (message as { role?: unknown })?.role === "tool",
-      );
-    return !answered;
+    const results = Array.isArray(messages)
+      ? messages.filter(
+          (message) => (message as { role?: unknown })?.role === "tool",
+        ).length
+      : 0;
+    return results === this.calls;
   }
 
   private chunk(delta: object, finishReason: string | null): object {

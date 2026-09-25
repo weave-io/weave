@@ -38,6 +38,14 @@ full observable surface:
 7. User override applied: `loom.temperature == 0.42`
 8. Custom user agent `proof-scout` materialized with its inline prompt
    visible in `.agent["proof-scout"].prompt`
+9. Loom and Tapestry deny OpenCode's built-in `explore` and `general`
+   subagents (`.agent.loom.permission.task.explore == "deny"`, and so on),
+   and `.agent.explore` / `.agent.general` are left to OpenCode — see
+   [OpenCode's built-in subagents](adapter-readiness-status.md#opencodes-built-in-subagents-spec-38-item-5)
+
+The script writes `opencode debug config` to a file before reading it: piped,
+the output was cut off at 64 KiB when a developer's global skills made it
+larger.
 
 **Requirements**: `bun`, `opencode` (v1.15+), `jq` on `PATH`. Hermetic
 XDG_*_HOME sandbox so ambient user config can't contaminate the run. No

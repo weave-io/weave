@@ -9,7 +9,7 @@
  * See docs/testing/opencode2-verification.md ("Live host check").
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 
 export const LIVE_CHECK_IDS = [
   "host_version",
@@ -22,6 +22,8 @@ export const LIVE_CHECK_IDS = [
   "delegation_ran",
   "delegation_returned",
   "subagent_policy",
+  "builtins_hidden",
+  "builtin_refused",
 ] as const;
 
 export type LiveCheckId = (typeof LIVE_CHECK_IDS)[number];
@@ -83,18 +85,31 @@ export interface LiveCheckOptions {
   readonly delegationTool: string;
   /** Tools a delegated subagent must not be offered. */
   readonly subagentForbiddenTools: readonly string[];
+  /**
+   * A host built-in subagent the scripted model asks the primary to spawn
+   * before it delegates to `delegate`. The host must refuse it (Spec 38
+   * item 5).
+   */
+  readonly refusedBuiltin: string;
 }
 
 interface ParsedRequest {
   readonly system: string;
   readonly tools: ReadonlyMap<string, string>;
-  /** Ids of earlier assistant calls to the delegation tool. */
-  readonly delegationCalls: ReadonlySet<string>;
-  /** `tool_call_id`s of the tool results the request carries. */
-  readonly toolResults: ReadonlySet<string>;
+  /** Earlier assistant calls to the delegation tool: call id → agent. */
+  readonly delegationCalls: ReadonlyMap<string, string>;
+  /** The tool results the request carries: `tool_call_id` → content. */
+  readonly toolResults: ReadonlyMap<string, string>;
 }
 
 const MAX_EVIDENCE = 300;
+
+/**
+ * The error type OpenCode 2 puts in a tool result when a permission rule
+ * denies the call (host 2.0.16:
+ * `{"error":{"type":"permission.rejected","message":"Permission denied: subagent"}}`).
+ */
+const PERMISSION_REJECTED = "permission.rejected";
 
 function bounded(text: string): string {
   if (text.length <= MAX_EVIDENCE) return text;
@@ -117,15 +132,29 @@ function contentText(content: unknown): string {
     .join("");
 }
 
-function delegationCallIds(
+/** The `agent` argument of one tool call, or `""` when it has none. */
+function callAgent(fn: Record<string, unknown> | undefined): string {
+  if (typeof fn?.arguments !== "string") return "";
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(fn.arguments as string) as unknown,
+    () => undefined,
+  )();
+  if (parsed.isErr()) return "";
+  const agent = asRecord(parsed.value)?.agent;
+  return typeof agent === "string" ? agent : "";
+}
+
+/** The message's calls to the delegation tool, as `[call id, agent]`. */
+function delegationCalls(
   message: Record<string, unknown>,
   tool: string,
-): string[] {
+): Array<[string, string]> {
   const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-  return calls.flatMap((call) => {
+  return calls.flatMap((call): Array<[string, string]> => {
     const record = asRecord(call);
-    const name = asRecord(record?.function)?.name;
-    return name === tool && typeof record?.id === "string" ? [record.id] : [];
+    const fn = asRecord(record?.function);
+    if (fn?.name !== tool || typeof record?.id !== "string") return [];
+    return [[record.id, callAgent(fn)]];
   });
 }
 
@@ -137,18 +166,18 @@ export function parseRequest(
   const body = asRecord(request.body);
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const system: string[] = [];
-  const delegationCalls = new Set<string>();
-  const toolResults = new Set<string>();
+  const calls = new Map<string, string>();
+  const toolResults = new Map<string, string>();
   for (const message of messages) {
     const record = asRecord(message);
     if (record === undefined) continue;
     if (record.role === "system") system.push(contentText(record.content));
     if (record.role === "assistant") {
-      for (const id of delegationCallIds(record, delegationTool))
-        delegationCalls.add(id);
+      for (const [id, agent] of delegationCalls(record, delegationTool))
+        calls.set(id, agent);
     }
     if (record.role === "tool" && typeof record.tool_call_id === "string") {
-      toolResults.add(record.tool_call_id);
+      toolResults.set(record.tool_call_id, contentText(record.content));
     }
   }
   const tools = new Map<string, string>();
@@ -161,7 +190,12 @@ export function parseRequest(
       typeof fn.description === "string" ? fn.description : "",
     );
   }
-  return { system: system.join("\n"), tools, delegationCalls, toolResults };
+  return {
+    system: system.join("\n"),
+    tools,
+    delegationCalls: calls,
+    toolResults,
+  };
 }
 
 export class LiveChecks {
@@ -257,6 +291,8 @@ export class LiveChecks {
       "delegation_ran",
       "delegation_returned",
       "subagent_policy",
+      "builtins_hidden",
+      "builtin_refused",
     ];
     if (observation.run === null) {
       return runIds.map((id) =>
@@ -283,7 +319,104 @@ export class LiveChecks {
       this.delegationRan(delegate, delegateRequests),
       this.delegationReturned(primaryRequests),
       this.subagentPolicy(delegateRequests),
+      this.builtinsHidden(observation.agents, primaryRequests),
+      this.builtinRefused(observation.agents, requests, primaryRequests),
     ];
+  }
+
+  /** The host's own subagents: subagent-mode agents Weave does not own. */
+  private hostBuiltins(agents: readonly HostAgent[]): HostAgent[] {
+    return agents.filter(
+      (agent) =>
+        agent.mode === "subagent" &&
+        !(agent.description ?? "").startsWith(this.options.ownershipMarker),
+    );
+  }
+
+  private builtinsHidden(
+    agents: readonly HostAgent[],
+    primaryRequests: readonly ParsedRequest[],
+  ): LiveVerdict {
+    const { delegationTool, primary } = this.options;
+    const builtins = this.hostBuiltins(agents).map((agent) => agent.id);
+    if (builtins.length === 0) {
+      return this.failed(
+        "builtins_hidden",
+        "host reported no built-in subagents, so there is nothing to check",
+      );
+    }
+    const offered = primaryRequests.flatMap((request) => {
+      const description = request.tools.get(delegationTool);
+      return description === undefined ? [] : [description];
+    });
+    if (offered.length === 0) {
+      return this.skipped(
+        "builtins_hidden",
+        `${primary} was not offered ${delegationTool}`,
+      );
+    }
+    // The host lists each subagent the caller may spawn as `- <id>: …`.
+    const listed = builtins.filter((id) =>
+      offered.some((description) =>
+        new RegExp(`^- ${escapeRegExp(id)}:`, "m").test(description),
+      ),
+    );
+    if (listed.length > 0) {
+      return this.failed(
+        "builtins_hidden",
+        `${primary}'s ${delegationTool} tool lists host built-ins: ${listed.join(", ")}`,
+      );
+    }
+    return this.passed(
+      "builtins_hidden",
+      `${primary}'s ${delegationTool} tool lists none of the host's built-in subagents (${builtins.join(", ")})`,
+    );
+  }
+
+  private builtinRefused(
+    agents: readonly HostAgent[],
+    requests: readonly ParsedRequest[],
+    primaryRequests: readonly ParsedRequest[],
+  ): LiveVerdict {
+    const { refusedBuiltin: builtin, primary } = this.options;
+    if (!this.hostBuiltins(agents).some((agent) => agent.id === builtin)) {
+      return this.failed(
+        "builtin_refused",
+        `host holds no built-in subagent named ${builtin}`,
+      );
+    }
+    const system = systemOf(agents, builtin);
+    if (system === undefined) {
+      return this.failed(
+        "builtin_refused",
+        `host reported no system prompt for ${builtin}, so whether it ran cannot be told`,
+      );
+    }
+    if (requests.some((request) => request.system.includes(system))) {
+      return this.failed(
+        "builtin_refused",
+        `${builtin} ran in a child session when ${primary} asked for it`,
+      );
+    }
+    const result = callResult(primaryRequests, builtin);
+    if (result === undefined) {
+      return this.failed(
+        "builtin_refused",
+        `no result came back for ${primary}'s call to ${builtin}`,
+      );
+    }
+    // Any other outcome ("agent not found", a plain answer) would not show
+    // that the host refused the call because of the caller's permissions.
+    if (resultErrorType(result) !== PERMISSION_REJECTED) {
+      return this.failed(
+        "builtin_refused",
+        `${primary}'s call to ${builtin} was not refused by a permission rule: ${result}`,
+      );
+    }
+    return this.passed(
+      "builtin_refused",
+      `${primary}'s call to ${builtin} was refused: ${result}`,
+    );
   }
 
   private runCompleted(exitCode: number): LiveVerdict {
@@ -377,9 +510,8 @@ export class LiveChecks {
   private delegationReturned(
     primaryRequests: readonly ParsedRequest[],
   ): LiveVerdict {
-    const returned = primaryRequests.some((request) =>
-      [...request.delegationCalls].some((id) => request.toolResults.has(id)),
-    );
+    const returned =
+      callResult(primaryRequests, this.options.delegate) !== undefined;
     if (!returned) {
       return this.failed(
         "delegation_returned",
@@ -454,6 +586,41 @@ function systemOf(
   const system = agents.find((agent) => agent.id === id)?.system?.trim();
   if (system === undefined || system.length === 0) return undefined;
   return system;
+}
+
+/**
+ * The result a request carries for a delegation call to `agent`, or
+ * `undefined` when no request carries one.
+ */
+function callResult(
+  requests: readonly ParsedRequest[],
+  agent: string,
+): string | undefined {
+  for (const request of requests) {
+    for (const [id, target] of request.delegationCalls) {
+      const result = request.toolResults.get(id);
+      if (target === agent && result !== undefined) return result;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * `error.type` of a tool result the host reported as JSON, or `undefined`
+ * when the result is not JSON or carries no error type.
+ */
+function resultErrorType(result: string): string | undefined {
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(result) as unknown,
+    () => undefined,
+  )();
+  if (parsed.isErr()) return undefined;
+  const type = asRecord(asRecord(parsed.value)?.error)?.type;
+  return typeof type === "string" ? type : undefined;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function describePlugin(plugin: HostPlugin): string {

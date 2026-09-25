@@ -15,6 +15,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import {
+  buildBuiltinSubagentTaskPermission,
   buildQuestionPermission,
   mapToolPolicy,
 } from "./tool-policy-mapping.js";
@@ -56,6 +57,9 @@ export type TranslateAgentError = {
  *   `mapToolPolicy`
  * - `mode` → `permission.question` via `buildQuestionPermission` (subagents
  *   never pause the run to ask the user)
+ * - Loom and Tapestry → `permission.task` via
+ *   `buildBuiltinSubagentTaskPermission` (they cannot spawn OpenCode's
+ *   built-in `explore` and `general` subagents)
  *
  * @param descriptor - The fully composed agent descriptor from the engine.
  * @param resolvedModel - The pre-validated model string from
@@ -74,7 +78,11 @@ export function translateAgent(
   const config: OpenCodeAgentConfig = {
     prompt: descriptor.composedPrompt,
     mode: descriptor.mode,
-    permission: { ...permission, ...buildQuestionPermission(descriptor.mode) },
+    permission: {
+      ...permission,
+      ...buildQuestionPermission(descriptor.mode),
+      ...buildBuiltinSubagentTaskPermission(descriptor),
+    },
   };
 
   // model: use the pre-validated resolved model when provided

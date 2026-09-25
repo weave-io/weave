@@ -159,6 +159,71 @@ See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adap
 for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
 for the normative spec.
 
+### OpenCode's built-in subagents (Spec 38 item 5)
+
+**Problem.** OpenCode ships its own subagents, `explore` and `general`
+(`opencode agent list` on OpenCode 1.18.31; `build`, `plan`, `compaction`,
+`summary` and `title` are primary agents the `task` tool does not spawn).
+They stayed in Loom's and Tapestry's `task` tool next to Thread and Shuttle,
+and the [September 2026 session audit](artifacts/session-audit-2026-09.md)
+found 14 delegations sent to them instead
+([Spec 38](specs/38-spec-delegation-accuracy/38-spec-delegation-accuracy.md),
+root cause d).
+
+**Decision.** The adapter gives Loom and Tapestry a per-agent `task`
+permission that denies the built-ins, in
+[`tool-policy-mapping.ts`](../packages/adapters/opencode/src/tool-policy-mapping.ts)
+(`buildBuiltinSubagentTaskPermission`):
+
+```jsonc
+"loom": { "permission": { "task": { "explore": "deny", "general": "deny" } } }
+```
+
+OpenCode evaluates `task` per subagent name. A denied subagent is left out of
+the `task` tool's list of subagents for that caller, and a call naming it is
+refused. Only the built-ins are named, so Weave's own agents and any agent the
+user defines outside Weave keep what the global config grants. A built-in name
+that is also one of the agent's delegation targets (a user's own Weave agent
+called `explore`, which replaces OpenCode's) is not denied.
+
+**Scope rule.** As on [Copilot](copilot-adapter.md#delegation-targets-and-copilot-built-in-agents),
+Weave changes nothing in a session whose active agent is not a Weave
+orchestrator. The rule sits on Loom's and Tapestry's own agent config: the
+built-ins stay registered, and `build`, `plan`, the user's other agents and
+Weave's other agents can still spawn them.
+
+**Evidence** (OpenCode 1.18.31, local build of this adapter, 25 Sep 2026):
+
+- `opencode debug agent loom` lists `{"permission":"task","pattern":"explore","action":"deny"}`
+  and the same for `general`, after the global `{"permission":"*","action":"allow"}`.
+- `opencode run --agent loom` on DeepSeek V4.1 Flash, asked to "use the explore
+  agent": Loom answered that its `task` tool accepts `pattern`, `shuttle`,
+  `spindle`, `thread`, `warp` and `weft`, and sent the work to Thread.
+- Asked to call `task` with `subagent_type: "explore"` anyway, the call failed
+  with "The user has specified a rule which prevents you from using this
+  specific tool call", citing the two `task` rules.
+- The same forced call from `build` spawned `explore`.
+
+`scripts/proof/opencode-v1-active-agent.sh` ([active-agent proofs](active-agent-proofs.md),
+claim 9) asserts the rule on every run of the proof workflow, and
+`tests/adapters/delegation-contract.scenario.test.ts` asserts it for every
+fixture config.
+
+**Alternatives considered.**
+
+- **Disabling the built-ins** (`agent.explore.disable: true` in the config
+  hook) removes them from every session, including ones where the user picked
+  `build` and wants `explore`. It breaks the scope rule.
+- **An allowlist** (`task: {"*": "deny", <target>: "allow"}`, as the
+  [OpenCode 2 adapter](opencode2-adapter.md#opencode-2s-built-in-subagents)
+  does) would also cut Loom off from agents the user defines in
+  `opencode.json` outside Weave. The denylist hides only what the audit found.
+
+**Limits.** The list of built-ins is fixed in the adapter
+(`OPENCODE_BUILTIN_SUBAGENTS`). A built-in subagent a later OpenCode release
+adds stays reachable until it is added there. The rule covers Loom and
+Tapestry only; a user's own Weave router agent can still spawn the built-ins.
+
 ---
 
 ## SDK Version Pin

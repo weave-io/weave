@@ -70,13 +70,15 @@ Fixes (f).
 - [ ] 4.3 Check the description OpenCode V1 and V2 show in their own agent list (V2 prepends its ownership marker) and fit the harness's limits, if any.
 - [ ] 4.4 Update [`prompt-composition.md`](../../prompt-composition.md) and the DSL reference's category section.
 
-## 5. Hide harness built-in subagents — PR: _
+## 5. Hide harness built-in subagents — PR: #260
 
 Fixes (d). OpenCode V1 and V2 only; Copilot already steers its orchestrators away from built-ins.
 
-- [ ] 5.1 Find the mechanism for each harness and verify it live: OpenCode's per-agent `task` permission for Loom and Tapestry, or disabling `explore` and `general` in the generated config. V1: `opencode debug agent loom`. V2: `opencode2 api agent.list` (see `scripts/proof/opencode2-live/`). Prefer the mechanism that leaves sessions without a Weave agent unchanged.
-- [ ] 5.2 Implement it in both adapters, with adapter tests (mocked config, no live harness).
-- [ ] 5.3 Record the mechanism, the evidence and its limits in each adapter's doc, as [Copilot's](../../copilot-adapter.md#delegation-targets-and-copilot-built-in-agents) does.
+- [x] 5.1 Find the mechanism for each harness and verify it live: OpenCode's per-agent `task` permission for Loom and Tapestry, or disabling `explore` and `general` in the generated config. V1: `opencode debug agent loom`. V2: `opencode2 api agent.list` (see `scripts/proof/opencode2-live/`). Prefer the mechanism that leaves sessions without a Weave agent unchanged.
+  - **V1 (OpenCode 1.18.31):** new per-agent `task: {explore: deny, general: deny}` on Loom and Tapestry. `opencode debug agent loom` shows both rules. A Loom session on DeepSeek V4.1 Flash asked to "use the explore agent" listed only Weave's six subagents and sent the work to Thread; forced to call `explore`, the call was refused by the `task` rule. The same call from `build` spawned `explore`. Disabling the built-ins was rejected: it changes sessions without a Weave agent.
+  - **V2 (host 2.0.16):** no change needed. Every Weave agent already gets `subagent * deny` plus an allow per delegation target (ADR 0013). `opencode2 api agent.list` shows it; Loom's `subagent` tool omits `explore` and `general`, and a scripted call to `explore` returns `permission.rejected`. `build` still spawns `explore`.
+- [x] 5.2 Implement it in both adapters, with adapter tests (mocked config, no live harness). V1 in `tool-policy-mapping.ts`; both harnesses asserted in `tests/adapters/delegation-contract.scenario.test.ts` (Loom and Tapestry cannot spawn `explore`/`general`, and can spawn every agent they are offered), V1 scope in `tests/adapters/opencode.scenario.test.ts`. The live checks now assert it too: V1 active-agent proof claim 9, and the OpenCode 2 live check's `builtins_hidden` and `builtin_refused`. Mutations: dropping the V1 rule fails 14 contract scenarios and proof claim 9; flipping V2's `subagent * deny` fails 16 contract scenarios and both live checks.
+- [x] 5.3 Record the mechanism, the evidence and its limits in each adapter's doc, as [Copilot's](../../copilot-adapter.md#delegation-targets-and-copilot-built-in-agents) does: [OpenCode V1](../../adapter-readiness-status.md#opencodes-built-in-subagents-spec-38-item-5), [OpenCode 2](../../opencode2-adapter.md#opencode-2s-built-in-subagents).
 - [ ] 5.4 Update the tryweave.io adapter docs.
 
 ## 6. Loom never executes plans — PR: _
