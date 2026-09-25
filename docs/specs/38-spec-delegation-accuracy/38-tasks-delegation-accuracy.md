@@ -52,6 +52,8 @@ Fixes (b). Decision: [ADR 0013](../../adr/0013-delegation-targets-from-materiali
 
 Fixes (c) and (e). Texts: [Prompt rules](38-spec-delegation-accuracy.md#prompt-rules). Write every rule positively: state the situation and the behaviour wanted, and name only agents that are listed.
 
+**Prerequisite, landed separately (#259).** The `tapestry-category-routing` cases named their categories only in the task text, never in Tapestry's delegation list, so with 3.1's "Delegate only to the agents listed above" Tapestry answered `shuttle` and the suite fell from about 29/30 to 13/30 on both dev models (measured on #257). Each case now declares its categories and the runner composes them into Tapestry's list ([case composition](../../agent-evals.md#tapestry-category-routing-case-composition)). Measure this group's prompt change against a baseline run after that fix.
+
 - [ ] 3.1 `loom.md`: replace the category-shuttle paragraph with "Delegate only to the agents listed above." and the matching-category guidance; remove the example names.
 - [ ] 3.2 `loom.md`: add the size rule and reconcile the sections it replaces ("Small or self-contained work", the "Never delegate work you can complete correctly in one step" and "Delegate aggressively" lines).
 - [ ] 3.3 `loom.md` and `tapestry.md`: add the recovery rule (resend once after a transient error; after a configuration error send the task to `shuttle` and tell the user in one line which agent is broken). Fold Tapestry's existing `<ErrorHandling>` retry into it rather than having two rules.

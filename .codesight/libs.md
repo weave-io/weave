@@ -459,13 +459,13 @@
   - function redactSecrets: (raw) => string
   - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
+  - function snapshotComposedPrompt: (agentName, composedPrompt, sources) => ResultAsync<PromptSnapshot, ProvenanceError>
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
   - interface ComposeSnapshotResult
   - interface ComposeAgentSnapshotsOptions
-  - interface ComposeAgentSnapshotsResult
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
@@ -552,6 +552,7 @@
   - interface SpindleResearchSignals
   - interface SpindleToolsRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/tapestry-category-config.ts` — class TapestryCasePromptComposer, const TAPESTRY_AGENT_NAME
 - `packages/cli/src/evals/tapestry-category-routing-runner.ts`
   - function findAffirmativeRouteTarget: (content) => string | undefined
   - function findLoneOpeningLineTarget: (content) => string | undefined
@@ -559,7 +560,7 @@
   - function detectGenericShuttleFallback: (content) => boolean
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
-  - _...13 more_
+  - _...14 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -585,7 +586,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...58 more_
+  - _...60 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

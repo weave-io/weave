@@ -496,3 +496,88 @@ describe("TapestryCategoryRoutingRunner — tcr-04/tcr-10 real fixtures with sco
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-case prompt composition
+// ---------------------------------------------------------------------------
+
+describe("TapestryCategoryRoutingRunner — per-case prompt composition", () => {
+  const evalCase = makeCategoryRoutingCase();
+
+  it("names the case and error type when a case's prompt cannot be composed, never the raw error text, and calls no model", async () => {
+    const modelClient = new StubModelClient();
+    const runner = makeRunner(
+      {
+        modelClient,
+        casePromptComposer: {
+          compose: () =>
+            ResultAsync.fromPromise(
+              Promise.reject(new Error("raw provider text sk-secret")),
+              () => ({
+                type: "ConfigLoadError" as const,
+                message: "raw provider text sk-secret",
+              }),
+            ),
+        },
+      },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = await runner.run();
+
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("PromptProviderFailed");
+    expect(error.message).toContain(`"${evalCase.id}"`);
+    expect(error.message).toContain("ConfigLoadError");
+    expect(error.message).not.toContain("sk-secret");
+    expect(modelClient.calls).toHaveLength(0);
+  });
+
+  it("returns a hash of each case's composed prompt as tapestry@<caseId>", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+    const runner = makeRunner(
+      {
+        modelClient,
+        casePromptComposer: {
+          compose: (c) =>
+            ResultAsync.fromSafePromise(Promise.resolve(`prompt for ${c.id}`)),
+        },
+      },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = (await runner.run())._unsafeUnwrap();
+
+    expect(result.promptSnapshots?.map((s) => s.agentName)).toEqual([
+      `tapestry@${evalCase.id}`,
+    ]);
+    expect(result.promptSnapshots?.[0]?.hash).toBe(
+      new Bun.CryptoHasher("sha256")
+        .update(`prompt for ${evalCase.id}`)
+        .digest("hex"),
+    );
+  });
+
+  it("records no per-case hash when one prompt is injected for every case", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+    const runner = makeRunner(
+      { modelClient, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = (await runner.run())._unsafeUnwrap();
+
+    expect(result.promptSnapshots).toBeUndefined();
+  });
+});

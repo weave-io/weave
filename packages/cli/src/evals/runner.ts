@@ -1202,9 +1202,15 @@ export class EvalOrchestrator {
         // Collect prompt snapshots for the shared eval-covered agent surface
         // before deriving provenance.
         // The snapshot provider returns publishable hash-only records — no raw text.
-        const snapshots = await this.snapshotProvider.getSnapshots(
+        const sharedSnapshots = await this.snapshotProvider.getSnapshots(
           getEvalCoveredPromptAgents(),
         );
+        // Prompts a runner composed itself (per case) are recorded next to
+        // the shared ones, so provenance hashes what was actually sent.
+        const snapshots = [
+          ...sharedSnapshots,
+          ...runnerComposedSnapshots(guarded.runnerResults),
+        ];
         // Derive provenance manifest from the collected snapshots
         const provenanceManifest = this.deriveProvenance(snapshots, repoSha);
         return { ...guarded, provenanceManifest };
@@ -2682,6 +2688,23 @@ export function buildEvalRunner(
  * via `EvalOrchestratorOptions.snapshotProvider` to avoid file I/O, git, and
  * engine calls.
  */
+/**
+ * The prompts runners composed themselves, one snapshot per agent name. A
+ * runner is called once per model, so the same case prompt arrives once per
+ * model; its hash is the same each time.
+ */
+function runnerComposedSnapshots(
+  runnerResults: readonly RunnerResult[],
+): PromptSnapshot[] {
+  const byAgent = new Map<string, PromptSnapshot>();
+  for (const snapshot of runnerResults.flatMap(
+    (result) => result.promptSnapshots ?? [],
+  )) {
+    byAgent.set(snapshot.agentName, snapshot);
+  }
+  return [...byAgent.values()];
+}
+
 function makeDefaultSnapshotProvider(): SnapshotProvider {
   return {
     async getSnapshots(

@@ -1329,3 +1329,88 @@ describe("loadCaseFile — allowed_models and the model matrix", () => {
     expect(evalCase.allowed_models).toEqual(["p/dev"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// loadCaseFile — declared categories
+// ---------------------------------------------------------------------------
+
+describe("loadCaseFile — declared categories", () => {
+  const frontend = {
+    name: "client-frontend",
+    description: "Client UI under src/Client/",
+  };
+
+  it("keeps declared categories and defaults disabled to false", async () => {
+    const filePath = await writeTempJson(
+      "categories-ok",
+      makeCase({
+        categories: [
+          { ...frontend, triggers: ["Use for src/Client/ changes"] },
+          { name: "backend", description: "API", disabled: true },
+        ],
+      }),
+    );
+    const evalCase = (await loadCaseFile(filePath))._unsafeUnwrap();
+    expect(evalCase.categories).toEqual([
+      {
+        ...frontend,
+        triggers: ["Use for src/Client/ changes"],
+        disabled: false,
+      },
+      { name: "backend", description: "API", disabled: true },
+    ]);
+  });
+
+  it("leaves categories undefined when the case declares none", async () => {
+    const filePath = await writeTempJson("categories-absent", makeCase());
+    const evalCase = (await loadCaseFile(filePath))._unsafeUnwrap();
+    expect(evalCase.categories).toBeUndefined();
+  });
+
+  it.each([
+    ["a duplicated category name", [frontend, frontend]],
+    ["an empty description", [{ ...frontend, description: "" }]],
+    ["a whitespace-only description", [{ ...frontend, description: "   " }]],
+    ["an empty triggers list", [{ ...frontend, triggers: [] }]],
+    ["a whitespace-only trigger", [{ ...frontend, triggers: ["  "] }]],
+    ["a name with a slash", [{ ...frontend, name: "client/ui" }]],
+    ["a name that starts with a digit", [{ ...frontend, name: "4client" }]],
+    ["an unknown category key", [{ ...frontend, patterns: ["src/**"] }]],
+    ["a name that is not an identifier", [{ ...frontend, name: "client ui" }]],
+  ])("rejects %s", async (_label, categories) => {
+    const filePath = await writeTempJson(
+      "categories-bad",
+      makeCase({ categories }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("FixtureValidationFailed");
+  });
+
+  it("every tapestry-category-routing case declares categories, and every category shuttle it may credit is an enabled one", async () => {
+    const casesResult = await loadSuiteCases(
+      "tapestry-category-routing",
+      EVALS_ROOT,
+    );
+    const cases = casesResult._unsafeUnwrap();
+    expect(cases.length).toBeGreaterThan(0);
+    for (const evalCase of cases) {
+      expect(evalCase.categories?.length ?? 0).toBeGreaterThan(0);
+      const enabled = new Set(
+        (evalCase.categories ?? [])
+          .filter((category) => !category.disabled)
+          .map((category) => `shuttle-${category.name}`),
+      );
+      const credited =
+        evalCase.expected_outcome.kind === "agent_routing"
+          ? [
+              evalCase.expected_outcome.target_agent,
+              ...evalCase.accepted_alternates,
+            ]
+          : [];
+      for (const agent of credited.filter((a) => a.startsWith("shuttle-"))) {
+        expect(enabled.has(agent)).toBe(true);
+      }
+    }
+  });
+});

@@ -75,6 +75,7 @@ export const KNOWN_AGENTS = new Set([
   "shuttle-frontend",
   "shuttle-client-frontend",
   "shuttle-client-mobile",
+  "shuttle-presentation",
   "shuttle-infra",
   "weft",
   "warp",

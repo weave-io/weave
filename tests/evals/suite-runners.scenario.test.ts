@@ -1500,6 +1500,23 @@ const CATEGORY_ANSWERS: Array<[string, string, number]> = [
     "UI change → the `shuttle-client-frontend` agent is not needed; thread first.",
     0,
   ],
+  // gpt-6-luna on tcr-10 names its route as the sentence's subject, then the
+  // disabled category it passed over.
+  [
+    "the generic shuttle as the subject, before a disabled category",
+    "`shuttle` should handle the work; the matching `shuttle-client-frontend` agent is disabled.",
+    0.4,
+  ],
+  [
+    "the category as the subject",
+    "The `shuttle-client-frontend` agent should handle it; shuttle-backend is not involved.",
+    1,
+  ],
+  [
+    "a hypothetical subject before the real route",
+    "`shuttle-backend` would handle API work. Route to shuttle-client-frontend.",
+    1,
+  ],
 ];
 
 describe("Tapestry answers a routing question on a case that expects a category shuttle", () => {

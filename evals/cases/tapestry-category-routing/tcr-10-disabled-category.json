@@ -1,8 +1,16 @@
 {
   "id": "tcr-10-disabled-category",
-  "description": "Route this task correctly when the matching category shuttle is disabled. The file being changed is `src/4.Presentation/DST.Client/Components/Settings.tsx`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`, which would normally route to `shuttle-client-frontend`. However, the config also includes `disable agents [\"shuttle-client-frontend\"]`. Which agent should now handle this work?",
+  "description": "Route this task correctly when the matching category shuttle is disabled. The file being changed is `src/4.Presentation/DST.Client/Components/Settings.tsx`. The active Weave config declares a client-frontend category covering `src/4.Presentation/DST.Client/`, which would normally route to `shuttle-client-frontend`. However, the config also includes `disable agents [\"shuttle-client-frontend\"]`. Which agent should now handle this work?",
   "suite": "tapestry-category-routing",
   "allowed_agents": ["tapestry", "shuttle", "loom"],
+  "categories": [
+    {
+      "name": "client-frontend",
+      "description": "Client frontend: UI components, pages, hooks, and utilities under src/4.Presentation/DST.Client/",
+      "triggers": ["Use for changes to files under src/4.Presentation/DST.Client/"],
+      "disabled": true
+    }
+  ],
   "expected_outcome": {
     "kind": "agent_routing",
     "target_agent": "shuttle",

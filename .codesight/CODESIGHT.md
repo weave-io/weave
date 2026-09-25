@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 227 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,600 tokens. Without it, AI exploration would cost ~76,000 tokens. **Saves ~55,400 tokens per conversation.**
-> **Last scanned:** 2026-09-25 11:14 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 228 lib files | 29 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,700 tokens. Without it, AI exploration would cost ~76,200 tokens. **Saves ~55,600 tokens per conversation.**
+> **Last scanned:** 2026-09-25 12:35 — re-run after significant changes
 
 ---
 
@@ -470,13 +470,13 @@
   - function redactSecrets: (raw) => string
   - _...6 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
+  - function snapshotComposedPrompt: (agentName, composedPrompt, sources) => ResultAsync<PromptSnapshot, ProvenanceError>
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
   - interface ComposeSnapshotInput
   - interface ComposeSnapshotResult
   - interface ComposeAgentSnapshotsOptions
-  - interface ComposeAgentSnapshotsResult
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
@@ -563,6 +563,7 @@
   - interface SpindleResearchSignals
   - interface SpindleToolsRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/tapestry-category-config.ts` — class TapestryCasePromptComposer, const TAPESTRY_AGENT_NAME
 - `packages/cli/src/evals/tapestry-category-routing-runner.ts`
   - function findAffirmativeRouteTarget: (content) => string | undefined
   - function findLoneOpeningLineTarget: (content) => string | undefined
@@ -570,7 +571,7 @@
   - function detectGenericShuttleFallback: (content) => boolean
   - function analyzeCategoryRouting: (content, expectedTarget, acceptedAlternates) => CategoryRoutingAnalysis
   - function scoreRoutingCorrectness: (analysis) => DimensionScore
-  - _...13 more_
+  - _...14 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -596,7 +597,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...58 more_
+  - _...60 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string
@@ -1132,7 +1133,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **51** files
+- `packages/cli/src/evals/types.ts` — imported by **49** files
 - `packages/cli/src/theme/colors.ts` — imported by **26** files
 - `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
@@ -1155,7 +1156,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +46 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +44 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
@@ -1185,7 +1186,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 224 test files found
+> 226 test files found
 
 ---
 

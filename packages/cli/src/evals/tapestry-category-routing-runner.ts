@@ -4,8 +4,10 @@
  * Executes the `tapestry-category-routing` eval suite: for each case
  * (optionally filtered by `--case` or `--model`), the runner:
  *
- *   1. Composes the Tapestry agent prompt via the prompt provider (default:
- *      `composeAgentSnapshots` from `prompt-snapshots.ts`).
+ *   1. Composes the Tapestry agent prompt for the case (default:
+ *      `TapestryCasePromptComposer`, which composes the builtin config plus
+ *      exactly the case's declared `categories`, so every enabled category
+ *      appears as `shuttle-{category}` in Tapestry's delegation list).
  *   2. Constructs a chat completion request from the case description.
  *   3. Calls the model client and captures the raw response.
  *   4. Parses the model response for `shuttle-{category}` routing signals
@@ -70,12 +72,17 @@
  *
  * # Prompt provider
  *
- * The runner accepts a `PromptProvider` in its options. When omitted, a default
- * provider is constructed that calls `composeAgentSnapshots` for `"tapestry"`.
- * Provider failure is a hard stop — no model calls are made.
+ * By default each case gets its own Tapestry prompt, composed by
+ * `TapestryCasePromptComposer` from the builtin config plus exactly the
+ * categories the case declares (`EvalCase.categories`). A category routes work
+ * only because `.weave` declares it, so the case's categories are rendered
+ * into Tapestry's delegation list the way a user's would be; a disabled one is
+ * left out. No global or project `.weave` is read. See
+ * `tapestry-category-config.ts`.
  *
- * Tests inject a `MockPromptProvider` (or use `tapestrySystemPrompt`) to avoid
- * file I/O, git, or network calls.
+ * A `PromptProvider` (or `tapestrySystemPrompt`) in the options replaces that
+ * with one prompt for every case — how tests avoid composition entirely.
+ * Composition failure for any case is a hard stop — no model calls are made.
  *
  * # Raw-data boundary
  *
@@ -99,6 +106,11 @@ import {
   buildPublicExplanation,
 } from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
+import { snapshotComposedPrompt } from "./prompt-snapshots.js";
+import {
+  TAPESTRY_AGENT_NAME,
+  TapestryCasePromptComposer,
+} from "./tapestry-category-config.js";
 import type {
   CaseResult,
   CaseResultSummary,
@@ -109,6 +121,8 @@ import type {
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
+  PromptSnapshot,
+  ProvenanceError,
   RawCaseResultArtifact,
   RawErrorSummary,
   RunnerError,
@@ -348,6 +362,8 @@ function isRoutingLine(line: string): boolean {
  *     "Conclusion: X", "Final: X", "Final answer: X", "Verdict: X",
  *     "Chosen: X", "Choice: X", "Recommendation: X", "Recommended: X",
  *     "Selected: X", "Selection: X" (case-insensitive).
+ *   - subject-first form, at the start of a sentence: "X should handle the
+ *     work", "The X agent will take this" (should/will/must only).
  *
  * Markdown emphasis (`**bold**`, `` `code` ``) around the verb or the target
  * name is stripped before matching so `**Route to: `shuttle`**` is
@@ -388,6 +404,15 @@ const AFFIRMATIVE_FALLBACK_VERB_RE =
 // still match the `shuttle(-category)?` identifier shape.
 const AFFIRMATIVE_USE_VERB_RE =
   /(?<=^|[.\n]\s*)use\s+(?:the\s+)?(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b(?:\s+agent)?/gi;
+// Subject-first forms: "X should handle the work", "The X agent will take
+// this". Scoped to start-of-sentence like the use verb, and limited to
+// should/will/must so "X would handle it" (hypothetical) and "X can handle
+// it, but it is disabled" (capability, not a decision) are not read as the
+// route. The target leads the match, so the `d` flag records its offset for
+// the negation check. gpt-6-luna on tcr-10: "`shuttle` should handle the
+// work; the matching `shuttle-client-frontend` agent is disabled."
+const AFFIRMATIVE_SUBJECT_VERB_RE =
+  /(?<=^|[.\n]\s*)(?:the\s+)?(shuttle(?:-[a-z0-9_-]+)?)(?!-)\b(?:\s+agent)?\s+(?:should|will|must)\s+(?:handle|take|own|implement|do)\b/dgi;
 
 const AFFIRMATIVE_ROUTE_PATTERNS = [
   AFFIRMATIVE_VERB_TO_RE,
@@ -396,6 +421,7 @@ const AFFIRMATIVE_ROUTE_PATTERNS = [
   AFFIRMATIVE_LABELLED_ANSWER_RE,
   AFFIRMATIVE_FALLBACK_VERB_RE,
   AFFIRMATIVE_USE_VERB_RE,
+  AFFIRMATIVE_SUBJECT_VERB_RE,
 ];
 
 /**
@@ -494,7 +520,10 @@ export function findAffirmativeRouteTarget(
         continue;
       }
       const target = match[1];
-      const targetIndex = index + match[0].length - target.length;
+      // Patterns whose target leads the match carry the `d` flag; the rest
+      // end with the target.
+      const targetIndex =
+        match.indices?.[1]?.[0] ?? index + match[0].length - target.length;
       if (isNegatedAffirmativeMatch(stripped, targetIndex, target.length)) {
         continue;
       }
@@ -1644,16 +1673,23 @@ export interface TapestryCategoryRoutingRunnerOptions {
    */
   scorer?: AgentEvalsScorer;
   /**
-   * Prompt provider for the Tapestry agent system prompt.
+   * One Tapestry system prompt for every case, replacing per-case composition.
    *
    * When set, the runner calls `provider.getPrompt("tapestry")` once before
    * executing work items. If the provider fails, the runner returns
    * `err({ type: "PromptProviderFailed" })`.
    *
-   * When omitted, a default provider that calls `composeAgentSnapshots` is used.
+   * When omitted, each case's prompt is composed by `casePromptComposer`.
    * Takes precedence over `tapestrySystemPrompt` when both are supplied.
    */
   promptProvider?: PromptProvider;
+  /**
+   * Composes Tapestry's prompt for one case. Defaults to
+   * `TapestryCasePromptComposer`, which renders the case's declared
+   * categories into Tapestry's delegation list. Used only when neither
+   * `promptProvider` nor `tapestrySystemPrompt` is supplied.
+   */
+  casePromptComposer?: TapestryCasePromptSource;
   /**
    * TEST-ONLY: Explicit system prompt string (bypasses the prompt provider).
    *
@@ -1673,6 +1709,39 @@ export interface TapestryCategoryRoutingRunnerOptions {
     suite: string,
   ) => ResultAsync<EvalRubric[], FixtureSchemaError>;
 }
+
+/** Composes Tapestry's system prompt for one case. */
+export interface TapestryCasePromptSource {
+  compose(evalCase: EvalCase): ResultAsync<string, ProvenanceError>;
+}
+
+/** Every case's Tapestry prompt, and the hashes the run records for them. */
+interface ResolvedCasePrompts {
+  byCase: Map<string, string>;
+  snapshots: PromptSnapshot[];
+}
+
+/**
+ * Why a case's prompt could not be composed: the case (when composed per
+ * case) and the error's type — never the error's text, which may carry raw
+ * provider or exception output.
+ */
+interface CasePromptFailure {
+  caseId?: string;
+  errorType: ProvenanceError["type"];
+}
+
+function describePromptFailure(failure: CasePromptFailure): string {
+  if (failure.caseId === undefined) {
+    return "Tapestry prompt provider failed: prompt composition could not complete.";
+  }
+  return `Tapestry prompt composition failed for case "${failure.caseId}" (${failure.errorType}).`;
+}
+
+/** Where the runner gets each case's Tapestry prompt. */
+type CasePromptSource =
+  | { kind: "uniform"; provider: PromptProvider }
+  | { kind: "per-case"; composer: TapestryCasePromptSource };
 
 /** Run request for a `TapestryCategoryRoutingRunner` execution. */
 export interface TapestryCategoryRoutingRunRequest {
@@ -1727,8 +1796,8 @@ export interface TapestryCategoryRoutingRunRequest {
  *
  * ## Prompt composition — hard fail on provider error
  *
- * The prompt is resolved once at the start of `run()` via the provider.
- * If the provider returns an error, the runner returns
+ * Every case's prompt is resolved at the start of `run()`, before any model
+ * call. If composition fails for any case, the runner returns
  * `err({ type: "PromptProviderFailed" })` immediately.
  *
  * ## Usage
@@ -1750,7 +1819,7 @@ export interface TapestryCategoryRoutingRunRequest {
 export class TapestryCategoryRoutingRunner {
   private readonly modelClient: ModelClient;
   private readonly scorer: AgentEvalsScorer | undefined;
-  private readonly promptProvider: PromptProvider;
+  private readonly promptSource: CasePromptSource;
   private readonly caseLoader: (
     suite: string,
   ) => ResultAsync<EvalCase[], FixtureSchemaError>;
@@ -1765,17 +1834,7 @@ export class TapestryCategoryRoutingRunner {
     this.rubricLoader =
       options.rubricLoader ?? ((suite) => loadSuiteRubrics(suite));
 
-    if (options.promptProvider !== undefined) {
-      this.promptProvider = options.promptProvider;
-    } else if (options.tapestrySystemPrompt !== undefined) {
-      const prompt = options.tapestrySystemPrompt;
-      this.promptProvider = {
-        getPrompt: (_agentName: string) =>
-          ResultAsync.fromSafePromise(Promise.resolve(prompt)),
-      };
-    } else {
-      this.promptProvider = makeDefaultTapestryPromptProvider();
-    }
+    this.promptSource = selectPromptSource(options);
   }
 
   /**
@@ -1870,33 +1929,80 @@ export class TapestryCategoryRoutingRunner {
         );
       }
 
-      return this.promptProvider
-        .getPrompt("tapestry")
+      return this.resolveCasePrompts(workItems.map((item) => item.evalCase))
         .mapErr(
-          (): RunnerError => ({
+          (failure): RunnerError => ({
             type: "PromptProviderFailed",
             agentName: "tapestry",
-            message: `Tapestry prompt provider failed: prompt composition could not complete.`,
+            message: describePromptFailure(failure),
           }),
         )
-        .andThen((systemPrompt) =>
+        .andThen((resolved) =>
           this.executeWorkItems(
             workItems,
             rubrics,
             rawArtifacts,
-            systemPrompt,
+            resolved.byCase,
           ).andThen((caseResults) =>
             ResultAsync.fromSafePromise(
-              Promise.resolve(
-                this.assembleResult(
+              Promise.resolve({
+                ...this.assembleResult(
                   TAPESTRY_CATEGORY_ROUTING_SUITE,
                   caseResults,
                 ),
-              ),
+                ...(resolved.snapshots.length > 0
+                  ? { promptSnapshots: resolved.snapshots }
+                  : {}),
+              }),
             ),
           ),
         );
     });
+  }
+
+  /**
+   * Resolve Tapestry's prompt for every case about to run, keyed by case ID.
+   * A uniform provider is asked once and records no snapshot (the run's
+   * shared `tapestry` snapshot covers it); the per-case composer is asked
+   * once per case, and each prompt is hashed as `tapestry@<caseId>` so the
+   * run's provenance records what was actually sent.
+   */
+  private resolveCasePrompts(
+    cases: EvalCase[],
+  ): ResultAsync<ResolvedCasePrompts, CasePromptFailure> {
+    const source = this.promptSource;
+    if (source.kind === "uniform") {
+      return source.provider
+        .getPrompt("tapestry")
+        .mapErr((error): CasePromptFailure => ({ errorType: error.type }))
+        .map((prompt) => ({
+          byCase: new Map(cases.map((c) => [c.id, prompt])),
+          snapshots: [],
+        }));
+    }
+    const distinct = [...new Map(cases.map((c) => [c.id, c])).values()];
+    return ResultAsync.combine(
+      distinct.map((evalCase) =>
+        source.composer
+          .compose(evalCase)
+          .andThen((prompt) =>
+            snapshotComposedPrompt(
+              `${TAPESTRY_AGENT_NAME}@${evalCase.id}`,
+              prompt,
+              [{ kind: "generated", layer: "primary" }],
+            ).map((snapshot) => ({ caseId: evalCase.id, prompt, snapshot })),
+          )
+          .mapErr(
+            (error): CasePromptFailure => ({
+              caseId: evalCase.id,
+              errorType: error.type,
+            }),
+          ),
+      ),
+    ).map((entries) => ({
+      byCase: new Map(entries.map((e) => [e.caseId, e.prompt])),
+      snapshots: entries.map((e) => e.snapshot),
+    }));
   }
 
   private buildWorkItems(
@@ -1926,7 +2032,7 @@ export class TapestryCategoryRoutingRunner {
     workItems: Array<{ evalCase: EvalCase; modelId: string }>,
     rubrics: EvalRubric[],
     rawArtifacts: boolean,
-    systemPrompt: string,
+    systemPrompts: Map<string, string>,
   ): ResultAsync<CaseResult[], never> {
     const executeAll = workItems.reduce(
       (acc, item) =>
@@ -1936,7 +2042,7 @@ export class TapestryCategoryRoutingRunner {
             item.modelId,
             rubrics,
             rawArtifacts,
-            systemPrompt,
+            systemPrompts.get(item.evalCase.id) ?? "",
           ).map((result) => [...results, result]),
         ),
       ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
@@ -2236,47 +2342,27 @@ export class TapestryCategoryRoutingRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Default prompt provider
+// Prompt source selection
 // ---------------------------------------------------------------------------
 
-function makeDefaultTapestryPromptProvider(): PromptProvider {
+function selectPromptSource(
+  options: TapestryCategoryRoutingRunnerOptions,
+): CasePromptSource {
+  if (options.promptProvider !== undefined) {
+    return { kind: "uniform", provider: options.promptProvider };
+  }
+  if (options.tapestrySystemPrompt !== undefined) {
+    const prompt = options.tapestrySystemPrompt;
+    return {
+      kind: "uniform",
+      provider: {
+        getPrompt: (_agentName: string) =>
+          ResultAsync.fromSafePromise(Promise.resolve(prompt)),
+      },
+    };
+  }
   return {
-    getPrompt: (agentName: string) => {
-      const importPromise = ResultAsync.fromPromise(
-        import("./prompt-snapshots.js"),
-        (cause): import("./types.js").ProvenanceError => ({
-          type: "PromptCompositionError",
-          agentName,
-          message: `Dynamic import of prompt-snapshots failed: ${String(cause)}`,
-        }),
-      );
-
-      return importPromise.andThen(({ composeAgentSnapshots }) =>
-        composeAgentSnapshots({ agentNames: [agentName], rawArtifacts: true })
-          .mapErr((provErr): import("./types.js").ProvenanceError => provErr)
-          .andThen((snapshotResult) => {
-            const raw = snapshotResult.rawArtifacts.find(
-              (a) => a.agentName === agentName,
-            );
-            if (raw !== undefined) {
-              return ResultAsync.fromSafePromise(
-                Promise.resolve(raw.composedPrompt),
-              );
-            }
-            return new ResultAsync<
-              string,
-              import("./types.js").ProvenanceError
-            >(
-              Promise.resolve(
-                err<string, import("./types.js").ProvenanceError>({
-                  type: "PromptCompositionError",
-                  agentName,
-                  message: `No raw artifact found for agent "${agentName}" after composition.`,
-                }),
-              ),
-            );
-          }),
-      );
-    },
+    kind: "per-case",
+    composer: options.casePromptComposer ?? new TapestryCasePromptComposer(),
   };
 }

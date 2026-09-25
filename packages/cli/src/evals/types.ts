@@ -19,7 +19,11 @@
  *     validated separately so runners can load them independently.
  */
 
-import type { TrajectorySummary } from "@weaveio/weave-core";
+import {
+  CategoryConfigSchema,
+  DelegationTriggerSchema,
+  type TrajectorySummary,
+} from "@weaveio/weave-core";
 import { z } from "zod";
 import type { EvalTrack } from "./eval-track.js";
 import type { JudgeIdentity } from "./report-schema.js";
@@ -439,6 +443,47 @@ export type ScoringMetadata = z.infer<typeof ScoringMetadataSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * A category a case declares in the Weave config it is judged under.
+ *
+ * The `tapestry-category-routing` runner composes Tapestry's prompt from the
+ * builtin config plus exactly these categories, so each enabled category is
+ * materialized as `shuttle-{name}` and listed among Tapestry's delegation
+ * targets — as it would be for a user who declared it in `.weave`. A category
+ * with `disabled: true` is declared but its generated shuttle is disabled
+ * (`disable agents ["shuttle-{name}"]`), so Tapestry never sees it.
+ */
+export const EvalCaseCategorySchema = z
+  .object({
+    /**
+     * Category name; the generated agent is `shuttle-{name}`. Limited to what
+     * the `.weave` lexer accepts as a block name, so a case cannot declare a
+     * category no user could.
+     */
+    name: z
+      .string()
+      .regex(
+        /^[A-Za-z_][A-Za-z0-9_-]*$/,
+        "category name must be a .weave identifier: a letter or _ followed by letters, digits, _ or -",
+      ),
+    /**
+     * The category `description` — what Tapestry reads in its list. Validated
+     * by the Weave schema's own rule, so a case the loader accepts is one the
+     * composer accepts.
+     */
+    description: CategoryConfigSchema.shape.description,
+    /** The category `triggers`, when the case declares any. */
+    triggers: z
+      .array(DelegationTriggerSchema)
+      .min(1, "category triggers must have at least one entry")
+      .optional(),
+    /** Declare the category but disable its generated shuttle. */
+    disabled: z.boolean().default(false),
+  })
+  .strict();
+
+export type EvalCaseCategory = z.infer<typeof EvalCaseCategorySchema>;
+
+/**
  * A single eval case fixture.
  *
  * Lives at `evals/cases/<suite>/<case-id>.json`.
@@ -506,6 +551,19 @@ export const EvalCaseSchema = z.object({
    * identifiers so they can be used as filter keys without escaping).
    */
   tags: z.array(IdentifierSchema).default([]),
+  /**
+   * Categories the case's Weave config declares. Read by the
+   * `tapestry-category-routing` runner, which composes them into Tapestry's
+   * delegation list (see `EvalCaseCategorySchema`). Other suites ignore it.
+   */
+  categories: z
+    .array(EvalCaseCategorySchema)
+    .refine(
+      (categories) =>
+        new Set(categories.map((c) => c.name)).size === categories.length,
+      { message: "category names must be unique" },
+    )
+    .optional(),
 });
 
 /**
@@ -1604,6 +1662,14 @@ export interface RunnerResult {
   erroredCases: number;
   /** ISO 8601 timestamp when the runner completed. */
   completedAt: string;
+  /**
+   * Hashes of prompts the runner composed itself, one per distinct prompt it
+   * sent, recorded in the run's provenance next to the shared agent
+   * snapshots. `tapestry-category-routing` composes Tapestry per case and
+   * records each as `tapestry@<caseId>`. Absent for runners that send the
+   * shared composed prompt.
+   */
+  promptSnapshots?: PromptSnapshot[];
 }
 
 // ---------------------------------------------------------------------------

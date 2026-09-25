@@ -149,6 +149,35 @@ function inferSourceDescriptors(
   return descriptors;
 }
 
+/**
+ * Hash an already composed prompt into a publishable `PromptSnapshot`.
+ *
+ * For prompts a runner composes itself rather than taking from the shared
+ * config — `tapestry-category-routing` composes Tapestry per case — so the
+ * run's provenance records the prompts it actually sent.
+ */
+export function snapshotComposedPrompt(
+  agentName: string,
+  composedPrompt: string,
+  sources: PromptSourceDescriptor[],
+): ResultAsync<PromptSnapshot, ProvenanceError> {
+  return sha256Hex(composedPrompt)
+    .mapErr(
+      (message): ProvenanceError => ({
+        type: "HashComputationError",
+        agentName,
+        message,
+      }),
+    )
+    .map((hash) => ({
+      agentName,
+      hash,
+      byteLength: new TextEncoder().encode(composedPrompt).length,
+      charLength: composedPrompt.length,
+      sources,
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // Single-agent snapshot composition
 // ---------------------------------------------------------------------------
