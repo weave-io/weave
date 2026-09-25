@@ -182,6 +182,7 @@ function buildDelegationTargets(
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
   categoryShuttleMap: Record<string, { categoryMeta: CategoryMetadata }>,
+  delegationCandidates: ReadonlySet<string> | undefined,
 ): DelegationTarget[] {
   if (agentConfig.tool_policy?.delegate === "deny") return [];
 
@@ -207,6 +208,12 @@ function buildDelegationTargets(
   for (const [targetName, targetConfig] of Object.entries(allAgents)) {
     if (targetName === agentName) continue;
     if (config.disabled.agents.includes(targetName)) continue;
+    // Only agents the harness holds may be offered (ADR 0013).
+    if (
+      delegationCandidates !== undefined &&
+      !delegationCandidates.has(targetName)
+    )
+      continue;
     if (targetConfig.mode === "primary") continue;
     if (shouldExcludeSharedShuttleTarget(agentName, targetName)) continue;
     if (delegationExclude.includes(targetName)) continue;
@@ -764,6 +771,15 @@ export function buildReviewRoutingContext(
   };
 }
 
+/**
+ * Compose one agent's adapter-facing descriptor.
+ *
+ * `delegationCandidates`, when given, is the set of agents that may appear in
+ * `delegationTargets` at all — `materializeAgents()` passes the agents that
+ * composed and that the harness reported as materialized (ADR 0013). When
+ * omitted, every agent in `allAgents` is a candidate, subject to the other
+ * filtering rules.
+ */
 export function composeAgentDescriptor(
   agentName: string,
   agentConfig: AgentConfig,
@@ -773,6 +789,7 @@ export function composeAgentDescriptor(
   materializedReviewVariants?: MaterializedAgent[],
   categoryShuttleMap?: Record<string, { categoryMeta: CategoryMetadata }>,
   promptFileReader: PromptFileReader = defaultPromptFileReader,
+  delegationCandidates?: ReadonlySet<string>,
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const delegationTargets = buildDelegationTargets(
     agentName,
@@ -780,6 +797,7 @@ export function composeAgentDescriptor(
     config,
     allAgents,
     categoryShuttleMap ?? {},
+    delegationCandidates,
   );
 
   const delegationTargetNames = delegationTargets.map((t) => t.name);

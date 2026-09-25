@@ -58,11 +58,6 @@ interface Fixture {
   /** Agents another OpenCode 2 plugin registered before Weave ran. */
   readonly foreignAgents?: readonly string[];
   /**
-   * Set when Loom and Tapestry are known to offer an agent the harness does
-   * not hold — root cause (b), which Spec 38 item 2 fixes.
-   */
-  readonly offersUnregisteredAgent?: true;
-  /**
    * Orchestrators whose prompt is known to name an unregistered agent outside
    * the `shuttle-*` names — root cause (c), which Spec 38 item 3 fixes.
    */
@@ -165,9 +160,9 @@ const FIXTURES: readonly Fixture[] = [
       }
     `,
     // The broken category's shuttle never reaches the harness: its prompt
-    // fails to render, so the adapter has nothing to register.
+    // fails to render, so the adapter has nothing to register, and the
+    // engine leaves it out of Loom's and Tapestry's lists.
     shuttles: ["shuttle-api"],
-    offersUnregisteredAgent: true,
   },
   {
     situation:
@@ -183,9 +178,9 @@ const FIXTURES: readonly Fixture[] = [
         description "Browser UI and styling"
       }
     `,
-    // The host keeps the foreign `shuttle-web`; Weave's is never inserted.
+    // The host keeps the foreign `shuttle-web`; Weave's is never inserted,
+    // and the adapter reports the name as taken so it is not offered.
     shuttles: ["shuttle-api"],
-    offersUnregisteredAgent: true,
   },
 ];
 
@@ -396,23 +391,16 @@ for (const harness of HARNESSES) {
 
       for (const orchestrator of ORCHESTRATORS) {
         // Spec 38 item 2 (root cause b): `delegation.targets` is built from
-        // the merged config, not from what the adapter registered, so an
-        // agent that failed to materialize — a prompt that did not compose,
-        // or on OpenCode 2 a name another plugin already holds — is still
-        // offered. Item 2 makes these pass.
-        const offersOnlyRegistered =
-          fixture.offersUnregisteredAgent === true ? it.failing : it;
+        // the agents the harness holds (ADR 0013), so an agent that failed
+        // to materialize — a prompt that did not compose, or on OpenCode 2 a
+        // name another plugin already holds — is not offered.
+        it(`offers ${orchestrator} only agents the harness holds`, async () => {
+          const current = await registered();
+          const list = delegationList(current.prompt(orchestrator));
 
-        offersOnlyRegistered(
-          `offers ${orchestrator} only agents the harness holds`,
-          async () => {
-            const current = await registered();
-            const list = delegationList(current.prompt(orchestrator));
-
-            expect(list).toContain("shuttle");
-            expect(unregistered(list, current)).toEqual([]);
-          },
-        );
+          expect(list).toContain("shuttle");
+          expect(unregistered(list, current)).toEqual([]);
+        });
 
         // --- L2: what the orchestrator's prompt names --------------------
 
@@ -441,9 +429,7 @@ for (const harness of HARNESSES) {
         // `shuttle-frontend` and `shuttle-core` (its todo-list example) and
         // the `shuttle-{category}` placeholder; tapestry.md names
         // `shuttle-{category}` in <Delegation> and <Routing>. None is a
-        // registered agent in any fixture. Item 3 makes these pass; in the
-        // fixtures that also offer an unregistered shuttle, item 2 must land
-        // too.
+        // registered agent in any fixture. Item 3 makes these pass.
         it.failing(`names only registered shuttles in ${orchestrator}'s prompt`, async () => {
           const current = await registered();
           const shuttles = agentLikeNames(current.prompt(orchestrator)).filter(

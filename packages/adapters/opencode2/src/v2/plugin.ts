@@ -1,11 +1,16 @@
 import { logger } from "@weaveio/weave-engine";
+import { okAsync } from "neverthrow";
 import { WeaveRpc } from "../rpc.js";
 import {
   type V2OpenCodeEvent as OpenCodeEvent,
   V2PluginModule as Plugin,
 } from "../sdk-types.js";
+import { WEAVE_OWNERSHIP_MARKER } from "../translate-agent.js";
 import { registerOpenCode2Agents } from "./agent-registration.js";
-import { buildOpenCode2Catalog } from "./catalog.js";
+import {
+  buildOpenCode2Catalog,
+  type OpenCode2CatalogCandidate,
+} from "./catalog.js";
 import { OpenCode2Commands } from "./commands.js";
 import { OpenCode2CatalogController } from "./config-refresh.js";
 import { probeCatalogSources } from "./config-source.js";
@@ -52,6 +57,25 @@ function observeInventory(
   );
 }
 
+/**
+ * The ids of agents the host holds that are not Weave's, sorted. An agent
+ * without Weave's ownership marker is a built-in's or another plugin's,
+ * whatever Weave inserted earlier: the current record decides. Weave's agent
+ * of that name is never inserted, so the catalog is told not to offer it
+ * (ADR 0013).
+ */
+function heldAgentIds(
+  agents: readonly { readonly id: unknown; readonly description?: unknown }[],
+): string[] {
+  return agents
+    .filter(
+      (agent) =>
+        !String(agent.description ?? "").startsWith(WEAVE_OWNERSHIP_MARKER),
+    )
+    .map((agent) => String(agent.id))
+    .sort();
+}
+
 export interface OpenCode2PluginDependencies {
   readonly buildCatalog?: typeof buildOpenCode2Catalog;
 }
@@ -77,16 +101,34 @@ export async function setupOpenCode2(
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
   const build = () =>
     fromOpenCode2Promise(
-      () => Promise.all([context.model.list(), context.skill.list()]),
+      () =>
+        Promise.all([
+          context.model.list(),
+          context.skill.list(),
+          context.agent.list(),
+        ]),
       "catalog_unavailable",
-      "OpenCode model or skill inventory could not be read",
-    ).andThen(([models, skills]) =>
+      "OpenCode model, skill or agent inventory could not be read",
+    ).andThen(([models, skills, agents]) =>
       catalogBuilder({
         location: context.location.directory,
         projectConfig: options.value.projectConfig,
         models: models.data,
         skills: skills.data,
+        heldAgents: heldAgentIds(agents.data),
       }),
+    );
+  // A catalog is stale when its sources changed or when the agents the host
+  // holds outside Weave changed, so a collision that appears or clears after
+  // setup is picked up on the next due refresh.
+  const heldAgentsChanged = (current: OpenCode2CatalogCandidate) =>
+    fromOpenCode2Promise(
+      () => context.agent.list(),
+      "host_unavailable",
+      "OpenCode agent inventory could not be read",
+    ).map(
+      (agents) =>
+        heldAgentIds(agents.data).join("\n") !== current.heldAgents.join("\n"),
     );
 
   const controller = new OpenCode2CatalogController(
@@ -94,10 +136,14 @@ export async function setupOpenCode2(
     {
       build,
       changed: (current) =>
-        probeCatalogSources(current.sources).mapErr(() => ({
-          code: "config_unavailable" as const,
-          message: "Weave sources could not be checked",
-        })),
+        probeCatalogSources(current.sources)
+          .mapErr(() => ({
+            code: "config_unavailable" as const,
+            message: "Weave sources could not be checked",
+          }))
+          .andThen((sourcesChanged) =>
+            sourcesChanged ? okAsync(true) : heldAgentsChanged(current),
+          ),
       reload: async () => {
         await context.agent.reload();
         await context.agent.list();

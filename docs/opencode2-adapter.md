@@ -80,6 +80,12 @@ Weave's abstract `tool_policy` has five dimensions (`read`, `write`, `execute`, 
 
 Rules are emitted in a stable, documented order (`read`, `write`, `execute`, `delegate`, `network`), so if you or another plugin append further overrides after this adapter runs, last-match-wins semantics stay predictable. See [Spec 34, Section 4](specs/34-spec-opencode2-adapter/34-spec-opencode2-adapter.md#4-abstract-tool-policy--v2-permissions-rule-mapping) for the full normative mapping and testing requirements.
 
+## Name collisions and delegation targets
+
+The host keeps an agent that another plugin (or a built-in) registered first: Weave never overwrites it, and never inserts its own agent of that name. Before building its catalog, the adapter reads the host's agent list and passes the ids of agents without Weave's ownership marker to the catalog as `heldAgents`. If one of Weave's agents has such a name, the catalog composes again with a report marking it `name_taken`, so Loom and Tapestry neither list it nor get a `subagent` permission for it. `status` still counts the collision (`agent_collision`). The held set is part of the catalog revision, and each due refresh (the same `refreshIntervalMs` probe that checks Weave's config sources) re-reads the host's agent list, so a collision that appears or clears after setup triggers a rebuild and a host reload. See [ADR 0013](adr/0013-delegation-targets-from-materialized-agents.md).
+
+An agent whose own prompt fails to compose is left out of every delegation list by the engine and reported as `materialization_failed`.
+
 ## Verification
 
 To confirm the plugin loaded correctly in live-plugin mode:

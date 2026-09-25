@@ -38,5 +38,6 @@ export function catalog(
     ),
     issues: [],
     sources: [],
+    heldAgents: [],
   };
 }

@@ -713,6 +713,55 @@ describe("another plugin already registered an agent under a name Weave wants", 
     ]);
   });
 
+  it("does not offer Loom the other plugin's agent as if it were Weave's", async () => {
+    const collided = await load(INPUT);
+    const free = await load({ config: INPUT.config });
+    const subagents = (host: typeof free) =>
+      host
+        .agent("loom")
+        .permissions.filter((rule) => rule.action === "subagent")
+        .map((rule) => rule.resource);
+
+    // With the name free, Loom is offered Weave's scribe; once another
+    // plugin holds it, Loom neither lists it nor may spawn it.
+    expect(String(free.agent("loom").system)).toContain("**scribe**");
+    expect(subagents(free)).toContain("scribe");
+    expect(String(collided.agent("loom").system)).not.toContain("scribe");
+    expect(subagents(collided)).not.toContain("scribe");
+  });
+
+  it("rebuilds its catalog when another plugin takes a name after setup", async () => {
+    const result = await live(
+      {
+        config: INPUT.config,
+        host: { options: { refreshIntervalMs: 250 } },
+      },
+      async (host) => {
+        const before = (await host.rpc("status")) as {
+          catalogRevision: string;
+        };
+        // Another plugin replaces Weave's scribe with its own record.
+        host.agents.set("scribe", {
+          id: "scribe",
+          name: "scribe",
+          description: "a plugin that came later",
+          permissions: [],
+        });
+        await Bun.sleep(300);
+        await host.promptSession();
+        const after = (await host.rpc("status")) as { catalogRevision: string };
+        return { before, after, reloads: [...host.reloads] };
+      },
+    );
+
+    // The held-agent set is part of the catalog's identity, so the change is
+    // picked up on the next due refresh and the host is asked to reload.
+    expect(result.after.catalogRevision).not.toBe(
+      result.before.catalogRevision,
+    );
+    expect(result.reloads).toContain("agent");
+  });
+
   it("tells the user a name collided instead of pretending the agent is theirs", async () => {
     const report = await statusOf(INPUT);
 
