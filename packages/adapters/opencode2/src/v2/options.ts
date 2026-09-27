@@ -5,7 +5,7 @@ import type { OpenCode2Error } from "./errors.js";
 
 export interface OpenCode2Options {
   readonly projectConfig: boolean;
-  readonly defaultAgent?: string;
+  readonly defaultAgent: string;
   readonly refreshIntervalMs: number;
 }
 
@@ -39,7 +39,12 @@ export function parseOpenCode2Options(
     });
   return ok({
     projectConfig: parsed.data.projectConfig ?? true,
-    defaultAgent: parsed.data.defaultAgent,
+    // Loom unless the option names another agent. This never overrides the
+    // user's own `default_agent`: OpenCode 2 applies its config agent
+    // transform (core/src/config/plugin/agent.ts) after every package plugin's
+    // (the plugin supervisor orders pre, packages, post), and
+    // registerOpenCode2Agents only sets a default for an agent Weave inserted.
+    defaultAgent: parsed.data.defaultAgent ?? "loom",
     refreshIntervalMs: parsed.data.refreshIntervalMs ?? 1_000,
   });
 }

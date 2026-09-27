@@ -689,6 +689,41 @@ describe("a user names one of their agents as the host's default", () => {
   });
 });
 
+describe("a user sets up Weave without naming a default agent", () => {
+  it("starts new sessions on Loom", async () => {
+    const host = await load({ host: ANTHROPIC_HOST });
+
+    expect(host.agentNames()).toContain("loom");
+    expect(host.defaultAgent).toBe("loom");
+  });
+
+  it("still starts them on the agent the option names, when it names one", async () => {
+    const host = await load({
+      host: { ...ANTHROPIC_HOST, options: { defaultAgent: "tapestry" } },
+    });
+
+    expect(host.defaultAgent).toBe("tapestry");
+  });
+
+  it("keeps the default_agent from the user's own OpenCode config", async () => {
+    const host = await load({
+      host: { ...ANTHROPIC_HOST, configDefaultAgent: "build" },
+    });
+
+    expect(host.agentNames()).toContain("loom");
+    expect(host.defaultAgent).toBe("build");
+  });
+
+  it("leaves the host's default alone when another plugin already holds loom", async () => {
+    const host = await load({
+      host: { ...ANTHROPIC_HOST, foreignAgents: ["loom"] },
+    });
+
+    expect(host.agent("loom").description).toBe("a plugin that was here first");
+    expect(host.defaultAgent).toBeUndefined();
+  });
+});
+
 describe("another plugin already registered an agent under a name Weave wants", () => {
   const INPUT = {
     config: `

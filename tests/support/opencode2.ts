@@ -108,6 +108,12 @@ export interface HostOptions {
    * the real host applies them.
    */
   readonly lazyAgents?: boolean;
+  /**
+   * The user's `default_agent` from their OpenCode config. The real host sets
+   * it in its config agent transform, which runs after every package
+   * plugin's, so this double applies it after the plugin's transform.
+   */
+  readonly configDefaultAgent?: string;
 }
 
 function modelRecord(model: HostModel) {
@@ -406,6 +412,12 @@ export class OpenCode2Host {
     });
   }
 
+  /** OpenCode 2's own config agent transform, reduced to `default_agent`. */
+  private applyConfigAgentTransform(): void {
+    const configured = this.options.configDefaultAgent;
+    if (configured !== undefined) this.defaultAgent = configured;
+  }
+
   private recordSession(
     name: SessionCall["name"],
     input: Record<string, unknown>,
@@ -440,7 +452,10 @@ export class OpenCode2Host {
       },
       agent: {
         transform: async (transform: (editor: unknown) => void) => {
-          const apply = () => this.applyAgentTransform(transform);
+          const apply = () => {
+            this.applyAgentTransform(transform);
+            this.applyConfigAgentTransform();
+          };
           if (this.options.lazyAgents === true) this.replay = apply;
           else apply();
           return this.registration("agent");
