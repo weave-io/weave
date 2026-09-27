@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- New sessions start on Loom. `defaultAgent` now defaults to `loom`, so a
+  plugin entry without options no longer leaves OpenCode 2 on `build`. Your
+  own `default_agent` in the OpenCode config still wins, because OpenCode
+  applies it after every package plugin. If another plugin holds `loom`, or
+  Loom is not registered, Weave sets no default.
+
 - Delegation: Loom and Tapestry are offered only agents that reached the host.
   The catalog build reads OpenCode's agent list and reports Weave agents whose
   id another plugin already holds (for example `shuttle-web`) as `name_taken`;

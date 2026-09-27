@@ -75,9 +75,13 @@ Plugin options use OpenCode's package descriptor form:
 ```
 
 `projectConfig: false` prevents this plugin instance from loading
-`<Location>/.weave/config.weave`. Global Weave config remains available. The
-refresh interval accepts 250 through 60,000 milliseconds. Unknown or invalid
-options disable setup with a bounded warning.
+`<Location>/.weave/config.weave`. Global Weave config remains available.
+`defaultAgent` names the agent a new session starts on and defaults to `loom`.
+Weave sets it only when it registered that agent itself, so if another plugin
+already holds the name, the host keeps its own default. A `default_agent` in
+your OpenCode config still wins: OpenCode applies it after every package
+plugin. The refresh interval accepts 250 through 60,000 milliseconds. Unknown
+or invalid options disable setup with a bounded warning.
 
 ## Package entries and compatibility
 
