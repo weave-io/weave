@@ -141,7 +141,12 @@ resolve is not treated as a request to have no agent.
 
 If an agent declares no model, OpenCode keeps native model selection. The
 adapter does not reset a user's model on each turn. A descriptor-level
-`variant` applies only when the selected model entry has no `#variant`.
+`variant` applies only when the selected model entry has no `#variant`. An
+entry's own `#variant` is part of the entry: a model that lacks it cannot serve
+that entry. A descriptor-level `variant` is a setting for whichever model is
+selected, including builtin fallbacks the user never paired it with, so a
+model that lacks it keeps the agent and runs without a variant. The adapter
+reports one `variant_unavailable` issue for that agent.
 Declared temperature is applied through the native context hook after agent
 ownership and session Location checks.
 

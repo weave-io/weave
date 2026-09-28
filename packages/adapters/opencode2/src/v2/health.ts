@@ -5,6 +5,7 @@ export interface OpenCode2HealthIssue {
   readonly code:
     | "materialization_failed"
     | "model_unavailable"
+    | "variant_unavailable"
     | "skill_unavailable"
     | "agent_collision";
   readonly agentName?: string;

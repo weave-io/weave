@@ -43,6 +43,11 @@ export type OpenCode2CatalogIssue =
       readonly details: readonly OpenCode2ModelResolutionError[];
     }
   | {
+      readonly code: "variant_unavailable";
+      readonly agentName: string;
+      readonly variant: string;
+    }
+  | {
       readonly code: "skill_unavailable";
       readonly agentName: string;
       readonly count: number;
@@ -222,6 +227,18 @@ function buildCandidate(
                 code: "model_unavailable",
                 agentName: materialized.agentName,
                 details: resolvedModel.error,
+              });
+            }
+            // The agent's own variant is dropped, not the model, when the
+            // selected model does not offer it; `status` still names it.
+            if (
+              resolvedModel.isOk() &&
+              resolvedModel.value.droppedVariant !== undefined
+            ) {
+              issues.push({
+                code: "variant_unavailable",
+                agentName: materialized.agentName,
+                variant: resolvedModel.value.droppedVariant,
               });
             }
             const modelRef = resolvedModel.isOk()
