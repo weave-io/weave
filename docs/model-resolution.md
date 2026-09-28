@@ -88,11 +88,14 @@ entry matches.
 
 The adapter checks entries in declaration order and uses the first viable one.
 An entry-level `#variant` takes priority over the descriptor-level `variant`.
-Every variant must exist in the selected live model entry. If a descriptor
-declares no models, the adapter leaves native model selection unchanged. If it
-declares models but none are viable, that agent is omitted and health reports a
-bounded `model_unavailable` issue. This release does not add automatic runtime
-fallback after registration.
+An entry-level `#variant` must exist in the live model entry, or the entry is
+not viable. The descriptor-level `variant` applies to whichever entry is
+selected: when that model does not offer it, the agent keeps the model, runs
+without a variant, and health reports a bounded `variant_unavailable` issue. If
+a descriptor declares no models, the adapter leaves native model selection
+unchanged. If it declares models but none are viable, the agent is registered
+without a model and health reports a bounded `model_unavailable` issue. This
+release does not add automatic runtime fallback after registration.
 
 ---
 

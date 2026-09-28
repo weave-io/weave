@@ -15,6 +15,8 @@ export interface OpenCode2ModelResolution {
   readonly ref?: Model.Ref;
   readonly source: "inherit" | "declared";
   readonly selectedIndex?: number;
+  /** The agent's own `variant`, left off because the selected model does not offer it. */
+  readonly droppedVariant?: string;
 }
 
 interface ParsedIntent {
@@ -43,15 +45,29 @@ function matchesModel(model: ModelInfo, intent: ParsedIntent): boolean {
   return model.id === intent.modelID;
 }
 
+/**
+ * The variant an entry runs with: `false` rejects the entry. A `#variant` on
+ * the entry is part of it, so a model that lacks it cannot serve the entry.
+ * The agent's own `variant` applies to whichever entry is selected (including
+ * builtin fallbacks merged after the user's), so a model that lacks it runs
+ * without a variant rather than costing the agent the model.
+ */
 function resolveVariant(
   model: ModelInfo,
   intent: ParsedIntent,
   descriptorVariant: string | undefined,
-): Model.VariantID | undefined | false {
-  const requested = intent.variant ?? descriptorVariant;
-  if (requested === undefined) return undefined;
-  const found = model.variants.find((variant) => variant.id === requested)?.id;
-  return found === undefined ? false : Model.VariantID.make(found);
+): { readonly id?: Model.VariantID; readonly dropped?: string } | false {
+  const offered = (requested: string) =>
+    model.variants.find((variant) => variant.id === requested)?.id;
+  if (intent.variant !== undefined) {
+    const found = offered(intent.variant);
+    return found === undefined ? false : { id: Model.VariantID.make(found) };
+  }
+  if (descriptorVariant === undefined) return {};
+  const found = offered(descriptorVariant);
+  return found === undefined
+    ? { dropped: descriptorVariant }
+    : { id: Model.VariantID.make(found) };
 }
 
 /** Resolve ordered Weave model intent against the exact live native catalog. */
@@ -90,10 +106,13 @@ export function resolveOpenCode2Model(
       ref: {
         id: Model.ID.make(model.id),
         providerID: Provider.ID.make(model.providerID),
-        ...(variant === undefined ? {} : { variant }),
+        ...(variant.id === undefined ? {} : { variant: variant.id }),
       },
       source: "declared",
       selectedIndex: entryIndex,
+      ...(variant.dropped === undefined
+        ? {}
+        : { droppedVariant: variant.dropped }),
     });
   }
   return err(errors);

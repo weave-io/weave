@@ -11,7 +11,7 @@
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts

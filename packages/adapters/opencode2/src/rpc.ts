@@ -22,6 +22,7 @@ const Issue = z
     code: z.enum([
       "materialization_failed",
       "model_unavailable",
+      "variant_unavailable",
       "skill_unavailable",
       "agent_collision",
     ]),

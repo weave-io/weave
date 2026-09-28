@@ -322,6 +322,86 @@ describe("a user asks for a model variant", () => {
   });
 });
 
+describe("a user sets one variant for the whole agent", () => {
+  const scribe = (model: string, variant: string) => `
+    agent scribe {
+      prompt "You are the scribe."
+      models ["${model}"]
+      mode subagent
+      variant ${variant}
+    }
+  `;
+
+  it("selects the variant when the agent's model offers it", async () => {
+    const host = await load({
+      config: scribe("anthropic/claude-sonnet-4-5", "thinking"),
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agent("scribe").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-4-5",
+      variant: "thinking",
+    } as never);
+  });
+
+  it("keeps the model they named when that model does not offer the variant", async () => {
+    // `variant none` on a Claude model: GPT models offer `none`, Claude
+    // models do not. The variant is a setting for whichever model the agent
+    // lands on, so it must not cost the agent the model the user named.
+    const host = await load({
+      config: scribe("anthropic/claude-sonnet-5", "none"),
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agent("scribe").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-5",
+    });
+  });
+
+  it("names the agent whose variant was dropped, so the change is visible", async () => {
+    const report = await statusOf({
+      config: scribe("anthropic/claude-sonnet-5", "none"),
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(report.issues).toContainEqual({
+      code: "variant_unavailable",
+      agentName: "scribe",
+    });
+    expect(report.issues).not.toContainEqual({
+      code: "model_unavailable",
+      agentName: "scribe",
+    });
+  });
+
+  it("keeps a builtin agent on the model the user gave it", async () => {
+    // A user's `models` list is merged ahead of the builtin's own, so a
+    // rejected first entry used to fall through to the builtin's fallback,
+    // or to no model at all, and a subagent then ran on its parent's model.
+    const host = await load({
+      config: `
+        agent shuttle {
+          models ["anthropic/claude-sonnet-5"]
+          variant none
+        }
+      `,
+      host: {
+        models: [
+          ...(ANTHROPIC_HOST.models ?? []),
+          { providerID: "openai", id: "gpt-6-sol", variants: ["none"] },
+        ],
+      },
+    });
+
+    expect(host.agent("shuttle").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-5",
+    });
+  });
+});
+
 describe("a user lists several models in preference order", () => {
   it("falls through to the next one when the one before it cannot be resolved", async () => {
     const host = await load({

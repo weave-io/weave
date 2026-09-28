@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An agent-level `variant` the selected model does not offer no longer costs
+  the agent its model. `variant none` on a Claude model (Claude models offer no
+  `none` variant, GPT models do) rejected every entry, so the agent fell to a
+  builtin fallback model or to no model at all, and a subagent then ran on its
+  parent's model. The agent now keeps the model it names, runs without the
+  variant, and `status` reports a `variant_unavailable` issue. A `#variant`
+  written on a model entry still has to exist for that entry to be used.
 - New sessions start on Loom. `defaultAgent` now defaults to `loom`, so a
   plugin entry without options no longer leaves OpenCode 2 on `build`. Your
   own `default_agent` in the OpenCode config still wins, because OpenCode

@@ -35,6 +35,7 @@ export const WeaveRpc: {
                     code: z.ZodEnum<{
                         materialization_failed: "materialization_failed";
                         model_unavailable: "model_unavailable";
+                        variant_unavailable: "variant_unavailable";
                         skill_unavailable: "skill_unavailable";
                         agent_collision: "agent_collision";
                     }>;
