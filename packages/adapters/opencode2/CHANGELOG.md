@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The builtin agents default to the models GitHub Copilot offers, and an
+  OpenCode 2 host signed in to Copilot now selects them: Loom, Tapestry and
+  Pattern on `claude-opus-5.5`, Weft and Warp on `gpt-6-sol`, Shuttle on
+  `claude-sonnet-5.5`, Spindle on `gpt-6-luna` and Thread on
+  `claude-haiku-4.5`. Copilot spells Claude versions with a dot, and the
+  defaults used only Anthropic's dashed spelling, so on Copilot Loom,
+  Tapestry and Pattern ran on `gpt-6-sol` and Thread on `gpt-6-luna`. Each
+  Claude model is now listed in both spellings, Copilot's first.
+
 - An agent-level `variant` the selected model does not offer no longer costs
   the agent its model. `variant none` on a Claude model (Claude models offer no
   `none` variant, GPT models do) rejected every entry, so the agent fell to a

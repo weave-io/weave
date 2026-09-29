@@ -28,26 +28,31 @@ category frontend {
 
 ## Builtin Default Models
 
-The builtin agents in [`builtins.ts`](../packages/config/src/builtins.ts) each name one Anthropic and one OpenAI model, in order of preference:
+The builtin agents in [`builtins.ts`](../packages/config/src/builtins.ts) default to the models GitHub Copilot offers. Each list names one Anthropic and one OpenAI model, in order of preference:
 
 | Agent | `models` |
 | --- | --- |
-| loom, tapestry, pattern, weft, warp | `["claude-opus-5-5", "gpt-6-sol"]` |
-| shuttle | `["claude-sonnet-5", "gpt-6-sol"]` |
-| thread | `["claude-haiku-4-5", "gpt-6-luna"]` |
-| spindle | `["gpt-6-luna", "claude-haiku-4-5"]` |
+| loom, tapestry, pattern | `["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]` |
+| weft, warp | `["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"]` |
+| shuttle | `["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"]` |
+| spindle | `["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"]` |
+| thread | `["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"]` |
 
-The [eval record of 25 Sep 2026](artifacts/eval-default-models-2026-09-25.md) gives the reasons and the scores. Haiku for Thread is unmeasured, because no suite scores Thread's own work yet.
+The [eval record](artifacts/eval-default-models-2026-09-25.md) gives the scores behind these picks, including the 29 Sep 2026 Copilot update. Haiku for Thread is unmeasured, because no suite scores Thread's own work yet.
 
-The IDs use the vendors' own spelling, which is how provider catalogs such as models.dev list them. A project or global `models` list merges ahead of these, so a user's own preference always comes first (see [Config Loading](config-loading.md)).
+**Why each Claude model is listed twice.** Catalogs spell Claude versions two ways. GitHub Copilot writes `claude-opus-5.5`, and Anthropic (and models.dev's `anthropic` provider) writes `claude-opus-5-5`. With only the Anthropic spelling, a Copilot-only OpenCode 2 host matched none of the Claude entries, so Loom, Tapestry, Pattern, Weft and Warp silently ran on `gpt-6-sol` and Thread on `gpt-6-luna`. The Copilot spelling comes first, so a host with both Copilot and Anthropic connected picks Copilot. OpenAI IDs are spelled the same everywhere.
+
+**Why there is no `github-copilot/` prefix.** A qualified entry would be unambiguous on OpenCode 2, but OpenCode V1 writes the first qualified entry without checking that the provider is connected (its config hook runs before the provider list exists), so every V1 user without Copilot would fail every run with `ProviderModelNotFoundError`. The cost of bare IDs: on an OpenCode 2 host with both Copilot and OpenAI connected, `gpt-6-sol` and `gpt-6-luna` match twice, are ambiguous and are skipped, so Weft, Warp and Spindle take their Claude fallback. A user who wants a specific provider writes it in their own config, for example `models ["github-copilot/gpt-6-sol"]`.
+
+A project or global `models` list merges ahead of these, so a user's own preference always comes first (see [Config Loading](config-loading.md)).
 
 What each harness does with the defaults:
 
 | Harness | Behaviour |
 | --- | --- |
-| OpenCode 2 | Uses the first entry with exactly one live catalog match. An Anthropic-only host gets the Anthropic entry and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. |
+| OpenCode 2 | Uses the first entry with exactly one live catalog match. A Copilot host gets the Copilot spelling, an Anthropic-only host the Anthropic spelling, and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. |
 | OpenCode (V1) | Uses only `provider/model` entries, so the bare defaults leave the agent on the user's selected or default model. |
-| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. The OpenAI entries are skipped, so Spindle gets its Anthropic fallback, `haiku`. |
+| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. Only the Anthropic spelling is in the allowlist, and the OpenAI entries are skipped, so Weft and Warp run on `opus` and Spindle on `haiku`. |
 | Copilot CLI | Writes no model, so the CLI's own model is used. |
 
 ---

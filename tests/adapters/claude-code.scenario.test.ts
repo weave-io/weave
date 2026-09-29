@@ -164,8 +164,9 @@ describe("a user generates a Claude Code plugin from their config", () => {
 
 describe("Weave's builtin agents on Claude Code", () => {
   // Claude Code runs Anthropic models only. Each builtin's `models` list names
-  // an Anthropic model, first or as the fallback behind an OpenAI one, so every
-  // agent gets its intended Claude model instead of the constant fallback.
+  // its Claude model in Anthropic's spelling too (after Copilot's, or behind an
+  // OpenAI one), so every agent gets its intended Claude model instead of the
+  // constant fallback.
   const builtinModels = getBuiltinConfig()._unsafeUnwrap().agents ?? {};
   const expected: Record<string, string> = {
     loom: "opus",

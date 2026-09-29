@@ -32,12 +32,13 @@ import { dedent } from "../support/scenario.js";
 
 /**
  * An Anthropic-only host whose catalog offers the Anthropic models Weave's
- * builtin agents ask for. Spindle prefers an OpenAI model, so on this host it
- * takes its Anthropic fallback.
+ * builtin agents ask for, in Anthropic's spelling. Spindle, Weft and Warp
+ * prefer an OpenAI model, so on this host they take their Anthropic fallback.
  */
 const ANTHROPIC_HOST: HostOptions = {
   models: [
     { providerID: "anthropic", id: "claude-opus-5-5" },
+    { providerID: "anthropic", id: "claude-sonnet-5-5" },
     { providerID: "anthropic", id: "claude-sonnet-5" },
     { providerID: "anthropic", id: "claude-haiku-4-5" },
     {
@@ -53,6 +54,21 @@ const OPENAI_HOST: HostOptions = {
   models: [
     { providerID: "openai", id: "gpt-6-sol" },
     { providerID: "openai", id: "gpt-6-luna" },
+  ],
+};
+
+/**
+ * A GitHub Copilot host. The IDs are the ones `opencode models github-copilot`
+ * listed on 29 Sep 2026: Copilot spells Claude versions with a dot.
+ */
+const COPILOT_HOST: HostOptions = {
+  models: [
+    { providerID: "github-copilot", id: "claude-opus-5.5" },
+    { providerID: "github-copilot", id: "claude-sonnet-5.5" },
+    { providerID: "github-copilot", id: "claude-sonnet-5" },
+    { providerID: "github-copilot", id: "claude-haiku-4.5" },
+    { providerID: "github-copilot", id: "gpt-6-sol" },
+    { providerID: "github-copilot", id: "gpt-6-luna" },
   ],
 };
 
@@ -152,19 +168,17 @@ describe("a user installs Weave on an OpenCode 2 host that can run the models it
     expect(host.agent("loom").model).toEqual(model("claude-opus-5-5"));
     expect(host.agent("tapestry").model).toEqual(model("claude-opus-5-5"));
     expect(host.agent("pattern").model).toEqual(model("claude-opus-5-5"));
-    expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5"));
+    expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5-5"));
     expect(host.agent("thread").model).toEqual(model("claude-haiku-4-5"));
-    expect(host.agent("weft").model).toEqual(model("claude-opus-5-5"));
-    expect(host.agent("warp").model).toEqual(model("claude-opus-5-5"));
   });
 
-  it("gives the OpenAI-first agent its Anthropic fallback on an Anthropic-only host", async () => {
+  it("gives the OpenAI-first agents their Anthropic fallback on an Anthropic-only host", async () => {
     const host = await load({ host: ANTHROPIC_HOST });
+    const model = (id: string) => ({ providerID: "anthropic", id });
 
-    expect(host.agent("spindle").model).toEqual({
-      providerID: "anthropic",
-      id: "claude-haiku-4-5",
-    });
+    expect(host.agent("weft").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("warp").model).toEqual(model("claude-opus-5-5"));
+    expect(host.agent("spindle").model).toEqual(model("claude-haiku-4-5"));
   });
 
   it("gives the Anthropic-first agents their OpenAI fallback on an OpenAI-only host", async () => {
@@ -399,6 +413,40 @@ describe("a user sets one variant for the whole agent", () => {
       providerID: "anthropic",
       id: "claude-sonnet-5",
     });
+  });
+});
+
+describe("a user installs Weave on an OpenCode 2 host signed in to GitHub Copilot", () => {
+  it("runs every agent on the Copilot model it defaults to", async () => {
+    const report = await statusOf({ host: COPILOT_HOST });
+    const host = await load({ host: COPILOT_HOST });
+    const model = (id: string) => ({ providerID: "github-copilot", id });
+
+    expect(report.issues).toEqual([]);
+    expect(host.agent("loom").model).toEqual(model("claude-opus-5.5"));
+    expect(host.agent("tapestry").model).toEqual(model("claude-opus-5.5"));
+    expect(host.agent("pattern").model).toEqual(model("claude-opus-5.5"));
+    expect(host.agent("weft").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("warp").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5.5"));
+    expect(host.agent("spindle").model).toEqual(model("gpt-6-luna"));
+    expect(host.agent("thread").model).toEqual(model("claude-haiku-4.5"));
+  });
+
+  it("keeps the Claude agents on Copilot when an Anthropic provider is connected too", async () => {
+    const host = await load({
+      host: {
+        models: [
+          ...(COPILOT_HOST.models ?? []),
+          ...(ANTHROPIC_HOST.models ?? []),
+        ],
+      },
+    });
+    const model = (id: string) => ({ providerID: "github-copilot", id });
+
+    expect(host.agent("loom").model).toEqual(model("claude-opus-5.5"));
+    expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5.5"));
+    expect(host.agent("thread").model).toEqual(model("claude-haiku-4.5"));
   });
 });
 

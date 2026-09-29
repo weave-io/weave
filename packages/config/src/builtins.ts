@@ -68,19 +68,26 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  * to their project or global `config.weave` to override these defaults.
  *
  * Model defaults: each list is an ordered preference, and adapters use the
- * first entry their harness can run. Every agent names one Anthropic and one
- * OpenAI model, so a harness that reaches only one vendor still gets that
- * vendor's pick rather than its own fallback. The choices, and the evals behind
- * them, are recorded in docs/artifacts/eval-default-models-2026-09-25.md. IDs
- * use the vendors' own spelling (`claude-opus-5-5`, `gpt-6-sol`), which is what
- * provider catalogs list; OpenCode 2 resolves a bare ID only when exactly one
- * live catalog entry matches it.
+ * first entry their harness can run. The picks are the ones GitHub Copilot
+ * offers, and every agent names one Anthropic and one OpenAI model, so a
+ * harness that reaches only one vendor still gets that vendor's pick rather
+ * than its own fallback. The choices, and the evals behind them, are recorded
+ * in docs/artifacts/eval-default-models-2026-09-25.md.
+ *
+ * A Claude model is named twice because catalogs spell it two ways: GitHub
+ * Copilot writes `claude-opus-5.5`, Anthropic writes `claude-opus-5-5`. The
+ * Copilot spelling comes first, so a Copilot host selects its own entry even
+ * when an Anthropic provider is connected too. IDs carry no provider prefix:
+ * OpenCode 2 resolves a bare ID only when exactly one live catalog entry
+ * matches it, OpenCode V1 would write a `github-copilot/` entry without
+ * checking the provider is connected, and Claude Code maps only the Anthropic
+ * spelling to its aliases.
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {
   description "Main orchestrator: classifies requests, routes bounded work to specialists, and sends plan-sized work to pattern; may read, write, execute, and delegate; select for requests that need coordination across several agents"
   prompt_file "loom.md"
-  models ["claude-opus-5-5", "gpt-6-sol"]
+  models ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]
   mode primary
 
   tool_policy {
@@ -96,7 +103,7 @@ agent loom {
 agent tapestry {
   description "Plan execution coordinator: follows an approved plan task by task, delegates implementation, and verifies acceptance criteria; may read, write, execute, and delegate, but never implements itself; select to execute an existing plan"
   prompt_file "tapestry.md"
-  models ["claude-opus-5-5", "gpt-6-sol"]
+  models ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]
   mode primary
 
   tool_policy {
@@ -111,7 +118,7 @@ agent tapestry {
 agent shuttle {
   description "General implementation worker: handles bounded coding, testing, debugging, and refactoring; may read, write, and run commands, but cannot delegate; select for scoped changes when no category shuttle matches the files"
   prompt_file "shuttle.md"
-  models ["claude-sonnet-5", "gpt-6-sol"]
+  models ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {
@@ -133,7 +140,7 @@ agent shuttle {
 agent pattern {
   description "Strategic planner: turns a goal into a file-backed, sequenced plan with per-task acceptance criteria; writes plan files only and cannot execute or delegate; select before multi-file features or complex refactors"
   prompt_file "pattern.md"
-  models ["claude-opus-5-5", "gpt-6-sol"]
+  models ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {
@@ -154,7 +161,7 @@ agent pattern {
 agent thread {
   description "Codebase explorer: traces symbols, call graphs, and data flow with exact file and line evidence; read-only, cannot execute or delegate; select for internal investigation before planning or editing"
   prompt_file "thread.md"
-  models ["claude-haiku-4-5", "gpt-6-luna"]
+  models ["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"]
   mode subagent
 
   tool_policy {
@@ -175,7 +182,7 @@ agent thread {
 agent spindle {
   description "External researcher: checks official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision needs facts outside this repository"
   prompt_file "spindle.md"
-  models ["gpt-6-luna", "claude-haiku-4-5"]
+  models ["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"]
   mode subagent
 
   tool_policy {
@@ -196,7 +203,7 @@ agent spindle {
 agent weft {
   description "Code reviewer: checks correctness, quality, and maintainability and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select after non-trivial changes"
   prompt_file "weft.md"
-  models ["claude-opus-5-5", "gpt-6-sol"]
+  models ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"]
   mode subagent
 
   tool_policy {
@@ -217,7 +224,7 @@ agent weft {
 agent warp {
   description "Security auditor: checks vulnerabilities, unsafe patterns, and specification compliance and returns an approve or block verdict; read-only, cannot execute or delegate; select when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
-  models ["claude-opus-5-5", "gpt-6-sol"]
+  models ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"]
   mode subagent
 
   tool_policy {
