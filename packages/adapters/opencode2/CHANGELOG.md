@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A Weave agent now runs on its configured model even when the client selects
+  none. OpenCode 2 runs a turn on the session's model and falls back to the
+  host default, not the agent's model, so `opencode2 run` without `-m` (and API
+  clients) ran Loom and Tapestry on the host default. When a session has no
+  model and its agent is Weave's, the prompt hook now selects that agent's
+  model. A session started without an agent resolves to the host's default
+  agent. A model the user chose is never replaced, and the TUI already
+  selected the agent's model itself.
+
 - The builtin agents default to the models GitHub Copilot offers, and an
   OpenCode 2 host signed in to Copilot now selects them: Loom, Tapestry and
   Pattern on `claude-opus-5.5`, Weft and Warp on `gpt-6-sol`, Shuttle on

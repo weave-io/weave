@@ -95,6 +95,15 @@ export interface HostOptions {
   /** The agent the session currently has selected. */
   readonly sessionAgent?: string;
   /**
+   * The model the session currently has selected. `null` is a session with
+   * none, which is what `opencode2 run` without `-m` leaves behind. Defaults
+   * to a model the plugin did not choose.
+   */
+  readonly sessionModel?: {
+    readonly providerID: string;
+    readonly id: string;
+  } | null;
+  /**
    * The directory the session reports, when it differs from the plugin's —
    * i.e. a session belonging to another Location.
    */
@@ -462,7 +471,14 @@ export class OpenCode2Host {
         },
         list: async () => {
           this.flush();
-          return { data: [...this.agents.values()] };
+          // The real host lists its default agent first: the agent a session
+          // with none selected runs on.
+          const agents = [...this.agents.values()];
+          const first = agents.find((agent) => agent.id === this.defaultAgent);
+          if (first === undefined) return { data: agents };
+          return {
+            data: [first, ...agents.filter((agent) => agent !== first)],
+          };
         },
         reload: async () => {
           this.reloads.push("agent");
@@ -503,7 +519,14 @@ export class OpenCode2Host {
               workspaceID: this.options.workspaceID ?? "workspace",
             },
             agent: this.options.sessionAgent,
-            model: { providerID: "probe", id: "previous" },
+            ...(this.options.sessionModel === null
+              ? {}
+              : {
+                  model: this.options.sessionModel ?? {
+                    providerID: "probe",
+                    id: "previous",
+                  },
+                }),
           };
         },
         switchAgent: async (input: Record<string, unknown>) => {

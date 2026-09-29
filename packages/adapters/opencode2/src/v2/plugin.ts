@@ -227,6 +227,7 @@ export async function setupOpenCode2(
     ownsAgent: (agent) => inserted.has(agent),
     refresh: () => controller.refreshIfDue(),
     session: context.session,
+    agent: context.agent,
   });
   const promptRegistration = await fromOpenCode2Promise(
     () =>
