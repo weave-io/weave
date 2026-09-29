@@ -935,6 +935,145 @@ describe("another plugin already registered an agent under a name Weave wants", 
   });
 });
 
+describe("a user talks to a Weave agent from a client that selects no model", () => {
+  // `opencode2 run` without `-m`, and API clients, leave the session without a
+  // model, and the host then runs the turn on its own default model, not the
+  // agent's. The TUI selects the agent's model itself before every submit.
+  const INPUT = {
+    config: `
+      agent loom {
+        models ["github-copilot/gpt-6-sol"]
+      }
+    `,
+    host: {
+      ...COPILOT_HOST,
+      sessionAgent: "loom",
+      sessionModel: null,
+    },
+  };
+
+  it("runs the turn on the model the .weave config gives that agent", async () => {
+    const selected = await live(INPUT, async (host) => {
+      await host.promptSession();
+      return host.lastSessionCall("switchModel");
+    });
+
+    expect(selected).toEqual({
+      sessionID: "session",
+      model: { providerID: "github-copilot", id: "gpt-6-sol" },
+    });
+  });
+
+  it("runs a builtin agent on its default model when the config says nothing about it", async () => {
+    const selected = await live(
+      {
+        host: { ...COPILOT_HOST, sessionAgent: "tapestry", sessionModel: null },
+      },
+      async (host) => {
+        await host.promptSession();
+        return host.lastSessionCall("switchModel");
+      },
+    );
+
+    expect(selected).toMatchObject({
+      model: { providerID: "github-copilot", id: "claude-opus-5.5" },
+    });
+  });
+
+  it("runs a session started without an agent on Loom's model, because Loom is the default", async () => {
+    const selected = await live(
+      { host: { ...COPILOT_HOST, sessionModel: null } },
+      async (host) => {
+        await host.promptSession();
+        return host.lastSessionCall("switchModel");
+      },
+    );
+
+    expect(selected).toMatchObject({
+      model: { providerID: "github-copilot", id: "claude-opus-5.5" },
+    });
+  });
+
+  it("follows the user's own default agent when the session names none", async () => {
+    const selected = await live(
+      {
+        config: `
+          agent tapestry {
+            models ["github-copilot/gpt-6-sol"]
+          }
+        `,
+        host: {
+          ...COPILOT_HOST,
+          sessionModel: null,
+          configDefaultAgent: "tapestry",
+        },
+      },
+      async (host) => {
+        await host.promptSession();
+        return host.lastSessionCall("switchModel");
+      },
+    );
+
+    expect(selected).toMatchObject({
+      model: { providerID: "github-copilot", id: "gpt-6-sol" },
+    });
+  });
+
+  it("leaves a model the user already chose alone", async () => {
+    const calls = await live(
+      {
+        ...INPUT,
+        host: {
+          ...INPUT.host,
+          sessionModel: {
+            providerID: "github-copilot",
+            id: "claude-haiku-4.5",
+          },
+        },
+      },
+      async (host) => {
+        await host.promptSession();
+        return host.sessionCallNames();
+      },
+    );
+
+    expect(calls).not.toContain("switchModel");
+  });
+
+  it("leaves the host's own agents to the host", async () => {
+    const calls = await live(
+      { ...INPUT, host: { ...INPUT.host, sessionAgent: "build" } },
+      async (host) => {
+        await host.promptSession();
+        return host.sessionCallNames();
+      },
+    );
+
+    expect(calls).not.toContain("switchModel");
+  });
+
+  it("leaves the choice to the host when none of the agent's models is available", async () => {
+    const calls = await live(
+      {
+        config: `
+          agent scribe {
+            prompt "You are the scribe."
+            models ["nowhere/nothing"]
+            mode primary
+          }
+        `,
+        host: { ...COPILOT_HOST, sessionAgent: "scribe", sessionModel: null },
+      },
+      async (host) => {
+        await host.promptSession();
+        return host.sessionCallNames();
+      },
+    );
+
+    expect(calls).not.toContain("switchModel");
+  });
+});
+
 describe("a user gives an agent skills", () => {
   const INPUT = {
     config: `

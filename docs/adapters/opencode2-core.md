@@ -139,6 +139,31 @@ model: all eight disappeared, `/weave:start` went with them because it requires
 an owned Tapestry, and the install looked inert. Declaring a model that does not
 resolve is not treated as a request to have no agent.
 
+### Which model a turn runs on
+
+Registering an agent's model is not enough on its own. OpenCode 2 runs every
+turn on the *session's* selected model and falls back to the host default
+(`model` in the OpenCode config, else the first available model) when the
+session has none; it never reads the agent's model. Delegated children are the
+exception: the host's subagent tool creates them with
+`override ?? agent.model ?? parent.model`.
+
+- **The TUI** selects a model before every submit: a model the user picked for
+  that agent in this TUI session, else the agent's registered model, else
+  `--model`, the config `model` or a recent model. Switching agents therefore
+  switches to the agent's Weave model.
+- **Clients that select no model** (`opencode2 run` without `-m`, API clients)
+  would leave the turn on the host default. Weave's `prompt` hook covers them:
+  when the session has no model and its agent is one Weave registered, it
+  selects that agent's resolved model with `session.switchModel` before the
+  turn runs. A session started without an agent runs on the host's default
+  agent, which the host lists first, so the hook resolves the agent the same
+  way (Loom, unless the user set their own `default_agent`).
+
+The hook never replaces a model the session already has, so `-m`, a TUI choice
+or a model picked earlier in the session always wins. It does nothing for
+agents Weave does not own or for an agent with no resolved model.
+
 If an agent declares no model, OpenCode keeps native model selection. The
 adapter does not reset a user's model on each turn. A descriptor-level
 `variant` applies only when the selected model entry has no `#variant`. An

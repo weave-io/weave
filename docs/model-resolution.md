@@ -50,7 +50,7 @@ What each harness does with the defaults:
 
 | Harness | Behaviour |
 | --- | --- |
-| OpenCode 2 | Uses the first entry with exactly one live catalog match. A Copilot host gets the Copilot spelling, an Anthropic-only host the Anthropic spelling, and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. |
+| OpenCode 2 | Uses the first entry with exactly one live catalog match. A Copilot host gets the Copilot spelling, an Anthropic-only host the Anthropic spelling, and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. The host runs a turn on the session's model, so Weave selects the agent's model for a session that has none (see [OpenCode 2 core](adapters/opencode2-core.md#which-model-a-turn-runs-on)). |
 | OpenCode (V1) | Uses only `provider/model` entries, so the bare defaults leave the agent on the user's selected or default model. |
 | Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. Only the Anthropic spelling is in the allowlist, and the OpenAI entries are skipped, so Weft and Warp run on `opus` and Spindle on `haiku`. |
 | Copilot CLI | Writes no model, so the CLI's own model is used. |
