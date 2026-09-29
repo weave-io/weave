@@ -25,6 +25,7 @@ const Issue = z
       "variant_unavailable",
       "skill_unavailable",
       "agent_collision",
+      "config_invalid",
     ]),
     agentName: z.string().max(128).optional(),
     count: z.number().int().min(0).max(512).optional(),

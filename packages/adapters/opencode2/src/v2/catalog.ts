@@ -146,12 +146,19 @@ function buildCandidate(
   sources: CatalogSourceCache,
 ): ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error> {
   return loadConfig(input.location, sources.configReader)
-    .mapErr(
-      (): OpenCode2Error => ({
+    .mapErr((errors): OpenCode2Error => {
+      // A file that parsed but failed the DSL or its validation is a user
+      // error `weave validate` can explain; an unreadable file is not.
+      if (errors.some((error) => error.type !== "FileReadError"))
+        return {
+          code: "config_invalid",
+          message: "Weave configuration is invalid",
+        };
+      return {
         code: "config_unavailable",
         message: "Weave configuration could not be loaded",
-      }),
-    )
+      };
+    })
     .andThen((config) => {
       if (sources.ioError() !== undefined) {
         return err<OpenCode2CatalogCandidate, OpenCode2Error>({
@@ -182,17 +189,10 @@ function buildCandidate(
               code: "catalog_unavailable",
               message: sourceLimit,
             });
-          const fatalPromptRead = plan.errors.some(
-            (error) =>
-              error.type === "DescriptorCompositionFailure" &&
-              error.cause.type === "PromptFileReadError",
-          );
-          if (fatalPromptRead)
-            return err<OpenCode2CatalogCandidate, OpenCode2Error>({
-              code: "config_unavailable",
-              message: "a configured prompt source could not be read",
-            });
-
+          // An agent whose prompt could not be composed — including a
+          // `prompt_file` that cannot be read — is left out and reported as
+          // `materialization_failed`. The rest of the config still loads, so
+          // one missing file does not cost the user every agent.
           const projections = new Map<string, OpenCode2AgentProjection>();
           const runtime = new Map<string, OpenCode2CatalogAgent>();
           const issues: OpenCode2CatalogIssue[] =

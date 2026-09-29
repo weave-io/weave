@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A partial or partly broken `.weave` config no longer registers zero agents.
+  An agent whose `prompt_file` cannot be read is left out on its own and
+  `status` names it (`materialization_failed`); before, one missing file failed
+  the whole catalog. A config that does not parse or validate still loads
+  nothing, but `status` now reports `config_invalid` and the plan panel says
+  "Weave config is invalid; run `weave validate`" instead of only "refresh
+  failed".
+
 - A Weave agent now runs on its configured model even when the client selects
   none. OpenCode 2 runs a turn on the session's model and falls back to the
   host default, not the agent's model, so `opencode2 run` without `-m` (and API

@@ -30,18 +30,21 @@ export type PlanUiState =
       readonly type: "no_plan";
       readonly scope: PlanUiScope;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | {
       readonly type: "ready";
       readonly scope: PlanUiScope;
       readonly plan: PlanUiDisplay;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | {
       readonly type: "completed";
       readonly scope: PlanUiScope;
       readonly plan: PlanUiDisplay;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | { readonly type: "unavailable"; readonly scope?: PlanUiScope }
   | { readonly type: "disconnected"; readonly scope?: PlanUiScope };
@@ -51,6 +54,7 @@ export interface PlanUiRpcResponse {
   readonly state: "no_plan" | "ready" | "completed";
   readonly plan?: PlanUiDisplay;
   readonly refreshFailed?: boolean;
+  readonly configInvalid?: boolean;
 }
 
 export interface PlanUiDependencies {
@@ -175,6 +179,7 @@ export class PlanUiController {
         type: "no_plan",
         scope,
         refreshFailed: response.value.refreshFailed === true,
+        configInvalid: response.value.configInvalid === true,
       });
       return;
     }
@@ -187,6 +192,7 @@ export class PlanUiController {
       scope,
       plan: response.value.plan,
       refreshFailed: response.value.refreshFailed === true,
+      configInvalid: response.value.configInvalid === true,
     });
   }
 

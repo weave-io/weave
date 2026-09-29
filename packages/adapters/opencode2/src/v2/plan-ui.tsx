@@ -33,15 +33,22 @@ function sessionScope(
   };
 }
 
+function refreshWarning(state: {
+  readonly refreshFailed: boolean;
+  readonly configInvalid?: boolean;
+}): readonly string[] {
+  if (!state.refreshFailed) return [];
+  if (state.configInvalid === true)
+    return ["Weave config is invalid; run `weave validate`"];
+  return ["Weave config refresh failed; using last valid config"];
+}
+
 function summary(state: PlanUiState, narrow: boolean): readonly string[] {
   if (state.type === "unsupported_host")
     return ["Weave plan: Unsupported OpenCode version"];
   if (state.type === "loading") return ["Weave plan: Loading"];
   if (state.type === "no_plan") {
-    const warning = state.refreshFailed
-      ? ["Weave config refresh failed; using last valid config"]
-      : [];
-    return ["Weave plan: No plan selected", ...warning];
+    return ["Weave plan: No plan selected", ...refreshWarning(state)];
   }
   if (state.type === "unavailable") return ["Weave plan: Unavailable"];
   if (state.type === "disconnected") return ["Weave plan: Disconnected"];
@@ -55,9 +62,7 @@ function summary(state: PlanUiState, narrow: boolean): readonly string[] {
     state.type === "completed"
       ? "Plan complete"
       : (state.plan.current?.title ?? "None");
-  const warning = state.refreshFailed
-    ? ["Weave config refresh failed; using last valid config"]
-    : [];
+  const warning = refreshWarning(state);
   return [
     first,
     ...progress,
@@ -110,7 +115,13 @@ export function PlanPanel(props: PlanPanelProps) {
         rpc.status(input, options),
         rpc.plan(input, options),
       ]);
-      return { ...plan, refreshFailed: status.refresh === "failed" };
+      return {
+        ...plan,
+        refreshFailed: status.refresh === "failed",
+        configInvalid: status.issues.some(
+          (issue) => issue.code === "config_invalid",
+        ),
+      };
     },
     publish: setState,
   });

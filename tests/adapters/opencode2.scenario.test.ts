@@ -711,17 +711,147 @@ describe("a user's config points at a prompt file that is not there", () => {
       prompt_file "nope.md"
       models ["probe/fast"]
       mode subagent
+      triggers ["Use for writing things down"]
     }
   `;
 
-  it("registers no agents at all, so the session never runs on a half-read config", async () => {
-    const host = await load({ config: CONFIG });
+  it("leaves out only the agent whose prompt it cannot read, so the rest still work", async () => {
+    const host = await load({ config: CONFIG, host: ANTHROPIC_HOST });
 
-    expect(host.agentNames()).toEqual([]);
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
   });
 
-  it("reports the catalog as failed rather than as an empty success", async () => {
-    expect((await statusOf({ config: CONFIG })).refresh).toBe("failed");
+  it("names that agent in the status report", async () => {
+    const report = await statusOf({ config: CONFIG, host: ANTHROPIC_HOST });
+
+    expect(report.refresh).toBe("fresh");
+    expect(report.issues).toContainEqual({
+      code: "materialization_failed",
+      agentName: "scribe",
+    });
+  });
+
+  it("does not offer the missing agent to Loom", async () => {
+    const host = await load({ config: CONFIG, host: ANTHROPIC_HOST });
+
+    expect(String(host.agent("loom").system)).not.toContain("scribe");
+  });
+
+  it("keeps the builtins when a builtin's own prompt file is the one missing", async () => {
+    const host = await load({
+      config: `
+        agent shuttle {
+          prompt_file "my-shuttle.md"
+        }
+      `,
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agentNames()).toEqual(
+      BUILTIN_AGENTS.filter((name) => name !== "shuttle"),
+    );
+  });
+});
+
+describe("a user's config covers only part of what Weave ships", () => {
+  it("keeps every builtin when the config only changes one agent's model", async () => {
+    const host = await load({
+      config: `
+        agent shuttle {
+          models ["anthropic/claude-sonnet-5"]
+        }
+      `,
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
+    expect(host.agent("shuttle").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-5",
+    });
+    expect(host.agent("loom").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-opus-5-5",
+    });
+  });
+
+  it("keeps the builtin prompt when the config only changes permissions", async () => {
+    const host = await load({
+      config: `
+        agent shuttle {
+          tool_policy {
+            network allow
+          }
+        }
+      `,
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
+    expect(String(host.agent("shuttle").system).length).toBeGreaterThan(1000);
+  });
+
+  it("loads a config with several partial agent blocks (#268)", async () => {
+    // The exact config from #268: one fully written agent, one that names
+    // only a model. Neither model is on this host, so both fall back.
+    const report = await statusOf({
+      config: `
+        agent loom {
+          description "Primary orchestration agent"
+          prompt "Coordinate the user's work, delegate when useful, and keep progress clear."
+          models ["opencode-go/gpt-6-luna"]
+          mode primary
+
+          tool_policy {
+            read allow
+            write allow
+            execute ask
+            delegate allow
+            network ask
+          }
+        }
+
+        agent shuttle {
+          models ["openai/gpt-6-sol"]
+        }
+      `,
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(report.refresh).toBe("fresh");
+    expect(report.agentCount).toBe(BUILTIN_AGENTS.length);
+    expect(report.issues).toEqual([]);
+  });
+
+  it("reads a config written with Windows line endings", async () => {
+    const host = await load({
+      config:
+        'agent loom {\r\n  prompt "Coordinate."\r\n  mode primary\r\n}\r\n\r\nagent shuttle {\r\n  models ["anthropic/claude-sonnet-5"]\r\n}\r\n',
+      host: ANTHROPIC_HOST,
+    });
+
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
+    expect(host.agent("shuttle").model).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-5",
+    });
+  });
+
+  it("keeps the rest when a custom agent has no prompt, and names that agent", async () => {
+    const config = `
+      agent helper {
+        models ["anthropic/claude-haiku-4-5"]
+        mode subagent
+      }
+    `;
+    const host = await load({ config, host: ANTHROPIC_HOST });
+    const report = await statusOf({ config, host: ANTHROPIC_HOST });
+
+    expect(host.agentNames()).toEqual(BUILTIN_AGENTS);
+    expect(report.issues).toContainEqual({
+      code: "materialization_failed",
+      agentName: "helper",
+    });
   });
 });
 
@@ -746,6 +876,12 @@ describe("a user's config cannot be parsed", () => {
 
     expect(report.refresh).toBe("failed");
     expect(report.readiness.nativeAgents).toBe(false);
+  });
+
+  it("says the config is invalid, so the user knows to run weave validate", async () => {
+    const report = await statusOf({ config: BROKEN });
+
+    expect(report.issues).toContainEqual({ code: "config_invalid" });
   });
 });
 

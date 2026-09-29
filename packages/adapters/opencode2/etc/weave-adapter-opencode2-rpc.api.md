@@ -38,6 +38,7 @@ export const WeaveRpc: {
                         variant_unavailable: "variant_unavailable";
                         skill_unavailable: "skill_unavailable";
                         agent_collision: "agent_collision";
+                        config_invalid: "config_invalid";
                     }>;
                     agentName: z.ZodOptional<z.ZodString>;
                     count: z.ZodOptional<z.ZodNumber>;
