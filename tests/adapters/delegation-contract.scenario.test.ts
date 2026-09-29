@@ -179,7 +179,7 @@ const FIXTURES: readonly Fixture[] = [
 /** The models the OpenCode 2 host offers: the Anthropic builtin defaults. */
 const HOST_MODELS: HostOptions["models"] = [
   { providerID: "anthropic", id: "claude-opus-5-5" },
-  { providerID: "anthropic", id: "claude-sonnet-5" },
+  { providerID: "anthropic", id: "claude-sonnet-5-5" },
   { providerID: "anthropic", id: "claude-haiku-4-5" },
   { providerID: "anthropic", id: "claude-sonnet-4-5" },
 ];
@@ -411,17 +411,14 @@ for (const harness of HARNESSES) {
         // shuttle names (`shuttle-backend`, `shuttle-frontend`,
         // `shuttle-core`, `shuttle-{category}`) from loom.md and tapestry.md;
         // item 2 keeps unregistered shuttles out of the delegation list.
-        it(
-          `names only registered shuttles in ${orchestrator}'s prompt`,
-          async () => {
-            const current = await registered();
-            const shuttles = agentLikeNames(
-              current.prompt(orchestrator),
-            ).filter((name) => name.startsWith("shuttle-"));
+        it(`names only registered shuttles in ${orchestrator}'s prompt`, async () => {
+          const current = await registered();
+          const shuttles = agentLikeNames(current.prompt(orchestrator)).filter(
+            (name) => name.startsWith("shuttle-"),
+          );
 
-            expect(unregistered(shuttles, current)).toEqual([]);
-          },
-        );
+          expect(unregistered(shuttles, current)).toEqual([]);
+        });
       }
     });
   }

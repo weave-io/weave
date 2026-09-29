@@ -9,6 +9,7 @@ import type { AgentDescriptor } from "@weaveio/weave-engine";
 
 const MODEL_ALIAS_MAP: Record<string, string> = {
   "claude-opus-5-5": "opus",
+  "claude-sonnet-5-5": "sonnet",
   "claude-sonnet-5": "sonnet",
   "claude-haiku-4-5": "haiku",
   "claude-haiku-4-5-20251001": "haiku",
