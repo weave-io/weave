@@ -64,6 +64,8 @@ Human-readable success output summarizes counts only:
 - disabled entries
 - log level
 
+Every form also checks that each agent the input declares can be registered by a harness adapter: a custom agent needs a `prompt` or `prompt_file`, and every `prompt_file` must be readable. Adapters drop only such an agent and keep the rest (see [OpenCode 2 core](adapters/opencode2-core.md#partial-and-broken-configs)), so `weave validate` is where the user finds out. A scoped or `--path` check merges the file onto the builtins, resolves its prompt files against the `prompts/` directory beside it, and reports only the agents and categories that file declares.
+
 The CLI intentionally avoids printing full private prompt/config content in normal success output. Parse and validation failures use `file:line:column: message` formatting where the DSL pipeline provides location data.
 
 The root `validate-config` script delegates to the CLI:

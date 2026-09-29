@@ -12,6 +12,7 @@ import {
   PlanUiController,
   type PlanUiRpcResponse,
   type PlanUiState,
+  planRefreshWarning,
   taskDialogOptions,
 } from "../v2/plan-ui-state.js";
 
@@ -57,6 +58,7 @@ describe("PlanUiController", () => {
       type: "no_plan",
       scope: { sessionID: "two", directory: "/two" },
       refreshFailed: false,
+      configInvalid: false,
     });
   });
 
@@ -84,6 +86,28 @@ describe("PlanUiController", () => {
     expect(published.at(-1)).toMatchObject({
       type: "ready",
       refreshFailed: true,
+    });
+  });
+
+  it("carries an invalid-config signal so the panel can name the cause", async () => {
+    const published: PlanUiState[] = [];
+    const controller = new PlanUiController({
+      supported: true,
+      getSession: (sessionID) => ({ sessionID, directory: "/project" }),
+      syncSession: async () => undefined,
+      fetchPlan: async (_scope, scopeToken) => ({
+        scope: { sessionID: "session", scopeToken },
+        state: "no_plan",
+        refreshFailed: true,
+        configInvalid: true,
+      }),
+      publish: (state) => published.push(state),
+    });
+    await controller.load("session");
+    expect(published.at(-1)).toMatchObject({
+      type: "no_plan",
+      refreshFailed: true,
+      configInvalid: true,
     });
   });
 
@@ -140,6 +164,24 @@ describe("taskDialogOptions", () => {
       "[x] 1. Done",
       "[>] 2. Current",
       "  [ ] 2.a. Next",
+    ]);
+  });
+});
+
+describe("planRefreshWarning", () => {
+  it("adds nothing while the catalog is fresh", () => {
+    expect(planRefreshWarning({ refreshFailed: false })).toEqual([]);
+  });
+
+  it("tells the user to run weave validate when the config is invalid", () => {
+    expect(
+      planRefreshWarning({ refreshFailed: true, configInvalid: true }),
+    ).toEqual(["Weave config is invalid; run `weave validate`"]);
+  });
+
+  it("keeps the generic warning for any other failed refresh", () => {
+    expect(planRefreshWarning({ refreshFailed: true })).toEqual([
+      "Weave config refresh failed; using last valid config",
     ]);
   });
 });

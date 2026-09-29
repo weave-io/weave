@@ -30,27 +30,46 @@ export type PlanUiState =
       readonly type: "no_plan";
       readonly scope: PlanUiScope;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | {
       readonly type: "ready";
       readonly scope: PlanUiScope;
       readonly plan: PlanUiDisplay;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | {
       readonly type: "completed";
       readonly scope: PlanUiScope;
       readonly plan: PlanUiDisplay;
       readonly refreshFailed: boolean;
+      readonly configInvalid?: boolean;
     }
   | { readonly type: "unavailable"; readonly scope?: PlanUiScope }
   | { readonly type: "disconnected"; readonly scope?: PlanUiScope };
+
+/**
+ * The warning line the plan panel adds when the last catalog refresh failed.
+ * An invalid config names the command that explains it; any other failure
+ * keeps the last valid catalog.
+ */
+export function planRefreshWarning(state: {
+  readonly refreshFailed: boolean;
+  readonly configInvalid?: boolean;
+}): readonly string[] {
+  if (!state.refreshFailed) return [];
+  if (state.configInvalid === true)
+    return ["Weave config is invalid; run `weave validate`"];
+  return ["Weave config refresh failed; using last valid config"];
+}
 
 export interface PlanUiRpcResponse {
   readonly scope: { readonly sessionID: string; readonly scopeToken: string };
   readonly state: "no_plan" | "ready" | "completed";
   readonly plan?: PlanUiDisplay;
   readonly refreshFailed?: boolean;
+  readonly configInvalid?: boolean;
 }
 
 export interface PlanUiDependencies {
@@ -175,6 +194,7 @@ export class PlanUiController {
         type: "no_plan",
         scope,
         refreshFailed: response.value.refreshFailed === true,
+        configInvalid: response.value.configInvalid === true,
       });
       return;
     }
@@ -187,6 +207,7 @@ export class PlanUiController {
       scope,
       plan: response.value.plan,
       refreshFailed: response.value.refreshFailed === true,
+      configInvalid: response.value.configInvalid === true,
     });
   }
 

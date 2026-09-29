@@ -3,6 +3,7 @@ import { ResultAsync } from "neverthrow";
 export type OpenCode2ErrorCode =
   | "invalid_options"
   | "config_unavailable"
+  | "config_invalid"
   | "catalog_unavailable"
   | "model_unavailable"
   | "session_unavailable"

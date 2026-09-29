@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
 > 0 routes | 0 models | 0 components | 228 lib files | 29 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,700 tokens. Without it, AI exploration would cost ~76,800 tokens. **Saves ~56,100 tokens per conversation.**
-> **Last scanned:** 2026-09-29 09:37 — re-run after significant changes
+> **Token savings:** this file is ~20,700 tokens. Without it, AI exploration would cost ~76,800 tokens. **Saves ~56,000 tokens per conversation.**
+> **Last scanned:** 2026-09-29 09:56 — re-run after significant changes
 
 ---
 
@@ -229,13 +229,13 @@
   - class OpenCode2PlanSessionState
   - interface StoredPlanSelection
 - `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
+  - function planRefreshWarning: (state) => readonly string[]
   - function taskDialogOptions: (plan) => Array<
   - class PlanUiController
   - interface PlanUiScope
   - interface PlanUiTask
   - interface PlanUiDisplay
-  - interface PlanUiRpcResponse
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/opencode2/src/v2/plugin.ts`
   - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
   - interface OpenCode2PluginDependencies
@@ -710,7 +710,7 @@
   - type DiscoveredConfig
   - const bunFileReader: FileReader
   - const GLOBAL_CONFIG_DIR_ENV
-- `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/loader.ts` — function getResolvedBuiltinConfig: () => Result<, function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
@@ -1188,7 +1188,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 230 test files found
+> 231 test files found
 
 ---
 

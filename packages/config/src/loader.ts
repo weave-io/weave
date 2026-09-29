@@ -1,4 +1,4 @@
-import { err, errAsync, ok, type ResultAsync } from "neverthrow";
+import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
 import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "./builtins.js";
 import {
   bunFileReader,
@@ -67,6 +67,18 @@ function inlineBuiltinPrompts(
 }
 
 /**
+ * The builtin config as `loadConfig` merges it: every builtin prompt inlined,
+ * so it composes without reading any file. For callers that merge a single
+ * config file onto the builtins themselves, such as `weave validate --path`.
+ */
+export function getResolvedBuiltinConfig(): Result<
+  import("@weaveio/weave-core").WeaveConfig,
+  import("@weaveio/weave-core").ConfigError[]
+> {
+  return getBuiltinConfig().map(inlineBuiltinPrompts);
+}
+
+/**
  * Load the final merged `WeaveConfig` for a project.
  *
  * Orchestrates the full config pipeline in five steps:
@@ -105,9 +117,10 @@ export function loadConfig(
   // Step 1: Builtins
   const builtinResult = getBuiltinConfig();
   if (builtinResult.isErr()) {
-    return errAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
-      { type: "BuiltinParseError", errors: builtinResult.error },
-    ]);
+    return errAsync<
+      import("@weaveio/weave-core").WeaveConfig,
+      ConfigLoadError[]
+    >([{ type: "BuiltinParseError", errors: builtinResult.error }]);
   }
 
   const builtinConfig = builtinResult.value;

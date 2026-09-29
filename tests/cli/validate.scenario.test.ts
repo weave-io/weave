@@ -134,3 +134,86 @@ describe("a user's global config is broken but their project config is fine", ()
     expect(global.exitCode).not.toBe(0);
   });
 });
+
+describe("a user's config has an agent that harnesses would leave out", () => {
+  // Harness adapters register every other agent and drop only one that cannot
+  // be composed, so validate is where the user finds out before a session
+  // quietly runs without it.
+  it("names an agent whose prompt file is not there, and where it looked", async () => {
+    const { exitCode, stderr } = await runWeave(["validate", "--project"], {
+      [`${PROJECT_DIR}/.weave/config.weave`]: dedent(`
+        agent helper {
+          prompt_file "helper.md"
+          mode subagent
+        }
+      `),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('agent "helper"');
+    expect(stderr).toContain(`${PROJECT_DIR}/.weave/prompts/helper.md`);
+  });
+
+  it("names a custom agent that has no prompt", async () => {
+    const { exitCode, stderr } = await runWeave(["validate", "--project"], {
+      [`${PROJECT_DIR}/.weave/config.weave`]: dedent(`
+        agent scribe {
+          models ["anthropic/claude-haiku-4-5"]
+          mode subagent
+        }
+      `),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('agent "scribe"');
+    expect(stderr).toContain("must define either prompt or prompt_file");
+  });
+
+  it("checks a global config against the global prompts directory", async () => {
+    const { exitCode, stderr } = await runWeave(["validate", "--global"], {
+      [`${HOME_DIR}/.weave/config.weave`]: dedent(`
+        agent helper {
+          prompt_file "helper.md"
+          mode subagent
+        }
+      `),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`${HOME_DIR}/.weave/prompts/helper.md`);
+  });
+});
+
+describe("a user's config only changes part of a builtin", () => {
+  it("passes when a block sets only a model or permissions, because the builtin supplies the rest", async () => {
+    const { exitCode } = await runWeave(["validate", "--project"], {
+      [`${PROJECT_DIR}/.weave/config.weave`]: dedent(`
+        agent shuttle {
+          models ["github-copilot/gpt-6-sol"]
+        }
+
+        agent loom {
+          tool_policy {
+            network deny
+          }
+        }
+      `),
+    });
+
+    expect(exitCode).toBe(0);
+  });
+
+  it("passes when the prompt file it names is there", async () => {
+    const { exitCode } = await runWeave(["validate", "--project"], {
+      [`${PROJECT_DIR}/.weave/config.weave`]: dedent(`
+        agent helper {
+          prompt_file "helper.md"
+          mode subagent
+        }
+      `),
+      [`${PROJECT_DIR}/.weave/prompts/helper.md`]: "You help.",
+    });
+
+    expect(exitCode).toBe(0);
+  });
+});

@@ -8,7 +8,7 @@ import type {
   PromptFileReader,
   PromptFileReadFailure,
 } from "@weaveio/weave-engine";
-import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, type Result, ResultAsync } from "neverthrow";
 
 export const MAX_CATALOG_SOURCE_COUNT = 64;
 export const MAX_CATALOG_SOURCE_BYTES = 4 * 1024 * 1024;
@@ -18,6 +18,8 @@ export interface CatalogSourceEntry {
   readonly exists: boolean;
   readonly bytes?: number;
   readonly sha256?: string;
+  /** The file exists but could not be read when the catalog was built. */
+  readonly unreadable?: true;
 }
 
 export type CatalogSourceIoError = {
@@ -80,6 +82,13 @@ export function probeCatalogSources(
       if (exists.isErr()) return err(exists.error);
       if (exists.value !== source.exists) return ok(true);
       if (!exists.value) continue;
+      // A source that could not be read left its agent out of the catalog.
+      // It has changed once it reads; until then there is nothing to compare.
+      if (source.unreadable === true) {
+        const retry = await io.readBytes(source.path);
+        if (retry.isErr()) continue;
+        return ok(true);
+      }
 
       const bytes = await io.readBytes(source.path);
       if (bytes.isErr()) return err(bytes.error);
@@ -212,18 +221,32 @@ export class CatalogSourceCache {
   private read(path: string): ResultAsync<string, CatalogSourceIoError> {
     const cached = this.reads.get(path);
     if (cached !== undefined) return cached.map((value) => value.text);
-    const pending = readExactText(path, this.io).map((value) => {
-      this.totalBytes += value.bytes;
-      if (this.totalBytes > MAX_CATALOG_SOURCE_BYTES)
-        this.limitMessage = "catalog source bytes exceed the supported limit";
-      this.record(path, {
-        path,
-        exists: true,
-        bytes: value.bytes,
-        sha256: value.sha256,
-      });
-      return value;
-    });
+    const pending = readExactText(path, this.io)
+      .map((value) => {
+        this.totalBytes += value.bytes;
+        if (this.totalBytes > MAX_CATALOG_SOURCE_BYTES)
+          this.limitMessage = "catalog source bytes exceed the supported limit";
+        this.record(path, {
+          path,
+          exists: true,
+          bytes: value.bytes,
+          sha256: value.sha256,
+        });
+        return value;
+      })
+      .orElse((error) =>
+        // Record the failure too, so a later refresh notices when the file
+        // appears or becomes readable and brings its agent back.
+        ResultAsync.fromSafePromise(
+          this.io.exists(path).catch(() => false),
+        ).andThen((exists) => {
+          this.record(
+            path,
+            exists ? { path, exists, unreadable: true } : { path, exists },
+          );
+          return errAsync<SourceText, CatalogSourceIoError>(error);
+        }),
+      );
     this.reads.set(path, pending);
     return pending.map((value) => value.text);
   }
