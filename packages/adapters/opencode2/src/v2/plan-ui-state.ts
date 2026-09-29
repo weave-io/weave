@@ -49,6 +49,21 @@ export type PlanUiState =
   | { readonly type: "unavailable"; readonly scope?: PlanUiScope }
   | { readonly type: "disconnected"; readonly scope?: PlanUiScope };
 
+/**
+ * The warning line the plan panel adds when the last catalog refresh failed.
+ * An invalid config names the command that explains it; any other failure
+ * keeps the last valid catalog.
+ */
+export function planRefreshWarning(state: {
+  readonly refreshFailed: boolean;
+  readonly configInvalid?: boolean;
+}): readonly string[] {
+  if (!state.refreshFailed) return [];
+  if (state.configInvalid === true)
+    return ["Weave config is invalid; run `weave validate`"];
+  return ["Weave config refresh failed; using last valid config"];
+}
+
 export interface PlanUiRpcResponse {
   readonly scope: { readonly sessionID: string; readonly scopeToken: string };
   readonly state: "no_plan" | "ready" | "completed";

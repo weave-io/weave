@@ -11,6 +11,7 @@ import {
   PlanUiController,
   type PlanUiScope,
   type PlanUiState,
+  planRefreshWarning,
   taskDialogOptions,
 } from "./plan-ui-state.js";
 
@@ -33,22 +34,12 @@ function sessionScope(
   };
 }
 
-function refreshWarning(state: {
-  readonly refreshFailed: boolean;
-  readonly configInvalid?: boolean;
-}): readonly string[] {
-  if (!state.refreshFailed) return [];
-  if (state.configInvalid === true)
-    return ["Weave config is invalid; run `weave validate`"];
-  return ["Weave config refresh failed; using last valid config"];
-}
-
 function summary(state: PlanUiState, narrow: boolean): readonly string[] {
   if (state.type === "unsupported_host")
     return ["Weave plan: Unsupported OpenCode version"];
   if (state.type === "loading") return ["Weave plan: Loading"];
   if (state.type === "no_plan") {
-    return ["Weave plan: No plan selected", ...refreshWarning(state)];
+    return ["Weave plan: No plan selected", ...planRefreshWarning(state)];
   }
   if (state.type === "unavailable") return ["Weave plan: Unavailable"];
   if (state.type === "disconnected") return ["Weave plan: Disconnected"];
@@ -62,7 +53,7 @@ function summary(state: PlanUiState, narrow: boolean): readonly string[] {
     state.type === "completed"
       ? "Plan complete"
       : (state.plan.current?.title ?? "None");
-  const warning = refreshWarning(state);
+  const warning = planRefreshWarning(state);
   return [
     first,
     ...progress,

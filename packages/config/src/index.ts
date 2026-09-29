@@ -14,7 +14,7 @@ export {
   globalConfigDir,
 } from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";
-export { loadConfig } from "./loader.js";
+export { getResolvedBuiltinConfig, loadConfig } from "./loader.js";
 export type { MergeError, WorkflowExtensionError } from "./merge.js";
 export { mergeConfigs, mergeConfigsResult, mergeWorkflow } from "./merge.js";
 export { normalizePath } from "./normalize-path.js";

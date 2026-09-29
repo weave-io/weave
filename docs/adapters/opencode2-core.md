@@ -234,7 +234,11 @@ with no prompt, or a `prompt_file` that cannot be read (including one that
 replaces a builtin's prompt), leaves only that agent out. `status` names it
 with a `materialization_failed` issue, and routers are not offered it. Earlier
 releases failed the whole catalog on an unreadable prompt file, so one missing
-file registered no Weave agents at all.
+file registered no Weave agents at all. A prompt file that fails to read is
+recorded in the catalog's source manifest (missing, or present but
+unreadable), so the next refresh after the user creates or fixes it brings the
+agent back without an OpenCode restart. `weave validate` reports the same
+agents, with the path it looked for.
 
 A config that does not parse or validate still loads nothing. Falling back to
 the builtins would silently drop what the user wrote, including restrictions

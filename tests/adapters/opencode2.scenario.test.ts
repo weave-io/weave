@@ -20,6 +20,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 import {
   HOST_DEFAULT_PERMISSIONS,
   type HostOptions,
@@ -735,6 +736,31 @@ describe("a user's config points at a prompt file that is not there", () => {
     const host = await load({ config: CONFIG, host: ANTHROPIC_HOST });
 
     expect(String(host.agent("loom").system)).not.toContain("scribe");
+  });
+
+  it("brings the agent back once the user creates the file", async () => {
+    const result = await live(
+      {
+        config: CONFIG,
+        host: { ...ANTHROPIC_HOST, options: { refreshIntervalMs: 250 } },
+      },
+      async (host) => {
+        const before = (await host.rpc("status")) as StatusReport;
+        await Bun.write(
+          join(host.root, ".weave", "prompts", "nope.md"),
+          "Write it all down.",
+        );
+        await Bun.sleep(300);
+        await host.promptSession();
+        const after = (await host.rpc("status")) as StatusReport;
+        return { before, after, reloads: [...host.reloads] };
+      },
+    );
+
+    const missing = { code: "materialization_failed", agentName: "scribe" };
+    expect(result.before.issues).toContainEqual(missing);
+    expect(result.after.issues).not.toContainEqual(missing);
+    expect(result.reloads).toContain("agent");
   });
 
   it("keeps the builtins when a builtin's own prompt file is the one missing", async () => {

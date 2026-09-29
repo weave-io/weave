@@ -66,12 +66,14 @@ export function buildOpenCode2Health(
   // A config that does not parse or validate loads nothing — falling back to
   // the builtins would silently drop the user's restrictions — so the reason
   // is reported instead of leaving only a failed refresh state.
+  // It goes first, displacing the last stale catalog issue if the list is
+  // full, because it is the one that explains why nothing else changes.
   if (
     refresh.state === "failed" &&
-    refresh.lastErrorCode === "config_invalid" &&
-    issues.length < MAX_HEALTH_ISSUES
+    refresh.lastErrorCode === "config_invalid"
   ) {
-    issues.push({ code: "config_invalid" });
+    issues.unshift({ code: "config_invalid" });
+    issues.splice(MAX_HEALTH_ISSUES);
   }
   const ready = catalog !== undefined;
   return {

@@ -8,7 +8,8 @@
   the whole catalog. A config that does not parse or validate still loads
   nothing, but `status` now reports `config_invalid` and the plan panel says
   "Weave config is invalid; run `weave validate`" instead of only "refresh
-  failed".
+  failed". Creating or fixing the missing prompt file brings the agent back on
+  the next refresh.
 
 - A Weave agent now runs on its configured model even when the client selects
   none. OpenCode 2 runs a turn on the session's model and falls back to the

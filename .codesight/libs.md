@@ -218,13 +218,13 @@
   - class OpenCode2PlanSessionState
   - interface StoredPlanSelection
 - `packages/adapters/opencode2/src/v2/plan-ui-state.ts`
+  - function planRefreshWarning: (state) => readonly string[]
   - function taskDialogOptions: (plan) => Array<
   - class PlanUiController
   - interface PlanUiScope
   - interface PlanUiTask
   - interface PlanUiDisplay
-  - interface PlanUiRpcResponse
-  - _...2 more_
+  - _...3 more_
 - `packages/adapters/opencode2/src/v2/plugin.ts`
   - function setupOpenCode2: (context, dependencies) => Promise<() => Promise<void>>
   - interface OpenCode2PluginDependencies
@@ -699,7 +699,7 @@
   - type DiscoveredConfig
   - const bunFileReader: FileReader
   - const GLOBAL_CONFIG_DIR_ENV
-- `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/loader.ts` — function getResolvedBuiltinConfig: () => Result<, function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>

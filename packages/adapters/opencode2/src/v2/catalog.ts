@@ -148,8 +148,18 @@ function buildCandidate(
   return loadConfig(input.location, sources.configReader)
     .mapErr((errors): OpenCode2Error => {
       // A file that parsed but failed the DSL or its validation is a user
-      // error `weave validate` can explain; an unreadable file is not.
-      if (errors.some((error) => error.type !== "FileReadError"))
+      // error `weave validate` can explain. An unreadable file is not, and a
+      // builtin that fails to parse is a Weave bug, not the user's config.
+      if (errors.some((error) => error.type === "BuiltinParseError"))
+        return {
+          code: "catalog_unavailable",
+          message: "Weave's builtin configuration could not be loaded",
+        };
+      if (
+        errors.some(
+          (error) => error.type === "ParseError" || error.type === "MergeError",
+        )
+      )
         return {
           code: "config_invalid",
           message: "Weave configuration is invalid",

@@ -121,7 +121,13 @@ weave validate --path .weave/config.weave --json
 ```
 
 Exit code `0` means the input is valid. Exit code `1` reports a read, parse,
-merge, or schema failure. Validation does not materialize an adapter or modify
+merge, or schema failure, or an agent that harness adapters would leave out:
+a custom agent with no prompt, or a `prompt_file` or `prompt_append_file` that
+cannot be read. Adapters register every other agent and drop only that one, so
+validate is where it shows up. With `--project`, `--global` or `--path`, the
+file is checked on top of the builtins, its prompt files are looked up in the
+`prompts/` directory next to it, and only agents and categories the file
+declares are reported. Validation does not materialize an adapter or modify
 configuration.
 
 ## Prompt commands

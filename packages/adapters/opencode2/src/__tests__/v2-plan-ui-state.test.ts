@@ -12,6 +12,7 @@ import {
   PlanUiController,
   type PlanUiRpcResponse,
   type PlanUiState,
+  planRefreshWarning,
   taskDialogOptions,
 } from "../v2/plan-ui-state.js";
 
@@ -163,6 +164,24 @@ describe("taskDialogOptions", () => {
       "[x] 1. Done",
       "[>] 2. Current",
       "  [ ] 2.a. Next",
+    ]);
+  });
+});
+
+describe("planRefreshWarning", () => {
+  it("adds nothing while the catalog is fresh", () => {
+    expect(planRefreshWarning({ refreshFailed: false })).toEqual([]);
+  });
+
+  it("tells the user to run weave validate when the config is invalid", () => {
+    expect(
+      planRefreshWarning({ refreshFailed: true, configInvalid: true }),
+    ).toEqual(["Weave config is invalid; run `weave validate`"]);
+  });
+
+  it("keeps the generic warning for any other failed refresh", () => {
+    expect(planRefreshWarning({ refreshFailed: true })).toEqual([
+      "Weave config refresh failed; using last valid config",
     ]);
   });
 });
