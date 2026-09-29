@@ -38,7 +38,7 @@ The builtin agents in [`builtins.ts`](../packages/config/src/builtins.ts) defaul
 | spindle | `["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"]` |
 | thread | `["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"]` |
 
-The [eval record](artifacts/eval-default-models-2026-09-25.md) gives the scores behind these picks, including the 29 Sep 2026 Copilot update. Haiku for Thread is unmeasured, because no suite scores Thread's own work yet.
+The eval records of [25 Sep 2026](artifacts/eval-default-models-2026-09-25.md) and [29 Sep 2026](artifacts/eval-copilot-default-models-2026-09-29.md) give the scores behind these picks. Haiku for Thread is unmeasured, because no suite scores Thread's own work yet.
 
 **Why each Claude model is listed twice.** Catalogs spell Claude versions two ways. GitHub Copilot writes `claude-opus-5.5`, and Anthropic (and models.dev's `anthropic` provider) writes `claude-opus-5-5`. With only the Anthropic spelling, a Copilot-only OpenCode 2 host matched none of the Claude entries, so Loom, Tapestry, Pattern, Weft and Warp silently ran on `gpt-6-sol` and Thread on `gpt-6-luna`. The Copilot spelling comes first, so a host with both Copilot and Anthropic connected picks Copilot. OpenAI IDs are spelled the same everywhere.
 
