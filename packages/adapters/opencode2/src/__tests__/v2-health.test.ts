@@ -58,13 +58,30 @@ describe("buildOpenCode2Health", () => {
     };
     const health = buildOpenCode2Health(catalog, { state: "fresh" });
 
-    expect(health.issues).toEqual([
-      { code: "model_updates_unavailable", agentName: undefined },
-    ]);
+    expect(health.issues).toEqual([{ code: "model_updates_unavailable" }]);
+    // The host's RPC accepts JSON values only: a key holding `undefined`
+    // fails the call even though the schema marks `agentName` optional.
+    expect(Object.keys(health.issues[0] ?? {})).toEqual(["code"]);
     const parsed = WeaveRpc.methods.status.output.safeParse({
       scope: { sessionID: "session", scopeToken: "token" },
       ...health,
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("leaves agentName out of an agentless materialization failure", () => {
+    const catalog: OpenCode2CatalogCandidate = {
+      ...catalogWithIssues(0),
+      issues: [
+        { code: "materialization_failed" },
+        { code: "materialization_failed", agentName: "loom" },
+      ],
+    };
+    const health = buildOpenCode2Health(catalog, { state: "fresh" });
+
+    expect(health.issues.map((issue) => Object.keys(issue))).toEqual([
+      ["code"],
+      ["code", "agentName"],
+    ]);
   });
 });

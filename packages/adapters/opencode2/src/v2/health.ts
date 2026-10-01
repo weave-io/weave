@@ -81,7 +81,10 @@ export function buildOpenCode2Health(
     .slice(0, MAX_HEALTH_ISSUES)
     .map((issue) => ({
       code: issue.code,
-      agentName: issue.agentName,
+      // The RPC wire carries JSON values only, so an issue with no agent
+      // (`model_updates_unavailable`, some `materialization_failed`) leaves
+      // the key out: `agentName: undefined` fails the whole `status` call.
+      ...(issue.agentName === undefined ? {} : { agentName: issue.agentName }),
       ...(issue.code === "skill_unavailable" ? { count: issue.count } : {}),
     }));
   const collisionCount = Math.max(

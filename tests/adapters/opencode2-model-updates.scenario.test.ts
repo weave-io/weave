@@ -327,3 +327,62 @@ describe("a user leaves model updates off", () => {
     });
   });
 });
+
+describe("an opted-in user's applied list is corrupt on disk", () => {
+  const run = once(async () => {
+    const keys = await throwawayKeys();
+    const list = await publishedList(keys, 1, "loom-a");
+    // The server is down, so nothing the plugin fetches repairs the file.
+    const requests: string[] = [];
+    return withGlobalDir(async (globalDir) => {
+      const applied = modelRecommendationsCachePaths(
+        "stable",
+        globalDir,
+      ).applied;
+      // A list that was applied once, then cut short (a full disk, a
+      // hand edit): it no longer parses.
+      await Bun.write(applied, list.body.slice(0, 200));
+      return withWeaveOnOpenCode2(
+        {
+          config: "settings { model_updates { mode auto } }",
+          host: { models: HOST_MODELS, sessionAgent: "loom" },
+          dependencies: {
+            modelRecommendations: {
+              fetch: async (url) => {
+                requests.push(url);
+                return new Response(null, { status: 503 });
+              },
+              publicKeys: [keys.publicKey],
+              baseUrl: BASE_URL,
+            },
+          },
+        },
+        async (host) => {
+          await host.promptSession();
+          return {
+            loom: host.agent("loom").model?.id,
+            status: (await host.rpc("status")) as StatusReport,
+          };
+        },
+      );
+    });
+  });
+
+  it("still answers status, reporting the recommendations as unavailable", async () => {
+    const result = await run();
+    expect(result.status.modelUpdates).toEqual({
+      mode: "auto",
+      channel: "stable",
+      state: "unavailable",
+    });
+    expect(result.status.issues).toContainEqual({
+      code: "model_updates_unavailable",
+    });
+  });
+
+  it("runs Loom on its builtin list instead of the unusable one", async () => {
+    // This host has none of Loom's builtin models, so the builtin list
+    // leaves Loom on the host's default rather than on `loom-a`.
+    expect((await run()).loom).toBeUndefined();
+  });
+});

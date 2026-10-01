@@ -98,6 +98,7 @@ export {
   MODEL_RECOMMENDATIONS_LOCK_STALE_MS,
   MODEL_RECOMMENDATIONS_RETRY_INTERVAL_MS,
   MODEL_RECOMMENDATIONS_URL_ENV,
+  MODEL_RECOMMENDATIONS_USER_AGENT,
   ModelRecommendations,
 } from "./model-recommendations-refresh.js";
 export type {

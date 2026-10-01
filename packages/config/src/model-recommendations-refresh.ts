@@ -68,6 +68,15 @@ export const DEFAULT_MODEL_RECOMMENDATIONS_BASE_URL =
 /** Overrides the base URL, for tests and local proofs. */
 export const MODEL_RECOMMENDATIONS_URL_ENV = "WEAVE_MODEL_RECOMMENDATIONS_URL";
 
+/**
+ * The `User-Agent` every check sends. Fixed and versionless, so the request
+ * says only that it is a model recommendations check: without it the
+ * runtime's default goes out, and a host may set that default to name itself
+ * (the OpenCode 2 binary runs Bun with `--user-agent=opencode/<channel>/<version>/cli`).
+ * An explicit header takes precedence over Bun's default.
+ */
+export const MODEL_RECOMMENDATIONS_USER_AGENT = "weave-model-recommendations/1";
+
 /** Wait this long after a successful check before checking again (24 hours). */
 export const MODEL_RECOMMENDATIONS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -906,7 +915,7 @@ export class ModelRecommendations {
   // -------------------------------------------------------------------------
 
   /**
-   * One GET with `If-None-Match`, a timeout over the whole exchange (body
+   * One GET with `If-None-Match` and the fixed `User-Agent`, a timeout over the whole exchange (body
    * included) and the size cap enforced while the body arrives.
    */
   private download(
@@ -921,7 +930,9 @@ export class ModelRecommendations {
         resolve(TIMED_OUT);
       }, this.timeoutMs);
     });
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      "User-Agent": MODEL_RECOMMENDATIONS_USER_AGENT,
+    };
     if (etag !== undefined) headers["If-None-Match"] = etag;
     const init: RequestInit = {
       method: "GET",
