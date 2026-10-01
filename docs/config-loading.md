@@ -47,7 +47,7 @@ locally.
 
 ## Three-Layer Merge
 
-Configuration is assembled from three layers in priority order (lowest → highest):
+Configuration is assembled from three layers in priority order (lowest → highest). A user who opts in to [published model recommendations](#published-model-recommendations) gets a fourth, between the builtins and the global layer.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -83,14 +83,59 @@ See [`packages/config/src/merge.ts`](../packages/config/src/merge.ts) for the im
 
 [Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) adds an opt-in fourth layer, between the builtins and the global config, that carries only builtin agents' `models` lists from a list the maintainers sign and publish on tryweave.io. Spec 39's "The published file" is the normative format.
 
-What `@weaveio/weave-config` has today is the format and its checks, not the layer:
+The format and its checks:
 
-- [`model-recommendations.ts`](../packages/config/src/model-recommendations.ts) — the `ModelRecommendationsFileSchema` (list) and `ModelRecommendationsEnvelopeSchema` (`{ payload, sig }`), the limits (64 KiB, 1–32 agents and 1–8 entries per section, 90-day validity), the typed `ModelRecommendationsError` union, and `selectRecommendationsSection(file, harness)`: a harness's own section, else `default`, and nothing for a caller with no harness ID.
+- [`model-recommendations.ts`](../packages/config/src/model-recommendations.ts) — the `ModelRecommendationsFileSchema` (list) and `ModelRecommendationsEnvelopeSchema` (`{ payload, sig }`), the limits (64 KiB, 1–32 agents and 1–8 entries per section, 90-day validity), the typed `ModelRecommendationsError` union, `selectRecommendationsSection(file, harness)` (a harness's own section, else `default`, and nothing for a caller with no harness ID), and `MODEL_RECOMMENDATIONS_CLIENT_VERSION`, the version a list's `min_config_version` is compared with.
 - [`model-recommendations-verifier.ts`](../packages/config/src/model-recommendations-verifier.ts) — `ModelRecommendationsVerifier`, which checks size, envelope shape, the Ed25519 signature (WebCrypto, over the payload's exact UTF-8 bytes), the schema and freshness, in that order, with the keys and clock injected; and `signModelRecommendations`, used by `scripts/models/sign.ts` and by tests with throwaway keys.
 - [`model-recommendations-keys.ts`](../packages/config/src/model-recommendations-keys.ts) — the public keys a list may be signed with. A key is rotated by shipping it here in a release before the site signs with it.
 - `BUILTIN_MODELS_ISSUED` in [`builtins.ts`](../packages/config/src/builtins.ts) — when the builtin `models` lists were last set. A list issued earlier is rejected, so an old list never overrides newer builtins. `builtins.test.ts` pins the builtin lists to this value; bump both together.
 
-`loadConfig` does not read recommendations yet: it still merges three layers, and its output is unchanged. The loader layer, the cache and fetching arrive in Spec 39's later work items. [`weave models check`](cli.md#weave-models-check) uses the same schema and verifier, so the site and the client agree on what is valid.
+[`weave models check`](cli.md#weave-models-check) uses the same schema and verifier, so the site and the client agree on what is valid.
+
+### The recommendations layer
+
+[`loadConfigDetailed`](../packages/config/src/loader.ts) adds the layer. In order:
+
+1. It merges builtins, global and project as before, and reads the merged `settings.model_updates` ([`resolveModelUpdates`](../packages/config/src/model-recommendations-cache.ts)). An absent block or `mode off` stops here: the cache is not read and the result is exactly the three-layer config. An unset `channel` means `stable`; project overrides global as for any setting.
+2. A caller that passes no `harness` also stops here. OpenCode V1 and Copilot CLI pass none, so they never get the layer.
+3. Otherwise it reads `<global>/cache/model-recommendations/<channel>/applied.json` through the injected `FileReader` (`<global>` honours `WEAVE_GLOBAL_CONFIG_DIR`; [`modelRecommendationsCachePaths`](../packages/config/src/model-recommendations-cache.ts) is the one place the cache layout is spelled). Reading through the loader's reader is what lets OpenCode 2's catalog source cache record the file and notice a promotion, with no adapter plumbing.
+4. The file is the served envelope. It is verified again on every load: signature, schema, channel, expiry, `issued` no more than 24 hours ahead, `issued` not before `BUILTIN_MODELS_ISSUED`, and `min_config_version` against `MODEL_RECOMMENDATIONS_CLIENT_VERSION`. Rollback is not checked here: the loader has no older list to compare with; the fetcher checks it before it promotes a list.
+5. [`ModelRecommendationsLayerReader`](../packages/config/src/model-recommendations-layer.ts) takes the harness's section (else `default`) and keeps only agents the builtin config defines. Each becomes `agents.<name>.models` in a layer that sets nothing else. Other names are skipped and listed in the diagnostic.
+6. The layers merge as `builtins → recommendations → global → project`. Arrays union-merge override-first, so every builtin agent's list becomes `[project…, global…, recommended…, builtin…]` with duplicates removed. A user's own entries still come first, the builtin entries stay as the fallback tail, and `disable agents` still wins because the layer never touches `disabled`.
+
+A missing, unreadable, unsigned, tampered, invalid, expired, too-new or wrong-channel file is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and a `ModelRecommendationsSkipped` diagnostic says why. This follows the [partial-config policy](adapters/opencode2-core.md#partial-and-broken-configs): an optional input must not cost the user their agents.
+
+### `loadConfigDetailed` and diagnostics
+
+```ts
+import {
+  describeModelRecommendationsSkipReason,
+  loadConfigDetailed,
+} from "@weaveio/weave-config";
+
+const result = await loadConfigDetailed(projectRoot, reader, {
+  harness: "opencode2", // "opencode2" | "claude-code" | "pi"; omit for no layer
+});
+result.map(({ config, diagnostics }) => {
+  for (const d of diagnostics) {
+    if (d.type === "ModelRecommendationsSkipped")
+      log.warn({ reason: describeModelRecommendationsSkipReason(d.reason) }, "skipped");
+  }
+});
+```
+
+Options: `harness`, `now` (the clock for expiry and skew), `clientVersion` (defaults to `MODEL_RECOMMENDATIONS_CLIENT_VERSION`) and `publicKeys` (tests and local proofs). `loadConfig(projectRoot, reader)` keeps its signature: it is `loadConfigDetailed` with no harness, returning only `config`, so it never reads the cache.
+
+`diagnostics` is a list of [`ConfigLoadDiagnostic`](../packages/config/src/diagnostics.ts):
+
+| `type` | When | Fields |
+| --- | --- | --- |
+| `ModelRecommendationsApplied` | A verified list was merged | `channel`, `harness`, `section` (the harness or `default`), `path`, `issued`, `expires`, `evidence`, `agents` (builtins it set), `skippedAgents` (names this version does not define) |
+| `ModelRecommendationsSkipped` | The user opted in but the layer was left out | `channel`, `harness`, `path`, `reason` |
+
+`reason` is a `ModelRecommendationsSkipReason`: `Missing` (nothing applied yet), `Unreadable`, `LayerInvalid` (a Weave bug), or any `ModelRecommendationsError` from the verifier, such as `EnvelopeInvalid`, `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `Expired`, `IssuedInFuture` or `OlderThanBuiltins`. `describeModelRecommendationsSkipReason` gives a one-line user-facing reason.
+
+Callers: OpenCode 2's catalog build passes `harness: "opencode2"` and reports a skipped layer as the `model_updates_unavailable` status issue ([OpenCode 2 core](adapters/opencode2-core.md)); `weave compose --adapter claude-code` passes `harness: "claude-code"` and logs a skipped layer. Fetching and the `weave models` commands that write the cache are Spec 39 items 4 and 5.
 
 ---
 
@@ -352,6 +397,7 @@ All exports are available from the package barrel:
 ```ts
 import {
   loadConfig, // Full pipeline
+  loadConfigDetailed, // Full pipeline, with a harness and diagnostics
   getBuiltinConfig, // Builtins only
   discoverAndParse, // Discovery only
   globalConfigDir, // Resolved global scope root

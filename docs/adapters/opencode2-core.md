@@ -248,6 +248,25 @@ plan panel shows "Weave config is invalid; run `weave validate`", which prints
 the offending file, line and field. An unreadable config file reports only
 the failed refresh, because `weave validate` cannot explain it.
 
+### Model recommendations
+
+The catalog loads config with `loadConfigDetailed(..., { harness: "opencode2" })`
+([Config Loading](../config-loading.md#the-recommendations-layer)). A user who
+opts in with `settings { model_updates { … } }` gets the `opencode2` section of
+the applied recommendations (else `default`) as a layer between the builtins
+and their own config. The loader reads `applied.json` through the catalog's
+source reader, so the source manifest records it, missing or present, and a
+later promotion changes the revision and rebuilds the catalog like any other
+source edit. Without an opt-in the file is never read and the manifest is
+unchanged.
+
+An applied file that cannot be used (missing, unreadable, unsigned, expired,
+or otherwise invalid) is skipped: the catalog still publishes, every builtin
+runs on its builtin list, and `status` carries one `model_updates_unavailable`
+issue until a usable file is applied. Fetching, the `modelUpdates` status
+object and the TUI notice are [Spec 39](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
+item 6.
+
 The adapter does not redirect the shared process logger to a Location-specific
 file. Operators control the shared pino destination and level.
 

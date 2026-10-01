@@ -54,12 +54,21 @@ What each harness does with the defaults:
 | --- | --- |
 | OpenCode 2 | Uses the first entry with exactly one live catalog match. A Copilot host gets the Copilot spelling, an Anthropic-only host the Anthropic spelling, and an OpenAI-only host the OpenAI entry. If nothing matches, the agent registers without a model and the host chooses. The host runs a turn on the session's model, so Weave selects the agent's model for a session that has none (see [OpenCode 2 core](adapters/opencode2-core.md#which-model-a-turn-runs-on)). |
 | OpenCode (V1) | Uses only `provider/model` entries, so the bare defaults leave the agent on the user's selected or default model. |
-| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. Only the Anthropic spelling is in the allowlist, and the OpenAI entries are skipped, so Weft and Warp run on `opus` and Spindle on `haiku`. |
+| Claude Code | Uses the first entry in its allowlist and writes the alias: `opus`, `sonnet` or `haiku`. The allowlist holds the Anthropic spelling and the three tier names; the Copilot spelling and the OpenAI entries are skipped, so Weft and Warp run on `opus` and Spindle on `haiku`. |
 | Copilot CLI | Writes no model, so the CLI's own model is used. |
 
 ### Published recommendations
 
-[Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) lets a user opt in to builtin `models` lists published on tryweave.io, without upgrading Weave. Its "The published file" section is the normative format. A list has a `default` section, written with the same bare IDs and double Claude spellings as the builtins above, and optional `opencode2`, `claude-code` and `pi` sections, because one entry means different things to different harnesses: `opencode2` entries may be provider-qualified (`openrouter/anthropic/claude-sonnet-5.5`), and `claude-code` entries are tiers (`opus`, `sonnet`, `haiku`). The format, signature and freshness checks are in [`@weaveio/weave-config`](config-loading.md#published-model-recommendations); the loader does not apply a list yet.
+[Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) lets a user opt in to builtin `models` lists published on tryweave.io, without upgrading Weave. Its "The published file" section is the normative format. A list has a `default` section, written with the same bare IDs and double Claude spellings as the builtins above, and optional `opencode2`, `claude-code` and `pi` sections, because one entry means different things to different harnesses: `opencode2` entries may be provider-qualified (`openrouter/anthropic/claude-sonnet-5.5`), and `claude-code` entries are tiers (`opus`, `sonnet`, `haiku`). The format, signature and freshness checks are in [`@weaveio/weave-config`](config-loading.md#published-model-recommendations).
+
+**How a list combines with the builtins.** When the user opts in and the adapter passes its harness ID, the loader merges the harness's section (else `default`) as a layer between the builtins and the user's config ([Config Loading](config-loading.md#the-recommendations-layer)). Each builtin agent's `models` becomes `[user entries…, recommended entries…, builtin entries…]` with duplicates removed, and the harness then applies its usual rule from the table above to that longer list. So a user's own entries still win; a recommended entry the harness cannot use is passed over like any other; and when no recommended entry resolves, the builtin entries behind it still do. Only `models` changes, only for builtin agents. A file that is missing, invalid, unsigned or expired is skipped, and the agent runs on its builtin list as if the user had not opted in.
+
+| Harness | Section | What the recommended entries are |
+| --- | --- | --- |
+| OpenCode 2 | `opencode2`, else `default` | Catalog IDs, bare or provider-qualified, matched against the live catalog by the [live-catalog rules](#opencode-2-live-catalog-rules). A skipped file shows as a `model_updates_unavailable` status issue. |
+| Claude Code | `claude-code`, else `default` | Tiers (`opus`, `sonnet`, `haiku`), which the adapter writes through unchanged and Claude Code maps to its current models. A `default` section's dashed Claude IDs map to tiers as the builtins do. |
+| Pi | `pi`, else `default` | Bare IDs, matched by Pi's resolver as for the builtins. Pi passes its harness ID once its adapter adopts `loadConfigDetailed` ([Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) item 6b). |
+| OpenCode V1, Copilot CLI | none | They pass no harness ID and never get the layer. |
 
 ### Checking recommendations against provider catalogs
 
@@ -81,7 +90,7 @@ The rules are restated once, in [`packages/cli/src/models/resolve.ts`](../packag
 
 - **OpenCode 2** follows the [live-catalog rules](#opencode-2-live-catalog-rules) below: the first entry that is a `provider/model` present in the catalog, or a bare ID with exactly one match. An entry-level `#variant` must be offered by the model.
 - **Pi** uses the first two steps of its resolver, which are the same: an exact `provider/id`, then a bare ID that is unique in the catalog. Pi's third step, a unique human-readable model name, is not modelled, because the fixtures carry no names.
-- **Claude Code** takes the first entry that is a tier or in the adapter's allowlist and writes its tier. Claude Code maps tiers to models itself, so this is checked once, reported under `anthropic`. The adapter accepts tier names once Spec 39's loader work lands; the check already assumes it.
+- **Claude Code** takes the first entry that is a tier or in the adapter's allowlist and writes its tier. Claude Code maps tiers to models itself, so this is checked once, reported under `anthropic`. The adapter accepts the tier names as entries ([Claude Code adapter](adapters/claude-code.md#models)).
 
 `none` means no entry in the section resolves on that catalog. At runtime the recommended entries come before the builtin ones, so such an agent would fall back to its builtin list. Resolved against these fixtures, the builtin lists give exactly the behaviour in the table above, and [a test](../packages/cli/src/models/__tests__/resolve.test.ts) pins it. The fixtures also show one case the table leaves out: on an OpenRouter-only host no builtin entry matches, because OpenRouter's IDs carry the vendor, so every builtin agent registers without a model. A list that should serve OpenRouter users needs `openrouter/…` entries in its `opencode2` section.
 

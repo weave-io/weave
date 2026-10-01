@@ -70,7 +70,7 @@ The website repository keeps the list itself as plain JSON; its deploy workflow 
   "channel": "stable",
   "issued": "2026-10-01T09:00:00Z",
   "expires": "2026-12-30T09:00:00Z",
-  "min_config_version": "0.2.0",
+  "min_config_version": "1.0.0",
   "evidence": "https://tryweave.io/evals/runs/<run-id>",
   "default": {
     "agents": {
@@ -96,7 +96,7 @@ The website repository keeps the list itself as plain JSON; its deploy workflow 
 | `channel` | Must equal the channel the client asked for. |
 | `issued` | ISO 8601 UTC timestamp. A client rejects a list whose `issued` is: not later than the list it already applied (rollback); more than 24 hours ahead of its clock (a mis-dated list would otherwise block every correctly dated one); or earlier than its own `BUILTIN_MODELS_ISSUED`, the date the builtin lists in that release were set (so an old list can never override newer builtins, even on a first opt-in or an empty cache). |
 | `expires` | ISO 8601 UTC timestamp, at most 90 days after `issued`. A client rejects an expired list, and stops using an applied one once it expires (agents fall back to their builtin lists and `status` says why). This bounds replay of an old signed list by a compromised host, and means maintainers re-publish at least every 90 days. |
-| `min_config_version` | Optional semver. A client whose `@weaveio/weave-config` is older ignores the file and reports why. |
+| `min_config_version` | Optional semver, compared with `MODEL_RECOMMENDATIONS_CLIENT_VERSION` in `@weaveio/weave-config` (not the package version). That constant starts at `1.0.0` and is bumped when the client learns a list feature an older client would misread. A client whose constant is older ignores the file and reports why. |
 | `evidence` | Required HTTPS URL, at most 256 characters: the published eval run behind the list ([publication bar](#publication-bar)). Shown by `weave models status`. |
 | `default` | Required. `{ "agents": {...} }`, used by a supported harness that has no section of its own. Entries are bare IDs that follow the builtin spelling rules. |
 | `harnesses` | Optional. Keys are `opencode2`, `claude-code` and `pi`; each value has the same shape as `default`. Other keys are rejected. `claude-code` entries must be `opus`, `sonnet` or `haiku`. `opencode2` entries may be provider-qualified (`openrouter/…`, `github-copilot/…`), because OpenCode 2 checks every entry against the live catalog. |
@@ -151,7 +151,7 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 
 - `loadConfig` reads the merged `settings.model_updates.mode` from the global and project layers first. When it is `off` or absent, nothing below happens and the result is identical to today.
 - Otherwise it reads `applied.json` for the channel, verifies its signature again, and turns it into a config layer holding only `agents.<name>.models` for builtin agents. Loading never touches the network.
-- **API.** A new `loadConfigDetailed(projectRoot, reader, { harness })` returns `{ config, diagnostics }`, where `diagnostics` is a typed list that includes a skipped recommendations layer and its reason. `loadConfig` keeps its signature and behaviour and returns only `config`, so no existing caller changes. Callers that report status (the CLI, `weave validate`, OpenCode 2) move to `loadConfigDetailed`.
+- **API.** A new `loadConfigDetailed(projectRoot, reader, { harness, now?, clientVersion? })` returns `{ config, diagnostics }`, where `diagnostics` is a typed list that includes a skipped recommendations layer and its reason. `loadConfig` keeps its signature and behaviour and returns only `config`, so no existing caller changes. Callers that report status (the CLI, `weave validate`, OpenCode 2) move to `loadConfigDetailed`.
 - The adapter passes its harness ID (`opencode2`, `claude-code` or `pi`), as explicit adapter context in line with the [adapter boundary](../../adapter-boundary.md). The loader uses that harness's section, or `default` when the file has none for it. A caller that passes no harness ID, which includes OpenCode V1 and Copilot CLI, gets no recommendations layer.
 - The merge order becomes:
 

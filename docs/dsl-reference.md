@@ -429,11 +429,12 @@ for precision limits and adapter responsibilities.
 
 #### `model_updates` Block
 
-> **Not active yet.** Weave parses, validates and merges this block, but
-> nothing reads it yet: no recommendations are fetched or applied, and the
-> resolved models are the same with or without it. It takes effect when the
-> config loader layer of Spec 39 (opt-in model recommendations, tracking issue
-> [#275](https://github.com/weave-io/weave/issues/275)) lands.
+> **Partly active.** With `notify` or `auto`, the config loader merges an
+> already applied, verified recommendations list on OpenCode 2 and Claude Code
+> ([Config Loading](config-loading.md#the-recommendations-layer)). Nothing
+> fetches or applies a list yet, so until that lands (Spec 39, tracking issue
+> [#275](https://github.com/weave-io/weave/issues/275)) the resolved models are
+> the same with or without the block.
 
 ```weave
 settings {

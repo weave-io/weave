@@ -21,6 +21,14 @@ import { z } from "zod";
 /** The only list `schema` this release understands; `v1` in the served URL. */
 export const MODEL_RECOMMENDATIONS_SCHEMA_VERSION = 1;
 
+/**
+ * The version of the recommendations client in this release, compared with a
+ * list's `min_config_version`. It is not the package version: bump it when
+ * the client learns a list feature that an older client would misread, and
+ * publish lists that need the feature with `min_config_version` set to it.
+ */
+export const MODEL_RECOMMENDATIONS_CLIENT_VERSION = "1.0.0";
+
 /** Largest accepted file, list or envelope, in UTF-8 bytes (64 KiB). */
 export const MAX_MODEL_RECOMMENDATIONS_BYTES = 64 * 1024;
 

@@ -1,13 +1,30 @@
-import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "./builtins.js";
+import type { ConfigLoadDiagnostic } from "./diagnostics.js";
 import {
   bunFileReader,
   discoverAndParse,
   type FileReader,
+  globalConfigDir,
 } from "./discovery.js";
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
 import { mergeConfigsResult } from "./merge.js";
+import {
+  MODEL_RECOMMENDATIONS_CLIENT_VERSION,
+  type RecommendationsHarness,
+} from "./model-recommendations.js";
+import { resolveModelUpdates } from "./model-recommendations-cache.js";
+import { ModelRecommendationsLayerReader } from "./model-recommendations-layer.js";
+import { ModelRecommendationsVerifier } from "./model-recommendations-verifier.js";
 import { resolvePromptPaths } from "./resolve.js";
 
 const log = logger.child({ module: "loader" });
@@ -78,28 +95,42 @@ export function getResolvedBuiltinConfig(): Result<
   return getBuiltinConfig().map(inlineBuiltinPrompts);
 }
 
+/** Options for `loadConfigDetailed`. Every field is optional. */
+export interface LoadConfigOptions {
+  /**
+   * The harness the caller configures (`opencode2`, `claude-code`, `pi`). It
+   * selects that harness's section of the applied model recommendations, or
+   * `default`. Without it no recommendations layer is added (Spec 39).
+   */
+  readonly harness?: RecommendationsHarness;
+  /** The current time, for the recommendations' expiry and skew checks. */
+  readonly now?: () => Date;
+  /**
+   * The client version compared with a list's `min_config_version`. Defaults
+   * to `MODEL_RECOMMENDATIONS_CLIENT_VERSION`.
+   */
+  readonly clientVersion?: string;
+  /**
+   * Ed25519 public keys that may sign recommendations. Defaults to the
+   * production keys; tests and local proofs pass their own.
+   */
+  readonly publicKeys?: readonly string[];
+}
+
+/** The merged config and what the loader found along the way. */
+export interface LoadedConfig {
+  readonly config: WeaveConfig;
+  /** Non-fatal findings, such as a skipped recommendations layer. */
+  readonly diagnostics: readonly ConfigLoadDiagnostic[];
+}
+
 /**
  * Load the final merged `WeaveConfig` for a project.
  *
- * Orchestrates the full config pipeline in five steps:
- *
- * 1. **Builtins**: Call `getBuiltinConfig()` to get the 8 built-in agent
- *    defaults. On error, returns a `BuiltinParseError` (indicates a code bug).
- *
- * 2. **Discover**: Call `discoverAndParse(projectRoot)` to find and parse
- *    `~/.weave/config.weave` (global) and `<projectRoot>/.weave/config.weave`
- *    (project). Missing files are silently skipped.
- *
- * 3. **Resolve paths**: For the builtin layer, inline embedded prompt content
- *    via `inlineBuiltinPrompts()` — this is bundle-safe and does not depend on
- *    `import.meta.dir`. For discovered layers, call `resolvePromptPaths()` as
- *    before so that user-authored `prompt_file` values become absolute paths.
- *
- * 4. **Merge**: Fold all layers left to right:
- *    `mergeConfigs(resolvedBuiltins, ...resolvedDiscovered)`
- *    (builtins first, then global, then project — discovery preserves order).
- *
- * 5. **Return**: Return `ok(mergedConfig)`.
+ * Equivalent to `loadConfigDetailed(projectRoot, fileReader)` without a
+ * harness, returning only the config: it never adds a model recommendations
+ * layer and never reads the recommendations cache. Callers that configure a
+ * harness or report status use `loadConfigDetailed`.
  *
  * @param projectRoot - Absolute path to the project root directory. Defaults
  *   to `process.cwd()`. The project config file is expected at
@@ -113,47 +144,134 @@ export function getResolvedBuiltinConfig(): Result<
 export function loadConfig(
   projectRoot?: string,
   fileReader: FileReader = bunFileReader,
-): ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]> {
-  // Step 1: Builtins
+): ResultAsync<WeaveConfig, ConfigLoadError[]> {
+  return loadConfigDetailed(projectRoot, fileReader).map(
+    (loaded) => loaded.config,
+  );
+}
+
+/**
+ * Load the final merged `WeaveConfig` for a project, with diagnostics.
+ *
+ * 1. **Builtins**: `getBuiltinConfig()`, with every builtin prompt inlined
+ *    (`inlineBuiltinPrompts()`, bundle-safe). A failure is a
+ *    `BuiltinParseError` and always a Weave bug.
+ * 2. **Discover**: `discoverAndParse(projectRoot)` finds and parses the global
+ *    (`~/.weave/config.weave`, or `WEAVE_GLOBAL_CONFIG_DIR`) and project
+ *    (`<projectRoot>/.weave/config.weave`) layers; user `prompt_file` values
+ *    are resolved to absolute paths.
+ * 3. **Merge**: `mergeConfigsResult(builtins, global, project)`.
+ * 4. **Recommendations** (Spec 39): when the merged
+ *    `settings.model_updates.mode` is `notify` or `auto` and the caller passed
+ *    a `harness`, read `<global>/cache/model-recommendations/<channel>/applied.json`
+ *    through `fileReader`, verify it, and merge its section as a layer of
+ *    builtin agents' `models` between the builtins and the global layer:
+ *    `builtins → recommendations → global → project`. With `mode off`, no
+ *    block, or no harness, the cache is not read and the result is step 3's.
+ *    A file that cannot be used never fails the load: the layer is skipped
+ *    and a `ModelRecommendationsSkipped` diagnostic says why.
+ *
+ * @returns `ok({ config, diagnostics })`, or `err(ConfigLoadError[])` when the
+ *          builtins, a user config file or the merge fails.
+ */
+export function loadConfigDetailed(
+  projectRoot?: string,
+  fileReader: FileReader = bunFileReader,
+  options: LoadConfigOptions = {},
+): ResultAsync<LoadedConfig, ConfigLoadError[]> {
   const builtinResult = getBuiltinConfig();
   if (builtinResult.isErr()) {
-    return errAsync<
-      import("@weaveio/weave-core").WeaveConfig,
-      ConfigLoadError[]
-    >([{ type: "BuiltinParseError", errors: builtinResult.error }]);
+    return errAsync<LoadedConfig, ConfigLoadError[]>([
+      { type: "BuiltinParseError", errors: builtinResult.error },
+    ]);
   }
-
   const builtinConfig = builtinResult.value;
+  // Resolved now, as discovery resolves it, so both read the same directory.
+  const globalDir = globalConfigDir();
 
-  // Step 2–5: Discover, resolve, merge
   return discoverAndParse(projectRoot, fileReader).andThen((discovered) => {
-    // Step 3: Resolve prompt paths for each layer.
-    //
-    // Builtins: use inlineBuiltinPrompts() instead of resolvePromptPaths().
-    // This replaces prompt_file references with embedded content (bundle-safe).
-    // See inlineBuiltinPrompts() JSDoc for the full rationale.
+    // Builtins: inline embedded prompts rather than resolvePromptPaths(); see
+    // inlineBuiltinPrompts() for why.
     const resolvedBuiltins = inlineBuiltinPrompts(builtinConfig);
-
     const resolvedDiscovered = discovered.map(({ config, scope }) =>
       resolvePromptPaths(config, scope),
     );
 
-    // Step 4: Merge all layers
-    const mergeResult = mergeConfigsResult(
-      resolvedBuiltins,
-      ...resolvedDiscovered,
-    );
-    if (mergeResult.isErr()) {
-      return err<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
-        { type: "MergeError", errors: mergeResult.error },
-      ]);
-    }
+    const base = mergeLayers(resolvedBuiltins, [], resolvedDiscovered);
+    if (base.isErr())
+      return errAsync<LoadedConfig, ConfigLoadError[]>(base.error);
 
-    const merged = mergeResult.value;
-    const agentCount = Object.keys(merged.agents).length;
-    log.debug({ agentCount }, "Merged config");
-    log.info("Config loaded successfully");
+    const settings = resolveModelUpdates(base.value.settings.model_updates);
+    const harness = options.harness;
+    if (settings === undefined || harness === undefined)
+      return okAsync<LoadedConfig, ConfigLoadError[]>(loaded(base.value, []));
 
-    return ok(merged);
+    const layerReader = new ModelRecommendationsLayerReader({
+      reader: fileReader,
+      verifier: new ModelRecommendationsVerifier({
+        publicKeys: options.publicKeys,
+        now: options.now,
+      }),
+      clientVersion:
+        options.clientVersion ?? MODEL_RECOMMENDATIONS_CLIENT_VERSION,
+      globalDir,
+    });
+    return layerReader
+      .read({
+        settings,
+        harness,
+        builtinAgents: new Set(Object.keys(builtinConfig.agents)),
+      })
+      .andThen(({ layer, diagnostic }) => {
+        if (layer === undefined)
+          return ok<LoadedConfig, ConfigLoadError[]>(
+            loaded(base.value, [diagnostic]),
+          );
+        const recommended = mergeLayers(
+          resolvedBuiltins,
+          [layer],
+          resolvedDiscovered,
+        );
+        // The layer holds only validated model lists, so this cannot fail in
+        // practice; if it ever does, the user keeps the config without it.
+        if (recommended.isErr())
+          return ok<LoadedConfig, ConfigLoadError[]>(
+            loaded(base.value, [
+              {
+                type: "ModelRecommendationsSkipped",
+                channel: settings.channel,
+                harness,
+                path: diagnostic.path,
+                reason: {
+                  type: "LayerInvalid",
+                  message: "the layer could not be merged",
+                },
+              },
+            ]),
+          );
+        return ok<LoadedConfig, ConfigLoadError[]>(
+          loaded(recommended.value, [diagnostic]),
+        );
+      });
   });
+}
+
+function mergeLayers(
+  builtins: WeaveConfig,
+  recommended: readonly WeaveConfig[],
+  discovered: readonly WeaveConfig[],
+): Result<WeaveConfig, ConfigLoadError[]> {
+  const merged = mergeConfigsResult(builtins, ...recommended, ...discovered);
+  if (merged.isErr())
+    return err([{ type: "MergeError", errors: merged.error }]);
+  return ok(merged.value);
+}
+
+function loaded(
+  config: WeaveConfig,
+  diagnostics: readonly ConfigLoadDiagnostic[],
+): LoadedConfig {
+  log.debug({ agentCount: Object.keys(config.agents).length }, "Merged config");
+  log.info("Config loaded successfully");
+  return { config, diagnostics };
 }

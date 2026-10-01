@@ -16,8 +16,16 @@ import type {
  * This is a conservative list. Claude Code may support additional models,
  * but the adapter only declares those it can confirm are available without
  * a runtime API call.
+ *
+ * The tier names `opus`, `sonnet` and `haiku` are accepted as entries too:
+ * Claude Code maps each one to its current model, so they are always
+ * available. They are what a `claude-code` model recommendations section
+ * names (Spec 39), and are written through unchanged.
  */
 export const CLAUDE_CODE_AVAILABLE_MODELS: Set<string> = new Set([
+  "opus",
+  "sonnet",
+  "haiku",
   "claude-opus-5-5",
   "claude-sonnet-5-5",
   "claude-sonnet-5",

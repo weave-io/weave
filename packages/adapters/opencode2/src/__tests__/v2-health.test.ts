@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { WeaveRpc } from "../rpc.js";
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
 import { buildOpenCode2Health } from "../v2/health.js";
 
@@ -45,5 +46,22 @@ describe("buildOpenCode2Health", () => {
     });
 
     expect(health.issues).toEqual([]);
+  });
+
+  it("reports a skipped model recommendations layer in a status the RPC schema accepts", () => {
+    const catalog: OpenCode2CatalogCandidate = {
+      ...catalogWithIssues(0),
+      issues: [{ code: "model_updates_unavailable" }],
+    };
+    const health = buildOpenCode2Health(catalog, { state: "fresh" });
+
+    expect(health.issues).toEqual([
+      { code: "model_updates_unavailable", agentName: undefined },
+    ]);
+    const parsed = WeaveRpc.methods.status.output.safeParse({
+      scope: { sessionID: "session", scopeToken: "token" },
+      ...health,
+    });
+    expect(parsed.success).toBe(true);
   });
 });

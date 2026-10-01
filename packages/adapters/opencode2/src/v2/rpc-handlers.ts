@@ -1,15 +1,15 @@
 import { ConfigPlanTaskReader } from "@weaveio/weave-config";
-import { err, ok, type ResultAsync } from "neverthrow";
 import {
   type PlanTaskNode,
   type PlanTaskSnapshotReader,
   selectActivePlanTask,
   selectNextPlanTask,
 } from "@weaveio/weave-engine";
+import { err, ok, type ResultAsync } from "neverthrow";
 import type { WeaveRpc } from "../rpc.js";
 import type { V2RpcHandlers as RpcHandlers } from "../sdk-types.js";
-import type { OpenCode2CatalogController } from "./config-refresh.js";
 import type { StartPlanError } from "./commands.js";
+import type { OpenCode2CatalogController } from "./config-refresh.js";
 import { fromOpenCode2Promise } from "./errors.js";
 import {
   buildOpenCode2Health,
@@ -22,8 +22,8 @@ import {
   type OpenCode2PlanSessionState,
 } from "./plan-session-state.js";
 import {
-  validateSessionScope,
   type OpenCode2SessionScope,
+  validateSessionScope,
 } from "./session-scope.js";
 
 export interface OpenCode2RpcDependencies {

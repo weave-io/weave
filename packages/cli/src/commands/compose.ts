@@ -11,7 +11,10 @@ import {
   ClaudeCodeAdapter,
   getBootstrapDir,
 } from "@weaveio/weave-adapter-claude-code";
-import { loadConfig } from "@weaveio/weave-config";
+import {
+  describeModelRecommendationsSkipReason,
+  loadConfigDetailed,
+} from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
@@ -166,10 +169,13 @@ export async function runCompose(
     }
   }
 
-  // 1. Load config
-  const configResult = await loadConfig(
+  // 1. Load config. The harness ID selects Claude Code's section of any
+  // applied model recommendations (Spec 39); without an opt-in it changes
+  // nothing.
+  const configResult = await loadConfigDetailed(
     projectRoot,
     toConfigFileReader(fs),
+    { harness: "claude-code" },
   ).mapErr(
     (errors): CliError => ({
       type: "ParseFailure",
@@ -197,8 +203,20 @@ export async function runCompose(
     return ok(1);
   }
 
-  const config = configResult.value;
+  const { config, diagnostics } = configResult.value;
   log.info({ agents: Object.keys(config.agents).length }, "Config loaded");
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.type !== "ModelRecommendationsSkipped") continue;
+    // Reported to the user by `weave models status` and `weave validate`
+    // (Spec 39 item 5); composing carries on with the builtin lists.
+    log.warn(
+      {
+        channel: diagnostic.channel,
+        reason: describeModelRecommendationsSkipReason(diagnostic.reason),
+      },
+      "Model recommendations skipped",
+    );
+  }
 
   // 2. Materialise agents
   const plan = await materializeAgents({ config });

@@ -24,6 +24,7 @@ const Issue = z
       "model_unavailable",
       "variant_unavailable",
       "skill_unavailable",
+      "model_updates_unavailable",
       "agent_collision",
       "config_invalid",
     ]),

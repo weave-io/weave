@@ -7,6 +7,11 @@
  */
 
 export { BUILTIN_MODELS_ISSUED, getBuiltinConfig } from "./builtins.js";
+export type {
+  ConfigLoadDiagnostic,
+  ModelRecommendationsSkipReason,
+} from "./diagnostics.js";
+export { describeModelRecommendationsSkipReason } from "./diagnostics.js";
 export type { DiscoveredConfig, FileReader } from "./discovery.js";
 export {
   discoverAndParse,
@@ -14,7 +19,12 @@ export {
   globalConfigDir,
 } from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";
-export { getResolvedBuiltinConfig, loadConfig } from "./loader.js";
+export type { LoadConfigOptions, LoadedConfig } from "./loader.js";
+export {
+  getResolvedBuiltinConfig,
+  loadConfig,
+  loadConfigDetailed,
+} from "./loader.js";
 export type { MergeError, WorkflowExtensionError } from "./merge.js";
 export { mergeConfigs, mergeConfigsResult, mergeWorkflow } from "./merge.js";
 export type {
@@ -36,12 +46,23 @@ export {
   MAX_MODEL_RECOMMENDATIONS_VALIDITY_MS,
   MAX_RECOMMENDED_AGENTS,
   MAX_RECOMMENDED_MODELS,
+  MODEL_RECOMMENDATIONS_CLIENT_VERSION,
   MODEL_RECOMMENDATIONS_SCHEMA_VERSION,
   ModelRecommendationsEnvelopeSchema,
   ModelRecommendationsFileSchema,
   RECOMMENDATIONS_HARNESSES,
   selectRecommendationsSection,
 } from "./model-recommendations.js";
+export type {
+  ModelRecommendationsCachePaths,
+  ResolvedModelUpdates,
+} from "./model-recommendations-cache.js";
+export {
+  DEFAULT_MODEL_UPDATES_CHANNEL,
+  MODEL_RECOMMENDATIONS_CACHE_DIR,
+  modelRecommendationsCachePaths,
+  resolveModelUpdates,
+} from "./model-recommendations-cache.js";
 export { MODEL_RECOMMENDATIONS_PUBLIC_KEYS } from "./model-recommendations-keys.js";
 export type {
   ModelRecommendationsFreshnessContext,

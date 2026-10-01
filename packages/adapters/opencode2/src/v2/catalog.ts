@@ -1,4 +1,4 @@
-import { loadConfig } from "@weaveio/weave-config";
+import { loadConfigDetailed } from "@weaveio/weave-config";
 import {
   type HarnessMaterializationReport,
   type MaterializationError,
@@ -51,6 +51,14 @@ export type OpenCode2CatalogIssue =
       readonly code: "skill_unavailable";
       readonly agentName: string;
       readonly count: number;
+    }
+  /**
+   * The user opted in to model recommendations (Spec 39), but the applied
+   * list could not be used, so every builtin agent runs on its builtin list.
+   */
+  | {
+      readonly code: "model_updates_unavailable";
+      readonly agentName?: undefined;
     };
 
 export interface OpenCode2CatalogAgent {
@@ -145,7 +153,12 @@ function buildCandidate(
   input: BuildOpenCode2CatalogInput,
   sources: CatalogSourceCache,
 ): ResultAsync<OpenCode2CatalogCandidate, OpenCode2Error> {
-  return loadConfig(input.location, sources.configReader)
+  // The harness ID selects OpenCode 2's section of any applied model
+  // recommendations. `applied.json` is read through `configReader`, so the
+  // source manifest records it and a promotion triggers a rebuild.
+  return loadConfigDetailed(input.location, sources.configReader, {
+    harness: "opencode2",
+  })
     .mapErr((errors): OpenCode2Error => {
       // A file that parsed but failed the DSL or its validation is a user
       // error `weave validate` can explain. An unreadable file is not, and a
@@ -169,8 +182,18 @@ function buildCandidate(
         message: "Weave configuration could not be loaded",
       };
     })
-    .andThen((config) => {
-      if (sources.ioError() !== undefined) {
+    .andThen(({ config, diagnostics }) => {
+      // The recommendations file is optional: the loader already skipped the
+      // layer and reported it, so failing to inspect it must not cost the
+      // user the catalog. Any other source that cannot be inspected still does.
+      const skippedRecommendations = diagnostics.find(
+        (diagnostic) => diagnostic.type === "ModelRecommendationsSkipped",
+      );
+      const ioError = sources.ioError();
+      if (
+        ioError !== undefined &&
+        ioError.path !== skippedRecommendations?.path
+      ) {
         return err<OpenCode2CatalogCandidate, OpenCode2Error>({
           code: "config_unavailable",
           message: "a Weave source could not be inspected",
@@ -207,6 +230,10 @@ function buildCandidate(
           const runtime = new Map<string, OpenCode2CatalogAgent>();
           const issues: OpenCode2CatalogIssue[] =
             plan.errors.map(materializationIssue);
+          // A skipped recommendations layer is not a config error: the
+          // catalog loads on the builtin lists and `status` says so.
+          if (skippedRecommendations !== undefined)
+            issues.push({ code: "model_updates_unavailable" });
           const availableSkills: SkillInfo[] = input.skills.map((skill) => ({
             name: skill.name,
             metadata: skill,
