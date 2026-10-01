@@ -491,6 +491,90 @@ describe("a user pins the applied recommendations", () => {
     expect(machine.file(GLOBAL_CONFIG)).toBe(edited);
   });
 
+  describe("when the list has provider-qualified entries", () => {
+    async function appliedQualified(machine: Machine): Promise<void> {
+      // Only the opencode2 section may name a provider.
+      await machine.publish({
+        ...list(1, ["claude-opus-5.6"]),
+        harnesses: {
+          opencode2: {
+            agents: {
+              loom: {
+                models: [
+                  "openrouter/anthropic/claude-opus-5.5",
+                  "claude-opus-5.6",
+                ],
+              },
+              shuttle: { models: ["claude-sonnet-5.6"] },
+              thread: { models: ["github-copilot/claude-haiku-5"] },
+            },
+          },
+        },
+      });
+      await machine.weave(["models", "update"]);
+      await machine.weave(["models", "apply"]);
+    }
+
+    it("leaves them out, says why, and keeps an agent with nothing else as it was", async () => {
+      const machine = new Machine({ [GLOBAL_CONFIG]: ownConfig });
+      await appliedQualified(machine);
+
+      const { exitCode, stdout } = await machine.weave([
+        "models",
+        "pin",
+        "--yes",
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(
+        "Left out provider-qualified models: loom (openrouter/anthropic/claude-opus-5.5), thread (github-copilot/claude-haiku-5).",
+      );
+      expect(stdout).toContain("OpenCode V1");
+      expect(stdout).toContain("--include-qualified");
+      expect(stdout).toContain(
+        "thread keeps its existing models: all of its recommended entries are provider-qualified.",
+      );
+      expect(stdout).toContain('+  models ["my-model", "claude-opus-5.6"]');
+      expect(stdout).not.toContain('+  models ["my-model", "openrouter');
+      expect(stdout).not.toContain("@@ new blocks: thread @@");
+      expect(stdout).toContain("Pinned the models of 2 agents");
+
+      const written = machine.file(GLOBAL_CONFIG) ?? "";
+      expect(written).toContain('models ["my-model", "claude-opus-5.6"]');
+      expect(written).toContain('models ["claude-sonnet-5.6"]');
+      expect(written).not.toContain("openrouter/");
+      expect(written).not.toContain("agent thread");
+    });
+
+    it("keeps them with --include-qualified and warns", async () => {
+      const machine = new Machine({ [GLOBAL_CONFIG]: ownConfig });
+      await appliedQualified(machine);
+
+      const { exitCode, stdout } = await machine.weave([
+        "models",
+        "pin",
+        "--include-qualified",
+        "--yes",
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(
+        "Warning: pinning provider-qualified models: loom (openrouter/anthropic/claude-opus-5.5), thread (github-copilot/claude-haiku-5).",
+      );
+      expect(stdout).toContain("OpenCode V1");
+      expect(stdout).toContain(
+        '+  models ["my-model", "openrouter/anthropic/claude-opus-5.5", "claude-opus-5.6"]',
+      );
+      expect(stdout).toContain("Pinned the models of 3 agents");
+
+      const written = machine.file(GLOBAL_CONFIG) ?? "";
+      expect(written).toContain(
+        'models ["my-model", "openrouter/anthropic/claude-opus-5.5", "claude-opus-5.6"]',
+      );
+      expect(written).toContain(
+        'agent thread {\n  models ["github-copilot/claude-haiku-5"]\n}',
+      );
+    });
+  });
+
   it("has nothing to pin before a list is applied", async () => {
     const machine = new Machine({ [GLOBAL_CONFIG]: NOTIFY });
     const { exitCode, stderr } = await machine.weave([

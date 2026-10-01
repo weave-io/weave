@@ -120,6 +120,8 @@ export interface ParsedArgs {
     modelsKey?: string;
     /** --issued-after <timestamp> for `weave models check` — the served list's `issued` */
     modelsIssuedAfter?: string;
+    /** --include-qualified for `weave models pin` — keep provider-qualified entries */
+    modelsIncludeQualified?: boolean;
   };
 }
 
@@ -250,6 +252,10 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--envelope") {
       flags.modelsEnvelope = true;
+      continue;
+    }
+    if (arg === "--include-qualified") {
+      flags.modelsIncludeQualified = true;
       continue;
     }
     if (arg === "--expect") {

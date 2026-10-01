@@ -143,6 +143,7 @@ export interface ParsedArgs {
         modelsExpect?: string;
         modelsKey?: string;
         modelsIssuedAfter?: string;
+        modelsIncludeQualified?: boolean;
     };
     rest: string[];
     unknownCommand?: string;

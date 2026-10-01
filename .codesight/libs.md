@@ -744,6 +744,11 @@
   - interface PinEdit
   - type PinnedLists
   - _...1 more_
+- `packages/cli/src/models/pin-plan.ts`
+  - function isQualifiedModel: (model) => boolean
+  - function planPins: (recommended, readonly string[]>>, own) => void
+  - interface QualifiedEntries
+  - interface PinPlan
 - `packages/cli/src/models/recommendations-session.ts`
   - function formatConfigLoadErrors: (errors) => string[]
   - class RecommendationsSession

@@ -48,7 +48,7 @@ export class ThemeRenderer {
       `    ${theme.cyan("models status")}               ${theme.dim("Show model updates and where each agent's models come from (--harness --json)")}`,
       `    ${theme.cyan("models update")}               ${theme.dim("Check for newer model recommendations now")}`,
       `    ${theme.cyan("models apply")}                ${theme.dim("Apply waiting model recommendations (notify mode)")}`,
-      `    ${theme.cyan("models pin")}                  ${theme.dim("Write the applied recommendations into the global config (--yes)")}`,
+      `    ${theme.cyan("models pin")}                  ${theme.dim("Write the applied recommendations into the global config (--include-qualified --yes)")}`,
       `    ${theme.cyan("models check")} <file>         ${theme.dim("Check a model recommendations list (--envelope --key --expect)")}`,
       "",
       `  ${theme.boldCyan("OPTIONS")}`,
