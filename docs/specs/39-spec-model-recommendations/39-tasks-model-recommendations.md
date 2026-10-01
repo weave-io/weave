@@ -11,26 +11,26 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 
 **Order and dependencies:** 1 → 2 → 3 → 4 → 5 → 6 → 8. Group 7 (website) needs group 2's `weave models check` released on `next`, and may land any time after that. Group 8 needs groups 6 and 7, or a locally served signed file. Group 0 runs alongside: the feature can ship without it, but no list that changes a model is published until group 0's blocking gaps are closed for that agent.
 
-## 0. Eval readiness — PR:
+## 0. Eval readiness — PRs: #280, #281, #283, #284
 
 The gaps are described, with evidence, in the [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md). One PR per task; 0.1, 0.2, 0.4 and 0.6 first.
 
-- [ ] 0.1 (G1) Builtins-only config mode for `eval run`: no project or global `.weave` is read, as in `tapestry-category-config.ts`. Make it the default for runs cited as evidence and record the mode in the bundle. Then re-score Shuttle and Weft on their shipped prompts.
-- [ ] 0.2 (G2) A model comparison over one bundle: candidate against current, per suite, with equal repeat counts, Fisher's exact test and Holm adjustment, the per-case guard (a case at ≥ 80% on current that falls below 60% on the candidate fails), and the cost difference. Tests with fixture bundles, including the Spindle 29 Sep shape (suite-level p ≈ 0.17, one case 8/8 → 4/8).
+- [x] 0.1 (G1) Builtins-only config mode for `eval run`: no project or global `.weave` is read, as in `tapestry-category-config.ts`. Make it the default for runs cited as evidence and record the mode in the bundle. Then re-score Shuttle and Weft on their shipped prompts. Code: #281. Re-scoring Shuttle and Weft on shipped prompts is still open.
+- [x] 0.2 (G2) A model comparison over one bundle: candidate against current, per suite, with equal repeat counts, Fisher's exact test and Holm adjustment, the per-case guard (a case at ≥ 80% on current that falls below 60% on the candidate fails), and the cost difference. Tests with fixture bundles, including the Spindle 29 Sep shape (suite-level p ≈ 0.17, one case 8/8 → 4/8). #284: `weave eval compare-models` (text track only).
 - [ ] 0.3 (G3) Grow suites to at least 12 text cases, one PR per suite, with rubrics: shuttle-execution (+9), weft-review (+8), spindle-tools (+10), warp-security (+8), pattern-planning (+8), tapestry-execution (+8). Shuttle and Weft first. Cover failure modes from the [session audit](../../artifacts/session-audit-2026-09.md). This picks up Spec 37 task 19.2.
-- [ ] 0.4 (G4) Every trajectory case's `allowed_models` includes every `default: true` model in `evals/model-matrix.json`, enforced by a test. A candidate must be a default model in the matrix before it is evaluated, so adding it there makes it runnable on every trajectory case.
+- [x] 0.4 (G4) Every trajectory case's `allowed_models` includes every `default: true` model in `evals/model-matrix.json`, enforced by a test. A candidate must be a default model in the matrix before it is evaluated, so adding it there makes it runnable on every trajectory case. #280.
 - [ ] 0.5 (G5) Catalog fixtures for Copilot, Anthropic, OpenAI, OpenRouter and Copilot + OpenAI, used by `weave models check` (task 2.5) to print and check each section's resolution.
-- [ ] 0.6 (G6) Store prompt and completion tokens per attempt in the score file, and report cost per attempt per model at the matrix's prices.
+- [x] 0.6 (G6) Store prompt and completion tokens per attempt in the score file, and report cost per attempt per model at the matrix's prices. #283: cost in local score files only, not the public report.
 - [ ] 0.7 (G7) Publish the candidate run through the CI eval workflow so the file's `evidence` link resolves; needs the credit top-up planned in Spec 38 task 10.2.
 - [ ] 0.8 (G8) A tier table in the evidence for Claude Code sections, and a check that each tier's measured model is in the eval matrix.
 - [ ] 0.9 Later (G9–G13): harder cases for the saturated suites, a Thread suite, an OpenCode 2 trajectory runner, provider smoke runs, and defect 4. Each widens which agents a list may change.
 
-## 1. DSL setting — PR:
+## 1. DSL setting — PR: #278
 
-- [ ] 1.1 `SettingsConfigSchema` gains an optional strict `model_updates` object: `mode` (`off` | `notify` | `auto`, required in the block), `channel` (`stable` | `next`, default `stable`). The spike showed the parser and validator need no change.
-- [ ] 1.2 Tests at all four levels named in [AGENTS.md](../../../AGENTS.md#schema-evolution-and-test-maintenance): schema, parser, validate, parse_config. Each valid mode and channel accepted; unknown mode, unknown channel, missing `mode` and unknown fields rejected with readable paths.
-- [ ] 1.3 Merge tests: project `mode off` overrides global `mode auto`; an omitted project block keeps the global one.
-- [ ] 1.4 [DSL reference](../../dsl-reference.md) documents the block; marked as having no effect until group 3 lands.
+- [x] 1.1 `SettingsConfigSchema` gains an optional strict `model_updates` object: `mode` (`off` | `notify` | `auto`, required in the block), `channel` (`stable` | `next`, default `stable`). The spike showed the parser and validator need no change.
+- [x] 1.2 Tests at all four levels named in [AGENTS.md](../../../AGENTS.md#schema-evolution-and-test-maintenance): schema, parser, validate, parse_config. Each valid mode and channel accepted; unknown mode, unknown channel, missing `mode` and unknown fields rejected with readable paths.
+- [x] 1.3 Merge tests: project `mode off` overrides global `mode auto`; an omitted project block keeps the global one.
+- [x] 1.4 [DSL reference](../../dsl-reference.md) documents the block; marked as having no effect until group 3 lands.
 
 ## 2. File format and signature — PR:
 
