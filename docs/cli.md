@@ -709,6 +709,7 @@ weave models check models/stable.json                                    # valid
 weave models check models/stable.json --expect models/stable.expect.json # and check every resolution
 weave models check stable.v1.json --envelope                             # verify a signed envelope with the built-in keys
 weave models check stable.v1.json --envelope --key <public-key-base64>   # ... or with another public key
+weave models check models/stable.json --issued-after 2026-10-01T09:00:00Z # must be newer than the served list
 weave models check models/stable.json --json                             # machine-readable report
 ```
 
@@ -716,7 +717,7 @@ What it does, in order:
 
 1. With `--envelope`, **verifies the envelope first**: its size (64 KiB), its `{ "payload", "sig" }` shape, and the Ed25519 signature over the exact bytes of `payload`. Nothing in the payload is parsed until the signature verifies. Without `--key` it uses the public keys built into `@weaveio/weave-config`; `--key` replaces them with one raw Ed25519 public key, base64. `--key` without `--envelope` is an error.
 2. **Validates** the list (the envelope's payload, or the plain file) against the same schema clients use ([`model-recommendations.ts`](../packages/config/src/model-recommendations.ts)): `schema 1`, `channel`, `issued`, `expires` at most 90 days after `issued`, optional semver `min_config_version`, a required HTTPS `evidence` link, a required `default` section and optional `opencode2`, `claude-code` and `pi` sections, the count and size limits, and no unknown fields.
-3. **Checks freshness** against the current time: an expired list, an `issued` more than 24 hours ahead, or an `issued` before this release's `BUILTIN_MODELS_ISSUED` fails. The check does not know the channel a client asks for, a currently applied list or a client version, so it skips those three rules; clients apply them.
+3. **Checks freshness** against the current time: an expired list, an `issued` more than 24 hours ahead, or an `issued` before this release's `BUILTIN_MODELS_ISSUED` fails. With `--issued-after <timestamp>`, the `issued` of the list currently served, a list that is not later than it fails too, which is the rollback rule clients apply; the website passes it so an older list can never be published over a newer one. The check does not know the channel a client asks for or a client version, so it skips those two rules; clients apply them.
 4. **Resolves** each harness's section (its own, or `default`) against the provider catalog fixtures and prints the model every agent gets: OpenCode 2 and Pi per catalog, Claude Code once. See [Model Resolution](model-resolution.md#checking-recommendations-against-provider-catalogs) for the rules and fixtures. `none` means no entry in the section resolves; at runtime that agent falls back to its builtin list. Agents the list names that this version does not define as builtins are listed, since clients skip them.
 5. With `--expect`, **compares** every resolution with the expectations file and fails on any difference.
 
@@ -758,7 +759,7 @@ The website keeps one beside each list, as `models/<channel>.expect.json` ([publ
 | Exit code | Meaning |
 | --- | --- |
 | `0` | The list is valid and fresh, the signature verified (with `--envelope`), and every resolution matched (with `--expect`). The report is on stdout. |
-| `1` | Anything else: a usage error, a missing or unreadable file, an envelope or signature that does not verify, a list that breaks a schema or freshness rule (the reason is on stderr), an invalid expectations file, or at least one resolution that differs from it (each one listed on stderr as `harness / catalog / agent: expected …, resolved …`). |
+| `1` | Anything else: a usage error (including an `--issued-after` that is not an ISO 8601 UTC timestamp), a missing or unreadable file, an envelope or signature that does not verify, a list that breaks a schema or freshness rule (the reason is on stderr), an invalid expectations file, or at least one resolution that differs from it (each one listed on stderr as `harness / catalog / agent: expected …, resolved …`). |
 
 ### Signing a list
 

@@ -1095,8 +1095,10 @@
   - const bunKeyFileIo: KeyFileIo
 - `scripts/models/sign.ts`
   - function signList: (listText, privateKey, verifier) => void
-  - function signFiles: (args) => ResultAsync<string, SignListError>
+  - function signFiles: (args, io, verifier) => void
+  - interface SignFileIo
   - type SignListError
+  - const bunSignFileIo: SignFileIo
 - `scripts/opencode2/fixtures/provider.ts`
   - class ProofProviderFixture
   - interface ProofProviderRequest

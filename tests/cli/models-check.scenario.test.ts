@@ -314,6 +314,48 @@ describe("a maintainer checks a list that must not be published", () => {
   });
 });
 
+describe("a maintainer publishes a list over the one currently served", () => {
+  it("passes a list issued later than the served one", async () => {
+    const { exitCode } = await runWeave(
+      [
+        "models",
+        "check",
+        "models/stable.json",
+        "--issued-after",
+        "2026-09-30T09:00:00Z",
+      ],
+      { "/site/models/stable.json": json(list) },
+    );
+
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    "2026-10-01T09:00:00Z",
+    "2026-10-01T10:00:00Z",
+  ])("exits 1 for a list that is not later than one served at %s", async (served) => {
+    const { exitCode, stderr } = await runWeave(
+      ["models", "check", "models/stable.json", "--issued-after", served],
+      { "/site/models/stable.json": json(list) },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("not later than the applied list");
+  });
+
+  it("exits 1 when --issued-after is not a UTC timestamp", async () => {
+    const { exitCode, stderr } = await runWeave(
+      ["models", "check", "models/stable.json", "--issued-after", "yesterday"],
+      { "/site/models/stable.json": json(list) },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(
+      "--issued-after must be an ISO 8601 UTC timestamp",
+    );
+  });
+});
+
 describe("a maintainer verifies a signed envelope", () => {
   it("exits 0 and says the signature verified", async () => {
     const { exitCode, stdout } = await runWeave(

@@ -115,6 +115,8 @@ export interface ParsedArgs {
     modelsExpect?: string;
     /** --key <public-key> for `weave models check` — verify against this key */
     modelsKey?: string;
+    /** --issued-after <timestamp> for `weave models check` — the served list's `issued` */
+    modelsIssuedAfter?: string;
   };
 }
 
@@ -269,6 +271,19 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.modelsKey = val;
+      continue;
+    }
+    if (arg === "--issued-after") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--issued-after",
+          message:
+            "--issued-after requires the issued timestamp of the list currently served",
+        });
+      }
+      flags.modelsIssuedAfter = val;
       continue;
     }
     if (arg === "--bootstrap-dir") {

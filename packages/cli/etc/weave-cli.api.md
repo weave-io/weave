@@ -135,6 +135,7 @@ export interface ParsedArgs {
         modelsEnvelope?: boolean;
         modelsExpect?: string;
         modelsKey?: string;
+        modelsIssuedAfter?: string;
     };
     rest: string[];
     unknownCommand?: string;

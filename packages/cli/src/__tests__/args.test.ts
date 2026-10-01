@@ -552,7 +552,24 @@ describe("models check", () => {
     expect(parsed.rest).toEqual(["models/stable.v1.json"]);
   });
 
-  it.each(["--expect", "--key"])("rejects %s without a value", (flag) => {
+  it("parses --issued-after", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "models",
+      "check",
+      "f",
+      "--issued-after",
+      "2026-10-01T09:00:00Z",
+    ])._unsafeUnwrap();
+    expect(parsed.flags.modelsIssuedAfter).toBe("2026-10-01T09:00:00Z");
+  });
+
+  it.each([
+    "--expect",
+    "--key",
+    "--issued-after",
+  ])("rejects %s without a value", (flag) => {
     const parsed = parseArgs(["bun", "weave", "models", "check", "f", flag]);
     expect(parsed._unsafeUnwrapErr()).toMatchObject({
       type: "MissingFlagValue",

@@ -4,7 +4,7 @@ import {
   ModelRecommendationsVerifier,
 } from "@weaveio/weave-config";
 import { generateKeyPair } from "../keygen.js";
-import { signFiles, signList } from "../sign.js";
+import { type SignFileIo, signFiles, signList } from "../sign.js";
 
 const NOW = new Date("2026-10-02T12:00:00Z");
 
@@ -80,16 +80,68 @@ describe("scripts/models/sign.ts", () => {
     expect(result._unsafeUnwrapErr().type).toBe("EnvelopeInvalid");
   });
 
-  it("reports missing arguments and unreadable files as errors, not exceptions", async () => {
+  it("reports missing arguments as a usage error", async () => {
     expect((await signFiles([]))._unsafeUnwrapErr().type).toBe("Usage");
-    const missing = await signFiles([
-      "/nonexistent/list.json",
-      "/nonexistent/key",
-      "/nonexistent/out.json",
-    ]);
-    expect(missing._unsafeUnwrapErr()).toEqual({
-      type: "ReadFailed",
-      path: "/nonexistent/list.json",
+  });
+
+  describe("with files", () => {
+    class MemorySignFileIo implements SignFileIo {
+      readonly files = new Map<string, string>();
+      failWrites = false;
+
+      async read(path: string): Promise<string> {
+        const text = this.files.get(path);
+        if (text === undefined) throw new Error(`ENOENT: ${path}`);
+        return text;
+      }
+
+      async write(path: string, text: string): Promise<void> {
+        if (this.failWrites) throw new Error("disk full");
+        this.files.set(path, text);
+      }
+    }
+
+    const verifier = () => new ModelRecommendationsVerifier({ now: () => NOW });
+
+    it("reads the list and key and writes the envelope", async () => {
+      const keys = (await generateKeyPair())._unsafeUnwrap();
+      const io = new MemorySignFileIo();
+      io.files.set("/l.json", list);
+      io.files.set("/k", `${keys.privateKey}\n`);
+      const out = await signFiles(["/l.json", "/k", "/e.json"], io, verifier());
+
+      expect(out._unsafeUnwrap()).toBe("/e.json");
+      const envelope = io.files.get("/e.json") ?? "";
+      expect(envelope.endsWith("\n")).toBe(true);
+      expect(JSON.parse(envelope).payload).toBe(list);
+    });
+
+    it("returns ReadFailed for a missing list or key", async () => {
+      const io = new MemorySignFileIo();
+      io.files.set("/l.json", list);
+      expect(
+        (
+          await signFiles(["/missing", "/k", "/e"], io, verifier())
+        )._unsafeUnwrapErr(),
+      ).toEqual({ type: "ReadFailed", path: "/missing" });
+      expect(
+        (
+          await signFiles(["/l.json", "/k", "/e"], io, verifier())
+        )._unsafeUnwrapErr(),
+      ).toEqual({ type: "ReadFailed", path: "/k" });
+    });
+
+    it("returns WriteFailed when the envelope cannot be written", async () => {
+      const keys = (await generateKeyPair())._unsafeUnwrap();
+      const io = new MemorySignFileIo();
+      io.files.set("/l.json", list);
+      io.files.set("/k", keys.privateKey);
+      io.failWrites = true;
+      expect(
+        (
+          await signFiles(["/l.json", "/k", "/e"], io, verifier())
+        )._unsafeUnwrapErr(),
+      ).toEqual({ type: "WriteFailed", path: "/e" });
     });
   });
 });

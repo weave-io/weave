@@ -66,35 +66,44 @@ export function signList(
     });
 }
 
-function readText(path: string): ResultAsync<string, SignListError> {
-  return ResultAsync.fromThrowable(
-    () => Bun.file(path).text(),
-    (): SignListError => ({ type: "ReadFailed", path }),
-  )();
+/** The file operations the script needs; injected so tests touch no disk. */
+export interface SignFileIo {
+  read(path: string): Promise<string>;
+  write(path: string, text: string): Promise<void>;
 }
 
-function writeText(
-  path: string,
-  text: string,
-): ResultAsync<number, SignListError> {
-  return ResultAsync.fromThrowable(
-    () => Bun.write(path, text),
-    (): SignListError => ({ type: "WriteFailed", path }),
-  )();
-}
+/** The real disk, through Bun APIs. */
+export const bunSignFileIo: SignFileIo = {
+  read: (path) => Bun.file(path).text(),
+  write: async (path, text) => {
+    await Bun.write(path, text);
+  },
+};
 
-/** Run the script; resolves to the outcome instead of throwing. */
+/** Run the script; resolves to the envelope's path instead of throwing. */
 export function signFiles(
   args: readonly string[],
+  io: SignFileIo = bunSignFileIo,
+  verifier = new ModelRecommendationsVerifier(),
 ): ResultAsync<string, SignListError> {
   const [listPath, keyPath, outPath] = args;
   if (listPath === undefined || keyPath === undefined || outPath === undefined)
     return errAsync({ type: "Usage" });
-  return readText(listPath)
+  const read = (path: string) =>
+    ResultAsync.fromThrowable(
+      () => io.read(path),
+      (): SignListError => ({ type: "ReadFailed", path }),
+    )();
+  return read(listPath)
     .andThen((listText) =>
-      readText(keyPath).andThen((key) => signList(listText, key.trim())),
+      read(keyPath).andThen((key) => signList(listText, key.trim(), verifier)),
     )
-    .andThen((envelope) => writeText(outPath, envelope))
+    .andThen((envelope) =>
+      ResultAsync.fromThrowable(
+        () => io.write(outPath, envelope),
+        (): SignListError => ({ type: "WriteFailed", path: outPath }),
+      )(),
+    )
     .map(() => outPath);
 }
 

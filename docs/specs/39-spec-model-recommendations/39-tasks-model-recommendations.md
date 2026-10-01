@@ -38,7 +38,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 2.2 Ed25519 verification with `crypto.subtle` over the exact file bytes, against a list of embedded public keys. Confirm Bun's WebCrypto supports Ed25519 verify; record the Bun version in the PR. Bun 1.4.2.
 - [x] 2.3 Typed error union (for example `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `TooLarge`). Fixtures for each, plus a valid fixture signed with a test-only key.
 - [x] 2.4 Key-generation and signing script for maintainers under `scripts/`, documented; the private key never enters the repository.
-- [x] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md). Also `--key` and `--json`; the expectations format is in [CLI](../../cli.md#the-expectations-file).
+- [x] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md). Also `--key`, `--issued-after` (the served list's `issued`, for the website's rollback check) and `--json`; the expectations format is in [CLI](../../cli.md#the-expectations-file).
 
 ## 3. Loader layer — PR:
 

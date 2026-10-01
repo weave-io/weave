@@ -23,6 +23,7 @@ import {
   Result,
   type ResultAsync,
 } from "neverthrow";
+import { z } from "zod";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
@@ -39,6 +40,8 @@ import {
   RecommendationsResolver,
 } from "../models/resolve.js";
 import type { ThemeColors } from "../theme/colors.js";
+
+const ISO_UTC = z.iso.datetime();
 
 export interface ModelsContext {
   terminal: TerminalIO;
@@ -65,12 +68,13 @@ interface CheckReport {
 /** Usage lines for `weave models`. */
 export function modelsUsage(theme: ThemeColors): string[] {
   return [
-    `${theme.boldYellow("Usage:")} weave models check <file> [--envelope] [--key <public-key>] [--expect <expect-file>] [--json]`,
+    `${theme.boldYellow("Usage:")} weave models check <file> [--envelope] [--key <public-key>] [--expect <expect-file>] [--issued-after <timestamp>] [--json]`,
     "",
     `  ${theme.cyan("<file>")}                  ${theme.dim("A recommendations list (JSON), or with --envelope a signed envelope")}`,
     `  ${theme.cyan("--envelope")}              ${theme.dim("Verify the envelope's Ed25519 signature, then check its list")}`,
     `  ${theme.cyan("--key")} <public-key>      ${theme.dim("Verify against this base64 raw Ed25519 key instead of the built-in keys")}`,
     `  ${theme.cyan("--expect")} <expect-file>  ${theme.dim("Fail unless every agent resolves to the model the file names")}`,
+    `  ${theme.cyan("--issued-after")} <timestamp> ${theme.dim("Fail unless the list is issued later than this (the list currently served)")}`,
     `  ${theme.cyan("--json")}                  ${theme.dim("Print the report as JSON")}`,
   ];
 }
@@ -282,13 +286,18 @@ class ModelsCheck {
     const toCliError = (
       error: Parameters<typeof describeModelRecommendationsError>[0],
     ) => invalid(path, [describeModelRecommendationsError(error)]);
+    const context = {
+      ...(this.ctx.flags.modelsIssuedAfter === undefined
+        ? {}
+        : { appliedIssued: this.ctx.flags.modelsIssuedAfter }),
+    };
     if (this.ctx.flags.modelsEnvelope)
       return this.verifier
-        .verifyEnvelope(text)
+        .verifyEnvelope(text, context)
         .map((file) => ({ file, signature: "verified" as const }))
         .mapErr(toCliError);
     const result = this.verifier
-      .validateList(text)
+      .validateList(text, context)
       .map((file) => ({ file, signature: "not-checked" as const }))
       .mapErr(toCliError);
     return result.isOk() ? okAsync(result.value) : errAsync(result.error);
@@ -325,6 +334,17 @@ export async function runModels(
       formatCliError({
         type: "InvalidArgs",
         message: "--key verifies a signature, so it needs --envelope",
+      }),
+    );
+    return ok(1);
+  }
+
+  const issuedAfter = ctx.flags.modelsIssuedAfter;
+  if (issuedAfter !== undefined && !ISO_UTC.safeParse(issuedAfter).success) {
+    ctx.terminal.stderr(
+      formatCliError({
+        type: "InvalidArgs",
+        message: `--issued-after must be an ISO 8601 UTC timestamp such as 2026-10-01T09:00:00Z, got "${issuedAfter}"`,
       }),
     );
     return ok(1);
