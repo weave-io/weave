@@ -194,7 +194,15 @@ function scanBlock(
       (previous?.type === TokenType.Newline ||
         previous?.type === TokenType.LBrace);
     if (atFieldStart && firstField === undefined) firstField = i;
-    if (atFieldStart && token.value === "models") {
+    // A key is followed by its value, so `models [` is the agent's own field
+    // wherever it sits on the line (`{ prompt "p" models ["a"] }` is valid).
+    const isModelsKey =
+      braces === 1 &&
+      brackets === 0 &&
+      token.type === TokenType.Identifier &&
+      token.value === "models" &&
+      tokens[i + 1]?.type === TokenType.LBracket;
+    if (isModelsKey) {
       models = i;
       modelsEnd = undefined;
     }

@@ -87,6 +87,14 @@ describe("pinModels", () => {
     });
   });
 
+  it("finds a models field that follows another field on the same line", () => {
+    const edit = pin('agent loom { prompt "p" models ["old"] }\n', {
+      loom: ["new"],
+    });
+    expect(edit.text).toBe('agent loom { prompt "p" models ["new"] }\n');
+    expect(edit.hunks[0]?.kind).toBe("replace");
+  });
+
   it("does not mistake a nested models key for the agent's own", () => {
     const source = [
       "agent loom {",

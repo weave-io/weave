@@ -218,7 +218,10 @@ export class RecommendationsSession {
       exists: async (path) => {
         if (!path.startsWith(cacheRoot)) return configReader.exists(path);
         const exists = await files.exists(path);
-        return exists.isOk() && exists.value;
+        // A cache that cannot be checked is not a missing file: reject, so the
+        // loader reports the layer as skipped (Unreadable), not pending.
+        if (exists.isErr()) return Promise.reject(exists.error);
+        return exists.value;
       },
       read: (path) => {
         if (!path.startsWith(cacheRoot)) return configReader.read(path);

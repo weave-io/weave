@@ -12,6 +12,7 @@
 
 import { beforeAll, describe, expect, it } from "bun:test";
 import { globalConfigDir } from "@weaveio/weave-config";
+import { errAsync } from "neverthrow";
 import { run } from "../../packages/cli/src/cli.js";
 import { MemoryFileSystem } from "../../packages/cli/src/fs/file-system.js";
 import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
@@ -347,6 +348,25 @@ describe("the applied list is damaged", () => {
     const status = await machine.weave(["models", "status"]);
     expect(status.stdout).toContain("applied     not used:");
     expect(status.stdout).toMatch(/loom\n\s+claude-opus-5\.5\s+builtin/);
+  });
+});
+
+describe("the recommendations cache cannot be read", () => {
+  it("is reported as skipped, not as nothing applied yet", async () => {
+    const machine = new Machine({ [GLOBAL_CONFIG]: NOTIFY });
+    machine.cache.exists = (path) =>
+      errAsync({
+        type: "CacheIoError",
+        operation: "exists",
+        path,
+        message: "permission denied",
+      });
+
+    const { exitCode, stdout } = await machine.weave(["validate"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain(
+      "model_recommendations: skipped, the applied recommendations file could not be read",
+    );
   });
 });
 
