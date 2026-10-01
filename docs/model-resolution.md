@@ -46,6 +46,8 @@ The eval records of [25 Sep 2026](artifacts/eval-default-models-2026-09-25.md) a
 
 A project or global `models` list merges ahead of these, so a user's own preference always comes first (see [Config Loading](config-loading.md)).
 
+[Spec 39 — Model Recommendations](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) (proposed) lets a user opt in to updated builtin lists published on tryweave.io, without upgrading Weave.
+
 What each harness does with the defaults:
 
 | Harness | Behaviour |
