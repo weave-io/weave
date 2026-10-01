@@ -14,6 +14,7 @@ import {
   type ModelRecommendationsFile,
   ModelRecommendationsVerifier,
 } from "@weaveio/weave-config";
+import { formatError } from "@weaveio/weave-core";
 import {
   err,
   errAsync,
@@ -138,19 +139,25 @@ function parseExpectations(
   );
 }
 
-function builtinAgentNames(): ReadonlySet<string> {
-  return getBuiltinConfig().match(
-    (config) => new Set(Object.keys(config.agents)),
-    () => new Set<string>(),
-  );
-}
-
-function notBuiltinAgents(file: ModelRecommendationsFile): string[] {
-  const builtins = builtinAgentNames();
+/**
+ * Agents the list names that this version does not define as builtins. A
+ * builtin DSL that fails to parse is a bug in this release, reported as such.
+ */
+function notBuiltinAgents(
+  file: ModelRecommendationsFile,
+): Result<string[], CliError> {
+  const builtins = getBuiltinConfig();
+  if (builtins.isErr())
+    return err({
+      type: "ParseFailure",
+      path: "builtins",
+      errors: builtins.error.map((e) => `builtins:${formatError(e)}`),
+    });
+  const names = new Set(Object.keys(builtins.value.agents));
   const named = new Set<string>(Object.keys(file.default.agents));
   for (const section of Object.values(file.harnesses ?? {}))
     for (const agent of Object.keys(section?.agents ?? {})) named.add(agent);
-  return [...named].filter((agent) => !builtins.has(agent)).sort();
+  return ok([...named].filter((agent) => !names.has(agent)).sort());
 }
 
 function renderReport(report: CheckReport, theme: ThemeColors): string {
@@ -241,13 +248,16 @@ class ModelsCheck {
     return readFile(this.fs, path)
       .andThen((text) => this.verify(resolved, text))
       .andThen(({ file, signature }) => {
+        const notBuiltin = notBuiltinAgents(file);
+        if (notBuiltin.isErr())
+          return errAsync<CheckReport, CliError>(notBuiltin.error);
         const resolutions = new RecommendationsResolver().resolveFile(file);
         const report: CheckReport = {
           path: resolved,
           file,
           signature,
           resolutions,
-          notBuiltin: notBuiltinAgents(file),
+          notBuiltin: notBuiltin.value,
         };
         const expectPath = this.ctx.flags.modelsExpect;
         if (expectPath === undefined) return okAsync(report);
