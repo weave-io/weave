@@ -63,7 +63,7 @@ export interface ComposeModelRecommendationsDeps {
   readonly publicKeys?: readonly string[];
   /** Where lists are fetched from. Defaults as `ModelRecommendations` does. */
   readonly baseUrl?: string;
-  /** Request timeout. Defaults to `COMPOSE_REFRESH_TIMEOUT_MS`. */
+  /** Request timeout. Defaults to, and is capped at, `COMPOSE_REFRESH_TIMEOUT_MS`. */
   readonly timeoutMs?: number;
 }
 

@@ -349,8 +349,13 @@ export async function runCompose(
   // and silent on stdout; see compose-refresh.ts for why it is awaited.
   const refresh = await new ComposeModelRefresh(
     new ModelRecommendations({
-      timeoutMs: COMPOSE_REFRESH_TIMEOUT_MS,
       ...recommendations,
+      // A shorter timeout (tests) is kept; a longer one would outlive the
+      // budget and keep the hook's process open, so it is capped.
+      timeoutMs: Math.min(
+        recommendations.timeoutMs ?? COMPOSE_REFRESH_TIMEOUT_MS,
+        COMPOSE_REFRESH_TIMEOUT_MS,
+      ),
     }),
   ).run(config.settings.model_updates);
   const note = describeComposeRefresh(refresh);
