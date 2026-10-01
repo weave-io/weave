@@ -64,6 +64,17 @@ Human-readable success output summarizes counts only:
 - disabled entries
 - log level
 
+When the effective config has a `settings { model_updates { … } }` block ([Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#visibility)), every form adds the model recommendations lines below. A config without the block prints exactly what it printed before. The lines describe the **effective** setting (global and project merged), since that is what the harnesses use, so `--project`, `--global` and `--path` report it too; when the effective config does not load, a file form prints no lines and the plain `weave validate` reports why.
+
+```text
+model_updates: notify (channel stable)
+model_recommendations: applied, issued 2026-10-01T09:00:00Z, expires 2026-12-30T09:00:00Z (opencode2, section opencode2)
+model_recommendations: pending, nothing applied yet (run weave models update, then weave models apply)
+model_recommendations: skipped, the list expired at … ; agents use their builtin models
+```
+
+`mode off` prints only `model_updates: off`. `applied` names the list's `issued` and `expires`, the harness and the section used; agent names the list carries that this version does not define are listed on a further line. `pending` means nothing has been applied yet; `skipped` means `applied.json` is there but unusable, with the reason. A pending or skipped layer is not an error: the exit code stays 0 and agents run on their builtin lists. The harness is OpenCode 2 unless `--harness` names `claude-code` or `pi` ([why](#weave-models-status-update-apply-and-pin)); `--harness opencode` or `copilot` reports that the harness takes no recommendations. With `--json` stdout is still the config document and the lines go to stderr.
+
 Every form also checks that each agent the input declares can be registered by a harness adapter: a custom agent needs a `prompt` or `prompt_file`, and every `prompt_file` must be readable. Adapters drop only such an agent and keep the rest (see [OpenCode 2 core](adapters/opencode2-core.md#partial-and-broken-configs)), so `weave validate` is where the user finds out. A scoped or `--path` check merges the file onto the builtins, resolves its prompt files against the `prompts/` directory beside it, and reports only the agents and categories that file declares.
 
 The CLI intentionally avoids printing full private prompt/config content in normal success output. Parse and validation failures use `file:line:column: message` formatting where the DSL pipeline provides location data.
@@ -700,6 +711,54 @@ Use those commands to confirm the published comparison between `60c3ebd-2026-06-
 
 See [Agent Evals](./agent-evals.md) for the full architecture, security checklist, and guide to adding new eval cases.
 
+## `weave models status`, `update`, `apply` and `pin`
+
+The user's side of [model recommendations](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#visibility): what is applied, where each agent's models come from, and how to fetch, apply or freeze a list. All four read the merged `settings.model_updates` the way `weave validate` does, and share the cache under `~/.weave/cache/model-recommendations/<channel>/` (or `WEAVE_GLOBAL_CONFIG_DIR`) with every harness.
+
+```bash
+weave models status                        # mode, channel, applied list, each agent's models and their sources
+weave models status --harness claude-code  # the same for Claude Code's section
+weave models status --project-root ../app --json
+weave models update                        # check tryweave.io now and print what changed
+weave models apply                         # apply a waiting list (notify mode)
+weave models pin                           # write the applied lists into ~/.weave/config.weave, after asking
+weave models pin --yes                     # ... without asking
+```
+
+**Harness.** A list has a section per harness, so the commands report for one: `--harness opencode2` (the default), `claude-code` or `pi`. OpenCode 2 is the default because Spec 39 ships it first and it is the only harness that applies a list without a restart; detecting the harness, as `weave init` does, would spawn harness binaries to print a status, and several can be installed at once. `--harness opencode` (OpenCode V1) and `--harness copilot` (Copilot CLI) get no recommendations layer: `status` says so and exits 0, the other commands exit 1. Any other name is a usage error.
+
+**`status`** prints:
+
+- `mode`, `channel`, and the harness with the section it uses (its own or `default`);
+- `applied`: the applied list's `issued` and `expires`, and `evidence`, the eval run behind it; or `nothing yet` with what to run; or `not used` with the reason the file cannot be used (unreadable, bad signature, expired, …);
+- `waiting`: a downloaded list newer than the applied one, which `weave models apply` would apply;
+- `last check`, `next check` (when the 24-hour or 1-hour throttle lets a background refresh check again) and `last error`, the last failed check in words;
+- `skipped`: agent names the list carries that this version does not define;
+- for every builtin agent, its merged `models` list with each entry's source: `project`, `global`, `recommended` or `builtin`. An entry's source is the first layer that lists it, in merge order (project, global, recommendations, builtins).
+
+The CLI has no live provider catalog, so `status` shows the lists and their sources, not the model each harness will pick. `weave models check` resolves a list against the catalog fixtures. With `mode off` the cache lines are replaced by how to opt in. `--json` prints the same report as one document. `--project-root <dir>` reads the project config from another directory; `--project` is the boolean flag of `weave validate`, so it is not reused here.
+
+**`update`** checks the channel now, skipping the throttle. In `auto` mode a newer list is applied at once and the command prints the applied `issued` and, per agent, the recommended list before and after (`was` / `now`; `(builtin list only)` when the agent had none). In `notify` mode it prints the same comparison against the waiting list and asks for `weave models apply`. When nothing is newer it says the recommendations are up to date. A failed check is recorded, shown by `status`, and printed in words (`the server answered HTTP 503`, `the signature does not verify: …`).
+
+**`apply`** applies the waiting list and prints the change, or `Nothing to apply` when nothing newer was downloaded.
+
+**`pin`** writes the applied lists for the chosen harness into the global `config.weave` as explicit `models` lines, so they no longer depend on the recommendations. For each agent in the list the new line is the agent's existing global entries followed by the recommended ones, without duplicates, so the effective lists do not change. The edit is textual and located with the DSL lexer, so the rest of the file is kept byte for byte, comments included:
+
+- an `agent <name> { … }` block with a `models` field gets that field replaced (the last block, when an agent is declared twice, as the parser keeps it);
+- a block without `models` gets one line before its closing brace, at its fields' indentation;
+- an agent without a block gets a new `agent <name> { models [...] }` block, appended under a `# Pinned by weave models pin: …` comment.
+
+The edited text is parsed again and compared with the original; if anything but those agents' `models` would change, nothing is written. `pin` prints the diff first and asks for confirmation; `--yes` skips the question, and without a terminal and without `--yes` it writes nothing and exits 1. Declining writes nothing and exits 0. The global config applies to every harness, so pin from the harness you use most. Afterwards, set `settings { model_updates { mode off } }` to stop fetching. The code is [`pin-editor.ts`](../packages/cli/src/models/pin-editor.ts).
+
+### Exit codes
+
+| Command | `0` | `1` |
+| --- | --- | --- |
+| `status` | The report was printed, including for `mode off` and for OpenCode V1 and Copilot CLI. | A usage error, or a config that does not load. |
+| `update` | The check succeeded: a list was applied, a newer list is waiting, or the recommendations are up to date. | Model updates are off, the harness takes no recommendations, the check failed (network, timeout, HTTP status, signature, schema, freshness), another process holds the cache lock, or the cache could not be written. |
+| `apply` | A list was applied, or there was nothing to apply. | Model updates are off, the harness takes no recommendations, the downloaded list no longer verifies (for example it expired), the lock is held, or the cache could not be written. |
+| `pin` | The global config was written, already held these models, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, or the write failed. |
+
 ## `weave models check`
 
 Checks a published model recommendations list ([Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#the-published-file), the normative format) before it is signed and published. The tryweave.io deploy workflow runs it on every list; maintainers run it locally while writing one.
@@ -779,13 +838,19 @@ packages/cli/src/
 │   ├── migrate.ts     # weave init migrate — orchestration flow
 │   ├── prompt.ts      # weave prompt
 │   ├── validate.ts    # weave validate
-│   ├── models.ts      # weave models check
+│   ├── models.ts      # weave models check, and routing for the other models subcommands
+│   ├── model-updates.ts # weave models status | update | apply | pin
 │   └── runtime.ts     # weave runtime
 ├── models/
 │   ├── catalogs/      # provider catalog fixtures (JSON), shipped in the bundle
 │   ├── catalogs.ts    # the fixed catalog set, including Copilot + OpenAI
 │   ├── resolve.ts     # the OpenCode 2 / Pi catalog rule and the Claude Code tier rule
-│   └── expectations.ts # the --expect file format and comparison
+│   ├── expectations.ts # the --expect file format and comparison
+│   ├── harness.ts     # --harness for status/update/apply/pin/validate, OpenCode 2 by default
+│   ├── recommendations-session.ts # the cache, the merged config and each layer, injected for tests
+│   ├── sources.ts     # each merged models entry's source
+│   ├── report.ts      # shared wording, validate's lines, was/now changes
+│   └── pin-editor.ts  # the textual models edit weave models pin makes
 └── migration/
     ├── types.ts                  # Shared migration types (MigrationPlan, ConversionWarning, etc.)
     ├── legacy-jsonc-converter.ts # JSONC-to-DSL conversion logic

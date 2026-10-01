@@ -11,6 +11,8 @@ import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
 import type { FileSystem } from "./fs/file-system.js";
 import { RealTerminal, type TerminalIO } from "./io/terminal.js";
+import type { CliModelRecommendationsDeps } from "./models/recommendations-session.js";
+import type { PromptAdapter } from "./prompt/index.js";
 import { defaultThemeManager } from "./theme/colors.js";
 import { defaultThemeRenderer } from "./theme/render.js";
 
@@ -43,6 +45,14 @@ export interface CliDeps {
    * system clock.
    */
   now?: () => Date;
+  /**
+   * Network and cache access for model recommendations, used by the
+   * `weave models` cache commands and `weave validate`. Defaults to
+   * tryweave.io and the cache under the global config directory.
+   */
+  modelRecommendations?: CliModelRecommendationsDeps;
+  /** Interactive prompts for `weave models pin`. Defaults to the terminal. */
+  prompt?: PromptAdapter;
 }
 
 function defaultDeps(): CliDeps {
@@ -63,7 +73,16 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled, fs, env, now } = {
+  const {
+    argv,
+    terminal,
+    colorEnabled,
+    fs,
+    env,
+    now,
+    modelRecommendations,
+    prompt,
+  } = {
     ...defaultDeps(),
     ...deps,
   };
@@ -128,7 +147,14 @@ export async function run(
       // Delegate to validate command — imported dynamically to keep
       // this router lean and avoid circular deps during init
       const { runValidate } = await import("./commands/validate.js");
-      return runValidate({ terminal, theme, flags, fs });
+      return runValidate({
+        terminal,
+        theme,
+        flags,
+        fs,
+        now,
+        modelRecommendations,
+      });
     }
 
     case "init": {
@@ -193,7 +219,16 @@ export async function run(
 
     case "models": {
       const { runModels } = await import("./commands/models.js");
-      return runModels({ terminal, theme, flags, rest, fs, now });
+      return runModels({
+        terminal,
+        theme,
+        flags,
+        rest,
+        fs,
+        now,
+        modelRecommendations,
+        prompt,
+      });
     }
 
     case "unknown": {

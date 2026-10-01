@@ -39,7 +39,11 @@ export interface CliDeps {
     env?: Record<string, string | undefined>;
     // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
     fs?: FileSystem_2;
+    // Warning: (ae-forgotten-export) The symbol "CliModelRecommendationsDeps" needs to be exported by the entry point index.d.ts
+    modelRecommendations?: CliModelRecommendationsDeps;
     now?: () => Date;
+    // Warning: (ae-forgotten-export) The symbol "PromptAdapter" needs to be exported by the entry point index.d.ts
+    prompt?: PromptAdapter;
     // (undocumented)
     terminal: TerminalIO;
 }
@@ -131,7 +135,7 @@ export interface ParsedArgs {
         outDir?: string;
         init?: boolean;
         bootstrapDir?: string;
-        modelsSubcommand?: "check";
+        modelsSubcommand?: "check" | "status" | "update" | "apply" | "pin";
         modelsEnvelope?: boolean;
         modelsExpect?: string;
         modelsKey?: string;

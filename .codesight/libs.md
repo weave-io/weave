@@ -282,6 +282,7 @@
   - interface MigrateContext
   - type InitScope
   - type InitPlan
+- `packages/cli/src/commands/model-updates.ts` — function runModelUpdates: (ctx, subcommand) => Promise<Result<number, CliError>>
 - `packages/cli/src/commands/models.ts`
   - function modelsUsage: (theme) => string[]
   - function runModels: (ctx) => Promise<Result<number, CliError>>
@@ -730,12 +731,44 @@
   - interface ExpectationMismatch
   - type ModelExpectations
   - const ModelExpectationsSchema
+- `packages/cli/src/models/harness.ts`
+  - function chooseHarness: (flag) => Result<HarnessChoice, CliError>
+  - function unsupportedMessage: (choice, {...}) => string
+  - type HarnessChoice
+  - const DEFAULT_RECOMMENDATIONS_HARNESS: RecommendationsHarness
+- `packages/cli/src/models/pin-editor.ts`
+  - function describePinEditError: (error) => string
+  - function modelsField: (models) => string
+  - function pinModels: (source, lists, header) => Result<PinEdit, PinEditError>
+  - interface PinHunk
+  - interface PinEdit
+  - type PinnedLists
+  - _...1 more_
+- `packages/cli/src/models/recommendations-session.ts`
+  - function formatConfigLoadErrors: (errors) => string[]
+  - class RecommendationsSession
+  - interface RecommendedLists
+  - interface UserLayers
+  - type CliModelRecommendationsDeps
+- `packages/cli/src/models/report.ts`
+  - function recommendationsDiagnostic: (diagnostics) => ConfigLoadDiagnostic | undefined
+  - function firstListHint: (mode) => string
+  - function validateSummaryLines: (config, diagnostics) => string[]
+  - function listChanges: (before, after) => ListChange[]
+  - function renderListChanges: (changes, harness) => string[]
+  - interface ListChange
+  - _...1 more_
 - `packages/cli/src/models/resolve.ts`
   - class RecommendationsResolver
   - interface AgentResolution
   - interface CatalogResolution
   - type EntryRejection
   - const CLAUDE_CODE_CATALOG: CatalogId
+- `packages/cli/src/models/sources.ts`
+  - function attributeModels: (merged, layers, agents) => Record<string, AttributedModel[]>
+  - interface AttributedModel
+  - interface ModelLayers
+  - type ModelSource
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter

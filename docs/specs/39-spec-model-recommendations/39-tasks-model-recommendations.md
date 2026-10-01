@@ -59,10 +59,10 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 
 ## 5. CLI — PR:
 
-- [ ] 5.1 `weave models status`: mode, channel, applied `issued` and `evidence`, waiting update, last check and error, per-agent merged list with each entry's source, skipped agent names.
-- [ ] 5.2 `weave models update` (forced refresh), `weave models apply` (promote `latest`), `weave models pin` (write explicit `models` into the global config after printing the diff and asking; `--yes` for scripts).
-- [ ] 5.3 `weave validate` (every form) reports the mode, the applied date, and a skipped layer with its reason.
-- [ ] 5.4 [CLI](../../cli.md) documents the `models` command group; API report (`packages/cli/etc/weave-cli.api.md`) updated.
+- [x] 5.1 `weave models status`: mode, channel, applied `issued` and `evidence`, waiting update, last check and error, per-agent merged list with each entry's source, skipped agent names.
+- [x] 5.2 `weave models update` (forced refresh), `weave models apply` (promote `latest`), `weave models pin` (write explicit `models` into the global config after printing the diff and asking; `--yes` for scripts).
+- [x] 5.3 `weave validate` (every form) reports the mode, the applied date, and a skipped layer with its reason.
+- [x] 5.4 [CLI](../../cli.md) documents the `models` command group; API report (`packages/cli/etc/weave-cli.api.md`) updated. Also: the commands report for OpenCode 2 unless `--harness` says otherwise, `--project-root` (not `--project`, which is `validate`'s boolean) picks the project, and `pin` edits only `models` fields, located with the lexer, and verifies the edit before writing.
 
 ## 6. OpenCode 2 — PR: #292
 
