@@ -50,6 +50,7 @@
 
 import type { TrajectorySummary } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
+import { type EvalConfigMode, isEvalConfigMode } from "./config-mode.js";
 import {
   type BoundedExplanation,
   EXPLANATION_MAX_CHARS,
@@ -437,6 +438,7 @@ export function sanitizeProvenanceManifest(
   gitSha: string;
   records: SanitizedProvenanceRecord[];
   judge?: JudgeIdentity;
+  configMode?: EvalConfigMode;
 } {
   return {
     version: manifest.version,
@@ -446,6 +448,11 @@ export function sanitizeProvenanceManifest(
     // The judge's two slug fields, copied by name: nothing else rides along.
     ...(manifest.judge !== undefined
       ? { judge: { id: manifest.judge.id, version: manifest.judge.version } }
+      : {}),
+    // Only a known mode is copied, so nothing else can ride along.
+    ...(manifest.configMode !== undefined &&
+    isEvalConfigMode(manifest.configMode)
+      ? { configMode: manifest.configMode }
       : {}),
   };
 }

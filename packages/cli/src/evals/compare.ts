@@ -27,6 +27,13 @@
  * - the same judge, when both runs record one (`JudgeMismatch`). A run that
  *   records none — every run before task 16.4 — has an **unknown** judge;
  *   the comparison proceeds and says so on every report;
+ * - the same config mode (`ConfigModeMismatch`): prompts composed from the
+ *   builtins only and prompts composed with a project's `.weave` overrides
+ *   are not the same prompts by design. A run that records no mode — every
+ *   run before Spec 39 task 0.1 — composed its prompts with the project
+ *   config, so it reads as `project`. The check is skipped when no compared
+ *   score depends on the mode: trajectory-track runs and
+ *   `tapestry-category-routing` never composed from it (`configModeApplies`);
  * - neither run a dry run (`DryRunBundle`).
  *
  * Refusals are typed `CompareError` values; nothing here throws.
@@ -44,6 +51,13 @@ import {
   SIGNIFICANCE_LEVEL,
   wilsonInterval,
 } from "./binomial-stats.js";
+import {
+  configModeApplies,
+  EVAL_CONFIG_MODES,
+  type EvalConfigMode,
+  UNRECORDED_EVAL_CONFIG_MODE,
+} from "./config-mode.js";
+import { EVAL_TRACKS, type EvalTrack } from "./eval-track.js";
 import { type AttemptTally, tallyAttempts } from "./pass-rates.js";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +92,13 @@ export interface RunSnapshot {
   repeatCount: number;
   /** The recorded judge, or `null` when the bundle records none. */
   judge: JudgeRecord | null;
+  /**
+   * The Weave config the prompts were composed from. A bundle that records
+   * none reads as `project` (`UNRECORDED_EVAL_CONFIG_MODE`).
+   */
+  configMode: EvalConfigMode;
+  /** The `--track` the run was restricted to, or `null` for both tracks. */
+  track: EvalTrack | null;
   /** Agent name → composed-prompt SHA-256. */
   promptHashes: Map<string, string>;
   attempts: ComparedAttempt[];
@@ -130,6 +151,16 @@ export type CompareError =
       type: "RepeatCountMismatch";
       baseline: number;
       candidate: number;
+      message: string;
+    }
+  | {
+      /**
+       * The runs composed their prompts from different Weave configs: one
+       * from the builtins only, the other with a project's `.weave`.
+       */
+      type: "ConfigModeMismatch";
+      baseline: EvalConfigMode;
+      candidate: EvalConfigMode;
       message: string;
     }
   | {
@@ -200,12 +231,21 @@ export type JudgeStatus =
       candidate: JudgeRecord | null;
     };
 
+/**
+ * The config mode both runs composed from, or `not-applicable` when no
+ * compared score depends on it (see `configModeApplies`).
+ */
+export type ConfigModeStatus =
+  | { kind: "same"; mode: EvalConfigMode }
+  | { kind: "not-applicable" };
+
 /** A full comparison, ready to print. */
 export interface RunComparison {
   baseline: RunSnapshot;
   candidate: RunSnapshot;
   repeatCount: number;
   judge: JudgeStatus;
+  configMode: ConfigModeStatus;
   promptChanges: PromptChange[];
   /** Rows tested together under Holm's adjustment. */
   testedRows: number;
@@ -234,8 +274,10 @@ const BundleIndexSchema = z.object({
   runSummary: z.object({
     suites: z.array(SuiteNameSchema),
     repeatCount: z.number().int().min(2).optional(),
+    track: z.enum(EVAL_TRACKS).optional(),
   }),
   judge: JudgeRecordSchema.optional(),
+  configMode: z.enum(EVAL_CONFIG_MODES).optional(),
 });
 
 const ScoreFileSchema = z.object({
@@ -259,6 +301,11 @@ const PromptHashesSchema = z.object({
 
 /** Where a judge may be recorded, besides `bundle-index.json`. */
 const JudgeCarrierSchema = z.object({ judge: JudgeRecordSchema.optional() });
+
+/** Where a config mode may be recorded, besides `bundle-index.json`. */
+const ConfigModeCarrierSchema = z.object({
+  configMode: z.enum(EVAL_CONFIG_MODES).optional(),
+});
 
 const RUN_ID_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -289,7 +336,8 @@ export class RunBundleReader {
             ResultAsync.combine([
               this.readPromptHashes(dir),
               this.readJudge(dir, index.judge),
-            ]).map(([promptHashes, judge]) => ({
+              this.readConfigMode(dir, index.configMode),
+            ]).map(([promptHashes, judge, configMode]) => ({
               ref,
               dir,
               runId: index.runId,
@@ -297,6 +345,8 @@ export class RunBundleReader {
               dryRun: index.dryRun,
               repeatCount: index.runSummary.repeatCount ?? 1,
               judge,
+              configMode: configMode as EvalConfigMode,
+              track: index.runSummary.track ?? null,
               promptHashes: promptHashes as Map<string, string>,
               attempts: scoreFiles.flatMap((file) =>
                 file.results.map((row) => ({
@@ -428,6 +478,24 @@ export class RunBundleReader {
     });
   }
 
+  /**
+   * The config mode the prompts were composed from: `bundle-index.json`'s
+   * `configMode`, else the provenance manifest's, else `project` — what
+   * every run made before the mode was recorded used.
+   */
+  private readConfigMode(
+    dir: string,
+    fromIndex: EvalConfigMode | undefined,
+  ): ResultAsync<EvalConfigMode, CompareError> {
+    if (fromIndex !== undefined) {
+      return ResultAsync.fromSafePromise(Promise.resolve(fromIndex));
+    }
+    return this.optionalJson(
+      join(dir, "provenance-manifest.json"),
+      ConfigModeCarrierSchema,
+    ).map((manifest) => manifest?.configMode ?? UNRECORDED_EVAL_CONFIG_MODE);
+  }
+
   private optionalJson<T>(
     path: string,
     schema: z.ZodType<T>,
@@ -455,8 +523,8 @@ function toJudgeRecord(raw: z.infer<typeof JudgeRecordSchema>): JudgeRecord {
 /**
  * Compare two run snapshots, or refuse with the reason they cannot be.
  *
- * Checks, in order: dry runs, judge, models, case × model pairs, repeat
- * count. Then, per suite × model, a two-sided Fisher's exact test on scored
+ * Checks, in order: dry runs, judge, config mode, models, case × model
+ * pairs, repeat count. Then, per suite × model, a two-sided Fisher's exact test on scored
  * attempts (errored ones left out), Holm-adjusted across every row that
  * could reach significance at its sample size.
  */
@@ -479,6 +547,7 @@ export function compareRuns(
     candidate,
     repeatCount: baseline.repeatCount,
     judge: judgeStatus(baseline.judge, candidate.judge),
+    configMode: configModeStatus(baseline, candidate),
     promptChanges: promptChanges(baseline, candidate),
     testedRows: testable.length,
     significanceLevel: SIGNIFICANCE_LEVEL,
@@ -501,6 +570,9 @@ function checkComparable(
 
   const judgeRefusal = checkJudges(baseline.judge, candidate.judge);
   if (judgeRefusal !== null) return judgeRefusal;
+
+  const configModeRefusal = checkConfigModes(baseline, candidate);
+  if (configModeRefusal !== null) return configModeRefusal;
 
   const models = difference(
     baseline.attempts.map((a) => a.modelId),
@@ -559,6 +631,46 @@ function checkComparable(
   }
 
   return null;
+}
+
+/** Whether either run's scores depend on its config mode. */
+function configModeMatters(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): boolean {
+  return [baseline, candidate].some((run) =>
+    configModeApplies({
+      track: run.track,
+      suites: [...new Set(run.attempts.map((a) => a.suite))],
+    }),
+  );
+}
+
+function checkConfigModes(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): CompareError | null {
+  if (baseline.configMode === candidate.configMode) return null;
+  if (!configModeMatters(baseline, candidate)) return null;
+  return {
+    type: "ConfigModeMismatch",
+    baseline: baseline.configMode,
+    candidate: candidate.configMode,
+    message:
+      `The baseline composed its prompts from the ${baseline.configMode} config and the candidate from the ` +
+      `${candidate.configMode} config, so a pass-rate difference could come from the config, not the prompt change. ` +
+      `Re-run the candidate with --config ${baseline.configMode}.`,
+  };
+}
+
+function configModeStatus(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): ConfigModeStatus {
+  if (!configModeMatters(baseline, candidate)) {
+    return { kind: "not-applicable" };
+  }
+  return { kind: "same", mode: baseline.configMode };
 }
 
 function checkJudges(

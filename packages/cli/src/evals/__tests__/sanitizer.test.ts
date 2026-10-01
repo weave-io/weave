@@ -40,6 +40,7 @@ import {
   FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS,
   REDACTED,
   sanitizeCaseResultSummary,
+  sanitizeProvenanceManifest,
   sanitizeScoreRecord,
   truncateExplanation,
 } from "../sanitizer.js";
@@ -947,5 +948,29 @@ describe("sanitizeCaseResultSummary — repeat fields", () => {
     const sanitized = sanitizeCaseResultSummary({ ...base, errored: false });
     expect(sanitized).not.toHaveProperty("attempt");
     expect(sanitized).not.toHaveProperty("errored");
+  });
+});
+
+describe("sanitizeProvenanceManifest — config mode", () => {
+  const manifest = {
+    version: 1,
+    producedAt: "2026-01-15T12:00:00.000Z",
+    gitSha: "abc1234",
+    records: [],
+  };
+
+  it("copies a known config mode", () => {
+    expect(
+      sanitizeProvenanceManifest({ ...manifest, configMode: "builtin" })
+        .configMode,
+    ).toBe("builtin");
+  });
+
+  it("drops a config mode it does not know", () => {
+    const sanitized = sanitizeProvenanceManifest({
+      ...manifest,
+      configMode: "home-dir" as unknown as "builtin",
+    });
+    expect("configMode" in sanitized).toBe(false);
   });
 });

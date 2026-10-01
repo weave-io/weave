@@ -25,6 +25,7 @@ import {
   type TrajectorySummary,
 } from "@weaveio/weave-core";
 import { z } from "zod";
+import type { EvalConfigMode } from "./config-mode.js";
 import type { EvalTrack } from "./eval-track.js";
 import type { JudgeIdentity } from "./report-schema.js";
 
@@ -872,6 +873,11 @@ export interface PromptProvenanceManifest {
    * bundle is written. Absent when no judge scored it.
    */
   judge?: JudgeIdentity;
+  /**
+   * The Weave config the prompts were composed from (Spec 39 task 0.1),
+   * added when the bundle is written.
+   */
+  configMode?: EvalConfigMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -1840,6 +1846,12 @@ export interface EvalBundle {
    * and on a run assembled without one.
    */
   judge?: JudgeIdentity;
+  /**
+   * The Weave config the run composed its prompts from (`weave eval run
+   * --config`, Spec 39 task 0.1). Absent on a bundle assembled without one;
+   * `weave eval compare` reads an absent mode as `project`.
+   */
+  configMode?: EvalConfigMode;
 }
 
 /**

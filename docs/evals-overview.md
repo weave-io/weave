@@ -59,6 +59,12 @@ Every judge call goes to **TypeSafe Jev** (`typesafe/jev-1.13`, pinned to the da
 - **Known blind spots.** In the acceptance check, Jev passed two of the planted failures: a Weft rejection whose BLOCKER lines name no file, and a Pattern plan that invents a command. Deterministic signals partly cover both (`weft-review-traced-true-positive`, `pattern-plan-no-invented-commands`), but on the judged cases the verdict is still Jev's.
 - **Evidence.** Jev was accepted on 28 of 30 labelled items, catching 10 of 12 fails: see the [judge acceptance check](artifacts/judge-bakeoff-2026-09-23.md). The questions, score mapping and how to change the judge are in [The judge](agent-evals.md#the-judge).
 
+## Which prompts are scored
+
+A run composes each agent's prompt from the **builtin config only** unless you ask otherwise: no project `.weave/` and no global `~/.weave/config.weave` is read. That makes a run score the prompts users get, on any machine. This repository's own `.weave/` overrides Shuttle and Weft for work on Weave itself, and runs made here before 1 Oct 2026 scored those overrides (the 24 Sep baseline and the 25 and 29 Sep model records); their Shuttle and Weft numbers need re-scoring before they are cited.
+
+`--config project` composes from the working directory's and the global `.weave` instead, for prompt work on those overrides. The mode is recorded in every bundle, and `eval compare` refuses to compare runs made in different modes. See [Choose the config](agent-evals.md#choose-the-config-prompts-are-composed-from---config).
+
 ## Commands
 
 All of these run from the repository root. Live runs need `OPENROUTER_API_KEY`. Add `--dry-run` to any `eval run` to check the suite, case and model names for free, with no key needed. Filters match exactly: `--agent` takes a suite id or alias, `--case` a case id, `--model` a matrix id.
@@ -97,7 +103,7 @@ It reads only the two local bundles, so it makes no model calls and needs no key
 - **no detectable change**: the data cannot tell the two runs apart. It does *not* mean the runs are equal. With 25 attempts a side, a move from 60% to 80% usually goes undetected. The fix is a higher `--repeat` or more cases.
 - **no detectable change: too few scored attempts**: nothing this small could ever reach significance. Re-run both with a higher `--repeat`.
 
-It refuses runs that used different models, cases, repeat counts or judges, and it refuses dry runs. See [Measure a change](agent-evals.md#measure-a-change) and [Compare two runs](agent-evals.md#compare-two-runs-eval-compare).
+It refuses runs that used different models, cases, repeat counts, judges or config modes, and it refuses dry runs. See [Measure a change](agent-evals.md#measure-a-change) and [Compare two runs](agent-evals.md#compare-two-runs-eval-compare).
 
 **5. Trajectory cases.** These need Podman and the sandbox image. Build the image once, and again after pulling changes:
 

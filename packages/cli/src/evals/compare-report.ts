@@ -12,6 +12,7 @@ import type { ProportionInterval } from "./binomial-stats.js";
 import {
   type ComparedSide,
   type ComparisonVerdict,
+  type ConfigModeStatus,
   describeJudge,
   type JudgeStatus,
   type PromptChange,
@@ -59,8 +60,16 @@ export class ComparisonReport {
       `  Design:   ${cases} ${plural(cases, "case")} × ${models} ${plural(models, "model")}, ` +
         `each case ${comparison.repeatCount} ${plural(comparison.repeatCount, "time")} per model`,
       `  Judge:    ${this.judgeLine(comparison.judge)}`,
+      `  Config:   ${this.configLine(comparison.configMode)}`,
       ...this.promptLines(comparison.promptChanges),
     ];
+  }
+
+  private configLine(status: ConfigModeStatus): string {
+    if (status.kind === "same") return status.mode;
+    return this.theme.dim(
+      "not applicable (no compared case composes its prompt from it)",
+    );
   }
 
   private judgeLine(status: JudgeStatus): string {

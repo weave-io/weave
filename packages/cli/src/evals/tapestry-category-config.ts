@@ -10,9 +10,10 @@
  * (`EvalCase.categories`) and this composer builds the config a user with
  * exactly those categories would have:
  *
- *   1. The builtin config, loaded through `loadConfig()` with a file reader
- *      that finds no files — no global or project `.weave` is read, so the
- *      developer's own categories never leak into a case.
+ *   1. The builtin config, loaded in the `builtin` eval config mode
+ *      (`config-mode.ts`) — no global or project `.weave` is read, so the
+ *      developer's own categories never leak into a case. This holds in
+ *      `--config project` runs too: a case's categories are its own.
  *   2. A case layer — the declared categories, and `disable agents` for the
  *      generated shuttle of each `disabled` one — validated by
  *      `WeaveConfigSchema` and merged with `mergeConfigsResult()`, as a
@@ -24,35 +25,15 @@
  * is what the engine renders from `tapestry.md`.
  */
 
-import {
-  type FileReader,
-  loadConfig,
-  mergeConfigsResult,
-} from "@weaveio/weave-config";
+import { mergeConfigsResult } from "@weaveio/weave-config";
 import { type WeaveConfig, WeaveConfigSchema } from "@weaveio/weave-core";
 import { materializeAgents } from "@weaveio/weave-engine";
 import { err, errAsync, ok, ResultAsync } from "neverthrow";
+import { EvalConfigLoader } from "./config-mode.js";
 import type { EvalCase, EvalCaseCategory, ProvenanceError } from "./types.js";
 
 /** The agent whose prompt this composer produces. */
 export const TAPESTRY_AGENT_NAME = "tapestry";
-
-/**
- * A reader that finds no config files, so `loadConfig()` returns the builtin
- * layer alone. The root it is given is never read.
- */
-const NO_CONFIG_FILES: FileReader = {
-  exists: () => Promise.resolve(false),
-  read: (path) =>
-    errAsync({
-      type: "FileReadError",
-      path,
-      cause: "no config files are read when composing a case",
-    }),
-};
-
-/** Placeholder project root; `NO_CONFIG_FILES` never touches it. */
-const UNREAD_PROJECT_ROOT = "/weave-eval-case";
 
 /**
  * Composes Tapestry's system prompt for one `tapestry-category-routing` case.
@@ -69,7 +50,7 @@ export class TapestryCasePromptComposer {
   }
 
   private loadBuiltins(): ResultAsync<WeaveConfig, ProvenanceError> {
-    return loadConfig(UNREAD_PROJECT_ROOT, NO_CONFIG_FILES).mapErr(
+    return new EvalConfigLoader().load("builtin").mapErr(
       (errors): ProvenanceError => ({
         type: "ConfigLoadError",
         message: `Failed to load the builtin Weave config: ${errors.map((e) => e.type).join(", ")}`,

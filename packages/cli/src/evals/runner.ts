@@ -65,6 +65,10 @@ import {
   scoredPassRate,
 } from "./case-outcomes.js";
 import {
+  DEFAULT_EVAL_CONFIG_MODE,
+  type EvalConfigMode,
+} from "./config-mode.js";
+import {
   type EvalEnvError,
   OPENROUTER_API_KEY_ENV_VAR,
   readEvalEnv,
@@ -89,6 +93,7 @@ import {
   PATTERN_PLANNING_SUITE,
   PatternPlanningRunner,
 } from "./pattern-planning-runner.js";
+import { ConfigModePromptProvider } from "./prompt-snapshots.js";
 import {
   bunGitShaProvider,
   deriveProvenanceManifest,
@@ -650,11 +655,16 @@ export interface SnapshotProvider {
    * Retrieve `PromptSnapshot` records for the named agents.
    *
    * @param agentNames - The agent names to snapshot (e.g. `["loom", "tapestry", "shuttle"]`).
+   * @param configMode - The run's eval config mode: which Weave config the
+   *        prompts are composed from (`config-mode.ts`).
    * @returns A promise resolving to the collected snapshots (may be partial
    *          when individual agents fail to compose — errors are not surfaced
    *          here, snapshots for successfully composed agents are returned).
    */
-  getSnapshots(agentNames: readonly string[]): Promise<PromptSnapshot[]>;
+  getSnapshots(
+    agentNames: readonly string[],
+    configMode: EvalConfigMode,
+  ): Promise<PromptSnapshot[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -689,8 +699,10 @@ export interface EvalOrchestratorOptions {
   /**
    * Prompt provider for all eval-covered agents.
    *
-   * When set, the provider is passed to all suite runners. When omitted, each runner constructs its
-   * own default provider via `composeAgentSnapshots`.
+   * When set, the provider is passed to all suite runners. When omitted, the
+   * text runners share a `ConfigModePromptProvider` for the request's
+   * `configMode`, and `tapestry-category-routing` composes Tapestry per case
+   * from the builtins.
    *
    * Tests always inject a `MockPromptProvider` to avoid git/network/fs calls.
    */
@@ -703,8 +715,9 @@ export interface EvalOrchestratorOptions {
    * manifest so the published bundle contains real prompt hashes — not an
    * empty manifest derived from `[]`.
    *
-   * When omitted, the orchestrator calls `composeAgentSnapshots` from
-   * `prompt-snapshots.ts` (production path). Tests inject a stub that returns
+   * When omitted, the orchestrator takes the snapshots from the run's own
+   * `ConfigModePromptProvider` (production path), the one the text runners
+   * compose from. Tests inject a stub that returns
    * controlled snapshots without any git, file-system, or engine calls.
    *
    * The snapshot provider is separate from `promptProvider` so that:
@@ -790,6 +803,7 @@ export interface EvalOrchestratorOptions {
    */
   loomDelegationMatrixPreflight?: (
     evalsRoot: string | undefined,
+    configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
 }
 
@@ -847,7 +861,16 @@ export class EvalOrchestrator {
   private readonly scorer: AgentEvalsScorer;
   private readonly judge: JudgeIdentity | undefined;
   private readonly promptProvider: PromptProvider | undefined;
-  private readonly snapshotProvider: SnapshotProvider;
+  private readonly snapshotProvider: SnapshotProvider | undefined;
+  /**
+   * The provider each run composes from when no `promptProvider` is
+   * injected: one per run (keyed by its request), so the config is loaded
+   * once and every runner and the provenance hashes share it.
+   */
+  private readonly runPromptProviders = new WeakMap<
+    EvalRunRequest,
+    ConfigModePromptProvider
+  >();
   private readonly gitShaProvider: GitShaProvider;
   private readonly bundleRoot: string;
   private readonly publishMode: BundleWriteMode;
@@ -857,6 +880,7 @@ export class EvalOrchestrator {
   private readonly assembledAt: string | undefined;
   private readonly loomDelegationMatrixPreflight: (
     evalsRoot: string | undefined,
+    configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
 
   constructor(options: EvalOrchestratorOptions) {
@@ -866,8 +890,7 @@ export class EvalOrchestrator {
     this.scorer = options.scorer;
     this.judge = options.judge;
     this.promptProvider = options.promptProvider;
-    this.snapshotProvider =
-      options.snapshotProvider ?? makeDefaultSnapshotProvider();
+    this.snapshotProvider = options.snapshotProvider;
     this.gitShaProvider = options.gitShaProvider ?? bunGitShaProvider;
     this.bundleRoot = options.bundleRoot ?? join(process.cwd(), "eval-bundles");
     this.publishMode = options.publishMode ?? "local";
@@ -877,7 +900,8 @@ export class EvalOrchestrator {
     this.assembledAt = options.assembledAt;
     this.loomDelegationMatrixPreflight =
       options.loomDelegationMatrixPreflight ??
-      ((evalsRoot) => runLoomDelegationMatrixPreflight({ evalsRoot }));
+      ((evalsRoot, configMode) =>
+        runLoomDelegationMatrixPreflight({ evalsRoot, configMode }));
   }
 
   /**
@@ -1202,9 +1226,7 @@ export class EvalOrchestrator {
         // Collect prompt snapshots for the shared eval-covered agent surface
         // before deriving provenance.
         // The snapshot provider returns publishable hash-only records — no raw text.
-        const sharedSnapshots = await this.snapshotProvider.getSnapshots(
-          getEvalCoveredPromptAgents(),
-        );
+        const sharedSnapshots = await this.sharedSnapshots(request);
         // Prompts a runner composed itself (per case) are recorded next to
         // the shared ones, so provenance hashes what was actually sent.
         const snapshots = [
@@ -1432,7 +1454,7 @@ export class EvalOrchestrator {
       const runner = new LoomRoutingRunner({
         modelClient: this.modelClient,
         scorer: this.scorer,
-        promptProvider: this.promptProvider,
+        promptProvider: this.promptProviderFor(request),
         evalsRoot: this.evalsRoot,
       });
 
@@ -1452,7 +1474,10 @@ export class EvalOrchestrator {
     // This preflight always runs (production default calls the real
     // `runLoomDelegationMatrixPreflight`; tests inject a stub — see
     // `EvalOrchestratorOptions.loomDelegationMatrixPreflight`).
-    return this.loomDelegationMatrixPreflight(this.evalsRoot)
+    return this.loomDelegationMatrixPreflight(
+      this.evalsRoot,
+      configModeOf(request),
+    )
       .mapErr(
         (preflightErr): RunnerError => ({
           type: "FixtureLoadError",
@@ -1480,7 +1505,7 @@ export class EvalOrchestrator {
     const runner = new TapestryExecutionRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1527,7 +1552,7 @@ export class EvalOrchestrator {
     const runner = new PatternPlanningRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1546,7 +1571,7 @@ export class EvalOrchestrator {
     const runner = new ShuttleExecutionRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1566,7 +1591,7 @@ export class EvalOrchestrator {
     const runner = new SpindleToolsRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1585,7 +1610,7 @@ export class EvalOrchestrator {
     const runner = new WeftReviewRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1604,7 +1629,7 @@ export class EvalOrchestrator {
     const runner = new WarpSecurityRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
-      promptProvider: this.promptProvider,
+      promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
 
@@ -1614,6 +1639,43 @@ export class EvalOrchestrator {
       dryRun: request.dryRun,
       rawArtifacts: request.rawArtifacts,
     });
+  }
+
+  /**
+   * The prompt provider a text runner gets: the injected one, else one that
+   * composes prompts from the request's config mode.
+   */
+  private promptProviderFor(request: EvalRunRequest): PromptProvider {
+    if (this.promptProvider !== undefined) return this.promptProvider;
+    return this.runPromptProvider(request);
+  }
+
+  /** The run's own `ConfigModePromptProvider`, created on first use. */
+  private runPromptProvider(request: EvalRunRequest): ConfigModePromptProvider {
+    const existing = this.runPromptProviders.get(request);
+    if (existing !== undefined) return existing;
+    const created = new ConfigModePromptProvider(configModeOf(request));
+    this.runPromptProviders.set(request, created);
+    return created;
+  }
+
+  /**
+   * Hash-only snapshots of every eval-covered prompt, for provenance: from
+   * the injected `snapshotProvider`, else from the run's own provider, so
+   * the hashes describe the prompts the runners were sent. A failure yields
+   * no snapshots; the manifest is still written, with no records.
+   */
+  private async sharedSnapshots(
+    request: EvalRunRequest,
+  ): Promise<PromptSnapshot[]> {
+    const agentNames = getEvalCoveredPromptAgents();
+    if (this.snapshotProvider !== undefined) {
+      return this.snapshotProvider.getSnapshots(
+        agentNames,
+        configModeOf(request),
+      );
+    }
+    return this.runPromptProvider(request).snapshots(agentNames).unwrapOr([]);
   }
 
   // ---------------------------------------------------------------------------
@@ -1734,6 +1796,9 @@ export class EvalOrchestrator {
             remoteSequenceReader,
             repeatCount: request.repeat ?? 1,
             judge: this.judge,
+            // Recorded so `weave eval compare` can refuse runs whose prompts
+            // came from different configs.
+            configMode: configModeOf(request),
             // Recorded so the dashboard indexes keep a trajectory run from
             // replacing the text run `latest.json` points at.
             track: request.track,
@@ -2672,23 +2737,9 @@ export function buildEvalRunner(
 }
 
 // ---------------------------------------------------------------------------
-// Default SnapshotProvider — production path
+// Runner-composed snapshots
 // ---------------------------------------------------------------------------
 
-/**
- * Build the default `SnapshotProvider` used when no override is injected.
- *
- * The default provider calls `composeAgentSnapshots` from `prompt-snapshots.ts`
- * to hash all eval-covered prompts using the real `@weaveio/weave-config` and
- * `@weaveio/weave-engine` composition pipeline. Errors during snapshot composition for
- * individual agents are swallowed — the provider returns whatever snapshots it
- * could collect, possibly an empty array. The orchestrator then derives a
- * manifest from whatever snapshots are available.
- *
- * This is the production path; tests always inject a stub `SnapshotProvider`
- * via `EvalOrchestratorOptions.snapshotProvider` to avoid file I/O, git, and
- * engine calls.
- */
 /**
  * The prompts runners composed themselves, one snapshot per agent name. A
  * runner is called once per model, so the same case prompt arrives once per
@@ -2706,31 +2757,9 @@ function runnerComposedSnapshots(
   return [...byAgent.values()];
 }
 
-function makeDefaultSnapshotProvider(): SnapshotProvider {
-  return {
-    async getSnapshots(
-      agentNames: readonly string[],
-    ): Promise<PromptSnapshot[]> {
-      try {
-        const { composeAgentSnapshots } = await import("./prompt-snapshots.js");
-        const result = await composeAgentSnapshots({
-          agentNames,
-          rawArtifacts: false,
-        });
-        if (result.isErr()) {
-          // Config load failure — return empty; orchestrator continues with no-op manifest
-          return [];
-        }
-        // Return successfully composed snapshots; per-agent errors are already
-        // collected in result.value.errors and the provider ignores them (partial
-        // provenance is better than no provenance).
-        return result.value.snapshots;
-      } catch {
-        // Dynamic import failed (unlikely in production) — return empty
-        return [];
-      }
-    },
-  };
+/** The request's config mode; a request without one runs `builtin`. */
+function configModeOf(request: EvalRunRequest): EvalConfigMode {
+  return request.configMode ?? DEFAULT_EVAL_CONFIG_MODE;
 }
 
 /** The key `writeRawArtifacts` and `buildCaseReports` share for one case result. */

@@ -26,13 +26,17 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import patternPrompt from "../../../../config/prompts/pattern.md" with {
   type: "text",
 };
 import {
+  ConfigModePromptProvider,
   composeAgentSnapshots,
   composeSnapshot,
   DEFAULT_SNAPSHOT_AGENTS,
+  snapshotComposedPrompt,
 } from "../prompt-snapshots.js";
 import { EVAL_SHORT_AGENT_FILTERS } from "../types.js";
 
@@ -662,5 +666,189 @@ describe("SHA-256 hash stability contract", () => {
 
     // All runs must produce the same hash
     expect(new Set(hashes).size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config mode — builtin vs project (Spec 39, task 0.1)
+// ---------------------------------------------------------------------------
+
+/** A project root the fixture reader serves; nothing on disk is read. */
+const FIXTURE_PROJECT_ROOT = "/fixture-repo";
+const FIXTURE_PROJECT_CONFIG = `${FIXTURE_PROJECT_ROOT}/.weave/config.weave`;
+const REPO_OVERRIDE_MARKER = "REPO-OVERRIDE-SHUTTLE-PROMPT-7f3a";
+
+/**
+ * A reader serving one project `.weave/config.weave` that overrides
+ * Shuttle's prompt, as this repository's `.weave/` does. Every path asked
+ * for is recorded, so a test can prove nothing was looked up at all.
+ */
+class FixtureConfigReader implements FileReader {
+  readonly asked: string[] = [];
+
+  exists(path: string): Promise<boolean> {
+    this.asked.push(path);
+    return Promise.resolve(path === FIXTURE_PROJECT_CONFIG);
+  }
+
+  read(path: string): ResultAsync<string, ConfigLoadError> {
+    this.asked.push(path);
+    if (path !== FIXTURE_PROJECT_CONFIG) {
+      return errAsync({ type: "FileReadError", path, cause: "not a fixture" });
+    }
+    return okAsync(
+      `agent shuttle {\n  prompt "${REPO_OVERRIDE_MARKER} You are this repo's Shuttle."\n}\n`,
+    );
+  }
+}
+
+async function composedShuttle(
+  options: Parameters<typeof composeAgentSnapshots>[0],
+): Promise<string> {
+  const result = await composeAgentSnapshots({
+    ...options,
+    agentNames: ["shuttle"],
+    rawArtifacts: true,
+  });
+  return result._unsafeUnwrap().rawArtifacts[0]?.composedPrompt ?? "";
+}
+
+describe("composeAgentSnapshots — config mode", () => {
+  it("does not use a project's override prompt in builtin mode", async () => {
+    const reader = new FixtureConfigReader();
+
+    const prompt = await composedShuttle({
+      configMode: "builtin",
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    expect(prompt).not.toContain(REPO_OVERRIDE_MARKER);
+    expect(prompt).toContain(SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT);
+  });
+
+  it("reads no project or global config file in builtin mode", async () => {
+    const reader = new FixtureConfigReader();
+
+    await composedShuttle({
+      configMode: "builtin",
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    expect(reader.asked).toEqual([]);
+  });
+
+  it("uses the project's override prompt in project mode", async () => {
+    const reader = new FixtureConfigReader();
+
+    const prompt = await composedShuttle({
+      configMode: "project",
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    expect(prompt).toContain(REPO_OVERRIDE_MARKER);
+    expect(reader.asked).toContain(FIXTURE_PROJECT_CONFIG);
+  });
+
+  it("defaults to builtin mode", async () => {
+    const reader = new FixtureConfigReader();
+
+    const prompt = await composedShuttle({
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    expect(prompt).not.toContain(REPO_OVERRIDE_MARKER);
+    expect(reader.asked).toEqual([]);
+  });
+
+  it("gives the two modes different Shuttle hashes when a project overrides Shuttle", async () => {
+    const reader = new FixtureConfigReader();
+    const hashOf = async (configMode: "builtin" | "project") =>
+      (
+        await composeAgentSnapshots({
+          configMode,
+          projectRoot: FIXTURE_PROJECT_ROOT,
+          fileReader: reader,
+          agentNames: ["shuttle", "loom"],
+        })
+      )
+        ._unsafeUnwrap()
+        .snapshots.map((s) => `${s.agentName}:${s.hash}`)
+        .sort();
+
+    const [builtinLoom, builtinShuttle] = await hashOf("builtin");
+    const [projectLoom, projectShuttle] = await hashOf("project");
+
+    expect(builtinShuttle).not.toBe(projectShuttle);
+    expect(builtinLoom).toBe(projectLoom);
+  });
+});
+
+describe("ConfigModePromptProvider", () => {
+  it("returns the builtin prompt in builtin mode", async () => {
+    const provider = new ConfigModePromptProvider("builtin", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: new FixtureConfigReader(),
+    });
+
+    const prompt = (await provider.getPrompt("shuttle"))._unsafeUnwrap();
+
+    expect(prompt).not.toContain(REPO_OVERRIDE_MARKER);
+  });
+
+  it("returns the project's prompt in project mode", async () => {
+    const provider = new ConfigModePromptProvider("project", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: new FixtureConfigReader(),
+    });
+
+    const prompt = (await provider.getPrompt("shuttle"))._unsafeUnwrap();
+
+    expect(prompt).toContain(REPO_OVERRIDE_MARKER);
+  });
+
+  it("loads the config once, however many prompts and snapshots it composes", async () => {
+    const reader = new FixtureConfigReader();
+    const provider = new ConfigModePromptProvider("project", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    await provider.getPrompt("shuttle");
+    await provider.getPrompt("loom");
+    await provider.snapshots(["shuttle", "loom"]);
+
+    expect(
+      reader.asked.filter((path) => path === FIXTURE_PROJECT_CONFIG),
+    ).toHaveLength(2); // one exists() and one read(), from a single load
+  });
+
+  it("hashes in its snapshots the same prompt it returns", async () => {
+    const provider = new ConfigModePromptProvider("project", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: new FixtureConfigReader(),
+    });
+
+    const prompt = (await provider.getPrompt("shuttle"))._unsafeUnwrap();
+    const [snapshot] = (await provider.snapshots(["shuttle"]))._unsafeUnwrap();
+    const expected = (
+      await snapshotComposedPrompt("shuttle", prompt, [])
+    )._unsafeUnwrap();
+
+    expect(snapshot?.hash).toBe(expected.hash);
+  });
+
+  it("returns a PromptCompositionError for an agent the config lacks", async () => {
+    const provider = new ConfigModePromptProvider("builtin");
+
+    const result = await provider.getPrompt("no-such-agent");
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "PromptCompositionError",
+      agentName: "no-such-agent",
+    });
   });
 });

@@ -10,7 +10,7 @@
  * The promises: per suite × model it says whether the pass rate changed
  * beyond the noise, and says "no detectable change" honestly when the
  * samples are too small to tell; it refuses runs that differ in design (case
- * set, models, repeat count, judge) rather than compare them; and it never
+ * set, models, repeat count, judge, config mode) rather than compare them; and it never
  * prints a prompt, an answer or anything else from the raw artifacts.
  *
  * The two bundles are written by the real `ArtifactBundleWriter`, then served
@@ -62,6 +62,8 @@ interface RunSpec {
   loomHash?: string;
   dryRun?: boolean;
   judge?: { id: string; version: string };
+  /** `--config`. Omitted writes no mode, as runs before it existed did. */
+  configMode?: "builtin" | "project";
 }
 
 function repeatCountOf(spec: RunSpec): number {
@@ -135,6 +137,7 @@ async function writeRun(root: string, spec: RunSpec): Promise<string> {
       repeatCount: repeatCountOf(spec),
       writeMarkdown: true,
       ...(spec.judge !== undefined ? { judge: spec.judge } : {}),
+      ...(spec.configMode !== undefined ? { configMode: spec.configMode } : {}),
     })
   )._unsafeUnwrap();
   // A raw transcript sits next to the bundle, as `--raw-artifacts` leaves it.
@@ -391,6 +394,54 @@ describe("a maintainer compares runs of different designs", () => {
     expect(result.stderr).toContain("scored by different judges");
     expect(result.stderr).toContain("anthropic/claude-sonnet-4.5@2025-09-29");
     expect(result.stderr).toContain("typesafe/jev-1.13@1.13.0");
+  });
+
+  it("names the config both runs composed their prompts from", async () => {
+    const result = await compare(
+      {
+        ...runOf(BASELINE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        configMode: "builtin",
+      },
+      {
+        ...runOf(CANDIDATE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        configMode: "builtin",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Config:   builtin");
+  });
+
+  it("refuses runs whose prompts came from different Weave configs", async () => {
+    const result = await compare(
+      {
+        ...runOf(BASELINE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        configMode: "project",
+      },
+      {
+        ...runOf(CANDIDATE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        configMode: "builtin",
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "The baseline composed its prompts from the project config and the candidate from the builtin config",
+    );
+    expect(result.stderr).toContain("--config project");
+  });
+
+  it("refuses a builtin run against a run that records no config, which composed from the project config", async () => {
+    const result = await compare(
+      runOf(BASELINE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+      {
+        ...runOf(CANDIDATE_SHA, { caseId: "loom-route-api", outcomes: "PPP" }),
+        configMode: "builtin",
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("from the project config");
   });
 
   it("refuses runs scored by the same judge pinned to different versions", async () => {

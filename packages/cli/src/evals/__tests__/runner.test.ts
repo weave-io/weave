@@ -47,10 +47,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, ok, ResultAsync } from "neverthrow";
+import type { EvalConfigMode } from "../config-mode.js";
 import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { loadModelMatrix, resolveDefaultModels } from "../model-matrix.js";
 import { StubModelClient } from "../openrouter-client.js";
+import {
+  ConfigModePromptProvider,
+  snapshotComposedPrompt,
+} from "../prompt-snapshots.js";
 import type { GitShaProvider } from "../provenance.js";
 import { StubResultsRepoPublisher } from "../results-repo.js";
 import {
@@ -130,11 +135,16 @@ class FailingPromptProvider implements PromptProvider {
  */
 class StubSnapshotProvider implements SnapshotProvider {
   readonly calls: Array<readonly string[]> = [];
+  readonly configModes: EvalConfigMode[] = [];
 
   constructor(private readonly snapshots: PromptSnapshot[] = []) {}
 
-  async getSnapshots(agentNames: readonly string[]): Promise<PromptSnapshot[]> {
+  async getSnapshots(
+    agentNames: readonly string[],
+    configMode: EvalConfigMode,
+  ): Promise<PromptSnapshot[]> {
     this.calls.push(agentNames);
+    this.configModes.push(configMode);
     return this.snapshots;
   }
 }
@@ -1386,6 +1396,170 @@ describe("EvalOrchestrator — snapshot provider for provenance", () => {
 
   it("getEvalCoveredPromptAgents stays aligned with the shared short-agent registry", () => {
     expect(getEvalCoveredPromptAgents()).toEqual(EVAL_SHORT_AGENT_FILTERS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config mode (Spec 39, task 0.1)
+// ---------------------------------------------------------------------------
+
+describe("EvalOrchestrator — config mode", () => {
+  it("composes provenance snapshots from the builtins when the request names no mode", async () => {
+    const snapshotProvider = new StubSnapshotProvider();
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({ snapshotProvider }),
+    );
+
+    await orchestrator.run(makeRequest());
+
+    expect(snapshotProvider.configModes).toEqual(["builtin"]);
+  });
+
+  it("composes provenance snapshots from the project config in project mode", async () => {
+    const snapshotProvider = new StubSnapshotProvider();
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({ snapshotProvider }),
+    );
+
+    await orchestrator.run(makeRequest({ configMode: "project" }));
+
+    expect(snapshotProvider.configModes).toEqual(["project"]);
+  });
+
+  it("resolves Loom's delegation targets in the request's config mode", async () => {
+    const modes: EvalConfigMode[] = [];
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({
+        loomDelegationMatrixPreflight: (_evalsRoot, configMode) => {
+          modes.push(configMode);
+          return ResultAsync.fromSafePromise(Promise.resolve([]));
+        },
+      }),
+    );
+
+    await orchestrator.run(
+      makeRequest({
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+        track: "text",
+        configMode: "project",
+      }),
+    );
+
+    expect(modes).toEqual(["project"]);
+  });
+
+  it("sends text runners the builtin prompt when no provider is injected and no mode is named", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+    const orchestrator = new EvalOrchestrator({
+      ...makeOptions({ modelClient, scorer, evalsRoot: REAL_EVALS_ROOT }),
+      promptProvider: undefined,
+    });
+
+    await orchestrator.run(
+      makeRequest({ agent: "loom", model: modelId, case: caseId }),
+    );
+
+    const builtinLoom = (
+      await new ConfigModePromptProvider("builtin").getPrompt("loom")
+    )._unsafeUnwrap();
+    const systemPrompt = modelClient.calls[0]?.messages.find(
+      (m) => m.role === "system",
+    )?.content;
+    expect(systemPrompt).toBe(builtinLoom);
+  });
+
+  it("records in provenance the hash of the prompt it sent, from one config load", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+    const orchestrator = new EvalOrchestrator({
+      ...makeOptions({
+        modelClient,
+        scorer,
+        evalsRoot: REAL_EVALS_ROOT,
+        bundleRoot: join(TEMP_DIR, `config-mode-provenance-${uid()}`),
+      }),
+      promptProvider: undefined,
+      snapshotProvider: undefined,
+    });
+
+    const summary = (
+      await orchestrator.run(
+        makeRequest({ agent: "loom", model: modelId, case: caseId }),
+      )
+    )._unsafeUnwrap();
+
+    const sent = modelClient.calls[0]?.messages.find(
+      (m) => m.role === "system",
+    )?.content;
+    const sentHash = (
+      await snapshotComposedPrompt("loom", sent ?? "", [])
+    )._unsafeUnwrap().hash;
+    const manifest = await Bun.file(
+      join(summary.bundleDir, "provenance-manifest.json"),
+    ).json();
+    const loom = manifest.records.find(
+      (r: { agentName: string }) => r.agentName === "loom",
+    );
+    expect(loom.hash).toBe(sentHash);
+  });
+
+  it("records the config mode in bundle-index.json and provenance-manifest.json", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+      snapshotProvider: new StubSnapshotProvider([makeSnapshot("loom")]),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot: join(TEMP_DIR, `config-mode-${uid()}`),
+      evalsRoot: REAL_EVALS_ROOT,
+      loomDelegationMatrixPreflight: passingLoomDelegationMatrixPreflightStub,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const summary = (
+      await orchestrator.run(
+        makeRequest({
+          agent: "loom",
+          model: modelId,
+          case: caseId,
+          configMode: "project",
+        }),
+      )
+    )._unsafeUnwrap();
+
+    const index = await Bun.file(
+      join(summary.bundleDir, "bundle-index.json"),
+    ).json();
+    const manifest = await Bun.file(
+      join(summary.bundleDir, "provenance-manifest.json"),
+    ).json();
+    expect(index.configMode).toBe("project");
+    expect(manifest.configMode).toBe("project");
   });
 });
 

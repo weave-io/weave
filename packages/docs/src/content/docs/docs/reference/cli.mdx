@@ -57,6 +57,7 @@ The current `weave --help` output lists these commands:
 | `--case <id>` | Filter evals to one case. |
 | `--repeat <n>` | Run each eval case n times per model and report pass rates. |
 | `--track text\|trajectory` | Run only the text cases or only the harness trajectory cases. |
+| `--config builtin\|project` | Compose eval prompts from the builtins only (default) or from the project and global `.weave`. |
 | `--dry-run` | Preview an eval without a model call. |
 | `--raw-artifacts` | Write raw eval artifacts locally for debugging. |
 
@@ -175,7 +176,10 @@ makes no model call. Live execution needs the configured model-service key.
 Raw artifacts are local-only debugging output. `--models dev` runs the cheap
 development subset instead of the full default matrix, and cannot be combined
 with `--model`. `--repeat <n>` runs each case n times per model and reports
-pass rates. `--track text|trajectory` runs one track only.
+pass rates. `--track text|trajectory` runs one track only. `--config builtin`
+(the default) composes prompts from the shipped builtins only, reading no
+project or global `.weave`, so a run scores the prompts users get;
+`--config project` reads both, for prompt work on a checkout's overrides.
 
 ## `weave eval compare`
 
@@ -185,7 +189,7 @@ weave eval compare <baseline> <candidate>
 
 Compares two local eval runs (run IDs or run directories) and says, per suite
 and model, whether the pass rate changed beyond the noise. It refuses runs
-with different cases, models, repeat counts or judges.
+with different cases, models, repeat counts, judges or config modes.
 
 ## `weave compose`
 

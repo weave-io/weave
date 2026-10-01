@@ -82,6 +82,8 @@ export interface ParsedArgs {
     evalRepeat?: string;
     /** --track for `weave eval run` (`text` or `trajectory`); validated by the eval command */
     evalTrack?: string;
+    /** --config for `weave eval run` (`builtin` or `project`); validated by the eval command */
+    evalConfig?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
     dryRun?: boolean;
     /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
@@ -387,6 +389,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.evalTrack = val;
+      continue;
+    }
+    if (arg === "--config") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--config",
+          message: "--config requires a config mode (builtin or project)",
+        });
+      }
+      flags.evalConfig = val;
       continue;
     }
 

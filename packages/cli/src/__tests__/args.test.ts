@@ -430,6 +430,30 @@ describe("eval run --track", () => {
   });
 });
 
+describe("eval run --config", () => {
+  it("parses --config into evalConfig, as typed", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "run",
+      "--config",
+      "project",
+    ]);
+
+    expect(result._unsafeUnwrap().flags.evalConfig).toBe("project");
+  });
+
+  it("rejects --config with no value", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--config"]);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--config",
+    });
+  });
+});
+
 describe("eval compare", () => {
   it("parses the subcommand and keeps the two runs in order", () => {
     const parsed = parseArgs([
