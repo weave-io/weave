@@ -171,6 +171,13 @@ function findAgentBlocks(tokens: readonly Token[]): Map<string, AgentBlock> {
   return blocks;
 }
 
+/** The first token at or after `from` that is not a newline. */
+function nextValue(tokens: readonly Token[], from: number): number {
+  let index = from;
+  while (tokens[index]?.type === TokenType.Newline) index++;
+  return index;
+}
+
 /** Reads one agent block from its `{`; undefined when it never closes. */
 function scanBlock(
   tokens: readonly Token[],
@@ -195,13 +202,14 @@ function scanBlock(
         previous?.type === TokenType.LBrace);
     if (atFieldStart && firstField === undefined) firstField = i;
     // A key is followed by its value, so `models [` is the agent's own field
-    // wherever it sits on the line (`{ prompt "p" models ["a"] }` is valid).
+    // wherever it sits on the line (`{ prompt "p" models ["a"] }` is valid),
+    // and the parser allows newlines between the key and the `[`.
     const isModelsKey =
       braces === 1 &&
       brackets === 0 &&
       token.type === TokenType.Identifier &&
       token.value === "models" &&
-      tokens[i + 1]?.type === TokenType.LBracket;
+      tokens[nextValue(tokens, i + 1)]?.type === TokenType.LBracket;
     if (isModelsKey) {
       models = i;
       modelsEnd = undefined;

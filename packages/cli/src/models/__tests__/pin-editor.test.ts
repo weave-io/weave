@@ -95,6 +95,13 @@ describe("pinModels", () => {
     expect(edit.hunks[0]?.kind).toBe("replace");
   });
 
+  it("finds a models field whose list starts on the next line", () => {
+    const source = 'agent loom {\n  models\n  ["old"]\n}\n';
+    const edit = pin(source, { loom: ["new"] });
+    expect(edit.text).toBe('agent loom {\n  models ["new"]\n}\n');
+    expect(edit.hunks[0]?.kind).toBe("replace");
+  });
+
   it("does not mistake a nested models key for the agent's own", () => {
     const source = [
       "agent loom {",
