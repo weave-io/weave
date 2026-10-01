@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { CONFIG_ERRORS_TRUNCATED } from "../config-error-policy.js";
+import { formatError } from "../errors.js";
 import { parseConfig } from "../parse-config.js";
 
 it("rejects prototype assignments and bounds validation diagnostics", () => {
@@ -58,6 +59,59 @@ describe("parseConfig — execution controls", () => {
     "settings { delegation { unknown 5 } }",
   ])("rejects invalid control declarations: %s", (source) => {
     expect(parseConfig(source).isErr()).toBe(true);
+  });
+});
+
+describe("parseConfig — settings.model_updates (Spec 39)", () => {
+  it.each(
+    (["off", "notify", "auto"] as const).flatMap((mode) =>
+      (["stable", "next"] as const).map((channel) => [mode, channel] as const),
+    ),
+  )("preserves mode %s and channel %s through the full pipeline", (mode, channel) => {
+    const config = parseConfig(
+      `settings {\n  log_level DEBUG\n  model_updates {\n    mode ${mode}\n    channel ${channel}\n  }\n}`,
+    )._unsafeUnwrap();
+    expect(config.settings.model_updates).toEqual({ mode, channel });
+    expect(config.settings.log_level).toBe("DEBUG");
+  });
+  it("omits model_updates when no block is declared", () => {
+    expect(
+      parseConfig("")._unsafeUnwrap().settings.model_updates,
+    ).toBeUndefined();
+  });
+  it.each([
+    [
+      "settings { model_updates { mode sometimes } }",
+      "settings.model_updates.mode",
+      '"off"|"notify"|"auto"',
+    ],
+    [
+      "settings { model_updates { mode auto channel nightly } }",
+      "settings.model_updates.channel",
+      '"stable"|"next"',
+    ],
+    [
+      "settings { model_updates { channel stable } }",
+      "settings.model_updates.mode",
+      '"off"|"notify"|"auto"',
+    ],
+    [
+      "settings { model_updates { } }",
+      "settings.model_updates.mode",
+      '"off"|"notify"|"auto"',
+    ],
+    [
+      'settings { model_updates { mode auto url "https://example.com" } }',
+      "settings.model_updates",
+      'Unrecognized key: "url"',
+    ],
+  ])("rejects %s with a readable message at its path", (source, path, mentions) => {
+    const [error] = parseConfig(source)._unsafeUnwrapErr();
+    expect(error).toMatchObject({ type: "ValidationError", path });
+    if (error === undefined) return;
+    const message = formatError(error);
+    expect(message).toContain(`[${path}]`);
+    expect(message).toContain(mentions);
   });
 });
 

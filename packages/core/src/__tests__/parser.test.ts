@@ -48,6 +48,38 @@ describe("Parser — execution controls", () => {
   });
 });
 
+describe("Parser — settings.model_updates (Spec 39)", () => {
+  it("parses a nested model_updates block with bare identifier values", () => {
+    const node = parseSource(
+      "settings {\n  model_updates {\n    mode notify\n    channel next\n  }\n}",
+    )._unsafeUnwrap()[0] as SettingAssignment;
+    expect(node.key).toBe("settings");
+    const settings = node.value as BlockValue;
+    expect(settings.properties[0]?.key).toBe("model_updates");
+    const modelUpdates = settings.properties[0]?.value as BlockValue;
+    expect(modelUpdates.kind).toBe("block");
+    expect(modelUpdates.properties).toHaveLength(2);
+    expect(modelUpdates.properties[0]).toMatchObject({
+      key: "mode",
+      value: { kind: "identifier", value: "notify" },
+    });
+    expect(modelUpdates.properties[1]).toMatchObject({
+      key: "channel",
+      value: { kind: "identifier", value: "next" },
+    });
+  });
+  it("keeps model_updates alongside sibling settings", () => {
+    const node = parseSource(
+      "settings { log_level DEBUG model_updates { mode off } }",
+    )._unsafeUnwrap()[0] as SettingAssignment;
+    const settings = node.value as BlockValue;
+    expect(settings.properties.map((property) => property.key)).toEqual([
+      "log_level",
+      "model_updates",
+    ]);
+  });
+});
+
 describe("Parser — agent block", () => {
   it("parses a minimal agent block", () => {
     const result = parseSource("agent loom {\n  temperature 0.1\n}");

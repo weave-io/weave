@@ -76,6 +76,49 @@ describe("execution control schemas", () => {
   });
 });
 
+describe("settings.model_updates schema (Spec 39)", () => {
+  it.each(["off", "notify", "auto"])("accepts mode %s", (mode) => {
+    expect(
+      SettingsConfigSchema.parse({ model_updates: { mode } }).model_updates
+        ?.mode,
+    ).toBe(mode);
+  });
+  it.each(["stable", "next"])("accepts channel %s", (channel) => {
+    expect(
+      SettingsConfigSchema.parse({ model_updates: { mode: "notify", channel } })
+        .model_updates?.channel,
+    ).toBe(channel);
+  });
+  it("leaves the block and an omitted channel unset so layers deep-merge", () => {
+    expect(SettingsConfigSchema.parse({}).model_updates).toBeUndefined();
+    expect(
+      SettingsConfigSchema.parse({ model_updates: { mode: "auto" } })
+        .model_updates,
+    ).toEqual({ mode: "auto" });
+  });
+  it.each([
+    [{ mode: "always" }, ["model_updates", "mode"]],
+    [{ mode: "OFF" }, ["model_updates", "mode"]],
+    [{ mode: true }, ["model_updates", "mode"]],
+    [{ mode: "auto", channel: "beta" }, ["model_updates", "channel"]],
+    [{ channel: "stable" }, ["model_updates", "mode"]],
+    [{}, ["model_updates", "mode"]],
+    [{ mode: "auto", url: "https://example.com" }, ["model_updates"]],
+  ])("rejects model_updates %j at its path", (model_updates, path) => {
+    const parsed = SettingsConfigSchema.safeParse({ model_updates });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.path).toEqual(path);
+  });
+  it("names the unknown field in the rejection message", () => {
+    const parsed = SettingsConfigSchema.safeParse({
+      model_updates: { mode: "auto", url: "https://example.com" },
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.issues[0]?.message).toContain("url");
+  });
+});
+
 describe("@weaveio/weave-core barrel exports", () => {
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();
