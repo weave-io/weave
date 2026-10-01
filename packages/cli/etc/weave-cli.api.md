@@ -112,7 +112,7 @@ export interface ParsedArgs {
         promptSubcommand?: "inspect" | "list" | "self-modify";
         agentName?: string;
         initSubmode?: "migrate";
-        evalSubcommand?: "run" | "compare" | "reindex";
+        evalSubcommand?: "run" | "compare" | "compare-models" | "reindex";
         evalAgent?: string;
         evalModel?: string;
         evalModels?: string;
@@ -120,6 +120,9 @@ export interface ParsedArgs {
         evalRepeat?: string;
         evalTrack?: string;
         evalConfig?: string;
+        evalCurrent?: string;
+        evalCandidate?: string;
+        evalMinRepeats?: string;
         dryRun?: boolean;
         rawArtifacts?: boolean;
         adapter?: string;

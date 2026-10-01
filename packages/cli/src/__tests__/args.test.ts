@@ -470,6 +470,48 @@ describe("eval compare", () => {
   });
 });
 
+describe("eval compare-models", () => {
+  it("parses the subcommand, the runs and the model flags", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "compare-models",
+      "run-a",
+      "--current",
+      "openai/gpt-6-luna",
+      "--candidate",
+      "openai/gpt-6-sol",
+      "--min-repeats",
+      "3",
+      "--json",
+    ])._unsafeUnwrap();
+
+    expect(parsed.flags.evalSubcommand).toBe("compare-models");
+    expect(parsed.rest).toEqual(["run-a"]);
+    expect(parsed.flags.evalCurrent).toBe("openai/gpt-6-luna");
+    expect(parsed.flags.evalCandidate).toBe("openai/gpt-6-sol");
+    expect(parsed.flags.evalMinRepeats).toBe("3");
+    expect(parsed.flags.json).toBe(true);
+  });
+
+  it("rejects --candidate with no value", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "compare-models",
+      "run-a",
+      "--candidate",
+    ]);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--candidate",
+    });
+  });
+});
+
 describe("eval reindex", () => {
   it("parses the subcommand and --dry-run", () => {
     const parsed = parseArgs([

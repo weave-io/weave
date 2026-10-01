@@ -67,9 +67,11 @@ export interface ParsedArgs {
     /**
      * eval subcommand: `"run"` for `weave eval run`, `"compare"` for
      * `weave eval compare <baseline> <candidate>` (the two runs are left in
-     * `rest`, in order), `"reindex"` for `weave eval reindex`.
+     * `rest`, in order), `"compare-models"` for
+     * `weave eval compare-models <run> [<run>]` (the runs are left in
+     * `rest`), `"reindex"` for `weave eval reindex`.
      */
-    evalSubcommand?: "run" | "compare" | "reindex";
+    evalSubcommand?: "run" | "compare" | "compare-models" | "reindex";
     /** --agent <name> filter for `weave eval run` */
     evalAgent?: string;
     /** --model <id> filter for `weave eval run` */
@@ -84,6 +86,12 @@ export interface ParsedArgs {
     evalTrack?: string;
     /** --config for `weave eval run` (`builtin` or `project`); validated by the eval command */
     evalConfig?: string;
+    /** --current <model-id> for `weave eval compare-models` */
+    evalCurrent?: string;
+    /** --candidate <model-id> for `weave eval compare-models` */
+    evalCandidate?: string;
+    /** --min-repeats <n> for `weave eval compare-models`, as typed; validated by the eval command */
+    evalMinRepeats?: string;
     /** --dry-run flag for `weave eval run` — skips actual execution */
     dryRun?: boolean;
     /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
@@ -391,6 +399,42 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       flags.evalTrack = val;
       continue;
     }
+    if (arg === "--current") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--current",
+          message: "--current requires the model ID the agent uses today",
+        });
+      }
+      flags.evalCurrent = val;
+      continue;
+    }
+    if (arg === "--candidate") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--candidate",
+          message: "--candidate requires the model ID that would replace it",
+        });
+      }
+      flags.evalCandidate = val;
+      continue;
+    }
+    if (arg === "--min-repeats") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--min-repeats",
+          message: "--min-repeats requires a number of repeats",
+        });
+      }
+      flags.evalMinRepeats = val;
+      continue;
+    }
     if (arg === "--config") {
       const val = args[++i];
       if (!val || val.startsWith("-")) {
@@ -470,9 +514,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       continue;
     }
 
-    // eval subcommands: "run", "compare", "reindex"
+    // eval subcommands: "run", "compare", "compare-models", "reindex"
     if (command === "eval" && flags.evalSubcommand === undefined) {
-      if (arg === "run" || arg === "compare" || arg === "reindex") {
+      if (
+        arg === "run" ||
+        arg === "compare" ||
+        arg === "compare-models" ||
+        arg === "reindex"
+      ) {
         flags.evalSubcommand = arg;
         continue;
       }
