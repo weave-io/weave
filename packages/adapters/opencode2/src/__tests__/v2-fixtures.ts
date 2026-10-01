@@ -10,6 +10,7 @@
  */
 
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
+import type { OpenCode2ModelUpdates } from "../v2/model-updates.js";
 import type { OpenCode2AgentProjection } from "../v2/translate-agent.js";
 
 export function projection(id = "helper"): OpenCode2AgentProjection {
@@ -21,6 +22,14 @@ export function projection(id = "helper"): OpenCode2AgentProjection {
     skillNames: [],
   };
 }
+
+/** A catalog loaded without a `model_updates` block. */
+export const MODEL_UPDATES_OFF: OpenCode2ModelUpdates = {
+  mode: "off",
+  channel: "stable",
+  state: "off",
+  agents: [],
+};
 
 export function catalog(
   projections: ReadonlyMap<string, OpenCode2AgentProjection> = new Map([
@@ -39,5 +48,6 @@ export function catalog(
     issues: [],
     sources: [],
     heldAgents: [],
+    modelUpdates: MODEL_UPDATES_OFF,
   };
 }

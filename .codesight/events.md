@@ -1,5 +1,6 @@
 # Events & Queues
 
+- `models.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 - `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 - `agent` [event] — `tests/support/opencode2.ts`
 - `command` [event] — `tests/support/opencode2.ts`

@@ -8,8 +8,11 @@
  * budgets would mean writing megabytes of fixture to disk.
  */
 
-import { describe, expect, it } from "bun:test";
-import { modelRecommendationsCachePaths } from "@weaveio/weave-config";
+import { beforeAll, describe, expect, it } from "bun:test";
+import {
+  modelRecommendationsCachePaths,
+  signModelRecommendations,
+} from "@weaveio/weave-config";
 import { errAsync, okAsync } from "neverthrow";
 import { buildOpenCode2Catalog } from "../v2/catalog.js";
 import {
@@ -148,6 +151,7 @@ describe("model recommendations in the catalog (Spec 39)", () => {
   it("neither reads the cache nor reports an issue without an opt-in", async () => {
     const catalog = await build(new Map());
     expect(catalog.sources.map((source) => source.path)).not.toContain(applied);
+    expect(catalog.modelUpdates.state).toBe("off");
     expect(
       catalog.issues.some(
         (issue) => issue.code === "model_updates_unavailable",
@@ -162,6 +166,11 @@ describe("model recommendations in the catalog (Spec 39)", () => {
       ]),
     );
     expect(catalog.sources).toContainEqual({ path: applied, exists: false });
+    expect(catalog.modelUpdates).toMatchObject({
+      mode: "auto",
+      channel: "stable",
+      state: "pending",
+    });
     expect(
       catalog.issues.some(
         (issue) => issue.code === "model_updates_unavailable",
@@ -184,6 +193,7 @@ describe("model recommendations in the catalog (Spec 39)", () => {
       catalog.sources.find((source) => source.path === applied)?.exists,
     ).toBe(true);
     expect(catalog.agents.has("loom")).toBe(true);
+    expect(catalog.modelUpdates.state).toBe("unavailable");
   });
 
   it("keeps the catalog when applied.json cannot be inspected", async () => {
@@ -210,5 +220,128 @@ describe("model recommendations in the catalog (Spec 39)", () => {
       code: "model_updates_unavailable",
     });
     expect(catalog.agents.has("loom")).toBe(true);
+  });
+});
+
+describe("a promoted recommendations list (Spec 39, task 6.2)", () => {
+  const projectConfig = "/project/.weave/config.weave";
+  const applied = modelRecommendationsCachePaths("stable").applied;
+  const encode = (text: string) => new TextEncoder().encode(text);
+  const models = ["loom-a", "loom-b"].map((id) => ({
+    id,
+    modelID: id,
+    providerID: "probe",
+    name: id,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    time: { released: 0 },
+    cost: [],
+    status: "active",
+    enabled: true,
+    limit: { context: 1_000, output: 1_000 },
+  })) as never[];
+  let keys: { publicKey: string; privateKey: string };
+
+  beforeAll(async () => {
+    const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    const base64 = (buffer: ArrayBuffer) =>
+      btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    keys = {
+      publicKey: base64(await crypto.subtle.exportKey("raw", pair.publicKey)),
+      privateKey: base64(
+        await crypto.subtle.exportKey("pkcs8", pair.privateKey),
+      ),
+    };
+  });
+
+  /** A signed envelope issued `hoursAgo`, putting Loom on `model`. */
+  async function envelope(hoursAgo: number, model: string) {
+    const issued = new Date(Date.now() - hoursAgo * 3_600_000);
+    const expires = new Date(issued.getTime() + 30 * 24 * 3_600_000);
+    const stamp = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
+    const payload = JSON.stringify({
+      schema: 1,
+      channel: "stable",
+      issued: stamp(issued),
+      expires: stamp(expires),
+      evidence: "https://tryweave.io/evals/runs/test",
+      default: { agents: { loom: { models: [model] } } },
+    });
+    return {
+      issued: stamp(issued),
+      bytes: encode(
+        (
+          await signModelRecommendations(payload, keys.privateKey)
+        )._unsafeUnwrap(),
+      ),
+    };
+  }
+
+  async function build(files: Map<string, Uint8Array>) {
+    const io = new MemorySourceIo(files);
+    const result = await buildOpenCode2Catalog({
+      location: "/project",
+      projectConfig: true,
+      models,
+      skills: [],
+      sourceIo: io,
+      modelRecommendationKeys: [keys.publicKey],
+    });
+    return { catalog: result._unsafeUnwrap(), io };
+  }
+
+  it("records applied.json's bytes, applies the list, and sees a promotion as a change", async () => {
+    const first = await envelope(2, "loom-a");
+    const files = new Map([
+      [projectConfig, encode("settings { model_updates { mode auto } }")],
+      [applied, first.bytes],
+    ]);
+    const { catalog } = await build(files);
+    expect(
+      catalog.sources.find((source) => source.path === applied),
+    ).toMatchObject({ exists: true, bytes: first.bytes.byteLength });
+    expect(catalog.modelUpdates).toMatchObject({
+      state: "applied",
+      issued: first.issued,
+      agents: ["loom"],
+    });
+    expect(String(catalog.agents.get("loom")?.model?.id)).toBe("loom-a");
+
+    // Unchanged bytes: the probe finds nothing to rebuild.
+    expect(
+      (
+        await probeCatalogSources(catalog.sources, new MemorySourceIo(files))
+      )._unsafeUnwrap(),
+    ).toBe(false);
+
+    // A refresh promotes a newer list: the probe sees it, and the rebuild
+    // moves Loom without any other source changing.
+    const second = await envelope(1, "loom-b");
+    files.set(applied, second.bytes);
+    expect(
+      (
+        await probeCatalogSources(catalog.sources, new MemorySourceIo(files))
+      )._unsafeUnwrap(),
+    ).toBe(true);
+    const rebuilt = (await build(files)).catalog;
+    expect(rebuilt.revision).not.toBe(catalog.revision);
+    expect(rebuilt.modelUpdates.issued).toBe(second.issued);
+    expect(String(rebuilt.agents.get("loom")?.model?.id)).toBe("loom-b");
+  });
+
+  it("sees the first promotion after a missing applied.json as a change", async () => {
+    const files = new Map([
+      [projectConfig, encode("settings { model_updates { mode auto } }")],
+    ]);
+    const { catalog } = await build(files);
+    files.set(applied, (await envelope(1, "loom-a")).bytes);
+    expect(
+      (
+        await probeCatalogSources(catalog.sources, new MemorySourceIo(files))
+      )._unsafeUnwrap(),
+    ).toBe(true);
   });
 });

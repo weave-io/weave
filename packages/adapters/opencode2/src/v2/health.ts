@@ -1,5 +1,6 @@
 import type { OpenCode2CatalogCandidate } from "./catalog.js";
 import type { OpenCode2RefreshStatus } from "./config-refresh.js";
+import type { OpenCode2ModelUpdates } from "./model-updates.js";
 
 export interface OpenCode2HealthIssue {
   readonly code:
@@ -14,8 +15,16 @@ export interface OpenCode2HealthIssue {
   readonly count?: number;
 }
 
+/** The recommendations layer, as `status` reports it (Spec 39). */
+export type OpenCode2ModelUpdatesReport = Pick<
+  OpenCode2ModelUpdates,
+  "mode" | "channel" | "state" | "issued"
+>;
+
 export interface OpenCode2HealthReport {
   readonly catalogRevision?: string;
+  /** Absent until a catalog is published. */
+  readonly modelUpdates?: OpenCode2ModelUpdatesReport;
   readonly refresh: OpenCode2RefreshStatus["state"];
   readonly agentCount: number;
   readonly issues: readonly OpenCode2HealthIssue[];
@@ -77,8 +86,19 @@ export function buildOpenCode2Health(
     issues.splice(MAX_HEALTH_ISSUES);
   }
   const ready = catalog !== undefined;
+  const updates = catalog?.modelUpdates;
   return {
     catalogRevision: catalog?.revision,
+    ...(updates === undefined
+      ? {}
+      : {
+          modelUpdates: {
+            mode: updates.mode,
+            channel: updates.channel,
+            state: updates.state,
+            ...(updates.issued === undefined ? {} : { issued: updates.issued }),
+          },
+        }),
     refresh: refresh.state,
     agentCount: ownedAgents.size,
     issues,

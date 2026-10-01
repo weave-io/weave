@@ -2,6 +2,7 @@ import { ResultAsync } from "neverthrow";
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import { WeaveRpc } from "../rpc.js";
 import type { V2TuiContext as Context } from "../sdk-types.js";
+import { modelUpdateNotice } from "./model-update-notice.js";
 import {
   INVALID_PLAN_NAME_MESSAGE,
   PLAN_CATALOG_UNREADABLE_MESSAGE,
@@ -323,6 +324,18 @@ export function PlanPanel(props: PlanPanelProps) {
     props.context.data.on("session.execution.interrupted", invalidateSession),
     rpc.events.on("plan.changed", (event) => {
       if (event.data.sessionID === props.sessionID) invalidate();
+    }),
+    // A reload moved agents to a newly applied recommendations list (Spec
+    // 39). Shown only for the Location this session belongs to.
+    rpc.events.on("models.changed", (event) => {
+      const scope = sessionScope(props.context, props.sessionID);
+      if (scope === undefined) return;
+      if (event.location.directory !== scope.directory) return;
+      props.context.ui.toast.show({
+        title: "Weave",
+        message: modelUpdateNotice(event.data),
+        variant: "info",
+      });
     }),
   ];
   const refreshTimer = setInterval(refresh, PLAN_REFRESH_INTERVAL_MS);

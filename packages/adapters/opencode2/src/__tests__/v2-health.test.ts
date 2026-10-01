@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { WeaveRpc } from "../rpc.js";
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
 import { buildOpenCode2Health } from "../v2/health.js";
+import { MODEL_UPDATES_OFF } from "./v2-fixtures.js";
 
 function catalogWithIssues(count: number): OpenCode2CatalogCandidate {
   return {
@@ -15,6 +16,7 @@ function catalogWithIssues(count: number): OpenCode2CatalogCandidate {
     })),
     sources: [],
     heldAgents: [],
+    modelUpdates: MODEL_UPDATES_OFF,
   };
 }
 

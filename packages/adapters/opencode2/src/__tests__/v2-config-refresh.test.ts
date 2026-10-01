@@ -185,4 +185,39 @@ describe("OpenCode2CatalogController", () => {
     expect(controller.catalog()).toBeUndefined();
     expect(controller.status().state).toBe("disposed");
   });
+
+  it("tells its owner about each publish, and not about a rolled-back one", async () => {
+    const candidates = [
+      withRevision("a"),
+      withRevision("b"),
+      withRevision("c"),
+    ];
+    let builds = 0;
+    let failReload = false;
+    const published: Array<[string | undefined, string]> = [];
+    const controller = new OpenCode2CatalogController(0, {
+      build: () =>
+        ResultAsync.fromSafePromise(
+          Promise.resolve(candidates[builds++] ?? withRevision("d")),
+        ),
+      reload: async () => {
+        if (failReload) throw new Error("host refused");
+      },
+      published: (previous, next) => {
+        published.push([previous?.revision[0], next.revision[0] ?? ""]);
+      },
+    });
+    await controller.initialize();
+    await controller.refreshInventory();
+    failReload = true;
+    await controller.refreshInventory();
+    // Same revision as the published one: nothing new to announce.
+    failReload = false;
+    builds = 1;
+    await controller.refreshInventory();
+    expect(published).toEqual([
+      [undefined, "a"],
+      ["a", "b"],
+    ]);
+  });
 });

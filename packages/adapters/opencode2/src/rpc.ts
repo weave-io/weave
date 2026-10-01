@@ -54,6 +54,30 @@ const Plan = z
   })
   .strict();
 
+/**
+ * The model recommendations layer (Spec 39): `off` without an opt-in,
+ * `pending` before anything is applied, `applied` with the list's `issued`,
+ * `unavailable` when `applied.json` is there but unusable (see the
+ * `model_updates_unavailable` issue).
+ */
+const ModelUpdates = z
+  .object({
+    mode: z.enum(["off", "notify", "auto"]),
+    channel: z.enum(["stable", "next"]),
+    state: z.enum(["off", "pending", "applied", "unavailable"]),
+    issued: z.string().min(1).max(64).optional(),
+  })
+  .strict();
+
+const ModelChange = z
+  .object({
+    agent: z.string().min(1).max(128),
+    displayName: z.string().min(1).max(128).optional(),
+    providerID: z.string().min(1).max(256),
+    model: z.string().min(1).max(256),
+  })
+  .strict();
+
 const RpcErrorData = z.object({ code: z.string().min(1).max(64) }).strict();
 
 /** Portable Weave contract. Importing it performs no setup. */
@@ -66,6 +90,7 @@ export const WeaveRpc = Rpc.define({
         .object({
           scope: ScopeOutput,
           catalogRevision: z.string().length(64).optional(),
+          modelUpdates: ModelUpdates.optional(),
           refresh: z.enum([
             "initializing",
             "fresh",
@@ -139,6 +164,19 @@ export const WeaveRpc = Rpc.define({
         .object({
           sessionID: z.string().min(1).max(256),
           scopeToken: z.string().min(1).max(128),
+        })
+        .strict(),
+    },
+    /**
+     * A reload changed some agents' resolved models because a newer model
+     * recommendations list was applied (Spec 39). Emitted once per reload;
+     * the TUI shows it as a notice.
+     */
+    "models.changed": {
+      schema: z
+        .object({
+          issued: z.string().min(1).max(64),
+          agents: z.array(ModelChange).min(1).max(64),
         })
         .strict(),
     },

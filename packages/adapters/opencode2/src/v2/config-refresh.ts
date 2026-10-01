@@ -27,6 +27,16 @@ export interface OpenCode2RefreshDependencies {
     current: OpenCode2CatalogCandidate,
   ) => ResultAsync<boolean, OpenCode2Error>;
   readonly reload: () => Promise<void>;
+  /**
+   * Called once a new candidate is published: after its registries reloaded,
+   * or on a publish that does not reload (the first). `previous` is the
+   * candidate it replaced, `undefined` on the first publish. It must not
+   * throw; anything slow belongs in the background.
+   */
+  readonly published?: (
+    previous: OpenCode2CatalogCandidate | undefined,
+    next: OpenCode2CatalogCandidate,
+  ) => void;
   readonly now?: () => number;
 }
 
@@ -185,6 +195,7 @@ export class OpenCode2CatalogController {
         message: "catalog controller is disposed",
       });
     this.refreshStatus = { state: "fresh" };
+    this.dependencies.published?.(previous, built.value);
     return ok(built.value);
   }
 }

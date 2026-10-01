@@ -118,6 +118,9 @@ export function createOpenCode2RpcHandlers(
         ...(health.catalogRevision === undefined
           ? {}
           : { catalogRevision: health.catalogRevision }),
+        ...(health.modelUpdates === undefined
+          ? {}
+          : { modelUpdates: health.modelUpdates }),
         refresh: health.refresh,
         agentCount: health.agentCount,
         issues: [...health.issues],
