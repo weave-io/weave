@@ -223,27 +223,31 @@ export class ComparisonReport {
   }
 }
 
-function counts(side: ComparedSide): string {
+/** `passed/scored`. */
+export function counts(side: ComparedSide): string {
   return `${side.passed}/${side.passed + side.failed}`;
 }
 
-function formatRate(rate: number | null): string {
+/** A pass rate as a right-aligned whole percentage. */
+export function formatRate(rate: number | null): string {
   if (rate === null) return "  n/a";
   return `${String(Math.round(rate * 100)).padStart(3)}%`;
 }
 
-function formatInterval(interval: ProportionInterval | null): string {
+/** A Wilson interval as `[low–high%]`. */
+export function formatInterval(interval: ProportionInterval | null): string {
   if (interval === null) return "";
   return `[${Math.round(interval.low * 100)}–${Math.round(interval.high * 100)}%]`;
 }
 
 /** `= 0.123`, or `< 0.001` for a p-value too small to print in 3 places. */
-function formatP(p: number): string {
+export function formatP(p: number): string {
   if (p < 0.001) return "< 0.001";
   return `= ${p.toFixed(3)}`;
 }
 
-function plural(count: number, noun: string): string {
+/** `noun`, or its plural when `count` is not 1. */
+export function plural(count: number, noun: string): string {
   if (count === 1) return noun;
   return `${noun}s`;
 }

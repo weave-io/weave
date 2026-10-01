@@ -336,15 +336,21 @@
   - function erroredCasesField: (erroredCases) => void
   - interface CaseOutcomeRow
   - _...2 more_
-- `packages/cli/src/evals/compare-report.ts` — class ComparisonReport
+- `packages/cli/src/evals/compare-report.ts`
+  - function counts: (side) => string
+  - function formatRate: (rate) => string
+  - function formatInterval: (interval) => string
+  - function formatP: (p) => string
+  - function plural: (count, noun) => string
+  - class ComparisonReport
 - `packages/cli/src/evals/compare.ts`
   - function compareRuns: (baseline, candidate) => Result<RunComparison, CompareError>
   - function describeJudge: (judge) => string
-  - class RunBundleReader
-  - interface JudgeRecord
-  - interface ComparedAttempt
-  - interface RunSnapshot
-  - _...10 more_
+  - function difference: (baseline, candidate) => void
+  - function listSome: (items) => string
+  - function sideCost: (attempts) => SideCost
+  - function side: (attempts) => ComparedSide
+  - _...15 more_
 - `packages/cli/src/evals/config-mode.ts`
   - function configModeApplies: (run) => boolean
   - function isEvalConfigMode: (value) => value is EvalConfigMode
@@ -438,6 +444,19 @@
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
   - _...5 more_
+- `packages/cli/src/evals/model-comparison-report.ts`
+  - function toModelComparisonDocument: (comparison) => ModelComparisonDocument
+  - class ModelComparisonReport
+  - interface ModelComparisonDocument
+  - const MODEL_COMPARISON_JSON_VERSION
+- `packages/cli/src/evals/model-comparison.ts`
+  - function smallestDetectableDrop: (currentN, candidateN) => number | null
+  - function compareModels: (runs, options) => Result<ModelComparison, ModelComparisonError>
+  - function guardStatus: (current, candidate) => CaseGuardStatus
+  - interface ModelComparisonOptions
+  - interface ComparedRun
+  - interface CaseGuard
+  - _...10 more_
 - `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]

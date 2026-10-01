@@ -4,7 +4,7 @@ Read this page first. It explains what Weave's agent evals are for, how a case b
 
 ## What evals are for
 
-Evals measure whether a prompt or agent change helped. Each case gives one agent (Loom, Tapestry, Shuttle, Spindle, Pattern, Weft or Warp) a realistic task and scores what it does. A deterministic check or an LLM judge does the scoring. You run the same cases before and after a change, with repeats, and `eval compare` tells you whether any difference is bigger than the noise. The evals are for measurement only. Nothing tunes prompts automatically.
+Evals measure whether a prompt or agent change helped. Each case gives one agent (Loom, Tapestry, Shuttle, Spindle, Pattern, Weft or Warp) a realistic task and scores what it does. A deterministic check or an LLM judge does the scoring. You run the same cases before and after a change, with repeats, and `eval compare` tells you whether any difference is bigger than the noise. To choose between two models, `eval compare-models` does the same per suite and checks the result against the bar a recommended model list must clear. The evals are for measurement only. Nothing tunes prompts automatically.
 
 ## How a case becomes a score
 
@@ -107,7 +107,24 @@ Under each row it also prints both runs' mean cost per attempt, the model's call
 
 It refuses runs that used different models, cases, repeat counts, judges or config modes, and it refuses dry runs. See [Measure a change](agent-evals.md#measure-a-change) and [Compare two runs](agent-evals.md#compare-two-runs-eval-compare).
 
-**5. Trajectory cases.** These need Podman and the sandbox image. Build the image once, and again after pulling changes:
+**5. Choose a model with `eval compare-models`.** `eval compare` refuses runs with different models: it judges a prompt change. To judge a model change, run both models on one commit with `--track text`, the builtin prompts (the default) and `--repeat 5` or more, then compare them:
+
+```bash
+bun packages/cli/src/main.ts eval compare-models <run-id> [<other-run-id>] \
+  --current openai/gpt-6-luna --candidate openai/gpt-6-sol
+```
+
+Pass one run holding both models, or two runs, one per model, made on the same commit with the same prompts, judge and config mode. It refuses fewer than 5 repeats per case per model, or uneven repeats. Per suite it prints:
+
+- both pass rates with 95% intervals, and Fisher's exact test on the suite totals, Holm-adjusted across suites: **SIGNIFICANTLY WORSE**, **SIGNIFICANTLY BETTER** or **no significant difference**;
+- the smallest drop the suite could detect at its size (30 points for a 4-case suite at 5 repeats, 13 for 12 cases), so a "no difference" on a thin suite reads as the weak evidence it is;
+- the per-case guard: any case the current model passes on 80% or more of attempts that the candidate passes on under 60% fails it, by case ID. Spindle's 29 Sep Sol-against-Luna result (11/16 against 15/16) is not significant at suite level (p ≈ 0.17), but one case fell from 8/8 to 4/8, and the guard catches it;
+- the cost per attempt of both models, model calls and judge calls apart, and the difference;
+- one line against the Spec 39 [publication bar](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#publication-bar): `PASS`, or `FAIL —` with every unmet step (fewer than 12 cases, a significant drop, a failed guard, unrecorded cost, project prompts…), then the steps it cannot see: trajectory cases, catalog resolution and published evidence.
+
+`--json` prints the same comparison as a document to attach to evidence. `--min-repeats <n>` accepts fewer repeats for development, and the bar then fails. See [Choose a model](agent-evals.md#choose-a-model-eval-compare-models).
+
+**6. Trajectory cases.** These need Podman and the sandbox image. Build the image once, and again after pulling changes:
 
 ```bash
 podman build -t weave-sandbox-opencode-default -f sandboxes/opencode/Containerfile sandboxes/opencode
@@ -117,7 +134,7 @@ TMPDIR=~/.cache/weave-trajectory-tmp \
 
 `--track text` runs only the text cases. Every trajectory case runs on every default model, so on the dev subset all six run on both dev models, 12 sessions per repeat. Each session can take up to its `max_duration_seconds` (5 to 9 minutes). See [Run one track](agent-evals.md#run-one-track---track).
 
-**6. Dispatch the CI workflow.** The workflow is manual only, and every dispatch publishes its results:
+**7. Dispatch the CI workflow.** The workflow is manual only, and every dispatch publishes its results:
 
 ```bash
 gh workflow run agent-evals.yml -f models=dev -f repeat=3
@@ -126,7 +143,7 @@ gh workflow run agent-evals.yml -f models=dev -f repeat=3
 The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat` and `trajectory` (on by default). The workflow runs a text job and then a trajectory job. See [CI dispatch](agent-evals.md#ci-dispatch).
 
 **Cost and time.**
-- Every live run records what each attempt cost. Each score file row (`score-<suite>.json`) carries the model's prompt and completion tokens and cost, and the judge's separately. The cost is the one OpenRouter reported in the response when there is one, and otherwise the tokens at the model's list prices in `evals/model-matrix.json`. The run report ends with the mean cost per attempt per model, and `eval compare` prints it for both runs. Usage a provider left out is recorded as missing, never as zero, and a mean that leaves such attempts out says so. Harness trajectory sessions make their model calls inside OpenCode, so only their judge calls are costed. Cost stays in the local score files; the public report does not carry it. See [Cost per attempt](agent-evals.md#cost-per-attempt).
+- Every live run records what each attempt cost. Each score file row (`score-<suite>.json`) carries the model's prompt and completion tokens and cost, and the judge's separately. The cost is the one OpenRouter reported in the response when there is one, and otherwise the tokens at the model's list prices in `evals/model-matrix.json`. The run report ends with the mean cost per attempt per model, `eval compare` prints it for both runs, and `eval compare-models` for both models with the difference. Usage a provider left out is recorded as missing, never as zero, and a mean that leaves such attempts out says so. Harness trajectory sessions make their model calls inside OpenCode, so only their judge calls are costed. Cost stays in the local score files; the public report does not carry it. See [Cost per attempt](agent-evals.md#cost-per-attempt).
 - The figures below come from reading the OpenRouter credit balance before and after a whole run, judge included, as every run before 1 Oct 2026 was costed.
 - A live run of 16 answers on the dev subset, one case per judged suite with Jev judging, cost about $0.012 on 24 Sep 2026.
 - `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases added about 5 min and $0.04 when only five sessions ran on DeepSeek; they are now 12 sessions per repeat, on both dev models.

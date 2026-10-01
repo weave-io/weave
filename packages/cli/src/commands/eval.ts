@@ -20,7 +20,11 @@
 import { join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
-import { type CliError, formatCliError } from "../errors.js";
+import {
+  type CliError,
+  formatCliError,
+  type InvalidArgsError,
+} from "../errors.js";
 import type { BundleWriteMode } from "../evals/artifact-bundle.js";
 import { UsageLedger } from "../evals/attempt-usage.js";
 import { loadSuiteCases } from "../evals/case-loader.js";
@@ -36,6 +40,11 @@ import {
   type AgentEvalsScorer,
   LangChainAgentEvalsScorer,
 } from "../evals/langchain-agent-evals.js";
+import { compareModels, PUBLICATION_BAR } from "../evals/model-comparison.js";
+import {
+  ModelComparisonReport,
+  toModelComparisonDocument,
+} from "../evals/model-comparison-report.js";
 import { filterMatrix, loadModelMatrix } from "../evals/model-matrix.js";
 import {
   type ModelClient,
@@ -187,6 +196,12 @@ const EVAL_USAGE = [
   "  weave eval compare <baseline> <candidate>",
   "                                        Say per suite and model whether pass rates changed beyond the noise",
   "                                        (each run is a run directory or a run ID under eval-bundles/runs/)",
+  "  weave eval compare-models <run> [<run>] --current <model-id> --candidate <model-id>",
+  "                                        Compare two models per suite against the Spec 39 publication bar",
+  "                                        (one run holding both models, or two runs on one commit)",
+  "  weave eval compare-models ... --min-repeats <n>",
+  "                                        Accept fewer than 5 repeats (development only; fails the bar)",
+  "  weave eval compare-models ... --json  Print the comparison as JSON",
   "  weave eval reindex [--dry-run]        Rebuild the dashboard indexes of weave-io/weave-agent-evals",
   "                                        from its published runs (needs EVAL_RESULTS_REPO_TOKEN)",
   "",
@@ -656,6 +671,105 @@ async function runEvalCompare(
 }
 
 // ---------------------------------------------------------------------------
+// Subcommand: eval compare-models
+// ---------------------------------------------------------------------------
+
+const COMPARE_MODELS_USAGE =
+  "weave eval compare-models <run> [<run>] --current <model-id> --candidate <model-id> [--min-repeats <n>] [--json]. " +
+  "Pass one run holding both models, or two runs (one per model) made on one commit; " +
+  "each is a run directory (eval-bundles/runs/<runId>) or a run ID.";
+
+/**
+ * `--min-repeats`: a whole number from 1 to the bar's own minimum. Asking
+ * for more than the bar is pointless — the bar already refuses fewer — and
+ * omitted means the bar's minimum.
+ */
+function parseMinRepeats(
+  raw: string | undefined,
+): Result<number, InvalidArgsError> {
+  if (raw === undefined) return ok(PUBLICATION_BAR.minRepeats);
+  const parsed = Number(raw);
+  if (
+    /^\d+$/.test(raw) &&
+    parsed >= 1 &&
+    parsed <= PUBLICATION_BAR.minRepeats
+  ) {
+    return ok(parsed);
+  }
+  return err({
+    type: "InvalidArgs",
+    message: `--min-repeats "${raw}" must be a whole number from 1 to ${PUBLICATION_BAR.minRepeats}`,
+  });
+}
+
+/**
+ * `weave eval compare-models <run> [<run>] --current <id> --candidate <id>`
+ * (Spec 39 task 0.2).
+ *
+ * Compares two models per suite — pass rates, Fisher's exact test with
+ * Holm's adjustment, the per-case guard and cost per attempt — and says per
+ * suite whether the publication bar's checkable steps pass. Exits 0 when the
+ * comparison was made, whatever it found, and 1 when it was refused or the
+ * arguments are wrong.
+ */
+async function runEvalCompareModels(
+  ctx: EvalContext,
+): Promise<Result<number, CliError>> {
+  const { terminal, theme, flags } = ctx;
+  const refs = ctx.rest ?? [];
+  const current = flags.evalCurrent;
+  const candidate = flags.evalCandidate;
+  if (
+    refs.length < 1 ||
+    refs.length > 2 ||
+    current === undefined ||
+    candidate === undefined
+  ) {
+    terminal.stderr(
+      formatCliError({
+        type: "InvalidArgs",
+        message: `weave eval compare-models needs one or two runs, --current and --candidate: ${COMPARE_MODELS_USAGE}`,
+      }),
+    );
+    return ok(1);
+  }
+  const minRepeats = parseMinRepeats(flags.evalMinRepeats);
+  if (minRepeats.isErr()) {
+    terminal.stderr(formatCliError(minRepeats.error));
+    return ok(1);
+  }
+
+  const reader = new RunBundleReader(ctx.fs ?? new BunFileSystem());
+  const snapshots = [];
+  for (const ref of refs) {
+    const snapshot = await reader.read(ref);
+    if (snapshot.isErr()) return refuse(terminal, snapshot.error.message);
+    snapshots.push(snapshot.value);
+  }
+
+  const comparison = compareModels(snapshots, {
+    current,
+    candidate,
+    minRepeats: minRepeats.value,
+  });
+  if (comparison.isErr()) {
+    return refuse(
+      terminal,
+      `Cannot compare these models: ${comparison.error.message}`,
+    );
+  }
+
+  if (flags.json) {
+    terminal.stdout(
+      JSON.stringify(toModelComparisonDocument(comparison.value), null, 2),
+    );
+    return ok(0);
+  }
+  terminal.stdout(new ModelComparisonReport(theme).render(comparison.value));
+  return ok(0);
+}
+
+// ---------------------------------------------------------------------------
 // Subcommand: eval reindex
 // ---------------------------------------------------------------------------
 
@@ -756,6 +870,10 @@ export async function runEval(
 
   if (flags.evalSubcommand === "compare") {
     return runEvalCompare(ctx);
+  }
+
+  if (flags.evalSubcommand === "compare-models") {
+    return runEvalCompareModels(ctx);
   }
 
   if (flags.evalSubcommand === "reindex") {

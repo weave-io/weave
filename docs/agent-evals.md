@@ -47,6 +47,11 @@ weave eval compare <baseline> <candidate>
     ├── RunBundleReader.read()         bundle-index.json, score-<suite>.json, prompt-hashes.json, judge
     ├── compareRuns()                  Refuse a different design; Fisher's exact test per suite × model, Holm-adjusted
     └── ComparisonReport               Print pass rates, intervals, verdicts (no raw content)
+
+weave eval compare-models <run> [<run>] --current <id> --candidate <id>
+    ├── RunBundleReader.read()         The same files as eval compare, from one or two runs
+    ├── compareModels()                Refuse a different design; per suite: Fisher + Holm, per-case guard, cost, bar verdict
+    └── ModelComparisonReport          Print the report, or the JSON document with --json (no raw content)
 ```
 
 All publishable output passes through the central allowlist sanitizer in `packages/cli/src/evals/sanitizer.ts` before being written. Raw artifacts are written to a separate `raw/` subdirectory that is never included in publishable bundles or external publication.
@@ -125,6 +130,11 @@ packages/cli/src/evals/
 ├── warp-security-runner.ts       WarpSecurityRunner
 ├── openrouter-client.ts      OpenRouterClient for model inference
 ├── attempt-usage.ts          Per-attempt tokens and cost: UsageLedger, MeteredModelClient, AttemptUsageMeter
+├── binomial-stats.ts         Wilson interval, Fisher's exact test, Holm's adjustment
+├── compare.ts                RunBundleReader, compareRuns — eval compare
+├── compare-report.ts         ComparisonReport — eval compare's text
+├── model-comparison.ts       compareModels, PUBLICATION_BAR — eval compare-models
+├── model-comparison-report.ts  ModelComparisonReport, toModelComparisonDocument — its text and --json
 ├── langchain-agent-evals.ts  LangChainAgentEvalsScorer — the scorer, and the LangChainJudge interface
 ├── judge-questions.ts        What the judge is asked per dimension: rubric, reference, answer, criteria
 ├── jev-judge.ts              JevJudge — the eval judge (TypeSafe Jev on OpenRouter's decisions endpoint)
@@ -587,6 +597,136 @@ descriptive log of earlier runs with the same filters. Its `drifted` and
 `mixed` labels flag any difference at all, including chance; use
 `eval compare` to decide whether a difference is real.
 
+### Choose a model (`eval compare-models`)
+
+`eval compare` judges a prompt change: two runs of the same models. It refuses
+runs whose models differ, by design. Choosing a default model needs the other
+comparison: two models on the same commit, prompts, judge, config mode and
+repeats. `weave eval compare-models` (Spec 39 task 0.2, gap G2 of the
+[eval readiness record](artifacts/eval-readiness-model-recommendations.md))
+makes it, per suite, and measures each suite against the
+[publication bar](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#publication-bar)
+a recommended model list must clear.
+
+```bash
+# 1. Run both models on one commit, text track, builtin prompts, at least 5 repeats
+bun packages/cli/src/main.ts eval run --agent spindle-tools --track text --repeat 5 \
+  --model openai/gpt-6-luna
+bun packages/cli/src/main.ts eval run --agent spindle-tools --track text --repeat 5 \
+  --model openai/gpt-6-sol
+#    → Eval run 1a2b3c4-2026-10-01-001, then 1a2b3c4-2026-10-01-002
+
+# 2. Compare (or pass one run that holds both models, e.g. from --models default)
+bun packages/cli/src/main.ts eval compare-models \
+  1a2b3c4-2026-10-01-001 1a2b3c4-2026-10-01-002 \
+  --current openai/gpt-6-luna --candidate openai/gpt-6-sol
+```
+
+It reads only the local bundles, like `eval compare`: no model call, no key.
+It exits 0 when it compared the models, whatever it found, and 1 when it
+refused or the arguments are wrong. With `--json` it prints the same
+comparison as a document (`kind: "weave-eval-model-comparison"`, `version: 1`,
+the thresholds under `publicationBar`, then every field of the report) for
+tooling to attach to a recommendation's evidence.
+
+This is the 29 Sep Spindle comparison (GPT 6 Sol against Luna,
+[record](artifacts/eval-copilot-default-models-2026-09-29.md)) as a fixture:
+
+```text
+Eval compare-models openai/gpt-6-luna (current) → openai/gpt-6-sol (candidate)
+  Runs:     1111111-2026-01-15-001 (both models)
+  Commit:   1111111
+  Judge:    typesafe/jev@1.13-20260917
+  Config:   builtin
+  Track:    text
+  Design:   2 cases in 1 suite, each case 8 times per model
+  Rule:     Fisher's exact test per suite on scored attempts (errored ones left out), Holm-adjusted across 1 testable suite; …
+  Bar:      Spec 39 publication bar: at least 12 text cases and 5 repeats, no significant drop, and no case at 80% or more on current below 60% on the candidate.
+
+  spindle-tools  (2 cases)
+    current    15/16    94% [72–99%]
+    candidate  11/16    69% [44–86%]
+    no significant difference (-25 points)  p = 0.172, Holm-adjusted p = 0.172
+    Smallest detectable drop at this size: 38 points from 95%, before Holm's adjustment
+    Per-case guard: FAILED on 1 case
+      spindle-citations  8/8 100% → 4/8 50%
+    Cost per attempt, model calls: $0.00200 (reported by OpenRouter) → $0.0100 (reported by OpenRouter) (+$0.00800)
+    Cost per attempt, judge calls: $0.00100 (reported by OpenRouter) → $0.00100 (reported by OpenRouter) (same)
+    Publication bar: FAIL — 2 cases; the bar needs at least 12 text cases (step 2); per-case guard failed on spindle-citations: …
+    Not checked here:
+      - step 4, a reason to change: the candidate is not significantly better, so the change needs a stated reason (availability, cost) and must not raise cost (model calls cost more per attempt)
+      - step 5, real sessions: the agent's trajectory cases on the candidate
+      - step 6, resolves as intended: weave models check --expect against the catalog fixtures
+      - step 8, published evidence: the run on tryweave.io/evals, linked from the file's evidence field
+
+  Suites clearing the publication bar steps a comparison can check: 0 of 1.
+```
+
+The suite-level test alone would have let Sol through (p ≈ 0.17); the
+per-case guard is what catches it.
+
+**Per suite it reports:**
+
+1. **Pass counts and 95% Wilson intervals** for both models, on scored
+   attempts (errored ones left out), as in `eval compare`.
+2. **Fisher's exact test**, two-sided, on the suite totals, Holm-adjusted
+   across every suite where some outcome could reach p < 0.05. Verdicts:
+   **SIGNIFICANTLY WORSE**, **SIGNIFICANTLY BETTER**, **no significant
+   difference**, or **not tested** when a model has too few scored attempts.
+3. **The smallest detectable drop**: how far below a current model passing
+   95% of attempts the candidate must fall before Fisher's test gives
+   p < 0.05 at this suite's size, before Holm's adjustment. It is the figure
+   the readiness record tabulates (30 points for 4 cases at 5 repeats, 13 for
+   12, 10 for 20), and it treats repeats as independent, so the real figure
+   is worse. A "no significant difference" on a thin suite is weak evidence,
+   and this line says how weak.
+4. **The per-case guard**, on rates: a case the current model passes on at
+   least 80% of its scored attempts fails when the candidate passes it on
+   fewer than 60%. Failing cases are listed by ID. A case where every
+   attempt of a model errored cannot be checked and is listed too.
+5. **Cost per attempt** of each model, the model's calls and the judge's
+   apart, and the candidate's difference
+   (see [Cost per attempt](#cost-per-attempt)).
+6. **A one-line verdict against the publication bar**: `PASS`, or `FAIL —`
+   followed by every unmet step. Then the steps a comparison cannot see.
+
+**What the bar verdict checks.** The thresholds are `PUBLICATION_BAR` in
+[`model-comparison.ts`](../packages/cli/src/evals/model-comparison.ts); change
+them only with the spec. A suite fails for each of:
+
+| Bar step | Fails when |
+| --- | --- |
+| 1, shipped prompts | the suite composes its prompts from the config and the run used `--config project` |
+| 2, enough cases | the suite has fewer than 12 cases, or a run was not restricted to `--track text` (score files do not mark which cases were trajectory cases, so the count cannot be trusted) |
+| 3, no regression | fewer than 5 repeats (`--min-repeats`); a run records no judge; the candidate is significantly worse; the suite could not be tested; a case fails the guard or cannot be checked |
+| 7, cost stated | the model calls' cost per attempt is not recorded for both models |
+
+Step 4 (a reason to change) is met when the candidate is significantly
+better; otherwise the report lists it as not checked here, with the direction
+of the cost change, because the stated reason is a maintainer's. Steps 5
+(trajectory cases), 6 (catalog resolution) and 8 (published evidence) are
+always listed as not checked here.
+
+**What it refuses**, with a typed `ModelComparisonError` and exit 1:
+
+| Refusal | When |
+| --- | --- |
+| `TooFewRepeats` | each case ran fewer than 5 times per model (or `--min-repeats`); says how many it found |
+| `RepeatCountMismatch` | a case ran a different number of times on the two models, or cases ran different numbers of times; names the cases |
+| `CaseSetMismatch` | the models ran different cases; names up to five |
+| `CommitMismatch` | two runs were made on different commits |
+| `PromptMismatch` | two runs composed a different prompt for some agent; names the agents |
+| `JudgeMismatch` | both runs record a judge and they differ |
+| `ConfigModeMismatch` | two runs composed from different config modes and a compared suite depends on it |
+| `ModelNotFound` | a model is in no run; lists the models found |
+| `ModelInSeveralRuns`, `UnusedRun`, `RunCount` | with two runs, a model is in both, or a run holds neither model; or not one or two runs |
+| `SameModel` | `--current` and `--candidate` name the same model |
+| `DryRunBundle`, `TrajectoryTrackRun` | a run is a dry run, or ran only the trajectory track |
+
+**`--min-repeats <n>`** (1 to 5) lowers the repeat floor for development and
+tests. The comparison then runs, the header says the bar's floor was not met,
+and every suite fails the bar for it.
+
 ### Cost per attempt
 
 A model recommendation changes users' bills, so its evidence states what the
@@ -645,8 +785,10 @@ ledger and totals the calls onto that case's summary. See
 [`attempt-usage.ts`](../packages/cli/src/evals/attempt-usage.ts).
 
 **How it is reported.** The run report ends with the mean cost per attempt
-per model, the model's calls and the judge's calls on separate lines, and
-`eval compare` prints the same for both runs under each suite × model row:
+per model, the model's calls and the judge's calls on separate lines,
+`eval compare` prints the same for both runs under each suite × model row, and
+`eval compare-models` prints it for both models with the candidate's
+difference ([Choose a model](#choose-a-model-eval-compare-models)):
 
 ```text
   Cost per attempt (mean):

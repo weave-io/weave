@@ -757,7 +757,7 @@ function pairKey(attempt: ComparedAttempt): string {
 }
 
 /** Items in one list and not the other, each sorted and de-duplicated. */
-function difference(
+export function difference(
   baseline: readonly string[],
   candidate: readonly string[],
 ): { onlyInBaseline: string[]; onlyInCandidate: string[] } {
@@ -787,7 +787,8 @@ function describeDifference(
   return parts.join(" ");
 }
 
-function listSome(items: readonly string[]): string {
+/** The first few `items`, then how many more there are. */
+export function listSome(items: readonly string[]): string {
   const shown = items.slice(0, MAX_LISTED_DIFFERENCES).join(", ");
   const rest = items.length - MAX_LISTED_DIFFERENCES;
   if (rest <= 0) return shown;
@@ -827,7 +828,8 @@ interface DraftRow {
   cost: { baseline: SideCost; candidate: SideCost };
 }
 
-function sideCost(attempts: readonly ComparedAttempt[]): SideCost {
+/** The mean cost per attempt of `attempts`, model and judge calls apart. */
+export function sideCost(attempts: readonly ComparedAttempt[]): SideCost {
   const usages = attempts.map((attempt) => attempt.usage);
   return {
     model: summarizeCost(usages, "model"),
@@ -835,7 +837,8 @@ function sideCost(attempts: readonly ComparedAttempt[]): SideCost {
   };
 }
 
-function side(attempts: readonly ComparedAttempt[]): ComparedSide {
+/** Pass, fail and errored counts of `attempts`, with a Wilson interval. */
+export function side(attempts: readonly ComparedAttempt[]): ComparedSide {
   const tally = tallyAttempts(attempts);
   return {
     ...tally,
@@ -852,7 +855,8 @@ function pValueOf(baseline: AttemptTally, candidate: AttemptTally): number {
   );
 }
 
-function groupBy(
+/** `attempts` grouped by `key`, in first-seen order. */
+export function groupBy(
   attempts: readonly ComparedAttempt[],
   key: (attempt: ComparedAttempt) => string,
 ): Map<string, ComparedAttempt[]> {
