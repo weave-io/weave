@@ -1,76 +1,122 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import { MemoryFileSystem } from "../../fs/file-system.js";
+import { ClaudeCodeInstaller } from "../claude-code.js";
 import { installAllSupported, installerRegistry } from "../index.js";
+import { OpenCodeInstaller } from "../opencode.js";
 import { OpenCode2Installer } from "../opencode2.js";
 
 function opencodeConfig() {
-  return "/home/user/.config/opencode/config.json";
+  return "/home/user/.config/opencode/opencode.json";
 }
 
 describe("harness installers", () => {
-  it("installs supported OpenCode integration", async () => {
-    const fs = new MemoryFileSystem({ [opencodeConfig()]: "{}" });
-    const installer = installerRegistry(fs).opencode;
-    const result = await installer.install({
-      harness: "opencode",
-      configPath: opencodeConfig(),
-      selectedModules: [],
-      force: false,
-    });
-    expect(result._unsafeUnwrap().changed).toBe(true);
-    expect(fs.snapshot()[opencodeConfig()]).toContain("weave:init");
-  });
+  const local = {
+    harness: "opencode" as const,
+    configPath: "/unused",
+    selectedModules: [],
+    force: false,
+    scope: "local" as const,
+  };
 
-  it("installs optional adapter modules", async () => {
-    const fs = new MemoryFileSystem({ [opencodeConfig()]: "{}" });
-    const installer = installerRegistry(fs).opencode;
-    const result = await installer.install({
-      harness: "opencode",
-      configPath: opencodeConfig(),
-      selectedModules: ["agents"],
-      force: false,
-    });
-    expect(result._unsafeUnwrap().messages.join("\n")).toContain(
-      "agent module",
-    );
+  it("adds the pinned OpenCode adapter to a new project plugin list", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const result = await new OpenCodeInstaller(fs, "0.2.0").install(local);
+    expect(result._unsafeUnwrap().changed).toBe(true);
     expect(
-      fs.snapshot()["/home/user/.config/opencode/weave-agents.json"],
-    ).toContain("@weaveio/weave-cli");
+      JSON.parse(fs.snapshot()["/project/opencode.jsonc"] ?? "{}"),
+    ).toEqual({ plugin: ["@weaveio/weave-adapter-opencode@0.2.0"] });
   });
 
-  it("is idempotent without force", async () => {
-    const fs = new MemoryFileSystem({ [opencodeConfig()]: "{}" });
-    const installer = installerRegistry(fs).opencode;
-    await installer.install({
-      harness: "opencode",
-      configPath: opencodeConfig(),
-      selectedModules: [],
-      force: false,
-    });
-    const second = await installer.install({
-      harness: "opencode",
-      configPath: opencodeConfig(),
-      selectedModules: [],
-      force: false,
-    });
-    expect(second._unsafeUnwrap().changed).toBe(false);
-    const matches = fs.snapshot()[opencodeConfig()].match(/weave:init/g) ?? [];
-    expect(matches.length).toBe(1);
+  it("appends to an existing OpenCode plugin list and is byte-idempotent", async () => {
+    const path = "/project/opencode.json";
+    const fs = new MemoryFileSystem(
+      { [path]: '{\n  // keep\n  "plugin": ["other-plugin"]\n}\n' },
+      "/project",
+      "/home/user",
+    );
+    const installer = new OpenCodeInstaller(fs, "0.2.0");
+    expect((await installer.install(local))._unsafeUnwrap().changed).toBe(true);
+    const once = fs.snapshot()[path] ?? "";
+    expect(once).toContain("// keep");
+    expect(once).toContain('"other-plugin"');
+    expect(once).toContain('"@weaveio/weave-adapter-opencode@0.2.0"');
+    expect((await installer.install(local))._unsafeUnwrap().changed).toBe(
+      false,
+    );
+    expect(fs.snapshot()[path]).toBe(once);
   });
 
-  it("allows forced reinstall marker", async () => {
-    const fs = new MemoryFileSystem({
-      [opencodeConfig()]: "{}\n// weave:init:install\n",
+  it("replaces the legacy OpenCode Weave plugin entry", async () => {
+    const path = "/project/opencode.json";
+    const fs = new MemoryFileSystem(
+      { [path]: '{ "plugin": ["@opencode_weave/weave@0.8.1"] }\n' },
+      "/project",
+      "/home/user",
+    );
+    const result = await new OpenCodeInstaller(fs, "0.2.0").install(local);
+    expect(result._unsafeUnwrap().messages.join("\n")).toContain(
+      "Replaced the legacy plugin entry @opencode_weave/weave@0.8.1",
+    );
+    expect(JSON.parse(fs.snapshot()[path] ?? "{}").plugin).toEqual([
+      "@weaveio/weave-adapter-opencode@0.2.0",
+    ]);
+  });
+
+  it("adds both OpenCode generations' entries to one shared config file", async () => {
+    const path = "/project/opencode.json";
+    const fs = new MemoryFileSystem({ [path]: "{}" }, "/project", "/home/user");
+    await new OpenCodeInstaller(fs, "0.2.0").install(local);
+    await new OpenCode2Installer(fs, "0.2.0").install({
+      ...local,
+      harness: "opencode2",
     });
-    const installer = installerRegistry(fs).opencode;
+    expect(JSON.parse(fs.snapshot()[path] ?? "{}")).toEqual({
+      plugin: ["@weaveio/weave-adapter-opencode@0.2.0"],
+      plugins: ["@weaveio/weave-adapter-opencode2@0.2.0"],
+    });
+  });
+
+  it("composes the Claude Code plugin for a project", async () => {
+    let composed = 0;
+    const installer = new ClaudeCodeInstaller(() => {
+      composed += 1;
+      return okAsync(0);
+    });
     const result = await installer.install({
-      harness: "opencode",
-      configPath: opencodeConfig(),
-      selectedModules: [],
-      force: true,
+      ...local,
+      harness: "claude-code",
     });
-    expect(result._unsafeUnwrap().changed).toBe(true);
-    expect(fs.snapshot()[opencodeConfig()]).toContain("weave:init:force");
+    expect(composed).toBe(1);
+    expect(result._unsafeUnwrap().messages).toEqual([
+      "Composed the Claude Code plugin.",
+    ]);
+  });
+
+  it("reports a failed Claude Code compose", async () => {
+    const installer = new ClaudeCodeInstaller(() => okAsync(1));
+    const result = await installer.install({
+      ...local,
+      harness: "claude-code",
+    });
+    expect(result._unsafeUnwrapErr().type).toBe("InstallFailed");
+  });
+
+  it("tells a global Claude Code install to compose per project", async () => {
+    let composed = 0;
+    const installer = new ClaudeCodeInstaller(() => {
+      composed += 1;
+      return okAsync(0);
+    });
+    const result = await installer.install({
+      ...local,
+      harness: "claude-code",
+      scope: "global",
+    });
+    expect(composed).toBe(0);
+    expect(result._unsafeUnwrap().messages.join("\n")).toContain(
+      "weave compose --adapter claude-code --init",
+    );
   });
 
   it("returns unsupported explicit harness errors", async () => {

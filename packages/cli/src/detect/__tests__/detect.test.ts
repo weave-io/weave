@@ -61,21 +61,49 @@ describe("harness detection", () => {
     ]);
   });
 
-  it("detects OpenCode 2 under XDG_CONFIG_HOME", async () => {
+  it("detects OpenCode 2 by its binary and reads config under XDG_CONFIG_HOME", async () => {
     const probes = new MemoryDetectionProbes({
       xdgConfigHome: "/xdg",
       files: { "/xdg/opencode/opencode.json": { readable: true } },
+      binaries: { opencode2: "/bin/opencode2" },
     });
     const result = await detectHarnesses(probes);
     expect(result._unsafeUnwrap()).toEqual([
       {
         id: "opencode2",
         configPath: "/xdg/opencode/opencode.json",
-        binaryPath: undefined,
+        binaryPath: "/bin/opencode2",
         version: undefined,
         readable: true,
       },
     ]);
+  });
+
+  it("does not detect an OpenCode generation from the shared config file alone", async () => {
+    const probes = new MemoryDetectionProbes({
+      files: {
+        "/home/user/.config/opencode/opencode.json": { readable: true },
+      },
+    });
+    const result = await detectHarnesses(probes);
+    expect(result._unsafeUnwrap()).toEqual([]);
+  });
+
+  it("treats a 2.x opencode binary as OpenCode 2, not OpenCode 1", async () => {
+    const probes = new MemoryDetectionProbes({
+      binaries: { opencode: "/bin/opencode", opencode2: "/bin/opencode2" },
+      versions: { opencode: "opencode v2.0.21", opencode2: "opencode v2.0.21" },
+    });
+    const result = await detectHarnesses(probes);
+    expect(result._unsafeUnwrap().map((harness) => harness.id)).toEqual([
+      "opencode2",
+    ]);
+  });
+
+  it("BunDetectionProbes finds a binary on PATH", async () => {
+    const result = await new BunDetectionProbes().binaryOnPath("bun");
+    expect(result._unsafeUnwrap()).toBe(Bun.which("bun") ?? undefined);
+    expect(result._unsafeUnwrap()).toBeDefined();
   });
 
   it("returns none detected", async () => {
@@ -86,11 +114,11 @@ describe("harness detection", () => {
 
   it("detects partial harness sets", async () => {
     const probes = new MemoryDetectionProbes({
-      files: { "/home/user/.config/opencode/config.json": { readable: true } },
+      files: { "/home/user/.claude/settings.json": { readable: true } },
     });
     const result = await detectHarnesses(probes);
     expect(result._unsafeUnwrap().map((harness) => harness.id)).toEqual([
-      "opencode",
+      "claude-code",
     ]);
   });
 

@@ -25,6 +25,7 @@ import {
 import type { DetectionProbes } from "../detect/probes.js";
 import type { CliError } from "../errors.js";
 import { describeFileSystemError, type FileSystem } from "../fs/file-system.js";
+import { isInstallable } from "../installers/index.js";
 import type { TerminalIO } from "../io/terminal.js";
 import { renderConversionWarnings } from "../migration/conversion-warnings.js";
 import { convertLegacySource } from "../migration/legacy-prompt-files.js";
@@ -166,11 +167,13 @@ async function continueAfterMigration(
   | { type: "cancelled" }
   | { type: "unavailable"; message: string }
 > {
-  const harnessOptions = harnesses.map((harness) => ({
-    value: harness.id,
-    label: harness.id,
-    hint: harness.version,
-  }));
+  const harnessOptions = harnesses
+    .filter((harness) => isInstallable(harness.id))
+    .map((harness) => ({
+      value: harness.id,
+      label: harness.id,
+      hint: harness.version,
+    }));
   const selectedHarnesses = await prompt.multiselect<SupportedHarnessId>({
     message: "Select harnesses to configure",
     options: harnessOptions,

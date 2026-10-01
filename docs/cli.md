@@ -190,179 +190,42 @@ Safety behavior:
 - Non-TTY invocations do not hang; use decisive flags such as `--scope` and `--yes` in scripts.
 - Prompt cancellation exits cleanly with code `0`.
 
-With `--harness opencode2`, explicit selection works before an OpenCode 2
-config exists. Local scope creates or edits `opencode.jsonc` in the project.
-Global scope uses `$XDG_CONFIG_HOME/opencode`, or `~/.config/opencode` when XDG
-is unset. The installer writes the plural `plugins` field, preserves comments
-and existing options, and refuses malformed, duplicate-key, or ambiguous
-config files. Repeating the command leaves the bytes unchanged.
-The selected V2 package is `@weaveio/weave-adapter-opencode2`; the V1 package
-remains independent. See the [V2 core guide](adapters/opencode2-core.md).
+The starter categories declare no `models` and no `temperature`. A category
+shuttle without `models` runs on Shuttle's builtin models, which track the
+current defaults; earlier starters pinned `claude-sonnet-4-5` and `gpt-4o`,
+which no longer matched provider catalogs. `temperature` is left unset for the
+reason in [Sampling defaults](adapters/opencode2-core.md#sampling-defaults):
+some models reject it, and the category shuttle then failed on every call.
 
-## `weave init migrate`
+`weave init` writes harness config only for the harnesses it is asked to
+install: `--harness <id>`, `--all-harnesses`, or the interactive selection.
+`--yes` alone writes the Weave config and installs nothing. A harness named
+with `--harness` is installed even when detection did not find it, because
+the project config is written either way.
 
-`weave init migrate` converts a legacy OpenCode JSONC config (`weave-opencode.jsonc`) into the current `.weave` DSL. Migration is also offered automatically during ordinary `weave init` when a legacy source file is detected for the chosen scope.
+| Harness | What `weave init` writes |
+| --- | --- |
+| `opencode` (OpenCode 1) | Adds `@weaveio/weave-adapter-opencode@<version>` to the `plugin` array. A legacy `@opencode_weave/weave` entry is replaced. |
+| `opencode2` | Adds `@weaveio/weave-adapter-opencode2@<version>` to the `plugins` array. |
+| `claude-code` | Runs `weave compose --adapter claude-code --init` in the project and prints the `claude --plugin-dir` launch command. At global scope it prints that command to run per project instead. |
+| `pi` | Nothing yet: Weave for Pi is not published. Explicit `--harness pi` exits `1`; any other selection skips it. |
 
-### Entry paths
+For both OpenCode generations, local scope creates or edits the project's
+`opencode.jsonc` (or an existing `opencode.json`, `.opencode/opencode.jsonc`,
+or `.opencode/opencode.json`). Global scope uses `$XDG_CONFIG_HOME/opencode`,
+or `~/.config/opencode` when XDG is unset. The two generations read the same
+files and each ignores the other's key, so one file can carry both entries.
+The installer preserves comments and existing entries, refuses malformed or
+ambiguous config files, and leaves an existing Weave entry at the version the
+user chose. Repeating the command leaves the bytes unchanged.
 
-**Explicit migrate mode** — direct invocation, interactive or scripted:
-
-```bash
-weave init migrate --scope local
-weave init migrate --scope global
-weave init migrate --scope local --yes
-weave init migrate --scope global --yes
-```
-
-**Ordinary init discovery** — migration is offered after scope selection when the legacy source exists:
-
-```bash
-weave init --scope local   # offers migration if .opencode/weave-opencode.jsonc exists
-weave init --scope global  # offers migration if ~/.config/opencode/weave-opencode.jsonc exists
-weave init --yes           # auto-migrates non-interactively when legacy source is found
-```
-
-### Scope-aware legacy source paths
-
-| Scope    | Legacy source path                                |
-| -------- | ------------------------------------------------- |
-| `local`  | `<projectRoot>/.opencode/weave-opencode.jsonc`    |
-| `global` | `~/.config/opencode/weave-opencode.jsonc`         |
-
-### Canonical migration destinations
-
-Migration **always** writes to the canonical Weave config paths. These are the same paths used by `discoverAndParse()` in `@weaveio/weave-config`:
-
-| Scope    | Destination                         |
-| -------- | ----------------------------------- |
-| `local`  | `<projectRoot>/.weave/config.weave` |
-| `global` | `~/.weave/config.weave`             |
-
-See [Config Loading — Config Discovery](./config-loading.md#config-discovery) for the canonical path definitions.
-
-### `--install-dir` behavior in migrate mode
-
-`--install-dir` is **ignored** in migrate mode. Migration always writes to the canonical scope destination (`~/.weave/config.weave` or `<projectRoot>/.weave/config.weave`) regardless of any `--install-dir` value. This is intentional: `--install-dir` is a starter-config scaffolding option for `weave init` that allows non-standard install locations; migration must stay aligned with the canonical paths that `@weaveio/weave-config` discovers at runtime. Allowing `--install-dir` to redirect migration output would produce a config file that the config loader would never find.
-
-### Preflight summary
-
-Before any file is written, migration shows a preflight summary:
-
-```text
-Migration preflight
-
-  Source:         /project/.opencode/weave-opencode.jsonc
-  Destination:    /project/.weave/config.weave
-  Scope:          local
-  Overwrite:      no (destination does not exist)
-  Skipped fields: none
-```
-
-When the destination already exists:
-
-```text
-Migration preflight
-
-  Source:         /project/.opencode/weave-opencode.jsonc
-  Destination:    /project/.weave/config.weave
-  Scope:          local
-  Overwrite:      yes — backup will be created at /project/.weave/config.weave.bak
-  Skipped fields: 2 field(s) will be skipped with warnings
-```
-
-### Safety behavior
-
-- **Validation before write**: generated `.weave` DSL is validated through the normal `parseConfig()` pipeline before any file is mutated. If validation fails, migration aborts with no destination or backup written.
-- **Unconvertible source**: when the legacy config cannot be parsed (or its structure is unsafe), migration exits with code `1` before the preflight and writes nothing. Ordinary `weave init` also exits `1` in this case.
-- **No invented settings**: migration never writes the starter template. When every legacy field is skipped, `config.weave` holds only the provenance comment and the skipped-field warnings.
-- **Overwrite backup**: when the destination already exists, exactly one backup is written at `<destination>.bak` before the destination is overwritten. No double-backup or extra files are created.
-- **Source preservation**: the legacy JSONC source file is never renamed or deleted after successful migration. Users retain a manual rollback path.
-- **Provenance comment**: generated `config.weave` begins with a comment block naming the legacy source, scope, and generator, followed by any skipped fields:
-
-  ```weave
-  # Migrated from legacy OpenCode JSONC config
-  # Source: /project/.opencode/weave-opencode.jsonc
-  # Scope: local
-  # Generated by: weave init migrate
-  #
-  # Legacy fields that were not migrated:
-  #   - skill_directories: legacy skill_directories are not migrated; ...
-  ```
-
-- **JSONC parsing**: comments and trailing commas are accepted. Generated DSL
-  does not preserve arbitrary comments. Duplicate object keys, dangerous keys,
-  malformed input, oversized input, and unsupported graph values fail safely.
-  Diagnostics have count and size limits.
-
-### `--yes` scripting behavior
-
-`--yes` enables fully non-interactive migration:
-
-```bash
-# Local migration — no prompts, overwrites with backup if destination exists
-weave init migrate --scope local --yes
-
-# Global migration — no prompts
-weave init migrate --scope global --yes
-```
-
-Without `--yes` in a non-TTY environment, migration exits with code `1` and a message directing the user to add `--yes`.
-
-### Warning semantics
-
-Migration uses best-effort partial conversion: supported fields are written even when some legacy fields are skipped. When fields are skipped, a warning summary is printed after the success message:
-
-```text
-⚠  Migration warnings — the following legacy fields were skipped:
-
-  • workflows: legacy workflow definitions are not supported in migration v1; define workflows using the current DSL workflow syntax
-  • continuation: legacy continuation settings are not supported in migration v1; use the current DSL continuation block if needed
-  • custom_agents.loom: "loom" collides with a builtin agent name; skipped to avoid silently overriding the builtin
-  • agents.shuttle.tools.call_weave_agent: "call_weave_agent" is a harness-specific tool name that cannot be mapped to an abstract tool_policy capability; skipped
-```
-
-**Exit code**: migration exits with code `0` even when warnings are emitted, as long as the destination file was written successfully.
-
-### Supported field conversions
-
-| Legacy field         | Current DSL output                        |
-| -------------------- | ----------------------------------------- |
-| `disabled_agents`    | `disable agents [...]`                    |
-| `disabled_hooks`     | `disable hooks [...]`                     |
-| `disabled_skills`    | `disable skills [...]`                    |
-| `log_level`          | `settings { log_level <VALUE> }`          |
-| `agents.<name>`      | `agent <name> { ... }` (builtin override) |
-| `custom_agents.<name>` | `agent <name> { ... }` (new agent)      |
-| `categories.<name>`  | `category <name> { ... }`                 |
-| `model` + `fallback_models` | `models [primary, ...fallbacks]`   |
-| `tools`              | `tool_policy { ... }` (known tools only)  |
-| `custom_agents.<name>.description` | `description "..."` (falls back to `display_name`) |
-| `custom_agents.<name>.prompt_file` | copied to `.weave/prompts/<name>.md`, referenced by `prompt_file` |
-
-**Explicitly skipped in migration v1** (warn + skip): `workflows`, `continuation`, `analytics`, `background`, `skill_directories`, `disabled_tools`, `tmux`, `experimental`, agent and custom agent `skills`, custom agent structured `triggers`, category `patterns`, and any other agent, custom agent, or category field without a current equivalent (for example `variant`, `top_p`, `maxTokens`, `modelOptions`).
-
-**Ignored silently**: `$schema`.
-
-### Agent namespace rules
-
-- `agents` entries are treated as **overrides of existing builtin agent names** (`loom`, `tapestry`, `shuttle`, `pattern`, `thread`, `spindle`, `weft`, `warp`). Non-builtin names under `agents` are warned and skipped — they do not silently become new agents.
-- `custom_agents` entries become new `agent <name>` blocks when the name does not collide with a builtin. Collisions are warned and skipped.
-- `categories` become `category <name>` blocks. The current DSL generates `shuttle-<category>` semantics automatically — no standalone `agent shuttle-<category>` entries are emitted.
-
-### Prompt file translation
-
-Legacy Weave read a custom agent's `prompt_file` relative to the legacy config directory (`.opencode/`, or `~/.config/opencode/` for the global config). Migration reads the same file and copies it to `<scope>/.weave/prompts/<agent>.md`, which the generated `prompt_file "<agent>.md"` references. A differing file already at that path is backed up to `<file>.bak` first.
-
-- As in legacy Weave, a readable `prompt_file` wins over an inline `prompt`; when the file cannot be read, the inline `prompt` is used instead.
-- Absolute paths and paths containing `..` are warned and skipped, as are files that cannot be read.
-- A custom agent left without any prompt is skipped with a warning, because harness adapters cannot register an agent without a prompt.
-- Legacy Weave ignored `prompt_file` on builtin agent overrides (`agents.<name>`), so migration warns and skips it there and the builtin prompt stays in effect.
-
-See [Config Loading — Prompt File Resolution](./config-loading.md#prompt-file-resolution) for how `prompt_file` values are resolved at runtime.
-
-### Post-migration flow
-
-After a successful migration write, `weave init migrate` continues into the normal harness selection and configuration flow. This matches the behavior of ordinary `weave init` — migration is not a terminal command.
+The published CLI pins the adapter versions it was released with:
+[`scripts/build-public-packages.ts`](../scripts/build-public-packages.ts)
+replaces `WEAVE_OPENCODE_ADAPTER_VERSION` and
+`WEAVE_OPENCODE2_ADAPTER_VERSION` at build time. A source checkout leaves them
+unset and writes the bare package name. The host installs the package itself
+on its next start; no `bun add` is needed. See the
+[V2 core guide](adapters/opencode2-core.md).
 
 ## Harness detection and installation
 
@@ -370,20 +233,27 @@ Detection is side-effect free. It may probe config paths, check readability, ins
 
 Supported detection IDs:
 
-- `opencode`
-- `opencode2`
-- `claude-code`
-- `pi`
+- `opencode`: an `opencode` binary on `PATH` whose `--version` is 1.x.
+  `@opencode/cli` also links an `opencode` binary, so a 2.x one is not
+  OpenCode 1.
+- `opencode2`: an `opencode2` binary on `PATH`. OpenCode 1 and 2 share
+  `~/.config/opencode/opencode.json(c)`, so neither is detected from that
+  file alone.
+- `claude-code`: a `claude` binary or `~/.claude/settings.json`.
+- `pi`: a `pi` binary or `~/.pi/config.json`.
 
-Installer support is intentionally separate from detection support. Legacy
-OpenCode and native OpenCode 2 have installers. Claude Code and Pi currently
-report unsupported installer messages until adapter-specific installers exist.
+Binaries are found with `Bun.which`. Earlier releases ran `command -v`
+through Bun Shell, which does not implement it, so no harness was ever found
+by its binary.
+
+The interactive selection offers only harnesses `weave init` can install.
 
 ```bash
-weave init --harness opencode --yes
+weave init --harness opencode --scope local --yes
 weave init --harness opencode2 --scope local --yes
-weave init --harness pi --yes        # explicit unsupported/undetected failure until supported
-weave init --all-harnesses --yes     # install supported detected harnesses, skip unsupported ones
+weave init --harness claude-code --scope local --yes
+weave init --harness pi --yes        # exits 1: Weave for Pi is not published yet
+weave init --all-harnesses --yes     # install every detected harness, skip Pi
 ```
 
 Harness writes only happen after explicit non-interactive flags or interactive confirmation.

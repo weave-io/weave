@@ -1,129 +1,38 @@
-import { dirname, join } from "node:path";
-import { dirname as posixDirname, join as posixJoin } from "node:path/posix";
-import { okAsync, type ResultAsync } from "neverthrow";
 import type { FileSystem } from "../fs/file-system.js";
-import type {
-  AdapterModule,
-  HarnessInstaller,
-  InstallError,
-  InstallRequest,
-  InstallResult,
-} from "./index.js";
+import { OpenCodePluginInstaller } from "./opencode-plugin.js";
 
-const WEAVE_ENTRY = "weave:init";
+export const OPENCODE_PLUGIN_PACKAGE = "@weaveio/weave-adapter-opencode";
 
-export class OpenCodeInstaller implements HarnessInstaller {
-  readonly id = "opencode" as const;
-  readonly supported = true;
-  readonly optionalModules: AdapterModule[] = [
-    {
-      id: "agents",
-      label: "Weave agent descriptors",
-      description:
-        "Install an adapter module that points OpenCode at Weave agents.",
-    },
-  ];
+/** The legacy OpenCode-only Weave plugin the adapter supersedes. */
+export const LEGACY_OPENCODE_PLUGIN_PACKAGE = "@opencode_weave/weave";
 
-  constructor(private readonly fs: FileSystem) {}
+/**
+ * The adapter version released with this CLI. `scripts/build-public-packages.ts`
+ * replaces this expression with the adapter's `package.json` version when it
+ * builds the published CLI; a source checkout leaves it unset.
+ */
+const RELEASED_ADAPTER_VERSION: string | undefined =
+  process.env.WEAVE_OPENCODE_ADAPTER_VERSION;
 
-  install(request: InstallRequest): ResultAsync<InstallResult, InstallError> {
-    return this.fs
-      .exists(request.configPath)
-      .mapErr((error) => ({
-        type: "InstallFailed" as const,
-        harness: this.id,
-        path: request.configPath,
-        cause: error,
-      }))
-      .andThen((exists) => {
-        if (!exists) {
-          return this.writeFreshConfig(request, []);
-        }
-
-        return this.fs
-          .readText(request.configPath)
-          .mapErr((error) => ({
-            type: "InstallFailed" as const,
-            harness: this.id,
-            path: request.configPath,
-            cause: error,
-          }))
-          .andThen((content) => this.writeConfig(request, content));
-      });
-  }
-
-  private writeFreshConfig(
-    request: InstallRequest,
-    messages: string[],
-  ): ResultAsync<InstallResult, InstallError> {
-    return this.writeConfig(request, "{}", messages);
-  }
-
-  private writeConfig(
-    request: InstallRequest,
-    existingContent: string,
-    initialMessages: string[] = [],
-  ): ResultAsync<InstallResult, InstallError> {
-    const hasEntry = existingContent.includes(WEAVE_ENTRY);
-    const messages = [...initialMessages];
-
-    if (hasEntry && !request.force) {
-      messages.push(
-        "OpenCode already contains a Weave entry; no changes made.",
-      );
-      return this.installModules(request, false, messages);
-    }
-
-    const nextContent = this.renderConfig(existingContent, request.force);
-    return this.fs
-      .writeText(request.configPath, nextContent)
-      .mapErr((error) => ({
-        type: "InstallFailed" as const,
-        harness: this.id,
-        path: request.configPath,
-        cause: error,
-      }))
-      .andThen(() => {
-        messages.push("Installed Weave OpenCode integration entry.");
-        return this.installModules(request, true, messages);
-      });
-  }
-
-  private installModules(
-    request: InstallRequest,
-    changed: boolean,
-    messages: string[],
-  ): ResultAsync<InstallResult, InstallError> {
-    if (!request.selectedModules.includes("agents")) {
-      return okAsync({ harness: this.id, changed, messages });
-    }
-
-    const modulePath = request.configPath.includes("/")
-      ? posixJoin(posixDirname(request.configPath), "weave-agents.json")
-      : join(dirname(request.configPath), "weave-agents.json");
-    const content = `${JSON.stringify({ source: WEAVE_ENTRY, generatedBy: "@weaveio/weave-cli" }, null, 2)}\n`;
-    return this.fs
-      .writeText(modulePath, content)
-      .mapErr((error) => ({
-        type: "InstallFailed" as const,
-        harness: this.id,
-        path: modulePath,
-        cause: error,
-      }))
-      .map(() => ({
-        harness: this.id,
-        changed: true,
-        messages: [
-          ...messages,
-          "Installed optional OpenCode Weave agent module.",
-        ],
-      }));
-  }
-
-  private renderConfig(existingContent: string, force: boolean): string {
-    const existing =
-      existingContent.trim().length > 0 ? existingContent.trim() : "{}";
-    const marker = force ? "force" : "install";
-    return `${existing}\n\n// ${WEAVE_ENTRY}:${marker}\n`;
+/**
+ * Adds the Weave adapter to OpenCode 1's `plugin` array. OpenCode installs
+ * the package itself the next time it starts.
+ */
+export class OpenCodeInstaller extends OpenCodePluginInstaller {
+  constructor(
+    fs: FileSystem,
+    adapterVersion: string | undefined = RELEASED_ADAPTER_VERSION,
+  ) {
+    super(
+      fs,
+      {
+        harness: "opencode",
+        label: "OpenCode",
+        key: "plugin",
+        packageName: OPENCODE_PLUGIN_PACKAGE,
+        replaces: [LEGACY_OPENCODE_PLUGIN_PACKAGE],
+      },
+      adapterVersion,
+    );
   }
 }

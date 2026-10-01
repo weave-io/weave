@@ -420,18 +420,19 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
   ): ResultAsync<Record<string, string>, PublicPackageBuildError> {
     if (packageName !== "@weaveio/weave-cli") return okAsync({});
-    // The CLI reports its own version, and `weave init --harness opencode2`
-    // pins the adapter version released alongside it.
-    return this.readManifestVersion("packages/cli/package.json").andThen(
-      (cliVersion) =>
-        this.readManifestVersion(
-          "packages/adapters/opencode2/package.json",
-        ).map((adapterVersion) => ({
-          "process.env.WEAVE_CLI_VERSION": JSON.stringify(cliVersion),
-          "process.env.WEAVE_OPENCODE2_ADAPTER_VERSION":
-            JSON.stringify(adapterVersion),
-        })),
-    );
+    // The CLI reports its own version, and `weave init` pins the OpenCode
+    // adapter versions released alongside it.
+    return ResultAsync.combine([
+      this.readManifestVersion("packages/cli/package.json"),
+      this.readManifestVersion("packages/adapters/opencode/package.json"),
+      this.readManifestVersion("packages/adapters/opencode2/package.json"),
+    ]).map(([cliVersion, opencodeVersion, opencode2Version]) => ({
+      "process.env.WEAVE_CLI_VERSION": JSON.stringify(cliVersion),
+      "process.env.WEAVE_OPENCODE_ADAPTER_VERSION":
+        JSON.stringify(opencodeVersion),
+      "process.env.WEAVE_OPENCODE2_ADAPTER_VERSION":
+        JSON.stringify(opencode2Version),
+    }));
   }
 
   private readManifestVersion(

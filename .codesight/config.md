@@ -8,7 +8,7 @@
 - `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
-- `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `LOG_LEVEL` **required** — packages/cli/src/main.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
 - `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
@@ -21,7 +21,8 @@
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_GLOBAL_CONFIG_DIR` **required** — packages/config/src/__tests__/load_config.test.ts
-- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_LOG_FILE` **required** — packages/cli/src/main.ts
+- `WEAVE_OPENCODE_ADAPTER_VERSION` **required** — packages/cli/src/installers/opencode.ts
 - `WEAVE_OPENCODE2_ADAPTER_VERSION` **required** — packages/cli/src/installers/opencode2.ts
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts

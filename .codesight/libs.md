@@ -610,16 +610,25 @@
   - class MemoryFileSystem
   - interface FileSystem
   - type FileSystemError
+- `packages/cli/src/installers/claude-code.ts` — class ClaudeCodeInstaller, type ComposeClaudeCode
 - `packages/cli/src/installers/index.ts`
-  - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
+  - function isInstallable: (id) => boolean
+  - function installerRegistry: (fs, composeClaudeCode) => Record<SupportedHarnessId, HarnessInstaller>
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
   - interface HarnessInstaller
   - type AdapterModule
   - type InstallRequest
-  - type InstallResult
-  - _...1 more_
-- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+  - _...3 more_
+- `packages/cli/src/installers/opencode-plugin.ts`
+  - function pluginSpecifier: (packageName, version) => string
+  - function openCodeConfigCandidates: (fs, scope) => string[]
+  - class OpenCodePluginInstaller
+  - interface OpenCodePluginTarget
+- `packages/cli/src/installers/opencode.ts`
+  - class OpenCodeInstaller
+  - const OPENCODE_PLUGIN_PACKAGE
+  - const LEGACY_OPENCODE_PLUGIN_PACKAGE
 - `packages/cli/src/installers/opencode2.ts`
   - function opencode2PluginSpecifier: (version) => string
   - class OpenCode2Installer

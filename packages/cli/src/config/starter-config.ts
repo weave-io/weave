@@ -27,20 +27,21 @@ export function starterConfig(scope: "global" | "local"): string {
 #   triggers ["Use for README and docs/ changes"]
 # }
 
+# Each category adds a shuttle-<name> specialist that Loom and Tapestry can
+# delegate to. Without \`models\`, it runs on Shuttle's models. To pin one,
+# list models your harness offers, most preferred first, for example
+# models ["anthropic/claude-sonnet-5-5"].
+
 category backend {
   description "Backend APIs, services, persistence, and data integrity"
-  models ["claude-sonnet-4-5"]
   triggers ["Use for backend APIs, services, persistence, and data integrity"]
   prompt_append "Prioritize API contracts, migrations, and backwards compatibility."
-  temperature 0.2
 }
 
 category frontend {
   description "Frontend UI, styling, accessibility, and user interaction"
-  models ["gpt-4o"]
   triggers ["Use for frontend UI, styling, accessibility, and user interaction"]
   prompt_append "Preserve accessibility and responsive behavior."
-  temperature 0.2
 }
 
 workflow quick-fix {
@@ -58,7 +59,7 @@ workflow quick-fix {
   step review {
     name "Review the fix"
     type gate
-    agent loom
+    agent weft
     prompt "Review the fix for: {{instance.goal}}"
     completion review_verdict
     on_reject pause
