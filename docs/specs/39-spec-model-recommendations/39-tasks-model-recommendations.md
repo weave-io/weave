@@ -85,7 +85,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 7.3 nginx: `/models/` served as `application/json`, `Cache-Control: public, max-age=300`, ETag.
 - [x] 7.4 User docs page: how to opt in, the commands, channels, what the request sends.
 
-## 8. Live proof — PR: see the [live proof record](../../artifacts/model-recommendations-live-proof-2026-10-01.md) (1 Oct 2026, released `0.3.0-next.0` packages)
+## 8. Live proof — PR: #307; see the [live proof record](../../artifacts/model-recommendations-live-proof-2026-10-01.md) (1 Oct 2026, released `0.3.0-next.0` packages)
 
 - [x] 8.1 On a real OpenCode 2 host with `mode auto` and `WEAVE_MODEL_RECOMMENDATIONS_URL` pointing at a locally served signed file: publish a new list, observe Loom's model change after the refresh with no restart. Loom moved `proof-loom-a` → `proof-loom-b` on the first prompt after `weave models update`, same service process; the live tryweave.io `stable` list (8.0) applied and left Loom on its builtin resolution.
 - [x] 8.2 Serve a tampered file: it is rejected, `status` reports it, and Loom keeps its model. `SignatureInvalid`; `weave models status` shows the error (the `status` RPC carries no last-check error, by design).
