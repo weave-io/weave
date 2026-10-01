@@ -138,15 +138,43 @@ function commandMatches(command: string, declared: string): boolean {
   return command === declared || command.startsWith(`${declared} `);
 }
 
-/** Command-like inline code spans in `text` (single backticks only). */
-function extractInlineCommands(text: string): string[] {
-  return [...text.matchAll(INLINE_CODE_RE)]
-    .map((match) => match[1] ?? "")
-    .filter(isCommandLike)
-    .map(normalizeCommand);
+const SHELL_CHAIN_RE = /&&|\|\||;|\|/;
+/**
+ * Package-script and package-runner invocations written as plain prose
+ * (`run bun run lint before pushing`). Only these shapes are read outside
+ * code: a bare runner word such as `go` or `make` is too common in English.
+ */
+const PROSE_COMMAND_RE =
+  /\b(?:(?:bun|npm|pnpm|yarn)\s+run\s+[A-Za-z0-9:_-]+|(?:bunx|npx)\s+[A-Za-z0-9@/._-]*[A-Za-z0-9_-])/g;
+
+/**
+ * The command-like parts of one span or line. A chain such as
+ * `bun test && bun run lint` is split, so a declared first command cannot
+ * carry an undeclared second one past the check.
+ */
+function splitCommands(text: string): string[] {
+  return text.split(SHELL_CHAIN_RE).filter(isCommandLike).map(normalizeCommand);
 }
 
-/** Command-like inline code spans plus command-like lines inside fences. */
+/** Command-like inline code spans in `text` (single backticks only). */
+function extractInlineCommands(text: string): string[] {
+  return [...text.matchAll(INLINE_CODE_RE)].flatMap((match) =>
+    splitCommands(match[1] ?? ""),
+  );
+}
+
+/** Script and runner invocations in a line's prose, outside inline code. */
+function extractProseCommands(line: string): string[] {
+  const prose = line.replace(INLINE_CODE_RE, " ");
+  return [...prose.matchAll(PROSE_COMMAND_RE)].map((match) =>
+    normalizeCommand(match[0]),
+  );
+}
+
+/**
+ * Commands a plan names: command-like inline code spans, command-like lines
+ * inside fences, and script or runner invocations in plain prose.
+ */
 function extractPlanCommands(content: string): string[] {
   const commands = extractInlineCommands(content);
   let inFence = false;
@@ -155,9 +183,11 @@ function extractPlanCommands(content: string): string[] {
       inFence = !inFence;
       continue;
     }
-    if (inFence && isCommandLike(line)) {
-      commands.push(normalizeCommand(line));
+    if (inFence) {
+      commands.push(...splitCommands(line));
+      continue;
     }
+    commands.push(...extractProseCommands(line));
   }
   return commands;
 }

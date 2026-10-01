@@ -946,6 +946,16 @@ failures, and the rubric-derived questions do not close them:
   invented. The `pattern-plan-no-invented-commands` judgment case checks it
   deterministically.
 
+  > **Score change, 1 Oct 2026 (#300).** The command check
+  > (`plan_no_unlisted_commands`, `plan_uses_declared_commands`) now splits
+  > shell chains, so `` `bun test && bun run lint` `` no longer passes on its
+  > declared first half, and also reads package-script and runner invocations
+  > written as plain prose (`bun|npm|pnpm|yarn run <script>`, `bunx|npx
+  > <tool>`). Other runner words (`go`, `make`) are still read only inside
+  > code, since they are common in English. Re-extracting every Pattern
+  > answer from the 1 Oct sanity runs changed no verdict, but compare
+  > pattern-planning runs only on the same side of this change.
+
 **Changing the judge.** Baselines are comparable only under the same judge:
 `eval compare` refuses runs whose recorded judges differ in id or version, so
 a judge change starts a new baseline. To change it:

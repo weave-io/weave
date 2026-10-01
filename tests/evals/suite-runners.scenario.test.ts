@@ -3054,6 +3054,52 @@ describe("Pattern plans a change", () => {
     expect(invented.firstCase?.passed).toBe(false);
   });
 
+  it.each([
+    [
+      "an undeclared command chained after a declared one",
+      "- [ ] `bun test && bun run lint` passes",
+      false,
+    ],
+    [
+      "an undeclared chained command inside a fence",
+      [
+        "- [ ] `bun test` passes",
+        "```bash",
+        "cd app && bun run lint",
+        "```",
+      ].join("\n"),
+      false,
+    ],
+    [
+      "an undeclared script named in plain prose",
+      "- [ ] `bun test` passes, then run bun run lint before pushing.",
+      false,
+    ],
+    [
+      "a package runner named in plain prose",
+      "- [ ] `bun test` passes; format with bunx prettier.",
+      false,
+    ],
+    [
+      "a chain of declared commands",
+      "- [ ] `bun install && bun test` passes",
+      true,
+    ],
+    [
+      "prose that only mentions linting, with no command",
+      "- [ ] `bun test` passes; the project has no lint script, so skip it.",
+      true,
+    ],
+  ])("reads a plan with %s for what it is", async (_shape, text, passes) => {
+    const run = await produces(
+      probe,
+      ["plan_uses_declared_commands", "plan_no_unlisted_commands"],
+      text as string,
+    );
+
+    expect(run.firstCase?.passed).toBe(passes as boolean);
+  });
+
   it("names the structure it wants, and withholds the signal names on a judgment case", async () => {
     const structural = await withEvalFixtures(
       [{ ...probe.fixture, tags: ["planning"] }],
