@@ -55,7 +55,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [ ] 4.1 `ModelRecommendations` class with injected `fetch`, clock and file access; `refresh({ force })` returns `ResultAsync` with a typed error.
 - [ ] 4.2 24-hour throttle per channel after success and 1-hour after failure, `If-None-Match`/ETag, 5-second timeout, 64 KiB body cap, no identifying headers. `WEAVE_MODEL_RECOMMENDATIONS_URL` overrides the base URL.
 - [ ] 4.3 `latest` and `applied` are envelope files written to a unique temporary name and moved into place with Bun Shell `mv` (test pins the rename); writers hold the `lock/` directory (Bun Shell `mkdir`, 60-second stale timeout) and re-check `issued` under the lock. `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
-- [ ] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`. No test touches the network.
+- [ ] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`, under the lock. Lock contention returns `Busy` and writes nothing, `state.json` included. No test touches the network.
 
 ## 5. CLI — PR:
 
@@ -71,6 +71,12 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated.
 - [ ] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md).
 - [ ] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
+
+## 6b. Claude Code and Pi — PR:
+
+- [ ] 6b.1 Claude Code: the session-start bootstrap calls `refresh()` in the background (never blocking composition) and composes with `loadConfigDetailed(..., { harness: "claude-code" })`.
+- [ ] 6b.2 Pi: the same at `session_start`, with `harness: "pi"`, in the Pi adapter (its source is outside this repository; open the PR where it lives).
+- [ ] 6b.3 Tests with a stub fetch: opted in, a session start triggers one refresh; `mode off`, none.
 
 ## 7. Website (`pgermishuys/weave-website`) — PR:
 

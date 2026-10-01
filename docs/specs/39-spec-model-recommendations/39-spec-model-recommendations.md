@@ -144,7 +144,8 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 - The request has a 5-second timeout and the 64 KiB body limit. Only `https://tryweave.io` is fetched; tests and local proofs point at another URL with `WEAVE_MODEL_RECOMMENDATIONS_URL`.
 - A downloaded file is written to `latest` only after it parses, validates and verifies.
 - In `auto` mode a newly verified `latest` with a later `issued` is copied to `applied`. In `notify` mode it waits for `weave models apply`.
-- Any failure (offline, timeout, bad signature, invalid, expired, mis-dated or stale list, too old a client, lock held) leaves `latest` and `applied` as they were and records an error code in `state.json`. Failures are never thrown to the caller; `refresh()` returns a `ResultAsync` whose error is a typed union.
+- Any failure (offline, timeout, bad signature, invalid, expired, mis-dated or stale list, too old a client) leaves `latest` and `applied` as they were and records an error code in `state.json`. Failures are never thrown to the caller; `refresh()` returns a `ResultAsync` whose error is a typed union.
+- Every write to the cache, `state.json` included, happens while holding `lock/`. A process that cannot take the lock returns a typed `Busy` result and writes nothing at all, so it cannot overwrite the lock holder's ETag, check time or error.
 
 ### Loading
 
@@ -168,11 +169,11 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 | --- | --- | --- |
 | **OpenCode 2** (native) | Without restart. The plugin calls `refresh()` in the background after its first catalog publish and on each admitted prompt or plan start, where the throttle makes most calls no-ops. Because the loader reads `applied.json` through the injected `FileReader`, the catalog's source cache records it and the existing probe sees a promotion. The refresh runs on admitted work, not on a timer, so a change lands on the prompt after the one that fetched it. | Same as the builtins: the first entry with exactly one live catalog match. A live session keeps its model; new sessions and later turns that Weave selects a model for use the new one. |
 | **OpenCode V1** | — | Not supported. V1 writes the first provider-qualified entry without checking that the provider is connected, so it passes no harness ID and gets no layer. `weave models status` says so. |
-| **Claude Code** | Next session start (the plugin reruns composition then). | Reads its `claude-code` section, whose entries are `opus`, `sonnet` or `haiku`. The adapter's allowlist accepts the three tier names, and Claude Code maps each one to its current model, so new Anthropic models arrive through Claude Code without a new list. |
-| **Pi** | Next session start. | The first declared entry that `ctx.modelRegistry.getAvailable()` offers, as for the builtin defaults. |
+| **Claude Code** | At session start the plugin calls `refresh()` in the background, then composes from the applied list, so a list fetched in one session applies at the next. | Reads its `claude-code` section, whose entries are `opus`, `sonnet` or `haiku`. The adapter's allowlist accepts the three tier names, and Claude Code maps each one to its current model, so new Anthropic models arrive through Claude Code without a new list. |
+| **Pi** | As for Claude Code: a background `refresh()` at `session_start`, applied at the next session. | The first declared entry that `ctx.modelRegistry.getAvailable()` offers, as for the builtin defaults. |
 | **Copilot CLI** | — | Not supported: it writes no agent model today. |
 
-Fetching runs in OpenCode 2 and in the CLI in this spec. The other adapters read whatever `applied.json` the CLI or an OpenCode 2 session last wrote; giving them their own background refresh is a later item.
+Every supported adapter fetches on its own, so `auto` works for a user who runs only Claude Code or only Pi. The cache is shared, so whichever harness or CLI command fetches first updates it for all of them.
 
 ## Visibility
 
@@ -231,12 +232,13 @@ One pull request per item, tests first, in this order. Tasks are in the [tasks f
 | 4 | **Fetch and cache** | `ModelRecommendations.refresh()` with injected fetch and file access: 24-hour throttle, ETag, size and time limits, rollback protection, `auto` promotion and `notify` holding. No test touches the network. |
 | 5 | **CLI** | `weave models status`, `update`, `apply`, `pin` and `check`, and the `weave validate` reporting, documented in [CLI](../../cli.md). |
 | 6 | **OpenCode 2** | Background refresh after first publish and on admitted work; a test that `applied.json` is a probed source (no new plumbing: the [spike](../../artifacts/model-recommendations-spike.md) showed the loader's `FileReader` is enough); `status` fields and issue code; TUI notice. An adapter scenario in `tests/adapters/` shows a promoted file reaching a reloaded agent without restart. |
+| 6b | **Claude Code and Pi** | A background `refresh()` at session start, composition with the harness's section, and tests with a stub fetch showing one refresh per session start when opted in and none when off. |
 | 7 | **Website** | Files, signing in the deploy workflow, nginx headers, user docs page. Opened against `pgermishuys/weave-website`. |
 | 8 | **Live proof** | On a real OpenCode 2 host with `mode auto`, pointed at a locally served signed file: an agent's model changes after promotion with no restart, a tampered remote file is rejected with the old model kept, and a corrupt local file is reported with `model_updates_unavailable` while agents run on their builtin lists. Recorded under `docs/artifacts/`, as the [spike](../../artifacts/model-recommendations-spike.md) did for the first two. |
 
 ## Finish line
 
-- A user who adds `settings { model_updates { mode auto } }` and changes nothing else gets new builtin model lists on OpenCode 2 within a day of publication, without restarting OpenCode. With `mode notify`, they see the change in `weave models status` and apply it with `weave models apply`.
+- A user who adds `settings { model_updates { mode auto } }` and changes nothing else gets a newly published list without upgrading Weave. On OpenCode 2 it applies without a restart, on the second prompt after the first check that finds it: checks happen on admitted work at most once a day, not on a timer. On Claude Code and Pi it applies at the session after the one that fetched it. With `mode notify`, they see the change in `weave models status` and apply it with `weave models apply`.
 - Every published list that changes a model clears the [publication bar](#publication-bar) for each agent it changes, and its `evidence` link opens the run.
 - A user who does not opt in sees no change in behaviour and no network request.
 - An unsigned, tampered, malformed, older or too-new file never changes any agent's model, and the user can see why.
