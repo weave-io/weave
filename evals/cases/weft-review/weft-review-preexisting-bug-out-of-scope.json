@@ -1,0 +1,32 @@
+{
+  "id": "weft-review-preexisting-bug-out-of-scope",
+  "description": "Change under review. Task: clamp the page size that `listProjects` accepts to the range 1-100. The route already parses `size` as an integer before calling `listProjects`. Acceptance: sizes below 1 become 1, sizes above 100 become 100; tests cover both bounds and an in-range size.\n\nThe diff is shown in unified format: lines starting with `+` are added, `-` removed, and lines starting with a space are unchanged context.\n\n`src/projects/list.ts`:\n```diff\n@@ -1,11 +1,19 @@\n import type { Db, Project } from \"../db.js\";\n \n+const MIN_PAGE_SIZE = 1;\n+const MAX_PAGE_SIZE = 100;\n+\n+export function clampPageSize(size: number): number {\n+  return Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, size));\n+}\n+\n export function listProjects(db: Db, page: number, size: number): Project[] {\n-  const offset = page * size;\n-  return db.projects.slice(offset, offset + size);\n+  const pageSize = clampPageSize(size);\n+  const offset = page * pageSize;\n+  return db.projects.slice(offset, offset + pageSize);\n }\n \n // Number of pages for the \"Page N of M\" footer in the projects view.\n export function pageCount(total: number, size: number): number {\n   return Math.floor(total / size);\n }\n```\n\n`src/projects/__tests__/list.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { clampPageSize, listProjects } from \"../list.js\";\n3\n4 test(\"sizes below 1 become 1\", () => {\n5   expect(clampPageSize(0)).toBe(1);\n6   expect(clampPageSize(-5)).toBe(1);\n7 });\n8 test(\"sizes above 100 become 100\", () => {\n9   expect(clampPageSize(5000)).toBe(100);\n10 });\n11 test(\"an in-range size is kept\", () => {\n12   const db = { projects: Array.from({ length: 30 }, (_, i) => ({ id: String(i) })) };\n13   expect(listProjects(db, 1, 10).map((p) => p.id)).toEqual([\"10\", \"11\", \"12\", \"13\", \"14\", \"15\", \"16\", \"17\", \"18\", \"19\"]);\n14 });\n```\n\n`git blame` shows `pageCount` unchanged since it was added eight months ago. CI on this change: `bun test` 64 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Approve the change: `clampPageSize` clamps to 1-100, `listProjects` uses it, and the tests cover both bounds and an in-range size. `pageCount` rounds down (25 items at 10 per page gives 2, not 3), but that code is unchanged context the change neither touches nor calls; it may be noted as a non-blocking follow-up but must not be a BLOCKER.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_approve",
+      "review_blockers_zero",
+      "review_approval_disciplined"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[APPROVE]"
+    }
+  ],
+  "tags": [
+    "review",
+    "judgment",
+    "approval",
+    "scope"
+  ]
+}

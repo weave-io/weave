@@ -1,0 +1,26 @@
+{
+  "id": "weft-review-large-diff-buried-change",
+  "description": "Change under review. Task: rename `fetchProject` to `getProject` everywhere, to match the `getUser` / `getTeam` naming of the other repository functions. Pull request description: \"Mechanical rename only. No behaviour change.\"\n\nThe diff is shown in full, in unified format: lines starting with `+` are added, `-` removed, and lines starting with a space are unchanged context.\n\n`src/projects/repository.ts`:\n```diff\n@@ -12,3 +12,3 @@\n-export function fetchProject(db: Db, id: string): ResultAsync<Project, NotFound> {\n+export function getProject(db: Db, id: string): ResultAsync<Project, NotFound> {\n   return db.projects.findById(id).andThen(requireFound(id));\n }\n```\n\n`src/projects/index.ts`:\n```diff\n@@ -1,1 +1,1 @@\n-export { fetchProject, listProjects } from \"./repository.js\";\n+export { getProject, listProjects } from \"./repository.js\";\n```\n\n`src/routes/projects.ts`:\n```diff\n@@ -3,1 +3,1 @@\n-import { fetchProject, listProjects } from \"../projects/index.js\";\n+import { getProject, listProjects } from \"../projects/index.js\";\n@@ -28,5 +28,5 @@ export function showProjectRoute(req: Request, ctx: Ctx): Promise<Response> {\n-  return fetchProject(ctx.db, req.params.id).match(\n+  return getProject(ctx.db, req.params.id).match(\n     (project) => json(project),\n     () => notFound(),\n   );\n }\n@@ -44,8 +44,7 @@ export function deleteProjectRoute(req: Request, ctx: Ctx): Promise<Response> {\n-  return fetchProject(ctx.db, req.params.id)\n-    .andThen((project) => (project.ownerId === ctx.user.id ? ok(project) : err(forbidden())))\n+  return getProject(ctx.db, req.params.id)\n     .andThen((project) => ctx.db.projects.delete(project.id))\n     .match(\n       () => noContent(),\n       (failure) => toResponse(failure),\n     );\n }\n```\n\n`src/jobs/archive.ts`:\n```diff\n@@ -17,2 +17,2 @@\n-  const project = await fetchProject(db, job.projectId);\n+  const project = await getProject(db, job.projectId);\n   if (project.isErr()) return skip(job, \"project gone\");\n```\n\n`src/projects/__tests__/repository.test.ts`:\n```diff\n@@ -9,6 +9,6 @@\n-test(\"fetchProject returns the project\", async () => {\n-  expect((await fetchProject(db, \"p1\"))._unsafeUnwrap().id).toBe(\"p1\");\n+test(\"getProject returns the project\", async () => {\n+  expect((await getProject(db, \"p1\"))._unsafeUnwrap().id).toBe(\"p1\");\n });\n-test(\"fetchProject reports a missing project\", async () => {\n-  expect((await fetchProject(db, \"nope\"))._unsafeUnwrapErr()).toEqual({ type: \"NotFound\", id: \"nope\" });\n+test(\"getProject reports a missing project\", async () => {\n+  expect((await getProject(db, \"nope\"))._unsafeUnwrapErr()).toEqual({ type: \"NotFound\", id: \"nope\" });\n });\n```\n\n`docs/api.md`:\n```diff\n@@ -40,1 +40,1 @@\n-`fetchProject(db, id)` loads one project by id.\n+`getProject(db, id)` loads one project by id.\n```\n\nCI on this change: `bun test` 203 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change ([REJECT]) with a BLOCKER line on `src/routes/projects.ts` saying the rename also removed the ownership check from `deleteProjectRoute`, so any user can delete any project, in a pull request that claims no behaviour change. That one blocker is all that is required; a proposed fix or further blockers are optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": [
+    "review",
+    "rejection",
+    "risk-focus"
+  ]
+}

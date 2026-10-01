@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 246 lib files | 30 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~22,300 tokens. Without it, AI exploration would cost ~81,100 tokens. **Saves ~58,800 tokens per conversation.**
-> **Last scanned:** 2026-10-01 16:22 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 246 lib files | 31 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~22,300 tokens. Without it, AI exploration would cost ~81,200 tokens. **Saves ~58,900 tokens per conversation.**
+> **Last scanned:** 2026-10-01 16:39 — re-run after significant changes
 
 ---
 
@@ -1206,7 +1206,8 @@
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
-- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `ONLY` (has default) — eval-bundles/slots/weft/sanity2.ts
+- `OPENROUTER_API_KEY` (has default) — eval-bundles/slots/weft/sanity.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
 - `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
@@ -1259,7 +1260,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **50** files
+- `packages/cli/src/evals/types.ts` — imported by **51** files
 - `packages/cli/src/fs/file-system.ts` — imported by **29** files
 - `packages/cli/src/io/terminal.ts` — imported by **28** files
 - `packages/cli/src/theme/colors.ts` — imported by **28** files
@@ -1268,21 +1269,21 @@
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **15** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
+- `packages/cli/src/evals/case-loader.ts` — imported by **12** files
 - `packages/cli/src/cli.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **11** files
 - `packages/cli/src/evals/eval-track.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +45 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +46 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +24 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +23 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +23 more
@@ -1291,7 +1292,7 @@
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/e2e-fixture-flow.test.ts` +10 more
+- `packages/cli/src/evals/langchain-agent-evals.ts` ← `eval-bundles/slots/weft/sanity.ts`, `eval-bundles/slots/weft/sanity2.ts`, `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts` +10 more
 
 ---
 
@@ -1312,7 +1313,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 243 test files found
+> 244 test files found
 
 ---
 

@@ -825,7 +825,7 @@ Weave currently supports an **eight-suite text-only eval surface**. Every regist
 | `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text; its `own-envelope` cases test what it does with a described session: honest reporting of failures, stale checks and a symptom that remains, scope, no invented values or commands, refusing secrets, and following the task's learnings |
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
-| `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals |
+| `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals; its judged review cases check that a rejection names the right defect and that a clean change is approved without invented blockers |
 | `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text |
 
 All suites share the same case schema, rubric schema, and model matrix. The shared suite registry is the source of truth for suite IDs, short `--agent` aliases, prompt snapshot coverage, and registry-driven sync tests. Suites are run in parallel across all models in the effective model set.
@@ -1659,6 +1659,15 @@ One trajectory case for each runtime problem in the [September 2026 session audi
 #### Text-only judgment cases
 
 Text-only cases tagged `judgment` test the conclusion an agent reaches from evidence in the case (inline code, a specialist's report, the project's commands), not only its output format. Runners withhold the required signal names for these cases, and each comes paired with a counter-case so a prompt change cannot pass by shifting bias. See the "Judgment cases" section of [`evals/README.md`](../evals/README.md).
+
+#### Weft judged review cases
+
+Eight `weft-review` cases were added on 1 Oct 2026 (Spec 39 task 0.3, gap G3 in the [eval readiness record](artifacts/eval-readiness-model-recommendations.md)), taking the suite from 4 to 12 text cases. Each shows a whole change: the task and its acceptance, the code (line-numbered files or a unified diff) and a passing CI line, so a reviewer cannot reject for missing evidence.
+
+- **Three approvals are `judgment` cases**, scored deterministically on `[APPROVE]` with zero `BLOCKER:` lines: a complete feature with tests (`approves-complete-feature`), a correct change with only style issues and lint warnings (`style-nits-not-blockers`), and a correct change next to a pre-existing bug it neither touches nor calls (`preexisting-bug-out-of-scope`).
+- **Five rejections are judged on the expected outcome alone** (`required_artifacts` is empty, so the runner's user message says "Required structural signals: none" and reveals no verdict). A deterministic `[REJECT]` check cannot tell a rejection for the right reason from one for the wrong reason, so the judge asks whether the review has a blocker naming the defect the case describes: a test whose cutoff excludes nothing (`test-never-exercises-filter`), an `orElse` that also swallows `ParseFailed` (`swallows-parse-error`), `args.overwrite ?? args.force` that never falls back because the CLI defaults `--overwrite` to `false` (`contradicts-stated-intent`), an ownership check dropped inside a rename-only diff (`large-diff-buried-change`), and a seconds setting passed as milliseconds (`traced-unit-mismatch`).
+
+They pair the way judgment cases do: a feature whose tests are real against one whose test cannot fail, a pre-existing bug to leave against a regression the change introduced, and style that looks wrong but is not against code that looks right but is not. Each judged expected outcome names the one required blocker and says that a fix, the consequence and further blockers are optional. Earlier wordings that listed the fix or a missing test as part of the outcome made the judge fail correct reviews. A judge sanity check put one plausible bad review per case (the wrong verdict, or a `[REJECT]` for a real but different issue) through Jev. It failed every one and passed the models' correct reviews. See "Weft judged review cases" in [`evals/README.md`](../evals/README.md#weft-judged-review-cases).
 
 #### Shuttle own-envelope cases
 

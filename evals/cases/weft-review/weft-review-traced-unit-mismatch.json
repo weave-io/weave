@@ -1,0 +1,26 @@
+{
+  "id": "weft-review-traced-unit-mismatch",
+  "description": "Change under review. Task: give the model-list request a timeout so a provider that never answers cannot hang `models list`. Use the existing `requestTimeout` setting and the existing `withTimeout` helper.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/config/schema.ts` (unchanged, shown for context):\n```ts\n17 export const ProviderSettingsSchema = z.object({\n18   /** How long to wait for a provider response, in seconds. */\n19   requestTimeout: z.number().int().positive().default(30),\n20   baseUrl: z.string().url().optional(),\n21 });\n```\n\n`src/util/timeout.ts` (unchanged, shown for context):\n```ts\n4 export type TimeoutError = { type: \"TimedOut\"; afterMs: number };\n5\n6 export function withTimeout<T>(promise: Promise<T>, ms: number): ResultAsync<T, TimeoutError> {\n7   const timer = new Promise<never>((_, reject) => setTimeout(() => reject(ms), ms));\n8   return ResultAsync.fromPromise(Promise.race([promise, timer]), () => ({ type: \"TimedOut\", afterMs: ms }));\n9 }\n```\n\n`src/providers/fetch-models.ts` (changed, lines 10-14):\n```ts\n10 export function fetchModels(client: ProviderClient, settings: ProviderSettings): ResultAsync<Model[], FetchModelsError> {\n11   return withTimeout(client.listModels(), settings.requestTimeout).mapErr(\n12     (cause): FetchModelsError => ({ type: \"ProviderTimeout\", cause }),\n13   );\n14 }\n```\n\n`src/providers/__tests__/fetch-models.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { fetchModels } from \"../fetch-models.js\";\n3\n4 const settings = { requestTimeout: 30 };\n5\n6 test(\"returns the provider's models\", async () => {\n7   const client = { listModels: () => Promise.resolve([{ id: \"m1\" }]) };\n8   expect((await fetchModels(client, settings))._unsafeUnwrap()).toEqual([{ id: \"m1\" }]);\n9 });\n10\n11 test(\"a provider that never answers times out\", async () => {\n12   const client = { listModels: () => new Promise<never>(() => {}) };\n13   expect((await fetchModels(client, settings))._unsafeUnwrapErr().type).toBe(\"ProviderTimeout\");\n14 });\n```\n\nCI on this change: `bun test` 58 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change ([REJECT]) with a BLOCKER line on `src/providers/fetch-models.ts` saying that `settings.requestTimeout`, a number of seconds, is passed to `withTimeout` as milliseconds. That one blocker is all that is required; the consequence (a 30 ms timeout), a proposed fix and further blockers are optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": [
+    "review",
+    "rejection",
+    "traced"
+  ]
+}

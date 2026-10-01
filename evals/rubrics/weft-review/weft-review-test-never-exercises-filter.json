@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-test-never-exercises-filter",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged case: the judge scores the review against the expected outcome. The `--since` test looks like a boundary test, but its expected list is the whole fixture, so a filter that did nothing would pass it. Any BLOCKER on the test file that says the exclusion of earlier sessions is untested meets the outcome, whatever fix it proposes. Fail the review if it approves, or if it has no such BLOCKER. Other blockers do not fail a review that has the required one. Each BLOCKER line must name the file it applies to."
+  }
+}

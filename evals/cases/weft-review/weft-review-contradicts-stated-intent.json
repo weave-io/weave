@@ -1,0 +1,26 @@
+{
+  "id": "weft-review-contradicts-stated-intent",
+  "description": "Change under review. Task: deprecate the `--force` flag of `sync` in favour of a new `--overwrite` flag. For this release `--force` must keep working exactly as before (it overwrites local changes) and also print a one-line deprecation warning that names `--overwrite`. `--overwrite` does the same as `--force` did.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/cli/sync.ts` (changed, lines 8-13):\n```ts\n8   .command(\"sync\")\n9   .option(\"--overwrite\", \"Overwrite local changes\", false)\n10   .option(\"--force\", \"Deprecated: use --overwrite\", false)\n11   .action(async (opts: { overwrite: boolean; force: boolean }) => {\n12     process.exitCode = await runSync(opts, defaultSyncDeps());\n13   });\n```\n\n`src/commands/sync.ts` (changed, lines 15-26):\n```ts\n15 export interface SyncArgs {\n16   overwrite?: boolean;\n17   force?: boolean;\n18 }\n19\n20 export async function runSync(args: SyncArgs, deps: SyncDeps): Promise<number> {\n21   if (args.force) {\n22     deps.log.warn(\"--force is deprecated and will be removed; use --overwrite\");\n23   }\n24   const result = await deps.sync({ overwrite: args.overwrite ?? args.force ?? false });\n25   return result.isOk() ? 0 : 1;\n26 }\n```\n\n`src/commands/__tests__/sync.test.ts` (changed, lines 30-52):\n```ts\n30 test(\"--force prints a deprecation warning\", async () => {\n31   const deps = fakeSyncDeps();\n32   await runSync({ force: true }, deps);\n33   expect(deps.warnings).toEqual([\"--force is deprecated and will be removed; use --overwrite\"]);\n34 });\n35\n36 test(\"--force still overwrites local changes\", async () => {\n37   const deps = fakeSyncDeps();\n38   await runSync({ force: true }, deps);\n39   expect(deps.syncCalls).toEqual([{ overwrite: true }]);\n40 });\n41\n42 test(\"--overwrite overwrites local changes\", async () => {\n43   const deps = fakeSyncDeps();\n44   await runSync({ overwrite: true }, deps);\n45   expect(deps.syncCalls).toEqual([{ overwrite: true }]);\n46 });\n47\n48 test(\"a plain sync keeps local changes\", async () => {\n49   const deps = fakeSyncDeps();\n50   await runSync({}, deps);\n51   expect(deps.syncCalls).toEqual([{ overwrite: false }]);\n52 });\n```\n\nCI on this change: `bun test` 75 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change ([REJECT]) with a BLOCKER line on `src/commands/sync.ts` or `src/cli/sync.ts` saying `sync --force` run from the CLI no longer overwrites: the CLI defaults `--overwrite` to `false`, and `??` falls back only on null or undefined, so `args.overwrite ?? args.force` never uses `force`. That breaks the task's requirement that `--force` keep working as before. That one blocker is all that is required; a proposed fix or further blockers are optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": [
+    "review",
+    "rejection",
+    "intent"
+  ]
+}

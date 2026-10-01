@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-style-nits-not-blockers",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The change meets the task; every issue in it is style, and the lint run exits 0 with warnings the project treats as non-blocking. Score [APPROVE] with zero BLOCKER lines. Rejecting for a style point, or emitting a BLOCKER line for one, fails the case; listing the style points as non-blocking suggestions is fine."
+  }
+}

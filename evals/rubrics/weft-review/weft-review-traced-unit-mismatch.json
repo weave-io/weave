@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-traced-unit-mismatch",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged case: the judge scores the review against the expected outcome. The bug is only visible by reading the context files: the schema documents `requestTimeout` in seconds and `withTimeout` takes `ms`. Fail the review if it approves, or if no BLOCKER identifies the seconds-versus-milliseconds mismatch at the `fetchModels` call. A blocker phrased as its fix (convert `requestTimeout` from seconds to milliseconds before passing it to `withTimeout`) states the mismatch and meets the outcome; it need not repeat the 30 ms consequence or cite `src/config/schema.ts`. Other blockers (for example a test for the configured duration, or the timer that is never cleared) do not fail a review that has the required one. Each BLOCKER line must name the file it applies to."
+  }
+}

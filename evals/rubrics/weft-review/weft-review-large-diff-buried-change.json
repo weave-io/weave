@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-large-diff-buried-change",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged case: the judge scores the review against the expected outcome. Fail the review if it approves, or if no BLOCKER names the removed `project.ownerId === ctx.user.id` check in `deleteProjectRoute`. Blockers about the rename itself (naming, the docs line, the tests) are noise but do not fail a review that has the required one. Each BLOCKER line must name the file it applies to."
+  }
+}

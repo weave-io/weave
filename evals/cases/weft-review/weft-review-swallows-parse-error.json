@@ -1,0 +1,26 @@
+{
+  "id": "weft-review-swallows-parse-error",
+  "description": "Change under review. Task: startup must not fail when `.weave/plugins.json` does not exist, as in a freshly created project: a missing file means no plugins. A malformed `plugins.json` must still stop startup with its parse error, so a typo is not silently ignored.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/plugins/store.ts` (unchanged, shown for context):\n```ts\n5 export type PluginStoreError =\n6   | { type: \"NotFound\"; path: string }\n7   | { type: \"ParseFailed\"; path: string; cause: unknown };\n8\n9 export function readPlugins(path: string): ResultAsync<PluginEntry[], PluginStoreError> {\n10   return readText(path).andThen((text) => parsePluginList(text, path));\n11 }\n```\n\n`src/startup.ts` (changed, lines 38-41):\n```ts\n38 export function loadStartupPlugins(root: string): ResultAsync<PluginEntry[], StartupError> {\n39   return readPlugins(join(root, \".weave\", \"plugins.json\"))\n40     .orElse(() => okAsync<PluginEntry[], StartupError>([]));\n41 }\n```\n\n`src/__tests__/startup.test.ts` (changed, lines 52-60):\n```ts\n52 test(\"a project without plugins.json starts with no plugins\", async () => {\n53   const root = await makeProject({});\n54   expect((await loadStartupPlugins(root))._unsafeUnwrap()).toEqual([]);\n55 });\n56\n57 test(\"listed plugins are loaded\", async () => {\n58   const root = await makeProject({ \".weave/plugins.json\": '[{\"name\":\"git\"}]' });\n59   expect((await loadStartupPlugins(root))._unsafeUnwrap()).toEqual([{ name: \"git\" }]);\n60 });\n```\n\nCI on this change: `bun test` 131 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change ([REJECT]) with a BLOCKER line on `src/startup.ts` saying the `orElse` recovers from every `readPlugins` error, including `ParseFailed`, so a malformed `plugins.json` starts with no plugins instead of failing. That one blocker is all that is required; a proposed fix (recover only `NotFound`) or a further blocker for the missing malformed-file test is optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": [
+    "review",
+    "rejection",
+    "error-handling"
+  ]
+}

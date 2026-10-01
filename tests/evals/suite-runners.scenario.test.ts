@@ -1980,6 +1980,75 @@ describe("Weft traces a blocker to the function the change calls", () => {
   });
 });
 
+describe("Weft reviews a change whose reason for rejecting the judge checks", () => {
+  const probe = only("weft-review")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "weft-judged-rejection",
+    description: [
+      "Change under review. Task: `--force` must keep overwriting.",
+      "`src/commands/sync.ts` (changed, line 24):",
+      "```ts",
+      "24   const result = await deps.sync({ overwrite: args.overwrite });",
+      "```",
+    ].join("\n"),
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "Reject with a BLOCKER on `src/commands/sync.ts` saying `--force` no longer overwrites.",
+      required_artifacts: [],
+    },
+    tags: ["review", "rejection"],
+  };
+  const review =
+    "[REJECT] `--force` stopped overwriting.\nReviewed files: `src/commands/sync.ts`\nBLOCKER: `src/commands/sync.ts:24` fix: pass `args.overwrite || args.force`.";
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "weft-review",
+        answers: [review],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("shows the model the change but neither the verdict nor any signal name", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("`--force` must keep overwriting");
+    expect(asked).toContain("Required structural signals: none");
+    expect(asked).not.toContain("no longer overwrites");
+    expect(asked).not.toContain("review_verdict");
+  });
+
+  it("asks the judge whether the review reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(review);
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: Reject with a BLOCKER on `src/commands/sync.ts` saying `--force` no longer overwrites.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide, since a [REJECT] for the wrong reason must fail", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Warp ------------------------------------------------------------------
 
 const WARP_BLOCK_HEAD = ["[BLOCK] — command injection", "BLOCKERS: 1/3"];

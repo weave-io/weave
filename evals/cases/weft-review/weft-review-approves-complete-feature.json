@@ -1,0 +1,32 @@
+{
+  "id": "weft-review-approves-complete-feature",
+  "description": "Change under review. Task: add a `--json` flag to `agents list` that prints the agents as a JSON array of `{ name, mode }` objects instead of the table. Acceptance: without the flag the table output is unchanged; with it the output is valid JSON with exactly those two fields per agent; `formatAgentsList` has a test for each path.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/agents/summary.ts` (unchanged, shown for context):\n```ts\n3 export interface AgentSummary {\n4   name: string;\n5   mode: \"primary\" | \"subagent\" | \"all\";\n6   description?: string;\n7 }\n```\n\n`src/commands/agents-list.ts` (changed, lines 1-14):\n```ts\n1 import type { AgentSummary } from \"../agents/summary.js\";\n2 import { renderTable } from \"../ui/table.js\";\n3\n4 export interface AgentsListArgs {\n5   json: boolean;\n6 }\n7\n8 export function formatAgentsList(agents: AgentSummary[], args: AgentsListArgs): string {\n9   if (args.json) {\n10     return JSON.stringify(agents.map(({ name, mode }) => ({ name, mode })));\n11   }\n12   return renderTable([\"Name\", \"Mode\"], agents.map((agent) => [agent.name, agent.mode]));\n13 }\n```\n\n`src/cli/agents.ts` (changed, lines 21-25):\n```ts\n21   .command(\"list\")\n22   .option(\"--json\", \"Print the agents as JSON\", false)\n23   .action((opts: { json: boolean }) => {\n24     print(formatAgentsList(listAgents(), { json: opts.json }));\n25   });\n```\n\n`src/commands/__tests__/agents-list.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { renderTable } from \"../../ui/table.js\";\n3 import { formatAgentsList } from \"../agents-list.js\";\n4\n5 const agents = [\n6   { name: \"loom\", mode: \"primary\" as const, description: \"Orchestrator\" },\n7   { name: \"shuttle\", mode: \"subagent\" as const },\n8 ];\n9\n10 test(\"without --json the table is unchanged\", () => {\n11   expect(formatAgentsList(agents, { json: false })).toBe(\n12     renderTable([\"Name\", \"Mode\"], [[\"loom\", \"primary\"], [\"shuttle\", \"subagent\"]]),\n13   );\n14 });\n15\n16 test(\"--json prints name and mode only\", () => {\n17   expect(JSON.parse(formatAgentsList(agents, { json: true }))).toEqual([\n18     { name: \"loom\", mode: \"primary\" },\n19     { name: \"shuttle\", mode: \"subagent\" },\n20   ]);\n21 });\n```\n\nCI on this change: `bun test` 48 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Approve the change: it does what the task asks, both output paths are tested, the JSON path drops `description` as required, and CI passed. Optional suggestions (pretty-printing, a CLI-level test) may be noted as non-blocking, but no BLOCKER line may be raised.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_approve",
+      "review_blockers_zero",
+      "review_approval_disciplined"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[APPROVE]"
+    }
+  ],
+  "tags": [
+    "review",
+    "judgment",
+    "approval",
+    "clean"
+  ]
+}
