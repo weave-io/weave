@@ -743,9 +743,11 @@ weave models pin --include-qualified       # ... keeping provider-qualified entr
 
 The CLI has no live provider catalog, so `status` shows the lists and their sources, not the model each harness will pick. `weave models check` resolves a list against the catalog fixtures. With `mode off` the cache lines are replaced by how to opt in. `--json` prints the same report as one document. `--project-root <dir>` reads the project config from another directory; `--project` is the boolean flag of `weave validate`, so it is not reused here.
 
-**`update`** checks the channel now, skipping the throttle. In `auto` mode a newer list is applied at once and the command prints the applied `issued` and, per agent, the recommended list before and after (`was` / `now`; `(builtin list only)` when the agent had none). In `notify` mode it prints the same comparison against the waiting list and asks for `weave models apply`. When nothing is newer it says the recommendations are up to date. A failed check is recorded, shown by `status`, and printed in words (`the server answered HTTP 503`, `the signature does not verify: …`).
+**`update`** checks the channel now, skipping the throttle. In `auto` mode a newer list is applied at once and the command prints the applied `issued` and, for each agent whose merged `models` list changes, the list before and after (`was` / `now`). The lists compared are the effective ones, merged as the loader merges them (project, global, recommendations, builtins), so they are what the agent runs. A list that repeats what agents already run is still applied, and the command says so, followed by `No agent's models changed.` (the first stable list, which repeats the builtin lists, is an example). In `notify` mode it prints the same comparison against the waiting list (`No agent's models would change.` when none differ) and asks for `weave models apply`. When nothing is newer it says the recommendations are up to date. A failed check is recorded, shown by `status`, and printed in words (`the server answered HTTP 503`, `the signature does not verify: …`).
 
-**`apply`** applies the waiting list and prints the change, or `Nothing to apply` when nothing newer was downloaded.
+**`apply`** applies the waiting list and prints the change, compared the same way, or `Nothing to apply` when nothing newer was downloaded.
+
+**Logs.** These commands report a failed check, an unusable applied list and a skipped layer in their own words, so they log at `error` and up when `LOG_LEVEL` is unset; other commands log warnings too. Set `LOG_LEVEL=warn` (or `debug`) to see the config package's JSON log lines on stderr. The choice is made in [`log-level.ts`](../packages/cli/src/log-level.ts), before any logger is created.
 
 **`pin`** writes the applied lists for the chosen harness into the global `config.weave` as explicit `models` lines, so they no longer depend on the recommendations. For each agent in the list the new line is the agent's existing global entries followed by the recommended ones, without duplicates, so the effective lists do not change, apart from provider-qualified entries (below). The edit is textual and located with the DSL lexer, so the rest of the file is kept byte for byte, comments included:
 
@@ -840,6 +842,8 @@ The CLI source is organized into focused modules:
 
 ```text
 packages/cli/src/
+├── main.ts            # the executable: log level and destination, then run()
+├── log-level.ts       # the default LOG_LEVEL per command (error for weave models)
 ├── commands/
 │   ├── init.ts        # weave init — planning, prompts, scaffold, harness install, summary
 │   ├── migrate.ts     # weave init migrate — orchestration flow
@@ -854,9 +858,9 @@ packages/cli/src/
 │   ├── resolve.ts     # the OpenCode 2 / Pi catalog rule and the Claude Code tier rule
 │   ├── expectations.ts # the --expect file format and comparison
 │   ├── harness.ts     # --harness for status/update/apply/pin/validate, OpenCode 2 by default
-│   ├── recommendations-session.ts # the cache, the merged config and each layer, injected for tests
+│   ├── recommendations-session.ts # the cache, the merged config, each layer, and the merged lists under a given list
 │   ├── sources.ts     # each merged models entry's source
-│   ├── report.ts      # shared wording, validate's lines, was/now changes
+│   ├── report.ts      # shared wording, validate's lines, was/now changes in the merged lists
 │   └── pin-editor.ts  # the textual models edit weave models pin makes
 └── migration/
     ├── types.ts                  # Shared migration types (MigrationPlan, ConversionWarning, etc.)

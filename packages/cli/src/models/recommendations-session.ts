@@ -27,6 +27,7 @@ import {
   type ModelRecommendationsDeps,
   type ModelRecommendationsFiles,
   ModelRecommendationsVerifier,
+  mergeConfigsResult,
   modelRecommendationsCachePaths,
   normalizePath,
   type RecommendationsHarness,
@@ -36,6 +37,7 @@ import {
   formatError,
   type ModelUpdatesChannel,
   type WeaveConfig,
+  WeaveConfigSchema,
 } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { CliError } from "../errors.js";
@@ -64,6 +66,9 @@ export interface RecommendedLists {
   readonly section: RecommendationsHarness | "default";
   readonly agents: Readonly<Record<string, readonly string[]>>;
 }
+
+/** Each agent's `models` list, by agent name. */
+export type AgentModels = Readonly<Record<string, readonly string[]>>;
 
 /** The global and project config files, each parsed on its own. */
 export interface UserLayers {
@@ -153,22 +158,59 @@ export class RecommendationsSession {
 
   /** The global and project config files on their own, for entry sources. */
   userLayers(projectRoot: string): ResultAsync<UserLayers, CliError> {
-    return discoverAndParse(projectRoot, this.reader())
-      .map((discovered) => {
-        const layers: { global?: WeaveConfig; project?: WeaveConfig } = {};
-        for (const { config, scope } of discovered) {
-          if (scope.kind === "global") layers.global = config;
-          if (scope.kind === "project") layers.project = config;
+    return this.discovered(projectRoot).map((discovered) => {
+      const layers: { global?: WeaveConfig; project?: WeaveConfig } = {};
+      for (const { config, scope } of discovered) {
+        if (scope.kind === "global") layers.global = config;
+        if (scope.kind === "project") layers.project = config;
+      }
+      return layers;
+    });
+  }
+
+  /**
+   * Every builtin agent's merged `models` list as the loader builds it with
+   * `recommended` as the recommendations layer, or with none: builtins, then
+   * the recommendations, then the config files. Comparing two of these tells
+   * whether applying a list changes what any agent runs.
+   */
+  effectiveModels(
+    projectRoot: string,
+    recommended: RecommendedLists | undefined,
+  ): ResultAsync<AgentModels, CliError> {
+    return this.builtins().andThen((builtins) =>
+      this.discovered(projectRoot).andThen((discovered) => {
+        const merged = mergeConfigsResult(
+          builtins,
+          ...recommendationsLayer(recommended),
+          ...discovered.map(({ config }) => config),
+        );
+        if (merged.isErr())
+          return errAsync<AgentModels, CliError>({
+            type: "ParseFailure",
+            path: projectRoot,
+            errors: formatConfigLoadErrors([
+              { type: "MergeError", errors: merged.error },
+            ]),
+          });
+        const models: Record<string, readonly string[]> = {};
+        for (const agent of Object.keys(builtins.agents)) {
+          const list = merged.value.agents[agent]?.models;
+          if (list !== undefined) models[agent] = list;
         }
-        return layers;
-      })
-      .mapErr(
-        (errors): CliError => ({
-          type: "ParseFailure",
-          path: projectRoot,
-          errors: formatConfigLoadErrors(errors),
-        }),
-      );
+        return okAsync<AgentModels, CliError>(models);
+      }),
+    );
+  }
+
+  private discovered(projectRoot: string) {
+    return discoverAndParse(projectRoot, this.reader()).mapErr(
+      (errors): CliError => ({
+        type: "ParseFailure",
+        path: projectRoot,
+        errors: formatConfigLoadErrors(errors),
+      }),
+    );
   }
 
   /** The builtin config, unmerged. A failure is a bug in this release. */
@@ -249,4 +291,22 @@ export class RecommendationsSession {
       },
     };
   }
+}
+
+/**
+ * A list's agents as a config layer, the way the loader adds it. A layer that
+ * does not validate is left out, as the loader leaves it out.
+ */
+function recommendationsLayer(
+  recommended: RecommendedLists | undefined,
+): WeaveConfig[] {
+  if (recommended === undefined) return [];
+  const agents = Object.fromEntries(
+    Object.entries(recommended.agents).map(([agent, models]) => [
+      agent,
+      { models: [...models] },
+    ]),
+  );
+  const layer = WeaveConfigSchema.safeParse({ agents });
+  return layer.success ? [layer.data] : [];
 }

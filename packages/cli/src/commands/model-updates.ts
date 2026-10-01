@@ -33,7 +33,7 @@ import type {
   ModelUpdatesChannel,
   ModelUpdatesMode,
 } from "@weaveio/weave-core";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import { type CliError, formatCliError } from "../errors.js";
 import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
 import {
@@ -375,20 +375,19 @@ class ModelUpdatesCommand {
     const after = await this.appliedLists(channel, choice.harness);
     const latest = await this.latestLists(channel, choice.harness);
     const promoted = "promoted" in outcome ? outcome.promoted : undefined;
-    if (promoted !== undefined) {
-      this.out([
+    if (promoted !== undefined)
+      return this.reportChange(
         `Applied the ${channel} list issued ${promoted.issued}${promoted.previousIssued === undefined ? "" : ` (was ${promoted.previousIssued})`}.`,
-        ...renderListChanges(listChanges(before, after), choice.harness),
-      ]);
-      return ok(0);
-    }
-    if (latest !== undefined && isNewer(latest, after)) {
-      this.out([
+        before,
+        after,
+      );
+    if (latest !== undefined && isNewer(latest, after))
+      return this.reportChange(
         `A newer ${channel} list, issued ${latest.issued}, is waiting. Run weave models apply to use it.`,
-        ...renderListChanges(listChanges(after, latest), choice.harness),
-      ]);
-      return ok(0);
-    }
+        after,
+        latest,
+        true,
+      );
     const issued = after?.issued ?? latest?.issued;
     this.out([
       `Model recommendations are up to date${issued === undefined ? "" : ` (${channel} list issued ${issued})`}.`,
@@ -425,9 +424,40 @@ class ModelUpdatesCommand {
       return ok(0);
     }
     const after = await this.appliedLists(channel, choice.harness);
-    this.out([
+    return this.reportChange(
       `Applied the ${channel} list issued ${outcome.issued}${outcome.previousIssued === undefined ? "" : ` (was ${outcome.previousIssued})`}.`,
-      ...renderListChanges(listChanges(before, after), choice.harness),
+      before,
+      after,
+    );
+  }
+
+  /**
+   * Print `headline`, then each agent whose merged list differs between the
+   * two recommendations states, or that none does. The merged lists are what
+   * agents run, so a list that repeats them is applied but changes nothing.
+   */
+  private async reportChange(
+    headline: string,
+    from: RecommendedLists | undefined,
+    to: RecommendedLists | undefined,
+    pending = false,
+  ): Promise<Result<number, CliError>> {
+    const lists = Result.combine(
+      await Promise.all([
+        this.session.effectiveModels(this.projectRoot, from),
+        this.session.effectiveModels(this.projectRoot, to),
+      ]),
+    );
+    // The config loaded before the check, so this cannot fail in practice; if
+    // it does, the user still learns what was applied.
+    if (lists.isErr()) {
+      this.out([headline]);
+      return this.failWith(lists.error);
+    }
+    const [before, after] = lists.value;
+    this.out([
+      headline,
+      ...renderListChanges(listChanges(before, after), pending),
     ]);
     return ok(0);
   }

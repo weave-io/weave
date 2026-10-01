@@ -190,7 +190,11 @@ describe("a notify user fetches a new list and applies it", () => {
       "A newer stable list, issued 2026-10-01T09:00:00Z, is waiting. Run weave models apply to use it.",
     );
     expect(update.stdout).toContain(
-      "  loom\n    was  (builtin list only)\n    now  claude-opus-5.6, claude-opus-5.5",
+      [
+        "  loom",
+        "    was  claude-opus-5.5, claude-opus-5-5, gpt-6-sol",
+        "    now  claude-opus-5.6, claude-opus-5.5, claude-opus-5-5, gpt-6-sol",
+      ].join("\n"),
     );
     expect(machine.site.urls).toEqual([
       "https://models.test/models/stable.v1.json",
@@ -295,12 +299,76 @@ describe("an auto user updates", () => {
       "Applied the stable list issued 2026-10-02T09:00:00Z (was 2026-10-01T09:00:00Z).",
     );
     expect(stdout).toContain(
-      "  loom\n    was  claude-opus-5.6\n    now  claude-opus-6",
+      [
+        "  loom",
+        "    was  claude-opus-5.6, claude-opus-5.5, claude-opus-5-5, gpt-6-sol",
+        "    now  claude-opus-6, claude-opus-5.5, claude-opus-5-5, gpt-6-sol",
+      ].join("\n"),
     );
 
     const same = await machine.weave(["models", "update"]);
     expect(same.stdout).toContain(
       "Model recommendations are up to date (stable list issued 2026-10-02T09:00:00Z).",
+    );
+  });
+});
+
+describe("a list that repeats the models agents already run", () => {
+  // The first stable list repeats the builtin lists. Applying it is real (the
+  // list is now the applied one), but no agent's merged list changes.
+  const BUILTIN_LOOM = ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"];
+
+  it("says which list an auto update applied and that no agent's models changed", async () => {
+    const machine = new Machine({ [GLOBAL_CONFIG]: AUTO });
+    await machine.publish(list(1, BUILTIN_LOOM));
+
+    const { exitCode, stdout, stderr } = await machine.weave([
+      "models",
+      "update",
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe(
+      [
+        "Applied the stable list issued 2026-10-01T09:00:00Z.",
+        "  No agent's models changed.",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+  });
+
+  it("tells a notify user the waiting list would change nothing, and apply says the same", async () => {
+    const machine = new Machine({ [GLOBAL_CONFIG]: NOTIFY });
+    await machine.publish(list(1, BUILTIN_LOOM));
+
+    const update = await machine.weave(["models", "update"]);
+    expect(update.stdout).toBe(
+      [
+        "A newer stable list, issued 2026-10-01T09:00:00Z, is waiting. Run weave models apply to use it.",
+        "  No agent's models would change.",
+      ].join("\n"),
+    );
+
+    const apply = await machine.weave(["models", "apply"]);
+    expect(apply.stdout).toBe(
+      [
+        "Applied the stable list issued 2026-10-01T09:00:00Z.",
+        "  No agent's models changed.",
+      ].join("\n"),
+    );
+  });
+
+  it("counts the user's own models: a list that only repeats them changes nothing", async () => {
+    const machine = new Machine({
+      [GLOBAL_CONFIG]: `${AUTO}\nagent loom {\n  models ["claude-opus-6"]\n}\n`,
+    });
+    await machine.publish(list(1, ["claude-opus-6", "claude-opus-5.5"]));
+
+    const { stdout } = await machine.weave(["models", "update"]);
+    expect(stdout).toBe(
+      [
+        "Applied the stable list issued 2026-10-01T09:00:00Z.",
+        "  No agent's models changed.",
+      ].join("\n"),
     );
   });
 });

@@ -180,7 +180,7 @@ Every supported adapter fetches on its own, so `auto` works for a user who runs 
 Every opted-in user can see where each agent's models came from.
 
 - **`weave models status`** prints the mode and channel, the `issued` date and `evidence` of the applied file, whether a newer file is waiting (`notify`), the last check time and last error, and for each builtin agent its merged list with each entry's source: project, global, recommended or builtin. Agent names in the file that this version skips are listed.
-- **`weave models update`** forces a fetch now and prints what changed.
+- **`weave models update`** forces a fetch now and prints what changed: each agent whose merged `models` list differs, or that none does.
 - **`weave models apply`** promotes `latest` to `applied` (the `notify` path).
 - **`weave models pin`** writes the applied recommendations into the global config as explicit `models` lines and prints the diff first. That freezes them; the user can then set `mode off`. Because every harness reads the global config, and OpenCode V1 writes the first provider-qualified entry without checking the provider is connected, `pin` leaves out provider-qualified entries (any entry containing `/`) and says which and why; `--include-qualified` keeps them with the same explanation as a warning. An agent left with no recommended entry keeps its existing lines. See [CLI](../../cli.md#weave-models-status-update-apply-and-pin).
 - **`weave validate`** reports the mode and applied date, and reports a skipped layer with its reason, in every form of the command.

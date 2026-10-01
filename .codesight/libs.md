@@ -692,6 +692,7 @@
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
+- `packages/cli/src/log-level.ts` — function defaultLogLevel: (argv) => CliLogLevel, type CliLogLevel
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
 - `packages/cli/src/migration/legacy-conversion-diagnostics.ts`
   - function boundConversionWarning: (warning) => ConversionWarning
@@ -766,12 +767,13 @@
   - interface RecommendedLists
   - interface UserLayers
   - type CliModelRecommendationsDeps
+  - _...1 more_
 - `packages/cli/src/models/report.ts`
   - function recommendationsDiagnostic: (diagnostics) => ConfigLoadDiagnostic | undefined
   - function firstListHint: (mode) => string
   - function validateSummaryLines: (config, diagnostics) => string[]
   - function listChanges: (before, after) => ListChange[]
-  - function renderListChanges: (changes, harness) => string[]
+  - function renderListChanges: (changes, pending) => string[]
   - interface ListChange
   - _...1 more_
 - `packages/cli/src/models/resolve.ts`
