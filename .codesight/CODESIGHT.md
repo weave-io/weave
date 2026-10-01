@@ -3,14 +3,18 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 241 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~21,900 tokens. Without it, AI exploration would cost ~80,300 tokens. **Saves ~58,400 tokens per conversation.**
-> **Last scanned:** 2026-10-01 15:01 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 242 lib files | 30 env vars | 9 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~21,900 tokens. Without it, AI exploration would cost ~80,000 tokens. **Saves ~58,100 tokens per conversation.**
+> **Last scanned:** 2026-10-01 15:36 — re-run after significant changes
 
 ---
 
 # Libraries
 
+- `eval-bundles/tmp/probe.ts`
+  - function paginate: (items, page, size) => T[]
+  - function sortByName: (people) => T[]
+  - function parseSince: (input) => Result<number,
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
 - `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
 - `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
@@ -590,10 +594,10 @@
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
+  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - interface ShuttleHonestySignals
-  - _...4 more_
+  - _...6 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
@@ -1171,9 +1175,9 @@
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
-- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `OPENROUTER_API_KEY` (has default) — eval-bundles/tmp/probe.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1206,14 +1210,12 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
-- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
-- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1236,16 +1238,16 @@
 - `packages/cli/src/args.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **14** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
+- `packages/cli/src/evals/case-loader.ts` — imported by **12** files
+- `packages/cli/src/evals/eval-track.ts` — imported by **12** files
 - `packages/cli/src/cli.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **11** files
-- `packages/cli/src/evals/eval-track.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
@@ -1279,7 +1281,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 244 test files found
+> 240 test files found
 
 ---
 

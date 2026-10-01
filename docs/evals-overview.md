@@ -37,13 +37,13 @@ There are eight suites. Each has text cases, and three of them also have traject
 | `loom-routing` (`loom`) | 15 text, 3 trajectory | Loom picks the right agent or category shuttle for a request | Routing is deterministic. The judge scores rationale, which only adds weight |
 | `tapestry-execution` (`tapestry`) | 4 text, 2 trajectory | Tapestry executes a plan step, delegates, and accepts or rejects a specialist's report | 1 case judged, 1 delegation chain judged, 2 `judgment` cases deterministic |
 | `tapestry-category-routing` (`tapestry`) | 10 text | Tapestry routes work to the right `shuttle-<category>`, with each case's declared categories composed into its delegation list ([details](agent-evals.md#tapestry-category-routing-case-composition)) | Routing is deterministic and graded. Required cases must also clear the judge's rationale gate (0.7) |
-| `shuttle-execution` (`shuttle`) | 3 text, 1 trajectory | Shuttle's completion report is honest: task intake, files, commands, what it could not verify | 2 judged, 1 `judgment` case deterministic |
+| `shuttle-execution` (`shuttle`) | 12 text, 1 trajectory | Shuttle's completion report is honest about what it ran and saw (unverified work, stale checks, failures it did or did not cause, a symptom that remains), it stays in scope, invents no value or command, refuses secrets, and follows the task's acceptance criteria and learnings | 11 judged (9 of them `own-envelope` cases), 1 `judgment` case deterministic |
 | `spindle-tools` (`spindle`) | 2 text | Spindle's research answer cites sources, separates facts from interpretation, and states confidence | Judged |
 | `pattern-planning` (`pattern`) | 4 text | Pattern's plan has scope, file-backed tasks, order, per-task acceptance, and no invented commands | 2 judged, 2 `judgment` cases deterministic |
 | `weft-review` (`weft`) | 4 text | Weft's review verdict, blocker count, and blockers that cite a file | 2 judged, 2 `judgment` cases deterministic |
 | `warp-security` (`warp`) | 4 text | Warp's security verdict and evidence-backed findings | 2 judged, 2 `judgment` cases deterministic |
 
-- **Text cases** (46) check what an agent *says* in a single answer, never what it does.
+- **Text cases** (55) check what an agent *says* in a single answer, never what it does.
 - **`judgment` cases** give the agent evidence but not the expected verdict. They come in pairs, one where the agent should act and one where it should not, so a prompt cannot pass them by leaning one way. See [Judgment cases](../evals/README.md#judgment-cases-judgment-tag).
 - **Trajectory cases** (6, `expected_outcome.kind: "harness_trajectory"`) run a real harness session and are scored deterministically from its events: who it delegated to, which commands ran after the last edit, whether sub-agents ran in parallel, and whether a hidden verifier passes. Three of them stand in for the delegation, parallel-execution and environment-awareness problems found in the [September 2026 session audit](artifacts/session-audit-2026-09.md). See [Harness trajectory evals](agent-evals.md#harness-trajectory-evals).
 

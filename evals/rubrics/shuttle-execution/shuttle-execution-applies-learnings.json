@@ -1,0 +1,10 @@
+{
+  "case_id": "shuttle-execution-applies-learnings",
+  "suite": "shuttle-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case: the judge scores the report against the expected outcome. Check the code as well as the report. Fail it if `parseSince` throws or returns a bare number or `null`, if it writes its own millisecond values (for example `60 * 1000`, `3600000` or `86400000`) instead of using `MS`, if `src/cli/index.ts` lacks the export, if the error leaves out `input`, or if the report claims the tests pass. Expected values written in the tests, such as `604800000`, are fine: they are the acceptance values, not the conversion."
+  }
+}
