@@ -39,6 +39,7 @@ export interface CliDeps {
     env?: Record<string, string | undefined>;
     // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
     fs?: FileSystem_2;
+    now?: () => Date;
     // (undocumented)
     terminal: TerminalIO;
 }
@@ -52,7 +53,7 @@ export interface CliDeps {
 export type CliError = InvalidArgsError | MissingFileError | FileReadError | FileWriteError | ParseFailureError | ValidationFailureError | AgentNotFoundError | CompositionFailureError | UnknownCommandError | EvalValidationError;
 
 // @public (undocumented)
-export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "unknown";
+export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "models" | "unknown";
 
 // @public (undocumented)
 export const defaultThemeManager: ThemeManager;
@@ -130,6 +131,11 @@ export interface ParsedArgs {
         outDir?: string;
         init?: boolean;
         bootstrapDir?: string;
+        modelsSubcommand?: "check";
+        modelsEnvelope?: boolean;
+        modelsExpect?: string;
+        modelsKey?: string;
+        modelsIssuedAfter?: string;
     };
     rest: string[];
     unknownCommand?: string;

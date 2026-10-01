@@ -22,6 +22,7 @@ export type Command =
   | "runtime"
   | "eval"
   | "compose"
+  | "models"
   | "unknown";
 
 export interface ParsedArgs {
@@ -106,6 +107,16 @@ export interface ParsedArgs {
     init?: boolean;
     /** --bootstrap-dir <path> for `weave compose --init` — overrides default output path */
     bootstrapDir?: string;
+    /** models subcommand: `"check"` for `weave models check <file>` (the file is left in `rest`). */
+    modelsSubcommand?: "check";
+    /** --envelope for `weave models check` — the file is a signed envelope */
+    modelsEnvelope?: boolean;
+    /** --expect <file> for `weave models check` — the expectations file */
+    modelsExpect?: string;
+    /** --key <public-key> for `weave models check` — verify against this key */
+    modelsKey?: string;
+    /** --issued-after <timestamp> for `weave models check` — the served list's `issued` */
+    modelsIssuedAfter?: string;
   };
 }
 
@@ -232,6 +243,47 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--init") {
       flags.init = true;
+      continue;
+    }
+    if (arg === "--envelope") {
+      flags.modelsEnvelope = true;
+      continue;
+    }
+    if (arg === "--expect") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--expect",
+          message: "--expect requires the path of an expectations file",
+        });
+      }
+      flags.modelsExpect = val;
+      continue;
+    }
+    if (arg === "--key") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--key",
+          message: "--key requires a base64 Ed25519 public key",
+        });
+      }
+      flags.modelsKey = val;
+      continue;
+    }
+    if (arg === "--issued-after") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--issued-after",
+          message:
+            "--issued-after requires the issued timestamp of the list currently served",
+        });
+      }
+      flags.modelsIssuedAfter = val;
       continue;
     }
     if (arg === "--bootstrap-dir") {
@@ -472,6 +524,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         case "compose":
           command = "compose";
           break;
+        case "models":
+          command = "models";
+          break;
         default:
           command = "unknown";
           unknownCommand = arg;
@@ -523,6 +578,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         arg === "reindex"
       ) {
         flags.evalSubcommand = arg;
+        continue;
+      }
+    }
+
+    // models subcommands: "check"
+    if (command === "models" && flags.modelsSubcommand === undefined) {
+      if (arg === "check") {
+        flags.modelsSubcommand = arg;
         continue;
       }
     }

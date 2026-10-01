@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 234 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~21,300 tokens. Without it, AI exploration would cost ~78,500 tokens. **Saves ~57,200 tokens per conversation.**
-> **Last scanned:** 2026-10-01 14:37 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 241 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~21,900 tokens. Without it, AI exploration would cost ~80,300 tokens. **Saves ~58,400 tokens per conversation.**
+> **Last scanned:** 2026-10-01 15:01 — re-run after significant changes
 
 ---
 
@@ -280,6 +280,10 @@
   - interface MigrateContext
   - type InitScope
   - type InitPlan
+- `packages/cli/src/commands/models.ts`
+  - function modelsUsage: (theme) => string[]
+  - function runModels: (ctx) => Promise<Result<number, CliError>>
+  - interface ModelsContext
 - `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts`
@@ -718,6 +722,18 @@
   - function describeFailedConversion: (error) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
+- `packages/cli/src/models/expectations.ts`
+  - function describeMismatch: (mismatch) => string
+  - function compareExpectations: (report, expectations) => ExpectationMismatch[]
+  - interface ExpectationMismatch
+  - type ModelExpectations
+  - const ModelExpectationsSchema
+- `packages/cli/src/models/resolve.ts`
+  - class RecommendationsResolver
+  - interface AgentResolution
+  - interface CatalogResolution
+  - type EntryRejection
+  - const CLAUDE_CODE_CATALOG: CatalogId
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
@@ -745,6 +761,7 @@
   - const defaultThemeRenderer
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_MODELS_ISSUED
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
@@ -761,6 +778,22 @@
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
+- `packages/config/src/model-recommendations-verifier.ts`
+  - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
+  - function encodeBase64: (bytes) => string
+  - function signModelRecommendations: (payload, privateKeyPkcs8) => ResultAsync<string, ModelRecommendationsSignError>
+  - class ModelRecommendationsVerifier
+  - interface ModelRecommendationsFreshnessContext
+  - interface ModelRecommendationsVerifierDeps
+  - _...1 more_
+- `packages/config/src/model-recommendations.ts`
+  - function isSemver: (value) => boolean
+  - function describeModelRecommendationsError: (error) => string
+  - function formatModelRecommendationsIssues: (error) => readonly string[]
+  - function selectRecommendationsSection: (file, harness) => SelectedRecommendationsSection | undefined
+  - function isRecommendationsHarness: (value) => value is RecommendationsHarness
+  - interface SelectedRecommendationsSection
+  - _...21 more_
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/plan-task-parser.ts`
@@ -1064,6 +1097,19 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
+- `scripts/models/keygen.ts`
+  - function generateKeyPair: () => ResultAsync<KeyPair, KeygenError>
+  - function keygen: (args, io) => ResultAsync<string, KeygenError>
+  - interface KeyPair
+  - interface KeyFileIo
+  - type KeygenError
+  - const bunKeyFileIo: KeyFileIo
+- `scripts/models/sign.ts`
+  - function signList: (listText, privateKey, verifier) => void
+  - function signFiles: (args, io, verifier) => void
+  - interface SignFileIo
+  - type SignListError
+  - const bunSignFileIo: SignFileIo
 - `scripts/opencode2/fixtures/provider.ts`
   - class ProofProviderFixture
   - interface ProofProviderRequest
@@ -1181,37 +1227,37 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **50** files
-- `packages/cli/src/fs/file-system.ts` — imported by **27** files
-- `packages/cli/src/theme/colors.ts` — imported by **27** files
-- `packages/cli/src/io/terminal.ts` — imported by **26** files
+- `packages/cli/src/fs/file-system.ts` — imported by **29** files
+- `packages/cli/src/io/terminal.ts` — imported by **28** files
+- `packages/cli/src/theme/colors.ts` — imported by **28** files
 - `packages/cli/src/evals/attempt-usage.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
+- `packages/cli/src/args.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
-- `packages/cli/src/args.ts` — imported by **15** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
 - `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
+- `packages/cli/src/cli.ts` — imported by **11** files
+- `packages/cli/src/errors.ts` — imported by **11** files
 - `packages/cli/src/evals/eval-track.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `packages/cli/src/cli.ts` — imported by **10** files
-- `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +45 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +22 more
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +22 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +24 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +23 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +23 more
 - `packages/cli/src/evals/attempt-usage.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/model-comparison.test.ts`, `packages/cli/src/evals/compare-report.ts`, `packages/cli/src/evals/jev-judge.ts` +14 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts` +14 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +10 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/e2e-fixture-flow.test.ts` +10 more
 
 ---
@@ -1233,7 +1279,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 237 test files found
+> 244 test files found
 
 ---
 

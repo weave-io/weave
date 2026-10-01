@@ -526,3 +526,54 @@ describe("eval reindex", () => {
     expect(parsed.flags.dryRun).toBe(true);
   });
 });
+
+describe("models check", () => {
+  it("parses the subcommand, the file and every flag", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "models",
+      "check",
+      "models/stable.v1.json",
+      "--envelope",
+      "--key",
+      "b5UhKwU8ugzt7BBcPCHCIXPMaGip85yid0l187r7c8Y=",
+      "--expect",
+      "models/stable.expect.json",
+    ])._unsafeUnwrap();
+
+    expect(parsed.command).toBe("models");
+    expect(parsed.flags.modelsSubcommand).toBe("check");
+    expect(parsed.flags.modelsEnvelope).toBe(true);
+    expect(parsed.flags.modelsKey).toBe(
+      "b5UhKwU8ugzt7BBcPCHCIXPMaGip85yid0l187r7c8Y=",
+    );
+    expect(parsed.flags.modelsExpect).toBe("models/stable.expect.json");
+    expect(parsed.rest).toEqual(["models/stable.v1.json"]);
+  });
+
+  it("parses --issued-after", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "models",
+      "check",
+      "f",
+      "--issued-after",
+      "2026-10-01T09:00:00Z",
+    ])._unsafeUnwrap();
+    expect(parsed.flags.modelsIssuedAfter).toBe("2026-10-01T09:00:00Z");
+  });
+
+  it.each([
+    "--expect",
+    "--key",
+    "--issued-after",
+  ])("rejects %s without a value", (flag) => {
+    const parsed = parseArgs(["bun", "weave", "models", "check", "f", flag]);
+    expect(parsed._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag,
+    });
+  });
+});

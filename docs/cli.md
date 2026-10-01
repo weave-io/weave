@@ -700,6 +700,74 @@ Use those commands to confirm the published comparison between `60c3ebd-2026-06-
 
 See [Agent Evals](./agent-evals.md) for the full architecture, security checklist, and guide to adding new eval cases.
 
+## `weave models check`
+
+Checks a published model recommendations list ([Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#the-published-file), the normative format) before it is signed and published. The tryweave.io deploy workflow runs it on every list; maintainers run it locally while writing one.
+
+```bash
+weave models check models/stable.json                                    # validate a plain list
+weave models check models/stable.json --expect models/stable.expect.json # and check every resolution
+weave models check stable.v1.json --envelope                             # verify a signed envelope with the built-in keys
+weave models check stable.v1.json --envelope --key <public-key-base64>   # ... or with another public key
+weave models check models/stable.json --issued-after 2026-10-01T09:00:00Z # must be newer than the served list
+weave models check models/stable.json --json                             # machine-readable report
+```
+
+What it does, in order:
+
+1. With `--envelope`, **verifies the envelope first**: its size (64 KiB), its `{ "payload", "sig" }` shape, and the Ed25519 signature over the exact bytes of `payload`. Nothing in the payload is parsed until the signature verifies. Without `--key` it uses the public keys built into `@weaveio/weave-config`; `--key` replaces them with one raw Ed25519 public key, base64. `--key` without `--envelope` is an error.
+2. **Validates** the list (the envelope's payload, or the plain file) against the same schema clients use ([`model-recommendations.ts`](../packages/config/src/model-recommendations.ts)): `schema 1`, `channel`, `issued`, `expires` at most 90 days after `issued`, optional semver `min_config_version`, a required HTTPS `evidence` link, a required `default` section and optional `opencode2`, `claude-code` and `pi` sections, the count and size limits, and no unknown fields.
+3. **Checks freshness** against the current time: an expired list, an `issued` more than 24 hours ahead, or an `issued` before this release's `BUILTIN_MODELS_ISSUED` fails. With `--issued-after <timestamp>`, the `issued` of the list currently served, a list that is not later than it fails too, which is the rollback rule clients apply; the website passes it so an older list can never be published over a newer one. The check does not know the channel a client asks for or a client version, so it skips those two rules; clients apply them.
+4. **Resolves** each harness's section (its own, or `default`) against the provider catalog fixtures and prints the model every agent gets: OpenCode 2 and Pi per catalog, Claude Code once. See [Model Resolution](model-resolution.md#checking-recommendations-against-provider-catalogs) for the rules and fixtures. `none` means no entry in the section resolves; at runtime that agent falls back to its builtin list. Agents the list names that this version does not define as builtins are listed, since clients skip them.
+5. With `--expect`, **compares** every resolution with the expectations file and fails on any difference.
+
+### The expectations file
+
+For each harness and each catalog it is checked against, the model each agent must resolve to, or `none`:
+
+```json
+{
+  "schema": 1,
+  "harnesses": {
+    "opencode2": {
+      "github-copilot": { "shuttle": "github-copilot/claude-sonnet-5.5" },
+      "anthropic": { "shuttle": "anthropic/claude-sonnet-5-5" },
+      "openai": { "shuttle": "openai/gpt-6-sol" },
+      "openrouter": { "shuttle": "openrouter/anthropic/claude-sonnet-5.5" },
+      "github-copilot+openai": { "shuttle": "github-copilot/claude-sonnet-5.5" }
+    },
+    "claude-code": { "anthropic": { "shuttle": "sonnet" } },
+    "pi": {
+      "github-copilot": { "shuttle": "github-copilot/claude-sonnet-5.5" },
+      "anthropic": { "shuttle": "anthropic/claude-sonnet-5-5" },
+      "openai": { "shuttle": "openai/gpt-6-sol" },
+      "openrouter": { "shuttle": "none" },
+      "github-copilot+openai": { "shuttle": "github-copilot/claude-sonnet-5.5" }
+    }
+  }
+}
+```
+
+- Harness keys are `opencode2`, `claude-code` and `pi`. OpenCode 2 and Pi take the catalog keys `github-copilot`, `anthropic`, `openai`, `openrouter` and `github-copilot+openai`. Claude Code maps its tiers to models itself, so it is checked once, under `anthropic`.
+- OpenCode 2 and Pi values are `provider/model`; Claude Code values are `opus`, `sonnet` or `haiku`.
+- The file must cover exactly what the check resolves. A resolution with no expectation, or an expectation for an agent the harness's section does not name, is a mismatch, so a list cannot add an agent or a harness section that nobody wrote an expectation for. Unknown keys and fields are rejected.
+
+The website keeps one beside each list, as `models/<channel>.expect.json` ([publication bar](specs/39-spec-model-recommendations/39-spec-model-recommendations.md#publication-bar), step 6).
+
+### Exit codes
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The list is valid and fresh, the signature verified (with `--envelope`), and every resolution matched (with `--expect`). The report is on stdout. |
+| `1` | Anything else: a usage error (including an `--issued-after` that is not an ISO 8601 UTC timestamp), a missing or unreadable file, an envelope or signature that does not verify, a list that breaks a schema or freshness rule (the reason is on stderr), an invalid expectations file, or at least one resolution that differs from it (each one listed on stderr as `harness / catalog / agent: expected …, resolved …`). |
+
+### Signing a list
+
+Two maintainer scripts sit beside the command:
+
+- `bun scripts/models/sign.ts <list.json> <private-key-file> <envelope-out.json>` checks the list the way a client would (schema and freshness), signs it, checks that the envelope fits the 64 KiB a client accepts, then writes the envelope `{ "payload": "<the list's exact text>", "sig": "<base64 Ed25519 signature>" }`. The private key file holds an Ed25519 key in PKCS #8 form, base64. The website's deploy workflow runs it with the key from its `model-recommendations` environment; the production private key never enters this repository.
+- `bun scripts/models/keygen.ts <private-key-out>` writes a new private key (mode 600) and logs its public key. Use it for a local proof with a throwaway key, or for a rotation: add the new public key to [`model-recommendations-keys.ts`](../packages/config/src/model-recommendations-keys.ts) and ship it in a release before the site signs with the new key.
+
 ## CLI command module structure
 
 The CLI source is organized into focused modules:
@@ -711,7 +779,13 @@ packages/cli/src/
 │   ├── migrate.ts     # weave init migrate — orchestration flow
 │   ├── prompt.ts      # weave prompt
 │   ├── validate.ts    # weave validate
+│   ├── models.ts      # weave models check
 │   └── runtime.ts     # weave runtime
+├── models/
+│   ├── catalogs/      # provider catalog fixtures (JSON), shipped in the bundle
+│   ├── catalogs.ts    # the fixed catalog set, including Copilot + OpenAI
+│   ├── resolve.ts     # the OpenCode 2 / Pi catalog rule and the Claude Code tier rule
+│   └── expectations.ts # the --expect file format and comparison
 └── migration/
     ├── types.ts                  # Shared migration types (MigrationPlan, ConversionWarning, etc.)
     ├── legacy-jsonc-converter.ts # JSONC-to-DSL conversion logic

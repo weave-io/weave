@@ -1,0 +1,35 @@
+{
+  "id": "openrouter",
+  "description": "OpenRouter: model IDs carry the vendor, as in evals/model-matrix.json, so an entry names them as openrouter/<vendor>/<model>.",
+  "updated": "2026-10-01",
+  "models": [
+    {
+      "providerID": "openrouter",
+      "id": "anthropic/claude-opus-5.5"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "anthropic/claude-sonnet-5.5"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "anthropic/claude-sonnet-5"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "anthropic/claude-haiku-4.5"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "openai/gpt-6-sol"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "openai/gpt-6-luna"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "openai/gpt-6-astra"
+    }
+  ]
+}

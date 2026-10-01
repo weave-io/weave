@@ -1,0 +1,19 @@
+{
+  "id": "openai",
+  "description": "OpenAI: IDs spelled the same as on every other provider (docs/model-resolution.md).",
+  "updated": "2026-10-01",
+  "models": [
+    {
+      "providerID": "openai",
+      "id": "gpt-6-sol"
+    },
+    {
+      "providerID": "openai",
+      "id": "gpt-6-luna"
+    },
+    {
+      "providerID": "openai",
+      "id": "gpt-6-astra"
+    }
+  ]
+}
