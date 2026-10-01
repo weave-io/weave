@@ -330,8 +330,13 @@ Verified so far: the event, its payload and the reload, against the host
 double in
 [`opencode2-model-updates.scenario.test.ts`](../../tests/adapters/opencode2-model-updates.scenario.test.ts).
 The toast uses the same `rpc.events.on` and `ui.toast.show` APIs the plan
-panel already uses, but it has not been seen on a live host yet; Spec 39's
-live proof (item 8) records that check.
+panel already uses. On a live `@opencode/cli@2.0.16` host with
+`0.3.0-next.0`, the event reached an external SDK subscriber and the TUI
+showed the toast for about five seconds
+([live proof record](../artifacts/model-recommendations-live-proof-2026-10-01.md)).
+In that release the `status` RPC fails, rather than returning the
+`model_updates_unavailable` issue, while an unusable `applied.json` is
+skipped (#303); `weave models status` reports the reason meanwhile.
 
 The adapter does not redirect the shared process logger to a Location-specific
 file. Operators control the shared pino destination and level.
