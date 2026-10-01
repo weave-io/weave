@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-says-not-found",
+  "description": "Research question: What is the default request timeout of the Quillstream HTTP client 4.x, that is, how long a single request may run before the client aborts it? [1] Quillstream 4.x reference, 'Client options' (official docs): `retries` defaults to 2; `pool.maxSockets` defaults to 64; `pool.idleTimeoutMs` defaults to 90000, the time an unused pooled socket stays open before it is closed. [2] Quillstream 4.x reference, 'Aborting requests' (official docs): pass an `AbortSignal` as `signal` to cancel a request; `AbortSignal.timeout(ms)` creates a signal that fires after `ms` milliseconds. Example: `client.get(url, { signal: AbortSignal.timeout(30_000) })` gives up after 30 seconds.",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose direct answer says the sources do not state a default request timeout. It does not give the 90-second `pool.idleTimeoutMs` [1] as the request timeout, and it states no other default value as fact. That is all that is required; pointing to `AbortSignal.timeout(ms)` [2] as the way to set one, or saying in Interpretation that there may be no default, is optional.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "not-found", "no-invention"]
+}

@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-calibrates-low-confidence",
+  "description": "Research question: Does Gannet DB 7 support online, zero-downtime index rebuilds? [1] Community forum thread on community.gannet.dev, 2025-11-03, an unaccepted answer from a user with 2 votes: 'I think 7.0 added online index rebuilds, pretty sure I saw it in a conference talk. Try `REBUILD INDEX ... ONLINE`.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) which says the brief cannot confirm that Gannet DB 7 supports online index rebuilds: the only source [1] is a single hedged, unaccepted community answer. It presents `REBUILD INDEX ... ONLINE` as that user's untested suggestion, not documented syntax, and its confidence is low. That is all that is required.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "confidence", "weak-source"]
+}

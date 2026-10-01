@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-summary-keeps-caveat",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it leaves out that custom `defineType` column types are not converted by `migrate --auto`, or if it says `migrate --auto` handles the whole migration. A summary that keeps the caveat but leaves out minor steps still passes, as does one that uses its Source facts section as the short summary."
+  }
+}

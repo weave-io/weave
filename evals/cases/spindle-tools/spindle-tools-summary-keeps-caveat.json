@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-summary-keeps-caveat",
+  "description": "Research question: Summarise how to migrate a project from Driftwood ORM 1 to Driftwood ORM 2. Keep it short: the team lead wants three bullets at most. [1] Driftwood 2 migration guide (official), full text: 'Before you start, upgrade to Driftwood 1.9 and make sure your test suite passes. Install `driftwood@2` and the matching `driftwood-cli@2`. Driftwood 2 requires Node 20 or Bun 1.2 or later. Rename `driftwood.config.js` to `driftwood.config.ts`; the options are unchanged. Run `driftwood migrate --auto`. It rewrites your model files and query calls to the new API (column types you registered yourself with `defineType` keep their 1.x definitions, so their values come back as raw strings until you port each one to `ColumnType`) and prints each file it changed. `findOne` now returns `null` instead of `undefined` when nothing matches. Finally, run your test suite again and commit.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose short summary keeps the guide's main caveat: `migrate --auto` does not convert custom column types registered with `defineType`, and their values read back as raw strings until each is ported to `ColumnType` by hand [1]. That caveat is the one required item; the other steps, and the `findOne` change, are expected in a good summary but are not individually required.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "summary", "caveat"]
+}

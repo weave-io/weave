@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-says-not-found",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it gives any default request timeout as fact (90 seconds, the 30 seconds of the example in [2], none or infinite), or if it presents `pool.idleTimeoutMs` as the request timeout. Mentioning the idle timeout while saying it governs idle pooled sockets, not request duration, is correct. A guess that the client may have no default is acceptable only in Interpretation, marked as inference."
+  }
+}

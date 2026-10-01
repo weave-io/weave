@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-flags-outdated-source",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it says the API is in beta now, says it is generally available now, or gives 10 requests per second as the current limit without tying it to the 2023 beta. Fail it if it never flags the source's age, or if its confidence is medium or high."
+  }
+}
