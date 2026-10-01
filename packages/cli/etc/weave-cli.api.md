@@ -39,6 +39,8 @@ export interface CliDeps {
     env?: Record<string, string | undefined>;
     // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
     fs?: FileSystem_2;
+    // Warning: (ae-forgotten-export) The symbol "ModelRecommendationsDeps" needs to be exported by the entry point index.d.ts
+    modelRecommendations?: ModelRecommendationsDeps;
     now?: () => Date;
     // (undocumented)
     terminal: TerminalIO;

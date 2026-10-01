@@ -55,13 +55,66 @@ agent shuttle {
 ```
 
 They are what the `claude-code` section of the opt-in
-[model recommendations](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
-names. `weave compose --adapter claude-code` loads config with
-`loadConfigDetailed(..., { harness: "claude-code" })`, so a user who opts in gets
-that section (else `default`) ahead of the builtin lists; a skipped file is
-logged and composition carries on with the builtins
+[model recommendations](#model-recommendations) names.
+
+## Model recommendations
+
+A user who adds `settings { model_updates { mode auto } }` (or `notify`) opts
+in to the signed model lists Weave publishes
+([Spec 39](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)).
+On Claude Code a list fetched in one session applies at the next.
+
+**Which entries.** `weave compose --adapter claude-code` loads config with
+`loadConfigDetailed(..., { harness: "claude-code" })`, so the applied list's
+`claude-code` section (else its `default` section) is merged ahead of the
+builtin lists and behind the user's own `models`
 ([Config Loading](../config-loading.md#the-recommendations-layer),
-[Model Resolution](../model-resolution.md#published-recommendations)).
+[Model Resolution](../model-resolution.md#published-recommendations)). A
+`claude-code` section names tiers, `opus`, `sonnet` or `haiku`, which Claude
+Code maps to its current models itself, so a new Anthropic model reaches the
+agents through Claude Code without a new list.
+
+**When a list is fetched.** The bootstrap plugin's `SessionStart` hook
+([`hooks.json`](../../packages/adapters/claude-code/src/bootstrap/hooks/hooks.json))
+runs `weave compose --adapter claude-code`. Compose first writes the bundle
+from whatever list is already applied, prints its summary, and only then calls
+`ModelRecommendations.refresh()` once
+([`compose-refresh.ts`](../../packages/cli/src/models/compose-refresh.ts)).
+A manual `weave compose --adapter claude-code` does the same. With no
+`model_updates` block or `mode off`, `refresh()` is not called and nothing is
+read, written or fetched. The refresh keeps its own throttle: at most one
+request a day, or an hour after a failed check; every other session start costs
+one read of `state.json`. In `auto` mode a verified, newer list is promoted to
+`applied.json`, which the next session's compose merges; in `notify` mode it
+waits in `latest.json`.
+
+**Why the hook waits for it, briefly.** The hook is a short-lived process and
+Claude Code waits for it before the session starts. Compose awaits the refresh
+with a tight bound rather than leaving it running or handing it to a detached
+child:
+
+- The request, body included, gets `COMPOSE_REFRESH_TIMEOUT_MS` (1.5 s)
+  instead of the usual 5 s, and compose stops waiting after
+  `COMPOSE_REFRESH_BUDGET_MS` (2 s), far inside the hook's 30 s timeout. The
+  bound applies only when a check is due.
+- The request is aborted at its own timeout, so nothing keeps the process
+  alive past its normal exit, and the cache lock is released by the process
+  that took it. A detached child would outlive the hook, could hold the lock
+  after the session started, and would need to locate the `weave` executable
+  again.
+- A failed, slow or broken refresh never changes the exit code, which stays
+  compose's own. On a slow link the check times out and is retried an hour
+  later.
+
+**What the user sees.** Stdout of a `SessionStart` hook is added to the
+session's context, so it carries only compose's summary. For a user who opted
+in, the summary says which lists the agents were composed from:
+`Model lists: recommended (stable, issued …)`, `builtin (no stable
+recommendations applied yet)`, or `builtin (stable recommendations skipped, see
+above)`. Everything else goes to stderr, where compose reports its other config
+problems: a `Warning:` line when an applied list cannot be used (unreadable,
+unsigned, expired, …, and composition carries on with the builtin lists), a
+note when a refresh applied a newer list or failed, and the structured logs.
 
 ## Commands
 

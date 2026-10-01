@@ -12,8 +12,11 @@ import {
   getBootstrapDir,
 } from "@weaveio/weave-adapter-claude-code";
 import {
+  type ConfigLoadDiagnostic,
   describeModelRecommendationsSkipReason,
   loadConfigDetailed,
+  ModelRecommendations,
+  type ModelRecommendationsDeps,
 } from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
@@ -26,6 +29,11 @@ import {
   toConfigFileReader,
 } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
+import {
+  COMPOSE_REFRESH_TIMEOUT_MS,
+  ComposeModelRefresh,
+  describeComposeRefresh,
+} from "../models/compose-refresh.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 const log = logger.child({ module: "cli-compose" });
@@ -43,6 +51,14 @@ export interface ComposeContext {
    * `MemoryFileSystem` so `weave compose` can be driven without touching disk.
    */
   fs?: FileSystem;
+  /**
+   * How model recommendations are fetched and verified (Spec 39): `fetch`,
+   * clock, cache files and public keys. Defaults to production behaviour, with
+   * the request timeout shortened to `COMPOSE_REFRESH_TIMEOUT_MS` because the
+   * Claude Code session-start hook waits for it. `publicKeys` and `now` also
+   * verify the applied list the config loads.
+   */
+  modelRecommendations?: ModelRecommendationsDeps;
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
@@ -172,10 +188,19 @@ export async function runCompose(
   // 1. Load config. The harness ID selects Claude Code's section of any
   // applied model recommendations (Spec 39); without an opt-in it changes
   // nothing.
+  const recommendations = ctx.modelRecommendations ?? {};
   const configResult = await loadConfigDetailed(
     projectRoot,
     toConfigFileReader(fs),
-    { harness: "claude-code" },
+    {
+      harness: "claude-code",
+      ...(recommendations.publicKeys === undefined
+        ? {}
+        : { publicKeys: recommendations.publicKeys }),
+      ...(recommendations.now === undefined
+        ? {}
+        : { now: recommendations.now }),
+    },
   ).mapErr(
     (errors): CliError => ({
       type: "ParseFailure",
@@ -207,14 +232,10 @@ export async function runCompose(
   log.info({ agents: Object.keys(config.agents).length }, "Config loaded");
   for (const diagnostic of diagnostics) {
     if (diagnostic.type !== "ModelRecommendationsSkipped") continue;
-    // Reported to the user by `weave models status` and `weave validate`
-    // (Spec 39 item 5); composing carries on with the builtin lists.
-    log.warn(
-      {
-        channel: diagnostic.channel,
-        reason: describeModelRecommendationsSkipReason(diagnostic.reason),
-      },
-      "Model recommendations skipped",
+    // Surfaced like the other config problems compose meets: a warning on
+    // stderr. Composing carries on with the builtin lists.
+    terminal.stderr(
+      `Warning: model recommendations (${diagnostic.channel}) skipped: ${describeModelRecommendationsSkipReason(diagnostic.reason)}. Agents keep their builtin model lists.`,
     );
   }
 
@@ -311,6 +332,7 @@ export async function runCompose(
     "",
     `  ${theme.dim("Agents materialised:")} ${theme.cyan(String(agents.length))}`,
     `  ${theme.dim("Output directory:   ")} ${theme.cyan(outDir)}`,
+    ...modelListsLines(diagnostics, theme),
     "",
     matErrors.length > 0
       ? `  ${theme.boldYellow("Warnings:")} ${matErrors.length} agent(s) skipped — see above.`
@@ -319,5 +341,45 @@ export async function runCompose(
   ];
 
   terminal.stdout(successLines.join("\n"));
+
+  // 8. Check for newer model recommendations (Spec 39, item 6b). Composition
+  // is done and its output written, so a list fetched now applies at the next
+  // compose: the next Claude Code session. Bounded, never fails the compose,
+  // and silent on stdout; see compose-refresh.ts for why it is awaited.
+  const refresh = await new ComposeModelRefresh(
+    new ModelRecommendations({
+      timeoutMs: COMPOSE_REFRESH_TIMEOUT_MS,
+      ...recommendations,
+    }),
+  ).run(config.settings.model_updates);
+  const note = describeComposeRefresh(refresh);
+  if (note !== undefined) terminal.stderr(note);
+
   return ok(0);
+}
+
+/**
+ * The summary's "Model lists" line: only for a user who opted in to model
+ * recommendations, saying whether an applied list is in use.
+ */
+function modelListsLines(
+  diagnostics: readonly ConfigLoadDiagnostic[],
+  theme: ThemeColors,
+): string[] {
+  const label = theme.dim("Model lists:        ");
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.type === "ModelRecommendationsApplied")
+      return [
+        `  ${label} ${theme.cyan(`recommended (${diagnostic.channel}, issued ${diagnostic.issued})`)}`,
+      ];
+    if (diagnostic.type === "ModelRecommendationsPending")
+      return [
+        `  ${label} builtin ${theme.dim(`(no ${diagnostic.channel} recommendations applied yet)`)}`,
+      ];
+    if (diagnostic.type === "ModelRecommendationsSkipped")
+      return [
+        `  ${label} builtin ${theme.dim(`(${diagnostic.channel} recommendations skipped, see above)`)}`,
+      ];
+  }
+  return [];
 }

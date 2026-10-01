@@ -22,7 +22,9 @@ weave compose --adapter claude-code --init
 
 The CLI-bundled adapter generates agents, composed prompts, model aliases, and
 tool lists under `.weave/plugins/claude-code/`. A small optional bootstrap
-plugin reruns composition at session start. The standalone adapter is reserved
+plugin reruns composition at session start and, for a user who opted in,
+checks for newer [model recommendations](adapters/claude-code.md#model-recommendations).
+The standalone adapter is reserved
 for nightly evaluation and uses the same materialization boundary.
 
 The adapter owns Claude-specific file locations, model aliases, tool names,

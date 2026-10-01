@@ -6,6 +6,7 @@
  * `main.ts` — this module is fully testable.
  */
 
+import type { ModelRecommendationsDeps } from "@weaveio/weave-config";
 import { ok, type Result } from "neverthrow";
 import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
@@ -43,6 +44,12 @@ export interface CliDeps {
    * system clock.
    */
   now?: () => Date;
+  /**
+   * How `weave compose` fetches and verifies model recommendations (Spec 39):
+   * `fetch`, clock, cache files and public keys. Defaults to production
+   * behaviour. Black-box tests inject a stub `fetch` and throwaway keys.
+   */
+  modelRecommendations?: ModelRecommendationsDeps;
 }
 
 function defaultDeps(): CliDeps {
@@ -63,7 +70,7 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled, fs, env, now } = {
+  const { argv, terminal, colorEnabled, fs, env, now, modelRecommendations } = {
     ...defaultDeps(),
     ...deps,
   };
@@ -188,7 +195,7 @@ export async function run(
 
     case "compose": {
       const { runCompose } = await import("./commands/compose.js");
-      return runCompose({ terminal, theme, flags, fs });
+      return runCompose({ terminal, theme, flags, fs, modelRecommendations });
     }
 
     case "models": {
