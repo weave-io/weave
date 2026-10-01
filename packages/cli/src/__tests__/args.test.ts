@@ -406,6 +406,30 @@ describe("eval run --repeat", () => {
   });
 });
 
+describe("eval run --concurrency", () => {
+  it("parses --concurrency into evalConcurrency, as typed", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "eval",
+      "run",
+      "--concurrency",
+      "6",
+    ]);
+
+    expect(result._unsafeUnwrap().flags.evalConcurrency).toBe("6");
+  });
+
+  it("rejects --concurrency with no value", () => {
+    const result = parseArgs(["bun", "weave", "eval", "run", "--concurrency"]);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "MissingFlagValue",
+      flag: "--concurrency",
+    });
+  });
+});
+
 describe("eval run --track", () => {
   it("parses --track into evalTrack, as typed", () => {
     const result = parseArgs([

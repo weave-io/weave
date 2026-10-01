@@ -39,7 +39,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { EVALS_ROOT, loadCaseFile } from "../case-loader.js";
-import { MAX_EVAL_REPEAT } from "../input-validation.js";
+import { MAX_EVAL_CONCURRENCY, MAX_EVAL_REPEAT } from "../input-validation.js";
 import { loadModelMatrix, MODEL_SET_NAMES } from "../model-matrix.js";
 import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
@@ -605,6 +605,71 @@ describe("workflow-sync — agent-evals.yml passes --repeat through", () => {
     expect(forwards).toHaveLength(4);
     // The raw input is read once, by validate-inputs; jobs see only its output.
     expect(text.match(/github\.event\.inputs\.repeat/g)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The concurrency dispatch input and the job time limits (Spec 39, gap G7)
+// ---------------------------------------------------------------------------
+
+describe("workflow-sync — agent-evals.yml runs text attempts concurrently", () => {
+  function inputBlock(text: string): string {
+    const start = text.indexOf("      concurrency:\n");
+    return text.slice(start, text.indexOf("\n      trajectory:\n", start));
+  }
+
+  it("offers a concurrency input that defaults to 6, a value the CLI accepts", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const block = inputBlock(text);
+
+    expect(block).toContain('default: "6"');
+    expect(block).toContain("type: string");
+    expect(6).toBeLessThanOrEqual(MAX_EVAL_CONCURRENCY);
+  });
+
+  it("validates concurrency against the CLI's maximum before any eval job", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const validate = jobBlock(text, "validate-inputs");
+
+    expect(validate).toContain(`MAX_CONCURRENCY=${MAX_EVAL_CONCURRENCY}`);
+    expect(validate).toContain(
+      "RAW_CONCURRENCY: ${{ github.event.inputs.concurrency }}",
+    );
+    expect(text).toContain(
+      "concurrency: ${{ steps.check.outputs.concurrency }}",
+    );
+    // The raw input is read once, by validate-inputs; jobs see only its output.
+    expect(text.match(/github\.event\.inputs\.concurrency/g)).toHaveLength(1);
+  });
+
+  it("forwards the validated concurrency to the text job's dry run and live run only", async () => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const forward =
+      /WEAVE_EVAL_CONCURRENCY: \$\{\{ needs\.validate-inputs\.outputs\.concurrency \}\}/g;
+
+    expect(jobBlock(text, "run-evals").match(forward)).toHaveLength(2);
+    // Trajectory sessions run one at a time, and the CLI refuses
+    // concurrency on the trajectory track.
+    expect(jobBlock(text, "trajectory-evals")).not.toContain(
+      "WEAVE_EVAL_CONCURRENCY",
+    );
+  });
+
+  it.each([
+    "run-evals",
+    "trajectory-evals",
+  ])("bounds %s below GitHub's six-hour job limit, and its eval step below the job", async (name) => {
+    const text = await Bun.file(WORKFLOW_PATH).text();
+    const job = jobBlock(text, name);
+    const jobLimit = /\n {4}timeout-minutes: (\d+)\n/.exec(job)?.[1];
+    const stepLimit = /\n {8}timeout-minutes: (\d+)\n/.exec(job)?.[1];
+
+    expect(jobLimit).toBeDefined();
+    expect(stepLimit).toBeDefined();
+    expect(Number(jobLimit)).toBeLessThan(360);
+    // The live eval step stops first, so the always() bundle upload after
+    // it still runs inside the job's limit.
+    expect(Number(stepLimit)).toBeLessThan(Number(jobLimit));
   });
 });
 

@@ -60,6 +60,7 @@ import type {
 import { PRIMARY_STRUCTURAL_PASS_THRESHOLD } from "./langchain-agent-evals.js";
 import type { ModelUsage } from "./openrouter-client.js";
 import type { JudgeIdentity } from "./report-schema.js";
+import { retryAfterMs } from "./retry-after.js";
 import type { ScoringDimension, ScoringError } from "./types.js";
 
 /** OpenRouter's decisions endpoint, which serves Jev. */
@@ -372,9 +373,6 @@ export const JEV_MAX_RETRIES = 2;
 /** The wait before retry `n` (0-based) when the answer names none. */
 const JEV_RETRY_BASE_MS = 1_000;
 
-/** The longest a `Retry-After` header may make the judge wait. */
-const JEV_RETRY_AFTER_MAX_MS = 30_000;
-
 /** One failed attempt, and whether and when it may be tried again. */
 interface AttemptFailure {
   error: ScoringError;
@@ -387,24 +385,9 @@ function retryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-/**
- * The wait a `Retry-After` header asks for, in milliseconds, capped at
- * `JEV_RETRY_AFTER_MAX_MS`. Accepts delta-seconds and an HTTP date;
- * anything else is ignored.
- */
-export function retryAfterMs(
-  header: string | null,
-  now: number = Date.now(),
-): number | undefined {
-  if (header === null || header.trim() === "") return undefined;
-  const seconds = Number(header);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(seconds * 1000, JEV_RETRY_AFTER_MAX_MS);
-  }
-  const date = Date.parse(header);
-  if (Number.isNaN(date)) return undefined;
-  return Math.min(Math.max(date - now, 0), JEV_RETRY_AFTER_MAX_MS);
-}
+// `retryAfterMs` lives in `retry-after.ts`, shared with the model client's
+// rate-limit retries; re-exported so existing imports keep working.
+export { retryAfterMs } from "./retry-after.js";
 
 /** The eval judge: one decisions call per judged dimension. */
 export class JevJudge implements LangChainJudge {
@@ -423,6 +406,16 @@ export class JevJudge implements LangChainJudge {
   /** The judge a run scored by this instance records. */
   identity(): JudgeIdentity {
     return { ...this.options.judge };
+  }
+
+  /**
+   * The same judge, recording each answered call's usage in `ledger`
+   * instead. `EvalOrchestrator` asks for one per unit of work, so judge
+   * calls are costed on the attempt they judged even when units run
+   * concurrently (`weave eval run --concurrency`).
+   */
+  withUsageLedger(ledger: UsageLedger): JevJudge {
+    return new JevJudge({ ...this.options, usageLedger: ledger });
   }
 
   evaluate(input: JudgeInput): ResultAsync<JudgeOutput, ScoringError> {

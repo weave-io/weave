@@ -1671,6 +1671,21 @@ export type RunnerError =
       agentName: string;
       /** Human-readable description (no raw provider error text). */
       message: string;
+    }
+  | {
+      /**
+       * A suite run threw or rejected instead of returning a `Result`, which
+       * no runner should do. `EvalOrchestrator` records it as a hard failure
+       * of that suite on that model, so the run exits 1 and every other
+       * unit of work still runs (see `worker-pool.ts`).
+       */
+      type: "SuiteRunDefect";
+      /** The suite that threw. */
+      suite: string;
+      /** The model it was running. */
+      modelId: string;
+      /** Human-readable description. */
+      message: string;
     };
 
 /**

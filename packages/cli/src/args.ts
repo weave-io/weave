@@ -83,6 +83,8 @@ export interface ParsedArgs {
     evalCase?: string;
     /** --repeat <n> for `weave eval run`, as typed; validated by the eval command */
     evalRepeat?: string;
+    /** --concurrency <n> for `weave eval run`, as typed; validated by the eval command */
+    evalConcurrency?: string;
     /** --track for `weave eval run` (`text` or `trajectory`); validated by the eval command */
     evalTrack?: string;
     /** --config for `weave eval run` (`builtin` or `project`); validated by the eval command */
@@ -446,6 +448,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       flags.evalRepeat = val;
+      continue;
+    }
+    if (arg === "--concurrency") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--concurrency",
+          message: "--concurrency requires a number of attempts to run at once",
+        });
+      }
+      flags.evalConcurrency = val;
       continue;
     }
     if (arg === "--track") {

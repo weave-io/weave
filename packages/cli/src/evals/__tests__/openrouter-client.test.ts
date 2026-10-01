@@ -30,9 +30,11 @@ import {
   DEFAULT_MAX_COMPLETION_TOKENS,
   isRetryableAnswerError,
   MAX_ANSWER_ATTEMPTS,
+  MAX_RATE_LIMIT_RETRIES,
   type ModelClientError,
   type ModelRequest,
   OpenRouterClient,
+  RateLimitRetryingModelClient,
   RetryingModelClient,
   StubModelClient,
 } from "../openrouter-client.js";
@@ -770,6 +772,128 @@ describe("RetryingModelClient", () => {
     expect(isRetryableAnswerError({ type: "NetworkError", message: "x" })).toBe(
       false,
     );
+  });
+});
+
+describe("OpenRouterClient — rate limits", () => {
+  it("reports the wait a 429's Retry-After header asks for", async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response("slow down", {
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: { "Retry-After": "7" },
+        }),
+    ) as unknown as typeof fetch;
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "HttpError",
+      statusCode: 429,
+      retryAfterMs: 7000,
+    });
+  });
+
+  it("leaves the wait out when the 429 names none", async () => {
+    globalThis.fetch = mockFetchHttpError(429, "Rate limited");
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr()).not.toHaveProperty("retryAfterMs");
+  });
+});
+
+describe("RateLimitRetryingModelClient", () => {
+  const RATE_LIMITED: ModelClientError = {
+    type: "HttpError",
+    statusCode: 429,
+    message: "OpenRouter returned HTTP 429: Too Many Requests",
+  };
+  const ANSWER = { model: "m", content: "an answer" };
+
+  function client(stub: StubModelClient, waits: number[]) {
+    return new RateLimitRetryingModelClient(stub, {
+      sleep: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+    });
+  }
+
+  it("asks again after a 429, backing off, and returns the answer that follows", async () => {
+    const stub = new StubModelClient();
+    stub.enqueueError(RATE_LIMITED);
+    stub.enqueueError(RATE_LIMITED);
+    stub.enqueueResponse(ANSWER);
+    const waits: number[] = [];
+
+    const result = await client(stub, waits).complete(MINIMAL_REQUEST);
+
+    expect(result._unsafeUnwrap()).toEqual(ANSWER);
+    expect(stub.calls).toHaveLength(3);
+    expect(waits).toEqual([2000, 4000]);
+  });
+
+  it("waits as long as Retry-After asks when the 429 names a wait", async () => {
+    const stub = new StubModelClient();
+    stub.enqueueError({ ...RATE_LIMITED, retryAfterMs: 12_000 });
+    stub.enqueueResponse(ANSWER);
+    const waits: number[] = [];
+
+    await client(stub, waits).complete(MINIMAL_REQUEST);
+
+    expect(waits).toEqual([12_000]);
+  });
+
+  it(`gives up after ${MAX_RATE_LIMIT_RETRIES} retries and returns the 429`, async () => {
+    const stub = new StubModelClient();
+    stub.setDefaultError(RATE_LIMITED);
+    const waits: number[] = [];
+
+    const result = await client(stub, waits).complete(MINIMAL_REQUEST);
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "HttpError",
+      statusCode: 429,
+    });
+    expect(stub.calls).toHaveLength(MAX_RATE_LIMIT_RETRIES + 1);
+    expect(waits).toHaveLength(MAX_RATE_LIMIT_RETRIES);
+  });
+
+  it.each<ModelClientError>([
+    { type: "HttpError", statusCode: 500, message: "boom" },
+    { type: "HttpError", statusCode: 401, message: "no" },
+    { type: "NetworkError", message: "down" },
+    { type: "EmptyResponse", message: "empty" },
+  ])("returns any other error ($type) at once, without asking again", async (error) => {
+    const stub = new StubModelClient();
+    stub.enqueueError(error);
+    stub.setDefaultResponse(ANSWER);
+    const waits: number[] = [];
+
+    const result = await client(stub, waits).complete(MINIMAL_REQUEST);
+
+    expect(result._unsafeUnwrapErr()).toEqual(error);
+    expect(stub.calls).toHaveLength(1);
+    expect(waits).toEqual([]);
+  });
+
+  it("ends the retries with the 429 when the wait itself fails", async () => {
+    const stub = new StubModelClient();
+    stub.enqueueError(RATE_LIMITED);
+    stub.setDefaultResponse(ANSWER);
+
+    const result = await new RateLimitRetryingModelClient(stub, {
+      sleep: () => Promise.reject(new Error("timer broke")),
+    }).complete(MINIMAL_REQUEST);
+
+    expect(result._unsafeUnwrapErr()).toEqual(RATE_LIMITED);
+    expect(stub.calls).toHaveLength(1);
   });
 });
 

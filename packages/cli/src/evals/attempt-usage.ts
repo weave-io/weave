@@ -20,6 +20,11 @@
  *   runner hands its result to `AttemptUsageMeter.attach()`, which drains the
  *   ledger — every call made since the previous case — and stores the totals
  *   on the case's summary as `usage`.
+ * - That drain is only right if nothing else records into the ledger while a
+ *   case runs. `EvalOrchestrator` gives each unit of work — one suite on one
+ *   model in one repeat — its own ledger, metered model client and judge
+ *   (`unitServices`), so units running at once under `--concurrency` never
+ *   cost one attempt's calls on another.
  *
  * # Cost
  *
@@ -121,7 +126,7 @@ export interface AttemptUsage {
 // Ledger and metered client
 // ---------------------------------------------------------------------------
 
-/** Every answered call of a run, in order, until a case drains them. */
+/** Every answered call of one unit of work, in order, until a case drains them. */
 export class UsageLedger {
   private calls: MeteredCall[] = [];
 
@@ -247,8 +252,8 @@ function sum(values: readonly number[]): number {
 }
 
 /**
- * Turns the ledger into per-attempt usage. One per run: it knows the run's
- * prices and drains the run's ledger.
+ * Turns the ledger into per-attempt usage. One per unit of work: it knows the
+ * run's prices and drains the unit's ledger.
  */
 export class AttemptUsageMeter {
   constructor(

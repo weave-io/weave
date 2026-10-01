@@ -412,8 +412,8 @@
   - type EvalRunInputs
   - type EvalInputValidationError
   - const MAX_EVAL_REPEAT
-  - const KNOWN_EVAL_AGENTS
-  - _...1 more_
+  - const MAX_EVAL_CONCURRENCY
+  - _...2 more_
 - `packages/cli/src/evals/jev-judge.ts`
   - function displayResponse: (response) => string
   - function buildJevState: (input) => string
@@ -421,7 +421,7 @@
   - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
   - function jevScore: (overall) => number
   - function jevRationale: (decision) => string
-  - _...13 more_
+  - _...12 more_
 - `packages/cli/src/evals/judge-questions.ts`
   - function signalQuestion: (signal) => string
   - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
@@ -489,12 +489,12 @@
   - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
   - function isRetryableAnswerError: (error) => boolean
+  - function isRateLimited: (error) => boolean
   - class OpenRouterClient
   - class RetryingModelClient
+  - class RateLimitRetryingModelClient
   - class StubModelClient
-  - interface ChatMessage
-  - interface ModelRequest
-  - _...6 more_
+  - _...10 more_
 - `packages/cli/src/evals/pass-rates.ts`
   - function isErroredAttempt: (outcome) => boolean
   - function tallyAttempts: (outcomes) => AttemptTally
@@ -572,6 +572,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
+- `packages/cli/src/evals/retry-after.ts` — function retryAfterMs: (header, now) => void, const RETRY_AFTER_MAX_MS
 - `packages/cli/src/evals/run-report.ts` — class EvalRunReport
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
@@ -656,6 +657,7 @@
   - interface ReviewSignals
   - interface WeftReviewRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/worker-pool.ts` — class WorkerPool
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - function toConfigFileReader: (fs) => ConfigFileReader

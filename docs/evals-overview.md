@@ -89,6 +89,8 @@ bun packages/cli/src/main.ts eval run --agent weft-review \
 
 This prints the verdict, every applicable dimension with its score (`✗` marks a score below its bar), and the path to the raw transcript. Nothing is published. See [Diagnose one case](agent-evals.md#diagnose-one-case).
 
+**Run attempts concurrently (`--track text --concurrency N`, 1 to 16).** Up to N units of work (one suite on one model in one repeat) run at once. What the run records is the same as a sequential run's; only the wall time changes. The full default matrix's 1,372 text attempts take about 7 hours one at a time and about 70 minutes at 6, the CI default. Trajectory sessions always run one at a time. See [Run attempts concurrently](agent-evals.md#run-attempts-concurrently---concurrency-n).
+
 **3. Repeat cases (`--repeat N`, 1 to 20).** Each case runs N times per model, and the report shows a pass rate (`PASS 5/5`, `FLAKY 3/5`, `FAIL 0/5`) rather than a single verdict. The run costs N times as much. See [Repeat cases](agent-evals.md#repeat-cases---repeat-n).
 
 **4. Measure a change with `eval compare`.** Run the same filters and the same `--repeat` on the commit before the change and on the commit with it, then compare the two runs:
@@ -140,7 +142,7 @@ TMPDIR=~/.cache/weave-trajectory-tmp \
 gh workflow run agent-evals.yml -f models=dev -f repeat=3
 ```
 
-The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat` and `trajectory` (on by default). The workflow runs a text job and then a trajectory job. See [CI dispatch](agent-evals.md#ci-dispatch).
+The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`, `concurrency` (6 by default) and `trajectory` (on by default). The workflow runs a text job and then a trajectory job, each stopped after 330 minutes so a run that is too long fails by name instead of at GitHub's 6-hour limit; a stopped run publishes nothing. See [CI dispatch](agent-evals.md#ci-dispatch).
 
 **Cost and time.**
 - Every live run records what each attempt cost. Each score file row (`score-<suite>.json`) carries the model's prompt and completion tokens and cost, and the judge's separately. The cost is the one OpenRouter reported in the response when there is one, and otherwise the tokens at the model's list prices in `evals/model-matrix.json`. The run report ends with the mean cost per attempt per model, `eval compare` prints it for both runs, and `eval compare-models` for both models with the difference. Usage a provider left out is recorded as missing, never as zero, and a mean that leaves such attempts out says so. Harness trajectory sessions make their model calls inside OpenCode, so only their judge calls are costed. Cost stays in the local score files; the public report does not carry it. See [Cost per attempt](agent-evals.md#cost-per-attempt).
@@ -148,6 +150,7 @@ The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`
 - A live run of 16 answers on the dev subset, one case per judged suite with Jev judging, cost about $0.012 on 24 Sep 2026.
 - `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases added about 5 min and $0.04 when only five sessions ran on DeepSeek; they are now 12 sessions per repeat, on both dev models.
 - The full default matrix, once: about $6.92 for the text track and $3.41 more for the 15 trajectory sessions the cases then allowed. The trajectory cases now run on every default model (84 sessions per repeat), so expect several times that. Run one process per suite and model in parallel, it took about 30 min (24 Sep 2026). See the [baseline](artifacts/eval-baseline-2026-09-24.md).
+- Wall time is roughly attempts × 18 s ÷ `--concurrency`: the full default matrix's text track once (1,372 attempts) takes about 70 minutes at the CI default of 6, and `repeat=5` on it needs `concurrency` 10 or more to fit the CI job. See the [wall-time table](agent-evals.md#run-attempts-concurrently---concurrency-n).
 - Check your OpenRouter credits before a large run.
 
 ## Reading results

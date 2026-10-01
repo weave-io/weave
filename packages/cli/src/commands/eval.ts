@@ -26,7 +26,6 @@ import {
   type InvalidArgsError,
 } from "../errors.js";
 import type { BundleWriteMode } from "../evals/artifact-bundle.js";
-import { UsageLedger } from "../evals/attempt-usage.js";
 import { loadSuiteCases } from "../evals/case-loader.js";
 import { compareRuns, RunBundleReader } from "../evals/compare.js";
 import { ComparisonReport } from "../evals/compare-report.js";
@@ -52,6 +51,7 @@ import {
   type ModelRequest,
   type ModelResponse,
   OpenRouterClient,
+  RateLimitRetryingModelClient,
 } from "../evals/openrouter-client.js";
 import {
   type ReindexRepository,
@@ -189,6 +189,8 @@ const EVAL_USAGE = [
   "  weave eval run --case <id>            Filter to a specific case",
   "  weave eval run --repeat <n>           Run each case n times per model and report pass rates",
   "  weave eval run --track <name>         Run only text-only cases (text) or harness cases (trajectory)",
+  "  weave eval run --track text --concurrency <n>",
+  "                                        Run up to n attempts at once (1-16; text track only)",
   "  weave eval run --config <mode>        Compose prompts from the builtins only (builtin, the default)",
   "                                        or from this directory's and the global .weave (project)",
   "  weave eval run --dry-run              Print what would run without executing",
@@ -242,6 +244,11 @@ function renderDryRunSummary(
   }
   if (request.track !== undefined) {
     lines.push(`  ${theme.cyan("Track:")}         ${request.track}`);
+  }
+  if (request.concurrency !== undefined && request.concurrency > 1) {
+    lines.push(
+      `  ${theme.cyan("Concurrency:")}   up to ${request.concurrency} attempts at once`,
+    );
   }
   if (request.configMode !== undefined) {
     lines.push(`  ${theme.cyan("Config:")}        ${request.configMode}`);
@@ -375,6 +382,7 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
     case: flags.evalCase,
     models: flags.evalModels,
     repeat: flags.evalRepeat,
+    concurrency: flags.evalConcurrency,
     track: flags.evalTrack,
     config: flags.evalConfig,
     dryRun: flags.dryRun ?? false,
@@ -526,7 +534,8 @@ export const JUDGE_MODEL_VERSION = "typesafe/jev-1.13-20260917";
  * Build the live production runner from real external dependencies.
  *
  * Constructs an `EvalOrchestrator` with:
- *   - `OpenRouterClient` for model inference
+ *   - `OpenRouterClient` for model inference, asking again after an HTTP 429
+ *     (`RateLimitRetryingModelClient`)
  *   - `LangChainAgentEvalsScorer(JevJudge)` for scoring via OpenRouter
  *   - The real `env` map for API key and token reads
  *
@@ -572,19 +581,22 @@ async function buildLiveRunner(
   }
 
   const evalEnv = envResult.value;
-  const modelClient = new OpenRouterClient(evalEnv);
+  // `--concurrency` keeps several calls in flight, so a rate limit is
+  // likelier; a 429 is asked again with backoff, never billed or scored.
+  const modelClient = new RateLimitRetryingModelClient(
+    new OpenRouterClient(evalEnv),
+  );
 
   // The judge: TypeSafe Jev on OpenRouter's decisions endpoint, pinned to
   // one dated version. It sees each judged case's rubric, reference and the
   // agent's actual response (`judge-questions.ts`).
-  // The model client and the judge record every answered call in one
-  // ledger, so each attempt's score file row carries the model's and the
-  // judge's tokens and cost (Spec 39 task 0.6).
-  const usageLedger = new UsageLedger();
+  // Each unit of work gets a copy of the judge recording into the unit's own
+  // usage ledger, the one its model calls are metered in, so each attempt's
+  // score file row carries the model's and the judge's tokens and cost
+  // (Spec 39 task 0.6), however many units run at once.
   const judge = new JevJudge({
     apiKey: evalEnv.apiKey,
     judge: { id: JUDGE_MODEL_ID, version: JUDGE_MODEL_VERSION },
-    usageLedger,
   });
   const scorer = new LangChainAgentEvalsScorer(judge);
 
@@ -608,7 +620,8 @@ async function buildLiveRunner(
     judge: judge.identity(),
     env: effectiveEnv,
     publishMode,
-    usageLedger,
+    meteredScorer: (ledger) =>
+      new LangChainAgentEvalsScorer(judge.withUsageLedger(ledger)),
   });
 
   return ok(buildEvalRunner(orchestrator, reportPartialFailure, reportRun));

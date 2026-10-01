@@ -114,6 +114,50 @@ describe("a maintainer asks for repeats", () => {
   });
 });
 
+describe("a maintainer runs attempts concurrently", () => {
+  it("refuses a concurrency outside 1 to 16, naming the range it accepts", async () => {
+    for (const value of ["0", "17", "2.5"]) {
+      const { exitCode, stderr } = await weaveEvalRun([
+        "--track",
+        "text",
+        "--concurrency",
+        value,
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain(`--concurrency "${value}"`);
+      expect(stderr).toContain("1 to 16");
+    }
+  });
+
+  it("refuses concurrency without --track text, because trajectory sessions run one at a time", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--concurrency", "4"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--concurrency 4 needs --track text");
+  });
+
+  it("asks for a number when --concurrency is given none", async () => {
+    const { exitCode, stderr } = await weaveEvalRun(["--concurrency"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--concurrency requires a number");
+  });
+
+  it("lists --concurrency in the usage text", async () => {
+    const terminal = new BufferTerminal();
+    await run({
+      argv: ["bun", "weave", "eval"],
+      terminal,
+      colorEnabled: false,
+      fs: new MemoryFileSystem({}, "/project", "/home/user"),
+      env: {},
+    });
+
+    expect(terminal.err.join("\n")).toContain("--concurrency <n>");
+  });
+});
+
 describe("a maintainer runs one eval track", () => {
   it("refuses a track it does not know, naming the two it has", async () => {
     const { exitCode, stderr } = await weaveEvalRun(["--track", "both"]);

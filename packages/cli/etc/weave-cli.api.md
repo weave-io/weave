@@ -126,6 +126,7 @@ export interface ParsedArgs {
         evalModels?: string;
         evalCase?: string;
         evalRepeat?: string;
+        evalConcurrency?: string;
         evalTrack?: string;
         evalConfig?: string;
         evalCurrent?: string;
