@@ -13,11 +13,13 @@ import {
   type RecommendationsHarness,
 } from "./model-recommendations.js";
 
-/** Why an opted-in recommendations layer was left out of the config. */
+/**
+ * Why an opted-in recommendations layer was left out of the config: an
+ * `applied.json` is there but cannot be used. A channel with no `applied.json`
+ * yet is not a skip; it is `ModelRecommendationsPending`.
+ */
 export type ModelRecommendationsSkipReason =
-  /** No `applied.json` for the channel: nothing has been applied yet. */
-  | { readonly type: "Missing" }
-  /** `applied.json` exists but could not be read. */
+  /** `applied.json` could not be read. */
   | { readonly type: "Unreadable" }
   /** The verified list could not be turned into a config layer (a Weave bug). */
   | { readonly type: "LayerInvalid"; readonly message: string }
@@ -44,7 +46,22 @@ export type ConfigLoadDiagnostic =
       /** Agent names in the section that this version does not define as builtins, sorted. */
       readonly skippedAgents: readonly string[];
     }
-  /** The user opted in, but the layer was left out; the config loaded without it. */
+  /**
+   * The user opted in, but nothing has been applied for the channel yet: no
+   * `applied.json`. The normal state before the first refresh promotes a list,
+   * and in `notify` mode until `weave models apply`. Not a problem to report as
+   * an error; the config loaded on the builtin lists.
+   */
+  | {
+      readonly type: "ModelRecommendationsPending";
+      readonly channel: ModelUpdatesChannel;
+      readonly harness: RecommendationsHarness;
+      readonly path: string;
+    }
+  /**
+   * The user opted in and `applied.json` is there, but it could not be used
+   * (unreadable, invalid, unsigned, expired, …); the config loaded without it.
+   */
   | {
       readonly type: "ModelRecommendationsSkipped";
       readonly channel: ModelUpdatesChannel;
@@ -58,8 +75,6 @@ export function describeModelRecommendationsSkipReason(
   reason: ModelRecommendationsSkipReason,
 ): string {
   switch (reason.type) {
-    case "Missing":
-      return "no recommendations have been applied for this channel yet";
     case "Unreadable":
       return "the applied recommendations file could not be read";
     case "LayerInvalid":

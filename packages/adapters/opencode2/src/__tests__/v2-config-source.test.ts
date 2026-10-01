@@ -155,16 +155,18 @@ describe("model recommendations in the catalog (Spec 39)", () => {
     ).toBe(false);
   });
 
-  it("records a missing applied.json as a source and reports the skipped layer", async () => {
+  it("records a missing applied.json as a source without an issue: nothing is fetched yet", async () => {
     const catalog = await build(
       new Map([
         [projectConfig, encode("settings { model_updates { mode auto } }")],
       ]),
     );
     expect(catalog.sources).toContainEqual({ path: applied, exists: false });
-    expect(catalog.issues).toContainEqual({
-      code: "model_updates_unavailable",
-    });
+    expect(
+      catalog.issues.some(
+        (issue) => issue.code === "model_updates_unavailable",
+      ),
+    ).toBe(false);
     expect(catalog.agents.has("loom")).toBe(true);
   });
 

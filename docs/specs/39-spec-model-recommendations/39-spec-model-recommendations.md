@@ -160,7 +160,7 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
   ```
 
   Union-merge then gives every agent `[user entries…, recommended entries…, builtin entries…]` with duplicates removed. A user's own preference still comes first, and the builtin list stays as a fallback when no recommended model is in the user's catalog.
-- A missing, unreadable, invalid or expired `applied.json` is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and the reason is returned in `diagnostics` (see [Visibility](#visibility)). This follows the partial-config policy: a problem with an optional input must not cost the user their agents.
+- A missing, unreadable, invalid or expired `applied.json` is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and the reason is returned in `diagnostics` (see [Visibility](#visibility)). A missing file is the normal state before the first promotion, so it is reported as pending (`ModelRecommendationsPending`), not as a skipped layer, and raises no `model_updates_unavailable` issue. (#275, item 4) This follows the partial-config policy: a problem with an optional input must not cost the user their agents.
 - Atomic writes are required, not optional. On OpenCode 2 a skipped layer is still a valid catalog, so a torn or corrupt `applied.json` would publish every agent back on its builtin models until the file is fixed. The [spike](../../artifacts/model-recommendations-spike.md) saw exactly that with a hand-corrupted file. Atomic writes keep Weave's own promotions out of that state; a file corrupted by something else is skipped and reported, and the next promotion replaces it.
 
 ## Harness behaviour
@@ -184,7 +184,7 @@ Every opted-in user can see where each agent's models came from.
 - **`weave models apply`** promotes `latest` to `applied` (the `notify` path).
 - **`weave models pin`** writes the applied recommendations into the global config as explicit `models` lines and prints the diff first. That freezes them; the user can then set `mode off`.
 - **`weave validate`** reports the mode and applied date, and reports a skipped layer with its reason, in every form of the command.
-- **OpenCode 2 `status`** gains an optional bounded `modelUpdates` object (`mode`, `channel`, `issued`, `state`) and an issue code `model_updates_unavailable` when an opted-in layer was skipped. The TUI shows a one-line notice when an update is applied, for example "Loom → claude-opus-5.6 (recommendations of 1 Oct 2026)". The notice mechanism is verified live, as for plan display.
+- **OpenCode 2 `status`** gains an optional bounded `modelUpdates` object (`mode`, `channel`, `issued`, `state`) and an issue code `model_updates_unavailable` when an opted-in layer was skipped because `applied.json` is there but unusable (not when nothing has been applied yet). The TUI shows a one-line notice when an update is applied, for example "Loom → claude-opus-5.6 (recommendations of 1 Oct 2026)". The notice mechanism is verified live, as for plan display.
 
 ## Publication bar
 

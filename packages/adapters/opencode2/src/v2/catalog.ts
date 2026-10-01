@@ -53,8 +53,10 @@ export type OpenCode2CatalogIssue =
       readonly count: number;
     }
   /**
-   * The user opted in to model recommendations (Spec 39), but the applied
-   * list could not be used, so every builtin agent runs on its builtin list.
+   * The user opted in to model recommendations (Spec 39) and an applied
+   * list is there, but it could not be read or used (invalid, unsigned,
+   * expired, …), so every builtin agent runs on its builtin list. A channel
+   * with nothing applied yet is not an issue.
    */
   | {
       readonly code: "model_updates_unavailable";
@@ -183,17 +185,25 @@ function buildCandidate(
       };
     })
     .andThen(({ config, diagnostics }) => {
-      // The recommendations file is optional: the loader already skipped the
-      // layer and reported it, so failing to inspect it must not cost the
+      // The recommendations file is optional: the loader already left the
+      // layer out and said why, so failing to inspect it must not cost the
       // user the catalog. Any other source that cannot be inspected still does.
-      const skippedRecommendations = diagnostics.find(
-        (diagnostic) => diagnostic.type === "ModelRecommendationsSkipped",
+      const recommendations = diagnostics.find(
+        (diagnostic) =>
+          diagnostic.type === "ModelRecommendationsSkipped" ||
+          diagnostic.type === "ModelRecommendationsPending",
       );
       const ioError = sources.ioError();
-      if (
-        ioError !== undefined &&
-        ioError.path !== skippedRecommendations?.path
-      ) {
+      const recommendationsUninspectable =
+        ioError !== undefined && ioError.path === recommendations?.path;
+      // Nothing applied yet (`Pending`) is the normal state before the first
+      // promotion, not an issue. A file that is there but unusable is, and so
+      // is one whose existence could not be checked: the source reader reports
+      // that to the loader as missing.
+      const recommendationsUnavailable =
+        recommendations?.type === "ModelRecommendationsSkipped" ||
+        recommendationsUninspectable;
+      if (ioError !== undefined && !recommendationsUninspectable) {
         return err<OpenCode2CatalogCandidate, OpenCode2Error>({
           code: "config_unavailable",
           message: "a Weave source could not be inspected",
@@ -230,9 +240,9 @@ function buildCandidate(
           const runtime = new Map<string, OpenCode2CatalogAgent>();
           const issues: OpenCode2CatalogIssue[] =
             plan.errors.map(materializationIssue);
-          // A skipped recommendations layer is not a config error: the
+          // An unusable recommendations file is not a config error: the
           // catalog loads on the builtin lists and `status` says so.
-          if (skippedRecommendations !== undefined)
+          if (recommendationsUnavailable)
             issues.push({ code: "model_updates_unavailable" });
           const availableSkills: SkillInfo[] = input.skills.map((skill) => ({
             name: skill.name,

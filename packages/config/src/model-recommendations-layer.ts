@@ -30,6 +30,11 @@ import type { ModelRecommendationsVerifier } from "./model-recommendations-verif
 
 const log = logger.child({ module: "model-recommendations-layer" });
 
+/** Why no layer was built: nothing applied yet, or an unusable file. */
+type LayerReadFailure =
+  | { readonly type: "Missing" }
+  | ModelRecommendationsSkipReason;
+
 /** What the layer reader needs. All of it is injected. */
 export interface ModelRecommendationsLayerDeps {
   readonly reader: FileReader;
@@ -58,7 +63,10 @@ export interface ModelRecommendationsLayerResult {
 export class ModelRecommendationsLayerReader {
   constructor(private readonly deps: ModelRecommendationsLayerDeps) {}
 
-  /** Never fails: an unusable file yields a `ModelRecommendationsSkipped` diagnostic. */
+  /**
+   * Never fails: a missing file yields `ModelRecommendationsPending`, an
+   * unusable one `ModelRecommendationsSkipped`.
+   */
   read(
     request: ModelRecommendationsLayerRequest,
   ): ResultAsync<ModelRecommendationsLayerResult, never> {
@@ -68,11 +76,25 @@ export class ModelRecommendationsLayerReader {
       this.deps.globalDir,
     ).applied;
     const skipped = (
-      reason: ModelRecommendationsSkipReason,
+      reason: LayerReadFailure,
     ): ModelRecommendationsLayerResult => {
-      // Nothing applied yet is the normal state before the first fetch.
-      const level = reason.type === "Missing" ? "info" : "warn";
-      log[level](
+      // Nothing applied yet is the normal state before the first promotion,
+      // not a problem with the file.
+      if (reason.type === "Missing") {
+        log.info(
+          { channel, harness: request.harness },
+          "Model recommendations pending: nothing applied yet",
+        );
+        return {
+          diagnostic: {
+            type: "ModelRecommendationsPending",
+            channel,
+            harness: request.harness,
+            path,
+          },
+        };
+      }
+      log.warn(
         { channel, harness: request.harness, reason: reason.type },
         "Model recommendations layer skipped",
       );
@@ -94,29 +116,25 @@ export class ModelRecommendationsLayerReader {
             channel,
             clientVersion: this.deps.clientVersion,
           })
-          .mapErr((error): ModelRecommendationsSkipReason => error),
+          .mapErr((error): LayerReadFailure => error),
       )
       .andThen((file) => this.toLayer(file, request, path))
       .orElse((reason) => okAsync(skipped(reason)));
   }
 
-  private readEnvelope(
-    path: string,
-  ): ResultAsync<string, ModelRecommendationsSkipReason> {
+  private readEnvelope(path: string): ResultAsync<string, LayerReadFailure> {
     // fromThrowable, not fromPromise: a reader that throws synchronously must
     // still give `Unreadable`, not escape this never-failing method.
     const exists = ResultAsync.fromThrowable(
       (target: string) => this.deps.reader.exists(target),
-      (): ModelRecommendationsSkipReason => ({ type: "Unreadable" }),
+      (): LayerReadFailure => ({ type: "Unreadable" }),
     );
     return exists(path).andThen((exists) => {
       if (!exists)
-        return errAsync<string, ModelRecommendationsSkipReason>({
-          type: "Missing",
-        });
+        return errAsync<string, LayerReadFailure>({ type: "Missing" });
       return this.deps.reader
         .read(path)
-        .mapErr((): ModelRecommendationsSkipReason => ({ type: "Unreadable" }));
+        .mapErr((): LayerReadFailure => ({ type: "Unreadable" }));
     });
   }
 
@@ -124,10 +142,7 @@ export class ModelRecommendationsLayerReader {
     file: ModelRecommendationsFile,
     request: ModelRecommendationsLayerRequest,
     path: string,
-  ): ResultAsync<
-    ModelRecommendationsLayerResult,
-    ModelRecommendationsSkipReason
-  > {
+  ): ResultAsync<ModelRecommendationsLayerResult, LayerReadFailure> {
     const section = selectRecommendationsSection(file, request.harness);
     const entries = Object.entries(section?.agents ?? {});
     const agents: Record<string, { models: string[] }> = {};
