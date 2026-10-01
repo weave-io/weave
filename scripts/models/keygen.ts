@@ -12,7 +12,6 @@
  */
 
 import { logger } from "@weaveio/weave-engine";
-import { $ } from "bun";
 import { errAsync, ResultAsync } from "neverthrow";
 
 const log = logger.child({ module: "models-keygen" });
@@ -61,18 +60,34 @@ export function generateKeyPair(): ResultAsync<KeyPair, KeygenError> {
 /** The file operations keygen needs; injected so tests touch no disk. */
 export interface KeyFileIo {
   exists(path: string): Promise<boolean>;
-  /** Create or truncate `path` with mode 600 before anything is written to it. */
+  /**
+   * Create `path` empty with mode 600, failing if it already exists, before
+   * anything is written to it.
+   */
   createPrivate(path: string): Promise<void>;
   write(path: string, text: string): Promise<void>;
+}
+
+/**
+ * Create `path` empty, exclusively and with mode 600 from the start: `umask
+ * 077` sets the mode at creation, and `set -C` (noclobber) makes the shell
+ * refuse a path that already exists, so there is no window in which the file
+ * is readable by others and no race between the existence check and creation.
+ */
+async function createExclusivePrivate(path: string): Promise<void> {
+  const shell = Bun.spawn(
+    ["sh", "-c", 'umask 077 && set -C && : > "$1"', "sh", path],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  if ((await shell.exited) !== 0)
+    throw new Error(`could not create ${path} exclusively`);
 }
 
 /** The real disk, through Bun APIs. */
 export const bunKeyFileIo: KeyFileIo = {
   exists: (path) => Bun.file(path).exists(),
-  createPrivate: async (path) => {
-    await Bun.write(path, "");
-    await $`chmod 600 ${path}`.quiet();
-  },
+  createPrivate: createExclusivePrivate,
+  // Bun.write truncates the file createPrivate made, which keeps its mode.
   write: async (path, text) => {
     await Bun.write(path, text);
   },

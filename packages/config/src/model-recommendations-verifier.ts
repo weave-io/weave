@@ -13,6 +13,7 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { BUILTIN_MODELS_ISSUED } from "./builtins.js";
 import {
   formatModelRecommendationsIssues,
+  isSemver,
   MAX_MODEL_RECOMMENDATIONS_BYTES,
   MAX_MODEL_RECOMMENDATIONS_ISSUED_SKEW_MS,
   type ModelRecommendationsEnvelope,
@@ -240,6 +241,9 @@ export class ModelRecommendationsVerifier {
         actual: file.channel,
       });
     const required = file.min_config_version;
+    const clientVersion = context.clientVersion;
+    if (clientVersion !== undefined && !isSemver(clientVersion))
+      return err({ type: "ClientVersionInvalid", actual: clientVersion });
     if (
       required !== undefined &&
       context.clientVersion !== undefined &&

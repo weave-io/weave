@@ -271,6 +271,22 @@ describe("freshness", () => {
     ).toBe(true);
   });
 
+  it.each([
+    "abc",
+    "",
+    "1.x",
+    "1.2",
+    "0.2.0\n",
+  ])("rejects an invalid client version %j as a typed error instead of throwing", async (clientVersion) => {
+    const error = (
+      await verify({ min_config_version: "0.2.0" }, { clientVersion })
+    )._unsafeUnwrapErr();
+    expect(error).toEqual({
+      type: "ClientVersionInvalid",
+      actual: clientVersion,
+    });
+  });
+
   it("validates an unsigned list with the same rules", () => {
     const v = verifier();
     expect(v.validateList(list()).isOk()).toBe(true);
@@ -291,6 +307,7 @@ describe("describeModelRecommendationsError", () => {
       { type: "SignatureInvalid", message: "no known key signed this payload" },
       { type: "SchemaInvalid", issues: ["schema: expected 1"] },
       { type: "ChannelMismatch", expected: "stable", actual: "next" },
+      { type: "ClientVersionInvalid", actual: "1.x" },
       { type: "ClientTooOld", required: "0.3.0", actual: "0.2.0" },
       { type: "Expired", expires: "a", now: "b" },
       { type: "IssuedInFuture", issued: "a", now: "b" },

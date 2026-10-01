@@ -776,13 +776,13 @@
   - interface ModelRecommendationsVerifierDeps
   - _...1 more_
 - `packages/config/src/model-recommendations.ts`
+  - function isSemver: (value) => boolean
   - function describeModelRecommendationsError: (error) => string
   - function formatModelRecommendationsIssues: (error) => readonly string[]
   - function selectRecommendationsSection: (file, harness) => SelectedRecommendationsSection | undefined
   - function isRecommendationsHarness: (value) => value is RecommendationsHarness
   - interface SelectedRecommendationsSection
-  - type RecommendationsHarness
-  - _...20 more_
+  - _...21 more_
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/plan-task-parser.ts`

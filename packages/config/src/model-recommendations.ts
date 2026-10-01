@@ -235,6 +235,7 @@ export type ModelRecommendationsError =
       readonly expected: string;
       readonly actual: string;
     }
+  | { readonly type: "ClientVersionInvalid"; readonly actual: string }
   | {
       readonly type: "ClientTooOld";
       readonly required: string;
@@ -257,6 +258,11 @@ export type ModelRecommendationsError =
       readonly appliedIssued: string;
     };
 
+/** True when `value` follows the SemVer 2.0.0 grammar. */
+export function isSemver(value: string): boolean {
+  return SEMVER_PATTERN.test(value);
+}
+
 /** A one-line, user-facing reason for a rejection. */
 export function describeModelRecommendationsError(
   error: ModelRecommendationsError,
@@ -274,6 +280,8 @@ export function describeModelRecommendationsError(
       return `the list is invalid: ${error.issues.join("; ")}`;
     case "ChannelMismatch":
       return `the list is for channel ${error.actual}, not ${error.expected}`;
+    case "ClientVersionInvalid":
+      return `the client version ${JSON.stringify(error.actual)} is not a semver version`;
     case "ClientTooOld":
       return `the list needs version ${error.required} or later; this is ${error.actual}`;
     case "Expired":
