@@ -42,6 +42,7 @@ function snapshot(
     dryRun: false,
     repeatCount: 8,
     judge: null,
+    configMode: "builtin",
     promptHashes: new Map(),
     attempts: rows,
     ...overrides,
@@ -134,6 +135,32 @@ describe("compareRuns — refusals", () => {
     expect(error.type).toBe("JudgeMismatch");
   });
 
+  it("refuses runs whose prompts came from different config modes", () => {
+    const rows = attempts("m/a", "c1", "PP");
+    const error = compareRuns(
+      snapshot("base", rows, { configMode: "project" }),
+      snapshot("cand", rows, { configMode: "builtin" }),
+    )._unsafeUnwrapErr();
+
+    expect(error).toMatchObject({
+      type: "ConfigModeMismatch",
+      baseline: "project",
+      candidate: "builtin",
+    });
+    expect(error.message).toContain("--config project");
+  });
+
+  it("compares runs made in the same config mode", () => {
+    const rows = attempts("m/a", "c1", "PP");
+
+    const result = compareRuns(
+      snapshot("base", rows, { configMode: "project" }),
+      snapshot("cand", rows, { configMode: "project" }),
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
   it("lists at most five differences and counts the rest", () => {
     const many = ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].flatMap((c) =>
       attempts("m/a", c, "P"),
@@ -213,5 +240,69 @@ describe("RunBundleReader — malformed bundles", () => {
 
     expect(snapshot.judge).toEqual({ id: "typesafe/jev-1.13", version: null });
     expect(snapshot.repeatCount).toBe(1);
+  });
+
+  const scoreFile = JSON.stringify({
+    suite: "loom-routing",
+    results: [{ caseId: "c1", modelId: "m/a", passed: true }],
+  });
+  const indexWith = (extra: Record<string, unknown>) =>
+    JSON.stringify({
+      runId: "r1",
+      gitSha: "abc1234",
+      dryRun: false,
+      runSummary: { suites: ["loom-routing"] },
+      ...extra,
+    });
+
+  it("reads the config mode recorded in bundle-index.json", async () => {
+    const fs = new MemoryFileSystem({
+      "/project/eval-bundles/runs/r1/bundle-index.json": indexWith({
+        configMode: "builtin",
+      }),
+      "/project/eval-bundles/runs/r1/score-loom-routing.json": scoreFile,
+    });
+
+    const snapshot = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrap();
+
+    expect(snapshot.configMode).toBe("builtin");
+  });
+
+  it("reads a config mode recorded only in the provenance manifest", async () => {
+    const fs = new MemoryFileSystem({
+      "/project/eval-bundles/runs/r1/bundle-index.json": indexWith({}),
+      "/project/eval-bundles/runs/r1/score-loom-routing.json": scoreFile,
+      "/project/eval-bundles/runs/r1/provenance-manifest.json": JSON.stringify({
+        configMode: "builtin",
+      }),
+    });
+
+    const snapshot = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrap();
+
+    expect(snapshot.configMode).toBe("builtin");
+  });
+
+  it("reads a bundle that records no config mode as project, as runs before the mode composed with the project config", async () => {
+    const fs = new MemoryFileSystem({
+      "/project/eval-bundles/runs/r1/bundle-index.json": indexWith({}),
+      "/project/eval-bundles/runs/r1/score-loom-routing.json": scoreFile,
+    });
+
+    const snapshot = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrap();
+
+    expect(snapshot.configMode).toBe("project");
+  });
+
+  it("refuses a config mode it does not know", async () => {
+    const fs = new MemoryFileSystem({
+      "/project/eval-bundles/runs/r1/bundle-index.json": indexWith({
+        configMode: "global",
+      }),
+      "/project/eval-bundles/runs/r1/score-loom-routing.json": scoreFile,
+    });
+
+    const error = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrapErr();
+
+    expect(error.type).toBe("BundleInvalid");
   });
 });

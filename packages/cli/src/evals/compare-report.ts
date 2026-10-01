@@ -59,6 +59,7 @@ export class ComparisonReport {
       `  Design:   ${cases} ${plural(cases, "case")} × ${models} ${plural(models, "model")}, ` +
         `each case ${comparison.repeatCount} ${plural(comparison.repeatCount, "time")} per model`,
       `  Judge:    ${this.judgeLine(comparison.judge)}`,
+      `  Config:   ${baseline.configMode}`,
       ...this.promptLines(comparison.promptChanges),
     ];
   }

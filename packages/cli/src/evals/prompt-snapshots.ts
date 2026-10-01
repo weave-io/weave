@@ -17,17 +17,26 @@
  * Design notes:
  *   - Hashing uses the Web Crypto API (`crypto.subtle.digest`) — Bun-native,
  *     no Node `crypto` import required.
- *   - Config loading is delegated to `@weaveio/weave-config`'s `loadConfig()`.
+ *   - Config loading is delegated to `EvalConfigLoader` (`config-mode.ts`),
+ *     which wraps `@weaveio/weave-config`'s `loadConfig()`. The default
+ *     `builtin` mode reads no project or global `.weave`, so the composed
+ *     prompts are the ones Weave ships; `project` mode reads both.
  *   - Prompt composition is delegated to `@weaveio/weave-engine`'s
  *     `composeAgentDescriptor()`.
  *   - All failures are returned as typed `ProvenanceError` values via
  *     `ResultAsync` — no exceptions propagate.
  */
 
-import { loadConfig } from "@weaveio/weave-config";
+import type { FileReader } from "@weaveio/weave-config";
 import { composeAgentDescriptor } from "@weaveio/weave-engine";
-import { errAsync, ok, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, ResultAsync } from "neverthrow";
+import {
+  DEFAULT_EVAL_CONFIG_MODE,
+  EvalConfigLoader,
+  type EvalConfigMode,
+} from "./config-mode.js";
 import type {
+  PromptProvider,
   PromptSnapshot,
   PromptSourceDescriptor,
   ProvenanceError,
@@ -298,10 +307,21 @@ export function composeSnapshot(
  */
 export interface ComposeAgentSnapshotsOptions {
   /**
-   * Project root directory for config loading.
-   * Defaults to `process.cwd()` when omitted.
+   * Which config the prompts are composed from. Defaults to `"builtin"`:
+   * the builtin config alone, with no project or global `.weave` read.
+   * `"project"` reads the merged config from `projectRoot`.
+   */
+  configMode?: EvalConfigMode;
+  /**
+   * Project root directory for config loading in `project` mode.
+   * Defaults to `process.cwd()` when omitted. Ignored in `builtin` mode.
    */
   projectRoot?: string;
+  /**
+   * The reader `project` mode discovers config through. Defaults to the real
+   * file system; tests inject fixtures. Ignored in `builtin` mode.
+   */
+  fileReader?: FileReader;
   /**
    * The agent names to compose snapshots for.
    * Defaults to `DEFAULT_SNAPSHOT_AGENTS` (`["loom", "tapestry", "shuttle", "spindle", "pattern", "weft", "warp"]`).
@@ -335,8 +355,9 @@ export interface ComposeAgentSnapshotsResult {
 
 /**
  * Compose prompt snapshots for the specified agents (default: Loom, Tapestry,
- * Shuttle, Spindle, Pattern, Weft, and Warp) using the merged Weave config
- * loaded from `projectRoot`.
+ * Shuttle, Spindle, Pattern, Weft, and Warp) using the Weave config of
+ * `configMode`: the builtins alone by default, or the merged config loaded
+ * from `projectRoot` in `project` mode.
  *
  * The function always succeeds at the top level — per-agent failures are
  * accumulated in `result.errors` rather than rejecting the entire result.
@@ -351,12 +372,22 @@ export function composeAgentSnapshots(
 ): ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError> {
   const agentNames = options.agentNames ?? DEFAULT_SNAPSHOT_AGENTS;
   const emitRaw = options.rawArtifacts ?? false;
+  const configMode = options.configMode ?? DEFAULT_EVAL_CONFIG_MODE;
+  const loader = new EvalConfigLoader({
+    ...(options.projectRoot !== undefined
+      ? { projectRoot: options.projectRoot }
+      : {}),
+    ...(options.fileReader !== undefined
+      ? { fileReader: options.fileReader }
+      : {}),
+  });
 
-  return loadConfig(options.projectRoot)
+  return loader
+    .load(configMode)
     .mapErr(
       (configErrors): ProvenanceError => ({
         type: "ConfigLoadError",
-        message: `Failed to load Weave config: ${configErrors.map((e) => e.type).join(", ")}`,
+        message: `Failed to load the ${configMode} Weave config: ${configErrors.map((e) => e.type).join(", ")}`,
       }),
     )
     .andThen((config) => {
@@ -405,4 +436,46 @@ export function composeAgentSnapshots(
         });
       });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Prompt provider for one config mode
+// ---------------------------------------------------------------------------
+
+/**
+ * A `PromptProvider` that composes each agent's prompt from the config of
+ * one `EvalConfigMode`. `EvalOrchestrator` hands one to every text runner,
+ * so the prompts a run sends and the hashes its provenance records come from
+ * the same config.
+ */
+export class ConfigModePromptProvider implements PromptProvider {
+  constructor(
+    private readonly configMode: EvalConfigMode,
+    private readonly options: Pick<
+      ComposeAgentSnapshotsOptions,
+      "projectRoot" | "fileReader"
+    > = {},
+  ) {}
+
+  getPrompt(agentName: string): ResultAsync<string, ProvenanceError> {
+    return composeAgentSnapshots({
+      ...this.options,
+      configMode: this.configMode,
+      agentNames: [agentName],
+      rawArtifacts: true,
+    }).andThen((composed) => {
+      const raw = composed.rawArtifacts.find((a) => a.agentName === agentName);
+      if (raw !== undefined) return ok(raw.composedPrompt);
+      const failure = composed.errors.find(
+        (e) => "agentName" in e && e.agentName === agentName,
+      );
+      return err<string, ProvenanceError>(
+        failure ?? {
+          type: "PromptCompositionError",
+          agentName,
+          message: `No prompt was composed for agent "${agentName}".`,
+        },
+      );
+    });
+  }
 }

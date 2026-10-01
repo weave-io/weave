@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 230 lib files | 30 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,800 tokens. Without it, AI exploration would cost ~76,900 tokens. **Saves ~56,100 tokens per conversation.**
-> **Last scanned:** 2026-10-01 13:19 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 231 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~21,000 tokens. Without it, AI exploration would cost ~77,700 tokens. **Saves ~56,700 tokens per conversation.**
+> **Last scanned:** 2026-10-01 13:41 — re-run after significant changes
 
 ---
 
@@ -348,6 +348,14 @@
   - interface ComparedAttempt
   - interface RunSnapshot
   - _...8 more_
+- `packages/cli/src/evals/config-mode.ts`
+  - function isEvalConfigMode: (value) => value is EvalConfigMode
+  - class EvalConfigLoader
+  - interface EvalConfigLoaderOptions
+  - type EvalConfigMode
+  - const EVAL_CONFIG_MODES
+  - const DEFAULT_EVAL_CONFIG_MODE: EvalConfigMode
+  - _...1 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
@@ -473,10 +481,10 @@
   - function snapshotComposedPrompt: (agentName, composedPrompt, sources) => ResultAsync<PromptSnapshot, ProvenanceError>
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
+  - class ConfigModePromptProvider
   - interface ComposeSnapshotInput
   - interface ComposeSnapshotResult
-  - interface ComposeAgentSnapshotsOptions
-  - _...2 more_
+  - _...3 more_
 - `packages/cli/src/evals/provenance.ts`
   - function deriveSummary: (snapshot) => string
   - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
@@ -1092,7 +1100,7 @@
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1125,12 +1133,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1156,13 +1166,13 @@
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `packages/cli/src/errors.ts` — imported by **11** files
+- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
-- `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `packages/adapters/opencode2/src/v2/errors.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -1196,7 +1206,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 227 test files found
+> 233 test files found
 
 ---
 

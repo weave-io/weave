@@ -34,9 +34,19 @@
  *   - `--track <text|trajectory>` (or `WEAVE_EVAL_TRACK`) runs only the
  *     text-only cases or only the `harness_trajectory` cases. Omitted runs
  *     both. See `eval-track.ts`.
+ *   - `--config <builtin|project>` (or `WEAVE_EVAL_CONFIG`) picks the Weave
+ *     config prompts are composed from. Omitted means `builtin`: no project
+ *     or global `.weave` is read, so the run scores the prompts users get.
+ *     See `config-mode.ts`.
  */
 
 import { err, ok, type Result } from "neverthrow";
+import {
+  DEFAULT_EVAL_CONFIG_MODE,
+  EVAL_CONFIG_MODES,
+  type EvalConfigMode,
+  isEvalConfigMode,
+} from "./config-mode.js";
 import { EVAL_TRACKS, type EvalTrack } from "./eval-track.js";
 import { MODEL_SET_NAMES, type ModelSetName } from "./model-matrix.js";
 import { EVAL_AGENT_FILTERS } from "./types.js";
@@ -75,6 +85,12 @@ export type EvalRunRequest = {
    */
   track?: EvalTrack;
   /**
+   * Which Weave config prompts are composed from (`--config`): `builtin`
+   * reads no project or global `.weave`; `project` reads both. Omitted means
+   * `builtin`. `parseEvalRunRequest` always sets it.
+   */
+  configMode?: EvalConfigMode;
+  /**
    * When `true`, skip actual execution and print what would be run.
    * Always safe in any environment.
    */
@@ -105,6 +121,8 @@ export type EvalRunInputs = {
   repeat?: string;
   /** Track name from --track flag. */
   track?: string;
+  /** Config mode from --config flag. */
+  config?: string;
   /** Whether --dry-run was passed. */
   dryRun?: boolean;
   /** Whether --raw-artifacts was passed. */
@@ -179,6 +197,15 @@ export type EvalInputValidationError =
       message: string;
     }
   | {
+      /** The `--config` value is not a known eval config mode. */
+      type: "UnknownConfigMode";
+      /** The unrecognised value supplied by the caller. */
+      value: string;
+      /** The permitted config modes. */
+      allowedValues: string[];
+      message: string;
+    }
+  | {
       /**
        * `--models dev` and `--model <id>` were both supplied. One names a
        * set, the other a single model; running both is ambiguous.
@@ -228,6 +255,19 @@ function validateRepeat(
     type: "InvalidRepeatCount",
     value,
     message: `--repeat "${value}" must be a whole number from 1 to ${MAX_EVAL_REPEAT}`,
+  });
+}
+
+/** Validate a `--config` value against `EVAL_CONFIG_MODES`. */
+function validateConfigMode(
+  value: string,
+): Result<EvalConfigMode, EvalInputValidationError> {
+  if (isEvalConfigMode(value)) return ok(value);
+  return err({
+    type: "UnknownConfigMode",
+    value,
+    allowedValues: [...EVAL_CONFIG_MODES],
+    message: `--config "${value}" is not a known config mode; use one of: ${EVAL_CONFIG_MODES.join(", ")}`,
   });
 }
 
@@ -406,6 +446,7 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
   "WEAVE_EVAL_MODELS",
   "WEAVE_EVAL_REPEAT",
   "WEAVE_EVAL_TRACK",
+  "WEAVE_EVAL_CONFIG",
   "WEAVE_EVAL_PUBLISH_MODE",
 ]);
 
@@ -478,6 +519,7 @@ export function parseEvalRunRequest(
   const envModels = normalizeEnvFilterValue(env.WEAVE_EVAL_MODELS);
   const envRepeat = normalizeEnvFilterValue(env.WEAVE_EVAL_REPEAT);
   const envTrack = normalizeEnvFilterValue(env.WEAVE_EVAL_TRACK);
+  const envConfig = normalizeEnvFilterValue(env.WEAVE_EVAL_CONFIG);
 
   // Resolve agent filter: merge CLI flag + env variable
   const agentMerge = detectDuplicate("agent", inputs.agent, envAgent);
@@ -562,6 +604,17 @@ export function parseEvalRunRequest(
   if (trackValidation.isErr()) return err(trackValidation.error);
   const validatedTrack = trackValidation.value;
 
+  // Resolve the config mode
+  const configMerge = detectDuplicate("config", inputs.config, envConfig);
+  if (configMerge.isErr()) return err(configMerge.error);
+  const rawConfig = configMerge.value;
+  const configValidation =
+    rawConfig !== undefined
+      ? validateConfigMode(rawConfig)
+      : ok(DEFAULT_EVAL_CONFIG_MODE);
+  if (configValidation.isErr()) return err(configValidation.error);
+  const configMode = configValidation.value;
+
   // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
   // control var, not a filter, but it is part of the eval env contract.
   const evalEnvKeys = Object.keys(env).filter((k) =>
@@ -586,6 +639,7 @@ export function parseEvalRunRequest(
     agent: validatedAgent,
     model: validatedModel,
     case: validatedCase,
+    configMode,
     dryRun: inputs.dryRun ?? false,
     rawArtifacts,
   };

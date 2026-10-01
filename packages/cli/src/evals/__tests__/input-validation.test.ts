@@ -800,3 +800,55 @@ describe("parseEvalRunRequest — --track", () => {
     expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
   });
 });
+
+describe("parseEvalRunRequest — --config", () => {
+  it("composes from the builtins when --config is not supplied, so a run scores the shipped prompts", () => {
+    const req = parseEvalRunRequest(inputs())._unsafeUnwrap();
+    expect(req.configMode).toBe("builtin");
+  });
+
+  it.each(["builtin", "project"] as const)("accepts --config %p", (config) => {
+    const req = parseEvalRunRequest(inputs({ config }))._unsafeUnwrap();
+    expect(req.configMode).toBe(config);
+  });
+
+  it.each([
+    "global",
+    "Builtin",
+    "builtins",
+  ])("rejects --config %p with the allowed values", (value) => {
+    const error = parseEvalRunRequest(
+      inputs({ config: value }),
+    )._unsafeUnwrapErr();
+    expect(error).toMatchObject({
+      type: "UnknownConfigMode",
+      value,
+      allowedValues: ["builtin", "project"],
+    });
+    expect(error.message).toContain("builtin, project");
+  });
+
+  it("reads WEAVE_EVAL_CONFIG when the flag is absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_CONFIG: "project" } }),
+    )._unsafeUnwrap();
+    expect(req.configMode).toBe("project");
+  });
+
+  it("treats a blank WEAVE_EVAL_CONFIG as absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_CONFIG: "" } }),
+    )._unsafeUnwrap();
+    expect(req.configMode).toBe("builtin");
+  });
+
+  it("rejects a flag and env var that name different config modes", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        config: "builtin",
+        envOverrides: { WEAVE_EVAL_CONFIG: "project" },
+      }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
+  });
+});

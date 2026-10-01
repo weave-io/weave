@@ -88,6 +88,7 @@
 import { basename, join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import { countCaseOutcomes, erroredCasesField } from "./case-outcomes.js";
+import type { EvalConfigMode } from "./config-mode.js";
 import { DashboardIndexWriter } from "./dashboard-indexes.js";
 import type { EvalTrack } from "./eval-track.js";
 import { assemblePublicReportBundle } from "./report-bundle.js";
@@ -296,6 +297,13 @@ export interface WriteBundleOptions {
    * `JudgeIdentitySchema` before anything is written.
    */
   judge?: JudgeIdentity;
+  /**
+   * The Weave config the run composed its prompts from (`weave eval run
+   * --config`, Spec 39 task 0.1). Recorded in `bundle-index.json` and
+   * `provenance-manifest.json` so `weave eval compare` can refuse runs whose
+   * prompts came from different configs. Omit it and nothing is recorded.
+   */
+  configMode?: EvalConfigMode;
   /**
    * The track the run was restricted to (`weave eval run --track`). Recorded
    * in the run summary, `bundle-index.json` and `public-report.json` so the
@@ -602,6 +610,8 @@ export function assembleBundle(options: {
   repeatCount?: number;
   /** The judge that scored the run; ignored on a dry run. */
   judge?: JudgeIdentity;
+  /** The Weave config the run composed its prompts from. */
+  configMode?: EvalConfigMode;
   /** The track the run was restricted to; omitted for a run of both. */
   track?: EvalTrack;
 }): Result<EvalBundle, BundleError> {
@@ -691,6 +701,9 @@ export function assembleBundle(options: {
     promptHashRecords,
     provenanceRef,
     ...(judge !== undefined ? { judge: { ...judge } } : {}),
+    ...(options.configMode !== undefined
+      ? { configMode: options.configMode }
+      : {}),
   };
 
   // Validate the assembled bundle passes publish-safety checks
@@ -875,6 +888,7 @@ export class ArtifactBundleWriter {
       dryRun,
       repeatCount: options.repeatCount,
       judge: options.judge,
+      configMode: options.configMode,
       track: options.track,
     });
 
@@ -1145,6 +1159,7 @@ export class ArtifactBundleWriter {
         const sanitized = sanitizeProvenanceManifest({
           ...provenanceManifest,
           judge: bundle.judge,
+          configMode: bundle.configMode,
         });
         return writeJson(
           sanitized,
@@ -1222,6 +1237,11 @@ export class ArtifactBundleWriter {
           runSummary: bundle.runSummary,
           // The judge that scored the run — read first by `eval compare`.
           ...(bundle.judge !== undefined ? { judge: bundle.judge } : {}),
+          // The config the prompts were composed from — `eval compare`
+          // refuses runs whose modes differ.
+          ...(bundle.configMode !== undefined
+            ? { configMode: bundle.configMode }
+            : {}),
           // publicFiles: closed list of allowlisted public artifacts for this run.
           // Website loaders MUST only fetch files listed here — no directory walking.
           publicFiles,

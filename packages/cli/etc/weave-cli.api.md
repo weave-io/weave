@@ -119,6 +119,7 @@ export interface ParsedArgs {
         evalCase?: string;
         evalRepeat?: string;
         evalTrack?: string;
+        evalConfig?: string;
         dryRun?: boolean;
         rawArtifacts?: boolean;
         adapter?: string;

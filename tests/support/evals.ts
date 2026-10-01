@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
+import type { EvalConfigMode } from "../../packages/cli/src/evals/config-mode.js";
 import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
 import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
 import {
@@ -453,6 +454,8 @@ export interface SuiteRunOptions {
   repeat?: number;
   /** `--track`. Omitted runs text-only and trajectory cases alike. */
   track?: EvalTrack;
+  /** `--config`. Omitted runs as `weave eval run` does: `builtin`. */
+  configMode?: EvalConfigMode;
   /** `--raw-artifacts`. */
   rawArtifacts?: boolean;
   /** The environment the run reads. Defaults to a fake API key. */
@@ -746,6 +749,9 @@ export async function runEvalSuite(
     case: options.caseFilter,
     ...(options.repeat !== undefined ? { repeat: options.repeat } : {}),
     ...(options.track !== undefined ? { track: options.track } : {}),
+    ...(options.configMode !== undefined
+      ? { configMode: options.configMode }
+      : {}),
     dryRun: options.dryRun ?? false,
     rawArtifacts: options.rawArtifacts ?? false,
   };

@@ -451,6 +451,7 @@ weave eval run --case shuttle-execution-report-structured-evidence  # restrict t
 weave eval run --case weft-review-clean-approval      # restrict to one weft-review case
 weave eval run --case warp-security-block-evidence-findings  # restrict to one warp-security case
 weave eval run --repeat 3                             # run each case 3 times per model; report pass rates
+weave eval run --config project                       # compose prompts from ./.weave and ~/.weave, not the builtins only
 weave eval run --dry-run                              # print what would run, no execution
 weave eval run --raw-artifacts                        # emit raw prompt text locally (NEVER in CI)
 ```
@@ -462,11 +463,14 @@ WEAVE_EVAL_AGENT=loom weave eval run
 WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5 weave eval run
 WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
 WEAVE_EVAL_REPEAT=3 weave eval run
+WEAVE_EVAL_CONFIG=project weave eval run
 ```
 
-`weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted). It refuses runs with different cases, models, repeat counts or recorded judges. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
+`weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted). It refuses runs with different cases, models, repeat counts, recorded judges or config modes. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
 
 `weave eval reindex [--dry-run]` rebuilds every dashboard index in `weave-io/weave-agent-evals` from the runs published there, keeping the text run (`latest.json`) and the trajectory run (`latest-trajectory.json`) apart, and uploads the index files. It never writes a run artifact. It needs `EVAL_RESULTS_REPO_TOKEN`; `--dry-run` rebuilds locally under `eval-bundles/reindex/` and uploads nothing. See [Track-aware indexes](./eval-sanitization-and-publish-pipeline.md#track-aware-indexes).
+
+`--config <builtin|project>` picks the Weave config prompts are composed from. `builtin`, the default, reads no project or global `.weave`, so a run scores the prompts Weave ships; `project` reads both, for prompt work on a checkout's own overrides. The mode is recorded in the bundle. See [Choose the config](./agent-evals.md#choose-the-config-prompts-are-composed-from---config).
 
 `--repeat N` (1–20) runs every selected case N times per model and reports a pass rate per case × model and per suite × model; errored attempts (no scorable answer) are left out of the rate and counted separately. Without it, a run is exactly what it was before repeats existed. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 

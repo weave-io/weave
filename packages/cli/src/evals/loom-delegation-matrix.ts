@@ -36,7 +36,6 @@
  */
 
 import type { ConfigLoadError } from "@weaveio/weave-config";
-import { loadConfig } from "@weaveio/weave-config";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import {
   type ComposeError,
@@ -52,6 +51,11 @@ import {
   type ResultAsync,
 } from "neverthrow";
 import { loadSuiteCases } from "./case-loader.js";
+import {
+  DEFAULT_EVAL_CONFIG_MODE,
+  EvalConfigLoader,
+  type EvalConfigMode,
+} from "./config-mode.js";
 import { LOOM_ROUTING_SUITE } from "./loom-routing-runner.js";
 import type { EvalCase, FixtureSchemaError } from "./types.js";
 
@@ -77,7 +81,7 @@ const DELEGATION_MATRIX_TARGET_TAG_PREFIX = "target:";
 
 /**
  * Injectable config loader signature. Production default calls
- * `loadConfig()` from `@weaveio/weave-config`. Tests inject a fixture-backed
+ * `EvalConfigLoader` (`config-mode.ts`) in the run's config mode. Tests inject a fixture-backed
  * loader to avoid real filesystem discovery.
  */
 export type DelegationMatrixConfigLoader = () => ResultAsync<
@@ -97,8 +101,16 @@ export type DelegationMatrixComposer = (
 ) => ResultAsync<{ delegationTargets: DelegationTarget[] }, ComposeError>;
 
 export interface ResolveLoomDelegationTargetsOptions {
-  /** Config loader override. Defaults to the real `loadConfig()`. */
+  /**
+   * Config loader override. Defaults to `EvalConfigLoader` in `configMode`,
+   * so the targets checked are those of the prompts the run sends.
+   */
   configLoader?: DelegationMatrixConfigLoader;
+  /**
+   * The eval config mode the default loader uses. Defaults to `"builtin"`.
+   * Ignored when `configLoader` is given.
+   */
+  configMode?: EvalConfigMode;
   /** Composer override. Defaults to the real `composeAgentDescriptor`. */
   composer?: DelegationMatrixComposer;
 }
@@ -120,11 +132,13 @@ export type LoomDelegationMatrixError =
       message: string;
     };
 
-function defaultConfigLoader(): ResultAsync<
-  WeaveConfig,
-  { message: string }[]
-> {
-  return loadConfig().mapErr((errors) => errors.map(summarizeConfigLoadError));
+function configLoaderFor(
+  configMode: EvalConfigMode,
+): DelegationMatrixConfigLoader {
+  return () =>
+    new EvalConfigLoader()
+      .load(configMode)
+      .mapErr((errors) => errors.map(summarizeConfigLoadError));
 }
 
 /**
@@ -182,7 +196,9 @@ function summarizeComposeError(error: ComposeError): string {
 export function resolveLoomDelegationTargets(
   options: ResolveLoomDelegationTargetsOptions = {},
 ): ResultAsync<DelegationTarget[], LoomDelegationMatrixError> {
-  const configLoader = options.configLoader ?? defaultConfigLoader;
+  const configLoader =
+    options.configLoader ??
+    configLoaderFor(options.configMode ?? DEFAULT_EVAL_CONFIG_MODE);
   const composer = options.composer ?? composeAgentDescriptor;
 
   return configLoader()
@@ -331,6 +347,8 @@ export interface RunLoomDelegationMatrixPreflightOptions {
   composer?: DelegationMatrixComposer;
   caseLoader?: LoomDelegationMatrixCaseLoader;
   evalsRoot?: string;
+  /** The run's eval config mode; see `ResolveLoomDelegationTargetsOptions`. */
+  configMode?: EvalConfigMode;
 }
 
 export type LoomDelegationMatrixPreflightError =
@@ -362,6 +380,7 @@ export function runLoomDelegationMatrixPreflight(
 
   return resolveLoomDelegationTargets({
     configLoader: options.configLoader,
+    configMode: options.configMode,
     composer: options.composer,
   }).andThen((targets) =>
     caseLoader(options.evalsRoot)

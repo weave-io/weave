@@ -106,6 +106,7 @@ packages/cli/src/evals/
 ├── case-loader.ts            loadCaseFile, loadRubricFile, loadSuiteCases
 ├── model-matrix.ts           loadModelMatrix, resolveDefaultModels, filterMatrix
 ├── input-validation.ts       parseEvalRunRequest — CLI flags + env normalization
+├── config-mode.ts            EvalConfigLoader — builtin-only or project config (`--config`)
 ├── prompt-snapshots.ts       Compose agent prompts, produce PromptSnapshot records
 ├── provenance.ts             Derive PromptProvenanceRecord and manifest
 ├── sanitizer.ts              Central allowlist sanitizer (source of truth)
@@ -348,6 +349,70 @@ when no suite ran anything, and an explicit agent or case filter keeps the
 strict rule. A case filter naming a case of the other track fails with
 `NoCasesFound`.
 
+### Choose the config prompts are composed from (`--config`)
+
+A run scores the prompts it composes, so which Weave config it composes them
+from decides what it measures. `--config` picks it (`WEAVE_EVAL_CONFIG` is the
+env-var form; see [`config-mode.ts`](../packages/cli/src/evals/config-mode.ts)):
+
+| Mode | What is read | Use it for |
+| --- | --- | --- |
+| `builtin` (default) | The builtin config only. No project `.weave/` and no global `~/.weave/config.weave` is read. | Every run cited as evidence: baselines, model comparisons, CI runs |
+| `project` | The builtins merged with the global and the working directory's `.weave/`, as a user's harness would load them | Prompt work on a checkout's own overrides |
+
+```bash
+# Score this repository's own Shuttle and Weft overrides, not what ships
+bun packages/cli/src/main.ts eval run --agent shuttle --models dev --config project
+```
+
+**Why the default is `builtin`.** Before the mode existed, every run composed
+its prompts with `loadConfig(cwd)`. Inside this repository that reads
+`.weave/`, which overrides Shuttle and Weft with `.weave/prompts/shuttle.md`
+and `weft.md` for work on Weave itself, and the maintainer's global config. So
+Shuttle and Weft were scored on prompts no user receives, and a run depended on
+whose machine made it. The composed-prompt hashes show the difference:
+
+| Agent | Hash with this repo's `.weave/` | Hash with the builtins only |
+| --- | --- | --- |
+| Shuttle | `71eb4551938e` | `2c0cb8fad592` |
+| Weft | `af792bff0aea` | `173c032be0cb` |
+| Loom, Tapestry, Pattern, Warp, Spindle | same | same |
+
+A run that may be cited as evidence must score what ships (gap G1 of the
+eval readiness record for Spec 39, task 0.1, issue #275), so `builtin` is the
+default and `project` must be asked for.
+
+**Earlier records measured `project`.** The [24 Sep baseline](artifacts/eval-baseline-2026-09-24.md),
+the [25 Sep default-model record](artifacts/eval-default-models-2026-09-25.md)
+and the [29 Sep Copilot record](artifacts/eval-copilot-default-models-2026-09-29.md)
+were made in this repository before the mode existed. Their Loom, Tapestry,
+Pattern, Warp and Spindle numbers are what `builtin` measures too. Their
+Shuttle and Weft numbers measured the repository's override prompts; re-score
+those agents in `builtin` mode before citing them for a model choice.
+
+**What the mode covers.** Every text runner composes through the same
+`ConfigModePromptProvider` (`prompt-snapshots.ts`), the provenance manifest's
+prompt hashes come from the same config, and the Loom delegation-matrix
+preflight resolves Loom's targets from it. Two parts do not follow it:
+
+- `tapestry-category-routing` always composes Tapestry per case from the
+  builtins plus the case's declared categories
+  ([details](#tapestry-category-routing-case-composition)), so a developer's
+  categories never leak into a case in either mode.
+- [Harness trajectory](#harness-trajectory-evals) cases run OpenCode in a
+  sandbox, where the Weave plugin loads config itself. A case with a fixture
+  uses the fixture's own `.weave/`; a case without one mounts this
+  repository's `.weave/config.weave` and `prompts/`. `--config` does not
+  change either.
+
+**Recorded and compared.** The mode is written as `configMode` to
+`bundle-index.json` and `provenance-manifest.json`. `eval compare` refuses two
+runs whose modes differ (`ConfigModeMismatch`) and prints the mode on its
+`Config:` line. A bundle that records no mode was made before the mode
+existed, with the project config, so it reads as `project`: a new `builtin` run
+is not compared with an old baseline until the baseline is re-run with
+`--config builtin` (or the candidate with `--config project`).
+
 ### Measure a change
 
 To find out whether a prompt, case or rubric change helped, run the same
@@ -385,8 +450,8 @@ bundles; it makes no model call and needs no API key.
 `weave eval compare <baseline> <candidate>` (Spec 37, task 18.2) prints, per
 suite × model, both pass rates with 95% Wilson intervals, the difference in
 points and a verdict; under each row it lists the cases whose pass rate moved.
-It also names each agent whose composed-prompt hash changed (hash only) and
-the judge each run records. It exits 0 when it compared the runs, whatever it
+It also names each agent whose composed-prompt hash changed (hash only), the
+judge each run records, and the config mode both runs composed from. It exits 0 when it compared the runs, whatever it
 found, and 1 when it refused.
 
 ```text
@@ -394,6 +459,7 @@ Eval compare 86eb974-2026-09-23-001 → 1a2b3c4-2026-09-23-001
   Commits:  86eb974 → 1a2b3c4
   Design:   2 cases × 1 model, each case 5 times per model
   Judge:    unknown (baseline: not recorded; candidate: not recorded). Assuming both runs were scored by the same judge.
+  Config:   builtin
   Prompts:  1 agent changed
             loom  aaaaaaaaaaaa → cccccccccccc
   Rule:     Fisher's exact test per suite × model on scored attempts (errored ones left out), Holm-adjusted across 1 testable row; …
@@ -465,6 +531,7 @@ typed `CompareError` and exit 1:
 | `CaseSetMismatch` | the runs ran different cases, or different case × model pairs; names up to five |
 | `RepeatCountMismatch` | the runs used different `--repeat`; says which to re-run with |
 | `JudgeMismatch` | **both** runs record a judge and they differ (id or version) |
+| `ConfigModeMismatch` | the runs composed their prompts from different configs (`--config builtin` against `project`); a run that records none counts as `project` ([why](#choose-the-config-prompts-are-composed-from---config)) |
 | `DryRunBundle` | either run is a dry run |
 | `BundleNotFound`, `BundleUnreadable`, `BundleInvalid` | a run cannot be found or read; names the path |
 
@@ -480,8 +547,8 @@ compare a post-16.4 run only with another post-16.4 run.
 
 **What it reads.** Only `bundle-index.json`, the `score-<suite>.json` files it
 names (suite names must be plain identifiers, so a bundle cannot point the
-reader outside its directory), `prompt-hashes.json`, and the judge fields
-above. It never opens `raw/`, and it prints only identifiers, counts, rates,
+reader outside its directory), `prompt-hashes.json`, and the judge and config
+mode fields above. It never opens `raw/`, and it prints only identifiers, counts, rates,
 p-values, short hashes and the judge id, so its output is safe in a CI log.
 
 `repeatability-diagnostics.json` (below) is still written after each run as a
@@ -1708,6 +1775,9 @@ weave eval run --case warp-security-block-evidence-findings
 # Combine filters (AND semantics — all three must match)
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api
 
+# Compose prompts from this directory's and the global .weave instead of the builtins
+weave eval run --config project
+
 # Dry run: print what would execute without making any model calls
 weave eval run --dry-run
 
@@ -1729,6 +1799,7 @@ WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5
 WEAVE_EVAL_MODELS=dev
 WEAVE_EVAL_CASE=loom-route-backend-api
 WEAVE_EVAL_REPEAT=3
+WEAVE_EVAL_CONFIG=project
 ```
 
 `--dry-run` now exercises the same suite fixture/rubric loading path as a live run, so shipped case/rubric drift fails closed before any model call would happen. It still does **not** require `OPENROUTER_API_KEY` because dry-run skips model execution.
@@ -1796,6 +1867,8 @@ Every eval run captures a **prompt provenance manifest** — a publishable JSON 
 | `capturedAt` | `string` | ISO 8601 timestamp |
 
 The `hash` is deterministic: the same composed prompt always yields the same hash. Hash changes in CI signal prompt drift without exposing raw prompt content.
+
+The manifest's top-level `configMode` (`builtin` or `project`) names the config the prompts were composed from (see [`--config`](#choose-the-config-prompts-are-composed-from---config)); the same composed prompt hashes the same in either mode, but a project override changes the prompt and so the hash.
 
 ### What the manifest does NOT contain
 
