@@ -79,6 +79,21 @@ See [`packages/config/src/merge.ts`](../packages/config/src/merge.ts) for the im
 
 ---
 
+## Published Model Recommendations
+
+[Spec 39](specs/39-spec-model-recommendations/39-spec-model-recommendations.md) adds an opt-in fourth layer, between the builtins and the global config, that carries only builtin agents' `models` lists from a list the maintainers sign and publish on tryweave.io. Spec 39's "The published file" is the normative format.
+
+What `@weaveio/weave-config` has today is the format and its checks, not the layer:
+
+- [`model-recommendations.ts`](../packages/config/src/model-recommendations.ts) — the `ModelRecommendationsFileSchema` (list) and `ModelRecommendationsEnvelopeSchema` (`{ payload, sig }`), the limits (64 KiB, 1–32 agents and 1–8 entries per section, 90-day validity), the typed `ModelRecommendationsError` union, and `selectRecommendationsSection(file, harness)`: a harness's own section, else `default`, and nothing for a caller with no harness ID.
+- [`model-recommendations-verifier.ts`](../packages/config/src/model-recommendations-verifier.ts) — `ModelRecommendationsVerifier`, which checks size, envelope shape, the Ed25519 signature (WebCrypto, over the payload's exact UTF-8 bytes), the schema and freshness, in that order, with the keys and clock injected; and `signModelRecommendations`, used by `scripts/models/sign.ts` and by tests with throwaway keys.
+- [`model-recommendations-keys.ts`](../packages/config/src/model-recommendations-keys.ts) — the public keys a list may be signed with. A key is rotated by shipping it here in a release before the site signs with it.
+- `BUILTIN_MODELS_ISSUED` in [`builtins.ts`](../packages/config/src/builtins.ts) — when the builtin `models` lists were last set. A list issued earlier is rejected, so an old list never overrides newer builtins. `builtins.test.ts` pins the builtin lists to this value; bump both together.
+
+`loadConfig` does not read recommendations yet: it still merges three layers, and its output is unchanged. The loader layer, the cache and fetching arrive in Spec 39's later work items. [`weave models check`](cli.md#weave-models-check) uses the same schema and verifier, so the site and the client agree on what is valid.
+
+---
+
 ## Workflow Extension
 
 When a project or global config declares a workflow with the same name as a builtin (or lower-priority) workflow **and** sets `extends`, the merge engine applies step-aware merge instead of the generic deep-merge.

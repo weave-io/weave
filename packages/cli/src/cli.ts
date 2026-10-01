@@ -37,6 +37,12 @@ export interface CliDeps {
    * for its filter allowlists. Defaults to `Bun.env` inside the handler.
    */
   env?: Record<string, string | undefined>;
+  /**
+   * The clock commands check time-bound files against — currently
+   * `weave models check`, for a list's `issued` and `expires`. Defaults to the
+   * system clock.
+   */
+  now?: () => Date;
 }
 
 function defaultDeps(): CliDeps {
@@ -57,7 +63,7 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled, fs, env } = {
+  const { argv, terminal, colorEnabled, fs, env, now } = {
     ...defaultDeps(),
     ...deps,
   };
@@ -183,6 +189,11 @@ export async function run(
     case "compose": {
       const { runCompose } = await import("./commands/compose.js");
       return runCompose({ terminal, theme, flags, fs });
+    }
+
+    case "models": {
+      const { runModels } = await import("./commands/models.js");
+      return runModels({ terminal, theme, flags, rest, fs, now });
     }
 
     case "unknown": {

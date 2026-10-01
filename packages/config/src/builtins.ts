@@ -29,6 +29,18 @@ import warpPrompt from "../prompts/warp.md" with { type: "text" };
 import weftPrompt from "../prompts/weft.md" with { type: "text" };
 
 /**
+ * When the builtin `models` lists in `BUILTIN_WEAVE_SOURCE` were last set:
+ * the commit time of #270, in UTC.
+ *
+ * A published model recommendations list issued before this is rejected, so
+ * an old list can never override newer builtins, even on a first opt-in or
+ * with an empty cache (Spec 39). Bump it in the same change whenever a
+ * builtin `models` list changes; `builtins.test.ts` pins the lists to this
+ * value and fails until you do.
+ */
+export const BUILTIN_MODELS_ISSUED = "2026-09-29T09:11:44Z";
+
+/**
  * Embedded builtin prompt contents, keyed by agent name.
  *
  * These are the same files referenced by `prompt_file` in
@@ -82,6 +94,9 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  * matches it, OpenCode V1 would write a `github-copilot/` entry without
  * checking the provider is connected, and Claude Code maps only the Anthropic
  * spelling to its aliases.
+ *
+ * When any `models` list below changes, set `BUILTIN_MODELS_ISSUED` to the
+ * time of that change; `builtins.test.ts` fails until you do.
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {

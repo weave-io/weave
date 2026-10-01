@@ -1,0 +1,31 @@
+{
+  "id": "github-copilot",
+  "description": "GitHub Copilot as OpenCode 2 lists it: Claude versions spelled with a dot. Seen live on OpenCode 2.0.16 (docs/artifacts/eval-copilot-default-models-2026-09-29.md).",
+  "updated": "2026-10-01",
+  "models": [
+    {
+      "providerID": "github-copilot",
+      "id": "claude-opus-5.5"
+    },
+    {
+      "providerID": "github-copilot",
+      "id": "claude-sonnet-5.5"
+    },
+    {
+      "providerID": "github-copilot",
+      "id": "claude-sonnet-5"
+    },
+    {
+      "providerID": "github-copilot",
+      "id": "claude-haiku-4.5"
+    },
+    {
+      "providerID": "github-copilot",
+      "id": "gpt-6-sol"
+    },
+    {
+      "providerID": "github-copilot",
+      "id": "gpt-6-luna"
+    }
+  ]
+}

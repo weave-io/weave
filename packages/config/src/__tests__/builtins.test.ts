@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weaveio/weave-core";
-import { BUILTIN_WEAVE_SOURCE, getBuiltinConfig } from "../builtins.js";
+import {
+  BUILTIN_MODELS_ISSUED,
+  BUILTIN_WEAVE_SOURCE,
+  getBuiltinConfig,
+} from "../builtins.js";
 
 describe("getBuiltinConfig", () => {
   it("describes each builtin's role, capabilities, and selection criteria", () => {
@@ -259,5 +263,39 @@ describe("getBuiltinConfig", () => {
         expect(t.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("BUILTIN_MODELS_ISSUED", () => {
+  // A published recommendations list issued before BUILTIN_MODELS_ISSUED is
+  // rejected (Spec 39), so the constant must move whenever a builtin `models`
+  // list does. If this test fails, set BUILTIN_MODELS_ISSUED in builtins.ts to
+  // the UTC time of your change and update both values below together.
+  it("is bumped whenever a builtin models list changes", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const models = Object.fromEntries(
+      Object.entries(config.agents)
+        .map(([name, agent]) => [name, agent.models ?? []] as const)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    );
+    expect({ issued: BUILTIN_MODELS_ISSUED, models }).toEqual({
+      issued: "2026-09-29T09:11:44Z",
+      models: {
+        loom: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
+        pattern: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
+        shuttle: ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"],
+        spindle: ["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"],
+        tapestry: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
+        thread: ["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"],
+        warp: ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"],
+        weft: ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"],
+      },
+    });
+  });
+
+  it("is an ISO 8601 UTC timestamp", () => {
+    expect(new Date(BUILTIN_MODELS_ISSUED).toISOString()).toBe(
+      "2026-09-29T09:11:44.000Z",
+    );
   });
 });

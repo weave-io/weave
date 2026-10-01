@@ -269,6 +269,10 @@
   - interface MigrateContext
   - type InitScope
   - type InitPlan
+- `packages/cli/src/commands/models.ts`
+  - function modelsUsage: (theme) => string[]
+  - function runModels: (ctx) => Promise<Result<number, CliError>>
+  - interface ModelsContext
 - `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts`
@@ -707,6 +711,18 @@
   - function describeFailedConversion: (error) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
+- `packages/cli/src/models/expectations.ts`
+  - function describeMismatch: (mismatch) => string
+  - function compareExpectations: (report, expectations) => ExpectationMismatch[]
+  - interface ExpectationMismatch
+  - type ModelExpectations
+  - const ModelExpectationsSchema
+- `packages/cli/src/models/resolve.ts`
+  - class RecommendationsResolver
+  - interface AgentResolution
+  - interface CatalogResolution
+  - type EntryRejection
+  - const CLAUDE_CODE_CATALOG: CatalogId
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
@@ -734,6 +750,7 @@
   - const defaultThemeRenderer
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_MODELS_ISSUED
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
@@ -750,6 +767,22 @@
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
+- `packages/config/src/model-recommendations-verifier.ts`
+  - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
+  - function encodeBase64: (bytes) => string
+  - function signModelRecommendations: (payload, privateKeyPkcs8) => ResultAsync<string, ModelRecommendationsSignError>
+  - class ModelRecommendationsVerifier
+  - interface ModelRecommendationsFreshnessContext
+  - interface ModelRecommendationsVerifierDeps
+  - _...1 more_
+- `packages/config/src/model-recommendations.ts`
+  - function describeModelRecommendationsError: (error) => string
+  - function formatModelRecommendationsIssues: (error) => readonly string[]
+  - function selectRecommendationsSection: (file, harness) => SelectedRecommendationsSection | undefined
+  - function isRecommendationsHarness: (value) => value is RecommendationsHarness
+  - interface SelectedRecommendationsSection
+  - type RecommendationsHarness
+  - _...20 more_
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/plan-task-parser.ts`
@@ -1053,6 +1086,8 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
+- `scripts/models/keygen.ts` — function generateKeyPair: () => Promise<
+- `scripts/models/sign.ts` — function signList: (listText, privateKey, verifier) => void, type SignListError
 - `scripts/opencode2/fixtures/provider.ts`
   - class ProofProviderFixture
   - interface ProofProviderRequest

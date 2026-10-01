@@ -30,7 +30,8 @@
     "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
     "neverthrow": "^8.2.0",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
