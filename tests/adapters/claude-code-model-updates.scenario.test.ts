@@ -172,13 +172,13 @@ describe("a Claude Code user opts in to automatic model updates", () => {
     expect(sessions[3]?.loom).toBe("haiku");
   });
 
-  it("says in the summary which model lists the agents were composed from", async () => {
+  it("says in the summary whether a recommended list was applied", async () => {
     const { sessions } = await scenario();
     expect(sessions[0]?.stdout).toMatch(
-      /Model lists: +builtin \(no stable recommendations applied yet\)/,
+      /Recommendations: +none applied yet \(stable\)/,
     );
     expect(sessions[1]?.stdout).toMatch(
-      /Model lists: +recommended \(stable, issued 2026-10-01T09:00:00Z\)/,
+      /Recommendations: +applied \(stable, issued 2026-10-01T09:00:00Z\)/,
     );
   });
 
@@ -188,7 +188,7 @@ describe("a Claude Code user opts in to automatic model updates", () => {
       "Model recommendations issued 2026-10-01T09:00:00Z were applied; they take effect at the next session.",
     );
     for (const session of sessions)
-      expect(session.stdout).not.toContain("Model recommendations");
+      expect(session.stdout).not.toContain("Model recommendations issued");
   });
 });
 
@@ -229,11 +229,11 @@ describe("a Claude Code user leaves model updates off", () => {
     expect(cacheFiles).toEqual([]);
   });
 
-  it("composes on the builtin lists and says nothing about model lists", async () => {
+  it("composes on the builtin lists and says nothing about recommendations", async () => {
     const { session } = await scenario();
     expect(session.exitCode).toBe(0);
     expect(session.loom).toBe("opus");
-    expect(session.stdout).not.toContain("Model lists");
+    expect(session.stdout).not.toContain("Recommendations");
   });
 });
 
@@ -290,7 +290,7 @@ describe("a Claude Code user's applied list cannot be used", () => {
       "Warning: model recommendations (stable) skipped:",
     );
     expect(session.stdout).toMatch(
-      /Model lists: +builtin \(stable recommendations skipped, see above\)/,
+      /Recommendations: +skipped \(stable, see the warning above\)/,
     );
   });
 });

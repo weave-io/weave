@@ -207,7 +207,7 @@ export async function runCompose(
     // Surfaced like the other config problems compose meets: a warning on
     // stderr. Composing carries on with the builtin lists.
     terminal.stderr(
-      `Warning: model recommendations (${diagnostic.channel}) skipped: ${describeModelRecommendationsSkipReason(diagnostic.reason)}. Agents keep their builtin model lists.`,
+      `Warning: model recommendations (${diagnostic.channel}) skipped: ${describeModelRecommendationsSkipReason(diagnostic.reason)}. They are not applied; agents use their configured and builtin model lists.`,
     );
   }
 
@@ -328,26 +328,27 @@ export async function runCompose(
 }
 
 /**
- * The summary's "Model lists" line: only for a user who opted in to model
- * recommendations, saying whether an applied list is in use.
+ * The summary's "Recommendations" line: only for a user who opted in to model
+ * recommendations, saying whether an applied list was merged. Agents' own
+ * `models` still come first either way.
  */
 function modelListsLines(
   diagnostics: readonly ConfigLoadDiagnostic[],
   theme: ThemeColors,
 ): string[] {
-  const label = theme.dim("Model lists:        ");
+  const label = theme.dim("Recommendations:    ");
   for (const diagnostic of diagnostics) {
     if (diagnostic.type === "ModelRecommendationsApplied")
       return [
-        `  ${label} ${theme.cyan(`recommended (${diagnostic.channel}, issued ${diagnostic.issued})`)}`,
+        `  ${label} ${theme.cyan(`applied (${diagnostic.channel}, issued ${diagnostic.issued})`)}`,
       ];
     if (diagnostic.type === "ModelRecommendationsPending")
       return [
-        `  ${label} builtin ${theme.dim(`(no ${diagnostic.channel} recommendations applied yet)`)}`,
+        `  ${label} none applied yet ${theme.dim(`(${diagnostic.channel})`)}`,
       ];
     if (diagnostic.type === "ModelRecommendationsSkipped")
       return [
-        `  ${label} builtin ${theme.dim(`(${diagnostic.channel} recommendations skipped, see above)`)}`,
+        `  ${label} skipped ${theme.dim(`(${diagnostic.channel}, see the warning above)`)}`,
       ];
   }
   return [];

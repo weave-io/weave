@@ -110,13 +110,14 @@ child:
 
 **What the user sees.** Stdout of a `SessionStart` hook is added to the
 session's context, so it carries only compose's summary. For a user who opted
-in, the summary says which lists the agents were composed from:
-`Model lists: recommended (stable, issued …)`, `builtin (no stable
-recommendations applied yet)`, or `builtin (stable recommendations skipped, see
-above)`. Everything else goes to stderr, where compose reports its other config
-problems: a `Warning:` line when an applied list cannot be used (unreadable,
-unsigned, expired, …, and composition carries on with the builtin lists), a
-note when a refresh applied a newer list or failed, and the structured logs.
+in, the summary says whether a recommended list was merged:
+`Recommendations: applied (stable, issued …)`, `none applied yet (stable)`, or
+`skipped (stable, see the warning above)`. Everything else goes to stderr, where
+compose reports its other config problems: a `Warning:` line when an applied
+list cannot be used (unreadable, unsigned, expired, …; it is not applied, and
+agents use their configured and builtin lists), a note when a refresh applied
+or downloaded a newer list, failed, or was still running when compose stopped
+waiting, and the structured logs.
 
 ## Commands
 

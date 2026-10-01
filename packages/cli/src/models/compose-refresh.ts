@@ -160,7 +160,7 @@ export function describeComposeRefresh(
     case "Off":
       return undefined;
     case "StillRunning":
-      return `Model recommendations: the check did not finish within ${result.budgetMs} ms; it is retried at a later session.`;
+      return `Model recommendations: the check was still running after ${result.budgetMs} ms; compose has finished, and the check completes or times out on its own.`;
     case "Failed":
       return describeFailure(result.error);
     case "Refreshed":
