@@ -499,6 +499,29 @@ export const RuntimeSettingsSchema = z
   })
   .default({ journal: { strict: false } });
 
+/** How Weave handles published model recommendations (Spec 39). */
+export const ModelUpdatesModeSchema = z.enum(["off", "notify", "auto"]);
+
+/** Which published recommendations channel Weave follows (Spec 39). */
+export const ModelUpdatesChannelSchema = z.enum(["stable", "next"]);
+
+/**
+ * `settings { model_updates { mode notify channel stable } }` — opt-in model
+ * recommendations (Spec 39). `mode` is required inside the block; omitting the
+ * whole block means `off`.
+ *
+ * `channel` is deliberately optional rather than `.default("stable")`: each
+ * config layer is parsed on its own before merging, so a schema default would
+ * make a project block that omits `channel` silently reset a global
+ * `channel next`. Consumers treat an absent channel as `stable`.
+ */
+export const ModelUpdatesSettingsSchema = z
+  .object({
+    mode: ModelUpdatesModeSchema,
+    channel: ModelUpdatesChannelSchema.optional(),
+  })
+  .strict();
+
 /**
  * The `settings { ... }` block — canonical home for log level and runtime
  * configuration. Top-level `log_level` is rejected; use `settings { log_level INFO }`.
@@ -517,6 +540,7 @@ export const SettingsConfigSchema = z
       })
       .strict()
       .optional(),
+    model_updates: ModelUpdatesSettingsSchema.optional(),
     runtime: RuntimeSettingsSchema,
   })
   .default({ log_level: "INFO", runtime: { journal: { strict: false } } });
@@ -599,6 +623,12 @@ export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 export type LogLevel = z.infer<typeof LogLevelSchema>;
 /** Runtime-specific settings (journal.strict, etc.). */
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
+/** Model recommendations mode: `off`, `notify` or `auto` (Spec 39). */
+export type ModelUpdatesMode = z.infer<typeof ModelUpdatesModeSchema>;
+/** Model recommendations channel: `stable` or `next` (Spec 39). */
+export type ModelUpdatesChannel = z.infer<typeof ModelUpdatesChannelSchema>;
+/** The `settings { model_updates { ... } }` block shape (Spec 39). */
+export type ModelUpdatesSettings = z.infer<typeof ModelUpdatesSettingsSchema>;
 /** The `settings { ... }` block config shape. */
 export type SettingsConfig = z.infer<typeof SettingsConfigSchema>;
 export type WeaveConfig = z.infer<typeof WeaveConfigSchema>;

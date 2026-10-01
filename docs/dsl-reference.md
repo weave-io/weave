@@ -427,6 +427,43 @@ for precision limits and adapter responsibilities.
 | --- | --- | --- |
 | `log_level` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | Runtime log level |
 
+#### `model_updates` Block
+
+> **Not active yet.** Weave parses, validates and merges this block, but
+> nothing reads it yet: no recommendations are fetched or applied, and the
+> resolved models are the same with or without it. It takes effect when the
+> config loader layer of Spec 39 (opt-in model recommendations, tracking issue
+> [#275](https://github.com/weave-io/weave/issues/275)) lands.
+
+```weave
+settings {
+  model_updates {
+    mode notify      # off | notify | auto
+    channel stable   # stable | next
+  }
+}
+```
+
+Opts in to model recommendations that Weave publishes for the builtin agents.
+
+| Field | Values | Required | Description |
+| --- | --- | --- | --- |
+| `mode` | `off` \| `notify` \| `auto` | Yes, inside the block | `off` never fetches or applies recommendations. `notify` fetches them and applies them only when the user asks. `auto` applies a newer verified list as soon as it is fetched. |
+| `channel` | `stable` \| `next` | No | Which published list to follow. An omitted channel means `stable`. |
+
+- Omitting the whole block means `off`.
+- `mode` is required inside the block; `model_updates { channel next }` is
+  rejected at `settings.model_updates.mode`.
+- Unknown fields inside `model_updates` are rejected, as are values outside the
+  listed enums.
+- Config layers deep-merge the block, project over global. A project turns
+  updates off for itself with `model_updates { mode off }`; a project that
+  omits the block keeps the global one; a project block that omits `channel`
+  keeps the global channel. For that reason the schema leaves an omitted
+  `channel` unset rather than filling in `stable`: a per-layer default would
+  overwrite a global `channel next` during the merge. Consumers read an unset
+  channel as `stable`.
+
 ### `continuation` Block
 
 Controls session recovery and idle behaviour.

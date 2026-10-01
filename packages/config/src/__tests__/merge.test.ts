@@ -60,6 +60,66 @@ describe("mergeConfigs", () => {
     expect(project.settings.delegation?.max_concurrency).toBe(2);
     expect(global.agents.worker?.fast).toBe(true);
   });
+  describe("settings.model_updates (Spec 39)", () => {
+    const global = cfg("settings { model_updates { mode auto channel next } }");
+
+    it("lets a project mode off override a global mode auto", () => {
+      const merged = mergeConfigs(
+        global,
+        cfg("settings { model_updates { mode off } }"),
+      );
+      expect(merged.settings.model_updates?.mode).toBe("off");
+    });
+
+    it("keeps the global block when the project omits it", () => {
+      const merged = mergeConfigs(
+        global,
+        cfg("settings { delegation { max_concurrency 2 } }"),
+      );
+      expect(merged.settings.model_updates).toEqual({
+        mode: "auto",
+        channel: "next",
+      });
+    });
+
+    it("deep-merges the block so an omitted project channel keeps the global one", () => {
+      const merged = mergeConfigs(
+        global,
+        cfg("settings { model_updates { mode notify } }"),
+      );
+      expect(merged.settings.model_updates).toEqual({
+        mode: "notify",
+        channel: "next",
+      });
+    });
+
+    it("lets a project channel override the global channel", () => {
+      const merged = mergeConfigs(
+        global,
+        cfg("settings { model_updates { mode auto channel stable } }"),
+      );
+      expect(merged.settings.model_updates).toEqual({
+        mode: "auto",
+        channel: "stable",
+      });
+    });
+
+    it("stays undefined when no layer declares the block", () => {
+      expect(
+        mergeConfigs(cfg(""), cfg("settings { log_level DEBUG }")).settings
+          .model_updates,
+      ).toBeUndefined();
+    });
+
+    it("does not mutate the global layer", () => {
+      mergeConfigs(global, cfg("settings { model_updates { mode off } }"));
+      expect(global.settings.model_updates).toEqual({
+        mode: "auto",
+        channel: "next",
+      });
+    });
+  });
+
   it("validates zero, single, and combined layers without mutating defaults or input", () => {
     expect(mergeConfigsResult().isOk()).toBe(true);
     expect(mergeConfigsResult(emptyConfig).isOk()).toBe(true);

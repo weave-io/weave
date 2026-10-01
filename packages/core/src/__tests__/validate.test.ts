@@ -42,6 +42,52 @@ describe("validate — execution controls", () => {
   });
 });
 
+describe("validate — settings.model_updates (Spec 39)", () => {
+  it.each([
+    "off",
+    "notify",
+    "auto",
+  ])("transforms mode %s into the settings object", (mode) => {
+    const config = validateSource(
+      `settings { model_updates { mode ${mode} } }`,
+    )._unsafeUnwrap();
+    expect(config.settings.model_updates).toEqual({ mode });
+  });
+  it.each(["stable", "next"])("transforms channel %s", (channel) => {
+    const config = validateSource(
+      `settings { model_updates { mode notify channel ${channel} } }`,
+    )._unsafeUnwrap();
+    expect(config.settings.model_updates).toEqual({ mode: "notify", channel });
+  });
+  it("leaves model_updates undefined when the block is omitted", () => {
+    expect(
+      validateSource("settings { log_level INFO }")._unsafeUnwrap().settings
+        .model_updates,
+    ).toBeUndefined();
+  });
+  it.each([
+    [
+      "settings { model_updates { mode always } }",
+      "settings.model_updates.mode",
+    ],
+    [
+      'settings { model_updates { mode "auto" channel beta } }',
+      "settings.model_updates.channel",
+    ],
+    [
+      "settings { model_updates { channel next } }",
+      "settings.model_updates.mode",
+    ],
+    [
+      "settings { model_updates { mode auto interval 5 } }",
+      "settings.model_updates",
+    ],
+  ])("rejects %s at its declared path", (source, path) => {
+    const errors = validateSource(source)._unsafeUnwrapErr();
+    expect(errors[0]?.path).toBe(path);
+  });
+});
+
 describe("validate — valid agent", () => {
   it("valid agent with all fields", () => {
     const src = `agent loom {
