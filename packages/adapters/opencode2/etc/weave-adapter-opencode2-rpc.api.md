@@ -23,7 +23,12 @@ export const WeaveRpc: {
                     scopeToken: z.ZodString;
                 }, z.core.$strict>;
                 catalogRevision: z.ZodOptional<z.ZodString>;
-                modelUpdates: z.ZodOptional<z.ZodObject<{
+                modelUpdates: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
+                    state: z.ZodEnum<{
+                        off: "off";
+                        pending: "pending";
+                        unavailable: "unavailable";
+                    }>;
                     mode: z.ZodEnum<{
                         auto: "auto";
                         off: "off";
@@ -33,14 +38,19 @@ export const WeaveRpc: {
                         stable: "stable";
                         next: "next";
                     }>;
-                    state: z.ZodEnum<{
+                }, z.core.$strict>, z.ZodObject<{
+                    state: z.ZodLiteral<"applied">;
+                    issued: z.ZodString;
+                    mode: z.ZodEnum<{
+                        auto: "auto";
                         off: "off";
-                        pending: "pending";
-                        applied: "applied";
-                        unavailable: "unavailable";
+                        notify: "notify";
                     }>;
-                    issued: z.ZodOptional<z.ZodString>;
-                }, z.core.$strict>>;
+                    channel: z.ZodEnum<{
+                        stable: "stable";
+                        next: "next";
+                    }>;
+                }, z.core.$strict>], "state">>;
                 refresh: z.ZodEnum<{
                     failed: "failed";
                     initializing: "initializing";
@@ -214,6 +224,7 @@ export const WeaveRpc: {
                     displayName: z.ZodOptional<z.ZodString>;
                     providerID: z.ZodString;
                     model: z.ZodString;
+                    variant: z.ZodOptional<z.ZodString>;
                 }, z.core.$strict>>;
             }, z.core.$strict>;
         };
