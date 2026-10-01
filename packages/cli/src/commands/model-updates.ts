@@ -8,7 +8,8 @@
  * - `update` checks now (a forced refresh) and prints what changed.
  * - `apply` promotes a waiting list (the `notify` path).
  * - `pin` writes the applied lists into the global config as explicit
- *   `models`, after printing the diff and asking.
+ *   `models`, after printing the diff and asking. Provider-qualified entries
+ *   are left out unless `--include-qualified` (see `pin-plan.ts`).
  *
  * The cache, clock and network are injected through `ModelsContext`; see
  * `RecommendationsSession`. Nothing here resolves a model against a live
@@ -45,6 +46,7 @@ import {
   type PinHunk,
   pinModels,
 } from "../models/pin-editor.js";
+import { type PinPlan, planPins } from "../models/pin-plan.js";
 import {
   RecommendationsSession,
   type RecommendedLists,
@@ -465,26 +467,37 @@ class ModelUpdatesCommand {
     const layers = await this.session.userLayers(this.projectRoot);
     if (layers.isErr()) return this.failWith(layers.error);
 
-    const lists: Record<string, string[]> = {};
-    let changed = 0;
-    for (const [agent, models] of Object.entries(recommended.agents)) {
-      const own = layers.value.global?.agents[agent]?.models ?? [];
-      lists[agent] = [...new Set([...own, ...models])];
-      if (lists[agent].length !== own.length) changed++;
-    }
+    const own = Object.fromEntries(
+      Object.entries(layers.value.global?.agents ?? {}).map(
+        ([agent, config]) => [agent, config.models ?? []],
+      ),
+    );
+    const plan = planPins(
+      recommended.agents,
+      own,
+      this.ctx.flags.modelsIncludeQualified === true,
+    );
+    const { changed } = plan;
     const header = `# Pinned by weave models pin: the ${settings.channel} list issued ${recommended.issued}, ${choice.harness} (section ${recommended.section}).`;
-    const edit = pinModels(source.value, lists, header);
+    const edit = pinModels(source.value, plan.lists, header);
     if (edit.isErr())
       return this.fail([`Error: ${describePinEditError(edit.error)}`]);
+    const notice = this.qualifiedNotice(plan);
     if (edit.value.hunks.length === 0) {
+      const leftOut =
+        notice.length > 0 && !this.ctx.flags.modelsIncludeQualified;
       this.out([
-        `The global config already lists these models; nothing to pin (${path}).`,
+        ...notice,
+        leftOut
+          ? `Nothing else to pin; the global config was not changed (${path}).`
+          : `The global config already lists these models; nothing to pin (${path}).`,
         ...this.offHint(),
       ]);
       return ok(0);
     }
 
     this.out([
+      ...notice,
       `Pin the ${choice.harness} recommendations (${settings.channel} list issued ${recommended.issued}) into ${path}:`,
       "",
       ...this.renderHunks(edit.value.hunks),
@@ -517,6 +530,40 @@ class ModelUpdatesCommand {
       ...this.offHint(),
     ]);
     return ok(0);
+  }
+
+  /**
+   * What `pin` says about provider-qualified entries: left out by default,
+   * kept with a warning under `--include-qualified`.
+   */
+  private qualifiedNotice(plan: PinPlan): string[] {
+    if (plan.qualified.length === 0) return [];
+    const entries = plan.qualified
+      .map(({ agent, models }) => `${agent} (${models.join(", ")})`)
+      .join(", ");
+    const why =
+      "The global config is read by every harness, and OpenCode V1 uses the first provider-qualified entry without checking that the provider is connected.";
+    if (this.ctx.flags.modelsIncludeQualified === true)
+      return [
+        this.theme.yellow(
+          `Warning: pinning provider-qualified models: ${entries}.`,
+        ),
+        this.theme.yellow(
+          `${why} OpenCode V1 runs fail when that provider is not connected.`,
+        ),
+        "",
+      ];
+    const lines = [
+      `Left out provider-qualified models: ${entries}.`,
+      `${why} Pass --include-qualified to keep them.`,
+    ];
+    if (plan.unchanged.length > 0)
+      lines.push(
+        plan.unchanged.length === 1
+          ? `${plan.unchanged[0]} keeps its existing models: all of its recommended entries are provider-qualified.`
+          : `${plan.unchanged.join(", ")} keep their existing models: all of their recommended entries are provider-qualified.`,
+      );
+    return [...lines, ""];
   }
 
   private offHint(): string[] {

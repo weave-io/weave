@@ -527,6 +527,23 @@ describe("eval reindex", () => {
   });
 });
 
+describe("models pin", () => {
+  it("parses --include-qualified", () => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "models",
+      "pin",
+      "--include-qualified",
+      "--yes",
+    ])._unsafeUnwrap();
+
+    expect(parsed.flags.modelsSubcommand).toBe("pin");
+    expect(parsed.flags.modelsIncludeQualified).toBe(true);
+    expect(parsed.flags.yes).toBe(true);
+  });
+});
+
 describe("models check", () => {
   it("parses the subcommand, the file and every flag", () => {
     const parsed = parseArgs([
