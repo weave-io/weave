@@ -10,7 +10,7 @@ This spike tests the riskiest parts of Spec 39 end to end before any production 
 | --- | --- |
 | 1. Can Bun verify Ed25519 without a dependency? | **Yes.** `crypto.subtle` signs and verifies Ed25519 in Bun 1.4.2, and inside the OpenCode 2.0.16 host process. A one-byte change fails verification. |
 | 2. Does a models-only layer merge as the spec says? | **Yes.** Loom's list became `[user…, recommended…, builtin…]` with duplicates removed. A recommended agent the version doesn't know was skipped. `notify` held the file without applying it, a project's `mode off` overrode a global `mode auto`, and a tampered `applied.json` was rejected. |
-| 3. Does a published change reach a running OpenCode 2 host? | **Yes, without a restart.** Loom moved from `proof/claude-opus-5-5` to `proof/claude-opus-5-6`, and the next session ran on the new model. |
+| 3. Does a published change reach a running OpenCode 2 host? | **Yes, without a restart.** Loom moved from `proof/claude-opus-5-5` to `proof/claude-opus-5-6`, and the next session selected the new model. The scripted provider was not running, so no model call completed. |
 | Found: a skipped layer flips agents back to the builtins | A corrupt local `applied.json` is a valid catalog without recommendations, so OpenCode 2 published it and Loom fell back to `claude-opus-5-5` until the file was fixed. The spec's claim that "writes do not need to be atomic" is wrong. |
 | Found: a failed fetch waits the full 24 hours | The spike recorded `lastCheck` on errors too, so one network failure delayed the next attempt by a day. |
 | Found: Weave's logs are not in the host log | Weave's pino output does not appear in OpenCode 2's `opencode.log`, so a user cannot see recommendation errors there. `status` and `weave models status` are the only places they show up. |
@@ -26,8 +26,8 @@ This spike tests the riskiest parts of Spec 39 end to end before any production 
 
 1. **Activation.** The plugin fetched the list in the background right after the first catalog publish (server log 12:07:01) and promoted it to `applied.json`. Loom was registered on `proof/claude-opus-5-5`.
 2. **New list published** (`issued` one day later; Loom → `["claude-opus-5-6", "claude-opus-5-5"]`):
-   - The first `opencode2 run --agent loom` triggered the fetch (12:07:28). Its catalog refresh had already started, so that session still ran on `claude-opus-5-5`.
-   - The second run's prompt hook found `applied.json` changed, rebuilt and reloaded agents. `agent.list` then showed Loom on `claude-opus-5-6`, and that session ran on it.
+   - The first `opencode2 run --agent loom` triggered the fetch (12:07:28). Its catalog refresh had already started, so that session still selected `claude-opus-5-5`.
+   - The second run's prompt hook found `applied.json` changed, rebuilt and reloaded agents. `agent.list` then showed Loom on `claude-opus-5-6`, and that session selected it.
    - The following fetch sent `If-None-Match` and got a 304.
 3. **Bad remote signature.** The server published a newer file with a stale signature. The fetch rejected it, `state.json` recorded `SignatureInvalid`, and Loom stayed on `claude-opus-5-6`.
 4. **Corrupt local file.** Editing `applied.json` by hand made the loader skip the layer, and the next refresh published Loom on `claude-opus-5-5`. Restoring the file brought `claude-opus-5-6` back on the next refresh.

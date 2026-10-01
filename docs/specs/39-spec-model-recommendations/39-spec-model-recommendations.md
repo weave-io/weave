@@ -56,13 +56,20 @@ settings {
 
 ## The published file
 
-Served at `https://tryweave.io/models/<channel>.v1.json`, with a detached signature at `https://tryweave.io/models/<channel>.v1.json.sig`. `v1` is the file's schema version; a breaking format change publishes `v2` alongside it, so old clients keep working.
+Served at `https://tryweave.io/models/<channel>.v1.json` as one signed envelope, so a refresh is a single request with a single ETag:
+
+```json
+{ "payload": "<the exact JSON text of the list>", "sig": "<base64 Ed25519 signature over the payload's UTF-8 bytes>" }
+```
+
+The website repository keeps the list itself as plain JSON; its deploy workflow builds the envelope. `v1` is the schema version of the list; a breaking format change publishes `v2` alongside it, so old clients keep working. The list inside the envelope looks like this:
 
 ```json
 {
   "schema": 1,
   "channel": "stable",
   "issued": "2026-10-01T09:00:00Z",
+  "expires": "2026-12-30T09:00:00Z",
   "min_config_version": "0.2.0",
   "evidence": "https://tryweave.io/evals/runs/<run-id>",
   "default": {
@@ -87,7 +94,8 @@ Served at `https://tryweave.io/models/<channel>.v1.json`, with a detached signat
 | --- | --- |
 | `schema` | The literal `1`. |
 | `channel` | Must equal the channel the client asked for. |
-| `issued` | ISO 8601 UTC timestamp. A client never applies a file whose `issued` is not later than the one it already applied (rollback protection). |
+| `issued` | ISO 8601 UTC timestamp. A client rejects a list whose `issued` is: not later than the list it already applied (rollback); more than 24 hours ahead of its clock (a mis-dated list would otherwise block every correctly dated one); or earlier than its own `BUILTIN_MODELS_ISSUED`, the date the builtin lists in that release were set (so an old list can never override newer builtins, even on a first opt-in or an empty cache). |
+| `expires` | ISO 8601 UTC timestamp, at most 90 days after `issued`. A client rejects an expired list, and stops using an applied one once it expires (agents fall back to their builtin lists and `status` says why). This bounds replay of an old signed list by a compromised host, and means maintainers re-publish at least every 90 days. |
 | `min_config_version` | Optional semver. A client whose `@weaveio/weave-config` is older ignores the file and reports why. |
 | `evidence` | Required HTTPS URL, at most 256 characters: the published eval run behind the list ([publication bar](#publication-bar)). Shown by `weave models status`. |
 | `default` | Required. `{ "agents": {...} }`, used by a supported harness that has no section of its own. Entries are bare IDs that follow the builtin spelling rules. |
@@ -100,12 +108,12 @@ Entries in `default` follow the same spelling rules as the builtins ([why bare I
 
 ### Signing
 
-- The signature is Ed25519 over the exact bytes of the JSON file, base64-encoded in the `.sig` file.
+- The signature is Ed25519 over the exact UTF-8 bytes of the envelope's `payload`, base64-encoded in its `sig` field.
 - The public keys live in `@weaveio/weave-config` as a list, so a key can be rotated by shipping the new key in a release before the site starts signing with it.
-- The private key is a secret of the website repository's deploy workflow. The workflow validates the file, signs it, and fails the deploy if either step fails.
+- The private key is a secret of a GitHub Environment, `model-recommendations`, in the website repository. The environment allows only the `main` branch and requires a maintainer's approval for every job that uses it. The deploy workflow validates the list, waits for that approval, signs it, and fails the deploy if any step fails. Each publish is therefore a deliberate, reviewed act, which is what makes `auto` acceptable.
 - The client verifies with WebCrypto (`crypto.subtle`, Ed25519) in Bun. No new dependency.
 
-**Why sign a file we host ourselves.** The file decides which model, and so which provider bill, every opted-in user's agents run on. A compromised site, repository or CDN must not be able to change that. The schema already limits a bad file to model choice; the signature limits who can publish one.
+**Why sign a file we host ourselves.** The file decides which model, and so which provider bill, every opted-in user's agents run on. The signature protects against a compromised host, CDN or nginx config, and against repository changes that a maintainer did not approve in the environment: a modified workflow still cannot reach the key without that approval. It does not protect against a compromised maintainer account; rotating the key in a release is the recovery. The schema limits a bad list to model choice, and `expires` limits how long an old one can be replayed.
 
 ## Client behaviour
 
@@ -119,26 +127,31 @@ Under the global config directory (honouring `WEAVE_GLOBAL_CONFIG_DIR`):
 
 ```
 ~/.weave/cache/model-recommendations/<channel>/
-├── latest.json    # last verified download: { "file": "<exact signed text>", "sig": "<base64>" }
+├── latest.json    # last verified download, as the served envelope
 ├── applied.json   # what the loader merges, same envelope
-└── state.json     # last check time, ETag, last error code
+├── state.json     # last check time, ETag, last error code
+└── lock/          # present while one process refreshes or applies
 ```
 
-Each envelope holds the exact signed bytes and their signature in one file, so a reader can never pair a new file with an old signature. Every write goes to a temporary name in the same directory and is renamed into place with `node:fs/promises` (as [`plan-task-reader.ts`](../../../packages/config/src/plan-task-reader.ts) already uses `node:fs/promises`), so a reader sees the old file or the new one, never a partial write.
+Each envelope holds the exact signed bytes and their signature in one file, so a reader can never pair a new list with an old signature.
+
+- **Atomic replacement.** Every write goes to a uniquely named temporary file in the same directory and is moved into place with Bun Shell's builtin `mv`, which is a `rename(2)` within one directory. A reader sees the old file or the new one, never a partial write. This uses Bun APIs only, as [AGENTS.md](../../../AGENTS.md#runtime--bun-only) requires; a test pins the rename behaviour.
+- **One writer at a time.** The CLI and several OpenCode 2 hosts share the cache. A refresh or `weave models apply` first creates `lock/` with Bun Shell's `mkdir`, which fails if it exists. A process that cannot take the lock skips the refresh, since another process is doing it. A lock older than 60 seconds is treated as abandoned and removed. Under the lock, the writer re-reads `applied.json` and re-checks `issued` before it commits, so a slower writer cannot replace a newer list with an older one.
 
 ### Fetching
 
-- `refresh()` does at most one request per channel per 24 hours after a successful check, and one per hour after a failed one, unless forced by `weave models update`. It sends `If-None-Match` with the stored ETag and no identifying headers or query parameters.
+- `refresh()` makes at most one attempt per channel per 24 hours after a successful check, and one per hour after a failed one, unless forced by `weave models update`. An attempt is one GET of the envelope with `If-None-Match` set to the stored ETag, and no identifying headers or query parameters.
 - The request has a 5-second timeout and the 64 KiB body limit. Only `https://tryweave.io` is fetched; tests and local proofs point at another URL with `WEAVE_MODEL_RECOMMENDATIONS_URL`.
 - A downloaded file is written to `latest` only after it parses, validates and verifies.
 - In `auto` mode a newly verified `latest` with a later `issued` is copied to `applied`. In `notify` mode it waits for `weave models apply`.
-- Any failure (offline, timeout, bad signature, invalid file, too old a client) leaves `latest` and `applied` as they were and records an error code in `state.json`. Failures are never thrown to the caller; `refresh()` returns a `ResultAsync` whose error is a typed union.
+- Any failure (offline, timeout, bad signature, invalid, expired, mis-dated or stale list, too old a client, lock held) leaves `latest` and `applied` as they were and records an error code in `state.json`. Failures are never thrown to the caller; `refresh()` returns a `ResultAsync` whose error is a typed union.
 
 ### Loading
 
 - `loadConfig` reads the merged `settings.model_updates.mode` from the global and project layers first. When it is `off` or absent, nothing below happens and the result is identical to today.
 - Otherwise it reads `applied.json` for the channel, verifies its signature again, and turns it into a config layer holding only `agents.<name>.models` for builtin agents. Loading never touches the network.
-- The adapter passes its harness ID to `loadConfig` (`opencode2`, `claude-code` or `pi`), as explicit adapter context in line with the [adapter boundary](../../adapter-boundary.md). The loader uses that harness's section, or `default` when the file has none for it. A caller that passes no harness ID, which includes OpenCode V1 and Copilot CLI, gets no recommendations layer.
+- **API.** A new `loadConfigDetailed(projectRoot, reader, { harness })` returns `{ config, diagnostics }`, where `diagnostics` is a typed list that includes a skipped recommendations layer and its reason. `loadConfig` keeps its signature and behaviour and returns only `config`, so no existing caller changes. Callers that report status (the CLI, `weave validate`, OpenCode 2) move to `loadConfigDetailed`.
+- The adapter passes its harness ID (`opencode2`, `claude-code` or `pi`), as explicit adapter context in line with the [adapter boundary](../../adapter-boundary.md). The loader uses that harness's section, or `default` when the file has none for it. A caller that passes no harness ID, which includes OpenCode V1 and Copilot CLI, gets no recommendations layer.
 - The merge order becomes:
 
   ```
@@ -146,7 +159,7 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
   ```
 
   Union-merge then gives every agent `[user entries…, recommended entries…, builtin entries…]` with duplicates removed. A user's own preference still comes first, and the builtin list stays as a fallback when no recommended model is in the user's catalog.
-- A missing, unreadable or invalid `applied.json` is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and the reason is reported (see [Visibility](#visibility)). This follows the partial-config policy: a problem with an optional input must not cost the user their agents.
+- A missing, unreadable, invalid or expired `applied.json` is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and the reason is returned in `diagnostics` (see [Visibility](#visibility)). This follows the partial-config policy: a problem with an optional input must not cost the user their agents.
 - Atomic writes are required, not optional. On OpenCode 2 a skipped layer is still a valid catalog, so a torn or corrupt `applied.json` would publish every agent back on its builtin models until the file is fixed. The [spike](../../artifacts/model-recommendations-spike.md) saw exactly that with a hand-corrupted file. Atomic writes keep Weave's own promotions out of that state; a file corrupted by something else is skipped and reported, and the next promotion replaces it.
 
 ## Harness behaviour
@@ -178,12 +191,12 @@ A published list may change an agent's models only when, for that agent, all of 
 
 1. **Shipped prompts.** The agent's suite ran with the builtin config only: no project or global `.weave`.
 2. **Enough cases.** The suite has at least 12 text cases, so at 5 repeats it can detect a drop of about 13 points.
-3. **No regression.** Candidate and current first model ran on the same commit and judge with at least 5 repeats. Two checks must pass:
+3. **No regression.** Candidate and current first model ran on the same commit and judge, with the same number of repeats, at least 5. Two checks must pass:
    - the suite-level difference is not a significant drop (Fisher's exact test with Holm adjustment, p < 0.05);
-   - no case the current model passes on at least 4 of 5 attempts drops below 3 of 5 on the candidate.
+   - no case that the current model passes on at least 80% of attempts falls below 60% on the candidate.
 4. **A reason to change.** Either the candidate is significantly better, or the change has a stated reason that is not a score (availability, cost) and does not raise cost.
 5. **Real sessions.** The agent's trajectory cases pass on the candidate.
-6. **Resolves as intended.** Every harness section that names the agent resolves to the intended model on the catalog fixtures for each provider it is meant to cover (`weave models check`).
+6. **Resolves as intended.** Next to each list, the website repository keeps an expectations file, `models/<channel>.expect.json`. For each harness section and each provider in a fixed set (`github-copilot`, `anthropic`, `openai`, `openrouter`), it names the model each agent must resolve to, or `none`. `weave models check --expect` resolves every section against catalog fixtures for those providers and fails on any mismatch. The fixtures ship with `@weaveio/weave-cli` and are updated when a provider's catalog changes.
 7. **Cost stated.** The evidence states the cost per attempt of the candidate against the current model.
 8. **Published evidence.** The run is published on tryweave.io/evals, and the file's `evidence` field links to it. Claude Code sections state which model each tier was measured as.
 
@@ -191,8 +204,8 @@ An agent that cannot clear the bar keeps its builtin list. Its models change onl
 
 ## Website
 
-- `public/models/stable.v1.json` and `public/models/next.v1.json` hold the source; the deploy workflow produces the `.sig` files.
-- The workflow validates each file with `weave models check <file>` (a CLI subcommand using the same schema as the client) before signing, so the site and the client cannot disagree about what is valid. The check also resolves every section against the provider catalog fixtures ([publication bar](#publication-bar), step 6) and fails on a missing `evidence` link.
+- `models/stable.json` and `models/next.json` hold the lists, with their `.expect.json` files beside them. The deploy workflow builds the signed envelopes and publishes them as `public/models/stable.v1.json` and `public/models/next.v1.json`.
+- The workflow validates each list with `weave models check <file> --expect <expect-file>` (a CLI subcommand using the same schema as the client) before signing, so the site and the client cannot disagree about what is valid. The check also resolves every section against the provider catalog fixtures ([publication bar](#publication-bar), step 6), rejects a list whose `issued` is not later than the one currently served, and fails on a missing `evidence` link.
 - nginx serves `/models/` as `application/json` with `Cache-Control: public, max-age=300` and an ETag.
 - A user docs page on tryweave.io explains the setting, the commands, and what data the request sends (none beyond the HTTP request itself).
 - The first `stable` file repeats today's builtin lists, so turning the feature on changes nothing until a maintainer publishes a new list. A list that changes a model waits for the [publication bar](#publication-bar).
