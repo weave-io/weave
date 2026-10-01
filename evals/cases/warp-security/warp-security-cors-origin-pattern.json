@@ -1,0 +1,21 @@
+{
+  "id": "warp-security-cors-origin-pattern",
+  "description": "Change under review: let partner dashboards call the account API from the browser. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/http/cors.ts` (added):\n```ts\n1 import type { Handler } from \"./types.js\";\n2\n3 const PARTNER_ORIGIN = /^https:\\/\\/[a-z0-9-]+.example.com$/;\n4\n5 export function withCors(handler: Handler): Handler {\n6   return async (req) => {\n7     const origin = req.headers.get(\"origin\") ?? \"\";\n8     const res = req.method === \"OPTIONS\" ? new Response(null, { status: 204 }) : await handler(req);\n9     if (PARTNER_ORIGIN.test(origin)) {\n10       res.headers.set(\"Access-Control-Allow-Origin\", origin);\n11       res.headers.set(\"Access-Control-Allow-Credentials\", \"true\");\n12       res.headers.set(\"Access-Control-Allow-Headers\", \"content-type\");\n13       res.headers.set(\"Access-Control-Allow-Methods\", \"GET, POST\");\n14       res.headers.set(\"Vary\", \"Origin\");\n15     }\n16     return res;\n17   };\n18 }\n```\n\n`src/server.ts` (changed, line 22):\n```ts\n22 router.all(\"/api/account/*\", withCors(accountRoutes));\n```\n\nEach partner's dashboard is served from its own subdomain, such as `https://acme.example.com`; only the company creates subdomains of `example.com`. The account API authenticates with the `session` cookie (`Secure; HttpOnly; SameSite=None`). It serves `GET /api/account/profile` (name, email address and the names of the user's API keys) and `POST /api/account/email` (changes the login email address).",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: the `.` before `example.com` in `PARTNER_ORIGIN` (line 3 of `src/http/cors.ts`) is not escaped, so it matches any character, and an origin such as `https://evilexample.com`, a domain anyone can register, passes the check. That origin is then echoed with `Access-Control-Allow-Credentials: true`, so a page on it can read a logged-in user's profile and change their login email with their session cookie. A blocking finding must identify the unescaped dot (or, more generally, that the pattern accepts origins outside `example.com`) combined with credentials, and fix it by escaping the dots or using an exact allowlist of origins.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "cors"
+  ]
+}

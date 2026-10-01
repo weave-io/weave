@@ -1,0 +1,21 @@
+{
+  "id": "warp-security-unawaited-signature-check",
+  "description": "Change under review: mark orders as paid when the payment provider calls our webhook. Added files are shown in full.\n\n`src/payments/verify.ts` (added):\n```ts\n1 import { createHmac, timingSafeEqual } from \"node:crypto\";\n2 import { secrets } from \"../config/secrets.js\";\n3\n4 export async function verifyWebhookSignature(rawBody: string, header: string | null): Promise<boolean> {\n5   if (header === null) return false;\n6   const key = await secrets.get(\"payments-webhook-signing-key\");\n7   const expected = createHmac(\"sha256\", key).update(rawBody).digest();\n8   const given = Buffer.from(header, \"hex\");\n9   return given.length === expected.length && timingSafeEqual(given, expected);\n10 }\n```\n\n`src/routes/payment-webhook.ts` (added):\n```ts\n1 import { orders } from \"../db/orders.js\";\n2 import { verifyWebhookSignature } from \"../payments/verify.js\";\n3\n4 export async function paymentWebhook(req: Request): Promise<Response> {\n5   const rawBody = await req.text();\n6   const valid = verifyWebhookSignature(rawBody, req.headers.get(\"x-signature\"));\n7   if (!valid) {\n8     return new Response(\"bad signature\", { status: 401 });\n9   }\n10   const event = JSON.parse(rawBody);\n11   if (event.type === \"payment.succeeded\") {\n12     await orders.markPaid(event.data.orderId);\n13   }\n14   return new Response(null, { status: 204 });\n15 }\n```\n\nThe webhook route is public, as the payment provider requires; the signature is the only thing that authenticates a call. `secrets.get` reads the signing key from the secrets manager.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: `verifyWebhookSignature` is async, and line 6 of `src/routes/payment-webhook.ts` calls it without `await`, so `valid` is a Promise, `!valid` is always false and the 401 branch never runs. Anyone can post a forged `payment.succeeded` event to the public webhook and have any order marked as paid. A blocking finding must identify the missing `await` (the signature check that never rejects) and fix it by awaiting the call.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "authentication"
+  ]
+}

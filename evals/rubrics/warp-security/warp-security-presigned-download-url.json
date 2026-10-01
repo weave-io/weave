@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-presigned-download-url",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The change puts a signature and a session token in a URL, which Warp's rules list as a blocking leak, but here the URL is a short-lived presigned URL for one object, issued only after an ownership check. Score an APPROVE verdict with BLOCKERS: 0/3. Non-blocking SUSPECTED notes (for example a shorter expiry or `Cache-Control: no-store`) are acceptable."
+  }
+}

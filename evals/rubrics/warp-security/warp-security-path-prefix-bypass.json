@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-path-prefix-bypass",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding explains that `startsWith(userDir)` without a trailing separator lets a path into a sibling directory whose name begins with the same digits through, exposing another user's files. Fail an APPROVE. Fail a BLOCK whose findings miss the prefix bypass: for example one that only reports content types, rate limits or symlinks, or that only claims `../` escapes the upload root without saying why the check lets it through. The output format (FINDING/EVIDENCE lines or a numbered list) is not scored."
+  }
+}

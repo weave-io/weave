@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-cors-origin-pattern",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding shows that the origin pattern accepts a host outside `example.com` (the unescaped `.`) while credentials are allowed. Fail an APPROVE, including one that accepts the regex as an allowlist. Fail a BLOCK whose findings miss the pattern flaw (for example only that any company subdomain is trusted, missing CSRF tokens or security headers). The output format is not scored."
+  }
+}

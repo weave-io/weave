@@ -80,7 +80,15 @@ evals/
 │       ├── warp-security-fast-exit-approve.json
 │       ├── warp-security-block-evidence-findings.json
 │       ├── warp-security-traced-injection.json         # judgment
-│       └── warp-security-guarded-false-positive.json   # judgment
+│       ├── warp-security-guarded-false-positive.json   # judgment
+│       ├── warp-security-guarded-parameterised-sql.json  # judgment
+│       ├── warp-security-presigned-download-url.json   # judgment
+│       ├── warp-security-path-prefix-bypass.json       # judge-scored
+│       ├── warp-security-copy-target-authz.json        # judge-scored
+│       ├── warp-security-ssrf-redirect-bypass.json     # judge-scored
+│       ├── warp-security-cors-origin-pattern.json      # judge-scored
+│       ├── warp-security-prototype-pollution-merge.json  # judge-scored
+│       └── warp-security-unawaited-signature-check.json  # judge-scored
 └── rubrics/
     ├── loom-routing/                   # Scoring rubrics for loom-routing cases
     │   ├── loom-route-backend-api.json
@@ -145,7 +153,15 @@ evals/
         ├── warp-security-fast-exit-approve.json
         ├── warp-security-block-evidence-findings.json
         ├── warp-security-traced-injection.json
-        └── warp-security-guarded-false-positive.json
+        ├── warp-security-guarded-false-positive.json
+        ├── warp-security-guarded-parameterised-sql.json
+        ├── warp-security-presigned-download-url.json
+        ├── warp-security-path-prefix-bypass.json
+        ├── warp-security-copy-target-authz.json
+        ├── warp-security-ssrf-redirect-bypass.json
+        ├── warp-security-cors-origin-pattern.json
+        ├── warp-security-prototype-pollution-merge.json
+        └── warp-security-unawaited-signature-check.json
 ```
 
 Trajectory fixtures (Spec 35) live next to the cases and rubrics:
@@ -398,8 +414,40 @@ structure the text runner can observe, such as:
 - file references inside evidence or remediation text
 
 Avoid assertions about actual exploitability, scanner output, runtime behavior,
-or whether a secret is truly live. The suite validates review-output shape, not
-runtime security behavior.
+or whether a secret is truly live. The suite validates the review, not runtime
+security behavior. Keep every value obviously fake: a case description must
+pass through `redactSecrets` unchanged, which the corpus guard checks.
+
+#### Judge-scored cases (`judge-scored` tag)
+
+A deterministic verdict check cannot tell a BLOCK for the right reason from a
+well-formed BLOCK for the wrong one, and Warp's prompt tells it to block when
+security patterns appear. A case tagged `judge-scored` therefore puts a real
+flaw behind a plausible guard and lets the judge decide whether a finding
+names it:
+
+- the description carries the change (inline code with line numbers, the
+  context a reviewer would know) and never states the verdict;
+- `required_artifacts` is empty, so the judge asks whether the review
+  achieves `expected_outcome.description`, which starts `Block the change:`
+  and names the flaw and an acceptable fix;
+- the rubric notes say what fails: an APPROVE, and a BLOCK whose findings
+  miss the flaw (name the tempting wrong findings, such as only a missing
+  rate limit), and what is not scored (the output format).
+
+The corpus guard (`packages/cli/src/evals/__tests__/warp-security-runner.test.ts`)
+keeps that shape. Pair them with deterministic `judgment` approvals of changes
+that only look dangerous, so a prompt cannot pass by blocking everything. The
+first six, added for Spec 39 gap G3, cover a `startsWith` path check without a
+trailing separator (`path-prefix-bypass`), a copy endpoint that never checks
+the folder it writes into (`copy-target-authz`), a private-address check that
+redirects bypass (`ssrf-redirect-bypass`), an unescaped dot in a CORS origin
+pattern with credentials (`cors-origin-pattern`), prototype pollution through
+a deep merge into an admin check (`prototype-pollution-merge`), and an async
+signature check called without `await` (`unawaited-signature-check`). The
+approvals beside them are SQL whose only user-chosen fragment comes from a
+constant map (`guarded-parameterised-sql`) and a presigned object-storage URL
+issued after an ownership check (`presigned-download-url`).
 
 ### Judgment cases (`judgment` tag)
 

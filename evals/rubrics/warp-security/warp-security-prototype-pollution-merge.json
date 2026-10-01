@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-prototype-pollution-merge",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding names prototype pollution through `__proto__` in `deepMerge` and connects it to its impact (the `isAdmin` check, or privilege escalation across users). Fail an APPROVE. Fail a BLOCK that only reports missing schema validation, payload size limits or type confusion without the prototype pollution. The output format is not scored."
+  }
+}
