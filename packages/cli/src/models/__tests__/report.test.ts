@@ -73,24 +73,23 @@ describe("validateSummaryLines", () => {
 
 describe("listChanges", () => {
   it("reports only agents whose list changed, by name", () => {
-    const before = {
-      issued: "a",
-      section: "default" as const,
-      agents: { weft: ["x"], loom: ["a"], thread: ["t"] },
-    };
-    const after = {
-      issued: "b",
-      section: "default" as const,
-      agents: { loom: ["b"], thread: ["t"], shuttle: ["s"] },
-    };
+    const before = { weft: ["x"], loom: ["a"], thread: ["t"] };
+    const after = { loom: ["b"], thread: ["t"], shuttle: ["s"] };
     const changes = listChanges(before, after);
     expect(changes).toEqual([
       { agent: "loom", before: ["a"], after: ["b"] },
       { agent: "shuttle", after: ["s"] },
       { agent: "weft", before: ["x"] },
     ]);
-    expect(renderListChanges([], "pi")).toEqual([
-      "  No change to the pi lists.",
+    expect(renderListChanges(changes)).toContain("    was  (no models)");
+  });
+
+  it("says no agent's models changed, or would change, when none differ", () => {
+    const lists = { loom: ["a", "b"] };
+    expect(listChanges(lists, { loom: ["a", "b"] })).toEqual([]);
+    expect(renderListChanges([])).toEqual(["  No agent's models changed."]);
+    expect(renderListChanges([], true)).toEqual([
+      "  No agent's models would change.",
     ]);
   });
 });

@@ -9,7 +9,7 @@ import {
   resolveModelUpdates,
 } from "@weaveio/weave-config";
 import type { WeaveConfig } from "@weaveio/weave-core";
-import type { RecommendedLists } from "./recommendations-session.js";
+import type { AgentModels } from "./recommendations-session.js";
 
 /** How to opt in, for messages shown while model updates are off. */
 export const OPT_IN_HINT =
@@ -75,26 +75,28 @@ export function validateSummaryLines(
   }
 }
 
-/** One agent whose recommended list differs between two lists. */
+/** One agent whose merged `models` list differs between two states. */
 export interface ListChange {
   readonly agent: string;
   readonly before?: readonly string[];
   readonly after?: readonly string[];
 }
 
-/** Agents whose recommended list differs, in name order. */
+/**
+ * Agents whose merged `models` list differs, in name order. Compares the
+ * effective lists (see `RecommendationsSession.effectiveModels`), not the
+ * recommended ones, so a list that repeats what agents already run is no
+ * change.
+ */
 export function listChanges(
-  before: RecommendedLists | undefined,
-  after: RecommendedLists | undefined,
+  before: AgentModels,
+  after: AgentModels,
 ): ListChange[] {
-  const agents = new Set([
-    ...Object.keys(before?.agents ?? {}),
-    ...Object.keys(after?.agents ?? {}),
-  ]);
+  const agents = new Set([...Object.keys(before), ...Object.keys(after)]);
   const changes: ListChange[] = [];
   for (const agent of [...agents].sort()) {
-    const was = before?.agents[agent];
-    const now = after?.agents[agent];
+    const was = before[agent];
+    const now = after[agent];
     if (JSON.stringify(was) === JSON.stringify(now)) continue;
     changes.push({
       agent,
@@ -105,14 +107,22 @@ export function listChanges(
   return changes;
 }
 
-/** Render list changes as `was` / `now` lines per agent. */
+/**
+ * Render list changes as `was` / `now` lines per agent. `pending` is true for
+ * a list that is waiting, not applied, so nothing has changed yet.
+ */
 export function renderListChanges(
   changes: readonly ListChange[],
-  harness: string,
+  pending = false,
 ): string[] {
-  if (changes.length === 0) return [`  No change to the ${harness} lists.`];
+  if (changes.length === 0)
+    return [
+      pending
+        ? "  No agent's models would change."
+        : "  No agent's models changed.",
+    ];
   const show = (list: readonly string[] | undefined) =>
-    list === undefined ? "(builtin list only)" : list.join(", ");
+    list === undefined ? "(no models)" : list.join(", ");
   return changes.flatMap((change) => [
     `  ${change.agent}`,
     `    was  ${show(change.before)}`,
