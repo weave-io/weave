@@ -517,6 +517,14 @@ export const SettingsConfigSchema = z
       })
       .strict()
       .optional(),
+    // SPIKE (Spec 39): opt-in model recommendations.
+    model_updates: z
+      .object({
+        mode: z.enum(["off", "notify", "auto"]),
+        channel: z.enum(["stable", "next"]).default("stable"),
+      })
+      .strict()
+      .optional(),
     runtime: RuntimeSettingsSchema,
   })
   .default({ log_level: "INFO", runtime: { journal: { strict: false } } });

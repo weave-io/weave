@@ -38,3 +38,6 @@ export {
 } from "./plan-task-reader.js";
 export { resolvePromptPaths } from "./resolve.js";
 export type { ConfigScope } from "./types.js";
+
+// SPIKE (Spec 39)
+export * from "./model-recommendations.js";

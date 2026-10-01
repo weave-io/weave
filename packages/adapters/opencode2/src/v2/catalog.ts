@@ -66,6 +66,8 @@ export interface OpenCode2CatalogCandidate {
   readonly sources: readonly CatalogSourceEntry[];
   /** The `heldAgents` this candidate was built against, sorted. */
   readonly heldAgents: readonly string[];
+  /** SPIKE (Spec 39): merged `settings.model_updates`, when declared. */
+  readonly modelUpdates?: { mode: "off" | "notify" | "auto"; channel: "stable" | "next" };
 }
 
 export interface BuildOpenCode2CatalogInput {
@@ -298,6 +300,7 @@ function buildCandidate(
             issues,
             sources: manifest,
             heldAgents: sortedHeld,
+            modelUpdates: config.settings.model_updates,
           });
         });
     });

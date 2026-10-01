@@ -1,4 +1,15 @@
-import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
+import {
+  modelUpdatesSettings,
+  readRecommendationsLayer,
+} from "./model-recommendations.js";
 import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "./builtins.js";
 import {
   bunFileReader,
@@ -138,9 +149,31 @@ export function loadConfig(
       resolvePromptPaths(config, scope),
     );
 
+    // SPIKE (Spec 39): opt-in recommendations layer between builtins and
+    // the user's layers. A layer that cannot be read is skipped.
+    const settings = modelUpdatesSettings(resolvedDiscovered);
+    const recommendations: ResultAsync<
+      import("@weaveio/weave-core").WeaveConfig[],
+      never
+    > =
+      settings.mode === "off"
+        ? okAsync([])
+        : readRecommendationsLayer(
+            fileReader,
+            settings,
+            new Set(Object.keys(builtinConfig.agents)),
+          )
+            .map((layer) => [layer])
+            .orElse((error) => {
+              log.warn({ error }, "Model recommendations layer skipped");
+              return okAsync([]);
+            });
+
+    return recommendations.andThen((recommended) => {
     // Step 4: Merge all layers
     const mergeResult = mergeConfigsResult(
       resolvedBuiltins,
+      ...recommended,
       ...resolvedDiscovered,
     );
     if (mergeResult.isErr()) {
@@ -155,5 +188,6 @@ export function loadConfig(
     log.info("Config loaded successfully");
 
     return ok(merged);
+    });
   });
 }

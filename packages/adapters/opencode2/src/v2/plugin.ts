@@ -1,3 +1,4 @@
+import { ModelRecommendations } from "@weaveio/weave-config";
 import { logger } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
 import { WeaveRpc } from "../rpc.js";
@@ -220,12 +221,26 @@ export async function setupOpenCode2(
     return async () => undefined;
   }
 
+  // SPIKE (Spec 39): fetch recommendations in the background, never in the
+  // catalog build. A promoted applied.json is a probed source, so the next
+  // due refresh rebuilds and reloads agents.
+  const recommendations = new ModelRecommendations();
+  const refreshRecommendations = () => {
+    const settings = controller.catalog()?.modelUpdates;
+    if (settings !== undefined) recommendations.refreshInBackground(settings);
+  };
+  refreshRecommendations();
+  const refreshCatalog = () => {
+    refreshRecommendations();
+    return controller.refreshIfDue();
+  };
+
   const sessionHooks = new OpenCode2SessionHooks({
     location: context.location.directory,
     workspaceID: context.location.workspaceID,
     catalog: () => controller.catalog(),
     ownsAgent: (agent) => inserted.has(agent),
-    refresh: () => controller.refreshIfDue(),
+    refresh: refreshCatalog,
     session: context.session,
     agent: context.agent,
   });
@@ -315,7 +330,7 @@ export async function setupOpenCode2(
     location: context.location.directory,
     workspaceID: context.location.workspaceID,
     context,
-    refresh: () => controller.refreshIfDue(),
+    refresh: refreshCatalog,
     ownsAgent: (agent) => inserted.has(agent),
     plans,
     planChanged: (sessionID, scopeToken) =>
