@@ -47,6 +47,16 @@ export type CliModelRecommendationsDeps = Pick<
   "fetch" | "files" | "shell" | "publicKeys" | "baseUrl" | "uniqueId"
 >;
 
+/** How a command uses the session, as opposed to what a test replaces. */
+export interface RecommendationsSessionOptions {
+  /**
+   * The refresh's request timeout. Defaults to `ModelRecommendations`' own
+   * (5 s); `weave compose` shortens it because Claude Code's session-start
+   * hook waits for it.
+   */
+  readonly timeoutMs?: number;
+}
+
 /** One cached list's section for a harness, builtin agents only. */
 export interface RecommendedLists {
   readonly issued: string;
@@ -92,6 +102,7 @@ export class RecommendationsSession {
     private readonly fs: FileSystem,
     private readonly deps: CliModelRecommendationsDeps = {},
     now?: () => Date,
+    options: RecommendationsSessionOptions = {},
   ) {
     this.globalDir = globalConfigDir();
     this.now = now ?? (() => new Date());
@@ -102,6 +113,9 @@ export class RecommendationsSession {
       shell: deps.shell ?? new BunModelRecommendationsShell(this.files),
       globalDir: this.globalDir,
       now: this.now,
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
     });
     this.verifier = new ModelRecommendationsVerifier({
       ...(deps.publicKeys === undefined ? {} : { publicKeys: deps.publicKeys }),

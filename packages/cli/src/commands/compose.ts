@@ -12,20 +12,24 @@ import {
   getBootstrapDir,
 } from "@weaveio/weave-adapter-claude-code";
 import {
+  type ConfigLoadDiagnostic,
   describeModelRecommendationsSkipReason,
-  loadConfigDetailed,
 } from "@weaveio/weave-config";
-import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
-import {
-  BunFileSystem,
-  type FileSystem,
-  toConfigFileReader,
-} from "../fs/file-system.js";
+import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
+import {
+  COMPOSE_REFRESH_TIMEOUT_MS,
+  ComposeModelRefresh,
+  describeComposeRefresh,
+} from "../models/compose-refresh.js";
+import {
+  type CliModelRecommendationsDeps,
+  RecommendationsSession,
+} from "../models/recommendations-session.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 const log = logger.child({ module: "cli-compose" });
@@ -43,6 +47,15 @@ export interface ComposeContext {
    * `MemoryFileSystem` so `weave compose` can be driven without touching disk.
    */
   fs?: FileSystem;
+  /** The clock list dates and the refresh throttle are checked against. */
+  now?: () => Date;
+  /**
+   * Network and cache access for model recommendations (Spec 39), as for the
+   * `weave models` commands. The config loader reads the cache through the
+   * same files the refresh writes. Defaults to tryweave.io and the cache
+   * under the global config directory.
+   */
+  modelRecommendations?: CliModelRecommendationsDeps;
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
@@ -172,31 +185,15 @@ export async function runCompose(
   // 1. Load config. The harness ID selects Claude Code's section of any
   // applied model recommendations (Spec 39); without an opt-in it changes
   // nothing.
-  const configResult = await loadConfigDetailed(
-    projectRoot,
-    toConfigFileReader(fs),
-    { harness: "claude-code" },
-  ).mapErr(
-    (errors): CliError => ({
-      type: "ParseFailure",
-      path: projectRoot,
-      errors: errors.flatMap((error) => {
-        if (error.type === "FileReadError")
-          return [`${error.path}: could not read config`];
-        if (error.type === "BuiltinParseError")
-          return error.errors.map((e) => `builtins:${formatError(e)}`);
-        if (error.type === "MergeError")
-          return error.errors.flatMap((e) =>
-            e.type === "ConfigValidationError"
-              ? e.errors.map(
-                  (issue) => `merge:${e.layer}:${formatError(issue)}`,
-                )
-              : [`merge:${e.type}:${e.error.type}`],
-          );
-        return error.errors.map((e) => `${error.path}:${formatError(e)}`);
-      }),
-    }),
+  // The request timeout is shortened because the Claude Code session-start
+  // hook waits for the refresh (step 8); see compose-refresh.ts.
+  const recommendations = new RecommendationsSession(
+    fs,
+    ctx.modelRecommendations,
+    ctx.now,
+    { timeoutMs: COMPOSE_REFRESH_TIMEOUT_MS },
   );
+  const configResult = await recommendations.load(projectRoot, "claude-code");
 
   if (configResult.isErr()) {
     terminal.stderr(formatCliError(configResult.error));
@@ -207,14 +204,10 @@ export async function runCompose(
   log.info({ agents: Object.keys(config.agents).length }, "Config loaded");
   for (const diagnostic of diagnostics) {
     if (diagnostic.type !== "ModelRecommendationsSkipped") continue;
-    // Reported to the user by `weave models status` and `weave validate`
-    // (Spec 39 item 5); composing carries on with the builtin lists.
-    log.warn(
-      {
-        channel: diagnostic.channel,
-        reason: describeModelRecommendationsSkipReason(diagnostic.reason),
-      },
-      "Model recommendations skipped",
+    // Surfaced like the other config problems compose meets: a warning on
+    // stderr. Composing carries on with the builtin lists.
+    terminal.stderr(
+      `Warning: model recommendations (${diagnostic.channel}) skipped: ${describeModelRecommendationsSkipReason(diagnostic.reason)}. They are not applied; agents use their configured and builtin model lists.`,
     );
   }
 
@@ -311,6 +304,7 @@ export async function runCompose(
     "",
     `  ${theme.dim("Agents materialised:")} ${theme.cyan(String(agents.length))}`,
     `  ${theme.dim("Output directory:   ")} ${theme.cyan(outDir)}`,
+    ...modelListsLines(diagnostics, theme),
     "",
     matErrors.length > 0
       ? `  ${theme.boldYellow("Warnings:")} ${matErrors.length} agent(s) skipped — see above.`
@@ -319,5 +313,43 @@ export async function runCompose(
   ];
 
   terminal.stdout(successLines.join("\n"));
+
+  // 8. Check for newer model recommendations (Spec 39, item 6b). Composition
+  // is done and its output written, so a list fetched now applies at the next
+  // compose: the next Claude Code session. Bounded, never fails the compose,
+  // and silent on stdout; see compose-refresh.ts for why it is awaited.
+  const refresh = await new ComposeModelRefresh(recommendations.models).run(
+    config.settings.model_updates,
+  );
+  const note = describeComposeRefresh(refresh);
+  if (note !== undefined) terminal.stderr(note);
+
   return ok(0);
+}
+
+/**
+ * The summary's "Recommendations" line: only for a user who opted in to model
+ * recommendations, saying whether an applied list was merged. Agents' own
+ * `models` still come first either way.
+ */
+function modelListsLines(
+  diagnostics: readonly ConfigLoadDiagnostic[],
+  theme: ThemeColors,
+): string[] {
+  const label = theme.dim("Recommendations:    ");
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.type === "ModelRecommendationsApplied")
+      return [
+        `  ${label} ${theme.cyan(`applied (${diagnostic.channel}, issued ${diagnostic.issued})`)}`,
+      ];
+    if (diagnostic.type === "ModelRecommendationsPending")
+      return [
+        `  ${label} none applied yet ${theme.dim(`(${diagnostic.channel})`)}`,
+      ];
+    if (diagnostic.type === "ModelRecommendationsSkipped")
+      return [
+        `  ${label} skipped ${theme.dim(`(${diagnostic.channel}, see the warning above)`)}`,
+      ];
+  }
+  return [];
 }

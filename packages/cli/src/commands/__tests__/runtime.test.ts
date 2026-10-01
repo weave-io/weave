@@ -7,7 +7,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createInMemoryRuntimeStore, createOwnerId } from "@weaveio/weave-engine";
+import {
+  createInMemoryRuntimeStore,
+  createOwnerId,
+} from "@weaveio/weave-engine";
 import { parseArgs } from "../../args.js";
 import { run } from "../../cli.js";
 import { BufferTerminal } from "../../io/terminal.js";

@@ -72,11 +72,11 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md#model-recommendations). Done as a `models.changed` RPC event, tested against the host double, and a plan-panel toast; the toast has not been seen on a live host yet, so that check moved to 8.4.
 - [x] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
 
-## 6b. Claude Code and Pi — PR:
+## 6b. Claude Code and Pi — PR: #295 (Claude Code)
 
-- [ ] 6b.1 Claude Code: the session-start bootstrap calls `refresh()` in the background (never blocking composition) and composes with `loadConfigDetailed(..., { harness: "claude-code" })`.
-- [ ] 6b.2 Pi: the same at `session_start`, with `harness: "pi"`, in the Pi adapter (its source is outside this repository; open the PR where it lives).
-- [ ] 6b.3 Tests with a stub fetch: opted in, a session start triggers one refresh; `mode off`, none.
+- [x] 6b.1 Claude Code: the session-start bootstrap calls `refresh()` in the background (never blocking composition) and composes with `loadConfigDetailed(..., { harness: "claude-code" })`. Done as: the hook's `weave compose` calls `refresh()` once after the bundle and summary are written, awaited with a bound (1.5 s request, 2 s wait) rather than detached, so the short-lived hook exits normally with compose's exit code; a skipped list is a stderr warning and the summary names the lists used ([Claude Code](../../adapters/claude-code.md#model-recommendations)).
+- [ ] 6b.2 Pi: the same at `session_start`, with `harness: "pi"`, in the Pi adapter (its source is outside this repository; open the PR where it lives). Blocked: only Pi's API reports are under `packages/adapters/pi`; this waits for the location of its source.
+- [x] 6b.3 Tests with a stub fetch: opted in, a session start triggers one refresh; `mode off`, none. Claude Code part: `tests/adapters/claude-code-model-updates.scenario.test.ts` (also a failing or hanging check never fails composition) and `compose-refresh.test.ts`.
 
 ## 7. Website (`pgermishuys/weave-website`) — PR:
 

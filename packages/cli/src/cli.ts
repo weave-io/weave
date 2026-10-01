@@ -40,14 +40,16 @@ export interface CliDeps {
    */
   env?: Record<string, string | undefined>;
   /**
-   * The clock commands check time-bound files against — currently
-   * `weave models check`, for a list's `issued` and `expires`. Defaults to the
+   * The clock commands check time-bound files against — currently the
+   * `weave models` commands, `weave validate` and `weave compose`, for a
+   * list's `issued` and `expires` and the refresh throttle. Defaults to the
    * system clock.
    */
   now?: () => Date;
   /**
    * Network and cache access for model recommendations, used by the
-   * `weave models` cache commands and `weave validate`. Defaults to
+   * `weave models` cache commands, `weave validate` and `weave compose`
+   * (which refreshes at Claude Code session start). Defaults to
    * tryweave.io and the cache under the global config directory.
    */
   modelRecommendations?: CliModelRecommendationsDeps;
@@ -214,7 +216,14 @@ export async function run(
 
     case "compose": {
       const { runCompose } = await import("./commands/compose.js");
-      return runCompose({ terminal, theme, flags, fs });
+      return runCompose({
+        terminal,
+        theme,
+        flags,
+        fs,
+        now,
+        modelRecommendations,
+      });
     }
 
     case "models": {

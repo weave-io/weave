@@ -725,6 +725,14 @@
   - function describeFailedConversion: (error) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
+- `packages/cli/src/models/compose-refresh.ts`
+  - function describeComposeRefresh: (result, ComposeRefreshError>) => string | undefined
+  - class ComposeModelRefresh
+  - interface ModelRecommendationsRefresher
+  - interface RefreshNotStarted
+  - type ComposeRefreshOutcome
+  - type ComposeRefreshError
+  - _...2 more_
 - `packages/cli/src/models/expectations.ts`
   - function describeMismatch: (mismatch) => string
   - function compareExpectations: (report, expectations) => ExpectationMismatch[]
@@ -752,6 +760,7 @@
 - `packages/cli/src/models/recommendations-session.ts`
   - function formatConfigLoadErrors: (errors) => string[]
   - class RecommendationsSession
+  - interface RecommendationsSessionOptions
   - interface RecommendedLists
   - interface UserLayers
   - type CliModelRecommendationsDeps
