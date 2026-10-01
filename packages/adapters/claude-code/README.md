@@ -2,8 +2,8 @@
 
 The Weave adapter that materializes normalized configuration as a Claude Code
 plugin directory. The stable user-facing path is the adapter bundled in
-`@weaveio/weave-cli`; this standalone package is also published on `latest`,
-`next`, and `nightly` for integrations that need the adapter library directly.
+`@weaveio/weave-cli`; this standalone package is also published on `latest`
+and `next` for integrations that need the adapter library directly.
 
 ## Install
 
@@ -11,8 +11,10 @@ For the supported CLI path:
 
 ```bash
 bun add --global @weaveio/weave-cli@latest
-weave compose --adapter claude-code --init
+weave init --scope local --yes --harness claude-code
 ```
+
+`--harness claude-code` runs `weave compose --adapter claude-code --init`.
 
 For an integration that imports the adapter directly:
 
@@ -20,7 +22,7 @@ For an integration that imports the adapter directly:
 bun add @weaveio/weave-adapter-claude-code@latest
 ```
 
-Use `@next` or `@nightly` instead of `@latest` to select another channel.
+Use `@next` instead of `@latest` for pre-releases.
 The package does not provide a standalone `claude` executable.
 
 ## Minimal use

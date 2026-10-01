@@ -14,8 +14,7 @@ bun add --global @weaveio/weave-cli@latest
 weave --version
 ```
 
-Use `@next` or `@nightly` instead of `@latest` to select another release
-channel. For a one-off invocation:
+Use `@next` instead of `@latest` for pre-releases. For a one-off invocation:
 
 ```bash
 bunx @weaveio/weave-cli@latest --help
@@ -26,10 +25,15 @@ bunx @weaveio/weave-cli@latest --help
 From the project that should use Weave:
 
 ```bash
-weave init --scope local --yes
+weave init --scope local --yes --harness opencode2   # or opencode, claude-code
 weave validate --project
 weave prompt list
 ```
+
+`--harness` adds Weave to that harness: the pinned adapter entry in
+`opencode.json(c)` for OpenCode 1 (`plugin`) and OpenCode 2 (`plugins`), or
+the composed plugin directories for Claude Code. Without it, `weave init`
+writes only `.weave/config.weave`.
 
 To generate Claude Code files:
 
