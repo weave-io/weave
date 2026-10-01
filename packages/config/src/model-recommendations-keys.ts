@@ -7,8 +7,9 @@
  * Rotation: ship the new key here in a release first, and only start signing
  * with it once that release is out, so clients already know the key when the
  * first list signed with it arrives. Remove a retired key in a later release.
- * The private half lives only in the `model-recommendations` GitHub
- * Environment of the website repository; it never enters this repository.
+ * The private half stays offline on a maintainer's machine: lists are signed
+ * there with `scripts/models/sign.ts` and the website only verifies them. It
+ * never enters this repository, the website repository or CI.
  */
 export const MODEL_RECOMMENDATIONS_PUBLIC_KEYS: readonly string[] = [
   // Production key, added 1 Oct 2026 (Spec 39).

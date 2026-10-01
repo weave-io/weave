@@ -11,9 +11,9 @@
  * the builtin baseline), and the envelope must fit the 64 KiB a client
  * accepts, or nothing is written: run
  * `weave models check <list> --expect <expect-file>` first for the resolution
- * check. The website's deploy workflow runs this with the key from its
- * `model-recommendations` environment; the private key never enters this
- * repository.
+ * check. A maintainer runs this offline and commits the envelope to the
+ * website repository, whose deploy workflow only verifies it; the private
+ * key never leaves the maintainer's machine.
  */
 
 import {
