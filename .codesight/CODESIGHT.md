@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 246 lib files | 31 env vars | 9 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~22,300 tokens. Without it, AI exploration would cost ~81,200 tokens. **Saves ~58,900 tokens per conversation.**
-> **Last scanned:** 2026-10-01 16:39 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 248 lib files | 30 env vars | 11 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~22,500 tokens. Without it, AI exploration would cost ~82,300 tokens. **Saves ~59,800 tokens per conversation.**
+> **Last scanned:** 2026-10-01 17:02 — re-run after significant changes
 
 ---
 
@@ -208,10 +208,23 @@
   - interface OpenCode2HealthIssue
   - interface OpenCode2HealthReport
   - interface OpenCode2RegistrationReadiness
+  - type OpenCode2ModelUpdatesReport
 - `packages/adapters/opencode2/src/v2/model-resolution.ts`
   - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
   - interface OpenCode2ModelResolution
   - type OpenCode2ModelResolutionError
+- `packages/adapters/opencode2/src/v2/model-update-notice.ts`
+  - function formatIssuedDate: (issued) => string
+  - function modelUpdateNotice: (input) => string
+  - interface ModelUpdateNoticeInput
+- `packages/adapters/opencode2/src/v2/model-updates.ts`
+  - function recommendedModelChanges: (previous, next) => OpenCode2ModelChangeNotice | undefined
+  - class OpenCode2ModelUpdatesTrigger
+  - interface OpenCode2ModelUpdates
+  - interface OpenCode2ModelRecommendationsRefresher
+  - interface OpenCode2ModelChange
+  - interface OpenCode2ModelChangeNotice
+  - _...2 more_
 - `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
 - `packages/adapters/opencode2/src/v2/plan-catalog.ts`
   - function listPlanNames: (location) => ResultAsync<readonly string[], PlanCatalogError>
@@ -1206,10 +1219,9 @@
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
-- `ONLY` (has default) — eval-bundles/slots/weft/sanity2.ts
-- `OPENROUTER_API_KEY` (has default) — eval-bundles/slots/weft/sanity.ts
+- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1242,12 +1254,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1269,17 +1283,17 @@
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **15** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
-- `packages/cli/src/evals/case-loader.ts` — imported by **12** files
 - `packages/cli/src/cli.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **11** files
 - `packages/cli/src/evals/eval-track.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
@@ -1292,12 +1306,13 @@
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/evals/langchain-agent-evals.ts` ← `eval-bundles/slots/weft/sanity.ts`, `eval-bundles/slots/weft/sanity2.ts`, `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts`, `packages/cli/src/evals/__tests__/langchain-agent-evals.test.ts` +10 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/e2e-fixture-flow.test.ts` +10 more
 
 ---
 
 # Events & Queues
 
+- `models.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 - `plan.changed` [event] — `packages/adapters/opencode2/src/v2/plugin.ts`
 - `agent` [event] — `tests/support/opencode2.ts`
 - `command` [event] — `tests/support/opencode2.ts`
@@ -1313,7 +1328,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 244 test files found
+> 250 test files found
 
 ---
 

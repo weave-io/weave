@@ -30,6 +30,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenCode2Context } from "../../packages/adapters/opencode2/src/v2/host-types.js";
+import type { OpenCode2PluginDependencies } from "../../packages/adapters/opencode2/src/v2/plugin.js";
 
 /** A model as the host's catalog would report it. */
 export interface HostModel {
@@ -204,6 +205,7 @@ export class OpenCode2Host {
   >();
   readonly hooks = new Map<string, (input: never) => Promise<void>>();
   readonly sessionCalls: SessionCall[] = [];
+  /** Every RPC event the plugin emitted, as `{ name, ...data }`. */
   readonly planEvents: Array<Record<string, unknown>> = [];
   readonly disposed: string[] = [];
   readonly reloads: string[] = [];
@@ -215,6 +217,13 @@ export class OpenCode2Host {
     (input: never, context: never) => Promise<unknown>
   > = {};
   private replay: (() => void) | undefined;
+  /** Agent transforms the plugin registered; a reload runs them again. */
+  private readonly agentTransforms: Array<(editor: unknown) => void> = [];
+  /**
+   * Records a transform created, which a reload drops before replaying. A
+   * record a scenario replaced since (another plugin's) is kept.
+   */
+  private readonly transformed = new Map<string, HostAgent>();
   private readonly storage = new Map<string, unknown>();
   private models: readonly HostModel[];
   private skills: readonly HostSkill[];
@@ -407,7 +416,8 @@ export class OpenCode2Host {
         this.defaultAgent = id;
       },
       update: (id: string, update: (agent: HostAgent) => void) => {
-        const agent: HostAgent = this.agents.get(id) ?? {
+        const existing = this.agents.get(id);
+        const agent: HostAgent = existing ?? {
           id,
           name: id,
           mode: "primary",
@@ -417,6 +427,7 @@ export class OpenCode2Host {
         };
         update(agent);
         this.agents.set(id, agent);
+        if (existing === undefined) this.transformed.set(id, agent);
       },
     });
   }
@@ -461,6 +472,7 @@ export class OpenCode2Host {
       },
       agent: {
         transform: async (transform: (editor: unknown) => void) => {
+          this.agentTransforms.push(transform);
           const apply = () => {
             this.applyAgentTransform(transform);
             this.applyConfigAgentTransform();
@@ -482,6 +494,19 @@ export class OpenCode2Host {
         },
         reload: async () => {
           this.reloads.push("agent");
+          // The real host rebuilds its registry from its own agents by
+          // running every transform again, which is how a reloaded catalog
+          // reaches the agents.
+          const apply = () => {
+            for (const [id, record] of this.transformed)
+              if (this.agents.get(id) === record) this.agents.delete(id);
+            this.transformed.clear();
+            for (const transform of this.agentTransforms)
+              this.applyAgentTransform(transform);
+            this.applyConfigAgentTransform();
+          };
+          if (this.options.lazyAgents === true) this.replay = apply;
+          else apply();
         },
       },
       command: {
@@ -624,6 +649,11 @@ export async function withWeaveOnOpenCode2<T>(
     readonly config?: string;
     readonly files?: Readonly<Record<string, string>>;
     readonly host?: HostOptions;
+    /**
+     * What `setupOpenCode2` is given besides the host: for example a stub
+     * `fetch` and throwaway key for model recommendations.
+     */
+    readonly dependencies?: OpenCode2PluginDependencies;
   },
   body: (host: OpenCode2Host) => Promise<T>,
 ): Promise<T> {
@@ -634,7 +664,7 @@ export async function withWeaveOnOpenCode2<T>(
   if (input.config !== undefined) files[".weave/config.weave"] = input.config;
   return withOpenCode2Project(files, async (root) => {
     const host = new OpenCode2Host(root, input.host);
-    const cleanup = await setupOpenCode2(host.context);
+    const cleanup = await setupOpenCode2(host.context, input.dependencies);
     try {
       return await body(host);
     } finally {

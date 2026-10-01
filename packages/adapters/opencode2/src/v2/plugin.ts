@@ -1,3 +1,7 @@
+import {
+  ModelRecommendations,
+  type ModelRecommendationsDeps,
+} from "@weaveio/weave-config";
 import { logger } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
 import { WeaveRpc } from "../rpc.js";
@@ -16,6 +20,11 @@ import { OpenCode2CatalogController } from "./config-refresh.js";
 import { probeCatalogSources } from "./config-source.js";
 import { fromOpenCode2Promise } from "./errors.js";
 import type { OpenCode2Context } from "./host-types.js";
+import {
+  type OpenCode2ModelChangeNotice,
+  OpenCode2ModelUpdatesTrigger,
+  recommendedModelChanges,
+} from "./model-updates.js";
 import { parseOpenCode2Options } from "./options.js";
 import { OpenCode2PlanSessionState } from "./plan-session-state.js";
 import { createOpenCode2RpcHandlers } from "./rpc-handlers.js";
@@ -78,6 +87,12 @@ function heldAgentIds(
 
 export interface OpenCode2PluginDependencies {
   readonly buildCatalog?: typeof buildOpenCode2Catalog;
+  /**
+   * How model recommendations are fetched and verified (Spec 39): `fetch`,
+   * clock, cache files and public keys. Defaults to production behaviour.
+   * `publicKeys` also verifies the applied list the catalog loads.
+   */
+  readonly modelRecommendations?: ModelRecommendationsDeps;
 }
 
 async function disposeRegistrations(
@@ -99,6 +114,7 @@ export async function setupOpenCode2(
   }
 
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
+  const recommendationKeys = dependencies.modelRecommendations?.publicKeys;
   const build = () =>
     fromOpenCode2Promise(
       () =>
@@ -116,6 +132,9 @@ export async function setupOpenCode2(
         models: models.data,
         skills: skills.data,
         heldAgents: heldAgentIds(agents.data),
+        ...(recommendationKeys === undefined
+          ? {}
+          : { modelRecommendationKeys: recommendationKeys }),
       }),
     );
   // A catalog is stale when its sources changed or when the agents the host
@@ -131,6 +150,16 @@ export async function setupOpenCode2(
         heldAgentIds(agents.data).join("\n") !== current.heldAgents.join("\n"),
     );
 
+  // Model recommendations are fetched in the background, never inside a
+  // catalog build: after the first publish and on admitted work. A promoted
+  // `applied.json` is a probed source, so the next due refresh rebuilds and
+  // reloads the agents (Spec 39).
+  const modelUpdates = new OpenCode2ModelUpdatesTrigger(
+    new ModelRecommendations(dependencies.modelRecommendations),
+    () => controller.catalog()?.modelUpdates.settings,
+  );
+  let announceModelChange = (_notice: OpenCode2ModelChangeNotice): void =>
+    undefined;
   const controller = new OpenCode2CatalogController(
     options.value.refreshIntervalMs,
     {
@@ -149,8 +178,25 @@ export async function setupOpenCode2(
         await context.agent.list();
         await context.command.reload();
       },
+      published: (previous, next) => {
+        if (previous === undefined) {
+          modelUpdates.trigger();
+          return;
+        }
+        const notice = recommendedModelChanges(previous, next);
+        if (notice !== undefined) announceModelChange(notice);
+      },
     },
   );
+  // Admitted work (a prompt, a plan start) checks for recommendations too;
+  // the throttle makes most of these a no-op. The check starts only once this
+  // turn's catalog refresh has settled, so it can neither delay the turn nor
+  // race its source probe: a list it fetches lands on a later refresh.
+  const admitted = () => {
+    const refreshed = controller.refreshIfDue();
+    void refreshed.then(() => modelUpdates.trigger());
+    return refreshed;
+  };
   const initial = await controller.initialize();
   if (initial.isErr())
     log.warn({ code: initial.error.code }, initial.error.message);
@@ -194,6 +240,7 @@ export async function setupOpenCode2(
   );
   if (agentRegistration.isErr()) {
     controller.dispose();
+    modelUpdates.dispose();
     inventoryAbort.abort();
     await inventoryObservation;
     log.warn(
@@ -213,6 +260,7 @@ export async function setupOpenCode2(
   );
   if (agentsReady.isErr()) {
     controller.dispose();
+    modelUpdates.dispose();
     inventoryAbort.abort();
     await inventoryObservation;
     await disposeRegistrations(registrations);
@@ -225,7 +273,7 @@ export async function setupOpenCode2(
     workspaceID: context.location.workspaceID,
     catalog: () => controller.catalog(),
     ownsAgent: (agent) => inserted.has(agent),
-    refresh: () => controller.refreshIfDue(),
+    refresh: admitted,
     session: context.session,
     agent: context.agent,
   });
@@ -300,6 +348,7 @@ export async function setupOpenCode2(
   if (rpcRegistration.isErr()) {
     await disposeRegistrations(registrations);
     controller.dispose();
+    modelUpdates.dispose();
     inventoryAbort.abort();
     await inventoryObservation;
     log.warn(
@@ -310,12 +359,27 @@ export async function setupOpenCode2(
   }
   registrations.push(rpcRegistration.value);
   readiness.rpc = true;
+  const modelEvents = rpcRegistration.value.events;
+  announceModelChange = (notice) => {
+    void fromOpenCode2Promise(
+      () =>
+        modelEvents.emit("models.changed", {
+          issued: notice.issued,
+          agents: [...notice.agents],
+        }),
+      "host_unavailable",
+      "Weave could not announce a model recommendations change",
+    ).then((emitted) => {
+      if (emitted.isErr())
+        log.warn({ code: emitted.error.code }, emitted.error.message);
+    });
+  };
 
   const commands: OpenCode2Commands = new OpenCode2Commands({
     location: context.location.directory,
     workspaceID: context.location.workspaceID,
     context,
-    refresh: () => controller.refreshIfDue(),
+    refresh: admitted,
     ownsAgent: (agent) => inserted.has(agent),
     plans,
     planChanged: (sessionID, scopeToken) =>
@@ -376,6 +440,7 @@ export async function setupOpenCode2(
 
   return async () => {
     controller.dispose();
+    modelUpdates.dispose();
     inventoryAbort.abort();
     await inventoryObservation;
     if (commandRegistration !== undefined) await commandRegistration.dispose();

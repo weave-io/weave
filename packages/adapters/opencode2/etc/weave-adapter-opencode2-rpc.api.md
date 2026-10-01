@@ -23,6 +23,34 @@ export const WeaveRpc: {
                     scopeToken: z.ZodString;
                 }, z.core.$strict>;
                 catalogRevision: z.ZodOptional<z.ZodString>;
+                modelUpdates: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
+                    state: z.ZodEnum<{
+                        off: "off";
+                        pending: "pending";
+                        unavailable: "unavailable";
+                    }>;
+                    mode: z.ZodEnum<{
+                        auto: "auto";
+                        off: "off";
+                        notify: "notify";
+                    }>;
+                    channel: z.ZodEnum<{
+                        stable: "stable";
+                        next: "next";
+                    }>;
+                }, z.core.$strict>, z.ZodObject<{
+                    state: z.ZodLiteral<"applied">;
+                    issued: z.ZodString;
+                    mode: z.ZodEnum<{
+                        auto: "auto";
+                        off: "off";
+                        notify: "notify";
+                    }>;
+                    channel: z.ZodEnum<{
+                        stable: "stable";
+                        next: "next";
+                    }>;
+                }, z.core.$strict>], "state">>;
                 refresh: z.ZodEnum<{
                     failed: "failed";
                     initializing: "initializing";
@@ -186,6 +214,18 @@ export const WeaveRpc: {
             readonly schema: z.ZodObject<{
                 sessionID: z.ZodString;
                 scopeToken: z.ZodString;
+            }, z.core.$strict>;
+        };
+        readonly "models.changed": {
+            readonly schema: z.ZodObject<{
+                issued: z.ZodString;
+                agents: z.ZodArray<z.ZodObject<{
+                    agent: z.ZodString;
+                    displayName: z.ZodOptional<z.ZodString>;
+                    providerID: z.ZodString;
+                    model: z.ZodString;
+                    variant: z.ZodOptional<z.ZodString>;
+                }, z.core.$strict>>;
             }, z.core.$strict>;
         };
     };

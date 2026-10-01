@@ -197,10 +197,23 @@
   - interface OpenCode2HealthIssue
   - interface OpenCode2HealthReport
   - interface OpenCode2RegistrationReadiness
+  - type OpenCode2ModelUpdatesReport
 - `packages/adapters/opencode2/src/v2/model-resolution.ts`
   - function resolveOpenCode2Model: (entries, descriptorVariant, available) => Result<OpenCode2ModelResolution, OpenCode2ModelResolutionError[]>
   - interface OpenCode2ModelResolution
   - type OpenCode2ModelResolutionError
+- `packages/adapters/opencode2/src/v2/model-update-notice.ts`
+  - function formatIssuedDate: (issued) => string
+  - function modelUpdateNotice: (input) => string
+  - interface ModelUpdateNoticeInput
+- `packages/adapters/opencode2/src/v2/model-updates.ts`
+  - function recommendedModelChanges: (previous, next) => OpenCode2ModelChangeNotice | undefined
+  - class OpenCode2ModelUpdatesTrigger
+  - interface OpenCode2ModelUpdates
+  - interface OpenCode2ModelRecommendationsRefresher
+  - interface OpenCode2ModelChange
+  - interface OpenCode2ModelChangeNotice
+  - _...2 more_
 - `packages/adapters/opencode2/src/v2/options.ts` — function parseOpenCode2Options: (value) => Result<OpenCode2Options, OpenCode2Error>, interface OpenCode2Options
 - `packages/adapters/opencode2/src/v2/plan-catalog.ts`
   - function listPlanNames: (location) => ResultAsync<readonly string[], PlanCatalogError>

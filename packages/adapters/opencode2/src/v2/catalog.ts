@@ -1,4 +1,10 @@
-import { loadConfigDetailed } from "@weaveio/weave-config";
+import {
+  type ConfigLoadDiagnostic,
+  DEFAULT_MODEL_UPDATES_CHANNEL,
+  loadConfigDetailed,
+  resolveModelUpdates,
+} from "@weaveio/weave-config";
+import type { ModelUpdatesSettings } from "@weaveio/weave-core";
 import {
   type HarnessMaterializationReport,
   type MaterializationError,
@@ -30,6 +36,7 @@ import {
   type OpenCode2ModelResolutionError,
   resolveOpenCode2Model,
 } from "./model-resolution.js";
+import type { OpenCode2ModelUpdates } from "./model-updates.js";
 import {
   type OpenCode2AgentProjection,
   translateOpenCode2Agent,
@@ -76,6 +83,18 @@ export interface OpenCode2CatalogCandidate {
   readonly sources: readonly CatalogSourceEntry[];
   /** The `heldAgents` this candidate was built against, sorted. */
   readonly heldAgents: readonly string[];
+  /**
+   * The model recommendations layer as this candidate loaded it (Spec 39):
+   * the merged settings the background refresh uses, and what `status`
+   * reports.
+   */
+  readonly modelUpdates: OpenCode2ModelUpdates;
+  /**
+   * The revision computed without the recommendations file: equal on two
+   * candidates when only `applied.json` differs between them, which is how a
+   * reload's model change is attributed to a newly applied list.
+   */
+  readonly baseRevision: string;
 }
 
 export interface BuildOpenCode2CatalogInput {
@@ -91,6 +110,11 @@ export interface BuildOpenCode2CatalogInput {
    */
   readonly heldAgents?: readonly string[];
   readonly sourceIo?: CatalogSourceIo;
+  /**
+   * Ed25519 public keys that may sign model recommendations. Defaults to the
+   * production keys; tests and local proofs pass a throwaway key.
+   */
+  readonly modelRecommendationKeys?: readonly string[];
 }
 
 function materializationIssue(
@@ -121,6 +145,35 @@ function hostReport(
       reason: "name_taken" as const,
       message: "the OpenCode host already holds an agent with this id",
     })),
+  };
+}
+
+/**
+ * The recommendations layer as the loader saw it. `unavailable` covers both a
+ * skipped `applied.json` and one whose existence could not be checked.
+ */
+function modelUpdatesOf(
+  settings: ModelUpdatesSettings | undefined,
+  recommendations: ConfigLoadDiagnostic | undefined,
+  unavailable: boolean,
+): OpenCode2ModelUpdates {
+  const channel = settings?.channel ?? DEFAULT_MODEL_UPDATES_CHANNEL;
+  const base = {
+    ...(settings === undefined ? {} : { settings }),
+    mode: settings?.mode ?? "off",
+    channel,
+    agents: [],
+  } as const;
+  if (resolveModelUpdates(settings) === undefined)
+    return { ...base, state: "off" };
+  if (unavailable) return { ...base, state: "unavailable" };
+  if (recommendations?.type !== "ModelRecommendationsApplied")
+    return { ...base, state: "pending" };
+  return {
+    ...base,
+    state: "applied",
+    issued: recommendations.issued,
+    agents: recommendations.agents,
   };
 }
 
@@ -160,6 +213,9 @@ function buildCandidate(
   // source manifest records it and a promotion triggers a rebuild.
   return loadConfigDetailed(input.location, sources.configReader, {
     harness: "opencode2",
+    ...(input.modelRecommendationKeys === undefined
+      ? {}
+      : { publicKeys: input.modelRecommendationKeys }),
   })
     .mapErr((errors): OpenCode2Error => {
       // A file that parsed but failed the DSL or its validation is a user
@@ -191,7 +247,8 @@ function buildCandidate(
       const recommendations = diagnostics.find(
         (diagnostic) =>
           diagnostic.type === "ModelRecommendationsSkipped" ||
-          diagnostic.type === "ModelRecommendationsPending",
+          diagnostic.type === "ModelRecommendationsPending" ||
+          diagnostic.type === "ModelRecommendationsApplied",
       );
       const ioError = sources.ioError();
       const recommendationsUninspectable =
@@ -203,6 +260,11 @@ function buildCandidate(
       const recommendationsUnavailable =
         recommendations?.type === "ModelRecommendationsSkipped" ||
         recommendationsUninspectable;
+      const modelUpdates = modelUpdatesOf(
+        config.settings.model_updates,
+        recommendations,
+        recommendationsUnavailable,
+      );
       if (ioError !== undefined && !recommendationsUninspectable) {
         return err<OpenCode2CatalogCandidate, OpenCode2Error>({
           code: "config_unavailable",
@@ -328,13 +390,22 @@ function buildCandidate(
             sortedHeld,
           );
           if (revision.isErr()) return err(revision.error);
+          const baseRevision = candidateRevision(
+            manifest.filter((source) => source.path !== recommendations?.path),
+            input.models,
+            input.skills,
+            sortedHeld,
+          );
+          if (baseRevision.isErr()) return err(baseRevision.error);
           return ok({
             revision: revision.value,
+            baseRevision: baseRevision.value,
             agents: projections,
             runtime,
             issues,
             sources: manifest,
             heldAgents: sortedHeld,
+            modelUpdates,
           });
         });
     });

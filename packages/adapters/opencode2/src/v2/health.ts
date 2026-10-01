@@ -1,5 +1,6 @@
 import type { OpenCode2CatalogCandidate } from "./catalog.js";
 import type { OpenCode2RefreshStatus } from "./config-refresh.js";
+import type { OpenCode2ModelUpdates } from "./model-updates.js";
 
 export interface OpenCode2HealthIssue {
   readonly code:
@@ -14,8 +15,34 @@ export interface OpenCode2HealthIssue {
   readonly count?: number;
 }
 
+/**
+ * The recommendations layer, as `status` reports it (Spec 39). `issued` is
+ * there exactly when a list is applied.
+ */
+export type OpenCode2ModelUpdatesReport = Pick<
+  OpenCode2ModelUpdates,
+  "mode" | "channel"
+> &
+  (
+    | { readonly state: "off" | "pending" | "unavailable" }
+    | { readonly state: "applied"; readonly issued: string }
+  );
+
+function modelUpdatesReport(
+  updates: OpenCode2ModelUpdates,
+): OpenCode2ModelUpdatesReport {
+  const base = { mode: updates.mode, channel: updates.channel };
+  if (updates.state !== "applied") return { ...base, state: updates.state };
+  // An applied layer always carries its list's `issued`; without one there
+  // is nothing applied to name.
+  if (updates.issued === undefined) return { ...base, state: "pending" };
+  return { ...base, state: "applied", issued: updates.issued };
+}
+
 export interface OpenCode2HealthReport {
   readonly catalogRevision?: string;
+  /** Absent until a catalog is published. */
+  readonly modelUpdates?: OpenCode2ModelUpdatesReport;
   readonly refresh: OpenCode2RefreshStatus["state"];
   readonly agentCount: number;
   readonly issues: readonly OpenCode2HealthIssue[];
@@ -77,8 +104,12 @@ export function buildOpenCode2Health(
     issues.splice(MAX_HEALTH_ISSUES);
   }
   const ready = catalog !== undefined;
+  const updates = catalog?.modelUpdates;
   return {
     catalogRevision: catalog?.revision,
+    ...(updates === undefined
+      ? {}
+      : { modelUpdates: modelUpdatesReport(updates) }),
     refresh: refresh.state,
     agentCount: ownedAgents.size,
     issues,

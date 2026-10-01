@@ -268,10 +268,70 @@ whose existence could not be checked, is skipped: the catalog still publishes,
 every builtin runs on its builtin list, and `status` carries one
 `model_updates_unavailable` issue until a usable file is applied. The cache is
 filled by `ModelRecommendations` in `@weaveio/weave-config`
-([Config Loading](../config-loading.md#fetching-and-the-cache)); calling its
-`refresh()` from the plugin, the `modelUpdates` status object and the TUI
-notice are [Spec 39](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
-item 6.
+([Config Loading](../config-loading.md#fetching-and-the-cache)).
+
+**When the plugin checks for a new list.** The plugin calls
+`ModelRecommendations.refresh()` in the background
+([`model-updates.ts`](../../packages/adapters/opencode2/src/v2/model-updates.ts)):
+
+- once after the first catalog publish (normally during setup, or the first
+  later refresh that publishes when setup's config was broken);
+- on admitted work: each prompt the `prompt` hook sees and each plan start
+  (`/weave:start` or the `start` RPC), once that turn's `refreshIfDue()` has
+  settled, so the check never races the turn's own source probe.
+
+The settings are the published catalog's merged `settings.model_updates`, so
+an edit that turns updates off takes effect with the next published catalog.
+With no block or `mode off` the plugin never calls `refresh()`. A refresh is
+never awaited by the prompt or command that started it, never runs inside a
+catalog build (each attempt's exact bytes stay deterministic), and at most one
+runs per host at a time. `ModelRecommendations`' own throttle (24 hours after a
+successful check, 1 hour after a failure) turns nearly every call into a read
+of `state.json`, and its `lock/` directory keeps several hosts and the CLI
+from writing at once. A failure is logged and changes nothing.
+
+There is no timer. A promoted `applied.json` is a changed source, so the next
+due refresh (on the next admitted work after `refreshIntervalMs`) rebuilds the
+catalog and reloads the agents without a restart. A change therefore lands on
+a turn after the one whose check fetched it. A live session keeps the model it
+has; new sessions, and later turns whose model Weave selects, use the new
+one ([Which model a turn runs on](#which-model-a-turn-runs-on)).
+
+**What `status` reports.** Once a catalog is published, the `status` RPC
+carries a bounded `modelUpdates` object:
+
+| Field | Values |
+| --- | --- |
+| `mode` | `off`, `notify` or `auto` (the merged setting; `off` when there is no block) |
+| `channel` | `stable` or `next` |
+| `state` | `off`; `pending` (opted in, nothing applied yet); `applied`; `unavailable` (`applied.json` is there but unusable, or could not be inspected) |
+| `issued` | the applied list's `issued`, only when `state` is `applied` |
+
+`unavailable` always comes with the `model_updates_unavailable` issue;
+`pending` never does. The object says nothing about a list waiting in `notify`
+mode or about the last check's error: `weave models status` reports those.
+
+**The notice.** When a reload moves agents to new models because a newer list
+was applied, the server plugin emits one `models.changed` RPC event:
+`{ issued, agents: [{ agent, displayName?, providerID, model, variant? }] }`,
+with at most 64 agents. A change counts only when nothing but `applied.json`
+differs between the two catalogs (each candidate carries a `baseRevision`
+computed without it), the new catalog applied a different `issued`, the list
+sets that agent's `models`, and the agent's resolved model or variant
+differs. A reload that also carries a user's edit or a host inventory change,
+a skipped list, or the first publish at setup emits nothing, so a model the
+user chose is never credited to the list. The `./tui` plan panel listens for
+it and, for a session in the same Location, shows an info toast such as
+"Loom now runs on claude-opus-5.6 (model recommendations of 1 Oct 2026)"
+([`model-update-notice.ts`](../../packages/adapters/opencode2/src/v2/model-update-notice.ts)).
+Headless clients can subscribe to the same event.
+
+Verified so far: the event, its payload and the reload, against the host
+double in
+[`opencode2-model-updates.scenario.test.ts`](../../tests/adapters/opencode2-model-updates.scenario.test.ts).
+The toast uses the same `rpc.events.on` and `ui.toast.show` APIs the plan
+panel already uses, but it has not been seen on a live host yet; Spec 39's
+live proof (item 8) records that check.
 
 The adapter does not redirect the shared process logger to a Location-specific
 file. Operators control the shared pino destination and level.
