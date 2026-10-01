@@ -1,6 +1,15 @@
 # @weaveio/weave-cli
 
-## Unreleased
+## 0.2.0
+
+- `weave init` produces a setup that runs: `--harness opencode` adds the
+  pinned adapter to OpenCode 1's `plugin` array (it used to write a comment),
+  `--harness claude-code` composes the Claude Code plugin, detection finds
+  harness binaries again, and the starter categories no longer pin stale
+  models or a `temperature` some models reject.
+- `weave init` pins the OpenCode 1 and OpenCode 2 adapter versions released
+  with this CLI (`0.2.0`).
+- Logs go to stderr at `warn` unless `LOG_LEVEL` is set.
 
 ### Added
 

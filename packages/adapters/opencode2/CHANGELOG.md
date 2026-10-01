@@ -1,6 +1,12 @@
 # @weaveio/weave-adapter-opencode2
 
-## Unreleased
+## 0.2.0
+
+First stable release for OpenCode 2. Add
+`"plugins": ["@weaveio/weave-adapter-opencode2@0.2.0"]` to `opencode.jsonc`;
+OpenCode 2 installs it on start, and the builtin agents load with no `.weave`
+config. `npm latest` was `0.1.0`, which registers no agents on OpenCode
+2.0.x. Verified on `@opencode/cli` 2.0.16 and 2.0.21.
 
 - A partial or partly broken `.weave` config no longer registers zero agents.
   An agent whose `prompt_file` cannot be read is left out on its own and

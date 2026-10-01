@@ -12,15 +12,15 @@ Add the package name to the `plugin` array in `opencode.json` or
 ```json
 {
   "plugin": [
-    "@weaveio/weave-adapter-opencode@<exact-version>"
+    "@weaveio/weave-adapter-opencode@0.2.0"
   ]
 }
 ```
 
 The package name is the canonical OpenCode plugin spec. OpenCode resolves the
 package's `server` export to the plugin entry point. Use an exact version for
-reproducible installs. Replace it with `latest`, `next`, or `nightly` when you
-want npm to resolve a channel tag.
+reproducible installs. Replace it with `latest` or `next` when you want npm
+to resolve a channel tag.
 
 There is no separate `npm install` step for the OpenCode plugin. OpenCode
 fetches the package at startup. Restart OpenCode after changing the plugin
@@ -28,11 +28,15 @@ version.
 
 ## Minimal use
 
-Create and validate a Weave project, then start OpenCode:
+The plugin entry is all OpenCode needs: with no `.weave` config, the builtin
+agents (Loom, Tapestry, Shuttle, Pattern, Thread, Spindle, Weft, Warp) load
+with their defaults. To customize them, scaffold and validate a project
+config with the CLI (`weave init --harness opencode` also writes the plugin
+entry):
 
 ```bash
 bun add --global @weaveio/weave-cli@latest
-weave init --scope local --yes
+weave init --scope local --yes --harness opencode
 weave validate --project
 opencode
 ```
