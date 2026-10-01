@@ -38,24 +38,42 @@ type HarnessProbe = {
   id: SupportedHarnessId;
   configPaths: (probes: DetectionProbes) => string[];
   binary: string;
+  /**
+   * Detect the harness only by its binary. OpenCode 1 and OpenCode 2 read the
+   * same `opencode.json(c)` files, so a config file cannot tell them apart.
+   */
+  requiresBinary?: boolean;
+  /** Whether the binary's `--version` output belongs to this harness. */
+  acceptsVersion?: (version: string | undefined) => boolean;
 };
+
+function openCodeConfigPaths(probes: DetectionProbes): string[] {
+  const root = probes.xdgConfigHome() ?? `${probes.home()}/.config`;
+  return [`${root}/opencode/opencode.jsonc`, `${root}/opencode/opencode.json`];
+}
+
+function majorVersion(version: string | undefined): number | undefined {
+  const match = version?.match(/(\d+)\.\d+\.\d+/);
+  if (match?.[1] === undefined) return undefined;
+  return Number(match[1]);
+}
 
 const HARNESS_PROBES: HarnessProbe[] = [
   {
+    // `@opencode/cli` (OpenCode 2) also links an `opencode` binary; only an
+    // `opencode` that reports 1.x is OpenCode 1. An unreadable version is not
+    // enough to install the OpenCode 1 adapter.
     id: "opencode",
-    configPaths: () => ["~/.config/opencode/config.json"],
+    configPaths: openCodeConfigPaths,
     binary: "opencode",
+    requiresBinary: true,
+    acceptsVersion: (version) => majorVersion(version) === 1,
   },
   {
     id: "opencode2",
-    configPaths: (probes) => {
-      const root = probes.xdgConfigHome() ?? `${probes.home()}/.config`;
-      return [
-        `${root}/opencode/opencode.jsonc`,
-        `${root}/opencode/opencode.json`,
-      ];
-    },
+    configPaths: openCodeConfigPaths,
     binary: "opencode2",
+    requiresBinary: true,
   },
   {
     id: "claude-code",
@@ -108,16 +126,22 @@ async function detectAll(probes: DetectionProbes): Promise<DetectedHarness[]> {
     const binaryPath = await probes.binaryOnPath(harness.binary);
 
     if (binaryPath.isErr()) throw probeFailed(harness.id, binaryPath.error);
-    if (!configExists && binaryPath.value === undefined) continue;
+    const found = binaryPath.value !== undefined;
+    if (!found && (harness.requiresBinary || !configExists)) continue;
 
+    const version = found
+      ? await probes.readVersion(harness.binary)
+      : undefined;
+    const versionText = version?.isOk() ? version.value : undefined;
+    if (harness.acceptsVersion && !harness.acceptsVersion(versionText))
+      continue;
     const readable = await probes.readable(configPath);
-    const version = await probes.readVersion(harness.binary);
 
     detected.push({
       id: harness.id,
       configPath,
       binaryPath: binaryPath.value,
-      version: version.isOk() ? version.value : undefined,
+      version: versionText,
       readable: readable.isOk() ? readable.value : false,
     });
   }

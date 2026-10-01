@@ -15,7 +15,7 @@ import {
   describeFileSystemError,
   type FileSystem,
 } from "../fs/file-system.js";
-import { installerRegistry } from "../installers/index.js";
+import { installerRegistry, isInstallable } from "../installers/index.js";
 import type { TerminalIO } from "../io/terminal.js";
 import {
   buildMigrationPlan,
@@ -77,7 +77,9 @@ export async function runInit(
   // Explicit migrate submode: weave init migrate [--scope ...] [--yes]
   if (ctx.flags.initSubmode === "migrate") {
     return runMigrateMode({ ...ctx, fs, prompt }, (plan, harnesses) =>
-      installHarnesses({ ctx, fs, plan, harnesses }),
+      installHarnesses({ ctx, fs, plan, harnesses }).then(
+        (outcome) => outcome.exitCode,
+      ),
     );
   }
 
@@ -108,14 +110,21 @@ export async function runInit(
     return ok(1);
   }
 
-  const installExit = await installHarnesses({
+  const install = await installHarnesses({
     ctx,
     fs,
     plan: planResult.plan,
     harnesses,
   });
-  ctx.terminal.stdout(renderInitSummary(ctx.theme, scaffold.value, harnesses));
-  return ok(installExit);
+  ctx.terminal.stdout(
+    renderInitSummary(
+      ctx.theme,
+      scaffold.value,
+      harnesses,
+      install.installed > 0,
+    ),
+  );
+  return ok(install.exitCode);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,11 +327,13 @@ async function createPlan(input: {
   });
   if (installDir.isErr()) return promptFailure(installDir.error.message);
 
-  const harnessOptions = harnesses.map((harness) => ({
-    value: harness.id,
-    label: harness.id,
-    hint: harness.version,
-  }));
+  const harnessOptions = harnesses
+    .filter((harness) => isInstallable(harness.id))
+    .map((harness) => ({
+      value: harness.id,
+      label: harness.id,
+      hint: harness.version,
+    }));
   const selectedHarnesses = await prompt.multiselect<SupportedHarnessId>({
     message: "Select harnesses to configure",
     options: harnessOptions,
@@ -365,11 +376,13 @@ async function continueAfterMigration(
   | { type: "cancelled" }
   | { type: "unavailable"; message: string }
 > {
-  const harnessOptions = harnesses.map((harness) => ({
-    value: harness.id,
-    label: harness.id,
-    hint: harness.version,
-  }));
+  const harnessOptions = harnesses
+    .filter((harness) => isInstallable(harness.id))
+    .map((harness) => ({
+      value: harness.id,
+      label: harness.id,
+      hint: harness.version,
+    }));
   const selectedHarnesses = await prompt.multiselect<SupportedHarnessId>({
     message: "Select harnesses to configure",
     options: harnessOptions,
@@ -500,26 +513,29 @@ export async function installHarnesses(input: {
   fs: FileSystem;
   plan: InitPlan;
   harnesses: DetectedHarness[];
-}): Promise<number> {
+}): Promise<{ exitCode: number; installed: number }> {
   const { ctx, fs, plan, harnesses } = input;
-  if (plan.selectedHarnesses.length === 0) return 0;
+  if (plan.selectedHarnesses.length === 0) return { exitCode: 0, installed: 0 };
 
-  const registry = installerRegistry(fs);
+  const registry = installerRegistry(fs, () => composeClaudeCode(ctx, fs));
   let exitCode = 0;
+  let installed = 0;
 
   for (const harnessId of plan.selectedHarnesses) {
     const installer = registry[harnessId];
     const detected = harnesses.find((harness) => harness.id === harnessId);
-    const explicitUndetectedV2 =
-      harnessId === "opencode2" && ctx.flags.harness === "opencode2";
-    if (detected === undefined && !explicitUndetectedV2) {
+    // A harness named with --harness is installed even when it was not
+    // detected: the project config is written either way, and the binary may
+    // live somewhere detection does not look.
+    const explicit = ctx.flags.harness === harnessId;
+    if (detected === undefined && !explicit) {
       ctx.terminal.stderr(`${harnessId} was requested but was not detected.`);
       exitCode = 1;
       continue;
     }
     if (!installer.supported) {
-      const message = `${harnessId} installer support is not available yet.`;
-      if (ctx.flags.allHarnesses && ctx.flags.harness === undefined) {
+      const message = `Weave for ${harnessId} is not published yet.`;
+      if (!explicit) {
         ctx.terminal.stdout(`Skipped ${harnessId}: ${message}`);
         continue;
       }
@@ -540,21 +556,42 @@ export async function installHarnesses(input: {
       exitCode = 1;
       continue;
     }
+    installed += 1;
     ctx.terminal.stdout(result.value.messages.join("\n"));
   }
 
-  return exitCode;
+  return { exitCode, installed };
+}
+
+function composeClaudeCode(
+  ctx: InitContext,
+  fs: FileSystem,
+): ResultAsync<number, unknown> {
+  return ResultAsync.fromPromise(
+    import("./compose.js").then(({ runCompose }) =>
+      runCompose({
+        terminal: ctx.terminal,
+        theme: ctx.theme,
+        flags: { ...ctx.flags, adapter: "claude-code", init: true },
+        fs,
+      }),
+    ),
+    (cause) => cause,
+  ).andThen((result) => result.mapErr((error): unknown => error));
 }
 
 function formatInstallError(error: {
   type: string;
+  harness?: string;
   message?: string;
   path?: string;
   cause?: unknown;
 }): string {
   if (error.message !== undefined) return error.message;
-  if (error.path !== undefined) return `Install failed at ${error.path}`;
-  return "Install failed.";
+  const reason = typeof error.cause === "string" ? `: ${error.cause}` : "";
+  if (error.path !== undefined)
+    return `Could not install ${error.harness ?? "the harness"} at ${error.path}${reason}`;
+  return `Install failed${reason}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +602,13 @@ function renderInitSummary(
   theme: ThemeColors,
   scaffold: ScaffoldResult,
   harnesses: DetectedHarness[],
+  installed: boolean,
 ): string {
+  const install = installed
+    ? []
+    : [
+        "- Add Weave to a harness: weave init --harness opencode|opencode2|claude-code",
+      ];
   return [
     theme.boldCyan("Weave init complete"),
     ...scaffold.messages,
@@ -574,6 +617,7 @@ function renderInitSummary(
     ...formatDetectionSummary(harnesses).map((line) => `- ${line}`),
     "",
     "Next steps:",
+    ...install,
     `- Edit ${scaffold.configPath}`,
     "- Run weave validate --project or weave validate --global",
   ].join("\n");

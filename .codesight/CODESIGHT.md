@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 228 lib files | 29 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~20,700 tokens. Without it, AI exploration would cost ~76,800 tokens. **Saves ~56,000 tokens per conversation.**
-> **Last scanned:** 2026-09-29 09:56 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 230 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~20,900 tokens. Without it, AI exploration would cost ~77,400 tokens. **Saves ~56,500 tokens per conversation.**
+> **Last scanned:** 2026-10-01 03:12 — re-run after significant changes
 
 ---
 
@@ -271,7 +271,7 @@
   - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function installHarnesses: (input) => Promise<number>
+  - function installHarnesses: (input) => Promise<
   - interface InitContext
 - `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string
@@ -621,16 +621,25 @@
   - class MemoryFileSystem
   - interface FileSystem
   - type FileSystemError
+- `packages/cli/src/installers/claude-code.ts` — class ClaudeCodeInstaller, type ComposeClaudeCode
 - `packages/cli/src/installers/index.ts`
-  - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
+  - function isInstallable: (id) => boolean
+  - function installerRegistry: (fs, composeClaudeCode) => Record<SupportedHarnessId, HarnessInstaller>
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
   - interface HarnessInstaller
   - type AdapterModule
   - type InstallRequest
-  - type InstallResult
-  - _...1 more_
-- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+  - _...3 more_
+- `packages/cli/src/installers/opencode-plugin.ts`
+  - function pluginSpecifier: (packageName, version) => string
+  - function openCodeConfigCandidates: (fs, scope) => string[]
+  - class OpenCodePluginInstaller
+  - interface OpenCodePluginTarget
+- `packages/cli/src/installers/opencode.ts`
+  - class OpenCodeInstaller
+  - const OPENCODE_PLUGIN_PACKAGE
+  - const LEGACY_OPENCODE_PLUGIN_PACKAGE
 - `packages/cli/src/installers/opencode2.ts`
   - function opencode2PluginSpecifier: (version) => string
   - class OpenCode2Installer
@@ -1080,7 +1089,7 @@
 - `FIXTURE_DIR` (has default) — packages/adapters/opencode2/verify/container-smoke.ts
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
-- `LOG_LEVEL` (has default) — packages/config/src/logger.ts
+- `LOG_LEVEL` **required** — packages/cli/src/main.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
 - `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
@@ -1093,7 +1102,8 @@
 - `WEAVE_EVAL_LIVE_TRAJECTORY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `WEAVE_EVAL_PUBLISH_MODE` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
 - `WEAVE_GLOBAL_CONFIG_DIR` **required** — packages/config/src/__tests__/load_config.test.ts
-- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_LOG_FILE` **required** — packages/cli/src/main.ts
+- `WEAVE_OPENCODE_ADAPTER_VERSION` **required** — packages/cli/src/installers/opencode.ts
 - `WEAVE_OPENCODE2_ADAPTER_VERSION` **required** — packages/cli/src/installers/opencode2.ts
 - `WEAVE_OPENCODE2_KEEP_PROOF` **required** — scripts/opencode2/proof-environment.ts
 - `WEAVE_TRAJECTORY_DUMP_STDERR` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.test.ts
@@ -1136,8 +1146,8 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **49** files
+- `packages/cli/src/fs/file-system.ts` — imported by **26** files
 - `packages/cli/src/theme/colors.ts` — imported by **26** files
-- `packages/cli/src/fs/file-system.ts` — imported by **25** files
 - `packages/cli/src/io/terminal.ts` — imported by **25** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **16** files
@@ -1159,8 +1169,8 @@
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts`, `packages/cli/src/evals/__tests__/judgment-cases.test.ts` +44 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +21 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +21 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +20 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +20 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/trajectory-dispatch.test.ts` +11 more

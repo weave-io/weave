@@ -160,13 +160,11 @@ describe("init command", () => {
     expect(terminal.out.join("\n")).toContain("cancelled");
   });
 
-  it("reports detected harnesses and installs supported explicit OpenCode", async () => {
-    const fs = new MemoryFileSystem({
-      "/home/user/.config/opencode/config.json": "{}",
-    });
+  it("adds the OpenCode adapter to the project's plugin list", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
     const probes = new MemoryDetectionProbes({
-      files: { "/home/user/.config/opencode/config.json": { readable: true } },
       binaries: { opencode: "/usr/bin/opencode" },
+      versions: { opencode: "1.18.33" },
     });
     const { terminal, ctx } = initContext({
       fs,
@@ -179,9 +177,32 @@ describe("init command", () => {
     });
     const result = await runInit(ctx);
     expect(result._unsafeUnwrap()).toBe(0);
+    expect(
+      JSON.parse(fs.snapshot()["/project/opencode.jsonc"] ?? "{}").plugin,
+    ).toEqual(["@weaveio/weave-adapter-opencode"]);
+    expect(terminal.out.join("\n")).toContain("Configured OpenCode plugin");
+  });
+
+  it("skips a detected harness Weave is not published for", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const probes = new MemoryDetectionProbes({
+      binaries: { pi: "/usr/bin/pi" },
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      probes,
+      overrides: {
+        scope: "local",
+        installDir: "/project/.weave",
+        allHarnesses: true,
+      },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
     expect(terminal.out.join("\n")).toContain(
-      "Installed Weave OpenCode integration",
+      "Skipped pi: Weave for pi is not published yet.",
     );
+    expect(terminal.out.join("\n")).toContain("Add Weave to a harness");
   });
 
   it("installs explicitly selected OpenCode 2 at local scope without prior detection", async () => {

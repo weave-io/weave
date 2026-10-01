@@ -1,6 +1,7 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { SupportedHarnessId } from "../detect/index.js";
 import type { FileSystem } from "../fs/file-system.js";
+import { ClaudeCodeInstaller, type ComposeClaudeCode } from "./claude-code.js";
 import { OpenCodeInstaller } from "./opencode.js";
 import { OpenCode2Installer } from "./opencode2.js";
 
@@ -59,13 +60,32 @@ export interface HarnessInstaller {
   install(request: InstallRequest): ResultAsync<InstallResult, InstallError>;
 }
 
+/** Harnesses `weave init` can install Weave into. */
+export const INSTALLABLE_HARNESSES: readonly SupportedHarnessId[] = [
+  "opencode",
+  "opencode2",
+  "claude-code",
+];
+
+export function isInstallable(id: SupportedHarnessId): boolean {
+  return INSTALLABLE_HARNESSES.includes(id);
+}
+
+/**
+ * Without a compose step (bulk installs, tests), Claude Code reports how to
+ * compose instead of failing.
+ */
+const NO_COMPOSE: ComposeClaudeCode = () =>
+  errAsync("run `weave compose --adapter claude-code --init` in the project");
+
 export function installerRegistry(
   fs: FileSystem,
+  composeClaudeCode: ComposeClaudeCode = NO_COMPOSE,
 ): Record<SupportedHarnessId, HarnessInstaller> {
   return {
     opencode: new OpenCodeInstaller(fs),
     opencode2: new OpenCode2Installer(fs),
-    "claude-code": unsupportedInstaller("claude-code"),
+    "claude-code": new ClaudeCodeInstaller(composeClaudeCode),
     pi: unsupportedInstaller("pi"),
   };
 }
@@ -79,7 +99,7 @@ function unsupportedInstaller(id: SupportedHarnessId): HarnessInstaller {
       errAsync({
         type: "UnsupportedHarness",
         harness: id,
-        message: `${id} installer support is not available yet.`,
+        message: `Weave for ${id} is not published yet.`,
       }),
   };
 }
@@ -88,7 +108,7 @@ function skipUnsupported(id: SupportedHarnessId): InstallResult {
   return {
     harness: id,
     changed: false,
-    messages: [`Skipped ${id}: installer support is not available yet.`],
+    messages: [`Skipped ${id}: Weave for ${id} is not published yet.`],
   };
 }
 

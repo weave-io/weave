@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { resolve as posixResolve } from "node:path/posix";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 
 export type ProbeError = {
   type: "ProbeError";
@@ -62,14 +62,12 @@ export class BunDetectionProbes implements DetectionProbes {
   }
 
   binaryOnPath(binary: string): ResultAsync<string | undefined, ProbeError> {
-    return ResultAsync.fromPromise(
-      Bun.$`command -v ${binary}`
-        .quiet()
-        .text()
-        .then((value) => value.trim() || undefined)
-        .catch(() => undefined),
+    // `command -v` is not a Bun Shell builtin, so shelling out for it found
+    // nothing and no harness was ever detected by its binary.
+    return Result.fromThrowable(
+      () => Bun.which(binary) ?? undefined,
       probeError("which", binary),
-    );
+    )().asyncAndThen((path) => okAsync(path));
   }
 
   readVersion(binary: string): ResultAsync<string | undefined, ProbeError> {

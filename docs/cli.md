@@ -190,14 +190,42 @@ Safety behavior:
 - Non-TTY invocations do not hang; use decisive flags such as `--scope` and `--yes` in scripts.
 - Prompt cancellation exits cleanly with code `0`.
 
-With `--harness opencode2`, explicit selection works before an OpenCode 2
-config exists. Local scope creates or edits `opencode.jsonc` in the project.
-Global scope uses `$XDG_CONFIG_HOME/opencode`, or `~/.config/opencode` when XDG
-is unset. The installer writes the plural `plugins` field, preserves comments
-and existing options, and refuses malformed, duplicate-key, or ambiguous
-config files. Repeating the command leaves the bytes unchanged.
-The selected V2 package is `@weaveio/weave-adapter-opencode2`; the V1 package
-remains independent. See the [V2 core guide](adapters/opencode2-core.md).
+The starter categories declare no `models` and no `temperature`. A category
+shuttle without `models` runs on Shuttle's builtin models, which track the
+current defaults; earlier starters pinned `claude-sonnet-4-5` and `gpt-4o`,
+which no longer matched provider catalogs. `temperature` is left unset for the
+reason in [Sampling defaults](adapters/opencode2-core.md#sampling-defaults):
+some models reject it, and the category shuttle then failed on every call.
+
+`weave init` writes harness config only for the harnesses it is asked to
+install: `--harness <id>`, `--all-harnesses`, or the interactive selection.
+`--yes` alone writes the Weave config and installs nothing. A harness named
+with `--harness` is installed even when detection did not find it, because
+the project config is written either way.
+
+| Harness | What `weave init` writes |
+| --- | --- |
+| `opencode` (OpenCode 1) | Adds `@weaveio/weave-adapter-opencode@<version>` to the `plugin` array. A legacy `@opencode_weave/weave` entry is replaced. |
+| `opencode2` | Adds `@weaveio/weave-adapter-opencode2@<version>` to the `plugins` array. |
+| `claude-code` | Runs `weave compose --adapter claude-code --init` in the project and prints the `claude --plugin-dir` launch command. At global scope it prints that command to run per project instead. |
+| `pi` | Nothing yet: Weave for Pi is not published. Explicit `--harness pi` exits `1`; any other selection skips it. |
+
+For both OpenCode generations, local scope creates or edits the project's
+`opencode.jsonc` (or an existing `opencode.json`, `.opencode/opencode.jsonc`,
+or `.opencode/opencode.json`). Global scope uses `$XDG_CONFIG_HOME/opencode`,
+or `~/.config/opencode` when XDG is unset. The two generations read the same
+files and each ignores the other's key, so one file can carry both entries.
+The installer preserves comments and existing entries, refuses malformed or
+ambiguous config files, and leaves an existing Weave entry at the version the
+user chose. Repeating the command leaves the bytes unchanged.
+
+The published CLI pins the adapter versions it was released with:
+[`scripts/build-public-packages.ts`](../scripts/build-public-packages.ts)
+replaces `WEAVE_OPENCODE_ADAPTER_VERSION` and
+`WEAVE_OPENCODE2_ADAPTER_VERSION` at build time. A source checkout leaves them
+unset and writes the bare package name. The host installs the package itself
+on its next start; no `bun add` is needed. See the
+[V2 core guide](adapters/opencode2-core.md).
 
 ## `weave init migrate`
 
@@ -370,20 +398,27 @@ Detection is side-effect free. It may probe config paths, check readability, ins
 
 Supported detection IDs:
 
-- `opencode`
-- `opencode2`
-- `claude-code`
-- `pi`
+- `opencode`: an `opencode` binary on `PATH` whose `--version` is 1.x.
+  `@opencode/cli` also links an `opencode` binary, so a 2.x one is not
+  OpenCode 1.
+- `opencode2`: an `opencode2` binary on `PATH`. OpenCode 1 and 2 share
+  `~/.config/opencode/opencode.json(c)`, so neither is detected from that
+  file alone.
+- `claude-code`: a `claude` binary or `~/.claude/settings.json`.
+- `pi`: a `pi` binary or `~/.pi/config.json`.
 
-Installer support is intentionally separate from detection support. Legacy
-OpenCode and native OpenCode 2 have installers. Claude Code and Pi currently
-report unsupported installer messages until adapter-specific installers exist.
+Binaries are found with `Bun.which`. Earlier releases ran `command -v`
+through Bun Shell, which does not implement it, so no harness was ever found
+by its binary.
+
+The interactive selection offers only harnesses `weave init` can install.
 
 ```bash
-weave init --harness opencode --yes
+weave init --harness opencode --scope local --yes
 weave init --harness opencode2 --scope local --yes
-weave init --harness pi --yes        # explicit unsupported/undetected failure until supported
-weave init --all-harnesses --yes     # install supported detected harnesses, skip unsupported ones
+weave init --harness claude-code --scope local --yes
+weave init --harness pi --yes        # exits 1: Weave for Pi is not published yet
+weave init --all-harnesses --yes     # install every detected harness, skip Pi
 ```
 
 Harness writes only happen after explicit non-interactive flags or interactive confirmation.
