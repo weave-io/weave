@@ -405,13 +405,24 @@ preflight resolves Loom's targets from it. Two parts do not follow it:
   repository's `.weave/config.weave` and `prompts/`. `--config` does not
   change either.
 
+**One config per run.** The config is loaded once per run, by the run's
+`ConfigModePromptProvider`, and every text runner and the provenance hashes
+compose from that load. Editing a `.weave` file during a long `project` run
+therefore cannot give two models different prompts, or leave the recorded
+hashes describing neither.
+
 **Recorded and compared.** The mode is written as `configMode` to
 `bundle-index.json` and `provenance-manifest.json`. `eval compare` refuses two
 runs whose modes differ (`ConfigModeMismatch`) and prints the mode on its
 `Config:` line. A bundle that records no mode was made before the mode
 existed, with the project config, so it reads as `project`: a new `builtin` run
 is not compared with an old baseline until the baseline is re-run with
-`--config builtin` (or the candidate with `--config project`).
+`--config builtin` (or the candidate with `--config project`). The check is
+skipped, and the `Config:` line says "not applicable", when no compared score
+depends on the mode: both runs restricted to `--track trajectory`, or only
+`tapestry-category-routing` compared (`configModeApplies` in
+[`config-mode.ts`](../packages/cli/src/evals/config-mode.ts)). A run of both
+tracks without `--track` is checked, because its text cases depend on it.
 
 ### Measure a change
 
@@ -531,7 +542,7 @@ typed `CompareError` and exit 1:
 | `CaseSetMismatch` | the runs ran different cases, or different case × model pairs; names up to five |
 | `RepeatCountMismatch` | the runs used different `--repeat`; says which to re-run with |
 | `JudgeMismatch` | **both** runs record a judge and they differ (id or version) |
-| `ConfigModeMismatch` | the runs composed their prompts from different configs (`--config builtin` against `project`); a run that records none counts as `project` ([why](#choose-the-config-prompts-are-composed-from---config)) |
+| `ConfigModeMismatch` | the runs composed their prompts from different configs (`--config builtin` against `project`) and a compared score depends on it; a run that records none counts as `project` ([why](#choose-the-config-prompts-are-composed-from---config)) |
 | `DryRunBundle` | either run is a dry run |
 | `BundleNotFound`, `BundleUnreadable`, `BundleInvalid` | a run cannot be found or read; names the path |
 

@@ -2,10 +2,13 @@ import { describe, expect, it } from "bun:test";
 import type { ConfigLoadError, FileReader } from "@weaveio/weave-config";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
+  configModeApplies,
   DEFAULT_EVAL_CONFIG_MODE,
   EvalConfigLoader,
   isEvalConfigMode,
+  SUITES_INDEPENDENT_OF_CONFIG_MODE,
 } from "../config-mode.js";
+import { TAPESTRY_CATEGORY_ROUTING_SUITE } from "../tapestry-category-routing-runner.js";
 
 const PROJECT_ROOT = "/fixture-repo";
 const PROJECT_CONFIG = `${PROJECT_ROOT}/.weave/config.weave`;
@@ -72,5 +75,23 @@ describe("eval config modes", () => {
     ["", false],
   ] as const)("recognise %p: %p", (value, known) => {
     expect(isEvalConfigMode(value)).toBe(known);
+  });
+});
+
+describe("configModeApplies", () => {
+  it("names the category-routing suite as independent of the mode", () => {
+    expect(SUITES_INDEPENDENT_OF_CONFIG_MODE).toEqual([
+      TAPESTRY_CATEGORY_ROUTING_SUITE,
+    ]);
+  });
+
+  it.each([
+    [null, ["shuttle-execution"], true],
+    ["text", ["loom-routing"], true],
+    [null, ["tapestry-category-routing", "weft-review"], true],
+    ["trajectory", ["loom-routing"], false],
+    [null, ["tapestry-category-routing"], false],
+  ] as const)("track %p, suites %p: %p", (track, suites, applies) => {
+    expect(configModeApplies({ track, suites })).toBe(applies);
   });
 });

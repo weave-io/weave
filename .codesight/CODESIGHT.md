@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 231 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~21,000 tokens. Without it, AI exploration would cost ~77,700 tokens. **Saves ~56,700 tokens per conversation.**
-> **Last scanned:** 2026-10-01 13:41 — re-run after significant changes
+> **Last scanned:** 2026-10-01 13:52 — re-run after significant changes
 
 ---
 
@@ -347,15 +347,15 @@
   - interface JudgeRecord
   - interface ComparedAttempt
   - interface RunSnapshot
-  - _...8 more_
+  - _...9 more_
 - `packages/cli/src/evals/config-mode.ts`
+  - function configModeApplies: (run) => boolean
   - function isEvalConfigMode: (value) => value is EvalConfigMode
   - class EvalConfigLoader
   - interface EvalConfigLoaderOptions
   - type EvalConfigMode
   - const EVAL_CONFIG_MODES
-  - const DEFAULT_EVAL_CONFIG_MODE: EvalConfigMode
-  - _...1 more_
+  - _...3 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
@@ -1166,12 +1166,12 @@
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `packages/cli/src/errors.ts` — imported by **11** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **10** files
 - `packages/cli/src/evals/case-outcomes.ts` — imported by **10** files
+- `packages/cli/src/evals/eval-track.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 
 ## Import Map (who imports what)

@@ -31,7 +31,9 @@
  *   builtins only and prompts composed with a project's `.weave` overrides
  *   are not the same prompts by design. A run that records no mode — every
  *   run before Spec 39 task 0.1 — composed its prompts with the project
- *   config, so it reads as `project`;
+ *   config, so it reads as `project`. The check is skipped when no compared
+ *   score depends on the mode: trajectory-track runs and
+ *   `tapestry-category-routing` never composed from it (`configModeApplies`);
  * - neither run a dry run (`DryRunBundle`).
  *
  * Refusals are typed `CompareError` values; nothing here throws.
@@ -50,10 +52,12 @@ import {
   wilsonInterval,
 } from "./binomial-stats.js";
 import {
+  configModeApplies,
   EVAL_CONFIG_MODES,
   type EvalConfigMode,
   UNRECORDED_EVAL_CONFIG_MODE,
 } from "./config-mode.js";
+import { EVAL_TRACKS, type EvalTrack } from "./eval-track.js";
 import { type AttemptTally, tallyAttempts } from "./pass-rates.js";
 
 // ---------------------------------------------------------------------------
@@ -93,6 +97,8 @@ export interface RunSnapshot {
    * none reads as `project` (`UNRECORDED_EVAL_CONFIG_MODE`).
    */
   configMode: EvalConfigMode;
+  /** The `--track` the run was restricted to, or `null` for both tracks. */
+  track: EvalTrack | null;
   /** Agent name → composed-prompt SHA-256. */
   promptHashes: Map<string, string>;
   attempts: ComparedAttempt[];
@@ -225,12 +231,21 @@ export type JudgeStatus =
       candidate: JudgeRecord | null;
     };
 
+/**
+ * The config mode both runs composed from, or `not-applicable` when no
+ * compared score depends on it (see `configModeApplies`).
+ */
+export type ConfigModeStatus =
+  | { kind: "same"; mode: EvalConfigMode }
+  | { kind: "not-applicable" };
+
 /** A full comparison, ready to print. */
 export interface RunComparison {
   baseline: RunSnapshot;
   candidate: RunSnapshot;
   repeatCount: number;
   judge: JudgeStatus;
+  configMode: ConfigModeStatus;
   promptChanges: PromptChange[];
   /** Rows tested together under Holm's adjustment. */
   testedRows: number;
@@ -259,6 +274,7 @@ const BundleIndexSchema = z.object({
   runSummary: z.object({
     suites: z.array(SuiteNameSchema),
     repeatCount: z.number().int().min(2).optional(),
+    track: z.enum(EVAL_TRACKS).optional(),
   }),
   judge: JudgeRecordSchema.optional(),
   configMode: z.enum(EVAL_CONFIG_MODES).optional(),
@@ -330,6 +346,7 @@ export class RunBundleReader {
               repeatCount: index.runSummary.repeatCount ?? 1,
               judge,
               configMode: configMode as EvalConfigMode,
+              track: index.runSummary.track ?? null,
               promptHashes: promptHashes as Map<string, string>,
               attempts: scoreFiles.flatMap((file) =>
                 file.results.map((row) => ({
@@ -530,6 +547,7 @@ export function compareRuns(
     candidate,
     repeatCount: baseline.repeatCount,
     judge: judgeStatus(baseline.judge, candidate.judge),
+    configMode: configModeStatus(baseline, candidate),
     promptChanges: promptChanges(baseline, candidate),
     testedRows: testable.length,
     significanceLevel: SIGNIFICANCE_LEVEL,
@@ -553,17 +571,8 @@ function checkComparable(
   const judgeRefusal = checkJudges(baseline.judge, candidate.judge);
   if (judgeRefusal !== null) return judgeRefusal;
 
-  if (baseline.configMode !== candidate.configMode) {
-    return {
-      type: "ConfigModeMismatch",
-      baseline: baseline.configMode,
-      candidate: candidate.configMode,
-      message:
-        `The baseline composed its prompts from the ${baseline.configMode} config and the candidate from the ` +
-        `${candidate.configMode} config, so a pass-rate difference could come from the config, not the prompt change. ` +
-        `Re-run the candidate with --config ${baseline.configMode}.`,
-    };
-  }
+  const configModeRefusal = checkConfigModes(baseline, candidate);
+  if (configModeRefusal !== null) return configModeRefusal;
 
   const models = difference(
     baseline.attempts.map((a) => a.modelId),
@@ -622,6 +631,46 @@ function checkComparable(
   }
 
   return null;
+}
+
+/** Whether either run's scores depend on its config mode. */
+function configModeMatters(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): boolean {
+  return [baseline, candidate].some((run) =>
+    configModeApplies({
+      track: run.track,
+      suites: [...new Set(run.attempts.map((a) => a.suite))],
+    }),
+  );
+}
+
+function checkConfigModes(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): CompareError | null {
+  if (baseline.configMode === candidate.configMode) return null;
+  if (!configModeMatters(baseline, candidate)) return null;
+  return {
+    type: "ConfigModeMismatch",
+    baseline: baseline.configMode,
+    candidate: candidate.configMode,
+    message:
+      `The baseline composed its prompts from the ${baseline.configMode} config and the candidate from the ` +
+      `${candidate.configMode} config, so a pass-rate difference could come from the config, not the prompt change. ` +
+      `Re-run the candidate with --config ${baseline.configMode}.`,
+  };
+}
+
+function configModeStatus(
+  baseline: RunSnapshot,
+  candidate: RunSnapshot,
+): ConfigModeStatus {
+  if (!configModeMatters(baseline, candidate)) {
+    return { kind: "not-applicable" };
+  }
+  return { kind: "same", mode: baseline.configMode };
 }
 
 function checkJudges(

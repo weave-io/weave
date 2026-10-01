@@ -36,6 +36,7 @@ import {
   composeAgentSnapshots,
   composeSnapshot,
   DEFAULT_SNAPSHOT_AGENTS,
+  snapshotComposedPrompt,
 } from "../prompt-snapshots.js";
 import { EVAL_SHORT_AGENT_FILTERS } from "../types.js";
 
@@ -807,6 +808,37 @@ describe("ConfigModePromptProvider", () => {
     const prompt = (await provider.getPrompt("shuttle"))._unsafeUnwrap();
 
     expect(prompt).toContain(REPO_OVERRIDE_MARKER);
+  });
+
+  it("loads the config once, however many prompts and snapshots it composes", async () => {
+    const reader = new FixtureConfigReader();
+    const provider = new ConfigModePromptProvider("project", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: reader,
+    });
+
+    await provider.getPrompt("shuttle");
+    await provider.getPrompt("loom");
+    await provider.snapshots(["shuttle", "loom"]);
+
+    expect(
+      reader.asked.filter((path) => path === FIXTURE_PROJECT_CONFIG),
+    ).toHaveLength(2); // one exists() and one read(), from a single load
+  });
+
+  it("hashes in its snapshots the same prompt it returns", async () => {
+    const provider = new ConfigModePromptProvider("project", {
+      projectRoot: FIXTURE_PROJECT_ROOT,
+      fileReader: new FixtureConfigReader(),
+    });
+
+    const prompt = (await provider.getPrompt("shuttle"))._unsafeUnwrap();
+    const [snapshot] = (await provider.snapshots(["shuttle"]))._unsafeUnwrap();
+    const expected = (
+      await snapshotComposedPrompt("shuttle", prompt, [])
+    )._unsafeUnwrap();
+
+    expect(snapshot?.hash).toBe(expected.hash);
   });
 
   it("returns a PromptCompositionError for an agent the config lacks", async () => {

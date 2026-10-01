@@ -52,7 +52,10 @@ import type { EvalRunRequest } from "../input-validation.js";
 import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { loadModelMatrix, resolveDefaultModels } from "../model-matrix.js";
 import { StubModelClient } from "../openrouter-client.js";
-import { ConfigModePromptProvider } from "../prompt-snapshots.js";
+import {
+  ConfigModePromptProvider,
+  snapshotComposedPrompt,
+} from "../prompt-snapshots.js";
 import type { GitShaProvider } from "../provenance.js";
 import { StubResultsRepoPublisher } from "../results-repo.js";
 import {
@@ -1472,6 +1475,48 @@ describe("EvalOrchestrator — config mode", () => {
       (m) => m.role === "system",
     )?.content;
     expect(systemPrompt).toBe(builtinLoom);
+  });
+
+  it("records in provenance the hash of the prompt it sent, from one config load", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+    const orchestrator = new EvalOrchestrator({
+      ...makeOptions({
+        modelClient,
+        scorer,
+        evalsRoot: REAL_EVALS_ROOT,
+        bundleRoot: join(TEMP_DIR, `config-mode-provenance-${uid()}`),
+      }),
+      promptProvider: undefined,
+      snapshotProvider: undefined,
+    });
+
+    const summary = (
+      await orchestrator.run(
+        makeRequest({ agent: "loom", model: modelId, case: caseId }),
+      )
+    )._unsafeUnwrap();
+
+    const sent = modelClient.calls[0]?.messages.find(
+      (m) => m.role === "system",
+    )?.content;
+    const sentHash = (
+      await snapshotComposedPrompt("loom", sent ?? "", [])
+    )._unsafeUnwrap().hash;
+    const manifest = await Bun.file(
+      join(summary.bundleDir, "provenance-manifest.json"),
+    ).json();
+    const loom = manifest.records.find(
+      (r: { agentName: string }) => r.agentName === "loom",
+    );
+    expect(loom.hash).toBe(sentHash);
   });
 
   it("records the config mode in bundle-index.json and provenance-manifest.json", async () => {

@@ -46,6 +46,31 @@ export const DEFAULT_EVAL_CONFIG_MODE: EvalConfigMode = "builtin";
  */
 export const UNRECORDED_EVAL_CONFIG_MODE: EvalConfigMode = "project";
 
+/**
+ * Suites whose prompts never come from the run's config mode:
+ * `tapestry-category-routing` composes Tapestry per case from the builtins
+ * plus the case's declared categories (`tapestry-category-config.ts`), in
+ * every mode and in every run made before the mode existed.
+ */
+export const SUITES_INDEPENDENT_OF_CONFIG_MODE: readonly string[] = [
+  "tapestry-category-routing",
+];
+
+/**
+ * Whether a run's scores depend on its config mode. They do not when it ran
+ * only the trajectory track (the sandboxed harness loads its own config) or
+ * only suites in `SUITES_INDEPENDENT_OF_CONFIG_MODE`.
+ */
+export function configModeApplies(run: {
+  track: "text" | "trajectory" | null;
+  suites: readonly string[];
+}): boolean {
+  if (run.track === "trajectory") return false;
+  return run.suites.some(
+    (suite) => !SUITES_INDEPENDENT_OF_CONFIG_MODE.includes(suite),
+  );
+}
+
 /** Narrow a string to an `EvalConfigMode`. */
 export function isEvalConfigMode(value: string): value is EvalConfigMode {
   return (EVAL_CONFIG_MODES as readonly string[]).includes(value);

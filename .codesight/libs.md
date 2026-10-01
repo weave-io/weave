@@ -336,15 +336,15 @@
   - interface JudgeRecord
   - interface ComparedAttempt
   - interface RunSnapshot
-  - _...8 more_
+  - _...9 more_
 - `packages/cli/src/evals/config-mode.ts`
+  - function configModeApplies: (run) => boolean
   - function isEvalConfigMode: (value) => value is EvalConfigMode
   - class EvalConfigLoader
   - interface EvalConfigLoaderOptions
   - type EvalConfigMode
   - const EVAL_CONFIG_MODES
-  - const DEFAULT_EVAL_CONFIG_MODE: EvalConfigMode
-  - _...1 more_
+  - _...3 more_
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex

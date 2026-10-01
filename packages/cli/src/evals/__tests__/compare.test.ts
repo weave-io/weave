@@ -43,6 +43,7 @@ function snapshot(
     repeatCount: 8,
     judge: null,
     configMode: "builtin",
+    track: null,
     promptHashes: new Map(),
     attempts: rows,
     ...overrides,
@@ -161,6 +162,42 @@ describe("compareRuns — refusals", () => {
     expect(result.isOk()).toBe(true);
   });
 
+  it("compares trajectory-track runs whatever their config modes, as the sandboxed harness loads its own config", () => {
+    const rows = attempts("m/a", "c1", "PP");
+
+    const comparison = compareRuns(
+      snapshot("base", rows, { configMode: "project", track: "trajectory" }),
+      snapshot("cand", rows, { configMode: "builtin", track: "trajectory" }),
+    )._unsafeUnwrap();
+
+    expect(comparison.configMode).toEqual({ kind: "not-applicable" });
+  });
+
+  it("compares tapestry-category-routing runs whatever their config modes, as it composes each case from the builtins", () => {
+    const rows = attempts("m/a", "c1", "PP", "tapestry-category-routing");
+
+    const comparison = compareRuns(
+      snapshot("base", rows, { configMode: "project" }),
+      snapshot("cand", rows, { configMode: "builtin" }),
+    )._unsafeUnwrap();
+
+    expect(comparison.configMode).toEqual({ kind: "not-applicable" });
+  });
+
+  it("still refuses when one compared suite composes from the config mode", () => {
+    const rows = [
+      ...attempts("m/a", "c1", "PP", "tapestry-category-routing"),
+      ...attempts("m/a", "c2", "PP", "shuttle-execution"),
+    ];
+
+    const error = compareRuns(
+      snapshot("base", rows, { configMode: "project" }),
+      snapshot("cand", rows, { configMode: "builtin" }),
+    )._unsafeUnwrapErr();
+
+    expect(error.type).toBe("ConfigModeMismatch");
+  });
+
   it("lists at most five differences and counts the rest", () => {
     const many = ["c1", "c2", "c3", "c4", "c5", "c6", "c7"].flatMap((c) =>
       attempts("m/a", c, "P"),
@@ -266,6 +303,23 @@ describe("RunBundleReader — malformed bundles", () => {
     const snapshot = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrap();
 
     expect(snapshot.configMode).toBe("builtin");
+    expect(snapshot.track).toBeNull();
+  });
+
+  it("reads the track the run was restricted to", async () => {
+    const fs = new MemoryFileSystem({
+      "/project/eval-bundles/runs/r1/bundle-index.json": JSON.stringify({
+        runId: "r1",
+        gitSha: "abc1234",
+        dryRun: false,
+        runSummary: { suites: ["loom-routing"], track: "trajectory" },
+      }),
+      "/project/eval-bundles/runs/r1/score-loom-routing.json": scoreFile,
+    });
+
+    const snapshot = (await new RunBundleReader(fs).read("r1"))._unsafeUnwrap();
+
+    expect(snapshot.track).toBe("trajectory");
   });
 
   it("reads a config mode recorded only in the provenance manifest", async () => {

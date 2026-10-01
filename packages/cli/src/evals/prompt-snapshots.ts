@@ -28,8 +28,9 @@
  */
 
 import type { FileReader } from "@weaveio/weave-config";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { composeAgentDescriptor } from "@weaveio/weave-engine";
-import { err, errAsync, ok, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import {
   DEFAULT_EVAL_CONFIG_MODE,
   EvalConfigLoader,
@@ -373,6 +374,17 @@ export function composeAgentSnapshots(
   const agentNames = options.agentNames ?? DEFAULT_SNAPSHOT_AGENTS;
   const emitRaw = options.rawArtifacts ?? false;
   const configMode = options.configMode ?? DEFAULT_EVAL_CONFIG_MODE;
+
+  return loadSnapshotConfig(configMode, options).andThen((config) =>
+    composeSnapshotsFromConfig(config, agentNames, emitRaw),
+  );
+}
+
+/** Load the config of `configMode`, as a `ProvenanceError` on failure. */
+function loadSnapshotConfig(
+  configMode: EvalConfigMode,
+  options: Pick<ComposeAgentSnapshotsOptions, "projectRoot" | "fileReader">,
+): ResultAsync<WeaveConfig, ProvenanceError> {
   const loader = new EvalConfigLoader({
     ...(options.projectRoot !== undefined
       ? { projectRoot: options.projectRoot }
@@ -381,61 +393,61 @@ export function composeAgentSnapshots(
       ? { fileReader: options.fileReader }
       : {}),
   });
+  return loader.load(configMode).mapErr(
+    (configErrors): ProvenanceError => ({
+      type: "ConfigLoadError",
+      message: `Failed to load the ${configMode} Weave config: ${configErrors.map((e) => e.type).join(", ")}`,
+    }),
+  );
+}
 
-  return loader
-    .load(configMode)
-    .mapErr(
-      (configErrors): ProvenanceError => ({
-        type: "ConfigLoadError",
-        message: `Failed to load the ${configMode} Weave config: ${configErrors.map((e) => e.type).join(", ")}`,
-      }),
-    )
-    .andThen((config) => {
-      // Deduplicate the supplied agent names so each agent is snapshotted
-      // exactly once, even when the caller passes duplicates (e.g. when
-      // building the list from EVAL_SHORT_AGENT_FILTERS which may repeat
-      // 'tapestry' for multiple suites).
-      const agentNameArray = [...new Set(Array.from(agentNames))];
+/**
+ * Compose snapshots for `agentNames` from an already loaded config. Per-agent
+ * failures are collected in `errors`; this never fails as a whole.
+ */
+function composeSnapshotsFromConfig(
+  config: WeaveConfig,
+  agentNames: readonly string[],
+  emitRaw: boolean,
+): ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError> {
+  // Deduplicate the supplied agent names so each agent is snapshotted
+  // exactly once, even when the caller passes duplicates (e.g. when
+  // building the list from EVAL_SHORT_AGENT_FILTERS which may repeat
+  // 'tapestry' for multiple suites).
+  const agentNameArray = [...new Set(Array.from(agentNames))];
 
-      // Settle all per-agent compositions using .match() to convert each
-      // ResultAsync into a discriminated union — this is the canonical pattern
-      // from materialization.ts for collecting per-item results from a
-      // ResultAsync array without losing type information.
-      const compositionPromises = agentNameArray.map((agentName) =>
-        composeSnapshot({ config, agentName }).match<
-          | { ok: true; value: ComposeSnapshotResult }
-          | { ok: false; error: ProvenanceError }
-        >(
-          (value) => ({ ok: true, value }),
-          (error) => ({ ok: false, error }),
-        ),
-      );
+  // Settle all per-agent compositions using .match() to convert each
+  // ResultAsync into a discriminated union — this is the canonical pattern
+  // from materialization.ts for collecting per-item results from a
+  // ResultAsync array without losing type information.
+  const compositionPromises = agentNameArray.map((agentName) =>
+    composeSnapshot({ config, agentName }).match<
+      | { ok: true; value: ComposeSnapshotResult }
+      | { ok: false; error: ProvenanceError }
+    >(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    ),
+  );
 
-      return ResultAsync.fromSafePromise(
-        Promise.all(compositionPromises),
-      ).andThen((settled) => {
-        const snapshots: PromptSnapshot[] = [];
-        const rawArtifactList: RawPromptArtifact[] = [];
-        const errors: ProvenanceError[] = [];
+  return ResultAsync.fromSafePromise(Promise.all(compositionPromises)).map(
+    (settled) => {
+      const snapshots: PromptSnapshot[] = [];
+      const rawArtifactList: RawPromptArtifact[] = [];
+      const errors: ProvenanceError[] = [];
 
-        for (const item of settled) {
-          if (item.ok) {
-            snapshots.push(item.value.snapshot);
-            if (emitRaw) {
-              rawArtifactList.push(item.value.rawArtifact);
-            }
-          } else {
-            errors.push(item.error);
-          }
+      for (const item of settled) {
+        if (!item.ok) {
+          errors.push(item.error);
+          continue;
         }
+        snapshots.push(item.value.snapshot);
+        if (emitRaw) rawArtifactList.push(item.value.rawArtifact);
+      }
 
-        return ok({
-          snapshots,
-          rawArtifacts: rawArtifactList,
-          errors,
-        });
-      });
-    });
+      return { snapshots, rawArtifacts: rawArtifactList, errors };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -444,11 +456,17 @@ export function composeAgentSnapshots(
 
 /**
  * A `PromptProvider` that composes each agent's prompt from the config of
- * one `EvalConfigMode`. `EvalOrchestrator` hands one to every text runner,
- * so the prompts a run sends and the hashes its provenance records come from
- * the same config.
+ * one `EvalConfigMode`.
+ *
+ * The config is loaded once, on first use, and every prompt and snapshot the
+ * provider produces comes from that one load. `EvalOrchestrator` creates one
+ * per run and hands it to every text runner and to provenance, so a config
+ * edited during a long `project` run cannot give two models different
+ * prompts, or leave the recorded hashes describing neither.
  */
 export class ConfigModePromptProvider implements PromptProvider {
+  private loaded: Promise<Result<WeaveConfig, ProvenanceError>> | undefined;
+
   constructor(
     private readonly configMode: EvalConfigMode,
     private readonly options: Pick<
@@ -458,24 +476,49 @@ export class ConfigModePromptProvider implements PromptProvider {
   ) {}
 
   getPrompt(agentName: string): ResultAsync<string, ProvenanceError> {
-    return composeAgentSnapshots({
-      ...this.options,
-      configMode: this.configMode,
-      agentNames: [agentName],
-      rawArtifacts: true,
-    }).andThen((composed) => {
-      const raw = composed.rawArtifacts.find((a) => a.agentName === agentName);
-      if (raw !== undefined) return ok(raw.composedPrompt);
-      const failure = composed.errors.find(
-        (e) => "agentName" in e && e.agentName === agentName,
+    return this.config()
+      .andThen((config) =>
+        composeSnapshotsFromConfig(config, [agentName], true),
+      )
+      .andThen((composed) => {
+        const raw = composed.rawArtifacts.find(
+          (a) => a.agentName === agentName,
+        );
+        if (raw !== undefined) return ok(raw.composedPrompt);
+        const failure = composed.errors.find(
+          (e) => "agentName" in e && e.agentName === agentName,
+        );
+        return err<string, ProvenanceError>(
+          failure ?? {
+            type: "PromptCompositionError",
+            agentName,
+            message: `No prompt was composed for agent "${agentName}".`,
+          },
+        );
+      });
+  }
+
+  /**
+   * Publishable hash-only snapshots of `agentNames`, composed from the same
+   * config load as every prompt this provider returns.
+   */
+  snapshots(
+    agentNames: readonly string[],
+  ): ResultAsync<PromptSnapshot[], ProvenanceError> {
+    return this.config()
+      .andThen((config) =>
+        composeSnapshotsFromConfig(config, agentNames, false),
+      )
+      .map((composed) => composed.snapshots);
+  }
+
+  /** The config of this provider's mode, loaded on first use only. */
+  private config(): ResultAsync<WeaveConfig, ProvenanceError> {
+    if (this.loaded === undefined) {
+      this.loaded = Promise.resolve(
+        loadSnapshotConfig(this.configMode, this.options),
       );
-      return err<string, ProvenanceError>(
-        failure ?? {
-          type: "PromptCompositionError",
-          agentName,
-          message: `No prompt was composed for agent "${agentName}".`,
-        },
-      );
-    });
+    }
+    return new ResultAsync(this.loaded);
   }
 }
