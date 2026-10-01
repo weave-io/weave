@@ -369,9 +369,10 @@ A research behaviour case (the ten added for Spec 39 gap G3) also tests one
 behaviour that the answer text shows, such as saying "not found" or flagging a
 dated source. Write those cases like this:
 
-- Start the description with `Research question` and give numbered sources
-  (`[1] Kind, title, date: 'quoted text'`). Use invented product names so the
-  model cannot answer from memory.
+- Start the description with `Research question` and give numbered sources:
+  `[1] Kind, title: 'quoted text'`, with a date when the case turns on
+  recency or version. Use invented product names so the model cannot answer
+  from memory.
 - Put the behaviour in `expected_outcome.description` and the rubric notes,
   never in the description: the runner shows the model the description only.
 - Name the one required behaviour in the expected outcome and say what is
