@@ -23,6 +23,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { caseModelDefaults, EVALS_ROOT, loadCaseFile } from "../case-loader.js";
 import {
   filterMatrix,
   loadModelMatrix,
@@ -36,7 +37,7 @@ import {
   resolveModelSet,
   validateModelInMatrix,
 } from "../model-matrix.js";
-import type { ModelMatrix } from "../types.js";
+import type { EvalCase, ModelMatrix } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -594,4 +595,85 @@ describe("loadModelMatrix — the real dev subset", () => {
 
   // Deliberately no hard-coded list of the dev models: moving the subset must
   // stay a single edit to evals/model-matrix.json (#194, Spec 37 4.4).
+});
+
+// ---------------------------------------------------------------------------
+// Trajectory cases run on every default model (Spec 39 task 0.4, gap G4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trajectory cases allowed to skip some default models, with the reason.
+ *
+ * Empty on purpose. A candidate model is evaluated only after it is added to
+ * the matrix as `default: true`, and this rule is what then lets it run on
+ * real harness sessions. Add an entry here only when a case genuinely cannot
+ * run on a default model, and say why next to it.
+ */
+const TRAJECTORY_DEFAULT_MODEL_EXCEPTIONS: Readonly<
+  Record<
+    string,
+    { readonly models: readonly string[]; readonly reason: string }
+  >
+> = {};
+
+async function loadRealTrajectoryCases(
+  matrix: ModelMatrix,
+): Promise<EvalCase[]> {
+  const modelDefaults = caseModelDefaults(matrix);
+  const glob = new Bun.Glob("*/*.json");
+  const casesDir = resolve(EVALS_ROOT, "cases");
+  const paths = Array.from(glob.scanSync(casesDir))
+    .sort()
+    .map((name) => resolve(casesDir, name));
+  const cases: EvalCase[] = [];
+  for (const path of paths) {
+    const loaded = await loadCaseFile(path, modelDefaults);
+    if (loaded.isErr()) throw new Error(loaded.error.message);
+    if (loaded.value.expected_outcome.kind !== "harness_trajectory") continue;
+    cases.push(loaded.value);
+  }
+  return cases;
+}
+
+describe("the real trajectory cases and the default matrix", () => {
+  it("let every trajectory case run on every default: true model", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const defaults = resolveDefaultModels(matrix).map((entry) => entry.id);
+    const cases = await loadRealTrajectoryCases(matrix);
+    expect(cases.length).toBeGreaterThan(0);
+
+    const missing: Record<string, string[]> = {};
+    for (const evalCase of cases) {
+      const excepted = TRAJECTORY_DEFAULT_MODEL_EXCEPTIONS[evalCase.id];
+      const absent = defaults.filter(
+        (id) =>
+          !evalCase.allowed_models.includes(id) &&
+          !(excepted?.models.includes(id) ?? false),
+      );
+      if (absent.length > 0) missing[evalCase.id] = absent;
+    }
+
+    // A case listed here pins `allowed_models` without a default model. Omit
+    // the field so it follows the matrix, or add the model to its list.
+    expect(missing).toEqual({});
+  });
+
+  it("names only real trajectory cases and default models as exceptions", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const defaults = new Set(
+      resolveDefaultModels(matrix).map((entry) => entry.id),
+    );
+    const caseIds = new Set(
+      (await loadRealTrajectoryCases(matrix)).map((c) => c.id),
+    );
+
+    for (const [caseId, exception] of Object.entries(
+      TRAJECTORY_DEFAULT_MODEL_EXCEPTIONS,
+    )) {
+      expect(caseIds.has(caseId)).toBe(true);
+      expect(exception.reason.trim()).not.toBe("");
+      for (const model of exception.models)
+        expect(defaults.has(model)).toBe(true);
+    }
+  });
 });

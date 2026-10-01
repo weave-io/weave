@@ -3,12 +3,6 @@
   "description": "CI is red on this branch and I haven't had a chance to look at why. Can you get it green again?",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "shuttle"],
-  "allowed_models": [
-    "anthropic/claude-sonnet-4.5",
-    "anthropic/claude-opus-5",
-    "openai/gpt-5.5",
-    "deepseek/deepseek-v4-flash-0731"
-  ],
   "expected_outcome": {
     "kind": "harness_trajectory",
     "expected_spawns": ["shuttle"],

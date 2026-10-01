@@ -99,7 +99,9 @@ describe("trajectory dispatch in execution runners", () => {
   });
 
   // The orchestrator fans a `--case` run out across the whole model matrix;
-  // a model the case does not allow is skipped, not a suite failure.
+  // a model the case does not allow is skipped, not a suite failure. Every
+  // trajectory case allows every default model (Spec 39 task 0.4), so the
+  // excluded model here is the trajectory-only, non-default gpt-4o-mini.
   it("shuttle-execution skips a case filter whose case does not allow the model", async () => {
     const trajectoryRunner = new PassingTrajectoryRunner();
     const runner = new ShuttleExecutionRunner({
@@ -112,7 +114,7 @@ describe("trajectory dispatch in execution runners", () => {
 
     const result = await runner.run({
       caseFilter: "shuttle-verify-tests-after-edit-trajectory",
-      modelFilter: "qwen/qwen3.8-max-0902",
+      modelFilter: "openai/gpt-4o-mini",
     });
 
     expect(result.isOk()).toBe(true);
