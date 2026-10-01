@@ -2629,6 +2629,90 @@ describe("Spindle answers a research brief", () => {
   });
 });
 
+const SPINDLE_REPORT_SIGNALS = [
+  "spindle_inline_citations_present",
+  "spindle_source_facts_separated",
+  "spindle_confidence_reported",
+  "spindle_sources_list_present",
+];
+
+describe("Spindle answers a brief whose research behaviour the judge checks", () => {
+  const probe = only("spindle-tools")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "spindle-says-not-found",
+    description:
+      "Research question: What is the default request timeout? [1] Client options: `pool.idleTimeoutMs` defaults to 90000.",
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "A report in the required format whose direct answer says the sources do not state a default request timeout.",
+      required_artifacts: SPINDLE_REPORT_SIGNALS,
+    },
+    tags: ["research", "not-found"],
+  };
+  // Every section of the report format, and the wrong answer.
+  const answer = [
+    "The default request timeout is 90 seconds [1].",
+    "",
+    "Source facts",
+    "- `pool.idleTimeoutMs` defaults to 90000 [1].",
+    "",
+    "Interpretation",
+    "Requests are aborted after 90 seconds.",
+    "",
+    "Sources:",
+    "- [1] Client options",
+    "",
+    "Confidence: high",
+  ].join("\n");
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "spindle-tools",
+        answers: [answer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.02,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("shows the model the brief and the report format, but not the behaviour it is judged on", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("What is the default request timeout?");
+    expect(asked).toContain("Source facts");
+    expect(asked).not.toContain("do not state a default request timeout");
+  });
+
+  it("puts the expected behaviour in the rubric beside the four report-format questions", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(answer);
+    expect(call?.rubricDescription).toContain(
+      "do not state a default request timeout",
+    );
+    expect(call?.criteria.map((c) => c.key)).toEqual(SPINDLE_REPORT_SIGNALS);
+  });
+
+  it("fails a report with every section when the judge finds the wrong answer in it", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Pattern ---------------------------------------------------------------
 
 const PATTERN_ANSWERS: SignalRow[] = [

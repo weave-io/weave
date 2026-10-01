@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-answers-the-question-asked",
+  "description": "Research question: Yes or no: does `client.list()` in the Heron SDK 2.x follow pagination automatically? [1] Heron SDK 2.x reference, `list()`: 'Returns one page of results (50 items by default) and a `nextCursor`. Pass `cursor` to fetch the next page.' [2] Heron SDK 2.x reference, `listAll()`: 'An async iterator that follows `nextCursor` until the last page.' [3] Heron SDK 2.x reference, 'Authentication': 'Pass `apiKey` to the client, or set `HERON_API_KEY`.' [4] Heron SDK 2.x reference, 'Webhooks': 'Verify each delivery with `heron.verifySignature(body, header)`.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose direct answer is no: `list()` returns one page and a `nextCursor` [1]; `listAll()` [2] is what follows pagination. It stays on that question and does not cover authentication [3] or webhooks [4]. That is all that is required.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "scope", "direct-answer"]
+}

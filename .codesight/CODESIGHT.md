@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 255 lib files | 30 env vars | 11 middleware | 10 events | 0% test coverage
 > **Token savings:** this file is ~23,100 tokens. Without it, AI exploration would cost ~84,100 tokens. **Saves ~61,000 tokens per conversation.**
-> **Last scanned:** 2026-10-01 18:11 — re-run after significant changes
+> **Last scanned:** 2026-10-01 18:20 — re-run after significant changes
 
 ---
 
@@ -1316,7 +1316,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **52** files
+- `packages/cli/src/evals/types.ts` — imported by **53** files
 - `packages/cli/src/fs/file-system.ts` — imported by **34** files
 - `packages/cli/src/io/terminal.ts` — imported by **30** files
 - `packages/cli/src/theme/colors.ts` — imported by **29** files
@@ -1339,7 +1339,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +47 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +48 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +29 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +25 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +24 more
@@ -1370,7 +1370,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 257 test files found
+> 258 test files found
 
 ---
 

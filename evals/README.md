@@ -55,9 +55,19 @@ evals/
 │   │   ├── shuttle-execution-refuses-secret-request.json   # own-envelope
 │   │   ├── shuttle-execution-applies-learnings.json   # own-envelope
 │   │   └── shuttle-verify-tests-after-edit-trajectory.json   # harness_trajectory
-│   ├── spindle-tools/                  # Spindle research-structure eval cases
+│   ├── spindle-tools/                  # Spindle research eval cases
 │   │   ├── spindle-tools-citations-facts-confidence.json
-│   │   └── spindle-tools-source-boundary-network-claims.json
+│   │   ├── spindle-tools-source-boundary-network-claims.json
+│   │   ├── spindle-tools-says-not-found.json   # research behaviour
+│   │   ├── spindle-tools-reconciles-conflicting-sources.json   # research behaviour
+│   │   ├── spindle-tools-official-docs-over-blog.json   # research behaviour
+│   │   ├── spindle-tools-version-mismatch.json   # research behaviour
+│   │   ├── spindle-tools-flags-outdated-source.json   # research behaviour
+│   │   ├── spindle-tools-no-unverified-live-facts.json   # research behaviour
+│   │   ├── spindle-tools-summary-keeps-caveat.json   # research behaviour
+│   │   ├── spindle-tools-answers-the-question-asked.json   # research behaviour
+│   │   ├── spindle-tools-calibrates-low-confidence.json   # research behaviour
+│   │   └── spindle-tools-local-code-out-of-scope.json   # research behaviour
 │   ├── pattern-planning/               # Pattern planning structure eval cases
 │   │   ├── pattern-plan-settings-refactor.json
 │   │   ├── pattern-plan-release-checklist.json
@@ -130,7 +140,17 @@ evals/
     │   └── shuttle-verify-tests-after-edit-trajectory.json
     ├── spindle-tools/                  # Scoring rubrics for spindle-tools cases
     │   ├── spindle-tools-citations-facts-confidence.json
-    │   └── spindle-tools-source-boundary-network-claims.json
+    │   ├── spindle-tools-source-boundary-network-claims.json
+    │   ├── spindle-tools-says-not-found.json
+    │   ├── spindle-tools-reconciles-conflicting-sources.json
+    │   ├── spindle-tools-official-docs-over-blog.json
+    │   ├── spindle-tools-version-mismatch.json
+    │   ├── spindle-tools-flags-outdated-source.json
+    │   ├── spindle-tools-no-unverified-live-facts.json
+    │   ├── spindle-tools-summary-keeps-caveat.json
+    │   ├── spindle-tools-answers-the-question-asked.json
+    │   ├── spindle-tools-calibrates-low-confidence.json
+    │   └── spindle-tools-local-code-out-of-scope.json
     ├── pattern-planning/               # Scoring rubrics for pattern-planning cases
     │   ├── pattern-plan-settings-refactor.json
     │   ├── pattern-plan-release-checklist.json
@@ -228,7 +248,7 @@ Every text-only case may assert only what is visible in assistant or user text. 
 | `tapestry-execution`        | Verify Tapestry executes steps and delegates to sub-agents   |
 | `tapestry-category-routing` | Verify Tapestry routes to the correct category shuttle agent |
 | `shuttle-execution`         | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
-| `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, and reports confidence from text |
+| `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, reports confidence, and handles its sources honestly (not found, conflicting, dated, out of scope), from text |
 | `pattern-planning`          | Verify Pattern emits structurally strong implementation plans |
 | `weft-review`               | Verify Weft emits structurally valid approve/reject reviews, and rejects for the right reason |
 | `warp-security`             | Verify Warp emits text-only security triage and finding structure |
@@ -335,7 +355,7 @@ criteria (`applies-learnings`).
 
 ### Spindle-tools fixture guidance
 
-`spindle-tools` cases must remain text-observable and research-structure-only.
+`spindle-tools` cases must remain text-observable.
 Encode any synthetic source brief directly in the case description or runner
 prompt and score only what the assistant text makes visible, such as:
 
@@ -343,6 +363,26 @@ prompt and score only what the assistant text makes visible, such as:
 - explicit separation between `Source facts` and `Interpretation`
 - a bounded `Confidence:` line
 - a final `Sources:` list
+
+Every case requires all four report-format signals, and the judge scores it.
+A research behaviour case (the ten added for Spec 39 gap G3) also tests one
+behaviour that the answer text shows, such as saying "not found" or flagging a
+dated source. Write those cases like this:
+
+- Start the description with `Research question` and give numbered sources:
+  `[1] Kind, title: 'quoted text'`, with a date when the case turns on
+  recency or version. Use invented product names so the model cannot answer
+  from memory.
+- Put the behaviour in `expected_outcome.description` and the rubric notes,
+  never in the description: the runner shows the model the description only.
+- Name the one required behaviour in the expected outcome and say what is
+  optional. Rubric notes start with what still fails a fully formatted report
+  ("Fail the answer if ...") and say which near-misses pass.
+- Check the case with a judge sanity run: a bad answer with every section must
+  fail, and a correct one must pass.
+
+`packages/cli/src/evals/__tests__/spindle-tools-corpus.test.ts` guards these
+rules.
 
 Do not require actual browsing telemetry, network events, search-tool traces,
 or hidden source retrieval state. If a case needs to talk about tools or

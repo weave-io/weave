@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-flags-outdated-source",
+  "description": "Research question, asked in October 2026: Is the Marlin Payments Refunds API generally available, and what is its rate limit? [1] Marlin developer blog (official), post dated 2023-02-14: 'The Refunds API enters public beta today. During the beta the rate limit is 10 requests per second per account. We expect general availability later this year.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) which says that the only source [1] dates from February 2023, more than three years before the question, so it cannot confirm whether the Refunds API is generally available now or what its current rate limit is. It reports the beta status and the 10 requests per second as what the post said in 2023, not as current facts, and its confidence is low. That is all that is required.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "recency", "outdated-source"]
+}

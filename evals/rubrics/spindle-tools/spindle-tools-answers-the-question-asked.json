@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-answers-the-question-asked",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if its direct answer is yes (including 'yes, via `listAll()`'), if it does not say plainly that `list()` returns a single page, or if it covers authentication or webhook verification, which the question did not ask about. Listing [3] or [4] in Sources without discussing them is fine."
+  }
+}

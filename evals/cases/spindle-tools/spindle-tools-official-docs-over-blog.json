@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-official-docs-over-blog",
+  "description": "Research question: Does the Ferrule build tool support incremental builds on Windows? [1] Ferrule official docs, 'Platform support' page, updated 2026-08-04: 'Incremental builds are supported on Linux and macOS. On Windows, `--incremental` is accepted but ignored: every build is a full build.' [2] Blog post 'Making Ferrule fly on Windows' by an independent developer, 2026-09-02, 1.2k upvotes: 'Incremental builds do work on Windows: set FERRULE_FS_WATCH=polling and my rebuilds went from 40 s to 3 s.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose answer is that Ferrule does not officially support incremental builds on Windows, per its docs [1], and which reports the blog's `FERRULE_FS_WATCH=polling` workaround [2] as an unofficial, unverified claim from an independent post, not as supported behaviour. That is all that is required.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "source-authority", "blog"]
+}
