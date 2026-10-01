@@ -145,11 +145,12 @@ function resolveValidationTarget(
 
 function validateEffective(
   session: RecommendationsSession,
-  cwd: string,
+  fs: FileSystem,
   harness: RecommendationsHarness | undefined,
 ): ResultAsync<ValidatedConfig, ValidateError> {
+  const cwd = fs.cwd();
   return session.load(cwd, harness).andThen(({ config, diagnostics }) =>
-    checkAgentsMaterialize(cwd, config).map(() => ({
+    checkAgentsMaterialize(cwd, config, fileSystemPromptReader(fs)).map(() => ({
       path: cwd,
       config,
       diagnostics,
@@ -189,15 +190,19 @@ async function modelUpdatesLines(
 /**
  * Harness adapters skip agents whose descriptors cannot be composed (for
  * example an agent with no prompt, or a prompt_file that does not exist).
- * Report those agents instead of letting them disappear at runtime.
+ * Report those agents instead of letting them disappear at runtime. Prompt
+ * files are read through `promptFileReader`, the command's filesystem, when
+ * given.
  */
 export function checkAgentsMaterialize(
   path: string,
   config: WeaveConfig,
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<WeaveConfig, ValidateError> {
-  return materializeAgents({ config }).andThen((plan) =>
-    materializationResult(path, config, plan.errors),
-  );
+  return materializeAgents({
+    config,
+    ...(promptFileReader === undefined ? {} : { promptFileReader }),
+  }).andThen((plan) => materializationResult(path, config, plan.errors));
 }
 
 /**
@@ -296,7 +301,7 @@ export async function runValidate(
     choice.value.type === "supported" ? choice.value.harness : undefined;
   const target = resolveValidationTarget(ctx.flags, fs);
   const result = await (target === undefined
-    ? validateEffective(session, fs.cwd(), harness)
+    ? validateEffective(session, fs, harness)
     : validateExplicitPath(target.path, fs, target.kind));
 
   if (result.isErr()) {

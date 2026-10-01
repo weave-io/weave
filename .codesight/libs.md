@@ -290,7 +290,7 @@
 - `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts`
-  - function checkAgentsMaterialize: (path, config) => ResultAsync<WeaveConfig, ValidateError>
+  - function checkAgentsMaterialize: (path, config, promptFileReader?) => ResultAsync<WeaveConfig, ValidateError>
   - function runValidate: (ctx) => Promise<Result<number, CliError>>
   - interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string

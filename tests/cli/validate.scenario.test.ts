@@ -217,3 +217,23 @@ describe("a user's config only changes part of a builtin", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("a user's effective config points at a prompt file beside it", () => {
+  it("reads the prompt file from the same disk as the config and accepts it", async () => {
+    const { exitCode, stdout, stderr } = await runWeave(["validate"], {
+      [`${PROJECT_DIR}/.weave/config.weave`]: dedent(`
+        agent reviewer {
+          description "Reviewer"
+          prompt_file "reviewer.md"
+          models ["anthropic/claude-sonnet-4-5"]
+          mode subagent
+        }
+      `),
+      [`${PROJECT_DIR}/.weave/prompts/reviewer.md`]: "You review code.",
+    });
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Weave config is valid");
+  });
+});
