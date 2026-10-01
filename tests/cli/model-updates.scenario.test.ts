@@ -454,6 +454,23 @@ describe("a user pins the applied recommendations", () => {
     expect(machine.file(GLOBAL_CONFIG)).toBe(ownConfig);
   });
 
+  it("writes nothing when the config changes while the question is open", async () => {
+    const machine = new Machine({ [GLOBAL_CONFIG]: ownConfig });
+    await applied(machine);
+    const edited = `${ownConfig}\n# edited meanwhile\n`;
+    const prompt = new StaticPromptAdapter({ confirm: [true] });
+    const answer = prompt.confirm.bind(prompt);
+    prompt.confirm = async (input) => {
+      await machine.fs.writeText(GLOBAL_CONFIG, edited);
+      return answer(input);
+    };
+
+    const { exitCode, stderr } = await machine.weave(["models", "pin"], prompt);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("changed while the diff was shown");
+    expect(machine.file(GLOBAL_CONFIG)).toBe(edited);
+  });
+
   it("has nothing to pin before a list is applied", async () => {
     const machine = new Machine({ [GLOBAL_CONFIG]: NOTIFY });
     const { exitCode, stderr } = await machine.weave([

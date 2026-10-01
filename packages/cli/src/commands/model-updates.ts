@@ -496,6 +496,14 @@ class ModelUpdatesCommand {
     const confirmed = await this.confirm(path);
     if (confirmed !== true) return ok(confirmed === "cancelled" ? 0 : 1);
 
+    // The question may have stayed open a while: write only over the text the
+    // diff was computed from, so an edit made meanwhile is never lost.
+    const current = await this.readGlobalConfig(path);
+    if (current.isErr()) return this.failWith(current.error);
+    if (current.value !== source.value)
+      return this.fail([
+        `Error: ${path} changed while the diff was shown, so nothing was written. Run weave models pin again.`,
+      ]);
     const written = await this.fs.writeText(path, edit.value.text);
     if (written.isErr())
       return this.failWith({

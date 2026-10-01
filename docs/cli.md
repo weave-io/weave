@@ -748,7 +748,7 @@ The CLI has no live provider catalog, so `status` shows the lists and their sour
 - a block without `models` gets one line before its closing brace, at its fields' indentation;
 - an agent without a block gets a new `agent <name> { models [...] }` block, appended under a `# Pinned by weave models pin: …` comment.
 
-The edited text is parsed again and compared with the original; if anything but those agents' `models` would change, nothing is written. `pin` prints the diff first and asks for confirmation; `--yes` skips the question, and without a terminal and without `--yes` it writes nothing and exits 1. Declining writes nothing and exits 0. The global config applies to every harness, so pin from the harness you use most. Afterwards, set `settings { model_updates { mode off } }` to stop fetching. The code is [`pin-editor.ts`](../packages/cli/src/models/pin-editor.ts).
+The edited text is parsed again and compared with the original; if anything but those agents' `models` would change, nothing is written. `pin` prints the diff first and asks for confirmation; `--yes` skips the question, and without a terminal and without `--yes` it writes nothing and exits 1. Declining writes nothing and exits 0. If the file changed while the question was open, nothing is written and the command exits 1. The global config applies to every harness, so pin from the harness you use most. Afterwards, set `settings { model_updates { mode off } }` to stop fetching. The code is [`pin-editor.ts`](../packages/cli/src/models/pin-editor.ts).
 
 ### Exit codes
 
@@ -757,7 +757,7 @@ The edited text is parsed again and compared with the original; if anything but 
 | `status` | The report was printed, including for `mode off` and for OpenCode V1 and Copilot CLI. | A usage error, or a config that does not load. |
 | `update` | The check succeeded: a list was applied, a newer list is waiting, or the recommendations are up to date. | Model updates are off, the harness takes no recommendations, the check failed (network, timeout, HTTP status, signature, schema, freshness), another process holds the cache lock, or the cache could not be written. |
 | `apply` | A list was applied, or there was nothing to apply. | Model updates are off, the harness takes no recommendations, the downloaded list no longer verifies (for example it expired), the lock is held, or the cache could not be written. |
-| `pin` | The global config was written, already held these models, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, or the write failed. |
+| `pin` | The global config was written, already held these models, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, the file changed while the diff was shown, or the write failed. |
 
 ## `weave models check`
 
