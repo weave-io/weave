@@ -723,6 +723,7 @@ weave models update                        # check tryweave.io now and print wha
 weave models apply                         # apply a waiting list (notify mode)
 weave models pin                           # write the applied lists into ~/.weave/config.weave, after asking
 weave models pin --yes                     # ... without asking
+weave models pin --include-qualified       # ... keeping provider-qualified entries (provider/model)
 ```
 
 **Harness.** A list has a section per harness, so the commands report for one: `--harness opencode2` (the default), `claude-code` or `pi`. OpenCode 2 is the default because Spec 39 ships it first and it is the only harness that applies a list without a restart; detecting the harness, as `weave init` does, would spawn harness binaries to print a status, and several can be installed at once. `--harness opencode` (OpenCode V1) and `--harness copilot` (Copilot CLI) get no recommendations layer: `status` says so and exits 0, the other commands exit 1. Any other name is a usage error.
@@ -742,13 +743,15 @@ The CLI has no live provider catalog, so `status` shows the lists and their sour
 
 **`apply`** applies the waiting list and prints the change, or `Nothing to apply` when nothing newer was downloaded.
 
-**`pin`** writes the applied lists for the chosen harness into the global `config.weave` as explicit `models` lines, so they no longer depend on the recommendations. For each agent in the list the new line is the agent's existing global entries followed by the recommended ones, without duplicates, so the effective lists do not change. The edit is textual and located with the DSL lexer, so the rest of the file is kept byte for byte, comments included:
+**`pin`** writes the applied lists for the chosen harness into the global `config.weave` as explicit `models` lines, so they no longer depend on the recommendations. For each agent in the list the new line is the agent's existing global entries followed by the recommended ones, without duplicates, so the effective lists do not change, apart from provider-qualified entries (below). The edit is textual and located with the DSL lexer, so the rest of the file is kept byte for byte, comments included:
 
 - an `agent <name> { … }` block with a `models` field gets that field replaced (the last block, when an agent is declared twice, as the parser keeps it);
 - a block without `models` gets one line before its closing brace, at its fields' indentation;
 - an agent without a block gets a new `agent <name> { models [...] }` block, appended under a `# Pinned by weave models pin: …` comment.
 
-The edited text is parsed again and compared with the original; if anything but those agents' `models` would change, nothing is written. `pin` prints the diff first and asks for confirmation; `--yes` skips the question, and without a terminal and without `--yes` it writes nothing and exits 1. Declining writes nothing and exits 0. If the file changed while the question was open, nothing is written and the command exits 1. The global config applies to every harness, so pin from the harness you use most. Afterwards, set `settings { model_updates { mode off } }` to stop fetching. The code is [`pin-editor.ts`](../packages/cli/src/models/pin-editor.ts).
+The edited text is parsed again and compared with the original; if anything but those agents' `models` would change, nothing is written. `pin` prints the diff first and asks for confirmation; `--yes` skips the question, and without a terminal and without `--yes` it writes nothing and exits 1. Declining writes nothing and exits 0. If the file changed while the question was open, nothing is written and the command exits 1. The global config applies to every harness, so pin from the harness you use most. Afterwards, set `settings { model_updates { mode off } }` to stop fetching. The code is [`pin-plan.ts`](../packages/cli/src/models/pin-plan.ts) (which entries are written) and [`pin-editor.ts`](../packages/cli/src/models/pin-editor.ts) (the edit).
+
+**Provider-qualified entries.** The `opencode2` section of a list may name a provider (`openrouter/anthropic/claude-opus-5.5`, `github-copilot/gpt-6-sol`). OpenCode 2 checks each entry against its live catalog, so the recommendations layer carries them safely; but the global config is read by every harness, and OpenCode V1 writes the first provider-qualified entry without checking that the provider is connected ([why](./model-resolution.md#builtin-default-models)), so a pinned one can make every V1 run fail. `pin` therefore leaves every recommended entry containing `/` out of what it writes and prints which entries, per agent, and why. `--include-qualified` keeps them and prints the same explanation as a warning. An agent whose recommended entries are all qualified keeps its existing lines unchanged, and `pin` says so. Entries the user already lists are theirs and always stay. The diff shown before confirmation is the final content. Claude Code tier names (`opus`, `sonnet`, `haiku`) are kept: other harnesses skip them.
 
 ### Exit codes
 
@@ -757,7 +760,7 @@ The edited text is parsed again and compared with the original; if anything but 
 | `status` | The report was printed, including for `mode off` and for OpenCode V1 and Copilot CLI. | A usage error, or a config that does not load. |
 | `update` | The check succeeded: a list was applied, a newer list is waiting, or the recommendations are up to date. | Model updates are off, the harness takes no recommendations, the check failed (network, timeout, HTTP status, signature, schema, freshness), another process holds the cache lock, or the cache could not be written. |
 | `apply` | A list was applied, or there was nothing to apply. | Model updates are off, the harness takes no recommendations, the downloaded list no longer verifies (for example it expired), the lock is held, or the cache could not be written. |
-| `pin` | The global config was written, already held these models, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, the file changed while the diff was shown, or the write failed. |
+| `pin` | The global config was written, already held these models, had nothing to pin once provider-qualified entries were left out, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, the file changed while the diff was shown, or the write failed. |
 
 ## `weave models check`
 
