@@ -1,5 +1,9 @@
 # Libraries
 
+- `eval-bundles/tmp/probe.ts`
+  - function paginate: (items, page, size) => T[]
+  - function sortByName: (people) => T[]
+  - function parseSince: (input) => Result<number,
 - `evals/fixtures/buggy-slugify/src/slugify.ts` — function slugify: (input) => string
 - `evals/fixtures/orders-api/src/api/orders.ts` — function getOrder: (id) => HttpResponse, interface HttpResponse
 - `evals/fixtures/orders-api/src/db/orders.ts` — function findOrder: (id) => Order | undefined, interface Order
@@ -579,10 +583,10 @@
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
+  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - interface ShuttleHonestySignals
-  - _...4 more_
+  - _...6 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
