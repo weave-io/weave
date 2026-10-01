@@ -23,7 +23,7 @@ import {
   MemoryFileSystem,
 } from "../../packages/cli/src/fs/file-system.js";
 import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
-import type { ModelRecommendationsDeps } from "../../packages/config/src/index.js";
+import type { ComposeModelRecommendationsDeps } from "../../packages/cli/src/models/compose-refresh.js";
 import { modelRecommendationsCachePaths } from "../../packages/config/src/index.js";
 import {
   HOUR,
@@ -95,7 +95,7 @@ interface SessionStart {
 /** One Claude Code session start: the bootstrap hook's compose. */
 async function sessionStart(
   fs: MemoryFileSystem,
-  modelRecommendations: ModelRecommendationsDeps,
+  modelRecommendations: ComposeModelRecommendationsDeps,
 ): Promise<SessionStart> {
   const terminal = new BufferTerminal();
   const started = Date.now();
@@ -142,7 +142,7 @@ describe("a Claude Code user opts in to automatic model updates", () => {
     server.body = first.body;
     return withGlobalDir("weave-claude-code-model-updates", async (dir) => {
       const fs = new ProjectInMemory(configWith("auto"), dir);
-      const deps: ModelRecommendationsDeps = {
+      const deps: ComposeModelRecommendationsDeps = {
         fetch: (url) => server.fetch(url),
         publicKeys: [keys.publicKey],
         baseUrl: STUB_BASE_URL,

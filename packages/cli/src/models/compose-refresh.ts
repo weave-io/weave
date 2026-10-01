@@ -37,7 +37,7 @@ import {
 } from "@weaveio/weave-config";
 import type { ModelUpdatesSettings } from "@weaveio/weave-core";
 import { logger } from "@weaveio/weave-engine";
-import { Result, type ResultAsync } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 
 const log = logger.child({ module: "cli-compose-model-updates" });
 
@@ -46,6 +46,26 @@ export const COMPOSE_REFRESH_TIMEOUT_MS = 1500;
 
 /** Compose stops waiting for the refresh after this (2 seconds). */
 export const COMPOSE_REFRESH_BUDGET_MS = 2000;
+
+/**
+ * What compose lets a caller inject into its `ModelRecommendations`: the
+ * parts that the refresh and the config loader can both honour. The cache
+ * location (`WEAVE_GLOBAL_CONFIG_DIR`) and the cache file access are not
+ * injectable here, because the loader reads `applied.json` through compose's
+ * own filesystem; a refresh writing elsewhere would never be applied.
+ */
+export interface ComposeModelRecommendationsDeps {
+  /** The subset of `fetch` the refresh uses. */
+  readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  /** The current time, for the throttle and for checking list dates. */
+  readonly now?: () => Date;
+  /** Ed25519 public keys that may sign lists; verifies fetched and applied lists. */
+  readonly publicKeys?: readonly string[];
+  /** Where lists are fetched from. Defaults as `ModelRecommendations` does. */
+  readonly baseUrl?: string;
+  /** Request timeout. Defaults to `COMPOSE_REFRESH_TIMEOUT_MS`. */
+  readonly timeoutMs?: number;
+}
 
 /** The part of `ModelRecommendations` compose uses. */
 export interface ModelRecommendationsRefresher {
@@ -89,29 +109,21 @@ export class ComposeModelRefresh {
     settings: ModelUpdatesSettings | undefined,
   ): Promise<ComposeRefreshResult> {
     if (resolveModelUpdates(settings) === undefined) return { type: "Off" };
-    const started = Result.fromThrowable(
-      () => this.refresher.refresh({ settings }),
+    // A refresher that throws, or whose promise rejects, is a bug; it comes
+    // back as `NotStarted` rather than as an exception.
+    const refresh = ResultAsync.fromThrowable(
+      async () => this.refresher.refresh({ settings }),
       (cause): RefreshNotStarted => ({
         type: "NotStarted",
         message: causeMessage(cause),
       }),
-    )();
-    if (started.isErr())
-      return this.report({ type: "Failed", error: started.error });
-
-    const settled: Promise<ComposeRefreshResult> = Promise.resolve(
-      started.value,
-    ).then(
-      (result): ComposeRefreshResult =>
-        result.match(
-          (outcome): ComposeRefreshResult => ({ type: "Refreshed", outcome }),
-          (error): ComposeRefreshResult => ({ type: "Failed", error }),
-        ),
-      (cause: unknown): ComposeRefreshResult => ({
-        type: "Failed",
-        error: { type: "NotStarted", message: causeMessage(cause) },
-      }),
     );
+    const settled: Promise<ComposeRefreshResult> = refresh()
+      .andThen((result) => result)
+      .match(
+        (outcome): ComposeRefreshResult => ({ type: "Refreshed", outcome }),
+        (error): ComposeRefreshResult => ({ type: "Failed", error }),
+      );
     let timer: ReturnType<typeof setTimeout> | undefined;
     const budget = new Promise<ComposeRefreshResult>((resolve) => {
       timer = setTimeout(

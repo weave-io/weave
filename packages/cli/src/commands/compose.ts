@@ -16,7 +16,6 @@ import {
   describeModelRecommendationsSkipReason,
   loadConfigDetailed,
   ModelRecommendations,
-  type ModelRecommendationsDeps,
 } from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
@@ -31,6 +30,7 @@ import {
 import type { TerminalIO } from "../io/terminal.js";
 import {
   COMPOSE_REFRESH_TIMEOUT_MS,
+  type ComposeModelRecommendationsDeps,
   ComposeModelRefresh,
   describeComposeRefresh,
 } from "../models/compose-refresh.js";
@@ -53,12 +53,13 @@ export interface ComposeContext {
   fs?: FileSystem;
   /**
    * How model recommendations are fetched and verified (Spec 39): `fetch`,
-   * clock, cache files and public keys. Defaults to production behaviour, with
-   * the request timeout shortened to `COMPOSE_REFRESH_TIMEOUT_MS` because the
-   * Claude Code session-start hook waits for it. `publicKeys` and `now` also
-   * verify the applied list the config loads.
+   * clock, public keys, base URL and timeout. Defaults to production
+   * behaviour, with the request timeout shortened to
+   * `COMPOSE_REFRESH_TIMEOUT_MS` because the Claude Code session-start hook
+   * waits for it. `publicKeys` and `now` also verify the applied list the
+   * config loads.
    */
-  modelRecommendations?: ModelRecommendationsDeps;
+  modelRecommendations?: ComposeModelRecommendationsDeps;
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {

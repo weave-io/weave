@@ -39,8 +39,7 @@ export interface CliDeps {
     env?: Record<string, string | undefined>;
     // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
     fs?: FileSystem_2;
-    // Warning: (ae-forgotten-export) The symbol "ModelRecommendationsDeps" needs to be exported by the entry point index.d.ts
-    modelRecommendations?: ModelRecommendationsDeps;
+    modelRecommendations?: ComposeModelRecommendationsDeps;
     now?: () => Date;
     // (undocumented)
     terminal: TerminalIO;
@@ -56,6 +55,15 @@ export type CliError = InvalidArgsError | MissingFileError | FileReadError | Fil
 
 // @public (undocumented)
 export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "models" | "unknown";
+
+// @public
+export interface ComposeModelRecommendationsDeps {
+    readonly baseUrl?: string;
+    readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
+    readonly now?: () => Date;
+    readonly publicKeys?: readonly string[];
+    readonly timeoutMs?: number;
+}
 
 // @public (undocumented)
 export const defaultThemeManager: ThemeManager;

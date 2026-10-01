@@ -6,12 +6,12 @@
  * `main.ts` — this module is fully testable.
  */
 
-import type { ModelRecommendationsDeps } from "@weaveio/weave-config";
 import { ok, type Result } from "neverthrow";
 import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
 import type { FileSystem } from "./fs/file-system.js";
 import { RealTerminal, type TerminalIO } from "./io/terminal.js";
+import type { ComposeModelRecommendationsDeps } from "./models/compose-refresh.js";
 import { defaultThemeManager } from "./theme/colors.js";
 import { defaultThemeRenderer } from "./theme/render.js";
 
@@ -46,10 +46,10 @@ export interface CliDeps {
   now?: () => Date;
   /**
    * How `weave compose` fetches and verifies model recommendations (Spec 39):
-   * `fetch`, clock, cache files and public keys. Defaults to production
+   * `fetch`, clock, public keys, base URL and timeout. Defaults to production
    * behaviour. Black-box tests inject a stub `fetch` and throwaway keys.
    */
-  modelRecommendations?: ModelRecommendationsDeps;
+  modelRecommendations?: ComposeModelRecommendationsDeps;
 }
 
 function defaultDeps(): CliDeps {
