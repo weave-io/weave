@@ -18,6 +18,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 - [`eval-default-models-2026-09-25.md`](eval-default-models-2026-09-25.md) — the evals behind the builtin default models (Opus 5.5, Sonnet 5, Haiku 4.5, GPT 6 Sol and Luna), each candidate against Sonnet 4.5 on its agent's suite, three repeats, judge Jev. Local only.
 - [`eval-copilot-default-models-2026-09-29.md`](eval-copilot-default-models-2026-09-29.md) — the evals and live Copilot check behind the GitHub Copilot defaults: Sonnet 5.5 against Sonnet 5 on Shuttle, GPT 6 Sol against Luna on Spindle, and the models an OpenCode 2 host signed in to Copilot registers. Local only.
 - [`model-recommendations-spike.md`](model-recommendations-spike.md) — Spec 39 spike (1 Oct 2026): Ed25519 verification in Bun, the recommendations config layer, and a live model change on OpenCode 2.0.16 without a restart; found that a skipped layer flips agents back to their builtin models, so promotion must be atomic.
+- [`eval-readiness-model-recommendations.md`](eval-readiness-model-recommendations.md) — Spec 39 (1 Oct 2026): the agent evals measured against the model-recommendation publication bar, agent by agent, with the smallest regression each suite can detect, and the gaps (G1–G13) to close before a list that changes a model can ship.
 
 ---
 

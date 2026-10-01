@@ -1,8 +1,8 @@
 # Spec 39 — Model Recommendations
 
-**Status:** Proposed — direction agreed with the maintainer on 1 Oct 2026, de-risked by a [live spike](../../artifacts/model-recommendations-spike.md) the same day; see [39 tasks](39-tasks-model-recommendations.md) · **Tracking issue:** #275
+**Status:** Proposed — direction agreed with the maintainer on 1 Oct 2026, de-risked by a [live spike](../../artifacts/model-recommendations-spike.md) the same day, with the evals measured against the [publication bar](#publication-bar) in the [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md); see [39 tasks](39-tasks-model-recommendations.md) · **Tracking issue:** #275
 
-**Related:** [39 tasks](39-tasks-model-recommendations.md) · [Model Resolution](../../model-resolution.md#builtin-default-models) · [Config Loading](../../config-loading.md) · [Adapter Boundary](../../adapter-boundary.md) · [OpenCode 2 core](../../adapters/opencode2-core.md#refresh-behavior) · [Partial config policy in the OpenCode 2 guide](../../adapters/opencode2-core.md#partial-and-broken-configs) · [Spec 36 — Execution Controls](../36-spec-execution-controls/36-spec-execution-controls.md) (the `settings` block precedent) · [Eval record, 25 Sep 2026](../../artifacts/eval-default-models-2026-09-25.md) · [Eval record, 29 Sep 2026](../../artifacts/eval-copilot-default-models-2026-09-29.md)
+**Related:** [39 tasks](39-tasks-model-recommendations.md) · [Model Resolution](../../model-resolution.md#builtin-default-models) · [Config Loading](../../config-loading.md) · [Adapter Boundary](../../adapter-boundary.md) · [OpenCode 2 core](../../adapters/opencode2-core.md#refresh-behavior) · [Partial config policy in the OpenCode 2 guide](../../adapters/opencode2-core.md#partial-and-broken-configs) · [Spec 36 — Execution Controls](../36-spec-execution-controls/36-spec-execution-controls.md) (the `settings` block precedent) · [Eval readiness for model recommendations](../../artifacts/eval-readiness-model-recommendations.md) · [Eval record, 25 Sep 2026](../../artifacts/eval-default-models-2026-09-25.md) · [Eval record, 29 Sep 2026](../../artifacts/eval-copilot-default-models-2026-09-29.md)
 
 ## Goal
 
@@ -26,7 +26,9 @@ The builtin model lists are chosen with evals and change often: #250, #251 and #
 - **Opt-in, off by default.** A config without the setting behaves exactly as today and makes no network request.
 - **Model lists for builtin agents only.** The published file can set nothing but `models` on agents that `builtins.ts` defines. Categories are user-defined, and generated category shuttles already inherit Shuttle's models. `review_models` stays out ([why builtins omit it](../../../packages/config/src/builtins.ts)).
 - **Signed from v1.** The file is signed with Ed25519; the client accepts only signed bytes. Adding signing later would break clients that do not expect it.
-- **`auto` is the recommended mode** once a user opts in; `notify` exists for users who want to approve each change.
+- **`notify` is the recommended mode.** A user sees what would change and applies it with `weave models apply`. `auto` is offered on the `next` channel first. The docs recommend it on `stable` only after three consecutive `stable` lists have shipped without a rollback.
+- **One section per harness.** The same entry means different things to different harnesses: a catalog ID on OpenCode 2, a tier on Claude Code. The file carries a `default` section and optional per-harness sections; see [The published file](#the-published-file).
+- **Only what the evals can vouch for.** A list may change an agent's models only when that agent clears the [publication bar](#publication-bar). Agents that do not keep their builtin lists and change only through releases. On 1 Oct 2026 no agent clears it; the [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md) lists what is missing.
 - **Channels follow the release trains:** `stable` and `next` ([Stable Release Trains](../../stable-release-trains.md)).
 - **OpenCode 2 first.** It is where most users are and the only adapter that can apply a change without a restart. The other adapters get the layer for free through `loadConfig`; what they do with it is in [Harness behaviour](#harness-behaviour).
 
@@ -35,7 +37,7 @@ The builtin model lists are chosen with evals and change often: #250, #251 and #
 ```weave
 settings {
   model_updates {
-    mode auto        # off | notify | auto
+    mode notify      # off | notify | auto
     channel stable   # stable | next
   }
 }
@@ -62,10 +64,21 @@ Served at `https://tryweave.io/models/<channel>.v1.json`, with a detached signat
   "channel": "stable",
   "issued": "2026-10-01T09:00:00Z",
   "min_config_version": "0.2.0",
-  "evidence": "https://tryweave.io/evals",
-  "agents": {
-    "loom":    { "models": ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"] },
-    "shuttle": { "models": ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"] }
+  "evidence": "https://tryweave.io/evals/runs/<run-id>",
+  "default": {
+    "agents": {
+      "shuttle": { "models": ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"] }
+    }
+  },
+  "harnesses": {
+    "opencode2": {
+      "agents": {
+        "shuttle": { "models": ["claude-sonnet-5.5", "claude-sonnet-5-5", "openrouter/anthropic/claude-sonnet-5.5", "gpt-6-sol"] }
+      }
+    },
+    "claude-code": {
+      "agents": { "shuttle": { "models": ["sonnet"] } }
+    }
   }
 }
 ```
@@ -76,12 +89,14 @@ Served at `https://tryweave.io/models/<channel>.v1.json`, with a detached signat
 | `channel` | Must equal the channel the client asked for. |
 | `issued` | ISO 8601 UTC timestamp. A client never applies a file whose `issued` is not later than the one it already applied (rollback protection). |
 | `min_config_version` | Optional semver. A client whose `@weaveio/weave-config` is older ignores the file and reports why. |
-| `evidence` | Optional HTTPS URL, at most 256 characters, shown by `weave models status`. |
-| `agents` | 1–32 entries. Each key is an agent name; each value is exactly `{ "models": [...] }` with 1–8 entries, each passing the same validation as a DSL `models` entry. |
+| `evidence` | Required HTTPS URL, at most 256 characters: the published eval run behind the list ([publication bar](#publication-bar)). Shown by `weave models status`. |
+| `default` | Required. `{ "agents": {...} }`, used by a supported harness that has no section of its own. Entries are bare IDs that follow the builtin spelling rules. |
+| `harnesses` | Optional. Keys are `opencode2`, `claude-code` and `pi`; each value has the same shape as `default`. Other keys are rejected. `claude-code` entries must be `opus`, `sonnet` or `haiku`. `opencode2` entries may be provider-qualified (`openrouter/…`, `github-copilot/…`), because OpenCode 2 checks every entry against the live catalog. |
+| `agents` | In each section, 1–32 entries. Each key is an agent name; each value is exactly `{ "models": [...] }` with 1–8 entries, each passing the same validation as a DSL `models` entry. |
 
 The whole file is at most 64 KiB. Unknown top-level fields and unknown fields inside an agent entry are rejected, so the file cannot grow new powers by accident. Agent names the running version does not define as builtins are skipped and listed by `weave models status`; they are not an error, so the file can name an agent before every client knows it.
 
-Entries follow the same spelling rules as the builtins ([why bare IDs, and why each Claude model is listed twice](../../model-resolution.md#builtin-default-models)).
+Entries in `default` follow the same spelling rules as the builtins ([why bare IDs, and why each Claude model is listed twice](../../model-resolution.md#builtin-default-models)). A section lists each agent's full fallback order before the builtin list: for example, the previous model before a cross-vendor fallback, because the recommended entries are tried before the builtin ones.
 
 ### Signing
 
@@ -123,6 +138,7 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 
 - `loadConfig` reads the merged `settings.model_updates.mode` from the global and project layers first. When it is `off` or absent, nothing below happens and the result is identical to today.
 - Otherwise it reads `applied.json` for the channel, verifies its signature again, and turns it into a config layer holding only `agents.<name>.models` for builtin agents. Loading never touches the network.
+- The adapter passes its harness ID to `loadConfig` (`opencode2`, `claude-code` or `pi`), as explicit adapter context in line with the [adapter boundary](../../adapter-boundary.md). The loader uses that harness's section, or `default` when the file has none for it. A caller that passes no harness ID, which includes OpenCode V1 and Copilot CLI, gets no recommendations layer.
 - The merge order becomes:
 
   ```
@@ -138,10 +154,10 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 | Harness | When a change applies | What it does with the layer |
 | --- | --- | --- |
 | **OpenCode 2** (native) | Without restart. The plugin calls `refresh()` in the background after its first catalog publish and on each admitted prompt or plan start, where the throttle makes most calls no-ops. Because the loader reads `applied.json` through the injected `FileReader`, the catalog's source cache records it and the existing probe sees a promotion. The refresh runs on admitted work, not on a timer, so a change lands on the prompt after the one that fetched it. | Same as the builtins: the first entry with exactly one live catalog match. A live session keeps its model; new sessions and later turns that Weave selects a model for use the new one. |
-| **OpenCode V1** | Next OpenCode start. | Uses only `provider/model` entries, so bare recommended IDs have no effect, as with the builtin defaults. |
-| **Claude Code** | Next session start (the plugin reruns composition then). | Maps the first allowlisted entry to `opus`, `sonnet` or `haiku`. A recommended model outside the allowlist is skipped. |
+| **OpenCode V1** | — | Not supported. V1 writes the first provider-qualified entry without checking that the provider is connected, so it passes no harness ID and gets no layer. `weave models status` says so. |
+| **Claude Code** | Next session start (the plugin reruns composition then). | Reads its `claude-code` section, whose entries are `opus`, `sonnet` or `haiku`. The adapter's allowlist accepts the three tier names, and Claude Code maps each one to its current model, so new Anthropic models arrive through Claude Code without a new list. |
 | **Pi** | Next session start. | The first declared entry that `ctx.modelRegistry.getAvailable()` offers, as for the builtin defaults. |
-| **Copilot CLI** | — | Writes no model today, so recommendations have no effect. |
+| **Copilot CLI** | — | Not supported: it writes no agent model today. |
 
 Fetching runs in OpenCode 2 and in the CLI in this spec. The other adapters read whatever `applied.json` the CLI or an OpenCode 2 session last wrote; giving them their own background refresh is a later item.
 
@@ -156,13 +172,30 @@ Every opted-in user can see where each agent's models came from.
 - **`weave validate`** reports the mode and applied date, and reports a skipped layer with its reason, in every form of the command.
 - **OpenCode 2 `status`** gains an optional bounded `modelUpdates` object (`mode`, `channel`, `issued`, `state`) and an issue code `model_updates_unavailable` when an opted-in layer was skipped. The TUI shows a one-line notice when an update is applied, for example "Loom → claude-opus-5.6 (recommendations of 1 Oct 2026)". The notice mechanism is verified live, as for plan display.
 
+## Publication bar
+
+A published list may change an agent's models only when, for that agent, all of the following hold. The [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md) says which tooling each step needs and which agents meet it.
+
+1. **Shipped prompts.** The agent's suite ran with the builtin config only: no project or global `.weave`.
+2. **Enough cases.** The suite has at least 12 text cases, so at 5 repeats it can detect a drop of about 13 points.
+3. **No regression.** Candidate and current first model ran on the same commit and judge with at least 5 repeats. Two checks must pass:
+   - the suite-level difference is not a significant drop (Fisher's exact test with Holm adjustment, p < 0.05);
+   - no case the current model passes on at least 4 of 5 attempts drops below 3 of 5 on the candidate.
+4. **A reason to change.** Either the candidate is significantly better, or the change has a stated reason that is not a score (availability, cost) and does not raise cost.
+5. **Real sessions.** The agent's trajectory cases pass on the candidate.
+6. **Resolves as intended.** Every harness section that names the agent resolves to the intended model on the catalog fixtures for each provider it is meant to cover (`weave models check`).
+7. **Cost stated.** The evidence states the cost per attempt of the candidate against the current model.
+8. **Published evidence.** The run is published on tryweave.io/evals, and the file's `evidence` field links to it. Claude Code sections state which model each tier was measured as.
+
+An agent that cannot clear the bar keeps its builtin list. Its models change only through a Weave release, where a maintainer reviews the change.
+
 ## Website
 
 - `public/models/stable.v1.json` and `public/models/next.v1.json` hold the source; the deploy workflow produces the `.sig` files.
-- The workflow validates each file with `weave models check <file>` (a CLI subcommand using the same schema as the client) before signing, so the site and the client cannot disagree about what is valid.
+- The workflow validates each file with `weave models check <file>` (a CLI subcommand using the same schema as the client) before signing, so the site and the client cannot disagree about what is valid. The check also resolves every section against the provider catalog fixtures ([publication bar](#publication-bar), step 6) and fails on a missing `evidence` link.
 - nginx serves `/models/` as `application/json` with `Cache-Control: public, max-age=300` and an ETag.
 - A user docs page on tryweave.io explains the setting, the commands, and what data the request sends (none beyond the HTTP request itself).
-- The first `stable` file repeats today's builtin lists, so turning the feature on changes nothing until a maintainer publishes a new list.
+- The first `stable` file repeats today's builtin lists, so turning the feature on changes nothing until a maintainer publishes a new list. A list that changes a model waits for the [publication bar](#publication-bar).
 
 ## Out of scope
 
@@ -178,9 +211,10 @@ One pull request per item, tests first, in this order. Tasks are in the [tasks f
 
 | # | Item | Outcome that shows it is met |
 | --- | --- | --- |
+| 0 | **Eval readiness** | The blocking gaps G1–G8 in the [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md) are closed: builtins-only eval runs, a model comparison with the per-case guard, trajectory cases on current models, catalog resolution checks, cost per attempt, published runs and the Claude Code tier table. Suites grow one at a time (G3); each grown suite makes its agent eligible. Items 1–8 do not wait for item 0, but no list that changes a model is published before it. |
 | 1 | **DSL setting** | `settings { model_updates { … } }` parses, validates and merges; invalid modes, channels and unknown fields are rejected with readable messages; tests at the schema, parser, validate and parse_config levels; [DSL reference](../../dsl-reference.md) updated. |
-| 2 | **File format and signature** | A `ModelRecommendationsFile` schema and Ed25519 verifier in `@weaveio/weave-config`, with fixtures for every rejection in [the field table](#the-published-file); `weave models check` validates a file. |
-| 3 | **Loader layer** | With `mode` off or absent, `loadConfig` output is byte-identical to today's for the existing fixtures. With a valid `applied.json`, builtin agents get `[user…, recommended…, builtin…]`; with an invalid one, the layer is skipped and the reason surfaced. |
+| 2 | **File format and signature** | A `ModelRecommendationsFile` schema (with `default` and `harnesses`) and Ed25519 verifier in `@weaveio/weave-config`, with fixtures for every rejection in [the field table](#the-published-file); `weave models check` validates a file and resolves each section against provider catalog fixtures. |
+| 3 | **Loader layer** | With `mode` off or absent, `loadConfig` output is byte-identical to today's for the existing fixtures. With a valid `applied.json`, builtin agents get `[user…, recommended…, builtin…]` from the section for the harness ID the adapter passes, or `default`; no harness ID means no layer; an invalid file skips the layer and surfaces the reason. The Claude Code adapter accepts `opus`, `sonnet` and `haiku` as entries. |
 | 4 | **Fetch and cache** | `ModelRecommendations.refresh()` with injected fetch and file access: 24-hour throttle, ETag, size and time limits, rollback protection, `auto` promotion and `notify` holding. No test touches the network. |
 | 5 | **CLI** | `weave models status`, `update`, `apply`, `pin` and `check`, and the `weave validate` reporting, documented in [CLI](../../cli.md). |
 | 6 | **OpenCode 2** | Background refresh after first publish and on admitted work; a test that `applied.json` is a probed source (no new plumbing: the [spike](../../artifacts/model-recommendations-spike.md) showed the loader's `FileReader` is enough); `status` fields and issue code; TUI notice. An adapter scenario in `tests/adapters/` shows a promoted file reaching a reloaded agent without restart. |
@@ -189,7 +223,8 @@ One pull request per item, tests first, in this order. Tasks are in the [tasks f
 
 ## Finish line
 
-- A user who adds `settings { model_updates { mode auto } }` and changes nothing else gets new builtin model lists on OpenCode 2 within a day of publication, without restarting OpenCode.
+- A user who adds `settings { model_updates { mode auto } }` and changes nothing else gets new builtin model lists on OpenCode 2 within a day of publication, without restarting OpenCode. With `mode notify`, they see the change in `weave models status` and apply it with `weave models apply`.
+- Every published list that changes a model clears the [publication bar](#publication-bar) for each agent it changes, and its `evidence` link opens the run.
 - A user who does not opt in sees no change in behaviour and no network request.
 - An unsigned, tampered, malformed, older or too-new file never changes any agent's model, and the user can see why.
 - `docs/model-resolution.md`, `docs/config-loading.md`, `docs/dsl-reference.md`, `docs/cli.md`, `docs/adapters/opencode2-core.md` and the tryweave.io docs describe the shipped behaviour.
