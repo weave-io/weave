@@ -462,6 +462,7 @@ weave eval run --case shuttle-execution-report-structured-evidence  # restrict t
 weave eval run --case weft-review-clean-approval      # restrict to one weft-review case
 weave eval run --case warp-security-block-evidence-findings  # restrict to one warp-security case
 weave eval run --repeat 3                             # run each case 3 times per model; report pass rates
+weave eval run --track text --concurrency 6           # run up to 6 text attempts at once; same results, less wall time
 weave eval run --config project                       # compose prompts from ./.weave and ~/.weave, not the builtins only
 weave eval run --dry-run                              # print what would run, no execution
 weave eval run --raw-artifacts                        # emit raw prompt text locally (NEVER in CI)
@@ -474,6 +475,7 @@ WEAVE_EVAL_AGENT=loom weave eval run
 WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5 weave eval run
 WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
 WEAVE_EVAL_REPEAT=3 weave eval run
+WEAVE_EVAL_TRACK=text WEAVE_EVAL_CONCURRENCY=6 weave eval run
 WEAVE_EVAL_CONFIG=project weave eval run
 ```
 
@@ -484,6 +486,8 @@ WEAVE_EVAL_CONFIG=project weave eval run
 `weave eval reindex [--dry-run]` rebuilds every dashboard index in `weave-io/weave-agent-evals` from the runs published there, keeping the text run (`latest.json`) and the trajectory run (`latest-trajectory.json`) apart, and uploads the index files. It never writes a run artifact. It needs `EVAL_RESULTS_REPO_TOKEN`; `--dry-run` rebuilds locally under `eval-bundles/reindex/` and uploads nothing. See [Track-aware indexes](./eval-sanitization-and-publish-pipeline.md#track-aware-indexes).
 
 `--config <builtin|project>` picks the Weave config prompts are composed from. `builtin`, the default, reads no project or global `.weave`, so a run scores the prompts Weave ships; `project` reads both, for prompt work on a checkout's own overrides. The mode is recorded in the bundle. See [Choose the config](./agent-evals.md#choose-the-config-prompts-are-composed-from---config).
+
+`--concurrency N` (1–16) runs up to N units of work at once — one suite on one model in one repeat each — instead of one after another. It needs `--track text`: trajectory sessions always run one at a time. The run records exactly what a sequential run records (rows are ordered as a sequential run orders them, and each attempt's usage and cost stay on that attempt); only the wall time changes. A rate-limited model call (HTTP 429) is asked again with backoff. Omitted means 1. See [Run attempts concurrently](./agent-evals.md#run-attempts-concurrently---concurrency-n).
 
 `--repeat N` (1–20) runs every selected case N times per model and reports a pass rate per case × model and per suite × model; errored attempts (no scorable answer) are left out of the rate and counted separately. Without it, a run is exactly what it was before repeats existed. See [Repeat cases](./agent-evals.md#repeat-cases---repeat-n).
 

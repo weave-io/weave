@@ -162,6 +162,7 @@ describe("banner and help rendering", () => {
       "--models default|dev",
       "--case",
       "--repeat",
+      "--concurrency",
       "--track",
       "--dry-run",
       "--raw-artifacts",

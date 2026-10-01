@@ -129,6 +129,7 @@ import {
 import type {
   CaseResultSummary,
   ModelMatrixEntry,
+  ModelPrices,
   PromptProvenanceManifest,
   PromptProvider,
   PromptSnapshot,
@@ -141,6 +142,7 @@ import {
   WarpSecurityRunner,
 } from "./warp-security-runner.js";
 import { WEFT_REVIEW_SUITE, WeftReviewRunner } from "./weft-review-runner.js";
+import { WorkerPool } from "./worker-pool.js";
 
 // ---------------------------------------------------------------------------
 // Run metadata — sanitized record embedded in the run summary
@@ -821,13 +823,42 @@ export interface EvalOrchestratorOptions {
     configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
   /**
-   * Where answered calls are recorded so each attempt's tokens and cost land
-   * on its score file row (Spec 39 task 0.6). Pass the ledger the judge
-   * records into, so judge calls are counted too. When omitted, the
-   * orchestrator keeps its own, which meters the model calls only.
+   * Builds a scorer whose judge records each answered call in `ledger`, so
+   * each attempt's judge tokens and cost land on its score file row (Spec 39
+   * task 0.6). The orchestrator gives every unit of work — one suite on one
+   * model in one repeat — its own ledger, and calls this once per unit, so
+   * units running concurrently (`--concurrency`) never cost one attempt's
+   * judge calls on another. When omitted, every unit is scored by `scorer`
+   * and only the model's calls are metered.
    */
-  usageLedger?: UsageLedger;
+  meteredScorer?: (ledger: UsageLedger) => AgentEvalsScorer;
 }
+
+/**
+ * What one unit of work — one suite on one model in one repeat — calls
+ * through: a model client and a scorer that record into the unit's own
+ * usage ledger, and the meter that drains it per case. Cases inside a unit
+ * run one after another, so the meter's drain-per-case attribution holds
+ * however many units run at once.
+ */
+interface UnitServices {
+  modelClient: ModelClient;
+  scorer: AgentEvalsScorer;
+  usageMeter: AttemptUsageMeter;
+}
+
+/** One unit of work, in the order a sequential run would run it. */
+interface WorkUnit {
+  /** 1-based repeat. */
+  attempt: number;
+  modelId: string;
+  suiteId: string;
+}
+
+/** What running a unit came to: its suite result, or skipped. */
+type UnitOutcome =
+  | { kind: "ran"; result: Result<RunnerResult, RunnerError> }
+  | { kind: "skipped" };
 
 // ---------------------------------------------------------------------------
 // EvalOrchestrator
@@ -879,8 +910,12 @@ export interface EvalOrchestratorOptions {
  * ```
  */
 export class EvalOrchestrator {
-  private readonly modelClient: ModelClient;
+  /** The client as given; each unit wraps it in its own meter and retries. */
+  private readonly baseModelClient: ModelClient;
   private readonly scorer: AgentEvalsScorer;
+  private readonly meteredScorer:
+    | ((ledger: UsageLedger) => AgentEvalsScorer)
+    | undefined;
   private readonly judge: JudgeIdentity | undefined;
   private readonly promptProvider: PromptProvider | undefined;
   private readonly snapshotProvider: SnapshotProvider | undefined;
@@ -904,22 +939,11 @@ export class EvalOrchestrator {
     evalsRoot: string | undefined,
     configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
-  private readonly usageLedger: UsageLedger;
-  /** Each run's usage meter, priced from that run's models. */
-  private readonly usageMeters = new WeakMap<
-    EvalRunRequest,
-    AttemptUsageMeter
-  >();
 
   constructor(options: EvalOrchestratorOptions) {
-    // Every suite asks again when a model returns an empty or truncated
-    // answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5). The meter sits
-    // under the retries, so a retried call's usage is counted too.
-    this.usageLedger = options.usageLedger ?? new UsageLedger();
-    this.modelClient = new RetryingModelClient(
-      new MeteredModelClient(options.modelClient, this.usageLedger),
-    );
+    this.baseModelClient = options.modelClient;
     this.scorer = options.scorer;
+    this.meteredScorer = options.meteredScorer;
     this.judge = options.judge;
     this.promptProvider = options.promptProvider;
     this.snapshotProvider = options.snapshotProvider;
@@ -1141,8 +1165,13 @@ export class EvalOrchestrator {
    *   - Run the Weft suite (if not filtered out by agent filter)
    *   - Run the Warp suite (if not filtered out by agent filter)
    *
-   * Results are accumulated sequentially to avoid race conditions on the
-   * shared `runnerResults` and `partialFailures` arrays.
+   * Each (repeat, model, suite) is one unit of work. Units run through a
+   * `WorkerPool`, up to `request.concurrency` at a time (1 when omitted), and
+   * their results are folded in unit order — the order a sequential run
+   * runs them in — never in the order they finish. Each unit gets its own
+   * usage ledger, model client and scorer (`unitServices`), so concurrent
+   * units never share mutable state and a concurrent run records exactly
+   * what a sequential one does. One unit's failure never stops another.
    *
    * The final `EvalRunSummary` will contain one runner rollup per executed
    * suite/model combination, and one `ModelRollup` per model across all suites.
@@ -1189,56 +1218,92 @@ export class EvalOrchestrator {
     const runnerResults: RunnerResult[] = [];
     const partialFailures: RunnerError[] = [];
     const failedSuites = new Set<string>();
+    const prices = priceTable(modelEntries);
 
-    // Calls left in the ledger by an earlier run belong to no case here.
-    this.usageLedger.drain();
-    this.usageMeters.set(
-      request,
-      new AttemptUsageMeter(this.usageLedger, priceTable(modelEntries)),
-    );
-
-    // Fan out across all selected models.
-    //
-    // Each model is run through all applicable suites. Results are
-    // accumulated sequentially to avoid race conditions.
-    //
-    // When `request.model` is set, `modelEntries` contains exactly one entry
-    // (already filtered by `resolveModelSet()`). When no model filter is set,
-    // `modelEntries` contains the full default matrix (≥ 3 models per the
-    // model matrix constraint).
-    //
-    // With `--repeat N` the whole models × suites pass runs N times, one
-    // attempt after another, so the repeats of a case are spread over the run
-    // rather than sent back to back. Each result is tagged with its attempt.
-    // A suite that fails hard on a model (fixture load, prompt provider) is
-    // not retried on later attempts: the failure would only repeat.
+    // The units of work, in the order a sequential run runs them. With
+    // `--repeat N` the whole models × suites pass runs N times, so the
+    // repeats of a case are spread over the run rather than sent back to
+    // back. When `request.model` is set, `modelEntries` holds that one
+    // model (already filtered by `resolveModelSet()`).
     const repeatCount = request.repeat ?? 1;
-    const hardFailed = new Set<string>();
-    const executeSuites = async (): Promise<void> => {
-      for (let attempt = 1; attempt <= repeatCount; attempt += 1) {
-        for (const modelEntry of modelEntries) {
-          const modelFilter = modelEntry.id;
-
-          for (const suite of selectedSuites) {
-            const key = `${suite.suiteId}\u0000${modelFilter}`;
-            if (hardFailed.has(key)) continue;
-            const result = await this.runSuiteById(
-              suite.suiteId,
-              request,
-              modelFilter,
-            );
-            if (result.isOk()) {
-              runnerResults.push(
-                tagAttempt(result.value, attempt, repeatCount),
-              );
-            } else {
-              partialFailures.push(result.error);
-              failedSuites.add(suite.suiteId);
-              hardFailed.add(key);
-            }
-          }
+    const units: WorkUnit[] = [];
+    for (let attempt = 1; attempt <= repeatCount; attempt += 1) {
+      for (const modelEntry of modelEntries) {
+        for (const suite of selectedSuites) {
+          units.push({
+            attempt,
+            modelId: modelEntry.id,
+            suiteId: suite.suiteId,
+          });
         }
       }
+    }
+
+    // A suite that fails hard on a model (fixture load, prompt provider) is
+    // not run again on later attempts: the failure would only repeat. A unit
+    // whose earlier attempt already failed hard is skipped when it starts.
+    const hardFailed = new Set<string>();
+    const keyOf = (unit: WorkUnit): string =>
+      `${unit.suiteId}\u0000${unit.modelId}`;
+
+    // `--concurrency N` runs up to N units at once (Spec 39, gap G7); 1 runs
+    // them one after another. Each unit meters into its own ledger, so its
+    // usage rows are what a sequential run records.
+    const pool = new WorkerPool(request.concurrency ?? 1);
+    const runUnit = (unit: WorkUnit): ResultAsync<UnitOutcome, never> => {
+      if (hardFailed.has(keyOf(unit))) {
+        return ResultAsync.fromSafePromise(
+          Promise.resolve<UnitOutcome>({ kind: "skipped" }),
+        );
+      }
+      return ResultAsync.fromSafePromise(
+        Promise.resolve(
+          this.runSuiteById(
+            unit.suiteId,
+            request,
+            unit.modelId,
+            this.unitServices(prices),
+          ),
+        ).then((result): UnitOutcome => {
+          if (result.isErr()) hardFailed.add(keyOf(unit));
+          return { kind: "ran", result };
+        }),
+      );
+    };
+    const defect = (cause: unknown, unit: WorkUnit): UnitOutcome => ({
+      kind: "ran",
+      result: err({
+        type: "SuiteRunDefect",
+        suite: unit.suiteId,
+        modelId: unit.modelId,
+        message: `Suite "${unit.suiteId}" on model "${unit.modelId}" threw instead of returning a result: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+    });
+
+    // Results are folded in unit order, never completion order, so the run
+    // records what a sequential run records. A unit whose earlier attempt
+    // failed hard is dropped here even if it ran (it may have started before
+    // that failure was known), as a sequential run would never have run it.
+    const executeSuites = async (): Promise<void> => {
+      const outcomes = await pool.run(units, runUnit, defect);
+      const folded = new Set<string>();
+      outcomes.forEach((outcome, index) => {
+        const unit = units[index];
+        if (unit === undefined) return;
+        const key = keyOf(unit);
+        if (folded.has(key)) return;
+        const value = outcome.isOk() ? outcome.value : outcome.error;
+        if (value.kind === "skipped") return;
+        if (value.result.isOk()) {
+          runnerResults.push(
+            tagAttempt(value.result.value, unit.attempt, repeatCount),
+          );
+          return;
+        }
+        partialFailures.push(value.result.error);
+        failedSuites.add(unit.suiteId);
+        folded.add(key);
+      });
     };
 
     return ResultAsync.fromSafePromise(
@@ -1435,41 +1500,65 @@ export class EvalOrchestrator {
     return agentFilter === agentName || agentFilter === suiteName;
   }
 
+  /**
+   * A fresh model client, scorer and usage meter for one unit of work, all
+   * recording into one new ledger.
+   *
+   * Every suite asks again when a model returns an empty or truncated
+   * answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5). The meter sits
+   * under the retries, so a retried call's usage is counted too.
+   */
+  private unitServices(prices: ReadonlyMap<string, ModelPrices>): UnitServices {
+    const ledger = new UsageLedger();
+    return {
+      modelClient: new RetryingModelClient(
+        new MeteredModelClient(this.baseModelClient, ledger),
+      ),
+      scorer: this.meteredScorer?.(ledger) ?? this.scorer,
+      usageMeter: new AttemptUsageMeter(ledger, prices),
+    };
+  }
+
   private runSuiteById(
     suiteId: string,
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     if (suiteId === LOOM_ROUTING_SUITE) {
-      return this.runLoomSuite(request, modelFilter);
+      return this.runLoomSuite(request, modelFilter, services);
     }
 
     if (suiteId === TAPESTRY_EXECUTION_SUITE) {
-      return this.runTapestrySuite(request, modelFilter);
+      return this.runTapestrySuite(request, modelFilter, services);
     }
 
     if (suiteId === SHUTTLE_EXECUTION_SUITE) {
-      return this.runShuttleSuite(request, modelFilter);
+      return this.runShuttleSuite(request, modelFilter, services);
     }
 
     if (suiteId === SPINDLE_TOOLS_SUITE) {
-      return this.runSpindleSuite(request, modelFilter);
+      return this.runSpindleSuite(request, modelFilter, services);
     }
 
     if (suiteId === PATTERN_PLANNING_SUITE) {
-      return this.runPatternSuite(request, modelFilter);
+      return this.runPatternSuite(request, modelFilter, services);
     }
 
     if (suiteId === WEFT_REVIEW_SUITE) {
-      return this.runWeftSuite(request, modelFilter);
+      return this.runWeftSuite(request, modelFilter, services);
     }
 
     if (suiteId === WARP_SECURITY_SUITE) {
-      return this.runWarpSuite(request, modelFilter);
+      return this.runWarpSuite(request, modelFilter, services);
     }
 
     if (suiteId === TAPESTRY_CATEGORY_ROUTING_SUITE) {
-      return this.runTapestryCategoryRoutingSuite(request, modelFilter);
+      return this.runTapestryCategoryRoutingSuite(
+        request,
+        modelFilter,
+        services,
+      );
     }
 
     return ResultAsync.fromSafePromise(Promise.resolve(undefined)).andThen(() =>
@@ -1488,12 +1577,13 @@ export class EvalOrchestrator {
   private runLoomSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runSuite = (): ResultAsync<RunnerResult, RunnerError> => {
       const runner = new LoomRoutingRunner({
-        modelClient: this.modelClient,
-        usageMeter: this.usageMeters.get(request),
-        scorer: this.scorer,
+        modelClient: services.modelClient,
+        usageMeter: services.usageMeter,
+        scorer: services.scorer,
         promptProvider: this.promptProviderFor(request),
         evalsRoot: this.evalsRoot,
       });
@@ -1541,11 +1631,12 @@ export class EvalOrchestrator {
   private runTapestrySuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new TapestryExecutionRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
@@ -1562,12 +1653,13 @@ export class EvalOrchestrator {
   private runTapestryCategoryRoutingSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const evalsRoot = this.evalsRoot;
     const runner = new TapestryCategoryRoutingRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProvider,
       caseLoader:
         evalsRoot !== undefined
@@ -1590,11 +1682,12 @@ export class EvalOrchestrator {
   private runPatternSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new PatternPlanningRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
@@ -1610,11 +1703,12 @@ export class EvalOrchestrator {
   private runShuttleSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new ShuttleExecutionRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
@@ -1631,11 +1725,12 @@ export class EvalOrchestrator {
   private runSpindleSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new SpindleToolsRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
@@ -1651,11 +1746,12 @@ export class EvalOrchestrator {
   private runWeftSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new WeftReviewRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });
@@ -1671,11 +1767,12 @@ export class EvalOrchestrator {
   private runWarpSuite(
     request: EvalRunRequest,
     modelFilter: string | undefined,
+    services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new WarpSecurityRunner({
-      modelClient: this.modelClient,
-      usageMeter: this.usageMeters.get(request),
-      scorer: this.scorer,
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
     });

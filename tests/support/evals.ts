@@ -17,7 +17,7 @@ import { join, relative } from "node:path";
 import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
-import { UsageLedger } from "../../packages/cli/src/evals/attempt-usage.js";
+import type { UsageLedger } from "../../packages/cli/src/evals/attempt-usage.js";
 import type { EvalConfigMode } from "../../packages/cli/src/evals/config-mode.js";
 import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
 import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
@@ -33,8 +33,10 @@ import {
   StubLangChainJudge,
 } from "../../packages/cli/src/evals/langchain-agent-evals.js";
 import type {
+  ModelClient,
   ModelClientError,
   ModelRequest,
+  ModelResponse,
   ModelUsage,
 } from "../../packages/cli/src/evals/openrouter-client.js";
 import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
@@ -386,6 +388,20 @@ export interface SuiteRunOptions {
   /** The answers the model gives, in order. The last one repeats. */
   answers?: string[];
   /**
+   * The model's answer to each request, decided from the request itself
+   * rather than from call order — what a scenario running attempts
+   * concurrently needs, since calls then arrive in no fixed order. A
+   * `ModelClientError` is returned instead of an answer. Takes precedence
+   * over `answers` and `modelError`.
+   */
+  answerFor?: (request: ModelRequest) => string | ModelClientError;
+  /**
+   * How long the model takes to answer each request, in milliseconds, so a
+   * concurrent run's calls finish in a different order than they started.
+   * Only read with `answerFor`.
+   */
+  answerDelayMs?: (request: ModelRequest) => number;
+  /**
    * The token usage OpenRouter reports with every answer. Omitted, answers
    * report none, as a provider that leaves usage out does.
    */
@@ -459,6 +475,8 @@ export interface SuiteRunOptions {
   dryRun?: boolean;
   /** `--repeat`. Omitted means each case runs once. */
   repeat?: number;
+  /** `--concurrency`. Omitted runs one attempt at a time. */
+  concurrency?: number;
   /** `--track`. Omitted runs text-only and trajectory cases alike. */
   track?: EvalTrack;
   /** `--config`. Omitted runs as `weave eval run` does: `builtin`. */
@@ -490,6 +508,8 @@ export interface SuiteRunObservation {
   files: string[];
   /** The parsed `score-<suite>.json`, or `null` when none was written. */
   scoreFile: BundleScoreFile | null;
+  /** Every score file written, parsed, keyed by its path under the bundle root. */
+  scoreFiles: Record<string, BundleScoreFile>;
   /**
    * The case summaries the score file carries.
    *
@@ -580,20 +600,30 @@ export const JEV_TEST_JUDGE: JudgeIdentity = {
  * it made to the stubbed decisions endpoint.
  */
 class RecordingJevJudge implements LangChainJudge {
-  readonly calls: JudgeInput[] = [];
   private readonly inner: JevJudge;
 
-  constructor(fetchImpl: FetchLike, usageLedger: UsageLedger) {
+  constructor(
+    private readonly fetchImpl: FetchLike,
+    readonly calls: JudgeInput[] = [],
+    usageLedger?: UsageLedger,
+  ) {
     this.inner = new JevJudge({
       apiKey: "test-key",
       judge: JEV_TEST_JUDGE,
       fetch: fetchImpl,
       // Retries are real; only the wait between them is skipped.
       sleep: () => Promise.resolve(),
-      // As `commands/eval.ts` wires it: the judge and the orchestrator
-      // share one ledger, so judge calls are costed per attempt.
-      usageLedger,
+      ...(usageLedger !== undefined ? { usageLedger } : {}),
     });
+  }
+
+  /**
+   * The same judge recording its usage in `ledger` — as `commands/eval.ts`
+   * wires it through `meteredScorer`, each unit of work gets one, so judge
+   * calls are costed on the attempt they judged.
+   */
+  recordingInto(ledger: UsageLedger): RecordingJevJudge {
+    return new RecordingJevJudge(this.fetchImpl, this.calls, ledger);
   }
 
   evaluate(input: JudgeInput): ResultAsync<JudgeOutput, ScoringError> {
@@ -605,10 +635,9 @@ class RecordingJevJudge implements LangChainJudge {
 /** The judge a run puts behind the real scorer. */
 function buildJudge(
   options: SuiteRunOptions,
-  usageLedger: UsageLedger,
 ): LangChainJudge & { readonly calls: JudgeInput[] } {
   if (options.decisionsEndpoint !== undefined) {
-    return new RecordingJevJudge(options.decisionsEndpoint, usageLedger);
+    return new RecordingJevJudge(options.decisionsEndpoint);
   }
   const fallback = options.judgeOutput ?? {
     score: 1,
@@ -666,25 +695,55 @@ function failingPromptProvider(marker: string): PromptProvider {
 }
 
 /**
- * Runs one suite the way `weave eval run` runs it, and returns what it left
- * on disk.
- *
- * The seam is `EvalOrchestrator` + `buildEvalRunner` — what
- * `packages/cli/src/commands/eval.ts` builds once it has an API key. The
- * model and the judge are the two external services, so those are stubbed and
- * nothing else is: fixture loading, signal extraction, scoring, bundle
- * assembly and artifact writing are all the product's own code.
- *
- * The bundle goes to a fresh temporary root, is read back, and is removed, so
- * a scenario asserts on file contents without owning a directory.
+ * A model that answers each request from the request itself, after an
+ * optional delay — so a run with several attempts in flight gets the same
+ * answer for the same attempt whatever order the calls arrive in.
  */
-export async function runEvalSuite(
-  options: SuiteRunOptions,
-): Promise<SuiteRunObservation> {
-  const model = options.model ?? EVAL_MODEL;
-  const bundleRoot = tempProjectPath("weave-evals-run-");
-  await makeDir(bundleRoot);
+class RequestKeyedModelClient implements ModelClient {
+  readonly calls: ModelRequest[] = [];
 
+  constructor(
+    private readonly model: string,
+    private readonly answerFor: (
+      request: ModelRequest,
+    ) => string | ModelClientError,
+    private readonly delayMs: (request: ModelRequest) => number,
+    private readonly usage: ModelUsage | undefined,
+  ) {}
+
+  complete(
+    request: ModelRequest,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    this.calls.push(request);
+    const answer = this.answerFor(request);
+    return new ResultAsync(
+      Bun.sleep(this.delayMs(request)).then(() => {
+        if (typeof answer !== "string") {
+          return err<ModelResponse, ModelClientError>(answer);
+        }
+        return ok<ModelResponse, ModelClientError>({
+          model: this.model,
+          content: answer,
+          ...(this.usage !== undefined ? { usage: this.usage } : {}),
+        });
+      }),
+    );
+  }
+}
+
+/** The model a run calls: keyed by request, or answering in call order. */
+function buildModelClient(
+  options: SuiteRunOptions,
+  model: string,
+): ModelClient & { readonly calls: ModelRequest[] } {
+  if (options.answerFor !== undefined) {
+    return new RequestKeyedModelClient(
+      model,
+      options.answerFor,
+      options.answerDelayMs ?? (() => 0),
+      options.modelUsage,
+    );
+  }
   const modelClient = new StubModelClient();
   for (const failure of options.modelErrorsFirst ?? []) {
     modelClient.enqueueError(failure);
@@ -705,8 +764,41 @@ export async function runEvalSuite(
     });
   }
 
-  const usageLedger = new UsageLedger();
-  const judge = buildJudge(options, usageLedger);
+  return modelClient;
+}
+
+/**
+ * Runs one suite the way `weave eval run` runs it, and returns what it left
+ * on disk.
+ *
+ * The seam is `EvalOrchestrator` + `buildEvalRunner` — what
+ * `packages/cli/src/commands/eval.ts` builds once it has an API key. The
+ * model and the judge are the two external services, so those are stubbed and
+ * nothing else is: fixture loading, signal extraction, scoring, bundle
+ * assembly and artifact writing are all the product's own code.
+ *
+ * The bundle goes to a fresh temporary root, is read back, and is removed, so
+ * a scenario asserts on file contents without owning a directory.
+ */
+export async function runEvalSuite(
+  options: SuiteRunOptions,
+): Promise<SuiteRunObservation> {
+  const model = options.model ?? EVAL_MODEL;
+  const bundleRoot = tempProjectPath("weave-evals-run-");
+  await makeDir(bundleRoot);
+
+  const modelClient = buildModelClient(options, model);
+
+  const judge = buildJudge(options);
+  const scorer = new LangChainAgentEvalsScorer(judge);
+  // As `commands/eval.ts` wires it: each unit of work gets a scorer whose
+  // judge records into that unit's ledger, so judge calls are costed on the
+  // attempt they judged. Only `JevJudge` records usage; the stub judges
+  // record none, so they share one scorer.
+  const meteredScorer = (ledger: UsageLedger) =>
+    judge instanceof RecordingJevJudge
+      ? new LangChainAgentEvalsScorer(judge.recordingInto(ledger))
+      : scorer;
 
   const promptProvider = selectPromptProvider(options);
 
@@ -734,8 +826,8 @@ export async function runEvalSuite(
 
   const orchestrator = new EvalOrchestrator({
     modelClient,
-    usageLedger,
-    scorer: new LangChainAgentEvalsScorer(judge),
+    scorer,
+    meteredScorer,
     ...(options.decisionsEndpoint !== undefined
       ? { judge: JEV_TEST_JUDGE }
       : {}),
@@ -767,6 +859,9 @@ export async function runEvalSuite(
     ...(options.modelSet !== undefined ? { modelSet: options.modelSet } : {}),
     case: options.caseFilter,
     ...(options.repeat !== undefined ? { repeat: options.repeat } : {}),
+    ...(options.concurrency !== undefined
+      ? { concurrency: options.concurrency }
+      : {}),
     ...(options.track !== undefined ? { track: options.track } : {}),
     ...(options.configMode !== undefined
       ? { configMode: options.configMode }
@@ -786,8 +881,11 @@ export async function runEvalSuite(
   const scorePaths = absolute.filter((path) => /score-[^/]+\.json$/.test(path));
   const rawPaths = absolute.filter((path) => /\/raw\/case-/.test(path));
   const scoreFiles: BundleScoreFile[] = [];
+  const scoreFilesByPath: Record<string, BundleScoreFile> = {};
   for (const path of scorePaths) {
-    scoreFiles.push((await Bun.file(path).json()) as BundleScoreFile);
+    const parsed = (await Bun.file(path).json()) as BundleScoreFile;
+    scoreFiles.push(parsed);
+    scoreFilesByPath[relative(bundleRoot, path)] = parsed;
   }
   const rawArtifacts: RawCaseResultArtifact[] = [];
   for (const path of rawPaths) {
@@ -839,6 +937,7 @@ export async function runEvalSuite(
     rollups: summary?.agentRollups ?? [],
     files,
     scoreFile,
+    scoreFiles: scoreFilesByPath,
     cases,
     firstCase: cases[0] ?? null,
     publicReport,

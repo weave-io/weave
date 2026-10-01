@@ -3,6 +3,7 @@ import {
   type EvalRunInputs,
   KNOWN_EVAL_AGENTS,
   KNOWN_EVAL_AGENTS_SORTED,
+  MAX_EVAL_CONCURRENCY,
   MAX_EVAL_REPEAT,
   parseEvalRunRequest,
 } from "../input-validation.js";
@@ -750,6 +751,94 @@ describe("parseEvalRunRequest — --repeat", () => {
       inputs({ repeat: "3", envOverrides: { WEAVE_EVAL_REPEAT: "5" } }),
     );
     expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --concurrency: attempts in flight at once (Spec 39, gap G7)
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — --concurrency", () => {
+  const text = { track: "text" } as const;
+
+  it("leaves concurrency unset when --concurrency is not supplied, so attempts run one after another", () => {
+    const req = parseEvalRunRequest(inputs())._unsafeUnwrap();
+    expect(req.concurrency).toBeUndefined();
+  });
+
+  it("accepts 1 and the maximum on the text track", () => {
+    expect(
+      parseEvalRunRequest(inputs({ ...text, concurrency: "1" }))._unsafeUnwrap()
+        .concurrency,
+    ).toBe(1);
+    expect(
+      parseEvalRunRequest(
+        inputs({ ...text, concurrency: String(MAX_EVAL_CONCURRENCY) }),
+      )._unsafeUnwrap().concurrency,
+    ).toBe(MAX_EVAL_CONCURRENCY);
+  });
+
+  it("caps concurrency at 16", () => {
+    expect(MAX_EVAL_CONCURRENCY).toBe(16);
+  });
+
+  it.each([
+    "0",
+    "-1",
+    "17",
+    "2.5",
+    "abc",
+    "06",
+    "+6",
+    "1e1",
+  ])("rejects --concurrency %p", (value) => {
+    const result = parseEvalRunRequest(inputs({ ...text, concurrency: value }));
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("InvalidConcurrency");
+    expect(error.message).toContain(`--concurrency "${value}"`);
+    expect(error.message).toContain(`1 to ${MAX_EVAL_CONCURRENCY}`);
+  });
+
+  it("reads WEAVE_EVAL_CONCURRENCY when the flag is absent", () => {
+    const req = parseEvalRunRequest(
+      inputs({ ...text, envOverrides: { WEAVE_EVAL_CONCURRENCY: "6" } }),
+    )._unsafeUnwrap();
+    expect(req.concurrency).toBe(6);
+  });
+
+  it("treats a blank WEAVE_EVAL_CONCURRENCY as absent, as workflow dispatch sends it", () => {
+    const req = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_CONCURRENCY: "" } }),
+    )._unsafeUnwrap();
+    expect(req.concurrency).toBeUndefined();
+  });
+
+  it("rejects a flag and env var that ask for different concurrency", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        ...text,
+        concurrency: "4",
+        envOverrides: { WEAVE_EVAL_CONCURRENCY: "6" },
+      }),
+    );
+    expect(result._unsafeUnwrapErr().type).toBe("DuplicateConflictingInput");
+  });
+
+  it.each([
+    ["no track", {}],
+    ["the trajectory track", { track: "trajectory" }],
+  ])("refuses more than one attempt at a time with %s, because trajectory sessions stay sequential", (_label, track) => {
+    const result = parseEvalRunRequest(inputs({ ...track, concurrency: "4" }));
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ConcurrencyNeedsTextTrack");
+    expect(error.message).toContain("--track text");
+  });
+
+  it("accepts a concurrency of 1 on any track, since that is a sequential run", () => {
+    const req = parseEvalRunRequest(
+      inputs({ track: "trajectory", concurrency: "1" }),
+    )._unsafeUnwrap();
+    expect(req.concurrency).toBe(1);
   });
 });
 

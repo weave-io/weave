@@ -39,6 +39,7 @@
 import { logger } from "@weaveio/weave-engine";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalEnv } from "./env.js";
+import { retryAfterMs } from "./retry-after.js";
 
 const log = logger.child({ module: "eval-model-client" });
 
@@ -183,6 +184,12 @@ export type ModelClientError =
       message: string;
       /** Raw response body, if available. Never contains the API key. */
       body?: string;
+      /**
+       * The wait the response's `Retry-After` header asked for, in
+       * milliseconds (capped), when it named one. Read by
+       * `RateLimitRetryingModelClient` on a 429.
+       */
+      retryAfterMs?: number;
     }
   | {
       type: "ParseError";
@@ -442,6 +449,7 @@ export class OpenRouterClient implements ModelClient {
             message: `Failed to read error response body: ${cause instanceof Error ? cause.message : String(cause)}`,
           }),
         ).andThen((body): ResultAsync<ModelResponse, ModelClientError> => {
+          const wait = retryAfterMs(response.headers.get("Retry-After"));
           return new ResultAsync(
             Promise.resolve(
               err<ModelResponse, ModelClientError>({
@@ -449,6 +457,7 @@ export class OpenRouterClient implements ModelClient {
                 statusCode: response.status,
                 message: `OpenRouter returned HTTP ${response.status}: ${response.statusText}`,
                 body: body.slice(0, 512), // cap body to avoid leaking secrets in verbose bodies
+                ...(wait !== undefined ? { retryAfterMs: wait } : {}),
               }),
             ),
           );
@@ -565,6 +574,96 @@ export class RetryingModelClient implements ModelClient {
         "Model returned no usable answer; asking again",
       );
       return this.attempt(request, attempt + 1);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RateLimitRetryingModelClient — bounded backoff for HTTP 429 only
+// ---------------------------------------------------------------------------
+
+/**
+ * How many times `RateLimitRetryingModelClient` asks again after a 429
+ * before it returns the 429 (so at most five calls in all).
+ */
+export const MAX_RATE_LIMIT_RETRIES = 4;
+
+/** The wait before retry `n` (0-based) when the 429 names none: 2s, 4s, 8s, 16s. */
+const RATE_LIMIT_BASE_MS = 2_000;
+
+/** Whether an error is the provider saying "too many requests". */
+export function isRateLimited(error: ModelClientError): boolean {
+  return error.type === "HttpError" && error.statusCode === 429;
+}
+
+export interface RateLimitRetryOptions {
+  /** Retries after the first call; defaults to `MAX_RATE_LIMIT_RETRIES`. */
+  maxRetries?: number;
+  /** Waits between attempts. Defaults to `Bun.sleep`; inject in tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * A `ModelClient` that asks again after an HTTP 429, waiting as long as the
+ * response's `Retry-After` asked, or 2s, 4s, 8s and 16s, up to
+ * `MAX_RATE_LIMIT_RETRIES` times. Every other error, and every answer, is
+ * returned at once; a 429 that outlasts the retries is returned as it is
+ * and the case is reported as errored.
+ *
+ * `weave eval run --concurrency` keeps several calls in flight, which makes
+ * a rate limit likelier than one call at a time did. A 429 is never billed
+ * and nothing was answered, so asking again cannot change what the attempt
+ * records. Other transport errors stay unretried here (see
+ * `isRetryableAnswerError`). `commands/eval.ts` wraps the production
+ * `OpenRouterClient` in one; the judge has its own 429 retries (`JevJudge`).
+ */
+export class RateLimitRetryingModelClient implements ModelClient {
+  private readonly maxRetries: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(
+    private readonly inner: ModelClient,
+    options: RateLimitRetryOptions = {},
+  ) {
+    this.maxRetries = options.maxRetries ?? MAX_RATE_LIMIT_RETRIES;
+    this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
+  }
+
+  complete(
+    request: ModelRequest,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    return this.attempt(request, 0);
+  }
+
+  private attempt(
+    request: ModelRequest,
+    retry: number,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    return this.inner.complete(request).orElse((error) => {
+      if (!isRateLimited(error)) return err(error);
+      if (retry >= this.maxRetries) {
+        log.warn(
+          { model: request.model, retries: retry },
+          "Model call still rate limited after every retry; the case is reported as errored",
+        );
+        return err(error);
+      }
+      const retryAfter =
+        error.type === "HttpError" ? error.retryAfterMs : undefined;
+      const wait = retryAfter ?? RATE_LIMIT_BASE_MS * 2 ** retry;
+      log.warn(
+        { model: request.model, retry: retry + 1, waitMs: wait },
+        "Model call rate limited; waiting before asking again",
+      );
+      // A wait that throws or rejects ends the retries with the 429 that
+      // prompted them, rather than escaping the Result chain.
+      const waitThenRetry = ResultAsync.fromThrowable(
+        (ms: number) => this.sleep(ms),
+        (): ModelClientError => error,
+      );
+      return waitThenRetry(wait).andThen(() =>
+        this.attempt(request, retry + 1),
+      );
     });
   }
 }

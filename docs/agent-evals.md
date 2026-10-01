@@ -307,7 +307,9 @@ bun packages/cli/src/main.ts eval run --agent loom --case loom-route-backend-api
 - The whole models × suites pass runs N times, one **attempt** after another,
   so the repeats of one case are spread over the run rather than sent back to
   back. A suite that fails hard on a model (fixture load, prompt provider) is
-  not retried on later attempts.
+  not retried on later attempts. With [`--concurrency`](#run-attempts-concurrently---concurrency-n)
+  several attempts are in flight at once, but they start in this order and are
+  recorded in it.
 - **`N = 1` (or no `--repeat`) is exactly today's run.** No attempt number, no
   repeat count and no pass-rate block is written anywhere, so its score files,
   public report, Markdown report, indexes and raw file names are byte-for-byte
@@ -374,6 +376,79 @@ model outside every case's `allowed_models` already is. The run still fails
 when no suite ran anything, and an explicit agent or case filter keeps the
 strict rule. A case filter naming a case of the other track fails with
 `NoCasesFound`.
+
+### Run attempts concurrently (`--concurrency N`)
+
+A text attempt takes about 18 seconds, almost all of it waiting on OpenRouter
+for the model's answer and the judge's. One after another, the full default
+matrix — 98 text cases on 14 default models, 1,372 attempts per repeat — takes
+about 7 hours, past GitHub's 6-hour job limit, so a CI run of it would be
+killed and publish nothing. `--concurrency N` keeps up to N units of work in
+flight at once (Spec 39, gap G7):
+
+```bash
+# The full default matrix's text cases, six units at a time
+bun packages/cli/src/main.ts eval run --track text --concurrency 6
+```
+
+- `N` is a whole number from 1 to `MAX_EVAL_CONCURRENCY` (16, in
+  `input-validation.ts`). `WEAVE_EVAL_CONCURRENCY` is the env-var form; a
+  blank value means "not set". Omitted means 1, a sequential run, which is
+  what `weave eval run` always did.
+- More than 1 needs `--track text`; anything else is refused with
+  `ConcurrencyNeedsTextTrack`. Trajectory sessions stay sequential (below).
+- **The unit of work is one suite on one model in one repeat**, the loop
+  `EvalOrchestrator.executeSuites()` already had. Units run through a
+  `WorkerPool` (`worker-pool.ts`); inside a unit, its cases run one after
+  another as before. A unit holds at most 16 text cases, so the tail is short: the
+  1,372 attempts are 112 units per repeat.
+- **What a run records does not depend on N.** Units start in the order a
+  sequential run runs them, and their results are folded back in that order,
+  never in the order they finished. Score files, the run report, the public
+  report, the bundle index and the dashboard indexes are the same as a
+  sequential run of the same answers (timestamps aside).
+  `tests/evals/concurrency.scenario.test.ts` checks this with answers and
+  judge calls that finish out of order. N is not written to the bundle, so
+  `eval compare` treats runs made at different concurrency as alike.
+- **Each unit meters its own calls.** [Cost per attempt](#cost-per-attempt)
+  drains a usage ledger after each case, which only works if nothing else
+  records into it meanwhile. Each unit therefore gets its own ledger, a model
+  client metered into it, and a copy of the judge recording into it
+  (`EvalOrchestratorOptions.meteredScorer`, `JevJudge.withUsageLedger()`), so
+  one attempt's judge calls are never costed on another.
+- **One failure stops nothing else.** An errored attempt is an errored row,
+  as before. A suite that fails hard on a model is still not run again on
+  later repeats; a later repeat that had already started when the failure
+  came in is dropped, so the run records what a sequential run would. A unit
+  that throws instead of returning a result fails as `SuiteRunDefect`.
+- **Rate limits.** The model client asks again after an HTTP 429, waiting as
+  long as `Retry-After` asks or 2, 4, 8 and 16 seconds, at most four times
+  (`RateLimitRetryingModelClient`); a 429 that outlasts that is an errored
+  attempt. Other transport errors are not retried, as before. The judge
+  already retried 429s and 5xx itself.
+
+**Wall time.** At about 18 seconds an attempt, wall time is roughly
+`attempts × 18 s ÷ N`:
+
+| Run | Attempts | N = 1 | N = 6 (CI default) | N = 12 | N = 16 |
+| --- | --- | --- | --- | --- | --- |
+| Full default matrix, text track, once | 1,372 | ~6 h 50 min | ~70 min | ~35 min | ~26 min |
+| The same, `repeat=3` | 4,116 | ~20 h 30 min | ~3 h 25 min | ~1 h 45 min | ~1 h 20 min |
+| The same, `repeat=5` (the publication bar's minimum) | 6,860 | ~34 h | ~5 h 45 min — over the step limit | ~2 h 50 min | ~2 h 10 min |
+| `--models dev`, text track, `repeat=3` | 588 | ~2 h 55 min | ~30 min | ~15 min | ~12 min |
+
+These are estimates from the 24 Sep run's per-attempt time; more calls in
+flight can make each one slower. A dispatch with `repeat=5` on the full
+matrix needs `concurrency` of 10 or more to finish inside the job's limit.
+
+**Trajectory runs stay sequential.** The trajectory runner is isolated per
+session: each one gets its own workspace under a random directory, a
+container named with a random UUID, and no published ports. It is not
+parallelised anyway, because a session is bounded by wall-clock time
+(`max_duration_seconds`, 5 to 9 minutes) on a shared runner: several
+OpenCode sessions in one 4-vCPU GitHub runner would compete for CPU and
+memory, and a session that times out because of its neighbours would be
+recorded as the model's failure. Measuring that safely needs its own change.
 
 ### Choose the config prompts are composed from (`--config`)
 
@@ -1246,13 +1321,14 @@ model names for free before you spend anything.
 
 ### CI dispatch
 
-The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_dispatch`, no push/PR/schedule triggers). Dispatch it from the Actions tab (or `gh workflow run agent-evals.yml -f agent=loom-routing -f model=anthropic/claude-sonnet-4.5 -f case=""`) with any combination of the four optional inputs:
+The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_dispatch`, no push/PR/schedule triggers). Dispatch it from the Actions tab (or `gh workflow run agent-evals.yml -f agent=loom-routing -f model=anthropic/claude-sonnet-4.5 -f case=""`) with any combination of the optional inputs:
 
 - `agent` — a suite ID or short agent alias from the shared registry (blank runs all suites).
 - `model` — an exact model ID from `evals/model-matrix.json` (blank runs the model set below).
 - `models` — a choice of `default` (the full default matrix, the default) or `dev` (the [development subset](#the-development-subset---models-dev)). `dev` cannot be combined with `model`. For example `gh workflow run agent-evals.yml -f models=dev`.
 - `case` — an exact case ID from `evals/cases/**` (blank runs every case).
 - `repeat` — how many times each case runs per model ([`--repeat`](#repeat-cases---repeat-n)), a whole number from 1 to 20; blank runs each case once. For example `gh workflow run agent-evals.yml -f models=dev -f repeat=3`.
+- `concurrency` — how many text-only attempts run at once ([`--concurrency`](#run-attempts-concurrently---concurrency-n)), a whole number from 1 to 16, **6 by default**; blank runs them one at a time. Only the text job receives it. A full-matrix dispatch with `repeat=5` needs 10 or more: see the wall-time table there.
 - `trajectory` — a boolean, on by default: also run the [harness trajectory](#harness-trajectory-evals) job. Untick it (`-f trajectory=false`) to run the text-only job alone.
 
 The workflow runs two eval jobs, one per [track](#run-one-track---track):
@@ -1260,9 +1336,11 @@ The workflow runs two eval jobs, one per [track](#run-one-track---track):
 - **`run-evals`** runs `weave eval run --track text`: every text-only case the filters select.
 - **`trajectory-evals`** builds the Podman sandbox image and runs `weave eval run --track trajectory`: every `harness_trajectory` case the filters select, each on the selected models its `allowed_models` permits. It runs on every dispatch (Spec 37, 20.2); until then it skipped itself unless trajectory-relevant paths had changed since the default branch, which a dispatch from `main` never has. A default dispatch therefore also runs all six trajectory cases on every default model, one sandboxed session each (up to its `max_duration_seconds`), times `repeat`: 84 sessions per repeat with today's 14 default models (see [Trajectory cases run on every default model](#trajectory-cases-run-on-every-default-model)). Dispatch `-f models=dev`, a `model`, or untick `trajectory` for a smaller run. The Phase 1 case `loom-route-shuttle-implement-utility-trajectory` also allows `openai/gpt-4o-mini`, which is outside the default matrix, so that model runs only when it is dispatched (`-f model=openai/gpt-4o-mini`) or locally with `bun run eval:trajectory`.
 
+Both eval jobs have `timeout-minutes: 330`, below GitHub's 6-hour job limit, so a run that is too long fails with a named timeout rather than being killed at the cliff. Each job's live eval step has a shorter limit (315 minutes for the text job, 300 for the trajectory job, which first builds the sandbox image), so the `always()` bundle upload after it still runs. A run stopped by either limit publishes nothing: `weave eval run` allocates the run ID, writes the bundle and publishes only after every attempt has finished, and publishes every run file before any index (see [the publish pipeline](eval-sanitization-and-publish-pipeline.md)). Only a kill inside that last upload, which takes seconds, could leave a run's files in the results repository with no index pointing at them, which no reader sees.
+
 A job whose track the filters exclude is skipped, not failed: a `case` filter runs only the job of that case's track; the text job is skipped when `model` names a model no text-only case allows (for example `openai/gpt-4o-mini`); the trajectory job is skipped when `agent` names a suite that cannot hold trajectory cases (`ALLOWED_TRAJECTORY_AGENTS`) or `model` names a model no trajectory case allows. The trajectory job starts after the text job finishes, whatever its outcome, never beside it: both publish, and a run ID (`<sha7>-<date>-<NNN>`) is allocated by reading the published manifest, so two concurrent publications could pick the same ID.
 
-Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_MODEL_SETS`, `ALLOWED_CASES`, `ALLOWED_TRAJECTORY_CASES`, `ALLOWED_TRAJECTORY_AGENTS`, the repeat range) before either eval job ever spends OpenRouter quota or touches secrets, and each job dry-runs its selection before the step that holds them. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, the suite registry, `MAX_EVAL_REPEAT`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
+Raw dispatch inputs are validated in a dedicated `validate-inputs` job against hardcoded allowlists (`ALLOWED_AGENTS`, `ALLOWED_MODELS`, `ALLOWED_MODEL_SETS`, `ALLOWED_CASES`, `ALLOWED_TRAJECTORY_CASES`, `ALLOWED_TRAJECTORY_AGENTS`, the repeat and concurrency ranges) before either eval job ever spends OpenRouter quota or touches secrets, and each job dry-runs its selection before the step that holds them. `packages/cli/src/evals/__tests__/workflow-sync.test.ts` enforces that those allowlists stay in exact sync with `EVAL_AGENT_FILTERS`, the suite registry, `MAX_EVAL_REPEAT`, `MAX_EVAL_CONCURRENCY`, `evals/model-matrix.json`, and every fixture under `evals/cases/**` — an allowlist drift (added case, renamed suite, new model) fails that test in CI, not silently in production.
 
 ### Remote checks
 

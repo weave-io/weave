@@ -34,6 +34,11 @@
  *   - `--track <text|trajectory>` (or `WEAVE_EVAL_TRACK`) runs only the
  *     text-only cases or only the `harness_trajectory` cases. Omitted runs
  *     both. See `eval-track.ts`.
+ *   - `--concurrency <n>` (or `WEAVE_EVAL_CONCURRENCY`) runs up to `n`
+ *     independent units of work at once, 1 to `MAX_EVAL_CONCURRENCY`.
+ *     Omitted means 1: one attempt after another. More than 1 needs
+ *     `--track text`, because trajectory sessions stay sequential.
+ *     See "Run attempts concurrently" in `docs/agent-evals.md`.
  *   - `--config <builtin|project>` (or `WEAVE_EVAL_CONFIG`) picks the Weave
  *     config prompts are composed from. Omitted means `builtin`: no project
  *     or global `.weave` is read, so the run scores the prompts users get.
@@ -80,6 +85,14 @@ export type EvalRunRequest = {
    */
   repeat?: number;
   /**
+   * How many units of work run at once (`--concurrency N`). Omitted means 1,
+   * a sequential run. Always an integer in `[1, MAX_EVAL_CONCURRENCY]`, and
+   * more than 1 only with `track: "text"`. It changes how long a run takes,
+   * never what it records: results are ordered as a sequential run orders
+   * them, and the value is not written to the bundle.
+   */
+  concurrency?: number;
+  /**
    * Which eval track to run (`--track`): only the text-only cases, or only
    * the `harness_trajectory` cases. Omitted runs both.
    */
@@ -119,6 +132,8 @@ export type EvalRunInputs = {
   models?: string;
   /** Repeat count from --repeat flag, as typed. */
   repeat?: string;
+  /** Concurrency from --concurrency flag, as typed. */
+  concurrency?: string;
   /** Track name from --track flag. */
   track?: string;
   /** Config mode from --config flag. */
@@ -185,6 +200,27 @@ export type EvalInputValidationError =
       type: "InvalidRepeatCount";
       /** The value supplied by the caller. */
       value: string;
+      message: string;
+    }
+  | {
+      /**
+       * The `--concurrency` value is not a whole number from 1 to
+       * `MAX_EVAL_CONCURRENCY`.
+       */
+      type: "InvalidConcurrency";
+      /** The value supplied by the caller. */
+      value: string;
+      message: string;
+    }
+  | {
+      /**
+       * `--concurrency` above 1 without `--track text`. Trajectory sessions
+       * run one after another (see `docs/agent-evals.md`), so a run that
+       * could include them is refused rather than silently run sequentially.
+       */
+      type: "ConcurrencyNeedsTextTrack";
+      /** The requested concurrency. */
+      concurrency: number;
       message: string;
     }
   | {
@@ -255,6 +291,53 @@ function validateRepeat(
     type: "InvalidRepeatCount",
     value,
     message: `--repeat "${value}" must be a whole number from 1 to ${MAX_EVAL_REPEAT}`,
+  });
+}
+
+/**
+ * The most units of work one run may have in flight at once.
+ *
+ * A guard on rate limits and on the CI runner: every unit in flight holds an
+ * open model call or judge call. Sixteen already brings the full default
+ * matrix well inside the job's time limit; see "Run attempts concurrently"
+ * in `docs/agent-evals.md`.
+ */
+export const MAX_EVAL_CONCURRENCY = 16;
+
+/**
+ * Validate a `--concurrency` value: a whole number from 1 to
+ * `MAX_EVAL_CONCURRENCY`, written plainly (`6`, not `6.0`, `+6` or `06`).
+ */
+function validateConcurrency(
+  value: string,
+): Result<number, EvalInputValidationError> {
+  const parsed = Number.parseInt(value, 10);
+  const plain = String(parsed) === value.trim();
+  if (plain && parsed >= 1 && parsed <= MAX_EVAL_CONCURRENCY) return ok(parsed);
+  return err({
+    type: "InvalidConcurrency",
+    value,
+    message: `--concurrency "${value}" must be a whole number from 1 to ${MAX_EVAL_CONCURRENCY}`,
+  });
+}
+
+/**
+ * Concurrency above 1 is for the text track only: trajectory sessions run
+ * one after another, so a run that could include them must say
+ * `--track text`.
+ */
+function validateConcurrencyTrack(
+  concurrency: number | undefined,
+  track: EvalTrack | undefined,
+): Result<void, EvalInputValidationError> {
+  if (concurrency === undefined || concurrency <= 1) return ok(undefined);
+  if (track === "text") return ok(undefined);
+  return err({
+    type: "ConcurrencyNeedsTextTrack",
+    concurrency,
+    message:
+      `--concurrency ${concurrency} needs --track text: trajectory cases run one ` +
+      "session at a time, so only text-only attempts run concurrently",
   });
 }
 
@@ -445,6 +528,7 @@ const KNOWN_EVAL_ENV_KEYS = new Set([
   "WEAVE_EVAL_CASE",
   "WEAVE_EVAL_MODELS",
   "WEAVE_EVAL_REPEAT",
+  "WEAVE_EVAL_CONCURRENCY",
   "WEAVE_EVAL_TRACK",
   "WEAVE_EVAL_CONFIG",
   "WEAVE_EVAL_PUBLISH_MODE",
@@ -518,6 +602,7 @@ export function parseEvalRunRequest(
   const envCase = normalizeEnvFilterValue(env.WEAVE_EVAL_CASE);
   const envModels = normalizeEnvFilterValue(env.WEAVE_EVAL_MODELS);
   const envRepeat = normalizeEnvFilterValue(env.WEAVE_EVAL_REPEAT);
+  const envConcurrency = normalizeEnvFilterValue(env.WEAVE_EVAL_CONCURRENCY);
   const envTrack = normalizeEnvFilterValue(env.WEAVE_EVAL_TRACK);
   const envConfig = normalizeEnvFilterValue(env.WEAVE_EVAL_CONFIG);
 
@@ -604,6 +689,26 @@ export function parseEvalRunRequest(
   if (trackValidation.isErr()) return err(trackValidation.error);
   const validatedTrack = trackValidation.value;
 
+  // Resolve the concurrency, which depends on the track
+  const concurrencyMerge = detectDuplicate(
+    "concurrency",
+    inputs.concurrency,
+    envConcurrency,
+  );
+  if (concurrencyMerge.isErr()) return err(concurrencyMerge.error);
+  const rawConcurrency = concurrencyMerge.value;
+  const concurrencyValidation =
+    rawConcurrency !== undefined
+      ? validateConcurrency(rawConcurrency)
+      : ok(undefined);
+  if (concurrencyValidation.isErr()) return err(concurrencyValidation.error);
+  const validatedConcurrency = concurrencyValidation.value;
+  const concurrencyTrack = validateConcurrencyTrack(
+    validatedConcurrency,
+    validatedTrack,
+  );
+  if (concurrencyTrack.isErr()) return err(concurrencyTrack.error);
+
   // Resolve the config mode
   const configMerge = detectDuplicate("config", inputs.config, envConfig);
   if (configMerge.isErr()) return err(configMerge.error);
@@ -646,5 +751,8 @@ export function parseEvalRunRequest(
   if (validatedModelSet !== undefined) request.modelSet = validatedModelSet;
   if (validatedRepeat !== undefined) request.repeat = validatedRepeat;
   if (validatedTrack !== undefined) request.track = validatedTrack;
+  if (validatedConcurrency !== undefined) {
+    request.concurrency = validatedConcurrency;
+  }
   return ok(request);
 }

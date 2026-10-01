@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 256 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~23,100 tokens. Without it, AI exploration would cost ~83,900 tokens. **Saves ~60,800 tokens per conversation.**
-> **Last scanned:** 2026-10-01 19:12 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 258 lib files | 30 env vars | 11 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~23,200 tokens. Without it, AI exploration would cost ~84,900 tokens. **Saves ~61,700 tokens per conversation.**
+> **Last scanned:** 2026-10-01 19:43 — re-run after significant changes
 
 ---
 
@@ -423,8 +423,8 @@
   - type EvalRunInputs
   - type EvalInputValidationError
   - const MAX_EVAL_REPEAT
-  - const KNOWN_EVAL_AGENTS
-  - _...1 more_
+  - const MAX_EVAL_CONCURRENCY
+  - _...2 more_
 - `packages/cli/src/evals/jev-judge.ts`
   - function displayResponse: (response) => string
   - function buildJevState: (input) => string
@@ -432,7 +432,7 @@
   - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
   - function jevScore: (overall) => number
   - function jevRationale: (decision) => string
-  - _...13 more_
+  - _...12 more_
 - `packages/cli/src/evals/judge-questions.ts`
   - function signalQuestion: (signal) => string
   - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
@@ -500,12 +500,12 @@
   - type SandboxImageCheckError
 - `packages/cli/src/evals/openrouter-client.ts`
   - function isRetryableAnswerError: (error) => boolean
+  - function isRateLimited: (error) => boolean
   - class OpenRouterClient
   - class RetryingModelClient
+  - class RateLimitRetryingModelClient
   - class StubModelClient
-  - interface ChatMessage
-  - interface ModelRequest
-  - _...6 more_
+  - _...10 more_
 - `packages/cli/src/evals/pass-rates.ts`
   - function isErroredAttempt: (outcome) => boolean
   - function tallyAttempts: (outcomes) => AttemptTally
@@ -583,6 +583,7 @@
   - class StubResultsRepoPublisher
   - interface PublishBundleRequest
   - _...2 more_
+- `packages/cli/src/evals/retry-after.ts` — function retryAfterMs: (header, now) => void, const RETRY_AFTER_MAX_MS
 - `packages/cli/src/evals/run-report.ts` — class EvalRunReport
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator, reportPartialFailure) => void
@@ -667,6 +668,7 @@
   - interface ReviewSignals
   - interface WeftReviewRunnerOptions
   - _...2 more_
+- `packages/cli/src/evals/worker-pool.ts` — class WorkerPool
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - function toConfigFileReader: (fs) => ConfigFileReader
@@ -1268,7 +1270,7 @@
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
 - `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts
@@ -1301,12 +1303,14 @@
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
+- pass-rates.d — `packages/cli/dist-types/evals/pass-rates.d.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - pass-rates.test — `packages/cli/src/evals/__tests__/pass-rates.test.ts`
 - pass-rates — `packages/cli/src/evals/pass-rates.ts`
 
 ## validation
+- migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
 
 ## auth
@@ -1323,15 +1327,15 @@
 - `packages/cli/src/fs/file-system.ts` — imported by **34** files
 - `packages/cli/src/io/terminal.ts` — imported by **30** files
 - `packages/cli/src/theme/colors.ts` — imported by **29** files
-- `packages/cli/src/evals/attempt-usage.ts` — imported by **19** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
+- `packages/cli/src/evals/attempt-usage.ts` — imported by **18** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **15** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **14** files
 - `packages/cli/src/errors.ts` — imported by **14** files
 - `packages/cli/src/cli.ts` — imported by **13** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `packages/cli/src/evals/case-loader.ts` — imported by **12** files
@@ -1346,8 +1350,8 @@
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +29 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +25 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +24 more
-- `packages/cli/src/evals/attempt-usage.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/model-comparison.test.ts`, `packages/cli/src/evals/compare-report.ts`, `packages/cli/src/evals/jev-judge.ts` +14 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts` +14 more
+- `packages/cli/src/evals/attempt-usage.ts` ← `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/model-comparison.test.ts`, `packages/cli/src/evals/compare-report.ts`, `packages/cli/src/evals/jev-judge.ts`, `packages/cli/src/evals/loom-routing-runner.ts` +13 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
@@ -1373,7 +1377,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 257 test files found
+> 263 test files found
 
 ---
 
