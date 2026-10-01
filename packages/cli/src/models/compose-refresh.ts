@@ -37,7 +37,7 @@ import {
 } from "@weaveio/weave-config";
 import type { ModelUpdatesSettings } from "@weaveio/weave-core";
 import { logger } from "@weaveio/weave-engine";
-import { ResultAsync } from "neverthrow";
+import { ok, okAsync, type Result, ResultAsync } from "neverthrow";
 
 const log = logger.child({ module: "cli-compose-model-updates" });
 
@@ -58,17 +58,16 @@ export interface RefreshNotStarted {
   readonly message: string;
 }
 
-/** What the session-start refresh did. */
-export type ComposeRefreshResult =
+/** What the session-start refresh did, when it did not fail. */
+export type ComposeRefreshOutcome =
   /** No `model_updates` block, or `mode off`: `refresh()` was not called. */
   | { readonly type: "Off" }
   | { readonly type: "Refreshed"; readonly outcome: RefreshOutcome }
-  | {
-      readonly type: "Failed";
-      readonly error: RefreshError | RefreshNotStarted;
-    }
   /** The budget ran out first; the refresh finishes or times out on its own. */
   | { readonly type: "StillRunning"; readonly budgetMs: number };
+
+/** Why the session-start refresh failed. Compose reports it and carries on. */
+export type ComposeRefreshError = RefreshError | RefreshNotStarted;
 
 function causeMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -85,10 +84,11 @@ export class ComposeModelRefresh {
   ) {}
 
   /** Refresh for the merged `settings.model_updates`, waiting at most the budget. */
-  async run(
+  run(
     settings: ModelUpdatesSettings | undefined,
-  ): Promise<ComposeRefreshResult> {
-    if (resolveModelUpdates(settings) === undefined) return { type: "Off" };
+  ): ResultAsync<ComposeRefreshOutcome, ComposeRefreshError> {
+    if (resolveModelUpdates(settings) === undefined)
+      return okAsync({ type: "Off" });
     // A refresher that throws, or whose promise rejects, is a bug; it comes
     // back as `NotStarted` rather than as an exception.
     const refresh = ResultAsync.fromThrowable(
@@ -98,54 +98,61 @@ export class ComposeModelRefresh {
         message: causeMessage(cause),
       }),
     );
-    const settled: Promise<ComposeRefreshResult> = refresh()
+    const settled = refresh()
       .andThen((result) => result)
-      .match(
-        (outcome): ComposeRefreshResult => ({ type: "Refreshed", outcome }),
-        (error): ComposeRefreshResult => ({ type: "Failed", error }),
+      .map(
+        (outcome): ComposeRefreshOutcome => ({ type: "Refreshed", outcome }),
       );
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const budget = new Promise<ComposeRefreshResult>((resolve) => {
-      timer = setTimeout(
-        () => resolve({ type: "StillRunning", budgetMs: this.budgetMs }),
-        this.budgetMs,
-      );
-    });
-    const result = await Promise.race([settled, budget]);
-    clearTimeout(timer);
-    return this.report(result);
+    const budget = new Promise<Result<ComposeRefreshOutcome, never>>(
+      (resolve) => {
+        timer = setTimeout(
+          () => resolve(ok({ type: "StillRunning", budgetMs: this.budgetMs })),
+          this.budgetMs,
+        );
+      },
+    );
+    return new ResultAsync(
+      Promise.race([Promise.resolve(settled), budget]).then((result) => {
+        clearTimeout(timer);
+        return result;
+      }),
+    )
+      .map((outcome) => this.reportOutcome(outcome))
+      .mapErr((error) => this.reportError(error));
   }
 
-  private report(result: ComposeRefreshResult): ComposeRefreshResult {
-    if (result.type === "StillRunning") {
+  private reportOutcome(outcome: ComposeRefreshOutcome): ComposeRefreshOutcome {
+    if (outcome.type === "StillRunning") {
       log.warn(
-        { code: "model_updates_refresh_pending", budgetMs: result.budgetMs },
+        { code: "model_updates_refresh_pending", budgetMs: outcome.budgetMs },
         "Model recommendations check is still running; compose is not waiting for it",
       );
-      return result;
+      return outcome;
     }
-    if (result.type === "Failed") {
-      // Another process holding the lock is doing this refresh for us.
-      if (result.error.type === "Busy") return result;
-      log.warn(
-        { code: "model_updates_refresh_failed", error: result.error.type },
-        "Model recommendations could not be refreshed",
-      );
-      return result;
-    }
-    if (result.type === "Refreshed" && "promoted" in result.outcome) {
-      const promoted = result.outcome.promoted;
-      if (promoted !== undefined)
-        log.info(
-          {
-            channel: result.outcome.channel,
-            issued: promoted.issued,
-            previousIssued: promoted.previousIssued,
-          },
-          "Model recommendations promoted; the next compose applies them",
-        );
-    }
-    return result;
+    if (outcome.type !== "Refreshed" || !("promoted" in outcome.outcome))
+      return outcome;
+    const promoted = outcome.outcome.promoted;
+    if (promoted === undefined) return outcome;
+    log.info(
+      {
+        channel: outcome.outcome.channel,
+        issued: promoted.issued,
+        previousIssued: promoted.previousIssued,
+      },
+      "Model recommendations promoted; the next compose applies them",
+    );
+    return outcome;
+  }
+
+  private reportError(error: ComposeRefreshError): ComposeRefreshError {
+    // Another process holding the lock is doing this refresh for us.
+    if (error.type === "Busy") return error;
+    log.warn(
+      { code: "model_updates_refresh_failed", error: error.type },
+      "Model recommendations could not be refreshed",
+    );
+    return error;
   }
 }
 
@@ -154,23 +161,21 @@ export class ComposeModelRefresh {
  * nothing to say (off, throttled, unchanged, or another process refreshing).
  */
 export function describeComposeRefresh(
-  result: ComposeRefreshResult,
+  result: Result<ComposeRefreshOutcome, ComposeRefreshError>,
 ): string | undefined {
-  switch (result.type) {
+  if (result.isErr()) return describeFailure(result.error);
+  const outcome = result.value;
+  switch (outcome.type) {
     case "Off":
       return undefined;
     case "StillRunning":
-      return `Model recommendations: the check was still running after ${result.budgetMs} ms; compose has finished, and the check completes or times out on its own.`;
-    case "Failed":
-      return describeFailure(result.error);
+      return `Model recommendations: the check was still running after ${outcome.budgetMs} ms; compose has finished, and the check completes or times out on its own.`;
     case "Refreshed":
-      return describeOutcome(result.outcome);
+      return describeOutcome(outcome.outcome);
   }
 }
 
-function describeFailure(
-  error: RefreshError | RefreshNotStarted,
-): string | undefined {
+function describeFailure(error: ComposeRefreshError): string | undefined {
   switch (error.type) {
     case "Busy":
       return undefined;

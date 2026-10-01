@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 255 lib files | 30 env vars | 11 middleware | 10 events | 0% test coverage
 > **Token savings:** this file is ~23,100 tokens. Without it, AI exploration would cost ~84,100 tokens. **Saves ~61,000 tokens per conversation.**
-> **Last scanned:** 2026-10-01 18:26 — re-run after significant changes
+> **Last scanned:** 2026-10-01 18:34 — re-run after significant changes
 
 ---
 
@@ -737,13 +737,13 @@
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/models/compose-refresh.ts`
-  - function describeComposeRefresh: (result) => string | undefined
+  - function describeComposeRefresh: (result, ComposeRefreshError>) => string | undefined
   - class ComposeModelRefresh
   - interface ModelRecommendationsRefresher
   - interface RefreshNotStarted
-  - type ComposeRefreshResult
-  - const COMPOSE_REFRESH_TIMEOUT_MS
-  - _...1 more_
+  - type ComposeRefreshOutcome
+  - type ComposeRefreshError
+  - _...2 more_
 - `packages/cli/src/models/expectations.ts`
   - function describeMismatch: (mismatch) => string
   - function compareExpectations: (report, expectations) => ExpectationMismatch[]

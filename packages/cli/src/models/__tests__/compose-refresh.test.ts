@@ -36,7 +36,7 @@ describe("ComposeModelRefresh", () => {
 
     const result = await new ComposeModelRefresh(refresher).run(undefined);
 
-    expect(result).toEqual({ type: "Off" });
+    expect(result._unsafeUnwrap()).toEqual({ type: "Off" });
     expect(refresher.requests).toEqual([]);
   });
 
@@ -47,7 +47,7 @@ describe("ComposeModelRefresh", () => {
       mode: "off",
     });
 
-    expect(result).toEqual({ type: "Off" });
+    expect(result._unsafeUnwrap()).toEqual({ type: "Off" });
     expect(refresher.requests).toEqual([]);
   });
 
@@ -63,10 +63,10 @@ describe("ComposeModelRefresh", () => {
     const result = await new ComposeModelRefresh(refresher).run(AUTO);
 
     expect(refresher.requests).toEqual([{ settings: AUTO }]);
-    expect(result).toEqual({ type: "Refreshed", outcome });
+    expect(result._unsafeUnwrap()).toEqual({ type: "Refreshed", outcome });
   });
 
-  it("returns a failed check as a result instead of throwing", async () => {
+  it("returns a failed check as an error instead of throwing", async () => {
     const refresher = new StubRefresher(() =>
       errAsync({
         type: "CheckFailed",
@@ -77,7 +77,7 @@ describe("ComposeModelRefresh", () => {
 
     const result = await new ComposeModelRefresh(refresher).run(AUTO);
 
-    expect(result.type).toBe("Failed");
+    expect(result._unsafeUnwrapErr().type).toBe("CheckFailed");
   });
 
   it("returns a refresher that throws as a failure", async () => {
@@ -87,9 +87,9 @@ describe("ComposeModelRefresh", () => {
 
     const result = await new ComposeModelRefresh(refresher).run(AUTO);
 
-    expect(result).toEqual({
-      type: "Failed",
-      error: { type: "NotStarted", message: "boom" },
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "NotStarted",
+      message: "boom",
     });
   });
 
@@ -103,9 +103,9 @@ describe("ComposeModelRefresh", () => {
 
     const result = await new ComposeModelRefresh(refresher).run(AUTO);
 
-    expect(result).toEqual({
-      type: "Failed",
-      error: { type: "NotStarted", message: "rejected" },
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "NotStarted",
+      message: "rejected",
     });
   });
 
@@ -120,7 +120,10 @@ describe("ComposeModelRefresh", () => {
 
     const result = await new ComposeModelRefresh(refresher, 30).run(AUTO);
 
-    expect(result).toEqual({ type: "StillRunning", budgetMs: 30 });
+    expect(result._unsafeUnwrap()).toEqual({
+      type: "StillRunning",
+      budgetMs: 30,
+    });
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

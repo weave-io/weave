@@ -726,13 +726,13 @@
   - function writeMigratedDsl: (fs, plan, dslContent, destExists, promptFiles) => ResultAsync<
   - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/models/compose-refresh.ts`
-  - function describeComposeRefresh: (result) => string | undefined
+  - function describeComposeRefresh: (result, ComposeRefreshError>) => string | undefined
   - class ComposeModelRefresh
   - interface ModelRecommendationsRefresher
   - interface RefreshNotStarted
-  - type ComposeRefreshResult
-  - const COMPOSE_REFRESH_TIMEOUT_MS
-  - _...1 more_
+  - type ComposeRefreshOutcome
+  - type ComposeRefreshError
+  - _...2 more_
 - `packages/cli/src/models/expectations.ts`
   - function describeMismatch: (mismatch) => string
   - function compareExpectations: (report, expectations) => ExpectationMismatch[]
