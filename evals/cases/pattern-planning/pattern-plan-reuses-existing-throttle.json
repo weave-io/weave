@@ -1,0 +1,21 @@
+{
+  "id": "pattern-plan-reuses-existing-throttle",
+  "description": "Plan limiting failed logins: after 5 failed attempts from one IP address within 15 minutes, `POST /login` answers 429 until the window has passed. Project files: `src/routes/login.ts` (the login handler; it answers 401 on a wrong password), `src/routes/signup.ts` (the signup handler), `src/lib/http.ts` (shared route middleware: `withJson()`, `withCors(origins)` and `withLimit(name, limit, windowSeconds, options?)`, which counts requests per client IP in Redis and answers 429 once the count is over the limit; `options.countIf(response)` decides which responses are counted, and `signup.ts` uses `withLimit(\"signup\", 3, 3600)`), `src/lib/redis.ts` (the shared Redis client), `src/lib/__tests__/http.test.ts` and `src/routes/__tests__/login.test.ts`. Available commands (from package.json scripts): `bun test`, `bun run typecheck`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan limits logins with the existing `withLimit` middleware from `src/lib/http.ts`, counting only failed attempts (for example through its `countIf` option), instead of building a second failure counter or rate limiter of its own.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "reuse",
+    "files"
+  ]
+}

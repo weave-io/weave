@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-codegen-before-consumers",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. Pass a plan that changes `api/openapi.yaml`, runs `bun run codegen` to regenerate the types, and orders both before the handler and account-page tasks (in `## Dependencies and Order`, in `Depends on` fields, or by an explicit task order that says why). Listing `src/generated/api-types.ts` as a file the codegen step regenerates is fine. Fail a plan that edits `src/generated/api-types.ts` by hand (adds the field to it directly) instead of regenerating it, that never runs `bun run codegen`, or that orders the handler or account-page change before the contract and codegen step. Plan format and the other commands are not scored."
+  }
+}

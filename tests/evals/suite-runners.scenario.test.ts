@@ -3159,6 +3159,67 @@ describe("Pattern plans a change", () => {
   });
 });
 
+describe("Pattern plans a change the judge scores for the behaviour it must show", () => {
+  const probe = only("pattern-planning")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "pattern-reuses-the-throttle",
+    description:
+      "Plan limiting failed logins. `src/lib/throttle.ts` exports `throttle(options)`. Available commands: `bun test`.",
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "The plan builds the limit on the existing `throttle` middleware.",
+      required_artifacts: [],
+    },
+    tags: ["planning", "judge-scored"],
+  };
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "pattern-planning",
+        answers: [probe.goodAnswer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("hands the model the brief without the behaviour it expects", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("`src/lib/throttle.ts` exports");
+    expect(asked).not.toContain("existing `throttle` middleware");
+    expect(asked).toContain("Required structural signals: none");
+  });
+
+  it("asks the judge whether the plan reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(probe.goodAnswer);
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: The plan builds the limit on the existing `throttle` middleware.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide, so a well-formed plan that misses the behaviour can fail", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Tapestry, deciding on a report ----------------------------------------
 
 const TAPESTRY_ANSWERS: SignalRow[] = [

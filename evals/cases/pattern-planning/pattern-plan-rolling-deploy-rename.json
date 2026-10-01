@@ -1,0 +1,21 @@
+{
+  "id": "pattern-plan-rolling-deploy-rename",
+  "description": "Plan renaming the `users.fullname` column to `display_name`, in the database and in the code. The API runs as six instances; a deploy applies pending migrations first and then replaces the instances one at a time over about 20 minutes. Project files: `db/migrations/` (one SQL file per change, applied in filename order by `bun run migrate`), `src/db/users.ts` (every query on `users`), `src/api/profile.ts` (reads the name for the profile endpoint) and `src/db/__tests__/users.test.ts`. Available commands (from package.json scripts): `bun run migrate`, `bun test`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan recognises that the old instances keep serving traffic against the migrated database during the rollout, and does not rename the column in one migration shipped with the code change: it splits the change into backward-compatible steps across separate deploys (for example add `display_name`, write both and backfill, switch reads, and drop `fullname` only in a later deploy) or uses another approach under which old and new code both work while the rollout runs.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "migration",
+    "risk"
+  ]
+}

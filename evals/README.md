@@ -72,7 +72,15 @@ evals/
 │   │   ├── pattern-plan-settings-refactor.json
 │   │   ├── pattern-plan-release-checklist.json
 │   │   ├── pattern-plan-verify-by-per-criterion.json   # judgment
-│   │   └── pattern-plan-no-invented-commands.json      # judgment
+│   │   ├── pattern-plan-no-invented-commands.json      # judgment
+│   │   ├── pattern-plan-reuses-existing-throttle.json  # judge-scored
+│   │   ├── pattern-plan-codegen-before-consumers.json  # judge-scored
+│   │   ├── pattern-plan-stale-contributing-commands.json  # judgment
+│   │   ├── pattern-plan-scopes-out-adjacent-todo.json  # judge-scored
+│   │   ├── pattern-plan-rolling-deploy-rename.json     # judge-scored
+│   │   ├── pattern-plan-separates-major-upgrade.json   # judge-scored
+│   │   ├── pattern-plan-keeps-no-dependency-constraint.json  # judge-scored
+│   │   └── pattern-plan-flags-open-retention-decision.json  # judge-scored
 │   ├── weft-review/                    # Weft review-structure eval cases
 │   │   ├── weft-review-clean-approval.json
 │   │   ├── weft-review-reject-blocker-citation.json
@@ -155,7 +163,15 @@ evals/
     │   ├── pattern-plan-settings-refactor.json
     │   ├── pattern-plan-release-checklist.json
     │   ├── pattern-plan-verify-by-per-criterion.json
-    │   └── pattern-plan-no-invented-commands.json
+    │   ├── pattern-plan-no-invented-commands.json
+    │   ├── pattern-plan-reuses-existing-throttle.json
+    │   ├── pattern-plan-codegen-before-consumers.json
+    │   ├── pattern-plan-stale-contributing-commands.json
+    │   ├── pattern-plan-scopes-out-adjacent-todo.json
+    │   ├── pattern-plan-rolling-deploy-rename.json
+    │   ├── pattern-plan-separates-major-upgrade.json
+    │   ├── pattern-plan-keeps-no-dependency-constraint.json
+    │   └── pattern-plan-flags-open-retention-decision.json
     ├── weft-review/                    # Scoring rubrics for weft-review cases
     │   ├── weft-review-clean-approval.json
     │   ├── weft-review-reject-blocker-citation.json
@@ -293,6 +309,50 @@ runner can deterministically extract from assistant output, such as:
 Avoid semantic “good plan” assertions that require subjective interpretation.
 The runner seeds `required_artifacts` with observable markers so the existing
 scorer path can grade representative planning cases without wish-casting.
+
+#### Judge-scored planning cases (`judge-scored` tag)
+
+Structural signals cannot tell a well-formed plan that builds on the wrong
+thing from one that builds on the right thing. A case tagged `judge-scored`
+names **one** planning behaviour and lets the judge decide whether the plan
+shows it:
+
+- the description is a short project brief: the request, the files with a
+  one-line note each, and `Available commands (from package.json scripts)`.
+  The evidence the behaviour depends on (an existing helper, a generated
+  file, a rolling deploy, a vague requirement) is stated as a fact of the
+  project, never as an instruction;
+- `required_artifacts` is empty, so the runner tells the model "Required
+  structural signals: none" and the judge asks whether the plan achieves
+  `expected_outcome.description`, which starts `The plan ` and names the one
+  behaviour. Everything else (format, tests, commands) is optional;
+- the rubric notes say what passes ("Pass a plan…", with the acceptable
+  variants) and what fails ("Fail a plan…");
+- the behaviour must be one the shipped Pattern prompt
+  (`packages/config/prompts/pattern.md`) asks for or leaves to judgment. A
+  case that expects a plan to break a prompt rule measures the prompt;
+- the line between pass and fail must be crisp. The first
+  `reuses-existing-throttle` brief left the existing limiter unable to count
+  only failures, so "reuse" and "a second mechanism in the same file" blurred
+  and the judge failed sound plans; the brief now gives `withLimit` a
+  `countIf` option, so building a separate counter is plainly the miss.
+
+The seven added for Spec 39 gap G3 cover limiting failed logins with an
+existing middleware's `countIf` option instead of a second failure counter
+(`reuses-existing-throttle`), regenerating
+types from the API contract before the code that uses them
+(`codegen-before-consumers`), leaving an adjacent TODO out of scope
+(`scopes-out-adjacent-todo`), an expand-and-contract column rename under a
+rolling deploy (`rolling-deploy-rename`), a breaking dependency upgrade as its
+own task before the feature that needs it (`separates-major-upgrade`), a
+"no new runtime dependency" constraint (`keeps-no-dependency-constraint`), and
+flagging an unsettled retention period as a decision for the caller
+(`flags-open-retention-decision`). Invented commands stay deterministic,
+because Jev missed an invented command in its acceptance check:
+`stale-contributing-commands` is a `judgment` case whose CONTRIBUTING.md
+mentions lint, format and end-to-end steps that package.json has no script
+for. `pattern-planning-corpus.test.ts`
+(`packages/cli/src/evals/__tests__/`) guards the shape of each kind.
 
 ### Shuttle-execution fixture guidance
 

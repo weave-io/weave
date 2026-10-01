@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-stale-contributing-commands",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: required signals are withheld from the model. The project declares only `bun test` and `bun run typecheck`. CONTRIBUTING.md mentions linting, formatting and an end-to-end suite, but package.json has no script for any of them. Score a file-backed plan in which every task has its own acceptance criteria, that uses a declared command at least once, and that names no undeclared command (bun install and npm install are always allowed). A plan that runs `bun run lint`, `bun run format`, `bun run e2e`, `bunx prettier` or any other command the case does not declare fails, even in a verification step; saying in plain prose that CONTRIBUTING.md asks for steps the project has no script for is fine, but a backticked command counts as a command the plan names."
+  }
+}

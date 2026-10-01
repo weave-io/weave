@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-reuses-existing-throttle",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. `withLimit` already supports counting only some responses through `options.countIf`. Pass a plan that wraps the login handler in `withLimit` (for example `withLimit(\"login\", 5, 900, { countIf: (res) => res.status === 401 })`) or extends `withLimit` itself where it falls short. Off-by-one choices about the fifth or sixth attempt, resetting on success, and new tests are fine. Fail a plan that builds a separate failure counter or limiter instead, wherever it puts it (a new module, new functions in `src/lib/http.ts` beside `withLimit`, Redis calls in `src/routes/login.ts`, an in-memory map or a new Redis client), and a plan that never says how the limit is enforced. Plan structure, task count and the verification commands are not scored."
+  }
+}

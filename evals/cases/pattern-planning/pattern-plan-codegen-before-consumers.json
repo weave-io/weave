@@ -1,0 +1,21 @@
+{
+  "id": "pattern-plan-codegen-before-consumers",
+  "description": "Plan returning a customer's preferred locale from `GET /customers/:id` as a new `preferredLocale` field and showing it on the account page. The `preferred_locale` column already exists, and `src/server/db/customers.ts` already selects it. Project files: `api/openapi.yaml` (the API contract), `src/generated/api-types.ts` (the `Customer` type and the other API types), `src/server/handlers/customers.ts` (the handler, typed with `Customer`), `src/web/pages/account.tsx` (the account page, which reads the same `Customer` type) and `src/server/handlers/__tests__/customers.test.ts`. Available commands (from package.json scripts): `bun run codegen`, `bun test`, `bun run typecheck`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan adds `preferredLocale` to the contract in `api/openapi.yaml` and regenerates `src/generated/api-types.ts` with `bun run codegen` before the handler and account-page changes that use the field, which depend on it; it does not edit `src/generated/api-types.ts` by hand.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "dependencies",
+    "ordering"
+  ]
+}

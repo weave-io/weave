@@ -1,0 +1,20 @@
+{
+  "id": "pattern-plan-keeps-no-dependency-constraint",
+  "description": "Plan adding a CSV download of an account's invoices at `GET /invoices/export.csv`, one row per invoice with its number, issue date, customer name and total. Project files: `src/routes/invoices.ts` (the invoice routes), `src/lib/invoices.ts` (`listInvoices(accountId)` returns `{ number, issuedAt, customerName, totalCents, currency }[]`), `src/routes/__tests__/invoices.test.ts` and `package.json` (it has no runtime dependencies, which the team keeps that way: the service ships as one edge-worker bundle that is at 990 KB of its 1 MB limit). Available commands (from package.json scripts): `bun test`, `bun run build` (fails when the bundle exceeds 1 MB).",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan keeps the project's no-runtime-dependency constraint: it builds the CSV in the project's own code and adds no CSV library or other runtime package to `package.json`.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "constraints"
+  ]
+}

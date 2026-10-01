@@ -1,0 +1,21 @@
+{
+  "id": "pattern-plan-separates-major-upgrade",
+  "description": "Plan adding a date-range picker to the booking form. The `<DateRangePicker>` component exists only in `@acme/ui` 5.x, a major release; the app depends on `@acme/ui` 4.8 and uses its `Button`, `Modal` and `Select` components in about 40 files under `src/components/`. Project files: `package.json`, `bun.lock`, `src/features/booking/BookingForm.tsx`, `src/features/booking/__tests__/BookingForm.test.tsx` and the components under `src/components/`. Available commands (from package.json scripts): `bun install`, `bun test`, `bun run typecheck`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan makes the `@acme/ui` 4.8 to 5.x upgrade, including checking and fixing the app's existing usages for the major release's breaking changes, a task (or tasks) of its own with its own acceptance, separate from and ordered before the task that adds `<DateRangePicker>` to the booking form.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "task-split",
+    "ordering"
+  ]
+}

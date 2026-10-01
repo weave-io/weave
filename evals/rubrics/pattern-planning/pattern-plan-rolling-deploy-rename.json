@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-rolling-deploy-rename",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. Migrations run before the old instances are replaced, so a plain `ALTER TABLE users RENAME COLUMN fullname TO display_name` breaks every old instance for up to 20 minutes. Pass a plan that avoids that: an expand-and-contract sequence over two or more deploys (add `display_name`, dual-write or sync and backfill, move reads, drop `fullname` later), or another approach under which old and new code both work during the rollout, such as keeping a compatibility view or generated column under the old name until the next deploy. Fail a plan whose migration renames or drops `fullname` in the same deploy as the code change, including one that only lists the rollout as a pitfall or proposes a maintenance window the deploy process described does not have. Plan format and commands are not scored."
+  }
+}
