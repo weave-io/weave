@@ -184,7 +184,7 @@ Every opted-in user can see where each agent's models came from.
 - **`weave models apply`** promotes `latest` to `applied` (the `notify` path).
 - **`weave models pin`** writes the applied recommendations into the global config as explicit `models` lines and prints the diff first. That freezes them; the user can then set `mode off`.
 - **`weave validate`** reports the mode and applied date, and reports a skipped layer with its reason, in every form of the command.
-- **OpenCode 2 `status`** gains an optional bounded `modelUpdates` object (`mode`, `channel`, `issued`, `state`) and an issue code `model_updates_unavailable` when an opted-in layer was skipped because `applied.json` is there but unusable (not when nothing has been applied yet). The TUI shows a one-line notice when an update is applied, for example "Loom → claude-opus-5.6 (recommendations of 1 Oct 2026)". The notice mechanism is verified live, as for plan display.
+- **OpenCode 2 `status`** gains an optional bounded `modelUpdates` object (`mode`, `channel`, `issued`, `state`) and an issue code `model_updates_unavailable` when an opted-in layer was skipped because `applied.json` is there but unusable (not when nothing has been applied yet). When a reload moves agents to a newly applied list, the server emits a bounded `models.changed` RPC event and the TUI shows it as a one-line notice, for example "Loom now runs on claude-opus-5.6 (model recommendations of 1 Oct 2026)" ([OpenCode 2 core](../../adapters/opencode2-core.md#model-recommendations)). The event is covered by the adapter scenario (item 6); the toast is verified on a live host in the live proof (item 8), as plan display was.
 
 ## Publication bar
 

@@ -290,6 +290,7 @@ describe("a user leaves model updates off", () => {
       withWeaveOnOpenCode2(
         {
           config: "settings { model_updates { mode off } }",
+          files: { ".weave/plans/release.md": "# Release\n\n- [ ] Ship it\n" },
           host: { models: HOST_MODELS, sessionAgent: "loom" },
           dependencies: {
             modelRecommendations: { fetch: (url) => server.fetch(url) },
@@ -297,10 +298,12 @@ describe("a user leaves model updates off", () => {
         },
         async (host) => {
           await host.promptSession();
-          await host.runCommand("weave:start", "");
+          await host.runCommand("weave:start", "release");
           await Bun.sleep(50);
           return {
             requests: [...server.requests],
+            // The plan start reached admission (and its catalog refresh).
+            prompted: host.sessionCallNames().includes("prompt"),
             status: (await host.rpc("status")) as StatusReport,
           };
         },
@@ -309,7 +312,9 @@ describe("a user leaves model updates off", () => {
   });
 
   it("never asks the server for a list, on setup or on admitted work", async () => {
-    expect((await run()).requests).toEqual([]);
+    const result = await run();
+    expect(result.prompted).toBe(true);
+    expect(result.requests).toEqual([]);
   });
 
   it("says model updates are off", async () => {

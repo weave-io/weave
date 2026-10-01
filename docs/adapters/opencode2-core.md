@@ -294,8 +294,8 @@ There is no timer. A promoted `applied.json` is a changed source, so the next
 due refresh (on the next admitted work after `refreshIntervalMs`) rebuilds the
 catalog and reloads the agents without a restart. A change therefore lands on
 a turn after the one whose check fetched it. A live session keeps the model it
-has; Weave selects the new model for sessions and turns it picks a model for
-([Which model a turn runs on](#which-model-a-turn-runs-on)).
+has; new sessions, and later turns whose model Weave selects, use the new
+one ([Which model a turn runs on](#which-model-a-turn-runs-on)).
 
 **What `status` reports.** Once a catalog is published, the `status` RPC
 carries a bounded `modelUpdates` object:
