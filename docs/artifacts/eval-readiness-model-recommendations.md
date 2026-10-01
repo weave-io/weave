@@ -37,7 +37,7 @@ Growing a suite to 12 cases at 5 repeats brings the smallest detectable drop to 
 
 ## Gaps that block the first published list
 
-These apply to every agent and stop any list that changes a model.
+Together they block any list that changes a model. G1 matters for Shuttle and Weft, the only agents whose scored prompt differs from the shipped one. G3 matters for each agent whose suite is below 12 cases: every agent except Loom and Tapestry's category routing. The others (G2, G4–G8) apply to every agent.
 
 ### G1. Score the prompts users get
 
