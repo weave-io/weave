@@ -40,7 +40,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 2.4 Key-generation and signing script for maintainers under `scripts/`, documented; the private key never enters the repository.
 - [x] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md). Also `--key`, `--issued-after` (the served list's `issued`, for the website's rollback check) and `--json`; the expectations format is in [CLI](../../cli.md#the-expectations-file).
 
-## 3. Loader layer — PR: #PRNUM
+## 3. Loader layer — PR: #287
 
 - [x] 3.1 `loadConfig` reads the merged `model_updates.mode` before deciding to read the cache. With `off` or no block, output is identical to today's for every existing loader fixture (assert it).
 - [x] 3.2 A verified `applied.json` becomes a layer of builtin-agent `models` only, merged between builtins and global. Tests: user entries first, then recommended, then builtin, duplicates removed; a recommended name that is not a builtin is skipped; `disable agents` still wins.
@@ -68,7 +68,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 
 - [ ] 6.1 After the first catalog publish, and on refresh probes when the throttle is due, call `refresh()` without awaiting it in the refresh path. Never in `build`, so a catalog attempt's exact bytes stay deterministic.
 - [ ] 6.2 Test that `applied.json` appears in the catalog's source manifest (recorded as missing when absent) and that a promotion triggers the existing rebuild and reload. The spike showed no adapter change is needed: the loader reads it through the source cache's `FileReader`.
-- [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated. The issue code and its RPC schema test landed with group 3 (#PRNUM); the `modelUpdates` object is still open.
+- [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated. The issue code and its RPC schema test landed with group 3 (#287); the `modelUpdates` object is still open.
 - [ ] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md).
 - [ ] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
 
