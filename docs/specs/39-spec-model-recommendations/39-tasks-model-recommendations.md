@@ -64,11 +64,11 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [ ] 5.3 `weave validate` (every form) reports the mode, the applied date, and a skipped layer with its reason.
 - [ ] 5.4 [CLI](../../cli.md) documents the `models` command group; API report (`packages/cli/etc/weave-cli.api.md`) updated.
 
-## 6. OpenCode 2 — PR: #PRNUM
+## 6. OpenCode 2 — PR: #292
 
 - [x] 6.1 After the first catalog publish, and on refresh probes when the throttle is due, call `refresh()` without awaiting it in the refresh path. Never in `build`, so a catalog attempt's exact bytes stay deterministic. Done as: after the first publish and on admitted work (prompt hook, plan start), single-flight per host, settings from the published catalog, never with `mode off`.
 - [x] 6.2 Test that `applied.json` appears in the catalog's source manifest (recorded as missing when absent) and that a promotion triggers the existing rebuild and reload. The spike showed no adapter change is needed: the loader reads it through the source cache's `FileReader`.
-- [x] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated. The issue code and its RPC schema test landed with group 3 (#287); `modelUpdates` (`mode`, `channel`, `state`: `off` | `pending` | `applied` | `unavailable`, `issued`) landed in #PRNUM.
+- [x] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated. The issue code and its RPC schema test landed with group 3 (#287); `modelUpdates` (`mode`, `channel`, `state`: `off` | `pending` | `applied` | `unavailable`, `issued`) landed in #292.
 - [x] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md#model-recommendations). Done as a `models.changed` RPC event, tested against the host double, and a plan-panel toast; the toast has not been seen on a live host yet, so that check moved to 8.4.
 - [x] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
 
