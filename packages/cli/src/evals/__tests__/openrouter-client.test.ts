@@ -185,6 +185,65 @@ describe("OpenRouterClient — successful responses", () => {
     expect(result._unsafeUnwrap().usage).toBeUndefined();
   });
 
+  it("ModelResponse.usage carries the cost OpenRouter reported", async () => {
+    const body = openRouterSuccess("Answer") as Record<string, unknown>;
+    globalThis.fetch = mockFetchOk({
+      ...body,
+      usage: {
+        prompt_tokens: 1200,
+        completion_tokens: 300,
+        total_tokens: 1500,
+        cost: 0.0081,
+      },
+    });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap().usage).toEqual({
+      promptTokens: 1200,
+      completionTokens: 300,
+      totalTokens: 1500,
+      costUsd: 0.0081,
+    });
+  });
+
+  it("leaves the cost out when OpenRouter reported none, rather than reading it as free", async () => {
+    globalThis.fetch = mockFetchOk(openRouterSuccess("Answer"));
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap().usage).not.toHaveProperty("costUsd");
+  });
+
+  it("treats usage without both token counts as not reported, never as zero tokens", async () => {
+    const body = openRouterSuccess("Answer") as Record<string, unknown>;
+    globalThis.fetch = mockFetchOk({
+      ...body,
+      usage: { prompt_tokens: 1200, cost: 0.0081 },
+    });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap().usage).toBeUndefined();
+  });
+
+  it("treats a null usage block as not reported", async () => {
+    const body = openRouterSuccess("Answer") as Record<string, unknown>;
+    globalThis.fetch = mockFetchOk({ ...body, usage: null });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrap().usage).toBeUndefined();
+  });
+
   it("falls back to request.model when provider omits model in response", async () => {
     const body = {
       // no top-level model field
@@ -575,6 +634,30 @@ describe("OpenRouterClient — answers with no usable content (Spec 37, 16.5)", 
     expect(result._unsafeUnwrapErr()).toMatchObject({
       type: "EmptyResponse",
       finishReason: "stop",
+    });
+  });
+
+  it("keeps the usage of an empty answer, which is still billed", async () => {
+    globalThis.fetch = mockFetchOk({
+      model: "deepseek/deepseek-v4-flash-0731",
+      choices: [
+        { finish_reason: "stop", message: { role: "assistant", content: "" } },
+      ],
+      usage: { prompt_tokens: 900, completion_tokens: 40, cost: 0.00006 },
+    });
+
+    const result = await new OpenRouterClient(VALID_ENV).complete(
+      MINIMAL_REQUEST,
+    );
+
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "EmptyResponse",
+      usage: {
+        promptTokens: 900,
+        completionTokens: 40,
+        totalTokens: 940,
+        costUsd: 0.00006,
+      },
     });
   });
 

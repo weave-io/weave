@@ -951,6 +951,59 @@ describe("sanitizeCaseResultSummary — repeat fields", () => {
   });
 });
 
+describe("sanitizeCaseResultSummary — usage (Spec 39 task 0.6)", () => {
+  const base: CaseResultSummary = {
+    caseId: "c",
+    modelId: "m/one",
+    suite: "weft-review",
+    passed: true,
+    required: true,
+    weightedTotal: 1,
+    dimensionScores: {
+      routingCorrectness: { score: 0, applicable: false },
+      delegationCorrectness: { score: 0, applicable: false },
+      executionCompleteness: { score: 1, applicable: true },
+      rationaleQuality: { score: 1, applicable: true },
+    },
+    scoredAt: "2026-01-01T00:00:00.000Z",
+    dryRun: false,
+  };
+
+  it("keeps the model's and the judge's tokens, cost and cost source", () => {
+    const usage = {
+      model: {
+        calls: 2,
+        promptTokens: 2000,
+        completionTokens: 300,
+        costUsd: 0.012,
+        costSource: "provider" as const,
+      },
+      judge: { calls: 2, costUsd: 0.00004, costSource: "provider" as const },
+    };
+    expect(sanitizeCaseResultSummary({ ...base, usage }).usage).toEqual(usage);
+  });
+
+  it("rebuilds usage field by field, dropping anything else", () => {
+    const sanitized = sanitizeCaseResultSummary({
+      ...base,
+      usage: {
+        judge: {
+          calls: 1,
+          costSource: "guessed" as unknown as "provider",
+          rawBody: "leak",
+        } as unknown as { calls: number },
+        rawContent: "leak",
+      } as unknown as CaseResultSummary["usage"],
+    });
+    expect(sanitized.usage).toEqual({ judge: { calls: 1 } });
+    expect(assertJsonPublishSafe(JSON.stringify(sanitized)).isOk()).toBe(true);
+  });
+
+  it("writes no usage when the summary has none", () => {
+    expect(sanitizeCaseResultSummary(base)).not.toHaveProperty("usage");
+  });
+});
+
 describe("sanitizeProvenanceManifest — config mode", () => {
   const manifest = {
     version: 1,

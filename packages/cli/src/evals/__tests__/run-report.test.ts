@@ -253,3 +253,79 @@ describe("EvalRunReport — repeated run", () => {
     expect(text).toContain("1 errored attempt left out of the pass rate");
   });
 });
+
+describe("EvalRunReport — cost per attempt (Spec 39 task 0.6)", () => {
+  const rollup = (
+    modelId: string,
+    cost: EvalRunSummary["modelRollups"][number]["cost"],
+  ): EvalRunSummary["modelRollups"][number] => ({
+    modelId,
+    totalCases: 4,
+    passedCases: 4,
+    failedCases: 0,
+    erroredCases: 0,
+    passRate: 1,
+    cost,
+  });
+
+  it("prints each model's mean cost per attempt, model and judge calls separately", () => {
+    const text = render(
+      summary([caseReport()], {
+        modelRollups: [
+          rollup("openai/gpt-6-luna", {
+            model: {
+              attempts: 4,
+              costed: 4,
+              meanUsd: 0.00041,
+              source: "provider",
+            },
+            judge: {
+              attempts: 4,
+              costed: 4,
+              meanUsd: 0.00004,
+              source: "provider",
+            },
+          }),
+        ],
+      }),
+    );
+
+    expect(text).toContain("Cost per attempt (mean):");
+    expect(text).toContain("    openai/gpt-6-luna");
+    expect(text).toContain("model calls  $0.000410 (reported by OpenRouter)");
+    expect(text).toContain("judge calls  $0.0000400 (reported by OpenRouter)");
+  });
+
+  it("marks a mean that leaves out attempts without a recorded cost", () => {
+    const text = render(
+      summary([caseReport()], {
+        modelRollups: [
+          rollup("openai/gpt-6-luna", {
+            model: { attempts: 4, costed: 3, meanUsd: 0.002, source: "prices" },
+            judge: { attempts: 4, costed: 0, meanUsd: null, source: null },
+          }),
+        ],
+      }),
+    );
+
+    expect(text).toContain(
+      "model calls  $0.00200 (at matrix prices)  (no recorded cost for 1 of 4 attempts, left out of the mean)",
+    );
+    expect(text).toContain("judge calls  not recorded");
+  });
+
+  it("prints no cost section for a run that wrote no case reports", () => {
+    const text = render(
+      summary([], {
+        modelRollups: [
+          rollup("openai/gpt-6-luna", {
+            model: { attempts: 0, costed: 0, meanUsd: null, source: null },
+            judge: { attempts: 0, costed: 0, meanUsd: null, source: null },
+          }),
+        ],
+      }),
+    );
+
+    expect(text).not.toContain("Cost per attempt");
+  });
+});

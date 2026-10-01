@@ -8,6 +8,7 @@
  */
 
 import { err, ok, ResultAsync } from "neverthrow";
+import { type AttemptUsageMeter, attachAttemptUsage } from "./attempt-usage.js";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
@@ -329,6 +330,11 @@ export function buildUserMessage(evalCase: EvalCase): string {
 
 export interface WeftReviewRunnerOptions {
   modelClient: ModelClient;
+  /**
+   * Records each attempt's token usage and cost on its summary (Spec 39
+   * task 0.6). Omit it to record none, as most tests do.
+   */
+  usageMeter?: AttemptUsageMeter;
   scorer: AgentEvalsScorer;
   promptProvider?: PromptProvider;
   weftSystemPrompt?: string;
@@ -344,12 +350,14 @@ export interface WeftReviewRunRequest {
 
 export class WeftReviewRunner {
   private readonly modelClient: ModelClient;
+  private readonly usageMeter: AttemptUsageMeter | undefined;
   private readonly scorer: AgentEvalsScorer;
   private readonly promptProvider: PromptProvider;
   private readonly evalsRoot: string | undefined;
 
   constructor(options: WeftReviewRunnerOptions) {
     this.modelClient = options.modelClient;
+    this.usageMeter = options.usageMeter;
     this.scorer = options.scorer;
     this.evalsRoot = options.evalsRoot;
 
@@ -529,7 +537,10 @@ export class WeftReviewRunner {
             rubrics,
             rawArtifacts,
             systemPrompt,
-          ).map((result) => [...results, result]),
+          ).map((result) => [
+            ...results,
+            attachAttemptUsage(this.usageMeter, result, item.evalCase),
+          ]),
         ),
       ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
     );

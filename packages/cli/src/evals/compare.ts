@@ -11,7 +11,8 @@
  *
  * Only sanitized, publishable-grade files are read from a run directory:
  * `bundle-index.json` (run ID, commit, suites, repeat count), each suite's
- * `score-<suite>.json` (one row per attempt: case, model, passed, errored),
+ * `score-<suite>.json` (one row per attempt: case, model, passed, errored,
+ * and the attempt's tokens and cost where recorded),
  * `prompt-hashes.json` (agent → SHA-256) and, where present, a recorded
  * judge. The `raw/` directory — prompts, transcripts, answers, rationales —
  * is never opened, and nothing printed is taken from a free-text field.
@@ -43,6 +44,12 @@ import { join } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { FileSystem } from "../fs/file-system.js";
+import {
+  type AttemptUsage,
+  COST_SOURCES,
+  type CostSummary,
+  summarizeCost,
+} from "./attempt-usage.js";
 import {
   bestPossibleP,
   fisherExactTwoSided,
@@ -77,6 +84,11 @@ export interface ComparedAttempt {
   modelId: string;
   passed: boolean;
   errored: boolean;
+  /**
+   * The attempt's tokens and cost, from its score file row. `undefined` for
+   * a row that records none (every run before Spec 39 task 0.6).
+   */
+  usage?: AttemptUsage;
 }
 
 /** What `eval compare` reads from one run directory. */
@@ -190,6 +202,16 @@ export interface ComparedSide extends AttemptTally {
   interval: ProportionInterval | null;
 }
 
+/**
+ * The mean cost per attempt of one side of a suite × model row: the model's
+ * own calls and the judge's, separately, over every attempt (errored ones
+ * included, since they were billed).
+ */
+export interface SideCost {
+  model: CostSummary;
+  judge: CostSummary;
+}
+
 /** One case on one model, for locating where a suite-level change came from. */
 export interface CaseComparison {
   caseId: string;
@@ -213,6 +235,8 @@ export interface SuiteModelComparison {
   adjustedP: number | null;
   verdict: ComparisonVerdict;
   cases: CaseComparison[];
+  /** Mean cost per attempt on each side (Spec 39 task 0.6). */
+  cost: { baseline: SideCost; candidate: SideCost };
 }
 
 /** An agent whose composed prompt differs between the two runs. */
@@ -280,6 +304,22 @@ const BundleIndexSchema = z.object({
   configMode: z.enum(EVAL_CONFIG_MODES).optional(),
 });
 
+const CountSchema = z.number().finite().nonnegative();
+
+/** A row's `usage`, as `attempt-usage.ts` writes it. */
+const CallsUsageSchema = z.object({
+  calls: z.number().int().nonnegative(),
+  promptTokens: CountSchema.optional(),
+  completionTokens: CountSchema.optional(),
+  costUsd: CountSchema.optional(),
+  costSource: z.enum(COST_SOURCES).optional(),
+});
+
+const AttemptUsageSchema = z.object({
+  model: CallsUsageSchema.optional(),
+  judge: CallsUsageSchema,
+});
+
 const ScoreFileSchema = z.object({
   suite: SuiteNameSchema,
   repeatCount: z.number().int().min(2).optional(),
@@ -289,6 +329,7 @@ const ScoreFileSchema = z.object({
       modelId: z.string().min(1),
       passed: z.boolean(),
       errored: z.boolean().optional(),
+      usage: AttemptUsageSchema.optional(),
     }),
   ),
 });
@@ -355,6 +396,7 @@ export class RunBundleReader {
                   modelId: row.modelId,
                   passed: row.passed,
                   errored: row.errored === true,
+                  ...(row.usage !== undefined ? { usage: row.usage } : {}),
                 })),
               ),
             })),
@@ -782,6 +824,15 @@ interface DraftRow {
   testable: boolean;
   unscored: boolean;
   cases: CaseComparison[];
+  cost: { baseline: SideCost; candidate: SideCost };
+}
+
+function sideCost(attempts: readonly ComparedAttempt[]): SideCost {
+  const usages = attempts.map((attempt) => attempt.usage);
+  return {
+    model: summarizeCost(usages, "model"),
+    judge: summarizeCost(usages, "judge"),
+  };
 }
 
 function side(attempts: readonly ComparedAttempt[]): ComparedSide {
@@ -840,6 +891,10 @@ function buildRows(baseline: RunSnapshot, candidate: RunSnapshot): DraftRow[] {
         !unscored && bestPossibleP(baseScored, candScored) < SIGNIFICANCE_LEVEL,
       unscored,
       cases: buildCaseRows(baseAttempts, candAttempts),
+      cost: {
+        baseline: sideCost(baseAttempts),
+        candidate: sideCost(candAttempts),
+      },
     };
   });
 }
@@ -880,6 +935,7 @@ function finishRow(
     adjustedP: adjustedP ?? null,
     verdict: verdictOf(row, adjustedP, difference),
     cases: row.cases,
+    cost: row.cost,
   };
 }
 

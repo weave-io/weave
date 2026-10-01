@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { printRunReport } from "../../packages/cli/src/commands/eval.js";
 import type { CliError } from "../../packages/cli/src/errors.js";
+import { UsageLedger } from "../../packages/cli/src/evals/attempt-usage.js";
 import type { EvalConfigMode } from "../../packages/cli/src/evals/config-mode.js";
 import type { EvalTrack } from "../../packages/cli/src/evals/eval-track.js";
 import type { EvalRunRequest } from "../../packages/cli/src/evals/input-validation.js";
@@ -34,6 +35,7 @@ import {
 import type {
   ModelClientError,
   ModelRequest,
+  ModelUsage,
 } from "../../packages/cli/src/evals/openrouter-client.js";
 import { StubModelClient } from "../../packages/cli/src/evals/openrouter-client.js";
 import type {
@@ -383,6 +385,11 @@ export interface SuiteRunOptions {
   agent?: string;
   /** The answers the model gives, in order. The last one repeats. */
   answers?: string[];
+  /**
+   * The token usage OpenRouter reports with every answer. Omitted, answers
+   * report none, as a provider that leaves usage out does.
+   */
+  modelUsage?: ModelUsage;
   /** Returned by the model instead of an answer. */
   modelError?: ModelClientError;
   /**
@@ -576,13 +583,16 @@ class RecordingJevJudge implements LangChainJudge {
   readonly calls: JudgeInput[] = [];
   private readonly inner: JevJudge;
 
-  constructor(fetchImpl: FetchLike) {
+  constructor(fetchImpl: FetchLike, usageLedger: UsageLedger) {
     this.inner = new JevJudge({
       apiKey: "test-key",
       judge: JEV_TEST_JUDGE,
       fetch: fetchImpl,
       // Retries are real; only the wait between them is skipped.
       sleep: () => Promise.resolve(),
+      // As `commands/eval.ts` wires it: the judge and the orchestrator
+      // share one ledger, so judge calls are costed per attempt.
+      usageLedger,
     });
   }
 
@@ -595,9 +605,10 @@ class RecordingJevJudge implements LangChainJudge {
 /** The judge a run puts behind the real scorer. */
 function buildJudge(
   options: SuiteRunOptions,
+  usageLedger: UsageLedger,
 ): LangChainJudge & { readonly calls: JudgeInput[] } {
   if (options.decisionsEndpoint !== undefined) {
-    return new RecordingJevJudge(options.decisionsEndpoint);
+    return new RecordingJevJudge(options.decisionsEndpoint, usageLedger);
   }
   const fallback = options.judgeOutput ?? {
     score: 1,
@@ -682,13 +693,20 @@ export async function runEvalSuite(
     modelClient.setDefaultError(options.modelError);
   } else {
     const answers = options.answers ?? [""];
+    const usage =
+      options.modelUsage !== undefined ? { usage: options.modelUsage } : {};
     for (const content of answers) {
-      modelClient.enqueueResponse({ model, content });
+      modelClient.enqueueResponse({ model, content, ...usage });
     }
-    modelClient.setDefaultResponse({ model, content: answers.at(-1) ?? "" });
+    modelClient.setDefaultResponse({
+      model,
+      content: answers.at(-1) ?? "",
+      ...usage,
+    });
   }
 
-  const judge = buildJudge(options);
+  const usageLedger = new UsageLedger();
+  const judge = buildJudge(options, usageLedger);
 
   const promptProvider = selectPromptProvider(options);
 
@@ -716,6 +734,7 @@ export async function runEvalSuite(
 
   const orchestrator = new EvalOrchestrator({
     modelClient,
+    usageLedger,
     scorer: new LangChainAgentEvalsScorer(judge),
     ...(options.decisionsEndpoint !== undefined
       ? { judge: JEV_TEST_JUDGE }

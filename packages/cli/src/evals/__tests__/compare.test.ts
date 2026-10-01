@@ -360,3 +360,125 @@ describe("RunBundleReader — malformed bundles", () => {
     expect(error.type).toBe("BundleInvalid");
   });
 });
+
+describe("compareRuns — cost per attempt (Spec 39 task 0.6)", () => {
+  const costed = (
+    caseId: string,
+    model: number | null,
+    judge: number,
+  ): ComparedAttempt => ({
+    suite: "weft-review",
+    caseId,
+    modelId: "m/a",
+    passed: true,
+    errored: false,
+    usage: {
+      model:
+        model === null
+          ? { calls: 1 }
+          : { calls: 1, costUsd: model, costSource: "provider" },
+      judge: { calls: 2, costUsd: judge, costSource: "provider" },
+    },
+  });
+
+  it("states each side's mean cost per attempt, model and judge calls separately", () => {
+    const baseline = snapshot("base", [
+      costed("c1", 0.01, 0.001),
+      costed("c2", 0.03, 0.001),
+    ]);
+    const candidate = snapshot("cand", [
+      costed("c1", 0.002, 0.002),
+      costed("c2", 0.004, 0.002),
+    ]);
+
+    const [row] = compareRuns(baseline, candidate)._unsafeUnwrap().rows;
+
+    expect(row?.cost.baseline.model.meanUsd).toBeCloseTo(0.02, 12);
+    expect(row?.cost.candidate.model.meanUsd).toBeCloseTo(0.003, 12);
+    expect(row?.cost.baseline.judge.meanUsd).toBeCloseTo(0.001, 12);
+    expect(row?.cost.candidate.judge.meanUsd).toBeCloseTo(0.002, 12);
+  });
+
+  it("counts the attempts the mean leaves out because they have no cost", () => {
+    const baseline = snapshot("base", [
+      costed("c1", 0.01, 0.001),
+      costed("c2", null, 0.001),
+    ]);
+    const candidate = snapshot("cand", [
+      costed("c1", 0.01, 0.001),
+      costed("c2", 0.01, 0.001),
+    ]);
+
+    const [row] = compareRuns(baseline, candidate)._unsafeUnwrap().rows;
+
+    expect(row?.cost.baseline.model).toMatchObject({
+      attempts: 2,
+      costed: 1,
+      meanUsd: 0.01,
+    });
+    expect(row?.cost.candidate.model).toMatchObject({ attempts: 2, costed: 2 });
+  });
+
+  it("has no mean for a run that recorded no usage", () => {
+    const [row] = compareRuns(
+      snapshot("base", attempts("m/a", "c1", "PP")),
+      snapshot("cand", attempts("m/a", "c1", "PP")),
+    )._unsafeUnwrap().rows;
+
+    expect(row?.cost.baseline.model.meanUsd).toBeNull();
+    expect(row?.cost.candidate.judge.meanUsd).toBeNull();
+  });
+});
+
+describe("RunBundleReader — usage on score file rows", () => {
+  const index = JSON.stringify({
+    runId: "r1",
+    gitSha: "abc1234",
+    dryRun: false,
+    runSummary: { suites: ["weft-review"] },
+  });
+  const read = (row: Record<string, unknown>) =>
+    new RunBundleReader(
+      new MemoryFileSystem({
+        "/project/eval-bundles/runs/r1/bundle-index.json": index,
+        "/project/eval-bundles/runs/r1/score-weft-review.json": JSON.stringify({
+          suite: "weft-review",
+          results: [{ caseId: "c1", modelId: "m/a", passed: true, ...row }],
+        }),
+      }),
+    ).read("r1");
+
+  it("reads a row's usage", async () => {
+    const usage = {
+      model: {
+        calls: 1,
+        promptTokens: 10,
+        completionTokens: 2,
+        costUsd: 0.01,
+        costSource: "prices" as const,
+      },
+      judge: { calls: 0, promptTokens: 0, completionTokens: 0, costUsd: 0 },
+    };
+
+    const snapshot = (await read({ usage }))._unsafeUnwrap();
+
+    expect(snapshot.attempts[0]?.usage).toEqual(usage);
+  });
+
+  it("reads a row without usage, as every run before it, as having none", async () => {
+    const snapshot = (await read({}))._unsafeUnwrap();
+
+    expect(snapshot.attempts[0]).not.toHaveProperty("usage");
+  });
+
+  it("refuses a row whose usage names an unknown cost source", async () => {
+    const error = (
+      await read({
+        usage: { judge: { calls: 1, costUsd: 0.1, costSource: "guess" } },
+      })
+    )._unsafeUnwrapErr();
+
+    expect(error.type).toBe("BundleInvalid");
+    expect(error.message).toContain("costSource");
+  });
+});

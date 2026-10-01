@@ -7,6 +7,7 @@
  */
 
 import { err, ok, ResultAsync } from "neverthrow";
+import { type AttemptUsageMeter, attachAttemptUsage } from "./attempt-usage.js";
 import {
   loadSuiteCases,
   loadSuiteRubrics,
@@ -667,6 +668,11 @@ export function buildUserMessage(evalCase: EvalCase): string {
 
 export interface PatternPlanningRunnerOptions {
   modelClient: ModelClient;
+  /**
+   * Records each attempt's token usage and cost on its summary (Spec 39
+   * task 0.6). Omit it to record none, as most tests do.
+   */
+  usageMeter?: AttemptUsageMeter;
   scorer: AgentEvalsScorer;
   promptProvider?: PromptProvider;
   patternSystemPrompt?: string;
@@ -682,12 +688,14 @@ export interface PatternPlanningRunRequest {
 
 export class PatternPlanningRunner {
   private readonly modelClient: ModelClient;
+  private readonly usageMeter: AttemptUsageMeter | undefined;
   private readonly scorer: AgentEvalsScorer;
   private readonly promptProvider: PromptProvider;
   private readonly evalsRoot: string | undefined;
 
   constructor(options: PatternPlanningRunnerOptions) {
     this.modelClient = options.modelClient;
+    this.usageMeter = options.usageMeter;
     this.scorer = options.scorer;
     this.evalsRoot = options.evalsRoot;
 
@@ -869,7 +877,10 @@ export class PatternPlanningRunner {
             rubrics,
             rawArtifacts,
             systemPrompt,
-          ).map((result) => [...results, result]),
+          ).map((result) => [
+            ...results,
+            attachAttemptUsage(this.usageMeter, result, item.evalCase),
+          ]),
         ),
       ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
     );

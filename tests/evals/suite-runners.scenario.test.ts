@@ -533,8 +533,15 @@ describe("a suite runs with a prompt, an answer and a judge's rationale in hand"
       "required",
       "scoredAt",
       "suite",
+      "usage",
       "weightedTotal",
     ]);
+    // Usage is counts, dollars and a closed cost-source label only (Spec 39
+    // task 0.6): no text from the model, the judge or the prompt rides along.
+    expect(summary.usage).toBeDefined();
+    expect(JSON.stringify(summary.usage)).not.toMatch(
+      /"(?!costSource")[a-zA-Z]+":"/,
+    );
   });
 });
 

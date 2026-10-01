@@ -22,6 +22,7 @@ import { describe, expect, it } from "bun:test";
 import { relative } from "node:path";
 import { run } from "../../packages/cli/src/cli.js";
 import { ArtifactBundleWriter } from "../../packages/cli/src/evals/artifact-bundle.js";
+import type { AttemptUsage } from "../../packages/cli/src/evals/attempt-usage.js";
 import type {
   CaseResult,
   PromptProvenanceManifest,
@@ -53,6 +54,11 @@ interface CaseSpec {
   outcomes: string;
   modelId?: string;
   suite?: string;
+  /**
+   * What each attempt cost, in attempt order, as a run records it on its
+   * score file row. `undefined` (or omitted) is an attempt with no usage.
+   */
+  usage?: Array<AttemptUsage | undefined>;
 }
 
 interface RunSpec {
@@ -89,6 +95,9 @@ function caseResults(spec: RunSpec): Map<string, CaseResult[]> {
           dryRun: spec.dryRun ?? false,
           ...(repeated ? { attempt } : {}),
           ...(outcome === "E" ? { errored: true } : {}),
+          ...(c.usage?.[attempt - 1] !== undefined
+            ? { usage: c.usage[attempt - 1] }
+            : {}),
         }),
       );
       bySuite.set(suite, results);
@@ -554,6 +563,61 @@ describe("a maintainer names the runs to compare", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
       "weave eval compare needs exactly two runs",
+    );
+  });
+});
+
+/** One attempt's usage: the model's and the judge's cost, as OpenRouter reported them. */
+function cost(model: number | null, judge: number): AttemptUsage {
+  return {
+    model:
+      model === null
+        ? { calls: 1 }
+        : { calls: 1, costUsd: model, costSource: "provider" },
+    judge: { calls: 2, costUsd: judge, costSource: "provider" },
+  };
+}
+
+describe("a maintainer compares runs that recorded what each attempt cost", () => {
+  const baseline = runOf(BASELINE_SHA, {
+    caseId: "loom-route-api",
+    outcomes: "PP",
+    usage: [cost(0.012, 0.00004), cost(0.014, 0.00004)],
+  });
+  const candidate = runOf(CANDIDATE_SHA, {
+    caseId: "loom-route-api",
+    outcomes: "PP",
+    usage: [cost(0.002, 0.00004), cost(null, 0.00004)],
+  });
+
+  it("prints each run's mean cost per attempt of the model's calls, then of the judge's", async () => {
+    const result = await compare(baseline, candidate);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "Cost per attempt, model calls: $0.0130 (reported by OpenRouter) → $0.00200 (reported by OpenRouter)",
+    );
+    expect(result.stdout).toContain(
+      "Cost per attempt, judge calls: $0.0000400 (reported by OpenRouter) → $0.0000400 (reported by OpenRouter)",
+    );
+  });
+
+  it("marks a mean that leaves out attempts with no recorded cost", async () => {
+    const result = await compare(baseline, candidate);
+
+    expect(result.stdout).toContain(
+      "(no recorded cost for 1 of 2 attempts, left out of the mean)",
+    );
+  });
+
+  it("says cost was not recorded when neither run recorded any", async () => {
+    const result = await compare(
+      runOf(BASELINE_SHA, { caseId: "loom-route-api", outcomes: "PP" }),
+      runOf(CANDIDATE_SHA, { caseId: "loom-route-api", outcomes: "PP" }),
+    );
+
+    expect(result.stdout).toContain(
+      "Cost per attempt: not recorded in either run",
     );
   });
 });

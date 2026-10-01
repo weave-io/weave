@@ -25,6 +25,7 @@ import {
   type TrajectorySummary,
 } from "@weaveio/weave-core";
 import { z } from "zod";
+import type { AttemptUsage } from "./attempt-usage.js";
 import type { EvalConfigMode } from "./config-mode.js";
 import type { EvalTrack } from "./eval-track.js";
 import type { JudgeIdentity } from "./report-schema.js";
@@ -611,6 +612,34 @@ export type EvalRubric = z.infer<typeof EvalRubricSchema>;
 // Model matrix
 // ---------------------------------------------------------------------------
 
+/** A price in US dollars per million tokens: finite and not negative. */
+const UsdPerMillionTokensSchema = z
+  .number()
+  .finite()
+  .nonnegative("a price must not be negative");
+
+/**
+ * A model's list prices, in US dollars per million tokens, as OpenRouter's
+ * public models API (`GET https://openrouter.ai/api/v1/models`) listed them
+ * on `as_of`. Long-context tiers and cache discounts are not modelled: eval
+ * prompts are far below the tiers, and a cost computed from these prices is
+ * used only when the provider reported none (see `attempt-usage.ts`).
+ */
+export const ModelPricesSchema = z
+  .object({
+    /** US dollars per million prompt (input) tokens. */
+    input_per_million: UsdPerMillionTokensSchema,
+    /** US dollars per million completion (output) tokens, reasoning included. */
+    output_per_million: UsdPerMillionTokensSchema,
+    /** The day the prices were read, `YYYY-MM-DD`. */
+    as_of: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "as_of must be a date, YYYY-MM-DD"),
+  })
+  .strict();
+
+export type ModelPrices = z.infer<typeof ModelPricesSchema>;
+
 /**
  * A single model entry in the model matrix.
  *
@@ -650,6 +679,12 @@ export const ModelMatrixEntrySchema = z.object({
    * tier-based filtering. All must be valid identifiers.
    */
   tags: z.array(IdentifierSchema).default([]),
+  /**
+   * The model's list prices on OpenRouter, used to cost an attempt whose
+   * response did not report its own cost (Spec 39 task 0.6). Optional: a
+   * model without prices is costed only from what OpenRouter reports.
+   */
+  prices: ModelPricesSchema.optional(),
 });
 
 export type ModelMatrixEntry = z.infer<typeof ModelMatrixEntrySchema>;
@@ -1385,6 +1420,14 @@ export interface CaseResultSummary {
    * stays in the local-only `RawErrorSummary`.
    */
   errorClassification?: string;
+  /**
+   * Tokens and cost of the calls this attempt made: the evaluated model's,
+   * retries included, and the judge's, separately (Spec 39 task 0.6). Set by
+   * the runner from the run's usage ledger; absent on a dry run and on a
+   * result made without a meter. Kept in the internal score files only; the
+   * public report never carries it. See `attempt-usage.ts`.
+   */
+  usage?: AttemptUsage;
 }
 
 /**
@@ -1727,6 +1770,8 @@ export interface BundleScoreFile {
     errored?: boolean;
     /** Why it errored; see `CaseResultSummary.errorClassification`. */
     errorClassification?: string;
+    /** Tokens and cost of the attempt; see `CaseResultSummary.usage`. */
+    usage?: AttemptUsage;
   }>;
   /**
    * How many times each case ran per model (`--repeat N`). Present only when

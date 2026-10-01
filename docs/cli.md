@@ -466,7 +466,7 @@ WEAVE_EVAL_REPEAT=3 weave eval run
 WEAVE_EVAL_CONFIG=project weave eval run
 ```
 
-`weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted). It refuses runs with different cases, models, repeat counts, recorded judges or config modes. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
+`weave eval compare <baseline> <candidate>` compares two local run bundles (run IDs under `eval-bundles/runs/`, or run directories) and says, per suite and model, whether the pass rate changed beyond the noise (Fisher's exact test, Holm-adjusted), with both runs' mean cost per attempt ([Cost per attempt](./agent-evals.md#cost-per-attempt)). It refuses runs with different cases, models, repeat counts, recorded judges or config modes. See [Compare two runs](./agent-evals.md#compare-two-runs-eval-compare) and [Measure a change](./agent-evals.md#measure-a-change).
 
 `weave eval reindex [--dry-run]` rebuilds every dashboard index in `weave-io/weave-agent-evals` from the runs published there, keeping the text run (`latest.json`) and the trajectory run (`latest-trajectory.json`) apart, and uploads the index files. It never writes a run artifact. It needs `EVAL_RESULTS_REPO_TOKEN`; `--dry-run` rebuilds locally under `eval-bundles/reindex/` and uploads nothing. See [Track-aware indexes](./eval-sanitization-and-publish-pipeline.md#track-aware-indexes).
 

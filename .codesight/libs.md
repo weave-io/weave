@@ -305,6 +305,14 @@
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun, repeatCount) => BundleScoreFile
   - _...11 more_
+- `packages/cli/src/evals/attempt-usage.ts`
+  - function priceTable: (entries) => ReadonlyMap<string, ModelPrices>
+  - function totalCalls: (calls, prices, ModelPrices>) => CallsUsage
+  - function attachAttemptUsage: (meter, result, evalCase) => CaseResult
+  - function summarizeCost: (usages, role) => CostSummary
+  - function formatUsd: (usd) => string
+  - function describeCostSource: (source) => string
+  - _...13 more_
 - `packages/cli/src/evals/binomial-stats.ts`
   - function wilsonInterval: (successes, trials) => ProportionInterval | null
   - function fisherExactTwoSided: (a, b, c, d) => number
@@ -336,7 +344,7 @@
   - interface JudgeRecord
   - interface ComparedAttempt
   - interface RunSnapshot
-  - _...9 more_
+  - _...10 more_
 - `packages/cli/src/evals/config-mode.ts`
   - function configModeApplies: (run) => boolean
   - function isEvalConfigMode: (value) => value is EvalConfigMode
@@ -389,7 +397,7 @@
   - function parseJevDecision: (body, input, model) => Result<JevDecision, ScoringError>
   - function jevScore: (overall) => number
   - function jevRationale: (decision) => string
-  - _...12 more_
+  - _...13 more_
 - `packages/cli/src/evals/judge-questions.ts`
   - function signalQuestion: (signal) => string
   - function executionJudgeInput: (run, evalCase, rubric) => JudgeInput | undefined
@@ -538,12 +546,12 @@
   - _...17 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
+  - function sanitizeAttemptUsage: (usage) => AttemptUsage
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
   - function sanitizeProvenanceRecord: (record) => SanitizedProvenanceRecord
   - function sanitizeProvenanceManifest: (manifest) => void
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
-  - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
-  - _...11 more_
+  - _...12 more_
 - `packages/cli/src/evals/shuttle-execution-runner.ts`
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
@@ -594,7 +602,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...60 more_
+  - _...62 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

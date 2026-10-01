@@ -22,6 +22,7 @@ import { err, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { BundleWriteMode } from "../evals/artifact-bundle.js";
+import { UsageLedger } from "../evals/attempt-usage.js";
 import { loadSuiteCases } from "../evals/case-loader.js";
 import { compareRuns, RunBundleReader } from "../evals/compare.js";
 import { ComparisonReport } from "../evals/compare-report.js";
@@ -561,9 +562,14 @@ async function buildLiveRunner(
   // The judge: TypeSafe Jev on OpenRouter's decisions endpoint, pinned to
   // one dated version. It sees each judged case's rubric, reference and the
   // agent's actual response (`judge-questions.ts`).
+  // The model client and the judge record every answered call in one
+  // ledger, so each attempt's score file row carries the model's and the
+  // judge's tokens and cost (Spec 39 task 0.6).
+  const usageLedger = new UsageLedger();
   const judge = new JevJudge({
     apiKey: evalEnv.apiKey,
     judge: { id: JUDGE_MODEL_ID, version: JUDGE_MODEL_VERSION },
+    usageLedger,
   });
   const scorer = new LangChainAgentEvalsScorer(judge);
 
@@ -587,6 +593,7 @@ async function buildLiveRunner(
     judge: judge.identity(),
     env: effectiveEnv,
     publishMode,
+    usageLedger,
   });
 
   return ok(buildEvalRunner(orchestrator, reportPartialFailure, reportRun));

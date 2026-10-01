@@ -58,6 +58,14 @@ import {
   type BundleWriteMode,
   type RemoteSequenceReader,
 } from "./artifact-bundle.js";
+import {
+  AttemptUsageMeter,
+  type CostSummary,
+  MeteredModelClient,
+  priceTable,
+  summarizeCost,
+  UsageLedger,
+} from "./attempt-usage.js";
 import { loadSuiteCases, loadSuiteRubrics } from "./case-loader.js";
 import {
   countCaseOutcomes,
@@ -231,6 +239,13 @@ export interface ModelRollup {
    * `null` when no case was scored.
    */
   passRate: number | null;
+  /**
+   * Mean cost per attempt of the model's own calls and of the judge's calls,
+   * over every attempt of this model (errored ones included: they were
+   * billed). Attempts without a recorded cost are left out of the mean and
+   * counted (`attempts - costed`). See `attempt-usage.ts`.
+   */
+  cost: { model: CostSummary; judge: CostSummary };
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +820,13 @@ export interface EvalOrchestratorOptions {
     evalsRoot: string | undefined,
     configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
+  /**
+   * Where answered calls are recorded so each attempt's tokens and cost land
+   * on its score file row (Spec 39 task 0.6). Pass the ledger the judge
+   * records into, so judge calls are counted too. When omitted, the
+   * orchestrator keeps its own, which meters the model calls only.
+   */
+  usageLedger?: UsageLedger;
 }
 
 // ---------------------------------------------------------------------------
@@ -882,11 +904,21 @@ export class EvalOrchestrator {
     evalsRoot: string | undefined,
     configMode: EvalConfigMode,
   ) => ResultAsync<DelegationTarget[], LoomDelegationMatrixPreflightError>;
+  private readonly usageLedger: UsageLedger;
+  /** Each run's usage meter, priced from that run's models. */
+  private readonly usageMeters = new WeakMap<
+    EvalRunRequest,
+    AttemptUsageMeter
+  >();
 
   constructor(options: EvalOrchestratorOptions) {
     // Every suite asks again when a model returns an empty or truncated
-    // answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5).
-    this.modelClient = new RetryingModelClient(options.modelClient);
+    // answer, up to MAX_ANSWER_ATTEMPTS times (Spec 37, 16.5). The meter sits
+    // under the retries, so a retried call's usage is counted too.
+    this.usageLedger = options.usageLedger ?? new UsageLedger();
+    this.modelClient = new RetryingModelClient(
+      new MeteredModelClient(options.modelClient, this.usageLedger),
+    );
     this.scorer = options.scorer;
     this.judge = options.judge;
     this.promptProvider = options.promptProvider;
@@ -1157,6 +1189,13 @@ export class EvalOrchestrator {
     const runnerResults: RunnerResult[] = [];
     const partialFailures: RunnerError[] = [];
     const failedSuites = new Set<string>();
+
+    // Calls left in the ledger by an earlier run belong to no case here.
+    this.usageLedger.drain();
+    this.usageMeters.set(
+      request,
+      new AttemptUsageMeter(this.usageLedger, priceTable(modelEntries)),
+    );
 
     // Fan out across all selected models.
     //
@@ -1453,6 +1492,7 @@ export class EvalOrchestrator {
     const runSuite = (): ResultAsync<RunnerResult, RunnerError> => {
       const runner = new LoomRoutingRunner({
         modelClient: this.modelClient,
+        usageMeter: this.usageMeters.get(request),
         scorer: this.scorer,
         promptProvider: this.promptProviderFor(request),
         evalsRoot: this.evalsRoot,
@@ -1504,6 +1544,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new TapestryExecutionRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -1525,6 +1566,7 @@ export class EvalOrchestrator {
     const evalsRoot = this.evalsRoot;
     const runner = new TapestryCategoryRoutingRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProvider,
       caseLoader:
@@ -1551,6 +1593,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new PatternPlanningRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -1570,6 +1613,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new ShuttleExecutionRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -1590,6 +1634,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new SpindleToolsRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -1609,6 +1654,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new WeftReviewRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -1628,6 +1674,7 @@ export class EvalOrchestrator {
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new WarpSecurityRunner({
       modelClient: this.modelClient,
+      usageMeter: this.usageMeters.get(request),
       scorer: this.scorer,
       promptProvider: this.promptProviderFor(request),
       evalsRoot: this.evalsRoot,
@@ -2567,6 +2614,16 @@ export class EvalOrchestrator {
           counts.totalCases,
           counts.erroredCases,
         ),
+        cost: {
+          model: summarizeCost(
+            summaries.map((summary) => summary.usage),
+            "model",
+          ),
+          judge: summarizeCost(
+            summaries.map((summary) => summary.usage),
+            "judge",
+          ),
+        },
       });
     }
 

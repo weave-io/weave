@@ -148,6 +148,13 @@ export interface ModelUsage {
    * when the provider reports it.
    */
   reasoningTokens?: number;
+  /**
+   * What the call cost, as the provider reported it (`usage.cost`, in
+   * OpenRouter credits, which are US dollars). Absent when the provider
+   * reported none; a cost is then computed from the model matrix's prices,
+   * never assumed to be zero (see `attempt-usage.ts`).
+   */
+  costUsd?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +201,11 @@ export type ModelClientError =
       message: string;
       /** `choices[0].finish_reason`, when the provider sent one. */
       finishReason?: string;
+      /**
+       * Token usage the provider reported, when it sent any: an empty answer
+       * is still billed, so its cost belongs to the attempt.
+       */
+      usage?: ModelUsage;
     }
   | {
       /**
@@ -261,7 +273,7 @@ interface OpenRouterChatCompletionResponse {
       content?: string | null;
     };
   }>;
-  usage?: OpenRouterUsage;
+  usage?: OpenRouterUsage | null;
   error?: {
     message?: string;
     code?: number | string;
@@ -276,18 +288,42 @@ interface OpenRouterUsage {
   completion_tokens_details?: {
     reasoning_tokens?: number;
   };
+  /**
+   * What the call cost in OpenRouter credits (US dollars). OpenRouter now
+   * includes it in every chat completion response; the old
+   * `usage: { include: true }` request flag is deprecated and has no effect.
+   */
+  cost?: number;
 }
 
+/** A token count or cost as a provider may send it: a finite number ≥ 0. */
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * The usage a response reported, or `undefined` when it reported none.
+ *
+ * Usage without both a prompt and a completion token count is treated as
+ * not reported: a missing count is never filled in with zero, because a zero
+ * would read as a free call in the cost report.
+ */
 function normalizeUsage(
-  usage: OpenRouterUsage | undefined,
+  usage: OpenRouterUsage | null | undefined,
 ): ModelUsage | undefined {
-  if (usage === undefined) return undefined;
+  if (usage === undefined || usage === null) return undefined;
+  const promptTokens = usage.prompt_tokens;
+  const completionTokens = usage.completion_tokens;
+  if (!isCount(promptTokens) || !isCount(completionTokens)) return undefined;
   const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
   return {
-    promptTokens: usage.prompt_tokens ?? 0,
-    completionTokens: usage.completion_tokens ?? 0,
-    totalTokens: usage.total_tokens ?? 0,
-    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    promptTokens,
+    completionTokens,
+    totalTokens: isCount(usage.total_tokens)
+      ? usage.total_tokens
+      : promptTokens + completionTokens,
+    ...(isCount(reasoningTokens) ? { reasoningTokens } : {}),
+    ...(isCount(usage.cost) ? { costUsd: usage.cost } : {}),
   };
 }
 
@@ -323,6 +359,7 @@ function unusableAnswerError(
     message:
       "OpenRouter returned a response with no usable content in choices[0].message.content",
     ...(finishReason !== undefined ? { finishReason } : {}),
+    ...(usage !== undefined ? { usage } : {}),
   };
 }
 
@@ -462,7 +499,7 @@ export class OpenRouterClient implements ModelClient {
               model: modelId,
               content,
               ...(finishReason !== undefined ? { finishReason } : {}),
-              usage,
+              ...(usage !== undefined ? { usage } : {}),
             }),
           ),
         );

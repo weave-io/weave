@@ -3,11 +3,13 @@
  *
  * Everything printed comes from a `RunComparison`: run IDs, commits, suite,
  * case and model identifiers, integer counts, rates, p-values, short prompt
- * hashes and the recorded judge. No prompt, transcript, answer or rationale
- * reaches this module — `RunBundleReader` never reads them.
+ * hashes, the recorded judge and mean costs per attempt in US dollars. No
+ * prompt, transcript, answer or rationale reaches this module —
+ * `RunBundleReader` never reads them.
  */
 
 import type { ThemeColors } from "../theme/colors.js";
+import { type CostSummary, describeCost } from "./attempt-usage.js";
 import type { ProportionInterval } from "./binomial-stats.js";
 import {
   type ComparedSide,
@@ -114,6 +116,7 @@ export class ComparisonReport {
       `      ${this.side("baseline ", row.baseline)}`,
       `      ${this.side("candidate", row.candidate)}`,
       `      ${this.verdict(row)}`,
+      ...this.costLines(row),
     ];
     const changed = row.cases.filter(
       (c) => c.baseline.passRate !== c.candidate.passRate,
@@ -127,6 +130,40 @@ export class ComparisonReport {
       );
     }
     return lines;
+  }
+
+  /**
+   * Mean cost per attempt, the model's calls and the judge's separately
+   * (Spec 39 task 0.6). One dim line when neither run recorded any cost.
+   */
+  private costLines(row: SuiteModelComparison): string[] {
+    const { baseline, candidate } = row.cost;
+    const summaries = [
+      baseline.model,
+      baseline.judge,
+      candidate.model,
+      candidate.judge,
+    ];
+    if (summaries.every((summary) => summary.meanUsd === null)) {
+      return [
+        `      ${this.theme.dim("Cost per attempt: not recorded in either run")}`,
+      ];
+    }
+    return [
+      `      Cost per attempt, model calls: ${this.costPair(baseline.model, candidate.model)}`,
+      `      Cost per attempt, judge calls: ${this.costPair(baseline.judge, candidate.judge)}`,
+    ];
+  }
+
+  private costPair(baseline: CostSummary, candidate: CostSummary): string {
+    return `${this.cost(baseline)} → ${this.cost(candidate)}`;
+  }
+
+  private cost(summary: CostSummary): string {
+    const described = describeCost(summary);
+    if (summary.meanUsd === null) return this.theme.yellow(described.mean);
+    if (described.missing === null) return described.mean;
+    return `${described.mean} ${this.theme.yellow(`(${described.missing}, left out of the mean)`)}`;
   }
 
   private side(label: string, side: ComparedSide): string {

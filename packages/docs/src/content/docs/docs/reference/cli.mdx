@@ -180,6 +180,9 @@ pass rates. `--track text|trajectory` runs one track only. `--config builtin`
 (the default) composes prompts from the shipped builtins only, reading no
 project or global `.weave`, so a run scores the prompts users get;
 `--config project` reads both, for prompt work on a checkout's overrides.
+A live run ends with each model's mean cost per attempt, its own calls and
+the judge's calls separately, and stores each attempt's tokens and cost in
+its local score file.
 
 ## `weave eval compare`
 
@@ -188,8 +191,9 @@ weave eval compare <baseline> <candidate>
 ```
 
 Compares two local eval runs (run IDs or run directories) and says, per suite
-and model, whether the pass rate changed beyond the noise. It refuses runs
-with different cases, models, repeat counts, judges or config modes.
+and model, whether the pass rate changed beyond the noise, with both runs'
+mean cost per attempt. It refuses runs with different cases, models, repeat
+counts, judges or config modes.
 
 ## `weave compose`
 

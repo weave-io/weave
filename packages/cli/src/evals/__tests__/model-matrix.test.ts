@@ -531,6 +531,88 @@ describe("loadModelMatrix — the dev field", () => {
   });
 });
 
+describe("loadModelMatrix — the prices field (Spec 39 task 0.6)", () => {
+  const PRICES = {
+    input_per_million: 3,
+    output_per_million: 15,
+    as_of: "2026-10-01",
+  };
+  const priced = (prices: unknown): Record<string, unknown> => ({
+    id: "provider/priced",
+    display_name: "Priced",
+    provider: "provider",
+    default: false,
+    prices,
+  });
+
+  it("accepts prices in US dollars per million tokens, with the day they were read", async () => {
+    const filePath = await writeTempJson(
+      "prices-ok",
+      matrixWith([priced(PRICES)]),
+    );
+    const matrix = (await loadModelMatrix(filePath))._unsafeUnwrap();
+    expect(
+      matrix.models.find((m) => m.id === "provider/priced")?.prices,
+    ).toEqual(PRICES);
+  });
+
+  it("leaves prices out when an entry omits them", async () => {
+    const filePath = await writeTempJson("prices-omitted", matrixWith([]));
+    const matrix = (await loadModelMatrix(filePath))._unsafeUnwrap();
+    expect(matrix.models.every((m) => m.prices === undefined)).toBe(true);
+  });
+
+  for (const [label, prices, path] of [
+    [
+      "a negative price",
+      { ...PRICES, input_per_million: -1 },
+      "models.3.prices.input_per_million",
+    ],
+    [
+      "a price that is not a number",
+      { ...PRICES, output_per_million: "15" },
+      "models.3.prices.output_per_million",
+    ],
+    [
+      "a missing as_of date",
+      { input_per_million: 3, output_per_million: 15 },
+      "models.3.prices.as_of",
+    ],
+    [
+      "an as_of that is not a date",
+      { ...PRICES, as_of: "October" },
+      "models.3.prices.as_of",
+    ],
+    [
+      "an unknown price field",
+      { ...PRICES, cache_read_per_million: 0.3 },
+      "models.3.prices",
+    ],
+  ] as const) {
+    it(`rejects ${label}, pointing at the field`, async () => {
+      const filePath = await writeTempJson(
+        `prices-${label.replace(/\W+/g, "-")}`,
+        matrixWith([priced(prices)]),
+      );
+      const e = (await loadModelMatrix(filePath))._unsafeUnwrapErr();
+      expect(e.type).toBe("FixtureValidationFailed");
+      if (e.type === "FixtureValidationFailed") {
+        expect(e.issues.map((i) => i.path)).toContain(path);
+      }
+    });
+  }
+});
+
+describe("loadModelMatrix — the real prices", () => {
+  it("lists prices for every default and dev model, so their cost per attempt can be stated", async () => {
+    const matrix = (await loadModelMatrix())._unsafeUnwrap();
+    const unpriced = matrix.models
+      .filter((m) => (m.default || m.dev) && m.prices === undefined)
+      .map((m) => m.id);
+    expect(unpriced).toEqual([]);
+  });
+});
+
 describe("resolveModelSet / resolveDevModels / resolveCaseDefaultModels", () => {
   const entry = (
     id: string,
