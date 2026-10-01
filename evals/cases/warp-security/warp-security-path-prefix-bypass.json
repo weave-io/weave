@@ -1,0 +1,21 @@
+{
+  "id": "warp-security-path-prefix-bypass",
+  "description": "Change under review: let users download the attachments they uploaded. The added file is shown in full.\n\n`src/routes/attachments.ts` (added):\n```ts\n1 import { join, resolve } from \"node:path\";\n2 import { requireSession } from \"../auth/session.js\";\n3\n4 const UPLOAD_ROOT = \"/srv/app/uploads\";\n5\n6 export const getAttachment = requireSession(async (req) => {\n7   const name = new URL(req.url).searchParams.get(\"file\");\n8   if (name === null) return new Response(\"missing file\", { status: 400 });\n9   const userDir = join(UPLOAD_ROOT, String(req.session.userId));\n10   const target = resolve(userDir, name);\n11   if (!target.startsWith(userDir)) {\n12     return new Response(\"forbidden\", { status: 403 });\n13   }\n14   return new Response(Bun.file(target));\n15 });\n```\n\nEach user's uploads are stored in `/srv/app/uploads/<userId>/`, where `userId` is the user's numeric id from the signed session cookie.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: the check on line 11 of `src/routes/attachments.ts` compares `target` with `userDir` without a trailing path separator, so a user can read another user's files when that user's id starts with the same digits (user 12 asking for `../123/invoice.pdf` gets `/srv/app/uploads/123/invoice.pdf`, which passes the check). A blocking finding must identify this prefix bypass of the `startsWith` check and fix it, for example by comparing against `userDir + sep` or by rejecting a `relative(userDir, target)` that starts with `..`.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "path-traversal"
+  ]
+}

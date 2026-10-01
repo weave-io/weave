@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-unawaited-signature-check",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding says the signature check is bypassed because the async `verifyWebhookSignature` is not awaited (a Promise is always truthy). Fail an APPROVE that trusts the HMAC and `timingSafeEqual`. Fail a BLOCK whose findings miss the missing `await` (for example only replay protection, JSON parsing errors or the hex decoding). The output format is not scored."
+  }
+}

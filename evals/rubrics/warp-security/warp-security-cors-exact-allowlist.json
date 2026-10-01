@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-cors-exact-allowlist",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. It is the counterpart of `warp-security-cors-origin-pattern`: the same credentialed CORS middleware, but the origin is checked against an exact allowlist, so there is no wildcard or reflected origin. Score an APPROVE verdict with BLOCKERS: 0/3. Non-blocking SUSPECTED notes (for example moving the origins to configuration) are acceptable."
+  }
+}

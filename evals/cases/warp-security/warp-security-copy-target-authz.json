@@ -1,0 +1,21 @@
+{
+  "id": "warp-security-copy-target-authz",
+  "description": "Change under review: add \"duplicate document\" to the documents API. Only the changed region of the file is shown: lines 58-67 are new, the handlers above them are unchanged, and the rest of the file is unchanged.\n\n`src/routes/documents.ts` (changed, lines 40-67):\n```ts\n40 app.patch(\"/documents/:id\", requireSession, async (req) => {\n41   const doc = await documents.get(req.params.id);\n42   await assertCan(req.session.user, \"edit\", doc.folderId);\n43   return Response.json(await documents.update(doc.id, await req.json()));\n44 });\n45\n46 app.post(\"/folders/:folderId/documents\", requireSession, async (req) => {\n47   await assertCan(req.session.user, \"edit\", req.params.folderId);\n48   const { title, body } = await req.json();\n49   return Response.json(await documents.create(req.params.folderId, { title, body }));\n50 });\n51\n52 app.delete(\"/documents/:id\", requireSession, async (req) => {\n53   const doc = await documents.get(req.params.id);\n54   await assertCan(req.session.user, \"edit\", doc.folderId);\n55   return Response.json(await documents.remove(doc.id));\n56 });\n57\n58 app.post(\"/documents/:id/duplicate\", requireSession, async (req) => {\n59   const source = await documents.get(req.params.id);\n60   await assertCan(req.session.user, \"view\", source.folderId);\n61   const { targetFolderId } = await req.json();\n62   const copy = await documents.create(targetFolderId ?? source.folderId, {\n63     title: `${source.title} (copy)`,\n64     body: source.body,\n65   });\n66   return Response.json(copy);\n67 });\n```\n\n`assertCan(user, action, folderId)` throws a 403 error unless the user holds that permission on the folder. Folders belong to different teams, and view and edit permissions are granted separately; many users can view a folder they cannot edit. Existing middleware enforces CSRF protection on every state-changing route: the session cookie is `SameSite=Strict`, and a request without a valid `X-CSRF-Token` header is rejected.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: the new duplicate handler in `src/routes/documents.ts` checks only `view` on the source folder (line 60) and never checks `edit` on the folder it writes into (line 62), unlike every other handler that creates or changes a document. A user can therefore create documents in any folder by passing its id as `targetFolderId`, including other teams' folders, or in a folder they may only view by omitting it. A blocking finding must identify the missing edit check on the target folder and fix it, for example with `assertCan(req.session.user, \"edit\", targetFolderId ?? source.folderId)` before the create.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "authorization"
+  ]
+}

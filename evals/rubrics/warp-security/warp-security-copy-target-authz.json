@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-copy-target-authz",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding says the duplicate handler writes into `targetFolderId` (or the source folder) without checking `edit` permission on that folder. Fail an APPROVE, including one that treats the `view` check on the source as sufficient. Fail a BLOCK whose findings miss the unchecked write target (for example only missing input validation, rate limits or the source being readable). The output format is not scored."
+  }
+}

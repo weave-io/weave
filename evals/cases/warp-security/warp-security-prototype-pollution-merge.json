@@ -1,0 +1,22 @@
+{
+  "id": "warp-security-prototype-pollution-merge",
+  "description": "Change under review: let users save dashboard preferences. Added files are shown in full; the last file is existing, unchanged code shown for context.\n\n`src/prefs/merge.ts` (added):\n```ts\n1 type Json = Record<string, unknown>;\n2\n3 export function deepMerge(target: Json, source: Json): Json {\n4   for (const key in source) {\n5     const value = source[key];\n6     if (value !== null && typeof value === \"object\" && !Array.isArray(value)) {\n7       target[key] = deepMerge((target[key] as Json) ?? {}, value as Json);\n8     } else {\n9       target[key] = value;\n10     }\n11   }\n12   return target;\n13 }\n```\n\n`src/routes/prefs.ts` (added):\n```ts\n1 import { requireSession } from \"../auth/session.js\";\n2 import { deepMerge } from \"../prefs/merge.js\";\n3 import { loadPrefs, storePrefs } from \"../prefs/store.js\";\n4\n5 export const savePrefs = requireSession(async (req) => {\n6   const patch = await req.json();\n7   const prefs = deepMerge(await loadPrefs(req.session.userId), patch);\n8   await storePrefs(req.session.userId, prefs);\n9   return Response.json(prefs);\n10 });\n```\n\n`src/auth/roles.ts` (unchanged, lines 10-13):\n```ts\n10 export function isAdmin(user: User): boolean {\n11   const flags: Record<string, unknown> = user.flags ?? {};\n12   return flags.admin === true;\n13 }\n```\n\n`loadPrefs` returns a plain object parsed from the stored JSON. Every tenant of the service is served by the same long-running server process. Existing middleware enforces CSRF protection on every state-changing route: the session cookie is `SameSite=Strict`, and a request without a valid `X-CSRF-Token` header is rejected.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: `deepMerge` in `src/prefs/merge.ts` copies every key of the request body, including `__proto__`, so a body such as `{\"__proto__\": {\"admin\": true}}` sent to `savePrefs` in `src/routes/prefs.ts` writes `admin` onto `Object.prototype` (prototype pollution). `isAdmin` in `src/auth/roles.ts` then returns true for every user without an own `admin` flag, across the whole server process. A blocking finding must identify the prototype pollution, trace it from the request body through `deepMerge` to its impact, and fix it (skip `__proto__`, `constructor` and `prototype` keys, merge into null-prototype objects, or validate the patch against a schema).",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "prototype-pollution",
+    "traced"
+  ]
+}

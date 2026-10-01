@@ -2237,6 +2237,82 @@ describe("Warp audits a synthetic change", () => {
   });
 });
 
+describe("Warp audits a change the judge scores for the vulnerability it must find", () => {
+  const probe = only("warp-security")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "warp-finds-the-prefix-bypass",
+    description: [
+      "Change under review: serve each user's uploads.",
+      "`src/routes/files.ts` (added):",
+      "```ts",
+      "9 const userDir = join(ROOT, String(userId));",
+      "10 if (!resolve(userDir, name).startsWith(userDir)) return forbidden();",
+      "```",
+    ].join("\n"),
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "Block the change: the startsWith check lacks a trailing separator.",
+      required_artifacts: [],
+    },
+    tags: ["security", "judge-scored", "block"],
+  };
+  const answer = [
+    "BLOCK",
+    "BLOCKERS: 1/3",
+    "SEVERITY: HIGH",
+    "FINDING: prefix check lets user 12 read ../123/",
+    "EVIDENCE: `src/routes/files.ts:10`",
+    "IMPACT: cross-user file read",
+    "FIX: compare against userDir + sep",
+  ].join("\n");
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "warp-security",
+        answers: [answer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("hands the model the change without the verdict it expects", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("`src/routes/files.ts` (added):");
+    expect(asked).not.toContain("trailing separator");
+    expect(asked).toContain("Required structural signals: none");
+  });
+
+  it("asks the judge whether the review reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(answer);
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: Block the change: the startsWith check lacks a trailing separator.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide, so a well-formed BLOCK for the wrong reason can fail", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Shuttle ---------------------------------------------------------------
 
 const SHUTTLE_ANSWERS: SignalRow[] = [

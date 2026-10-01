@@ -1,0 +1,32 @@
+{
+  "id": "warp-security-guarded-parameterised-sql",
+  "description": "Change under review: add text search and sorting to a customer's order list. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/routes/orders.ts` (changed, lines 8-14):\n```ts\n8 app.get(\"/orders\", requireSession, async (req) => {\n9   const url = new URL(req.url);\n10   const term = url.searchParams.get(\"q\") ?? \"\";\n11   const sort = url.searchParams.get(\"sort\") ?? \"newest\";\n12   const orders = await searchOrders(req.session.customerId, term, sort);\n13   return Response.json(orders);\n14 });\n```\n\n`src/db/orders.ts` (added):\n```ts\n1 import { sql } from \"./client.js\";\n2 import type { Order } from \"./types.js\";\n3\n4 const SORT_COLUMNS: Record<string, string> = {\n5   newest: \"created_at DESC\",\n6   oldest: \"created_at ASC\",\n7   largest: \"total_cents DESC\",\n8 };\n9\n10 export async function searchOrders(customerId: string, term: string, sort: string): Promise<Order[]> {\n11   const orderBy = Object.hasOwn(SORT_COLUMNS, sort) ? SORT_COLUMNS[sort] : SORT_COLUMNS.newest;\n12   return await sql<Order[]>`\n13     SELECT id, status, total_cents, created_at\n14     FROM orders\n15     WHERE customer_id = ${customerId}\n16       AND note ILIKE ${\"%\" + term + \"%\"}\n17     ORDER BY ${sql.unsafe(orderBy)}\n18     LIMIT 50\n19   `;\n20 }\n```\n\n`sql` is the existing postgres.js client: a value interpolated into its tagged template is sent as a bound parameter, never as SQL text, and `sql.unsafe(text)` inserts `text` into the query as raw SQL. `requireSession` is the existing session middleware; it sets `req.session.customerId` from the signed session cookie.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Approve the change: it builds SQL from query parameters and passes a value to `sql.unsafe`, but the search term and customer id reach the database only as bound parameters, the value passed to `sql.unsafe` can only be one of three constant strings (the sort key is checked with `Object.hasOwn` against a constant map), and the customer id comes from the session, so there is no injection or cross-customer access. Non-blocking notes are acceptable; FINDING lines and a BLOCK verdict are not.",
+    "required_artifacts": [
+      "security_verdict_present",
+      "security_verdict_approve",
+      "security_blocker_count_capped"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "APPROVE"
+    }
+  ],
+  "tags": [
+    "security",
+    "judgment",
+    "guarded",
+    "approve",
+    "sql"
+  ]
+}

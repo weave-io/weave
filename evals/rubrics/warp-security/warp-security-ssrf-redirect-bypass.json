@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-ssrf-redirect-bypass",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the verdict is withheld from the model. Pass a BLOCK whose finding explains why the `isPrivateAddress` check does not stop server-side request forgery: redirects that `fetch` follows, or DNS re-resolution between the check and the request. Either bypass is enough. Fail an APPROVE that trusts the check. Fail a BLOCK that only asks for a domain allowlist, rate limiting or input validation without naming a way past the existing check. The output format is not scored."
+  }
+}
