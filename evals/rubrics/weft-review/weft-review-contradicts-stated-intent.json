@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-contradicts-stated-intent",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged case: the judge scores the review against the expected outcome. The test `--force still overwrites local changes` passes only because it omits `overwrite`, which the CLI never does. Fail the review if it approves, or if no BLOCKER says `--force` from the CLI does not overwrite because `overwrite` arrives as `false`, not undefined. A blocker that only asks for more tests or rewords the warning does not meet the outcome. Other blockers do not fail a review that has the required one. Each BLOCKER line must name the file it applies to."
+  }
+}

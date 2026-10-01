@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-swallows-parse-error",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged case: the judge scores the review against the expected outcome. Fail the review if it approves, or if no BLOCKER says the recovery is too broad (it also swallows `ParseFailed` / a malformed file). Naming `readPlugins`, `PluginStoreError` or `ParseFailed` and the `orElse` line is what traces it. A blocker only about the missing malformed-file test, with no word on the swallowed parse error, does not meet the outcome. Other blockers do not fail a review that has the required one. Each BLOCKER line must name the file it applies to."
+  }
+}

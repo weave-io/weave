@@ -67,7 +67,15 @@ evals/
 │   │   ├── weft-review-clean-approval.json
 │   │   ├── weft-review-reject-blocker-citation.json
 │   │   ├── weft-review-traced-true-positive.json       # judgment
-│   │   └── weft-review-guarded-false-positive.json     # judgment
+│   │   ├── weft-review-guarded-false-positive.json     # judgment
+│   │   ├── weft-review-approves-complete-feature.json   # judgment
+│   │   ├── weft-review-style-nits-not-blockers.json   # judgment
+│   │   ├── weft-review-preexisting-bug-out-of-scope.json   # judgment
+│   │   ├── weft-review-test-never-exercises-filter.json   # judged review
+│   │   ├── weft-review-swallows-parse-error.json   # judged review
+│   │   ├── weft-review-contradicts-stated-intent.json   # judged review
+│   │   ├── weft-review-large-diff-buried-change.json   # judged review
+│   │   └── weft-review-traced-unit-mismatch.json   # judged review
 │   └── warp-security/                  # Warp security-review structure eval cases
 │       ├── warp-security-fast-exit-approve.json
 │       ├── warp-security-block-evidence-findings.json
@@ -124,7 +132,15 @@ evals/
     │   ├── weft-review-clean-approval.json
     │   ├── weft-review-reject-blocker-citation.json
     │   ├── weft-review-traced-true-positive.json
-    │   └── weft-review-guarded-false-positive.json
+    │   ├── weft-review-guarded-false-positive.json
+    │   ├── weft-review-approves-complete-feature.json
+    │   ├── weft-review-style-nits-not-blockers.json
+    │   ├── weft-review-preexisting-bug-out-of-scope.json
+    │   ├── weft-review-test-never-exercises-filter.json
+    │   ├── weft-review-swallows-parse-error.json
+    │   ├── weft-review-contradicts-stated-intent.json
+    │   ├── weft-review-large-diff-buried-change.json
+    │   └── weft-review-traced-unit-mismatch.json
     └── warp-security/                  # Scoring rubrics for warp-security cases
         ├── warp-security-fast-exit-approve.json
         ├── warp-security-block-evidence-findings.json
@@ -198,7 +214,7 @@ Every text-only case may assert only what is visible in assistant or user text. 
 | `shuttle-execution`         | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
 | `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, and reports confidence from text |
 | `pattern-planning`          | Verify Pattern emits structurally strong implementation plans |
-| `weft-review`               | Verify Weft emits structurally valid approve/reject reviews   |
+| `weft-review`               | Verify Weft emits structurally valid approve/reject reviews, and rejects for the right reason |
 | `warp-security`             | Verify Warp emits text-only security triage and finding structure |
 
 ### Case Schema
@@ -323,8 +339,9 @@ fixture contract before execution.
 
 `weft-review` cases must remain synthetic and text-observable. Encode the
 review target entirely inside the case description or runner prompt so the
-suite never depends on a live repo diff. Score only review structure the text
-runner can observe, such as:
+suite never depends on a live repo diff. Score review structure the text
+runner can observe, or, in a judged review case (below), whether the review
+names the defect the case describes. Observable structure includes:
 
 - explicit `[APPROVE]` / `[REJECT]` verdict tags
 - blocker count and presence/absence discipline
@@ -333,6 +350,39 @@ runner can observe, such as:
 
 Avoid assertions that require tool traces, actual patch application, or hidden
 repository state beyond the synthetic text provided to the model.
+
+#### Weft judged review cases
+
+A `[REJECT]` signal cannot tell a rejection for the right reason from one for
+the wrong reason. A judged review case therefore has empty
+`required_artifacts`: the runner's user message says "Required structural
+signals: none", so it reveals no verdict, and the judge asks whether the
+review reaches the case's `expected_outcome.description`. Approvals stay
+`judgment` cases, scored on `[APPROVE]` with zero `BLOCKER:` lines, because
+for an approval the verdict is the whole answer.
+
+When writing one:
+
+- show the whole change: the task and its acceptance, every changed file
+  (line-numbered, or a unified diff with `+`/`-`/space markers) and the
+  unchanged context the defect depends on, and a passing CI line so missing
+  evidence is not a reason to reject;
+- make the defect visible only by reading the code (a CLI default that
+  defeats `??`, a seconds setting passed as milliseconds), never by a
+  sentence that names it;
+- in the expected outcome, name the one blocker that is required and say that
+  a fix, the consequence and further blockers are optional. The judge treats
+  every detail in the outcome as a requirement: listing the fix or a missing
+  test there made it fail correct reviews;
+- in the rubric notes, say what fails ("Fail the review if…") and which
+  phrasings are acceptable, such as a blocker written as its fix;
+- check the judge before relying on the case: one plausible bad review (the
+  wrong verdict, or a `[REJECT]` for a real but different issue) must fail,
+  and a correct review must pass.
+
+`weft-review-corpus.test.ts` (`packages/cli/src/evals/__tests__/`) guards these
+rules: every judged case starts `Change under review. Task:`, shows code, never
+reaches the model with its expected outcome, and has notes saying what fails.
 
 ### Warp-security fixture guidance
 

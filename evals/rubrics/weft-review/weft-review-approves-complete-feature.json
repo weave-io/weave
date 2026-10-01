@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-approves-complete-feature",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The change is complete and correct for the stated task and acceptance, so score [APPROVE] with zero BLOCKER lines. Inventing a blocker from a requirement the task does not state (pretty-printed JSON, an empty-list test, a test of the CLI wiring) fails the case; noting such an idea as non-blocking is fine."
+  }
+}

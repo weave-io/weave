@@ -1,0 +1,26 @@
+{
+  "id": "weft-review-test-never-exercises-filter",
+  "description": "Change under review. Task: `sessions list --since <date>` shows only the sessions that started on or after that date. Acceptance: without `--since` every session is listed; with it, sessions that started before the date are left out; `filterSessions` is covered by tests for both.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/sessions/filter.ts` (added):\n```ts\n1 import type { Session } from \"./types.js\";\n2\n3 export function filterSessions(sessions: Session[], since?: Date): Session[] {\n4   if (since === undefined) {\n5     return sessions;\n6   }\n7   return sessions.filter((session) => session.startedAt.getTime() >= since.getTime());\n8 }\n```\n\n`src/cli/sessions.ts` (changed, lines 14-19):\n```ts\n14   .command(\"list\")\n15   .option(\"--since <date>\", \"Only sessions started on or after this date\")\n16   .action((opts: { since?: string }) => {\n17     const since = opts.since === undefined ? undefined : new Date(opts.since);\n18     print(formatSessions(filterSessions(loadSessions(), since)));\n19   });\n```\n\n`src/sessions/__tests__/filter.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { filterSessions } from \"../filter.js\";\n3\n4 const sessions = [\n5   { id: \"a\", startedAt: new Date(\"2026-09-10T08:00:00Z\") },\n6   { id: \"b\", startedAt: new Date(\"2026-09-12T08:00:00Z\") },\n7   { id: \"c\", startedAt: new Date(\"2026-09-14T08:00:00Z\") },\n8 ];\n9\n10 test(\"without --since every session is listed\", () => {\n11   expect(filterSessions(sessions).map((s) => s.id)).toEqual([\"a\", \"b\", \"c\"]);\n12 });\n13\n14 test(\"--since keeps a session that started exactly at the cutoff\", () => {\n15   const since = new Date(\"2026-09-10T08:00:00Z\");\n16   expect(filterSessions(sessions, since).map((s) => s.id)).toEqual([\"a\", \"b\", \"c\"]);\n17 });\n```\n\nCI on this change: `bun test` 87 pass, 0 fail; `bun run typecheck` exits 0.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Reject the change ([REJECT]) with a BLOCKER line on `src/sessions/__tests__/filter.test.ts` saying no test checks that a session started before the `--since` date is left out (the `--since` test keeps every session). That one blocker is all that is required; a proposed fix or further blockers are optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    }
+  ],
+  "tags": [
+    "review",
+    "rejection",
+    "tests"
+  ]
+}

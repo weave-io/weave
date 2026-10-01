@@ -1,0 +1,32 @@
+{
+  "id": "weft-review-style-nits-not-blockers",
+  "description": "Change under review. Task: `resolveAgent` must return a typed `UnknownAgent` error instead of throwing, as the project's error-handling rule (neverthrow `Result`) requires. Acceptance: an unknown name gives `err({ type: \"UnknownAgent\", name })`; the `run` command logs it and exits 1; tests cover a known and an unknown name.\n\nAdded files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/agents/resolve.ts` (changed, lines 1-22):\n```ts\n1 import { err, ok, type Result } from \"neverthrow\";\n2 import type { AgentConfig } from \"./config.js\";\n3\n4 export type ResolveError = { type: \"UnknownAgent\"; name: string };\n5\n6 // Looks up an agent by it's name.\n7 export function resolveAgent(\n8   name: string,\n9   agents: Map<string, AgentConfig>,\n10 ): Result<AgentConfig, ResolveError> {\n11   const a: AgentConfig | undefined = agents.get(name);\n12   if (a === undefined) {\n13     return err({ type: \"UnknownAgent\", name: name });\n14   } else {\n15     return ok(a);\n16   }\n17 }\n```\n\n`src/commands/run.ts` (changed, lines 30-36):\n```ts\n30   const resolved = resolveAgent(args.agent, agents);\n31   if (resolved.isErr()) {\n32     log.error({ name: resolved.error.name }, \"unknown agent\")\n33     return 1;\n34   }\n35   const agent = resolved.value;\n36   return startAgent(agent, args);\n```\n\n`src/agents/__tests__/resolve.test.ts` (added):\n```ts\n1 import { expect, test } from \"bun:test\";\n2 import { resolveAgent } from \"../resolve.js\";\n3\n4 const loom = { name: \"loom\", models: [\"claude-opus-5-5\"] };\n5\n6 test(\"a known name resolves\", () => {\n7   expect(resolveAgent(\"loom\", new Map([[\"loom\", loom]]))._unsafeUnwrap()).toBe(loom);\n8 });\n9\n10 test(\"an unknown name is an UnknownAgent error\", () => {\n11   expect(resolveAgent(\"nope\", new Map())._unsafeUnwrapErr()).toEqual({ type: \"UnknownAgent\", name: \"nope\" });\n12 });\n```\n\n`src/commands/__tests__/run.test.ts` (changed, lines 40-44):\n```ts\n40 test(\"an unknown agent exits 1\", async () => {\n41   const code = await runCommand({ agent: \"nope\" }, { agents: new Map() });\n42   expect(code).toBe(1);\n43 });\n```\n\nCI on this change: `bun test` 112 pass, 0 fail; `bun run typecheck` exits 0; `bun run lint` exits 0 with 3 warnings (no-else-return at `src/agents/resolve.ts:14`, semi at `src/commands/run.ts:32`, no-inferrable-types at `src/agents/resolve.ts:11`). The project treats lint warnings as non-blocking.",
+  "suite": "weft-review",
+  "allowed_agents": [
+    "weft"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Approve the change: `resolveAgent` returns the typed `UnknownAgent` error, the `run` command logs it and exits 1, and both names are tested. The single-letter name, the redundant `name: name`, the `else` after `return`, the explicit annotation, the comment typo and the missing semicolon are style observations that may be noted as non-blocking but must not be BLOCKER lines.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_approve",
+      "review_blockers_zero",
+      "review_approval_disciplined"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[APPROVE]"
+    }
+  ],
+  "tags": [
+    "review",
+    "judgment",
+    "approval",
+    "style"
+  ]
+}

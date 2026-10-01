@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-preexisting-bug-out-of-scope",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The `pageCount` bug is real but pre-existing: the diff shows it as unchanged context, `git blame` dates it eight months back, and the clamp does not use it. Score [APPROVE] with zero BLOCKER lines. Rejecting because of `pageCount` fails the case; reporting it as a separate follow-up is the expected good behaviour."
+  }
+}
