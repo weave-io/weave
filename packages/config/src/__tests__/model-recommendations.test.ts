@@ -205,11 +205,16 @@ describe("ModelRecommendationsFileSchema", () => {
     ).not.toEqual([]);
   });
 
-  it("rejects an agent name that is not a DSL-style name", () => {
+  it.each([
+    "Shuttle",
+    "shuttle\n",
+    "1loom",
+    "-loom",
+  ])("rejects the agent name %j", (name) => {
     expect(
       issuesFor({
         ...validList(),
-        default: { agents: { Shuttle: { models: ["gpt-6-sol"] } } },
+        default: { agents: { [name]: { models: ["gpt-6-sol"] } } },
       }),
     ).not.toEqual([]);
   });

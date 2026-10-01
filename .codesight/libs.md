@@ -1088,9 +1088,11 @@
   - _...25 more_
 - `scripts/models/keygen.ts`
   - function generateKeyPair: () => ResultAsync<KeyPair, KeygenError>
-  - function keygen: (args) => ResultAsync<string, KeygenError>
+  - function keygen: (args, io) => ResultAsync<string, KeygenError>
   - interface KeyPair
+  - interface KeyFileIo
   - type KeygenError
+  - const bunKeyFileIo: KeyFileIo
 - `scripts/models/sign.ts`
   - function signList: (listText, privateKey, verifier) => void
   - function signFiles: (args) => ResultAsync<string, SignListError>

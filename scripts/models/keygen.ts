@@ -58,35 +58,52 @@ export function generateKeyPair(): ResultAsync<KeyPair, KeygenError> {
   )();
 }
 
-async function writePrivateKey(
-  path: string,
-  privateKey: string,
-): Promise<void> {
-  await Bun.write(path, "");
-  await $`chmod 600 ${path}`.quiet();
-  await Bun.write(path, `${privateKey}\n`);
+/** The file operations keygen needs; injected so tests touch no disk. */
+export interface KeyFileIo {
+  exists(path: string): Promise<boolean>;
+  /** Create or truncate `path` with mode 600 before anything is written to it. */
+  createPrivate(path: string): Promise<void>;
+  write(path: string, text: string): Promise<void>;
 }
+
+/** The real disk, through Bun APIs. */
+export const bunKeyFileIo: KeyFileIo = {
+  exists: (path) => Bun.file(path).exists(),
+  createPrivate: async (path) => {
+    await Bun.write(path, "");
+    await $`chmod 600 ${path}`.quiet();
+  },
+  write: async (path, text) => {
+    await Bun.write(path, text);
+  },
+};
 
 /** Run the script; resolves to the new public key instead of throwing. */
 export function keygen(
   args: readonly string[],
+  io: KeyFileIo = bunKeyFileIo,
 ): ResultAsync<string, KeygenError> {
   const [outPath] = args;
   if (outPath === undefined) return errAsync({ type: "Usage" });
-  return ResultAsync.fromThrowable(
-    () => Bun.file(outPath).exists(),
-    (): KeygenError => ({ type: "WriteFailed", path: outPath }),
-  )()
+  const writeFailed = (): KeygenError => ({
+    type: "WriteFailed",
+    path: outPath,
+  });
+  return ResultAsync.fromThrowable(() => io.exists(outPath), writeFailed)()
     .andThen((exists) =>
       exists
         ? errAsync<KeyPair, KeygenError>({ type: "Exists", path: outPath })
         : generateKeyPair(),
     )
     .andThen((keys) =>
-      ResultAsync.fromThrowable(
-        () => writePrivateKey(outPath, keys.privateKey),
-        (): KeygenError => ({ type: "WriteFailed", path: outPath }),
-      )().map(() => keys.publicKey),
+      ResultAsync.fromThrowable(() => io.createPrivate(outPath), writeFailed)()
+        .andThen(() =>
+          ResultAsync.fromThrowable(
+            () => io.write(outPath, `${keys.privateKey}\n`),
+            writeFailed,
+          )(),
+        )
+        .map(() => keys.publicKey),
     );
 }
 
